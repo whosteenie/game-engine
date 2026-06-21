@@ -39,5 +39,4 @@ glm::vec3 ClosestPointOnLine(const glm::vec3& linePoint, const glm::vec3& lineDi
 
 int PickSceneObject(
     const std::vector<SceneObject>& objects,
-    const Ray& ray,
-    double animationTime);
+    const Ray& ray);

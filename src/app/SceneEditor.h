@@ -12,6 +12,12 @@ enum class TransformTool
     Scale = 2
 };
 
+enum class TransformSpace
+{
+    Local = 0,
+    World = 1
+};
+
 class SceneEditor
 {
 public:
@@ -20,7 +26,8 @@ public:
 
     TransformTool GetTool() const;
     void SetTool(TransformTool tool);
-    bool IsGizmoDragging() const;
+    TransformSpace GetTransformSpace() const;
+    void SetTransformSpace(TransformSpace space);
 
     void Update(
         DemoScene& scene,
@@ -37,6 +44,6 @@ public:
 
 private:
     TransformTool m_tool = TransformTool::Translate;
+    TransformSpace m_transformSpace = TransformSpace::Local;
     SelectionRenderer* m_selectionRenderer = nullptr;
-    bool m_gizmoWasUsing = false;
 };

@@ -28,6 +28,7 @@ Application::Application(int width, int height, const char* title)
 
     glfwSwapInterval(1);
     glEnable(GL_DEPTH_TEST);
+    glEnable(GL_MULTISAMPLE);
 
     m_renderer = std::make_unique<Renderer>();
     m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
@@ -80,6 +81,7 @@ void Application::InitGLFW()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_SAMPLES, 4);
 
     m_window = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
     if (!m_window)
@@ -107,7 +109,7 @@ void Application::Update(double deltaTime)
 
     m_imguiLayer->BeginFrame();
     m_sceneHierarchyPanel->Draw(*m_scene);
-    m_debugPanel->Draw(*m_scene, *m_camera, m_paused);
+    m_debugPanel->Draw(*m_scene, *m_camera);
 
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -120,23 +122,14 @@ void Application::Update(double deltaTime)
     const bool allowGameKeyboard = !io.WantCaptureKeyboard;
     const bool allowGameMouse = !io.WantCaptureMouse;
 
-    if (m_input->IsKeyDown(GLFW_KEY_ESCAPE))
+    if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_ESCAPE))
     {
         glfwSetWindowShouldClose(m_window, true);
     }
 
-    if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_SPACE))
-    {
-        m_paused = !m_paused;
-    }
-
-    if (allowGameKeyboard)
-    {
-        m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
-    }
-
     if (allowGameMouse && m_input->IsCapturingMouse())
     {
+        m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
         m_camera->ProcessMouseMovement(
             m_input->ConsumeMouseDeltaX(),
             m_input->ConsumeMouseDeltaY());
@@ -155,10 +148,7 @@ void Application::Update(double deltaTime)
     glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 
     m_scene->Update(
-        deltaTime,
-        m_paused,
         *m_input,
-        allowGameKeyboard,
         *m_camera,
         viewportWidth,
         viewportHeight,

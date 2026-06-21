@@ -11,7 +11,7 @@
 GridRenderer::GridRenderer()
     : m_shader(new Shader(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
 {
-    BuildGridGeometry(10, 1.0f);
+    BuildGridGeometry(m_halfExtent);
 }
 
 GridRenderer::~GridRenderer()
@@ -19,34 +19,40 @@ GridRenderer::~GridRenderer()
     delete m_shader;
     glDeleteVertexArrays(1, &m_vao);
     glDeleteBuffers(1, &m_vbo);
+    glDeleteBuffers(1, &m_ebo);
 }
 
-void GridRenderer::BuildGridGeometry(int halfExtent, float spacing)
+void GridRenderer::BuildGridGeometry(float halfExtent)
 {
-    std::vector<float> vertices;
-    const float extent = halfExtent * spacing;
-    const float y = 0.002f; // draw above the shadow floor so lines stay visible
+    const float y = 0.051f;
 
-    for (int i = -halfExtent; i <= halfExtent; ++i)
-    {
-        float pos = i * spacing;
+    const std::vector<float> vertices = {
+        -halfExtent, y, -halfExtent,
+         halfExtent, y, -halfExtent,
+         halfExtent, y,  halfExtent,
+        -halfExtent, y,  halfExtent,
+    };
 
-        // Line along X (varying Z)
-        vertices.insert(vertices.end(), { -extent, y, pos,  extent, y, pos });
-        // Line along Z (varying X)
-        vertices.insert(vertices.end(), { pos, y, -extent,  pos, y, extent });
-    }
+    const std::vector<unsigned int> indices = {
+        0, 1, 2,
+        0, 2, 3,
+    };
 
-    m_vertexCount = static_cast<unsigned int>(vertices.size() / 3);
+    m_indexCount = static_cast<unsigned int>(indices.size());
 
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
+    glGenBuffers(1, &m_ebo);
 
     glBindVertexArray(m_vao);
+
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_STATIC_DRAW);
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), indices.data(), GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
     glEnableVertexAttribArray(0);
 
     glBindVertexArray(0);
@@ -58,7 +64,51 @@ void GridRenderer::Draw(const Camera& camera) const
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
     m_shader->SetVec3("uColor", glm::vec3(0.35f, 0.38f, 0.42f));
+    m_shader->SetVec3("uCameraPosition", camera.GetPosition());
+    m_shader->SetFloat("uCellSize", m_cellSize);
+    m_shader->SetFloat("uMajorInterval", m_majorInterval);
+
+    GLboolean blendEnabled = glIsEnabled(GL_BLEND);
+    GLboolean depthMaskEnabled = GL_TRUE;
+    glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMaskEnabled);
+    GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+    GLint blendSrcRgb;
+    GLint blendDstRgb;
+    GLint blendSrcAlpha;
+    GLint blendDstAlpha;
+    glGetIntegerv(GL_BLEND_SRC_RGB, &blendSrcRgb);
+    glGetIntegerv(GL_BLEND_DST_RGB, &blendDstRgb);
+    glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
+    glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
 
     glBindVertexArray(m_vao);
-    glDrawArrays(GL_LINES, 0, m_vertexCount);
+    glDrawElements(GL_TRIANGLES, m_indexCount, GL_UNSIGNED_INT, nullptr);
+    glBindVertexArray(0);
+
+    glDepthMask(depthMaskEnabled);
+
+    if (cullFaceEnabled)
+    {
+        glEnable(GL_CULL_FACE);
+    }
+    else
+    {
+        glDisable(GL_CULL_FACE);
+    }
+
+    if (blendEnabled)
+    {
+        glEnable(GL_BLEND);
+    }
+    else
+    {
+        glDisable(GL_BLEND);
+    }
+
+    glBlendFuncSeparate(blendSrcRgb, blendDstRgb, blendSrcAlpha, blendDstAlpha);
 }

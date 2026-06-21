@@ -31,12 +31,12 @@ SelectionRenderer::~SelectionRenderer()
     glDeleteBuffers(1, &m_vbo);
 }
 
-void SelectionRenderer::Draw(const Camera& camera, const SceneObject& object, double animationTime) const
+void SelectionRenderer::Draw(const Camera& camera, const SceneObject& object) const
 {
     std::vector<float> vertices;
     GizmoGeometry::AppendOrientedBoxOutline(
         vertices,
-        object.BuildModelMatrix(animationTime),
+        object.BuildModelMatrix(),
         object.GetLocalBoundsMin(),
         object.GetLocalBoundsMax(),
         0.03f);

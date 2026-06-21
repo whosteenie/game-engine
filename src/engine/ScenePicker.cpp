@@ -124,8 +124,7 @@ glm::vec3 ClosestPointOnLine(const glm::vec3& linePoint, const glm::vec3& lineDi
 
 int PickSceneObject(
     const std::vector<SceneObject>& objects,
-    const Ray& ray,
-    double animationTime)
+    const Ray& ray)
 {
     int closestIndex = -1;
     float closestDistance = std::numeric_limits<float>::max();
@@ -135,7 +134,7 @@ int PickSceneObject(
         const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
         glm::vec3 boundsMin;
         glm::vec3 boundsMax;
-        object.GetWorldBounds(animationTime, boundsMin, boundsMax);
+        object.GetWorldBounds(boundsMin, boundsMax);
 
         float hitDistance = 0.0f;
         if (!IntersectRayAabb(ray, boundsMin, boundsMax, hitDistance))

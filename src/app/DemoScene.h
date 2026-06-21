@@ -27,10 +27,7 @@ public:
     ~DemoScene();
 
     void Update(
-        double deltaTime,
-        bool paused,
         Input& input,
-        bool allowObjectMovement,
         const Camera& camera,
         int framebufferWidth,
         int framebufferHeight,
@@ -55,7 +52,6 @@ public:
     void ClearSelection();
     bool HasSelection() const;
 
-    double GetAnimationTime() const;
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
 
@@ -70,7 +66,6 @@ public:
 private:
     void SetupLighting();
     void SetupObjects();
-    void HandleSelectedObjectMovement(Input& input, double deltaTime);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass() const;
 
@@ -84,7 +79,6 @@ private:
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<Shader> m_shadowDepthShader;
     SceneLighting m_lighting;
-    double m_animationTime = 0.0;
     int m_selectedObjectIndex = 1;
     bool m_showLightGizmos = true;
     int m_selectedLightIndex = 0;

@@ -8,5 +8,5 @@ struct Transform
     glm::vec3 rotationDegrees = glm::vec3(0.0f);
     glm::vec3 scale = glm::vec3(1.0f);
 
-    glm::mat4 ToMatrix(double animationTime, bool autoSpin) const;
+    glm::mat4 ToMatrix() const;
 };

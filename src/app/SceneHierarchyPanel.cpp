@@ -54,15 +54,7 @@ namespace
         Transform& transform = object.GetTransform();
 
         SliderVec3("Position", transform.position, -20.0f, 20.0f);
-        if (!object.HasAutoSpin())
-        {
-            SliderVec3("Rotation", transform.rotationDegrees, -180.0f, 180.0f);
-        }
-        else
-        {
-            ImGui::TextUnformatted("Rotation driven by auto spin.");
-        }
-
+        SliderVec3("Rotation", transform.rotationDegrees, -180.0f, 180.0f);
         SliderVec3("Scale", transform.scale, 0.1f, 5.0f);
     }
 
@@ -87,6 +79,28 @@ namespace
 
         return clicked;
     }
+
+    bool DrawSpaceButton(const char* label, TransformSpace space, TransformSpace activeSpace, DemoScene& scene)
+    {
+        const bool isActive = space == activeSpace;
+        if (isActive)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.55f, 0.85f, 1.0f));
+        }
+
+        const bool clicked = ImGui::Button(label);
+        if (isActive)
+        {
+            ImGui::PopStyleColor();
+        }
+
+        if (clicked)
+        {
+            scene.GetSceneEditor().SetTransformSpace(space);
+        }
+
+        return clicked;
+    }
 }
 
 void SceneHierarchyPanel::Draw(DemoScene& scene) const
@@ -101,6 +115,7 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
 
     SceneEditor& editor = scene.GetSceneEditor();
     const TransformTool activeTool = editor.GetTool();
+    const TransformSpace activeSpace = editor.GetTransformSpace();
 
     DrawToolButton("Move (W)", TransformTool::Translate, activeTool, scene);
     ImGui::SameLine();
@@ -108,7 +123,19 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
     ImGui::SameLine();
     DrawToolButton("Scale (R)", TransformTool::Scale, activeTool, scene);
 
-    ImGui::TextUnformatted("LMB: select/deselect or drag gizmo. RMB: fly camera.");
+    if (activeTool != TransformTool::Scale)
+    {
+        DrawSpaceButton("Local (L)", TransformSpace::Local, activeSpace, scene);
+        ImGui::SameLine();
+        DrawSpaceButton("World (G)", TransformSpace::World, activeSpace, scene);
+    }
+    else
+    {
+        ImGui::TextUnformatted("Scale gizmo uses local axes.");
+    }
+
+    ImGui::TextUnformatted("LMB: select/deselect or drag gizmo.");
+    ImGui::TextUnformatted("RMB + WASD/Q/E: fly camera. Shift: move faster.");
     ImGui::Separator();
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
@@ -191,12 +218,6 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
         if (ImGui::Checkbox("Movable", &movable))
         {
             selectedObject.SetMovable(movable);
-        }
-
-        bool autoSpin = selectedObject.HasAutoSpin();
-        if (ImGui::Checkbox("Auto spin", &autoSpin))
-        {
-            selectedObject.SetAutoSpin(autoSpin);
         }
 
         bool castShadow = selectedObject.CastsShadow();

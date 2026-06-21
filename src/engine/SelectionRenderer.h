@@ -10,7 +10,7 @@ public:
     SelectionRenderer();
     ~SelectionRenderer();
 
-    void Draw(const Camera& camera, const SceneObject& object, double animationTime) const;
+    void Draw(const Camera& camera, const SceneObject& object) const;
 
 private:
     Shader* m_shader = nullptr;

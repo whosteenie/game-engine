@@ -45,8 +45,7 @@ namespace
 
 void DebugPanel::Draw(
     DemoScene& scene,
-    const Camera& camera,
-    bool paused) const
+    const Camera& camera) const
 {
     ImGui::SetNextWindowSize(ImVec2(440.0f, 620.0f), ImGuiCond_FirstUseEver);
 
@@ -55,9 +54,6 @@ void DebugPanel::Draw(
         ImGui::End();
         return;
     }
-
-    ImGui::Text("Pause animation: Space");
-    ImGui::Text("Paused: %s", paused ? "yes" : "no");
 
     const glm::vec3 cameraPosition = camera.GetPosition();
     ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cameraPosition.x, cameraPosition.y, cameraPosition.z);

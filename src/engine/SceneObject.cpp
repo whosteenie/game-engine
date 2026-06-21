@@ -10,17 +10,6 @@
 #include <limits>
 #include <utility>
 
-namespace
-{
-    glm::mat3 NormalizeColumns(const glm::mat3& matrix)
-    {
-        return glm::mat3(
-            glm::normalize(glm::vec3(matrix[0])),
-            glm::normalize(glm::vec3(matrix[1])),
-            glm::normalize(glm::vec3(matrix[2])));
-    }
-}
-
 SceneObject::SceneObject(
     std::string name,
     Mesh* mesh,
@@ -29,7 +18,6 @@ SceneObject::SceneObject(
     const glm::vec3& localBoundsMax,
     Transform transform,
     bool movable,
-    bool autoSpin,
     bool castShadow,
     bool receiveShadow)
     : m_name(std::move(name)),
@@ -39,7 +27,6 @@ SceneObject::SceneObject(
       m_localBoundsMin(localBoundsMin),
       m_localBoundsMax(localBoundsMax),
       m_movable(movable),
-      m_autoSpin(autoSpin),
       m_castShadow(castShadow),
       m_receiveShadow(receiveShadow)
 {
@@ -90,16 +77,6 @@ void SceneObject::SetMovable(bool movable)
     m_movable = movable;
 }
 
-bool SceneObject::HasAutoSpin() const
-{
-    return m_autoSpin;
-}
-
-void SceneObject::SetAutoSpin(bool autoSpin)
-{
-    m_autoSpin = autoSpin;
-}
-
 bool SceneObject::CastsShadow() const
 {
     return m_castShadow;
@@ -120,14 +97,9 @@ void SceneObject::SetReceiveShadow(bool receiveShadow)
     m_receiveShadow = receiveShadow;
 }
 
-glm::mat4 SceneObject::BuildModelMatrix(double animationTime) const
+glm::mat4 SceneObject::BuildModelMatrix() const
 {
-    return m_transform.ToMatrix(animationTime, m_autoSpin);
-}
-
-glm::mat4 SceneObject::BuildEditMatrix() const
-{
-    return m_transform.ToMatrix(0.0, false);
+    return m_transform.ToMatrix();
 }
 
 void SceneObject::ApplyTransformFromMatrix(const glm::mat4& matrix)
@@ -142,15 +114,9 @@ void SceneObject::ApplyTransformFromMatrix(const glm::mat4& matrix)
     m_transform.scale = glm::make_vec3(scale);
 }
 
-glm::vec3 SceneObject::GetWorldPivot(double animationTime) const
+void SceneObject::GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const
 {
-    const glm::mat4 modelMatrix = BuildModelMatrix(animationTime);
-    return glm::vec3(modelMatrix[3]);
-}
-
-void SceneObject::GetWorldBounds(double animationTime, glm::vec3& boundsMin, glm::vec3& boundsMax) const
-{
-    const glm::mat4 modelMatrix = BuildModelMatrix(animationTime);
+    const glm::mat4 modelMatrix = BuildModelMatrix();
     const std::array<glm::vec3, 8> corners = {
         glm::vec3(m_localBoundsMin.x, m_localBoundsMin.y, m_localBoundsMin.z),
         glm::vec3(m_localBoundsMax.x, m_localBoundsMin.y, m_localBoundsMin.z),
@@ -172,16 +138,6 @@ void SceneObject::GetWorldBounds(double animationTime, glm::vec3& boundsMin, glm
         boundsMin = glm::min(boundsMin, worldPosition);
         boundsMax = glm::max(boundsMax, worldPosition);
     }
-}
-
-glm::mat3 SceneObject::GetLocalAxisMatrix(double animationTime) const
-{
-    if (m_autoSpin)
-    {
-        return glm::mat3(1.0f);
-    }
-
-    return NormalizeColumns(glm::mat3(BuildModelMatrix(animationTime)));
 }
 
 const glm::vec3& SceneObject::GetLocalBoundsMin() const

@@ -19,6 +19,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <limits>
 
 DemoScene::DemoScene()
     : m_cubeMesh(CreateCubeMesh()),
@@ -70,7 +71,6 @@ void DemoScene::SetupObjects()
         Transform{},
         false,
         false,
-        false,
         true);
 
     auto cubeMaterial = std::make_unique<Material>(
@@ -93,8 +93,7 @@ void DemoScene::SetupObjects()
         cubeTransform,
         true,
         true,
-        true,
-        false);
+        true);
 
     m_selectedObjectIndex = 1;
 }
@@ -123,9 +122,8 @@ void DemoScene::AddCubeObject()
         glm::vec3(0.5f),
         cubeTransform,
         true,
-        false,
         true,
-        false);
+        true);
 }
 
 bool DemoScene::RemoveObject(std::size_t index)
@@ -239,11 +237,6 @@ bool DemoScene::HasSelection() const
     return m_selectedObjectIndex >= 0 && static_cast<std::size_t>(m_selectedObjectIndex) < m_objects.size();
 }
 
-double DemoScene::GetAnimationTime() const
-{
-    return m_animationTime;
-}
-
 SceneEditor& DemoScene::GetSceneEditor()
 {
     return *m_sceneEditor;
@@ -298,10 +291,7 @@ glm::vec3 DemoScene::GetSunDirection() const
 }
 
 void DemoScene::Update(
-    double deltaTime,
-    bool paused,
     Input& input,
-    bool allowObjectMovement,
     const Camera& camera,
     int framebufferWidth,
     int framebufferHeight,
@@ -310,16 +300,6 @@ void DemoScene::Update(
     bool allowMouseInput,
     bool allowKeyboardInput)
 {
-    if (allowObjectMovement && !m_sceneEditor->IsGizmoDragging())
-    {
-        HandleSelectedObjectMovement(input, deltaTime);
-    }
-
-    if (!paused)
-    {
-        m_animationTime += deltaTime;
-    }
-
     m_sceneEditor->Update(
         *this,
         camera,
@@ -332,52 +312,26 @@ void DemoScene::Update(
         allowKeyboardInput);
 }
 
-void DemoScene::HandleSelectedObjectMovement(Input& input, double deltaTime)
-{
-    if (!HasSelection())
-    {
-        return;
-    }
-
-    SceneObject& selectedObject = GetObject(static_cast<std::size_t>(m_selectedObjectIndex));
-    if (!selectedObject.IsMovable())
-    {
-        return;
-    }
-
-    const float moveSpeed = 2.0f;
-    const float step = moveSpeed * static_cast<float>(deltaTime);
-    glm::vec3& position = selectedObject.GetTransform().position;
-
-    if (input.IsKeyDown(GLFW_KEY_LEFT))
-    {
-        position.x -= step;
-    }
-    if (input.IsKeyDown(GLFW_KEY_RIGHT))
-    {
-        position.x += step;
-    }
-    if (input.IsKeyDown(GLFW_KEY_UP))
-    {
-        position.z -= step;
-    }
-    if (input.IsKeyDown(GLFW_KEY_DOWN))
-    {
-        position.z += step;
-    }
-    if (input.IsKeyDown(GLFW_KEY_PAGE_UP))
-    {
-        position.y += step;
-    }
-    if (input.IsKeyDown(GLFW_KEY_PAGE_DOWN))
-    {
-        position.y -= step;
-    }
-}
-
 void DemoScene::RenderShadowPass() const
 {
-    m_shadowMap->BeginPass(GetSunDirection(), glm::vec3(0.0f));
+    glm::vec3 boundsMin(std::numeric_limits<float>::max());
+    glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
+
+    for (const SceneObject& object : m_objects)
+    {
+        if (!object.CastsShadow() && !object.ReceivesShadow())
+        {
+            continue;
+        }
+
+        glm::vec3 objectBoundsMin;
+        glm::vec3 objectBoundsMax;
+        object.GetWorldBounds(objectBoundsMin, objectBoundsMax);
+        boundsMin = glm::min(boundsMin, objectBoundsMin);
+        boundsMax = glm::max(boundsMax, objectBoundsMax);
+    }
+
+    m_shadowMap->BeginPass(GetSunDirection(), boundsMin, boundsMax);
 
     m_shadowDepthShader->Use();
     m_shadowDepthShader->SetMat4("uLightSpaceMatrix", m_shadowMap->GetLightSpaceMatrix());
@@ -389,7 +343,7 @@ void DemoScene::RenderShadowPass() const
             continue;
         }
 
-        m_shadowDepthShader->SetMat4("uModel", object.BuildModelMatrix(m_animationTime));
+        m_shadowDepthShader->SetMat4("uModel", object.BuildModelMatrix());
         object.GetMesh()->Draw();
     }
 }
@@ -406,7 +360,7 @@ void DemoScene::Render(
 
     for (const SceneObject& object : m_objects)
     {
-        const glm::mat4 modelMatrix = object.BuildModelMatrix(m_animationTime);
+        const glm::mat4 modelMatrix = object.BuildModelMatrix();
         object.GetMaterial().Apply(
             camera,
             m_lighting,

@@ -36,7 +36,6 @@ private:
     const char* m_title;
 
     GLFWwindow* m_window = nullptr;
-    bool m_paused = false;
 
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<ImGuiLayer> m_imguiLayer;

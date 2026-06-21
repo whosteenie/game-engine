@@ -24,7 +24,16 @@ void Camera::SetAspectFromFramebuffer(int width, int height)
 
 void Camera::ProcessKeyboard(const Input& input, float deltaTime)
 {
+    if (!input.IsCapturingMouse())
+    {
+        return;
+    }
+
     float velocity = m_movementSpeed * deltaTime;
+    if (input.IsKeyDown(GLFW_KEY_LEFT_SHIFT) || input.IsKeyDown(GLFW_KEY_RIGHT_SHIFT))
+    {
+        velocity *= 3.0f;
+    }
 
     if (input.IsKeyDown(GLFW_KEY_W))
     {
