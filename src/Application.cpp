@@ -130,6 +130,15 @@ void Application::HandleInput(double deltaTime)
     {
         m_position.y -= moveSpeed * static_cast<float>(deltaTime);
     }
+
+    if (glfwGetKey(m_window, GLFW_KEY_PAGE_UP) == GLFW_PRESS)
+    {
+        m_position.z -= moveSpeed * static_cast<float>(deltaTime);
+    }
+    if (glfwGetKey(m_window, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS)
+    {
+        m_position.z += moveSpeed * static_cast<float>(deltaTime);
+    }
 }
 
 void Application::OnFramebufferResize(int width, int height)
