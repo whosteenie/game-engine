@@ -16,6 +16,9 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <stdexcept>
+#include <string>
+
 DemoScene::DemoScene()
     : m_cubeMesh(CreateCubeMesh()),
       m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
@@ -25,16 +28,10 @@ DemoScene::DemoScene()
       m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
       m_shadowDepthShader(std::make_unique<Shader>(
           EngineConstants::ShadowDepthVertexShader,
-          EngineConstants::ShadowDepthFragmentShader)),
-      m_floorMaterial(std::make_unique<Material>(
-          EngineConstants::LitVertexShader,
-          EngineConstants::PbrFragmentShader,
-          glm::vec3(1.0f),
-          1.0f,
-          0.0f))
+          EngineConstants::ShadowDepthFragmentShader))
 {
-    ApplyConcreteFloorMaterialMaps(*m_floorMaterial);
     SetupLighting();
+    SetupObjects();
 }
 
 DemoScene::~DemoScene() = default;
@@ -52,6 +49,77 @@ void DemoScene::SetupLighting()
     m_lighting.SetShadowLightIndex(0);
 }
 
+void DemoScene::SetupObjects()
+{
+    auto floorMaterial = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        glm::vec3(1.0f),
+        1.0f,
+        0.0f);
+    ApplyConcreteFloorMaterialMaps(*floorMaterial);
+
+    m_objects.emplace_back(
+        "Floor",
+        m_floorMesh.get(),
+        std::move(floorMaterial),
+        Transform{},
+        false,
+        false,
+        false,
+        true);
+
+    auto cubeMaterial = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        glm::vec3(1.0f),
+        0.85f,
+        0.0f);
+    ApplyWoodTableMaterialMaps(*cubeMaterial);
+
+    Transform cubeTransform;
+    cubeTransform.position = glm::vec3(0.0f, 1.5f, 0.0f);
+
+    m_objects.emplace_back(
+        "Cube",
+        m_cubeMesh.get(),
+        std::move(cubeMaterial),
+        cubeTransform,
+        true,
+        true,
+        true,
+        false);
+
+    m_selectedObjectIndex = 1;
+}
+
+void DemoScene::AddCubeObject()
+{
+    auto cubeMaterial = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        glm::vec3(1.0f),
+        0.85f,
+        0.0f);
+    ApplyWoodTableMaterialMaps(*cubeMaterial);
+
+    Transform cubeTransform;
+    cubeTransform.position = glm::vec3(0.5f * static_cast<float>(m_nextCubeNumber), 1.5f, 0.0f);
+
+    const std::string cubeName = "Cube " + std::to_string(m_nextCubeNumber);
+    ++m_nextCubeNumber;
+
+    m_objects.emplace_back(
+        cubeName,
+        m_cubeMesh.get(),
+        std::move(cubeMaterial),
+        cubeTransform,
+        true,
+        false,
+        true,
+        false);
+}
+
 const SceneLighting& DemoScene::GetLighting() const
 {
     return m_lighting;
@@ -67,9 +135,52 @@ IBL& DemoScene::GetIBL()
     return *m_ibl;
 }
 
-Material& DemoScene::GetFloorMaterial()
+const std::vector<SceneObject>& DemoScene::GetObjects() const
 {
-    return *m_floorMaterial;
+    return m_objects;
+}
+
+std::vector<SceneObject>& DemoScene::GetObjects()
+{
+    return m_objects;
+}
+
+SceneObject& DemoScene::GetObject(std::size_t index)
+{
+    return m_objects.at(index);
+}
+
+const SceneObject& DemoScene::GetObject(std::size_t index) const
+{
+    return m_objects.at(index);
+}
+
+int DemoScene::GetSelectedObjectIndex() const
+{
+    return m_selectedObjectIndex;
+}
+
+void DemoScene::SetSelectedObjectIndex(int selectedObjectIndex)
+{
+    if (m_objects.empty())
+    {
+        m_selectedObjectIndex = 0;
+        return;
+    }
+
+    if (selectedObjectIndex < 0)
+    {
+        m_selectedObjectIndex = 0;
+        return;
+    }
+
+    if (static_cast<std::size_t>(selectedObjectIndex) >= m_objects.size())
+    {
+        m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
+        return;
+    }
+
+    m_selectedObjectIndex = selectedObjectIndex;
 }
 
 bool DemoScene::GetShowLightGizmos() const
@@ -115,11 +226,11 @@ glm::vec3 DemoScene::GetSunDirection() const
     return lights.front().GetDirection();
 }
 
-void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowCubeMovement)
+void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowObjectMovement)
 {
-    if (allowCubeMovement)
+    if (allowObjectMovement)
     {
-        HandleMovement(input, deltaTime);
+        HandleSelectedObjectMovement(input, deltaTime);
     }
 
     if (!paused)
@@ -128,77 +239,90 @@ void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowCu
     }
 }
 
-void DemoScene::HandleMovement(Input& input, double deltaTime)
+void DemoScene::HandleSelectedObjectMovement(Input& input, double deltaTime)
 {
+    if (m_objects.empty())
+    {
+        return;
+    }
+
+    SceneObject& selectedObject = GetObject(static_cast<std::size_t>(m_selectedObjectIndex));
+    if (!selectedObject.IsMovable())
+    {
+        return;
+    }
+
     const float moveSpeed = 2.0f;
     const float step = moveSpeed * static_cast<float>(deltaTime);
+    glm::vec3& position = selectedObject.GetTransform().position;
 
     if (input.IsKeyDown(GLFW_KEY_LEFT))
     {
-        m_position.x -= step;
+        position.x -= step;
     }
     if (input.IsKeyDown(GLFW_KEY_RIGHT))
     {
-        m_position.x += step;
+        position.x += step;
     }
     if (input.IsKeyDown(GLFW_KEY_UP))
     {
-        m_position.z -= step;
+        position.z -= step;
     }
     if (input.IsKeyDown(GLFW_KEY_DOWN))
     {
-        m_position.z += step;
+        position.z += step;
     }
     if (input.IsKeyDown(GLFW_KEY_PAGE_UP))
     {
-        m_position.y += step;
+        position.y += step;
     }
     if (input.IsKeyDown(GLFW_KEY_PAGE_DOWN))
     {
-        m_position.y -= step;
+        position.y -= step;
     }
 }
 
-glm::mat4 DemoScene::BuildCubeModelMatrix() const
-{
-    glm::mat4 model = glm::mat4(1.0f);
-    model = glm::translate(model, m_position);
-    model = glm::rotate(model, (float)m_animationTime * 1.5f, glm::vec3(0.0f, 1.0f, 0.0f));
-    model = glm::rotate(model, (float)m_animationTime * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
-    return model;
-}
-
-glm::mat4 DemoScene::BuildFloorModelMatrix() const
-{
-    return glm::mat4(1.0f);
-}
-
-void DemoScene::RenderShadowPass(const glm::mat4& cubeModel) const
+void DemoScene::RenderShadowPass() const
 {
     m_shadowMap->BeginPass(GetSunDirection(), glm::vec3(0.0f));
 
     m_shadowDepthShader->Use();
     m_shadowDepthShader->SetMat4("uLightSpaceMatrix", m_shadowMap->GetLightSpaceMatrix());
-    m_shadowDepthShader->SetMat4("uModel", cubeModel);
-    m_cubeMesh->Draw();
+
+    for (const SceneObject& object : m_objects)
+    {
+        if (!object.CastsShadow())
+        {
+            continue;
+        }
+
+        m_shadowDepthShader->SetMat4("uModel", object.BuildModelMatrix(m_animationTime));
+        object.GetMesh()->Draw();
+    }
 }
 
 void DemoScene::Render(
     const Camera& camera,
-    const Material& cubeMaterial,
     int viewportWidth,
     int viewportHeight) const
 {
-    const glm::mat4 cubeModel = BuildCubeModelMatrix();
-    const glm::mat4 floorModel = BuildFloorModelMatrix();
-
-    RenderShadowPass(cubeModel);
+    RenderShadowPass();
     m_shadowMap->EndPass();
 
     glViewport(0, 0, viewportWidth, viewportHeight);
 
-    m_floorMaterial->Apply(camera, m_lighting, *m_ibl, floorModel, m_shadowMap.get(), true);
-    m_floorMesh->Draw();
+    for (const SceneObject& object : m_objects)
+    {
+        const glm::mat4 modelMatrix = object.BuildModelMatrix(m_animationTime);
+        object.GetMaterial().Apply(
+            camera,
+            m_lighting,
+            *m_ibl,
+            modelMatrix,
+            m_shadowMap.get(),
+            object.ReceivesShadow());
+        object.GetMesh()->Draw();
+    }
 
     m_grid->Draw(camera);
 
@@ -206,7 +330,4 @@ void DemoScene::Render(
     {
         m_lightGizmos->Draw(camera, m_lighting, m_selectedLightIndex);
     }
-
-    cubeMaterial.Apply(camera, m_lighting, *m_ibl, cubeModel, m_shadowMap.get(), false);
-    m_cubeMesh->Draw();
 }

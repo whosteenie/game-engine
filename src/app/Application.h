@@ -8,8 +8,8 @@ class DebugPanel;
 class DemoScene;
 class ImGuiLayer;
 class Input;
-class Material;
 class Renderer;
+class SceneHierarchyPanel;
 
 class Application
 {
@@ -41,8 +41,8 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<ImGuiLayer> m_imguiLayer;
     std::unique_ptr<DebugPanel> m_debugPanel;
+    std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<Material> m_material;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<DemoScene> m_scene;
 };

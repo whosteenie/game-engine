@@ -5,12 +5,11 @@
 #include "app/Application.h"
 #include "app/DebugPanel.h"
 #include "app/DemoScene.h"
+#include "app/SceneHierarchyPanel.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/ImGuiLayer.h"
 #include "engine/Input.h"
-#include "engine/Material.h"
-#include "engine/MaterialTextures.h"
 #include "engine/Renderer.h"
 
 #include <imgui.h>
@@ -32,17 +31,11 @@ Application::Application(int width, int height, const char* title)
     m_renderer = std::make_unique<Renderer>();
     m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
     m_debugPanel = std::make_unique<DebugPanel>();
+    m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
         -35.0f);
-    m_material = std::make_unique<Material>(
-        EngineConstants::LitVertexShader,
-        EngineConstants::PbrFragmentShader,
-        glm::vec3(1.0f),
-        0.85f,
-        0.0f);
-    ApplyWoodTableMaterialMaps(*m_material);
 
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
@@ -112,7 +105,8 @@ void Application::Update(double deltaTime)
     glfwPollEvents();
 
     m_imguiLayer->BeginFrame();
-    m_debugPanel->Draw(*m_scene, *m_material, *m_camera, m_paused);
+    m_sceneHierarchyPanel->Draw(*m_scene);
+    m_debugPanel->Draw(*m_scene, *m_camera, m_paused);
 
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -174,7 +168,7 @@ void Application::Render()
     glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
 
     m_renderer->BeginFrame();
-    m_scene->Render(*m_camera, *m_material, viewportWidth, viewportHeight);
+    m_scene->Render(*m_camera, viewportWidth, viewportHeight);
     m_imguiLayer->EndFrame();
     m_renderer->EndFrame(m_window);
 }

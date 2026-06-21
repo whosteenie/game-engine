@@ -106,6 +106,8 @@ add_executable(game-engine
 
     src/app/DebugPanel.cpp
 
+    src/app/SceneHierarchyPanel.cpp
+
     src/app/DemoScene.cpp
 
     src/engine/Camera.cpp
@@ -117,6 +119,10 @@ add_executable(game-engine
     src/engine/Light.cpp
 
     src/engine/SceneLighting.cpp
+
+    src/engine/SceneObject.cpp
+
+    src/engine/Transform.cpp
 
     src/engine/ShadowMap.cpp
 

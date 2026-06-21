@@ -45,7 +45,6 @@ namespace
 
 void DebugPanel::Draw(
     DemoScene& scene,
-    Material& cubeMaterial,
     const Camera& camera,
     bool paused) const
 {
@@ -245,67 +244,6 @@ void DebugPanel::Draw(
         {
             ibl.SetEnvironmentIntensity(environmentIntensity);
         }
-    }
-
-    if (ImGui::CollapsingHeader("Cube Material", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::PushID("CubeMaterial");
-
-        glm::vec3 albedo = cubeMaterial.GetAlbedo();
-        if (ColorEditVec3("Albedo", albedo))
-        {
-            cubeMaterial.SetAlbedo(albedo);
-        }
-
-        float roughness = cubeMaterial.GetRoughness();
-        if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
-        {
-            cubeMaterial.SetRoughness(roughness);
-        }
-
-        float metallic = cubeMaterial.GetMetallic();
-        if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
-        {
-            cubeMaterial.SetMetallic(metallic);
-        }
-
-        if (cubeMaterial.HasAlbedoMap())
-        {
-            ImGui::TextUnformatted("Albedo tints the albedo map.");
-        }
-
-        ImGui::PopID();
-    }
-
-    Material& floorMaterial = scene.GetFloorMaterial();
-    if (ImGui::CollapsingHeader("Floor Material"))
-    {
-        ImGui::PushID("FloorMaterial");
-
-        glm::vec3 albedo = floorMaterial.GetAlbedo();
-        if (ColorEditVec3("Albedo", albedo))
-        {
-            floorMaterial.SetAlbedo(albedo);
-        }
-
-        float roughness = floorMaterial.GetRoughness();
-        if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
-        {
-            floorMaterial.SetRoughness(roughness);
-        }
-
-        float metallic = floorMaterial.GetMetallic();
-        if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
-        {
-            floorMaterial.SetMetallic(metallic);
-        }
-
-        if (floorMaterial.HasAlbedoMap())
-        {
-            ImGui::TextUnformatted("Albedo tints the albedo map.");
-        }
-
-        ImGui::PopID();
     }
 
     ImGui::End();
