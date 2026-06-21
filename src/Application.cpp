@@ -3,6 +3,7 @@
 #include <glad/glad.h>
 
 #include "Application.h"
+#include "Mesh.h"
 #include "Shader.h"
 
 #include <stdexcept>
@@ -21,12 +22,19 @@ Application::Application(int width, int height, const char* title)
     OnFramebufferResize(framebufferWidth, framebufferHeight);
 
     m_shader = new Shader("assets/shaders/triangle.vert", "assets/shaders/triangle.frag");
-    CreateTriangleMesh();
+
+    const float k = 0.4330127f;
+    float vertices[] = {
+         0.0f,  0.5f, 0.0f,
+        -k,    -0.25f, 0.0f,
+         k,    -0.25f, 0.0f
+    };
+    m_mesh = new Mesh(vertices, 3);
 }
 
 Application::~Application()
 {
-    DestroyTriangleMesh();
+    delete m_mesh;
     delete m_shader;
 
     glfwDestroyWindow(m_window);
@@ -77,34 +85,6 @@ void Application::InitGLAD()
     {
         throw std::runtime_error("Failed to initialize GLAD");
     }
-}
-
-void Application::CreateTriangleMesh()
-{
-    const float k = 0.4330127f;
-    float vertices[] = {
-         0.0f,  0.5f, 0.0f,
-        -k,    -0.25f, 0.0f,
-         k,    -0.25f, 0.0f
-    };
-
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    glBindVertexArray(0);
-}
-
-void Application::DestroyTriangleMesh()
-{
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
 }
 
 void Application::Update(double deltaTime)
@@ -158,8 +138,7 @@ void Application::Render()
     m_shader->SetFloat("uAspect", m_aspect);
     m_shader->SetFloat("uTime", static_cast<float>(m_animationTime));
 
-    glBindVertexArray(m_vao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
+    m_mesh->Draw();
 
     glfwSwapBuffers(m_window);
 }

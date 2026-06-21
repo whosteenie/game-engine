@@ -21,6 +21,7 @@ FetchContent_MakeAvailable(glfw)
 add_executable(game-engine
     src/main.cpp
     src/Application.cpp
+    src/Mesh.cpp
     src/Shader.cpp
     vendor/glad/src/glad.c
 )

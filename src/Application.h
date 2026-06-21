@@ -1,6 +1,7 @@
 #pragma once
 
 struct GLFWwindow;
+class Mesh;
 class Shader;
 
 class Application
@@ -14,8 +15,6 @@ public:
 private:
     void InitGLFW();
     void InitGLAD();
-    void CreateTriangleMesh();
-    void DestroyTriangleMesh();
 
     void Update(double deltaTime);
     void Render();
@@ -35,6 +34,5 @@ private:
     bool m_spaceWasDown = false;
 
     Shader* m_shader = nullptr;
-    unsigned int m_vao = 0;
-    unsigned int m_vbo = 0;
+    Mesh* m_mesh = nullptr;
 };
