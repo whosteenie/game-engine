@@ -7,6 +7,8 @@
 #include "Mesh.h"
 #include "Renderer.h"
 #include "Shader.h"
+#include "primitives/Triangle.h"
+#include "primitives/Cube.h"
 
 #include <stdexcept>
 
@@ -31,14 +33,7 @@ Application::Application(int width, int height, const char* title)
     OnFramebufferResize(framebufferWidth, framebufferHeight);
 
     m_shader = std::make_unique<Shader>("assets/shaders/triangle.vert", "assets/shaders/triangle.frag");
-
-    const float k = 0.4330127f;
-    float vertices[] = {
-         0.0f,  0.5f, 0.0f,
-        -k,    -0.25f, 0.0f,
-         k,    -0.25f, 0.0f
-    };
-    m_mesh = std::make_unique<Mesh>(vertices, 3);
+    m_mesh = CreateCubeMesh();
 }
 
 Application::~Application()
@@ -163,7 +158,6 @@ void Application::Render()
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", m_camera->GetViewMatrix());
     m_shader->SetMat4("uProjection", m_camera->GetProjectionMatrix());
-    m_shader->SetFloat("uTime", static_cast<float>(m_animationTime));
 
     m_mesh->Draw();
 

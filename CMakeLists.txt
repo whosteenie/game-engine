@@ -32,6 +32,8 @@ add_executable(game-engine
     src/Mesh.cpp
     src/Renderer.cpp
     src/Shader.cpp
+    src/primitives/Triangle.cpp
+    src/primitives/Cube.cpp
     vendor/glad/src/glad.c
 )
 
