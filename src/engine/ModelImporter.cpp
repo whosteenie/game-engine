@@ -24,296 +24,11 @@
 #include <cctype>
 #include <exception>
 #include <filesystem>
-#include <iomanip>
-#include <iostream>
 #include <limits>
-#include <sstream>
 #include <unordered_map>
 
 namespace
 {
-    constexpr const char* ImportLogPrefix = "[glTF Import]";
-
-    void ImportLog(const std::string& message)
-    {
-        std::cout << ImportLogPrefix << " " << message << std::endl;
-    }
-
-    std::string GltfWrapName(int wrap)
-    {
-        switch (wrap)
-        {
-        case 33071:
-            return "CLAMP_TO_EDGE";
-        case 33648:
-            return "MIRRORED_REPEAT";
-        case 10497:
-            return "REPEAT";
-        default:
-            return "UNKNOWN(" + std::to_string(wrap) + ")";
-        }
-    }
-
-    std::string GltfFilterName(int filter)
-    {
-        switch (filter)
-        {
-        case 9728:
-            return "NEAREST";
-        case 9729:
-            return "LINEAR";
-        case 9984:
-            return "NEAREST_MIPMAP_NEAREST";
-        case 9985:
-            return "LINEAR_MIPMAP_NEAREST";
-        case 9986:
-            return "NEAREST_MIPMAP_LINEAR";
-        case 9987:
-            return "LINEAR_MIPMAP_LINEAR";
-        default:
-            return "UNKNOWN(" + std::to_string(filter) + ")";
-        }
-    }
-
-    std::string GlWrapName(unsigned int wrap)
-    {
-        switch (wrap)
-        {
-        case 0x812F:
-            return "GL_CLAMP_TO_EDGE";
-        case 0x8370:
-            return "GL_MIRRORED_REPEAT";
-        case 0x2901:
-            return "GL_REPEAT";
-        default:
-            return "GL_UNKNOWN(0x" + std::to_string(wrap) + ")";
-        }
-    }
-
-    std::string GlFilterName(unsigned int filter)
-    {
-        switch (filter)
-        {
-        case 0x2600:
-            return "GL_NEAREST";
-        case 0x2601:
-            return "GL_LINEAR";
-        default:
-            return "GL_UNKNOWN(0x" + std::to_string(filter) + ")";
-        }
-    }
-
-    std::string FormatVec3(const glm::vec3& value)
-    {
-        std::ostringstream stream;
-        stream << std::fixed << std::setprecision(3)
-            << "(" << value.x << ", " << value.y << ", " << value.z << ")";
-        return stream.str();
-    }
-
-    std::string FormatVec2Range(const glm::vec2& minValue, const glm::vec2& maxValue)
-    {
-        std::ostringstream stream;
-        stream << std::fixed << std::setprecision(4)
-            << "u[" << minValue.x << ", " << maxValue.x << "] v[" << minValue.y << ", " << maxValue.y << "]";
-        return stream.str();
-    }
-
-    std::string FormatSamplerSettings(const TextureSamplerSettings& settings)
-    {
-        return GlWrapName(settings.wrapS) + "/" + GlWrapName(settings.wrapT) +
-            " min=" + GlFilterName(settings.minFilter) +
-            " mag=" + GlFilterName(settings.magFilter);
-    }
-
-    TextureSamplerSettings GetGltfSamplerSettings(const tinygltf::Model& model, int textureIndex);
-
-    void LogResolvedSampler(const char* context, int textureIndex, const TextureSamplerSettings& settings)
-    {
-        std::ostringstream stream;
-        stream << context << " texture #" << textureIndex << " -> " << FormatSamplerSettings(settings);
-        ImportLog(stream.str());
-    }
-
-    void LogModelOverview(const tinygltf::Model& model, const std::string& path)
-    {
-        ImportLog("Loading: " + path);
-        ImportLog(
-            "Counts: scenes=" + std::to_string(model.scenes.size()) +
-            " nodes=" + std::to_string(model.nodes.size()) +
-            " meshes=" + std::to_string(model.meshes.size()) +
-            " materials=" + std::to_string(model.materials.size()) +
-            " textures=" + std::to_string(model.textures.size()) +
-            " images=" + std::to_string(model.images.size()) +
-            " samplers=" + std::to_string(model.samplers.size()));
-
-        if (!model.extensionsUsed.empty())
-        {
-            std::ostringstream stream;
-            stream << "Extensions used:";
-            for (const std::string& extension : model.extensionsUsed)
-            {
-                stream << " " << extension;
-            }
-            ImportLog(stream.str());
-        }
-
-        for (std::size_t samplerIndex = 0; samplerIndex < model.samplers.size(); ++samplerIndex)
-        {
-            const tinygltf::Sampler& sampler = model.samplers[samplerIndex];
-            std::ostringstream stream;
-            stream << "Sampler #" << samplerIndex
-                << " wrapS=" << GltfWrapName(sampler.wrapS)
-                << " wrapT=" << GltfWrapName(sampler.wrapT)
-                << " min=" << GltfFilterName(sampler.minFilter)
-                << " mag=" << GltfFilterName(sampler.magFilter);
-            ImportLog(stream.str());
-        }
-
-        for (std::size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
-        {
-            const tinygltf::Image& image = model.images[imageIndex];
-            std::ostringstream stream;
-            stream << "Image #" << imageIndex
-                << " " << image.width << "x" << image.height
-                << " ch=" << image.component;
-            if (!image.uri.empty())
-            {
-                stream << " uri=\"" << image.uri << "\"";
-            }
-            else
-            {
-                stream << " embedded";
-            }
-            ImportLog(stream.str());
-        }
-
-        for (std::size_t textureIndex = 0; textureIndex < model.textures.size(); ++textureIndex)
-        {
-            const tinygltf::Texture& texture = model.textures[textureIndex];
-            std::ostringstream stream;
-            stream << "Texture #" << textureIndex
-                << " image=" << texture.source
-                << " sampler=" << texture.sampler
-                << " resolved=" << FormatSamplerSettings(GetGltfSamplerSettings(model, static_cast<int>(textureIndex)));
-            ImportLog(stream.str());
-        }
-
-        for (std::size_t materialIndex = 0; materialIndex < model.materials.size(); ++materialIndex)
-        {
-            const tinygltf::Material& material = model.materials[materialIndex];
-            const auto& pbr = material.pbrMetallicRoughness;
-            std::ostringstream stream;
-            stream << "Material #" << materialIndex;
-            if (!material.name.empty())
-            {
-                stream << " \"" << material.name << "\"";
-            }
-            stream << " baseColorFactor=" << FormatVec3(glm::vec3(
-                static_cast<float>(pbr.baseColorFactor[0]),
-                static_cast<float>(pbr.baseColorFactor[1]),
-                static_cast<float>(pbr.baseColorFactor[2])));
-            stream << " alphaMode=" << (material.alphaMode.empty() ? "OPAQUE" : material.alphaMode);
-            stream << " doubleSided=" << (material.doubleSided ? "true" : "false");
-            if (pbr.baseColorTexture.index >= 0)
-            {
-                stream << " baseColorTex=" << pbr.baseColorTexture.index
-                    << " uvSet=" << pbr.baseColorTexture.texCoord;
-            }
-            else
-            {
-                stream << " baseColorTex=none";
-            }
-            if (pbr.metallicRoughnessTexture.index >= 0)
-            {
-                stream << " metallicRoughnessTex=" << pbr.metallicRoughnessTexture.index
-                    << " uvSet=" << pbr.metallicRoughnessTexture.texCoord;
-            }
-            if (material.normalTexture.index >= 0)
-            {
-                stream << " normalTex=" << material.normalTexture.index
-                    << " uvSet=" << material.normalTexture.texCoord;
-            }
-            if (material.occlusionTexture.index >= 0)
-            {
-                stream << " occlusionTex=" << material.occlusionTexture.index
-                    << " uvSet=" << material.occlusionTexture.texCoord;
-            }
-            if (!material.extensions.empty())
-            {
-                stream << " extensions=" << material.extensions.size();
-            }
-            ImportLog(stream.str());
-        }
-    }
-
-    void LogMeshPrimitive(
-        const std::string& meshLabel,
-        int materialIndex,
-        int positionCount,
-        std::size_t indexCount,
-        bool hasNormals,
-        bool hasTexCoord0,
-        bool hasTexCoord1,
-        bool hasTangents,
-        bool hasColor0,
-        bool generatedTangents,
-        const glm::vec2& uv0Min,
-        const glm::vec2& uv0Max,
-        const glm::vec2& uv1Min,
-        const glm::vec2& uv1Max,
-        bool hasUv1Data)
-    {
-        std::ostringstream stream;
-        stream << "Mesh \"" << meshLabel << "\" material=" << materialIndex
-            << " verts=" << positionCount
-            << " tris=" << (indexCount / 3)
-            << " attrs:";
-        if (hasNormals)
-        {
-            stream << " NORMAL";
-        }
-        if (hasTexCoord0)
-        {
-            stream << " TEXCOORD_0";
-        }
-        if (hasTexCoord1)
-        {
-            stream << " TEXCOORD_1";
-        }
-        if (hasTangents)
-        {
-            stream << " TANGENT";
-        }
-        if (hasColor0)
-        {
-            stream << " COLOR_0";
-        }
-        if (generatedTangents)
-        {
-            stream << " (generated tangents)";
-        }
-        if (hasTexCoord0)
-        {
-            stream << " uv0 " << FormatVec2Range(uv0Min, uv0Max);
-        }
-        if (hasUv1Data)
-        {
-            stream << " uv1 " << FormatVec2Range(uv1Min, uv1Max);
-        }
-        ImportLog(stream.str());
-
-        if (hasColor0)
-        {
-            ImportLog("WARNING: Mesh \"" + meshLabel + "\" has COLOR_0 vertex colors — not applied by engine.");
-        }
-
-        if (hasTexCoord1 && materialIndex >= 0)
-        {
-            ImportLog("Note: Mesh \"" + meshLabel + "\" has TEXCOORD_1 — verify material uvSet assignments.");
-        }
-    }
-
     bool LoadImageData(
         tinygltf::Image* image,
         const int /*imageIndex*/,
@@ -601,9 +316,6 @@ namespace
         if (!image.uri.empty() && image.uri.rfind("data:", 0) != 0)
         {
             const std::string texturePath = JoinPath(modelDirectory, image.uri);
-            ImportLog(
-                "Loading external image #" + std::to_string(imageIndex) +
-                " from \"" + texturePath + "\" " + FormatSamplerSettings(samplerSettings));
             try
             {
                 texture = TextureCache::Get().Load(
@@ -612,18 +324,13 @@ namespace
                     samplerSettings,
                     true);
             }
-            catch (const std::exception& exception)
+            catch (const std::exception&)
             {
-                ImportLog("FAILED to load external image #" + std::to_string(imageIndex) + ": " + exception.what());
                 texture = nullptr;
             }
         }
         else if (!image.image.empty() && image.width > 0 && image.height > 0)
         {
-            ImportLog(
-                "Loading embedded image #" + std::to_string(imageIndex) +
-                " " + std::to_string(image.width) + "x" + std::to_string(image.height) +
-                " ch=" + std::to_string(image.component) + " " + FormatSamplerSettings(samplerSettings));
             texture = Texture::CreateFromPixels(
                 image.image.data(),
                 image.width,
@@ -633,19 +340,10 @@ namespace
                 samplerSettings,
                 true);
         }
-        else
-        {
-            ImportLog("FAILED image #" + std::to_string(imageIndex) + ": no pixel data available");
-        }
 
         if (texture != nullptr && texture->IsValid())
         {
             textureCache.emplace(cacheKey, texture);
-            ImportLog("Texture OK image #" + std::to_string(imageIndex) + " id=" + std::to_string(texture->GetId()));
-        }
-        else if (texture == nullptr || !texture->IsValid())
-        {
-            ImportLog("Texture INVALID for image #" + std::to_string(imageIndex));
         }
 
         return texture;
@@ -665,7 +363,6 @@ namespace
 
         const tinygltf::Texture& texture = model.textures[static_cast<std::size_t>(textureIndex)];
         const TextureSamplerSettings samplerSettings = GetGltfSamplerSettings(model, textureIndex);
-        LogResolvedSampler("Resolved", textureIndex, samplerSettings);
         return LoadGltfImageTexture(
             model,
             texture.source,
@@ -765,25 +462,12 @@ namespace
             if (pbr.baseColorTexture.index >= 0)
             {
                 material->SetAlbedoTexCoordSet(pbr.baseColorTexture.texCoord);
-                std::shared_ptr<Texture> albedoMap = LoadGltfTexture(
+                material->SetAlbedoMap(LoadGltfTexture(
                     model,
                     pbr.baseColorTexture.index,
                     modelDirectory,
                     TextureColorSpace::SRGB,
-                    textureCache);
-                if (albedoMap == nullptr)
-                {
-                    ImportLog(
-                        "WARNING: Material #" + std::to_string(materialIndex) +
-                        " failed to load base color texture #" + std::to_string(pbr.baseColorTexture.index));
-                }
-                material->SetAlbedoMap(std::move(albedoMap));
-            }
-            else
-            {
-                ImportLog(
-                    "WARNING: Material #" + std::to_string(materialIndex) +
-                    " has no base color texture — using baseColorFactor " + FormatVec3(albedo));
+                    textureCache));
             }
 
             if (pbr.metallicRoughnessTexture.index >= 0)
@@ -892,9 +576,7 @@ namespace
         const tinygltf::Primitive& primitive,
         std::unique_ptr<Mesh>& outMesh,
         glm::vec3& boundsMin,
-        glm::vec3& boundsMax,
-        const std::string& meshLabel,
-        int materialIndex)
+        glm::vec3& boundsMax)
     {
         if (primitive.mode != TINYGLTF_MODE_TRIANGLES && primitive.mode != -1)
         {
@@ -951,8 +633,6 @@ namespace
             tangents = GetAccessorData<float>(model, tangentIt->second, tangentComponentCount, tangentCount);
         }
 
-        const bool hasColor0 = primitive.attributes.find("COLOR_0") != primitive.attributes.end();
-
         std::vector<unsigned int> indices;
         if (primitive.indices >= 0)
         {
@@ -1004,14 +684,6 @@ namespace
         std::vector<float> vertices;
         vertices.reserve(static_cast<std::size_t>(positionCount) * Mesh::TexturedVertexFloatCount);
 
-        glm::vec2 uv0Min(std::numeric_limits<float>::max());
-        glm::vec2 uv0Max(std::numeric_limits<float>::lowest());
-        glm::vec2 uv1Min(std::numeric_limits<float>::max());
-        glm::vec2 uv1Max(std::numeric_limits<float>::lowest());
-        const bool hasTexCoord0 = texCoords != nullptr;
-        const bool hasTexCoord1 = texCoords1 != nullptr;
-        const bool hasTangents = tangents != nullptr;
-
         for (int vertexIndex = 0; vertexIndex < positionCount; ++vertexIndex)
         {
             const glm::vec3 position = ReadVec3(positions, vertexIndex);
@@ -1025,16 +697,12 @@ namespace
             if (texCoords != nullptr && vertexIndex < texCoordCount)
             {
                 uv0 = ReadVec2(texCoords, vertexIndex);
-                uv0Min = glm::min(uv0Min, uv0);
-                uv0Max = glm::max(uv0Max, uv0);
             }
 
             glm::vec2 uv1(0.0f);
             if (texCoords1 != nullptr && vertexIndex < texCoord1Count)
             {
                 uv1 = ReadVec2(texCoords1, vertexIndex);
-                uv1Min = glm::min(uv1Min, uv1);
-                uv1Max = glm::max(uv1Max, uv1);
             }
 
             glm::vec4 tangent(1.0f, 0.0f, 0.0f, 1.0f);
@@ -1053,28 +721,10 @@ namespace
             ExpandBounds(boundsMin, boundsMax, position);
         }
 
-        const bool generatedTangents = tangents == nullptr;
-        if (generatedTangents)
+        if (tangents == nullptr)
         {
             GenerateTangents(vertices, indices);
         }
-
-        LogMeshPrimitive(
-            meshLabel,
-            materialIndex,
-            positionCount,
-            indices.size(),
-            normals != nullptr,
-            hasTexCoord0,
-            hasTexCoord1,
-            hasTangents,
-            hasColor0,
-            generatedTangents,
-            uv0Min,
-            uv0Max,
-            uv1Min,
-            uv1Max,
-            hasTexCoord1);
 
         outMesh = PrimitiveMesh::BuildMesh(vertices, indices);
         return outMesh != nullptr;
@@ -1117,16 +767,7 @@ namespace
                 std::unique_ptr<Mesh> meshData;
                 glm::vec3 boundsMin;
                 glm::vec3 boundsMax;
-                const std::string meshLabel = nodes[static_cast<std::size_t>(nodeObjectIndex)].name +
-                    " [prim " + std::to_string(primitiveIndex + 1) + "]";
-                if (!BuildMeshFromPrimitive(
-                    model,
-                    primitive,
-                    meshData,
-                    boundsMin,
-                    boundsMax,
-                    meshLabel,
-                    primitive.material))
+                if (!BuildMeshFromPrimitive(model, primitive, meshData, boundsMin, boundsMax))
                 {
                     continue;
                 }
@@ -1207,7 +848,7 @@ ImportedModel LoadModelFromFile(const std::string& path)
 
     if (!warning.empty())
     {
-        ImportLog("Loader warning: " + warning);
+        // Warnings are non-fatal; keep going.
     }
 
     if (!loaded)
@@ -1215,8 +856,6 @@ ImportedModel LoadModelFromFile(const std::string& path)
         importedModel.errorMessage = error.empty() ? "Failed to load model file." : error;
         return importedModel;
     }
-
-    LogModelOverview(model, path);
 
     const std::string modelDirectory = GetModelDirectory(path);
     std::unordered_map<std::string, std::shared_ptr<Texture>> textureCache;
@@ -1268,12 +907,8 @@ ImportedModel LoadModelFromFile(const std::string& path)
         importedModel.errorMessage = "No supported triangle meshes were found in the model.";
         importedModel.nodes.clear();
         importedModel.rootNodeIndex = -1;
-        ImportLog("Import failed: no supported triangle meshes found.");
         return importedModel;
     }
 
-    ImportLog(
-        "Import complete: " + std::to_string(importedModel.nodes.size() - 1) +
-        " scene object(s), " + std::to_string(textureCache.size()) + " GPU texture(s) created.");
     return importedModel;
 }

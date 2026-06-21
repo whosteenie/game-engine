@@ -3,6 +3,7 @@
 #include "engine/SceneHierarchy.h"
 #include "engine/SceneObject.h"
 
+#include <algorithm>
 #include <limits>
 
 Ray ScreenPointToRay(
@@ -54,10 +55,22 @@ bool IntersectRayAabb(
     return hitDistance >= 0.0f;
 }
 
-int PickSceneObject(const std::vector<SceneObject>& objects, const Ray& ray)
+namespace
 {
-    int closestIndex = -1;
-    float closestDistance = std::numeric_limits<float>::max();
+    bool ComparePickHits(const PickHit& left, const PickHit& right)
+    {
+        if (left.boundsVolume != right.boundsVolume)
+        {
+            return left.boundsVolume < right.boundsVolume;
+        }
+
+        return left.distance < right.distance;
+    }
+}
+
+std::vector<PickHit> PickAllSceneObjects(const std::vector<SceneObject>& objects, const Ray& ray)
+{
+    std::vector<PickHit> hits;
 
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
@@ -77,12 +90,52 @@ int PickSceneObject(const std::vector<SceneObject>& objects, const Ray& ray)
             continue;
         }
 
-        if (hitDistance < closestDistance)
+        const glm::vec3 boundsSize = boundsMax - boundsMin;
+        PickHit hit;
+        hit.objectIndex = objectIndex;
+        hit.distance = hitDistance;
+        hit.boundsVolume = boundsSize.x * boundsSize.y * boundsSize.z;
+        hits.push_back(hit);
+    }
+
+    std::sort(hits.begin(), hits.end(), ComparePickHits);
+    return hits;
+}
+
+int PickSceneObjectCycling(
+    const std::vector<SceneObject>& objects,
+    const Ray& ray,
+    int currentSelection,
+    bool repeatClickAtSameSpot)
+{
+    const std::vector<PickHit> hits = PickAllSceneObjects(objects, ray);
+    if (hits.empty())
+    {
+        return -1;
+    }
+
+    if (repeatClickAtSameSpot && currentSelection >= 0)
+    {
+        for (std::size_t hitIndex = 0; hitIndex < hits.size(); ++hitIndex)
         {
-            closestDistance = hitDistance;
-            closestIndex = objectIndex;
+            if (hits[hitIndex].objectIndex == currentSelection)
+            {
+                const std::size_t nextHitIndex = (hitIndex + 1) % hits.size();
+                return hits[nextHitIndex].objectIndex;
+            }
         }
     }
 
-    return closestIndex;
+    return hits.front().objectIndex;
+}
+
+int PickSceneObject(const std::vector<SceneObject>& objects, const Ray& ray)
+{
+    const std::vector<PickHit> hits = PickAllSceneObjects(objects, ray);
+    if (hits.empty())
+    {
+        return -1;
+    }
+
+    return hits.front().objectIndex;
 }

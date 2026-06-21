@@ -284,7 +284,16 @@ namespace
         }
     }
 
-    void DrawObjectContextMenu(Scene& scene, int objectIndex, int& pendingDeleteIndex)
+    void DrawObjectContextMenu(
+        Scene& scene,
+        int objectIndex,
+        int& pendingDeleteIndex,
+        int& pendingRenameIndex,
+        int& renameTargetIndex,
+        bool& beginRenameNextFrame,
+        char* renameBuffer,
+        std::size_t renameBufferSize,
+        bool& focusRenameInput)
     {
         if (!ImGui::BeginPopupContextItem())
         {
@@ -295,6 +304,19 @@ namespace
         DrawCreateObjectMenu(scene, objectIndex);
 
         ImGui::Separator();
+        if (ImGui::MenuItem("Rename"))
+        {
+            renameTargetIndex = objectIndex;
+            beginRenameNextFrame = true;
+            pendingRenameIndex = -1;
+            std::snprintf(
+                renameBuffer,
+                renameBufferSize,
+                "%s",
+                scene.GetObject(static_cast<std::size_t>(objectIndex)).GetName().c_str());
+            focusRenameInput = true;
+        }
+
         if (ImGui::MenuItem("Delete"))
         {
             pendingDeleteIndex = objectIndex;
@@ -303,15 +325,71 @@ namespace
         ImGui::EndPopup();
     }
 
-    void DrawHierarchyNode(Scene& scene, int objectIndex, int selectedIndex, int& pendingDeleteIndex)
+    bool DrawInlineRenameField(
+        char* renameBuffer,
+        std::size_t renameBufferSize,
+        bool& focusRenameInput,
+        bool& renameInputEngaged,
+        bool& cancelRename)
+    {
+        if (focusRenameInput)
+        {
+            ImGui::SetKeyboardFocusHere();
+        }
+
+        const float textLineHeight = ImGui::GetTextLineHeight();
+        const float rawFramePaddingY = (textLineHeight - ImGui::GetFontSize()) * 0.5f;
+        const float framePaddingY = rawFramePaddingY > 0.0f ? rawFramePaddingY : 0.0f;
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, framePaddingY));
+
+        const float inputWidth = ImGui::GetContentRegionAvail().x;
+        ImGui::SetNextItemWidth(inputWidth > 0.0f ? inputWidth : -FLT_MIN);
+        const ImGuiInputTextFlags inputFlags =
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll;
+
+        const bool confirmed = ImGui::InputText("##RenameInput", renameBuffer, renameBufferSize, inputFlags);
+
+        ImGui::PopStyleVar();
+
+        if (ImGui::IsItemActive() || ImGui::IsItemFocused())
+        {
+            renameInputEngaged = true;
+            focusRenameInput = false;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            cancelRename = true;
+        }
+        else if (renameInputEngaged && ImGui::IsItemDeactivated() && !confirmed)
+        {
+            cancelRename = true;
+        }
+
+        return confirmed;
+    }
+
+    void DrawHierarchyNode(
+        Scene& scene,
+        int objectIndex,
+        int selectedIndex,
+        int& pendingDeleteIndex,
+        int& pendingRenameIndex,
+        int& renameTargetIndex,
+        bool& beginRenameNextFrame,
+        char* renameBuffer,
+        std::size_t renameBufferSize,
+        bool& focusRenameInput,
+        bool& renameInputEngaged)
     {
         const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
+        const bool isRenaming = objectIndex == pendingRenameIndex;
 
         ImGui::PushID(objectIndex);
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (objectIndex == selectedIndex)
+        if (objectIndex == selectedIndex && !isRenaming)
         {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
@@ -322,19 +400,89 @@ namespace
         }
 
         const std::string label = object.IsRenderable() ? object.GetName() : "[Empty] " + object.GetName();
-        const bool opened = ImGui::TreeNodeEx(label.c_str(), flags);
-        if (ImGui::IsItemClicked())
+        bool opened = false;
+        bool cancelRename = false;
+
+        if (isRenaming)
         {
-            scene.SetSelectedObjectIndex(objectIndex);
+            flags &= ~ImGuiTreeNodeFlags_SpanAvailWidth;
+
+            const float rowY = ImGui::GetCursorPosY();
+            const float rowStartX = ImGui::GetCursorPosX();
+            const float labelX = rowStartX + ImGui::GetTreeNodeToLabelSpacing();
+
+            if (!children.empty())
+            {
+                ImGui::SetNextItemOpen(true, ImGuiCond_Always);
+                const ImGuiTreeNodeFlags arrowFlags =
+                    flags | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanTextWidth;
+                opened = ImGui::TreeNodeEx("##RenameAnchor", arrowFlags);
+            }
+
+            ImGui::SetCursorPos(ImVec2(labelX, rowY));
+
+            if (DrawInlineRenameField(
+                    renameBuffer,
+                    renameBufferSize,
+                    focusRenameInput,
+                    renameInputEngaged,
+                    cancelRename))
+            {
+                if (renameBuffer[0] != '\0')
+                {
+                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetName(renameBuffer);
+                }
+
+                pendingRenameIndex = -1;
+                focusRenameInput = false;
+                renameInputEngaged = false;
+            }
+            else if (cancelRename)
+            {
+                pendingRenameIndex = -1;
+                focusRenameInput = false;
+                renameInputEngaged = false;
+            }
+        }
+        else
+        {
+            opened = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (ImGui::IsItemClicked())
+            {
+                scene.SetSelectedObjectIndex(objectIndex);
+            }
         }
 
-        DrawObjectContextMenu(scene, objectIndex, pendingDeleteIndex);
+        if (!isRenaming)
+        {
+            DrawObjectContextMenu(
+                scene,
+                objectIndex,
+                pendingDeleteIndex,
+                pendingRenameIndex,
+                renameTargetIndex,
+                beginRenameNextFrame,
+                renameBuffer,
+                renameBufferSize,
+                focusRenameInput);
+        }
 
         if (opened && !children.empty())
         {
             for (int childIndex : children)
             {
-                DrawHierarchyNode(scene, childIndex, selectedIndex, pendingDeleteIndex);
+                DrawHierarchyNode(
+                    scene,
+                    childIndex,
+                    selectedIndex,
+                    pendingDeleteIndex,
+                    pendingRenameIndex,
+                    renameTargetIndex,
+                    beginRenameNextFrame,
+                    renameBuffer,
+                    renameBufferSize,
+                    focusRenameInput,
+                    renameInputEngaged);
             }
 
             ImGui::TreePop();
@@ -414,6 +562,14 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
     selectedIndex = scene.GetSelectedObjectIndex();
 
     ImGui::BeginChild("HierarchyList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
+
+    if (m_beginRenameNextFrame)
+    {
+        m_pendingRenameIndex = m_renameTargetIndex;
+        m_beginRenameNextFrame = false;
+        m_renameInputEngaged = false;
+    }
+
     if (ImGui::Selectable("(none)", selectedIndex < 0))
     {
         scene.ClearSelection();
@@ -427,13 +583,29 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
             continue;
         }
 
-        DrawHierarchyNode(scene, objectIndex, selectedIndex, m_pendingDeleteIndex);
+        DrawHierarchyNode(
+            scene,
+            objectIndex,
+            selectedIndex,
+            m_pendingDeleteIndex,
+            m_pendingRenameIndex,
+            m_renameTargetIndex,
+            m_beginRenameNextFrame,
+            m_renameBuffer,
+            sizeof(m_renameBuffer),
+            m_focusRenameInput,
+            m_renameInputEngaged);
     }
 
     if (m_pendingDeleteIndex >= 0)
     {
         scene.RemoveObject(static_cast<std::size_t>(m_pendingDeleteIndex));
         m_pendingDeleteIndex = -1;
+        m_pendingRenameIndex = -1;
+        m_renameTargetIndex = -1;
+        m_beginRenameNextFrame = false;
+        m_focusRenameInput = false;
+        m_renameInputEngaged = false;
         selectedIndex = scene.GetSelectedObjectIndex();
     }
 

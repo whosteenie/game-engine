@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <memory>
 
 class Camera;
@@ -48,4 +49,6 @@ private:
     TransformTool m_tool = TransformTool::Translate;
     TransformSpace m_transformSpace = TransformSpace::Local;
     std::unique_ptr<SelectionRenderer> m_selectionRenderer;
+    glm::vec2 m_lastPickScreenPosition = glm::vec2(0.0f);
+    bool m_hasLastPickScreenPosition = false;
 };

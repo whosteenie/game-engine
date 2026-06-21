@@ -11,6 +11,13 @@ struct Ray
 
 class SceneObject;
 
+struct PickHit
+{
+    int objectIndex = -1;
+    float distance = 0.0f;
+    float boundsVolume = 0.0f;
+};
+
 Ray ScreenPointToRay(
     const glm::vec2& screenPoint,
     const glm::vec2& viewportSize,
@@ -26,3 +33,13 @@ bool IntersectRayAabb(
 int PickSceneObject(
     const std::vector<SceneObject>& objects,
     const Ray& ray);
+
+std::vector<PickHit> PickAllSceneObjects(
+    const std::vector<SceneObject>& objects,
+    const Ray& ray);
+
+int PickSceneObjectCycling(
+    const std::vector<SceneObject>& objects,
+    const Ray& ray,
+    int currentSelection,
+    bool repeatClickAtSameSpot);

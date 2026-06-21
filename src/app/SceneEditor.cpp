@@ -17,6 +17,8 @@
 
 namespace
 {
+    constexpr float PickRepeatThresholdPixels = 8.0f;
+
     ImGuizmo::OPERATION ToImGuizmoOperation(TransformTool tool)
     {
         switch (tool)
@@ -173,7 +175,16 @@ void SceneEditor::Update(
         return;
     }
 
-    const int pickedIndex = PickSceneObject(scene.GetObjects(), ray);
+    const bool repeatClickAtSameSpot = m_hasLastPickScreenPosition &&
+        glm::length(mousePosition - m_lastPickScreenPosition) <= PickRepeatThresholdPixels;
+    m_lastPickScreenPosition = mousePosition;
+    m_hasLastPickScreenPosition = true;
+
+    const int pickedIndex = PickSceneObjectCycling(
+        scene.GetObjects(),
+        ray,
+        scene.GetSelectedObjectIndex(),
+        repeatClickAtSameSpot);
     if (pickedIndex >= 0)
     {
         scene.SetSelectedObjectIndex(pickedIndex);
