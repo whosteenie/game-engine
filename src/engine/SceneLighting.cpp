@@ -64,6 +64,16 @@ void SceneLighting::SetIndirectBounceColor(const glm::vec3& color)
     m_indirectBounceColor = color;
 }
 
+int SceneLighting::GetShadowLightIndex() const
+{
+    return m_shadowLightIndex;
+}
+
+void SceneLighting::SetShadowLightIndex(int shadowLightIndex)
+{
+    m_shadowLightIndex = shadowLightIndex;
+}
+
 void SceneLighting::Apply(Shader& shader) const
 {
     const int lightCount = static_cast<int>(m_lights.size());

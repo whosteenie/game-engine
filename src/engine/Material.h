@@ -6,6 +6,7 @@
 class Camera;
 class SceneLighting;
 class Shader;
+class ShadowMap;
 
 class Material
 {
@@ -22,7 +23,9 @@ public:
     void Apply(
         const Camera& camera,
         const SceneLighting& lighting,
-        const glm::mat4& model) const;
+        const glm::mat4& model,
+        const ShadowMap* shadowMap = nullptr,
+        bool receiveShadow = false) const;
 
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;

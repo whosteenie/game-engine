@@ -144,8 +144,12 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 
 void Application::Render()
 {
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
+
     m_renderer->BeginFrame();
-    m_scene->Render(*m_camera, *m_material);
+    m_scene->Render(*m_camera, *m_material, viewportWidth, viewportHeight);
     m_renderer->EndFrame(m_window);
 }
 

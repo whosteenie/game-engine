@@ -3,6 +3,7 @@ out vec4 FragColor;
 
 in vec3 vFragPos;
 in vec3 vNormal;
+in vec4 vFragPosLightSpace;
 
 #define MAX_LIGHTS 8
 
@@ -34,6 +35,10 @@ uniform float uAmbientStrength;
 uniform float uIndirectStrength;
 uniform vec3 uIndirectBounceDirection;
 uniform vec3 uIndirectBounceColor;
+
+uniform sampler2D uShadowMap;
+uniform int uShadowLightIndex;
+uniform int uReceiveShadow;
 
 vec3 SrgbToLinear(vec3 srgb)
 {
@@ -174,6 +179,38 @@ vec3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
+float CalcShadow(vec3 normal, vec3 lightDir)
+{
+    if (uReceiveShadow == 0)
+    {
+        return 1.0;
+    }
+
+    vec3 projCoords = vFragPosLightSpace.xyz / vFragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
+        projCoords.y < 0.0 || projCoords.y > 1.0 ||
+        projCoords.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    float bias = max(0.0025 * (1.0 - dot(normal, lightDir)), 0.0005);
+    float shadow = 0.0;
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
+    for (int x = -1; x <= 1; ++x)
+    {
+        for (int y = -1; y <= 1; ++y)
+        {
+            float closestDepth = texture(uShadowMap, projCoords.xy + vec2(x, y) * texelSize).r;
+            shadow += projCoords.z - bias > closestDepth ? 0.0 : 1.0;
+        }
+    }
+
+    return shadow / 9.0;
+}
+
 void main()
 {
     vec3 normal = normalize(vNormal);
@@ -224,7 +261,13 @@ void main()
             metallic,
             radiance);
 
-        directLighting += contribution * attenuation * spotIntensity;
+        float shadow = 1.0;
+        if (i == uShadowLightIndex)
+        {
+            shadow = CalcShadow(normal, lightDir);
+        }
+
+        directLighting += contribution * attenuation * spotIntensity * shadow;
     }
 
     vec3 result = ambient + indirect + directLighting;

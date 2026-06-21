@@ -33,12 +33,14 @@ add_executable(game-engine
     src/engine/Input.cpp
     src/engine/Light.cpp
     src/engine/SceneLighting.cpp
+    src/engine/ShadowMap.cpp
     src/engine/Material.cpp
     src/engine/Mesh.cpp
     src/engine/Renderer.cpp
     src/engine/Shader.cpp
     src/engine/GridRenderer.cpp
     src/primitives/Cube.cpp
+    src/primitives/Floor.cpp
     src/primitives/Triangle.cpp
     vendor/glad/src/glad.c
 )

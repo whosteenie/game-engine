@@ -25,7 +25,7 @@ void GridRenderer::BuildGridGeometry(int halfExtent, float spacing)
 {
     std::vector<float> vertices;
     const float extent = halfExtent * spacing;
-    const float y = -0.001f; // tiny offset avoids z-fighting with objects on the floor
+    const float y = 0.002f; // draw above the shadow floor so lines stay visible
 
     for (int i = -halfExtent; i <= halfExtent; ++i)
     {
