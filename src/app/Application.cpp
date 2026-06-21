@@ -31,8 +31,8 @@ Application::Application(int width, int height, const char* title)
         -135.0f,
         -35.0f);
     m_material = std::make_unique<Material>(
-        EngineConstants::PhongVertexShader,
-        EngineConstants::PhongFragmentShader,
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
         glm::vec3(0.9f, 0.15f, 0.1f),
         0.5f,
         0.0f);

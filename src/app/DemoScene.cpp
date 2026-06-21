@@ -23,24 +23,21 @@ DemoScene::~DemoScene() = default;
 
 void DemoScene::SetupLighting()
 {
-    const glm::vec3 keyLightPosition(4.0f, 6.0f, 3.0f);
-    const glm::vec3 keyLightColor(1.0f, 0.97f, 0.92f);
+    const glm::vec3 sunDirection = glm::normalize(glm::vec3(0.45f, 0.7f, 0.55f));
+    const glm::vec3 sunColor(1.0f, 0.97f, 0.92f);
 
-    m_lighting.AddLight(Light::MakePoint(
-        keyLightPosition,
-        keyLightColor,
-        1.0f,
-        1.0f,
-        0.07f,
-        0.017f));
+    m_lighting.AddLight(Light::MakeDirectional(
+        sunDirection,
+        sunColor,
+        0.9f));
 
     m_lighting.AddLight(Light::MakeDirectional(
         glm::normalize(glm::vec3(-0.4f, 0.25f, -0.55f)),
         glm::vec3(0.65f, 0.72f, 0.9f),
-        0.3f));
+        0.25f));
 
-    m_lighting.SetIndirectBounceDirection(glm::normalize(keyLightPosition));
-    m_lighting.SetIndirectBounceColor(keyLightColor);
+    m_lighting.SetIndirectBounceDirection(sunDirection);
+    m_lighting.SetIndirectBounceColor(sunColor);
 }
 
 const SceneLighting& DemoScene::GetLighting() const

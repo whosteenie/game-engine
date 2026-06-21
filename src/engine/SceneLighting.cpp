@@ -64,16 +64,6 @@ void SceneLighting::SetIndirectBounceColor(const glm::vec3& color)
     m_indirectBounceColor = color;
 }
 
-float SceneLighting::GetSpecularStrength() const
-{
-    return m_specularStrength;
-}
-
-void SceneLighting::SetSpecularStrength(float specularStrength)
-{
-    m_specularStrength = specularStrength;
-}
-
 void SceneLighting::Apply(Shader& shader) const
 {
     const int lightCount = static_cast<int>(m_lights.size());
@@ -121,7 +111,6 @@ void SceneLighting::Apply(Shader& shader) const
 
     shader.SetFloat("uAmbientStrength", m_ambientStrength);
     shader.SetFloat("uIndirectStrength", m_indirectStrength);
-    shader.SetFloat("uSpecularStrength", m_specularStrength);
     shader.SetVec3("uIndirectBounceDirection", m_indirectBounceDirection);
     shader.SetVec3("uIndirectBounceColor", m_indirectBounceColor);
 }
