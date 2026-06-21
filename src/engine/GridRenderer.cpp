@@ -7,16 +7,16 @@
 
 #include <glm/glm.hpp>
 #include <vector>
+#include <memory>
 
 GridRenderer::GridRenderer()
-    : m_shader(new Shader(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
 {
     BuildGridGeometry(m_halfExtent);
 }
 
 GridRenderer::~GridRenderer()
 {
-    delete m_shader;
     glDeleteVertexArrays(1, &m_vao);
     glDeleteBuffers(1, &m_vbo);
     glDeleteBuffers(1, &m_ebo);

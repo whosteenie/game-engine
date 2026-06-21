@@ -8,10 +8,11 @@
 #include "engine/Shader.h"
 
 #include <glm/glm.hpp>
+#include <memory>
 #include <vector>
 
 SelectionRenderer::SelectionRenderer()
-    : m_shader(new Shader(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
 {
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
@@ -26,7 +27,6 @@ SelectionRenderer::SelectionRenderer()
 
 SelectionRenderer::~SelectionRenderer()
 {
-    delete m_shader;
     glDeleteVertexArrays(1, &m_vao);
     glDeleteBuffers(1, &m_vbo);
 }

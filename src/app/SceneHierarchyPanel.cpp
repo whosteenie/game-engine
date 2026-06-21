@@ -1,6 +1,6 @@
 #include "app/SceneHierarchyPanel.h"
 
-#include "app/DemoScene.h"
+#include "app/Scene.h"
 #include "app/SceneEditor.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
@@ -175,7 +175,7 @@ namespace
         ImGui::PopID();
     }
 
-    bool DrawToolButton(const char* label, TransformTool tool, TransformTool activeTool, DemoScene& scene)
+    bool DrawToolButton(const char* label, TransformTool tool, TransformTool activeTool, Scene& scene)
     {
         const bool isActive = tool == activeTool;
         if (isActive)
@@ -197,7 +197,7 @@ namespace
         return clicked;
     }
 
-    bool DrawSpaceButton(const char* label, TransformSpace space, TransformSpace activeSpace, DemoScene& scene)
+    bool DrawSpaceButton(const char* label, TransformSpace space, TransformSpace activeSpace, Scene& scene)
     {
         const bool isActive = space == activeSpace;
         if (isActive)
@@ -219,7 +219,7 @@ namespace
         return clicked;
     }
 
-    bool AddPrimitiveFromMenu(DemoScene& scene, ScenePrimitive primitive)
+    bool AddPrimitiveFromMenu(Scene& scene, ScenePrimitive primitive)
     {
         if (ImGui::MenuItem(GetScenePrimitiveDisplayName(primitive)))
         {
@@ -231,7 +231,7 @@ namespace
         return false;
     }
 
-    void Draw3DObjectMenu(DemoScene& scene)
+    void Draw3DObjectMenu(Scene& scene)
     {
         if (ImGui::BeginMenu("3D Object"))
         {
@@ -244,7 +244,7 @@ namespace
         }
     }
 
-    void DrawAddObjectPopup(DemoScene& scene)
+    void DrawAddObjectPopup(Scene& scene)
     {
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
@@ -254,7 +254,7 @@ namespace
     }
 }
 
-void SceneHierarchyPanel::Draw(DemoScene& scene) const
+void SceneHierarchyPanel::Draw(Scene& scene) const
 {
     ImGui::SetNextWindowSize(ImVec2(400.0f, 560.0f), ImGuiCond_FirstUseEver);
 

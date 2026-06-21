@@ -4,7 +4,7 @@
 
 #include "app/Application.h"
 #include "app/DebugPanel.h"
-#include "app/DemoScene.h"
+#include "app/Scene.h"
 #include "app/SceneEditor.h"
 #include "app/SceneHierarchyPanel.h"
 #include "engine/Camera.h"
@@ -44,7 +44,7 @@ Application::Application(int width, int height, const char* title)
     OnFramebufferResize(framebufferWidth, framebufferHeight);
 
     m_input = std::make_unique<Input>(m_window);
-    m_scene = std::make_unique<DemoScene>();
+    m_scene = std::make_unique<Scene>();
 
     glfwSetCursorPosCallback(m_window, MouseCallback);
 }
@@ -183,7 +183,6 @@ void Application::Render()
 
     m_renderer->BeginFrame();
     m_scene->Render(*m_camera, viewportWidth, viewportHeight);
-    m_scene->GetSceneEditor().RenderOverlays(*m_scene, *m_camera, viewportWidth, viewportHeight);
     m_imguiLayer->EndFrame();
     m_renderer->EndFrame(m_window);
 }

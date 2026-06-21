@@ -1,12 +1,12 @@
 #pragma once
 
 class Camera;
-class DemoScene;
+class Scene;
 
 class DebugPanel
 {
 public:
-    void Draw(DemoScene& scene, const Camera& camera) const;
+    void Draw(Scene& scene, const Camera& camera) const;
 
 private:
     mutable bool m_showPanel = true;

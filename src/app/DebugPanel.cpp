@@ -1,6 +1,6 @@
 #include "app/DebugPanel.h"
 
-#include "app/DemoScene.h"
+#include "app/Scene.h"
 #include "engine/Camera.h"
 #include "engine/IBL.h"
 #include "engine/Light.h"
@@ -44,7 +44,7 @@ namespace
 }
 
 void DebugPanel::Draw(
-    DemoScene& scene,
+    Scene& scene,
     const Camera& camera) const
 {
     ImGui::SetNextWindowSize(ImVec2(440.0f, 620.0f), ImGuiCond_FirstUseEver);
@@ -81,6 +81,10 @@ void DebugPanel::Draw(
             {
                 selectedLightIndex = static_cast<int>(lightCount) - 1;
                 scene.SetSelectedLightIndex(selectedLightIndex);
+            }
+            else if (selectedLightIndex < 0)
+            {
+                selectedLightIndex = 0;
             }
 
             std::vector<const char*> lightLabels;

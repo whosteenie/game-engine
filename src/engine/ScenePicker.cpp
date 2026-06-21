@@ -2,8 +2,6 @@
 
 #include "engine/SceneObject.h"
 
-#include <algorithm>
-#include <cmath>
 #include <limits>
 
 Ray ScreenPointToRay(
@@ -53,73 +51,6 @@ bool IntersectRayAabb(
 
     hitDistance = nearDistance >= 0.0f ? nearDistance : farDistance;
     return hitDistance >= 0.0f;
-}
-
-float DistanceRayLineSegment(
-    const Ray& ray,
-    const glm::vec3& segmentStart,
-    const glm::vec3& segmentEnd)
-{
-    const glm::vec3 segment = segmentEnd - segmentStart;
-    const glm::vec3 w0 = ray.origin - segmentStart;
-
-    const float segmentLengthSquared = glm::dot(segment, segment);
-    if (segmentLengthSquared < 0.000001f)
-    {
-        return glm::length(glm::cross(ray.direction, w0));
-    }
-
-    const float rayProjection = glm::dot(ray.direction, segment);
-    const float denominator = 1.0f - rayProjection * rayProjection;
-
-    float rayParameter = 0.0f;
-    float segmentParameter = 0.0f;
-
-    if (denominator > 0.000001f)
-    {
-        rayParameter = (rayProjection * glm::dot(segment, w0) - glm::dot(ray.direction, w0)) / denominator;
-        segmentParameter = (glm::dot(segment, w0) - rayProjection * glm::dot(ray.direction, w0)) / denominator;
-    }
-
-    rayParameter = std::max(rayParameter, 0.0f);
-    segmentParameter = glm::clamp(segmentParameter, 0.0f, 1.0f);
-
-    const glm::vec3 closestRayPoint = ray.origin + ray.direction * rayParameter;
-    const glm::vec3 closestSegmentPoint = segmentStart + segment * segmentParameter;
-    return glm::length(closestRayPoint - closestSegmentPoint);
-}
-
-bool IntersectRayPlane(
-    const Ray& ray,
-    const glm::vec3& planePoint,
-    const glm::vec3& planeNormal,
-    float& hitDistance)
-{
-    const float denominator = glm::dot(planeNormal, ray.direction);
-    if (std::abs(denominator) < 0.000001f)
-    {
-        return false;
-    }
-
-    hitDistance = glm::dot(planePoint - ray.origin, planeNormal) / denominator;
-    return hitDistance >= 0.0f;
-}
-
-glm::vec3 ClosestPointOnRay(const Ray& ray, float distance)
-{
-    return ray.origin + ray.direction * distance;
-}
-
-glm::vec3 ClosestPointOnLine(const glm::vec3& linePoint, const glm::vec3& lineDirection, const glm::vec3& point)
-{
-    const float directionLengthSquared = glm::dot(lineDirection, lineDirection);
-    if (directionLengthSquared < 0.000001f)
-    {
-        return linePoint;
-    }
-
-    const float t = glm::dot(point - linePoint, lineDirection) / directionLengthSquared;
-    return linePoint + lineDirection * t;
 }
 
 int PickSceneObject(

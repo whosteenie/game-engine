@@ -147,7 +147,7 @@ namespace
 }
 
 LightGizmoRenderer::LightGizmoRenderer()
-    : m_shader(new Shader(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
 {
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
@@ -162,7 +162,6 @@ LightGizmoRenderer::LightGizmoRenderer()
 
 LightGizmoRenderer::~LightGizmoRenderer()
 {
-    delete m_shader;
     glDeleteVertexArrays(1, &m_vao);
     glDeleteBuffers(1, &m_vbo);
 }
@@ -193,7 +192,8 @@ void LightGizmoRenderer::Draw(const Camera& camera, const SceneLighting& lightin
         glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
 
-        const bool selected = static_cast<int>(lightIndex) == selectedLightIndex;
+        const bool selected =
+            selectedLightIndex >= 0 && static_cast<int>(lightIndex) == selectedLightIndex;
         m_shader->SetVec3("uColor", GizmoColor(lighting.GetLights()[lightIndex], selected));
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
     }

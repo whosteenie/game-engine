@@ -1,4 +1,6 @@
-#include "app/DemoScene.h"
+#include <glad/glad.h>
+
+#include "app/Scene.h"
 
 #include "app/SceneEditor.h"
 #include "engine/Camera.h"
@@ -26,7 +28,7 @@
 #include <string>
 #include <limits>
 
-DemoScene::DemoScene()
+Scene::Scene()
     : m_cubeMesh(CreateCubeMesh()),
       m_sphereMesh(CreateSphereMesh()),
       m_cylinderMesh(CreateCylinderMesh()),
@@ -46,9 +48,9 @@ DemoScene::DemoScene()
     SetupObjects();
 }
 
-DemoScene::~DemoScene() = default;
+Scene::~Scene() = default;
 
-void DemoScene::SetupLighting()
+void Scene::SetupLighting()
 {
     const glm::vec3 sunDirection = glm::normalize(glm::vec3(0.45f, 0.7f, 0.55f));
     const glm::vec3 sunColor(1.0f, 0.97f, 0.92f);
@@ -61,7 +63,7 @@ void DemoScene::SetupLighting()
     m_lighting.SetShadowLightIndex(0);
 }
 
-void DemoScene::SetupObjects()
+void Scene::SetupObjects()
 {
     auto floorMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -175,7 +177,7 @@ namespace
     }
 }
 
-Mesh* DemoScene::GetMeshForPrimitive(ScenePrimitive primitive)
+Mesh* Scene::GetMeshForPrimitive(ScenePrimitive primitive)
 {
     switch (primitive)
     {
@@ -194,7 +196,7 @@ Mesh* DemoScene::GetMeshForPrimitive(ScenePrimitive primitive)
     return m_cubeMesh.get();
 }
 
-int DemoScene::GetNextObjectNumber(ScenePrimitive primitive)
+int Scene::GetNextObjectNumber(ScenePrimitive primitive)
 {
     switch (primitive)
     {
@@ -213,7 +215,7 @@ int DemoScene::GetNextObjectNumber(ScenePrimitive primitive)
     return 1;
 }
 
-int DemoScene::AddObject(ScenePrimitive primitive)
+int Scene::AddObject(ScenePrimitive primitive)
 {
     const int instanceNumber = GetNextObjectNumber(primitive);
     const PrimitiveSpawnInfo spawnInfo = GetPrimitiveSpawnInfo(primitive, instanceNumber);
@@ -238,7 +240,7 @@ int DemoScene::AddObject(ScenePrimitive primitive)
     return static_cast<int>(m_objects.size()) - 1;
 }
 
-bool DemoScene::RemoveObject(std::size_t index)
+bool Scene::RemoveObject(std::size_t index)
 {
     if (index >= m_objects.size())
     {
@@ -267,47 +269,47 @@ bool DemoScene::RemoveObject(std::size_t index)
     return true;
 }
 
-const SceneLighting& DemoScene::GetLighting() const
+const SceneLighting& Scene::GetLighting() const
 {
     return m_lighting;
 }
 
-SceneLighting& DemoScene::GetLighting()
+SceneLighting& Scene::GetLighting()
 {
     return m_lighting;
 }
 
-IBL& DemoScene::GetIBL()
+IBL& Scene::GetIBL()
 {
     return *m_ibl;
 }
 
-const std::vector<SceneObject>& DemoScene::GetObjects() const
+const std::vector<SceneObject>& Scene::GetObjects() const
 {
     return m_objects;
 }
 
-std::vector<SceneObject>& DemoScene::GetObjects()
+std::vector<SceneObject>& Scene::GetObjects()
 {
     return m_objects;
 }
 
-SceneObject& DemoScene::GetObject(std::size_t index)
+SceneObject& Scene::GetObject(std::size_t index)
 {
     return m_objects.at(index);
 }
 
-const SceneObject& DemoScene::GetObject(std::size_t index) const
+const SceneObject& Scene::GetObject(std::size_t index) const
 {
     return m_objects.at(index);
 }
 
-int DemoScene::GetSelectedObjectIndex() const
+int Scene::GetSelectedObjectIndex() const
 {
     return m_selectedObjectIndex;
 }
 
-void DemoScene::SetSelectedObjectIndex(int selectedObjectIndex)
+void Scene::SetSelectedObjectIndex(int selectedObjectIndex)
 {
     if (m_objects.empty())
     {
@@ -330,46 +332,52 @@ void DemoScene::SetSelectedObjectIndex(int selectedObjectIndex)
     m_selectedObjectIndex = selectedObjectIndex;
 }
 
-void DemoScene::ClearSelection()
+void Scene::ClearSelection()
 {
     m_selectedObjectIndex = -1;
 }
 
-bool DemoScene::HasSelection() const
+bool Scene::HasSelection() const
 {
     return m_selectedObjectIndex >= 0 && static_cast<std::size_t>(m_selectedObjectIndex) < m_objects.size();
 }
 
-SceneEditor& DemoScene::GetSceneEditor()
+SceneEditor& Scene::GetSceneEditor()
 {
     return *m_sceneEditor;
 }
 
-const SceneEditor& DemoScene::GetSceneEditor() const
+const SceneEditor& Scene::GetSceneEditor() const
 {
     return *m_sceneEditor;
 }
 
-bool DemoScene::GetShowLightGizmos() const
+bool Scene::GetShowLightGizmos() const
 {
     return m_showLightGizmos;
 }
 
-void DemoScene::SetShowLightGizmos(bool showLightGizmos)
+void Scene::SetShowLightGizmos(bool showLightGizmos)
 {
     m_showLightGizmos = showLightGizmos;
 }
 
-int DemoScene::GetSelectedLightIndex() const
+int Scene::GetSelectedLightIndex() const
 {
     return m_selectedLightIndex;
 }
 
-void DemoScene::SetSelectedLightIndex(int selectedLightIndex)
+void Scene::SetSelectedLightIndex(int selectedLightIndex)
 {
+    if (m_lighting.GetLightCount() == 0)
+    {
+        m_selectedLightIndex = -1;
+        return;
+    }
+
     if (selectedLightIndex < 0)
     {
-        m_selectedLightIndex = 0;
+        m_selectedLightIndex = -1;
         return;
     }
 
@@ -382,7 +390,18 @@ void DemoScene::SetSelectedLightIndex(int selectedLightIndex)
     m_selectedLightIndex = selectedLightIndex;
 }
 
-glm::vec3 DemoScene::GetSunDirection() const
+void Scene::ClearLightSelection()
+{
+    m_selectedLightIndex = -1;
+}
+
+bool Scene::HasLightSelection() const
+{
+    return m_selectedLightIndex >= 0 &&
+        static_cast<std::size_t>(m_selectedLightIndex) < m_lighting.GetLightCount();
+}
+
+glm::vec3 Scene::GetSunDirection() const
 {
     const auto& lights = m_lighting.GetLights();
     if (lights.empty())
@@ -393,7 +412,7 @@ glm::vec3 DemoScene::GetSunDirection() const
     return lights.front().GetDirection();
 }
 
-void DemoScene::Update(
+void Scene::Update(
     Input& input,
     const Camera& camera,
     int framebufferWidth,
@@ -415,7 +434,7 @@ void DemoScene::Update(
         allowKeyboardInput);
 }
 
-void DemoScene::RenderShadowPass() const
+void Scene::RenderShadowPass() const
 {
     glm::vec3 boundsMin(std::numeric_limits<float>::max());
     glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
@@ -451,7 +470,7 @@ void DemoScene::RenderShadowPass() const
     }
 }
 
-void DemoScene::Render(
+void Scene::Render(
     const Camera& camera,
     int viewportWidth,
     int viewportHeight) const
@@ -480,4 +499,6 @@ void DemoScene::Render(
     {
         m_lightGizmos->Draw(camera, m_lighting, m_selectedLightIndex);
     }
+
+    m_sceneEditor->RenderSelectionOverlay(*this, camera);
 }

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 class Camera;
 class SceneLighting;
 class Shader;
@@ -13,7 +15,7 @@ public:
     void Draw(const Camera& camera, const SceneLighting& lighting, int selectedLightIndex) const;
 
 private:
-    Shader* m_shader = nullptr;
+    std::unique_ptr<Shader> m_shader;
     mutable unsigned int m_vao = 0;
     mutable unsigned int m_vbo = 0;
 };

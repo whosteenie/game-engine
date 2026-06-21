@@ -1,6 +1,8 @@
 #include "app/SceneEditor.h"
 
-#include "app/DemoScene.h"
+#include <memory>
+
+#include "app/Scene.h"
 #include "engine/Camera.h"
 #include "engine/Input.h"
 #include "engine/SceneObject.h"
@@ -44,7 +46,7 @@ namespace
     }
 
     void UpdateTransformGizmo(
-        DemoScene& scene,
+        Scene& scene,
         const Camera& camera,
         TransformTool tool,
         TransformSpace space)
@@ -83,14 +85,11 @@ namespace
 }
 
 SceneEditor::SceneEditor()
-    : m_selectionRenderer(new SelectionRenderer())
+    : m_selectionRenderer(std::make_unique<SelectionRenderer>())
 {
 }
 
-SceneEditor::~SceneEditor()
-{
-    delete m_selectionRenderer;
-}
+SceneEditor::~SceneEditor() = default;
 
 void SceneEditor::SetTool(TransformTool tool)
 {
@@ -113,7 +112,7 @@ void SceneEditor::SetTransformSpace(TransformSpace space)
 }
 
 void SceneEditor::Update(
-    DemoScene& scene,
+    Scene& scene,
     const Camera& camera,
     Input& input,
     int framebufferWidth,
@@ -186,11 +185,7 @@ void SceneEditor::Update(
     }
 }
 
-void SceneEditor::RenderOverlays(
-    DemoScene& scene,
-    const Camera& camera,
-    int /*viewportWidth*/,
-    int /*viewportHeight*/)
+void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camera) const
 {
     const int selectedIndex = scene.GetSelectedObjectIndex();
     if (selectedIndex < 0)
@@ -198,6 +193,6 @@ void SceneEditor::RenderOverlays(
         return;
     }
 
-    SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+    const SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
     m_selectionRenderer->Draw(camera, selectedObject);
 }

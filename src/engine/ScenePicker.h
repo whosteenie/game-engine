@@ -23,20 +23,6 @@ bool IntersectRayAabb(
     const glm::vec3& boundsMax,
     float& hitDistance);
 
-float DistanceRayLineSegment(
-    const Ray& ray,
-    const glm::vec3& segmentStart,
-    const glm::vec3& segmentEnd);
-
-bool IntersectRayPlane(
-    const Ray& ray,
-    const glm::vec3& planePoint,
-    const glm::vec3& planeNormal,
-    float& hitDistance);
-
-glm::vec3 ClosestPointOnRay(const Ray& ray, float distance);
-glm::vec3 ClosestPointOnLine(const glm::vec3& linePoint, const glm::vec3& lineDirection, const glm::vec3& point);
-
 int PickSceneObject(
     const std::vector<SceneObject>& objects,
     const Ray& ray);

@@ -19,13 +19,13 @@ class GridRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
 
-class DemoScene
+class Scene
 {
 public:
     static constexpr float FloorHalfExtent = 12.0f;
 
-    DemoScene();
-    ~DemoScene();
+    Scene();
+    ~Scene();
 
     void Update(
         Input& input,
@@ -63,6 +63,8 @@ public:
     void SetShowLightGizmos(bool showLightGizmos);
     int GetSelectedLightIndex() const;
     void SetSelectedLightIndex(int selectedLightIndex);
+    void ClearLightSelection();
+    bool HasLightSelection() const;
 
 private:
     void SetupLighting();

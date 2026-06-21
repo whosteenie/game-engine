@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 class Camera;
 class Shader;
 
@@ -14,7 +16,7 @@ public:
 private:
     void BuildGridGeometry(float halfExtent);
 
-    Shader* m_shader = nullptr;
+    std::unique_ptr<Shader> m_shader;
     unsigned int m_vao = 0;
     unsigned int m_vbo = 0;
     unsigned int m_ebo = 0;

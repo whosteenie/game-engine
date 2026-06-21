@@ -1,8 +1,10 @@
 #pragma once
 
+#include <memory>
+
 class Camera;
-class DemoScene;
 class Input;
+class Scene;
 class SelectionRenderer;
 
 enum class TransformTool
@@ -30,7 +32,7 @@ public:
     void SetTransformSpace(TransformSpace space);
 
     void Update(
-        DemoScene& scene,
+        Scene& scene,
         const Camera& camera,
         Input& input,
         int framebufferWidth,
@@ -40,10 +42,10 @@ public:
         bool allowMouseInput,
         bool allowKeyboardInput);
 
-    void RenderOverlays(DemoScene& scene, const Camera& camera, int viewportWidth, int viewportHeight);
+    void RenderSelectionOverlay(const Scene& scene, const Camera& camera) const;
 
 private:
     TransformTool m_tool = TransformTool::Translate;
     TransformSpace m_transformSpace = TransformSpace::Local;
-    SelectionRenderer* m_selectionRenderer = nullptr;
+    std::unique_ptr<SelectionRenderer> m_selectionRenderer;
 };

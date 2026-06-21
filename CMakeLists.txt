@@ -78,12 +78,14 @@ FetchContent_Declare(
 
 
 
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
 FetchContent_GetProperties(imguizmo)
 
 if(NOT imguizmo_POPULATED)
-
     FetchContent_Populate(imguizmo)
-
 endif()
 
 
@@ -154,7 +156,7 @@ add_executable(game-engine
 
     src/app/SceneEditor.cpp
 
-    src/app/DemoScene.cpp
+    src/app/Scene.cpp
 
     src/engine/Camera.cpp
 
@@ -213,8 +215,6 @@ add_executable(game-engine
     src/primitives/Capsule.cpp
 
     src/primitives/Plane.cpp
-
-    src/primitives/Triangle.cpp
 
     vendor/glad/src/glad.c
 
