@@ -8,6 +8,9 @@
 
 #include <stdexcept>
 
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+
 Application::Application(int width, int height, const char* title)
     : m_width(width), m_height(height), m_title(title)
 {
@@ -135,9 +138,24 @@ void Application::Render()
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     m_shader->Use();
-    m_shader->SetFloat("uAspect", m_aspect);
+    glm::mat4 model = glm::mat4(1.0f);
+    model = glm::rotate(model, (float)m_animationTime * 1.5f, glm::vec3(0.0f, 1.0f, 0.0f));
+    model = glm::rotate(model, (float)m_animationTime * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
+    glm::mat4 view = glm::lookAt(
+        glm::vec3(0.0f, 0.0f, 3.0f),   // camera position
+        glm::vec3(0.0f, 0.0f, 0.0f),   // look-at target
+        glm::vec3(0.0f, 1.0f, 0.0f)    // up direction
+    );
+    glm::mat4 projection = glm::perspective(
+        glm::radians(45.0f),
+        1.0f / m_aspect,
+        0.1f,
+        100.0f
+    );
+    m_shader->SetMat4("uModel", model);
+    m_shader->SetMat4("uView", view);
+    m_shader->SetMat4("uProjection", projection);
     m_shader->SetFloat("uTime", static_cast<float>(m_animationTime));
-
     m_mesh->Draw();
 
     glfwSwapBuffers(m_window);

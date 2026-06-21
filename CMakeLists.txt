@@ -18,6 +18,13 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw)
 
+FetchContent_Declare(
+    glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG 1.0.1
+)
+FetchContent_MakeAvailable(glm)
+
 add_executable(game-engine
     src/main.cpp
     src/Application.cpp
@@ -29,7 +36,7 @@ add_executable(game-engine
 target_include_directories(game-engine PRIVATE vendor/glad/include src)
 
 find_package(OpenGL REQUIRED)
-target_link_libraries(game-engine PRIVATE glfw OpenGL::GL)
+target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm)
 
 add_custom_command(TARGET game-engine POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory

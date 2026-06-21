@@ -6,6 +6,8 @@
 #include <iostream>
 #include <sstream>
 
+#include <glm/gtc/type_ptr.hpp>
+
 Shader::Shader(const char* vertexPath, const char* fragmentPath)
 {
     std::string vertexSource = ReadFile(vertexPath);
@@ -83,4 +85,14 @@ unsigned int Shader::Link(unsigned int vertex, unsigned int fragment) const
     }
 
     return program;
+}
+
+void Shader::SetMat4(const char* name, const glm::mat4& value) const
+{
+    glUniformMatrix4fv(
+        glGetUniformLocation(m_programID, name),
+        1,
+        GL_FALSE,
+        glm::value_ptr(value)
+    );
 }
