@@ -28,6 +28,8 @@ private:
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
 
+    static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
+
     int m_width;
     int m_height;
     const char* m_title;

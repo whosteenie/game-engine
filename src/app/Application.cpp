@@ -21,13 +21,16 @@ Application::Application(int width, int height, const char* title)
     InitGLFW();
     InitGLAD();
 
+    glfwSetCursorPosCallback(m_window, MouseCallback);
+
     glfwSwapInterval(1);
     glEnable(GL_DEPTH_TEST);
 
     m_renderer = std::make_unique<Renderer>();
     m_camera = std::make_unique<Camera>(
-        glm::vec3(0.0f, 0.0f, 3.0f),
-        glm::vec3(0.0f, 0.0f, 0.0f));
+        glm::vec3(6.0f, 5.0f, 6.0f),
+        -135.0f,
+        -35.0f);
     m_light = std::make_unique<Light>(glm::vec3(2.0f, 2.0f, 2.0f));
     m_material = std::make_unique<Material>(
         EngineConstants::PhongVertexShader,
@@ -98,6 +101,8 @@ void Application::Update(double deltaTime)
 {
     glfwPollEvents();
 
+    m_input->UpdateMouseCapture();
+
     if (m_input->IsKeyDown(GLFW_KEY_ESCAPE))
     {
         glfwSetWindowShouldClose(m_window, true);
@@ -106,6 +111,20 @@ void Application::Update(double deltaTime)
     if (m_input->WasKeyPressed(GLFW_KEY_SPACE))
     {
         m_paused = !m_paused;
+    }
+
+    m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
+
+    if (m_input->IsCapturingMouse())
+    {
+        m_camera->ProcessMouseMovement(
+            m_input->ConsumeMouseDeltaX(),
+            m_input->ConsumeMouseDeltaY());
+    }
+    else
+    {
+        m_input->ConsumeMouseDeltaX();
+        m_input->ConsumeMouseDeltaY();
     }
 
     m_scene->Update(deltaTime, m_paused, *m_input);
@@ -128,4 +147,10 @@ void Application::Render()
     m_renderer->BeginFrame();
     m_scene->Render(*m_camera, *m_light, *m_material);
     m_renderer->EndFrame(m_window);
+}
+
+void Application::MouseCallback(GLFWwindow* window, double xPos, double yPos)
+{
+    auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+    app->m_input->OnMouseMove(xPos, yPos);
 }

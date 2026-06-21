@@ -6,12 +6,14 @@
 #include "engine/Material.h"
 #include "engine/Mesh.h"
 #include "primitives/Cube.h"
+#include "engine/GridRenderer.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
 DemoScene::DemoScene()
-    : m_mesh(CreateCubeMesh())
+    : m_mesh(CreateCubeMesh()),
+      m_grid(std::make_unique<GridRenderer>())
 {
 }
 
@@ -42,19 +44,19 @@ void DemoScene::HandleMovement(Input& input, double deltaTime)
     }
     if (input.IsKeyDown(GLFW_KEY_UP))
     {
-        m_position.y += step;
+        m_position.z -= step;
     }
     if (input.IsKeyDown(GLFW_KEY_DOWN))
     {
-        m_position.y -= step;
+        m_position.z += step;
     }
     if (input.IsKeyDown(GLFW_KEY_PAGE_UP))
     {
-        m_position.z -= step;
+        m_position.y += step;
     }
     if (input.IsKeyDown(GLFW_KEY_PAGE_DOWN))
     {
-        m_position.z += step;
+        m_position.y -= step;
     }
 }
 
@@ -69,6 +71,8 @@ glm::mat4 DemoScene::BuildModelMatrix() const
 
 void DemoScene::Render(const Camera& camera, const Light& light, const Material& material) const
 {
+    m_grid->Draw(camera);
+    
     material.Apply(camera, light, BuildModelMatrix());
     m_mesh->Draw();
 }

@@ -2,24 +2,36 @@
 
 #include <glm/glm.hpp>
 
+class Input;
+
 class Camera
 {
 public:
-    Camera(
-        const glm::vec3& position,
-        const glm::vec3& target,
-        const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    Camera(const glm::vec3& position, float yaw, float pitch);
 
     void SetAspectFromFramebuffer(int width, int height);
+
+    void ProcessKeyboard(const Input& input, float deltaTime);
+    void ProcessMouseMovement(float xOffset, float yOffset);
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
     glm::vec3 GetPosition() const;
 
 private:
+    void UpdateCameraVectors();
+
     glm::vec3 m_position;
-    glm::vec3 m_target;
+    glm::vec3 m_front;
     glm::vec3 m_up;
+    glm::vec3 m_right;
+    glm::vec3 m_worldUp;
+
+    float m_yaw;
+    float m_pitch;
+
+    float m_movementSpeed = 4.0f;
+    float m_mouseSensitivity = 0.1f;
 
     float m_fov = 45.0f;
     float m_aspect = 1.0f;
