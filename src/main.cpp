@@ -10,14 +10,22 @@ const char* vertexShaderSource = R"(
     uniform float uAspect;
     void main()
     {
-        float angle = uTime * 1.5;
-        float c = cos(angle);
-        float s = sin(angle);
-        // Rotate around Y axis
+        float yAngle = uTime * 1.5;   // faster — left/right spin
+        float xAngle = uTime * 0.6;   // slower — up/down tilt
+        float cy = cos(yAngle);
+        float sy = sin(yAngle);
+        float cx = cos(xAngle);
+        float sx = sin(xAngle);
+        // 1) Rotate around Y
+        vec3 pos;
+        pos.x = aPos.x * cy + aPos.z * sy;
+        pos.y = aPos.y;
+        pos.z = -aPos.x * sy + aPos.z * cy;
+        // 2) Rotate around X
         vec3 rotated;
-        rotated.x = aPos.x * c + aPos.z * s;
-        rotated.y = aPos.y;
-        rotated.z = -aPos.x * s + aPos.z * c;
+        rotated.x = pos.x;
+        rotated.y = pos.y * cx - pos.z * sx;
+        rotated.z = pos.y * sx + pos.z * cx;
         gl_Position = vec4(rotated.x * uAspect, rotated.y, rotated.z, 1.0);
     }
     )";
