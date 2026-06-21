@@ -171,6 +171,8 @@ void Application::Render()
     m_shader->SetVec3("uLightPos", glm::vec3(2.0f, 2.0f, 2.0f));
     m_shader->SetVec3("uObjectColor", glm::vec3(0.75f, 0.78f, 0.85f));
 
+    m_shader->SetVec3("uViewPos", m_camera->GetPosition());
+
     m_mesh->Draw();
 
     m_renderer->EndFrame(m_window);
