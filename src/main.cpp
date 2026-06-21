@@ -6,19 +6,38 @@
 const char* vertexShaderSource = R"(
     #version 330 core
     layout (location = 0) in vec3 aPos;
+    uniform float uTime;
+    uniform float uAspect;
     void main()
     {
-        gl_Position = vec4(aPos, 1.0);
+        float angle = uTime * 1.5;
+        float c = cos(angle);
+        float s = sin(angle);
+        // Rotate around Y axis
+        vec3 rotated;
+        rotated.x = aPos.x * c + aPos.z * s;
+        rotated.y = aPos.y;
+        rotated.z = -aPos.x * s + aPos.z * c;
+        gl_Position = vec4(rotated.x * uAspect, rotated.y, rotated.z, 1.0);
     }
     )";
-    const char* fragmentShaderSource = R"(
-    #version 330 core
-    out vec4 FragColor;
-    void main()
-    {
-        FragColor = vec4(0.9f, 0.4f, 0.2f, 1.0f);
-    }
-    )";
+
+const char* fragmentShaderSource = R"(
+#version 330 core
+out vec4 FragColor;
+
+uniform float uTime;
+
+void main()
+{
+    FragColor = vec4(
+        0.5 + 0.5 * sin(uTime),
+        0.5 + 0.5 * sin(uTime + 2.094),
+        0.5 + 0.5 * sin(uTime + 4.189),
+        1.0
+    );
+}
+)";
 
 unsigned int CompileShader(unsigned int type, const char* source)
 {
@@ -86,12 +105,22 @@ int main()
     
     glfwSwapInterval(1);
 
-    unsigned int shaderProgram = CreateShaderProgram(vertexShaderSource, fragmentShaderSource);
+    glEnable(GL_DEPTH_TEST);
 
+    int framebufferWidth, framebufferHeight;
+    glfwGetFramebufferSize(window, &framebufferWidth, &framebufferHeight);
+    float aspect = static_cast<float>(framebufferHeight) / static_cast<float>(framebufferWidth);
+
+    unsigned int shaderProgram = CreateShaderProgram(vertexShaderSource, fragmentShaderSource);
+    int uTimeLocation = glGetUniformLocation(shaderProgram, "uTime");
+    int uAspectLocation = glGetUniformLocation(shaderProgram, "uAspect");
+
+    // Equilateral triangle centered at origin (circumradius 0.5, point facing up)
+    const float k = 0.4330127f; // sqrt(3) / 4 * 2 = sqrt(3)/2 * 0.5
     float vertices[] = {
-        -0.5f, -0.5f, 0.0f,  // bottom-left
-         0.5f, -0.5f, 0.0f,  // bottom-right
-         0.0f,  0.5f, 0.0f   // top
+         0.0f,  0.5f, 0.0f,  // top
+        -k,    -0.25f, 0.0f, // bottom-left
+         k,    -0.25f, 0.0f  // bottom-right
     };
     unsigned int vao, vbo;
     glGenVertexArrays(1, &vao);
@@ -114,8 +143,11 @@ int main()
         glfwPollEvents();
 
         glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
         glUseProgram(shaderProgram);
+        glUniform1f(uAspectLocation, aspect);
+        glUniform1f(uTimeLocation, static_cast<float>(currentTime));
         glBindVertexArray(vao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         glfwSwapBuffers(window);
