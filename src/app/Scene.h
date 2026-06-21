@@ -56,13 +56,16 @@ public:
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
 
-    int AddObject(ScenePrimitive primitive);
+    int AddObject(ScenePrimitive primitive, int parentIndex = -1);
     int AddEmptyObject(int parentIndex = -1);
-    std::vector<int> ImportModel(const std::string& path);
+    std::vector<int> ImportModel(const std::string& path, int parentIndex = -1);
     const std::string& GetLastImportError() const;
     bool RemoveObject(std::size_t index);
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
+    glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
+    void GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
+    void ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix);
     void GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
     std::vector<int> GetChildren(int objectIndex) const;
     std::vector<int> GetRootObjectIndices() const;

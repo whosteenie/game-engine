@@ -217,7 +217,7 @@ int Scene::GetNextObjectNumber(ScenePrimitive primitive)
     return 1;
 }
 
-int Scene::AddObject(ScenePrimitive primitive)
+int Scene::AddObject(ScenePrimitive primitive, int parentIndex)
 {
     const int instanceNumber = GetNextObjectNumber(primitive);
     const PrimitiveSpawnInfo spawnInfo = GetPrimitiveSpawnInfo(primitive, instanceNumber);
@@ -226,7 +226,14 @@ int Scene::AddObject(ScenePrimitive primitive)
         std::string(GetScenePrimitiveDisplayName(primitive)) + " " + std::to_string(instanceNumber);
 
     Transform transform;
-    transform.position = spawnInfo.position;
+    if (parentIndex >= 0)
+    {
+        transform.position = glm::vec3(0.0f, 1.5f, 0.0f);
+    }
+    else
+    {
+        transform.position = spawnInfo.position;
+    }
 
     m_objects.emplace_back(
         objectName,
@@ -237,7 +244,8 @@ int Scene::AddObject(ScenePrimitive primitive)
         transform,
         spawnInfo.movable,
         spawnInfo.castShadow,
-        spawnInfo.receiveShadow);
+        spawnInfo.receiveShadow,
+        parentIndex);
 
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -264,6 +272,21 @@ int Scene::AddEmptyObject(int parentIndex)
 glm::mat4 Scene::GetWorldMatrix(int objectIndex) const
 {
     return GetObjectWorldMatrix(m_objects, objectIndex);
+}
+
+glm::mat4 Scene::GetGizmoWorldMatrix(int objectIndex) const
+{
+    return GetObjectGizmoWorldMatrix(m_objects, objectIndex);
+}
+
+void Scene::GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const
+{
+    GetObjectLocalSelectionBounds(m_objects, objectIndex, boundsMin, boundsMax);
+}
+
+void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix)
+{
+    ApplyObjectGizmoWorldMatrix(m_objects, objectIndex, gizmoWorldMatrix);
 }
 
 void Scene::GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const
@@ -311,7 +334,7 @@ void Scene::RemapParentIndicesAfterRemoval(int removedIndex)
     }
 }
 
-std::vector<int> Scene::ImportModel(const std::string& path)
+std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
 {
     m_lastImportError.clear();
 
@@ -328,10 +351,15 @@ std::vector<int> Scene::ImportModel(const std::string& path)
         return {};
     }
 
-    const float spread = static_cast<float>(m_nextImportNumber) * 2.5f;
-    ++m_nextImportNumber;
+    const bool placeAtSceneRoot = parentIndex < 0;
+    const float spread = placeAtSceneRoot ? static_cast<float>(m_nextImportNumber) * 2.5f : 0.0f;
+    if (placeAtSceneRoot)
+    {
+        ++m_nextImportNumber;
+    }
 
     float minWorldY = std::numeric_limits<float>::max();
+    const glm::mat4 sceneParentWorld = parentIndex >= 0 ? GetWorldMatrix(parentIndex) : glm::mat4(1.0f);
     for (std::size_t nodeIndex = 0; nodeIndex < importedModel.nodes.size(); ++nodeIndex)
     {
         const ImportedSceneNode& node = importedModel.nodes[nodeIndex];
@@ -340,7 +368,12 @@ std::vector<int> Scene::ImportModel(const std::string& path)
             continue;
         }
 
-        const glm::mat4 worldMatrix = GetImportedNodeWorldMatrix(importedModel.nodes, static_cast<int>(nodeIndex));
+        glm::mat4 worldMatrix = GetImportedNodeWorldMatrix(importedModel.nodes, static_cast<int>(nodeIndex));
+        if (parentIndex >= 0)
+        {
+            worldMatrix = sceneParentWorld * worldMatrix;
+        }
+
         const glm::vec3 corners[2] = {node.boundsMin, node.boundsMax};
         for (const glm::vec3& corner : corners)
         {
@@ -357,8 +390,9 @@ std::vector<int> Scene::ImportModel(const std::string& path)
     std::vector<int> importedSceneIndices;
     importedSceneIndices.reserve(importedModel.nodes.size());
 
-    for (ImportedSceneNode& node : importedModel.nodes)
+    for (std::size_t importedNodeIndex = 0; importedNodeIndex < importedModel.nodes.size(); ++importedNodeIndex)
     {
+        ImportedSceneNode& node = importedModel.nodes[importedNodeIndex];
         Mesh* mesh = nullptr;
         if (node.hasMesh && node.mesh != nullptr)
         {
@@ -370,6 +404,10 @@ std::vector<int> Scene::ImportModel(const std::string& path)
         if (node.parentIndex >= 0)
         {
             parentSceneIndex = importedSceneIndices[static_cast<std::size_t>(node.parentIndex)];
+        }
+        else if (static_cast<int>(importedNodeIndex) == importedModel.rootNodeIndex && parentIndex >= 0)
+        {
+            parentSceneIndex = parentIndex;
         }
 
         m_objects.emplace_back(

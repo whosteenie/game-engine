@@ -4,7 +4,6 @@
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/GizmoGeometry.h"
-#include "engine/SceneObject.h"
 #include "engine/Shader.h"
 
 #include <glm/glm.hpp>
@@ -33,31 +32,17 @@ SelectionRenderer::~SelectionRenderer()
 
 void SelectionRenderer::Draw(
     const Camera& camera,
-    const SceneObject& object,
-    const glm::mat4& worldMatrix) const
+    const glm::mat4& worldMatrix,
+    const glm::vec3& localBoundsMin,
+    const glm::vec3& localBoundsMax) const
 {
     std::vector<float> vertices;
-
-    if (object.IsRenderable())
-    {
-        GizmoGeometry::AppendOrientedBoxOutline(
-            vertices,
-            worldMatrix,
-            object.GetLocalBoundsMin(),
-            object.GetLocalBoundsMax(),
-            0.03f);
-    }
-    else
-    {
-        const glm::vec3 pivotBoundsMin(-0.15f);
-        const glm::vec3 pivotBoundsMax(0.15f);
-        GizmoGeometry::AppendOrientedBoxOutline(
-            vertices,
-            worldMatrix,
-            pivotBoundsMin,
-            pivotBoundsMax,
-            0.02f);
-    }
+    GizmoGeometry::AppendOrientedBoxOutline(
+        vertices,
+        worldMatrix,
+        localBoundsMin,
+        localBoundsMax,
+        0.03f);
 
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);

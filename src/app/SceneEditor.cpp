@@ -67,8 +67,7 @@ namespace
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
 
-        Transform& transform = selectedObject.GetTransform();
-        glm::mat4 worldMatrix = scene.GetWorldMatrix(selectedIndex);
+        glm::mat4 gizmoWorldMatrix = scene.GetGizmoWorldMatrix(selectedIndex);
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
@@ -77,16 +76,9 @@ namespace
                 glm::value_ptr(projectionMatrix),
                 ToImGuizmoOperation(tool),
                 ToImGuizmoMode(space),
-                glm::value_ptr(worldMatrix)))
+                glm::value_ptr(gizmoWorldMatrix)))
         {
-            glm::mat4 parentWorldMatrix(1.0f);
-            const int parentIndex = selectedObject.GetParentIndex();
-            if (parentIndex >= 0)
-            {
-                parentWorldMatrix = scene.GetWorldMatrix(parentIndex);
-            }
-
-            transform.SetFromMatrix(glm::inverse(parentWorldMatrix) * worldMatrix);
+            scene.ApplyGizmoWorldMatrix(selectedIndex, gizmoWorldMatrix);
         }
     }
 }
@@ -200,6 +192,12 @@ void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camer
         return;
     }
 
-    const SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
-    m_selectionRenderer->Draw(camera, selectedObject, scene.GetWorldMatrix(selectedIndex));
+    glm::vec3 localBoundsMin;
+    glm::vec3 localBoundsMax;
+    scene.GetLocalSelectionBounds(selectedIndex, localBoundsMin, localBoundsMax);
+    m_selectionRenderer->Draw(
+        camera,
+        scene.GetWorldMatrix(selectedIndex),
+        localBoundsMin,
+        localBoundsMax);
 }

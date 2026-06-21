@@ -220,11 +220,11 @@ namespace
         return clicked;
     }
 
-    bool AddPrimitiveFromMenu(Scene& scene, ScenePrimitive primitive)
+    bool AddPrimitiveFromMenu(Scene& scene, ScenePrimitive primitive, int parentIndex)
     {
         if (ImGui::MenuItem(GetScenePrimitiveDisplayName(primitive)))
         {
-            const int newIndex = scene.AddObject(primitive);
+            const int newIndex = scene.AddObject(primitive, parentIndex);
             scene.SetSelectedObjectIndex(newIndex);
             return true;
         }
@@ -232,11 +232,10 @@ namespace
         return false;
     }
 
-    bool AddEmptyFromMenu(Scene& scene)
+    bool AddEmptyFromMenu(Scene& scene, int parentIndex)
     {
         if (ImGui::MenuItem("Empty"))
         {
-            const int parentIndex = scene.HasSelection() ? scene.GetSelectedObjectIndex() : -1;
             const int newIndex = scene.AddEmptyObject(parentIndex);
             scene.SetSelectedObjectIndex(newIndex);
             return true;
@@ -245,7 +244,66 @@ namespace
         return false;
     }
 
-    void DrawHierarchyNode(Scene& scene, int objectIndex, int selectedIndex)
+    void Draw3DObjectMenu(Scene& scene, int parentIndex)
+    {
+        if (ImGui::BeginMenu("3D Object"))
+        {
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Cube, parentIndex);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Sphere, parentIndex);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Cylinder, parentIndex);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Capsule, parentIndex);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Plane, parentIndex);
+            ImGui::EndMenu();
+        }
+    }
+
+    void ImportModelFromDialog(Scene& scene, int parentIndex)
+    {
+        std::string modelPath;
+        if (!FileDialog::OpenModelFile(modelPath))
+        {
+            return;
+        }
+
+        const std::vector<int> importedIndices = scene.ImportModel(modelPath, parentIndex);
+        if (importedIndices.empty())
+        {
+            return;
+        }
+
+        scene.SetSelectedObjectIndex(importedIndices.front());
+    }
+
+    void DrawCreateObjectMenu(Scene& scene, int parentIndex)
+    {
+        AddEmptyFromMenu(scene, parentIndex);
+        Draw3DObjectMenu(scene, parentIndex);
+        if (ImGui::MenuItem("Import Model..."))
+        {
+            ImportModelFromDialog(scene, parentIndex);
+        }
+    }
+
+    void DrawObjectContextMenu(Scene& scene, int objectIndex, int& pendingDeleteIndex)
+    {
+        if (!ImGui::BeginPopupContextItem())
+        {
+            return;
+        }
+
+        scene.SetSelectedObjectIndex(objectIndex);
+        DrawCreateObjectMenu(scene, objectIndex);
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Delete"))
+        {
+            pendingDeleteIndex = objectIndex;
+        }
+
+        ImGui::EndPopup();
+    }
+
+    void DrawHierarchyNode(Scene& scene, int objectIndex, int selectedIndex, int& pendingDeleteIndex)
     {
         const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
@@ -270,11 +328,13 @@ namespace
             scene.SetSelectedObjectIndex(objectIndex);
         }
 
+        DrawObjectContextMenu(scene, objectIndex, pendingDeleteIndex);
+
         if (opened && !children.empty())
         {
             for (int childIndex : children)
             {
-                DrawHierarchyNode(scene, childIndex, selectedIndex);
+                DrawHierarchyNode(scene, childIndex, selectedIndex, pendingDeleteIndex);
             }
 
             ImGui::TreePop();
@@ -283,46 +343,11 @@ namespace
         ImGui::PopID();
     }
 
-    void Draw3DObjectMenu(Scene& scene)
-    {
-        if (ImGui::BeginMenu("3D Object"))
-        {
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Cube);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Sphere);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Cylinder);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Capsule);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Plane);
-            ImGui::EndMenu();
-        }
-    }
-
-    void ImportModelFromDialog(Scene& scene)
-    {
-        std::string modelPath;
-        if (!FileDialog::OpenModelFile(modelPath))
-        {
-            return;
-        }
-
-        const std::vector<int> importedIndices = scene.ImportModel(modelPath);
-        if (importedIndices.empty())
-        {
-            return;
-        }
-
-        scene.SetSelectedObjectIndex(importedIndices.front());
-    }
-
     void DrawAddObjectPopup(Scene& scene)
     {
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
-            AddEmptyFromMenu(scene);
-            Draw3DObjectMenu(scene);
-            if (ImGui::MenuItem("Import Model..."))
-            {
-                ImportModelFromDialog(scene);
-            }
+            DrawCreateObjectMenu(scene, -1);
             ImGui::EndPopup();
         }
     }
@@ -402,17 +427,21 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
             continue;
         }
 
-        DrawHierarchyNode(scene, objectIndex, selectedIndex);
+        DrawHierarchyNode(scene, objectIndex, selectedIndex, m_pendingDeleteIndex);
     }
 
-    if (ImGui::BeginPopupContextWindow("HierarchyContextMenu", ImGuiPopupFlags_MouseButtonRight))
+    if (m_pendingDeleteIndex >= 0)
     {
-        AddEmptyFromMenu(scene);
-        Draw3DObjectMenu(scene);
-        if (ImGui::MenuItem("Import Model..."))
-        {
-            ImportModelFromDialog(scene);
-        }
+        scene.RemoveObject(static_cast<std::size_t>(m_pendingDeleteIndex));
+        m_pendingDeleteIndex = -1;
+        selectedIndex = scene.GetSelectedObjectIndex();
+    }
+
+    if (ImGui::BeginPopupContextWindow(
+            "HierarchyContextMenu",
+            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+    {
+        DrawCreateObjectMenu(scene, -1);
         ImGui::EndPopup();
     }
 

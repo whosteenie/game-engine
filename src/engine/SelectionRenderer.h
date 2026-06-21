@@ -4,7 +4,6 @@
 #include <memory>
 
 class Camera;
-class SceneObject;
 class Shader;
 
 class SelectionRenderer
@@ -13,7 +12,11 @@ public:
     SelectionRenderer();
     ~SelectionRenderer();
 
-    void Draw(const Camera& camera, const SceneObject& object, const glm::mat4& worldMatrix) const;
+    void Draw(
+        const Camera& camera,
+        const glm::mat4& worldMatrix,
+        const glm::vec3& localBoundsMin,
+        const glm::vec3& localBoundsMax) const;
 
 private:
     std::unique_ptr<Shader> m_shader;

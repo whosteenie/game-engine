@@ -9,4 +9,5 @@ public:
 
 private:
     mutable bool m_showPanel = true;
+    mutable int m_pendingDeleteIndex = -1;
 };
