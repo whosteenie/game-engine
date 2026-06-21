@@ -4,6 +4,7 @@
 #include "app/SceneEditor.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
+#include "engine/ScenePrimitive.h"
 
 #include <imgui.h>
 
@@ -13,14 +14,97 @@
 
 namespace
 {
-    bool SliderVec3(const char* label, glm::vec3& value, float min, float max)
-    {
-        return ImGui::SliderFloat3(label, &value.x, min, max);
-    }
+    constexpr float kTransformRowLabelWidth = 68.0f;
+
+    const char* const kAxisLabels[] = {"X", "Y", "Z"};
+    const ImVec4 kAxisColors[] = {
+        ImVec4(0.86f, 0.33f, 0.33f, 1.0f),
+        ImVec4(0.52f, 0.78f, 0.40f, 1.0f),
+        ImVec4(0.42f, 0.58f, 0.92f, 1.0f),
+    };
 
     bool ColorEditVec3(const char* label, glm::vec3& value)
     {
         return ImGui::ColorEdit3(label, &value.x);
+    }
+
+    void DrawTransformRowLabel(const char* label, glm::vec3& value, const glm::vec3& resetValue)
+    {
+        ImGui::AlignTextToFramePadding();
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgHovered));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive));
+        ImGui::Selectable(label, false, ImGuiSelectableFlags_None);
+
+        if (ImGui::BeginPopupContextItem())
+        {
+            char menuLabel[64];
+            std::snprintf(menuLabel, sizeof(menuLabel), "Reset %s", label);
+            if (ImGui::MenuItem(menuLabel))
+            {
+                value = resetValue;
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopStyleColor(3);
+    }
+
+    void DrawTransformAxisField(
+        int axis,
+        const char* label,
+        glm::vec3& value,
+        const glm::vec3& resetValue,
+        float dragSpeed,
+        const char* format)
+    {
+        ImGui::PushID(axis);
+        ImGui::AlignTextToFramePadding();
+
+        ImGui::PushStyleColor(ImGuiCol_Text, kAxisColors[axis]);
+        ImGui::TextUnformatted(kAxisLabels[axis]);
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+
+        if (ImGui::BeginPopupContextItem())
+        {
+            char menuLabel[64];
+            std::snprintf(menuLabel, sizeof(menuLabel), "Reset %s %s", kAxisLabels[axis], label);
+            if (ImGui::MenuItem(menuLabel))
+            {
+                value[axis] = resetValue[axis];
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::PopID();
+    }
+
+    void DrawTransformRow(
+        const char* label,
+        glm::vec3& value,
+        const glm::vec3& resetValue,
+        float dragSpeed,
+        const char* format = "%.2f")
+    {
+        ImGui::PushID(label);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        DrawTransformRowLabel(label, value, resetValue);
+
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            ImGui::TableSetColumnIndex(axis + 1);
+            DrawTransformAxisField(axis, label, value, resetValue, dragSpeed, format);
+        }
+
+        ImGui::PopID();
     }
 
     void DrawMaterialSection(Material& material)
@@ -49,13 +133,35 @@ namespace
         }
     }
 
+    void ResetTransform(Transform& transform)
+    {
+        transform.position = glm::vec3(0.0f);
+        transform.rotationDegrees = glm::vec3(0.0f);
+        transform.scale = glm::vec3(1.0f);
+    }
+
     void DrawTransformSection(SceneObject& object)
     {
         Transform& transform = object.GetTransform();
 
-        SliderVec3("Position", transform.position, -20.0f, 20.0f);
-        SliderVec3("Rotation", transform.rotationDegrees, -180.0f, 180.0f);
-        SliderVec3("Scale", transform.scale, 0.1f, 5.0f);
+        ImGui::PushID("TransformTable");
+        if (ImGui::BeginTable(
+                "##fields",
+                4,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody))
+        {
+            ImGui::TableSetupColumn("##row", ImGuiTableColumnFlags_WidthFixed, kTransformRowLabelWidth);
+            ImGui::TableSetupColumn("##x", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##y", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+
+            DrawTransformRow("Position", transform.position, glm::vec3(0.0f), 0.1f);
+            DrawTransformRow("Rotation", transform.rotationDegrees, glm::vec3(0.0f), 0.5f);
+            DrawTransformRow("Scale", transform.scale, glm::vec3(1.0f), 0.01f);
+
+            ImGui::EndTable();
+        }
+        ImGui::PopID();
     }
 
     bool DrawToolButton(const char* label, TransformTool tool, TransformTool activeTool, DemoScene& scene)
@@ -101,11 +207,45 @@ namespace
 
         return clicked;
     }
+
+    bool AddPrimitiveFromMenu(DemoScene& scene, ScenePrimitive primitive)
+    {
+        if (ImGui::MenuItem(GetScenePrimitiveDisplayName(primitive)))
+        {
+            const int newIndex = scene.AddObject(primitive);
+            scene.SetSelectedObjectIndex(newIndex);
+            return true;
+        }
+
+        return false;
+    }
+
+    void Draw3DObjectMenu(DemoScene& scene)
+    {
+        if (ImGui::BeginMenu("3D Object"))
+        {
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Cube);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Sphere);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Cylinder);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Capsule);
+            AddPrimitiveFromMenu(scene, ScenePrimitive::Plane);
+            ImGui::EndMenu();
+        }
+    }
+
+    void DrawAddObjectPopup(DemoScene& scene)
+    {
+        if (ImGui::BeginPopup("AddObjectPopup"))
+        {
+            Draw3DObjectMenu(scene);
+            ImGui::EndPopup();
+        }
+    }
 }
 
 void SceneHierarchyPanel::Draw(DemoScene& scene) const
 {
-    ImGui::SetNextWindowSize(ImVec2(360.0f, 560.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(400.0f, 560.0f), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Scene", &m_showPanel, ImGuiWindowFlags_None))
     {
@@ -155,6 +295,14 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
     }
 
     ImGui::TextUnformatted("Hierarchy");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Create"))
+    {
+        ImGui::OpenPopup("AddObjectPopup");
+    }
+    DrawAddObjectPopup(scene);
+
+    ImGui::BeginChild("HierarchyList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
     if (ImGui::Selectable("(none)", selectedIndex < 0))
     {
         scene.ClearSelection();
@@ -173,14 +321,15 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
         }
     }
 
-    if (ImGui::Button("Add cube"))
+    if (ImGui::BeginPopupContextWindow("HierarchyContextMenu", ImGuiPopupFlags_MouseButtonRight))
     {
-        scene.AddCubeObject();
-        scene.SetSelectedObjectIndex(static_cast<int>(scene.GetObjects().size()) - 1);
+        Draw3DObjectMenu(scene);
+        ImGui::EndPopup();
     }
 
-    ImGui::SameLine();
-  ImGui::BeginDisabled(!scene.HasSelection());
+    ImGui::EndChild();
+
+    ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {
         scene.RemoveObject(static_cast<std::size_t>(selectedIndex));
@@ -207,7 +356,18 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
         selectedObject.SetName(nameBuffer);
     }
 
-    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen))
+    const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+    if (ImGui::BeginPopupContextItem())
+    {
+        if (ImGui::MenuItem("Reset Transform"))
+        {
+            ResetTransform(selectedObject.GetTransform());
+        }
+
+        ImGui::EndPopup();
+    }
+
+    if (transformOpen)
     {
         DrawTransformSection(selectedObject);
     }

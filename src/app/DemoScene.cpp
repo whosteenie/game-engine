@@ -9,6 +9,10 @@
 #include "engine/Mesh.h"
 #include "primitives/Cube.h"
 #include "primitives/Floor.h"
+#include "primitives/Sphere.h"
+#include "primitives/Cylinder.h"
+#include "primitives/Capsule.h"
+#include "primitives/Plane.h"
 #include "engine/GridRenderer.h"
 #include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
@@ -23,6 +27,10 @@
 
 DemoScene::DemoScene()
     : m_cubeMesh(CreateCubeMesh()),
+      m_sphereMesh(CreateSphereMesh()),
+      m_cylinderMesh(CreateCylinderMesh()),
+      m_capsuleMesh(CreateCapsuleMesh()),
+      m_planeMesh(CreatePlaneMesh()),
       m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
       m_grid(std::make_unique<GridRenderer>()),
       m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
@@ -98,32 +106,135 @@ void DemoScene::SetupObjects()
     m_selectedObjectIndex = 1;
 }
 
-void DemoScene::AddCubeObject()
+namespace
 {
-    auto cubeMaterial = std::make_unique<Material>(
-        EngineConstants::LitVertexShader,
-        EngineConstants::PbrFragmentShader,
-        glm::vec3(1.0f),
-        0.85f,
-        0.0f);
-    ApplyWoodTableMaterialMaps(*cubeMaterial);
+    struct PrimitiveSpawnInfo
+    {
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        glm::vec3 position;
+        bool movable = true;
+        bool castShadow = true;
+        bool receiveShadow = true;
+    };
 
-    Transform cubeTransform;
-    cubeTransform.position = glm::vec3(0.5f * static_cast<float>(m_nextCubeNumber), 1.5f, 0.0f);
+    PrimitiveSpawnInfo GetPrimitiveSpawnInfo(ScenePrimitive primitive, int instanceNumber)
+    {
+        const float spread = static_cast<float>(instanceNumber) * 1.25f;
 
-    const std::string cubeName = "Cube " + std::to_string(m_nextCubeNumber);
-    ++m_nextCubeNumber;
+        switch (primitive)
+        {
+        case ScenePrimitive::Cube:
+            return {
+                glm::vec3(-0.5f),
+                glm::vec3(0.5f),
+                glm::vec3(spread, 1.5f, 0.0f),
+            };
+        case ScenePrimitive::Sphere:
+            return {
+                glm::vec3(-0.5f),
+                glm::vec3(0.5f),
+                glm::vec3(spread, 1.5f, 1.5f),
+            };
+        case ScenePrimitive::Cylinder:
+            return {
+                glm::vec3(-0.5f),
+                glm::vec3(0.5f),
+                glm::vec3(spread, 1.5f, -1.5f),
+            };
+        case ScenePrimitive::Capsule:
+            return {
+                glm::vec3(-0.5f, -1.0f, -0.5f),
+                glm::vec3(0.5f, 1.0f, 0.5f),
+                glm::vec3(spread, 1.0f, 3.0f),
+            };
+        case ScenePrimitive::Plane:
+            return {
+                glm::vec3(-5.0f, -0.01f, -5.0f),
+                glm::vec3(5.0f, 0.01f, 5.0f),
+                glm::vec3(spread, 0.0f, -3.0f),
+            };
+        }
+
+        return {
+            glm::vec3(-0.5f),
+            glm::vec3(0.5f),
+            glm::vec3(spread, 1.5f, 0.0f),
+        };
+    }
+
+    std::unique_ptr<Material> CreateDefaultObjectMaterial()
+    {
+        return std::make_unique<Material>(
+            EngineConstants::LitVertexShader,
+            EngineConstants::PbrFragmentShader,
+            glm::vec3(0.78f, 0.78f, 0.78f),
+            0.55f,
+            0.0f);
+    }
+}
+
+Mesh* DemoScene::GetMeshForPrimitive(ScenePrimitive primitive)
+{
+    switch (primitive)
+    {
+    case ScenePrimitive::Cube:
+        return m_cubeMesh.get();
+    case ScenePrimitive::Sphere:
+        return m_sphereMesh.get();
+    case ScenePrimitive::Cylinder:
+        return m_cylinderMesh.get();
+    case ScenePrimitive::Capsule:
+        return m_capsuleMesh.get();
+    case ScenePrimitive::Plane:
+        return m_planeMesh.get();
+    }
+
+    return m_cubeMesh.get();
+}
+
+int DemoScene::GetNextObjectNumber(ScenePrimitive primitive)
+{
+    switch (primitive)
+    {
+    case ScenePrimitive::Cube:
+        return m_nextCubeNumber++;
+    case ScenePrimitive::Sphere:
+        return m_nextSphereNumber++;
+    case ScenePrimitive::Cylinder:
+        return m_nextCylinderNumber++;
+    case ScenePrimitive::Capsule:
+        return m_nextCapsuleNumber++;
+    case ScenePrimitive::Plane:
+        return m_nextPlaneNumber++;
+    }
+
+    return 1;
+}
+
+int DemoScene::AddObject(ScenePrimitive primitive)
+{
+    const int instanceNumber = GetNextObjectNumber(primitive);
+    const PrimitiveSpawnInfo spawnInfo = GetPrimitiveSpawnInfo(primitive, instanceNumber);
+
+    const std::string objectName =
+        std::string(GetScenePrimitiveDisplayName(primitive)) + " " + std::to_string(instanceNumber);
+
+    Transform transform;
+    transform.position = spawnInfo.position;
 
     m_objects.emplace_back(
-        cubeName,
-        m_cubeMesh.get(),
-        std::move(cubeMaterial),
-        glm::vec3(-0.5f),
-        glm::vec3(0.5f),
-        cubeTransform,
-        true,
-        true,
-        true);
+        objectName,
+        GetMeshForPrimitive(primitive),
+        CreateDefaultObjectMaterial(),
+        spawnInfo.boundsMin,
+        spawnInfo.boundsMax,
+        transform,
+        spawnInfo.movable,
+        spawnInfo.castShadow,
+        spawnInfo.receiveShadow);
+
+    return static_cast<int>(m_objects.size()) - 1;
 }
 
 bool DemoScene::RemoveObject(std::size_t index)

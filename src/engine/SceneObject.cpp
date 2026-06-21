@@ -99,7 +99,26 @@ void SceneObject::SetReceiveShadow(bool receiveShadow)
 
 glm::mat4 SceneObject::BuildModelMatrix() const
 {
-    return m_transform.ToMatrix();
+    glm::mat4 matrix(1.0f);
+
+    const float translation[3] = {
+        m_transform.position.x,
+        m_transform.position.y,
+        m_transform.position.z,
+    };
+    const float rotation[3] = {
+        m_transform.rotationDegrees.x,
+        m_transform.rotationDegrees.y,
+        m_transform.rotationDegrees.z,
+    };
+    const float scale[3] = {
+        m_transform.scale.x,
+        m_transform.scale.y,
+        m_transform.scale.z,
+    };
+
+    ImGuizmo::RecomposeMatrixFromComponents(translation, rotation, scale, glm::value_ptr(matrix));
+    return matrix;
 }
 
 void SceneObject::ApplyTransformFromMatrix(const glm::mat4& matrix)

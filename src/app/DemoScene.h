@@ -6,6 +6,7 @@
 
 #include "engine/Constants.h"
 #include "engine/SceneLighting.h"
+#include "engine/ScenePrimitive.h"
 #include "engine/Shader.h"
 #include "engine/ShadowMap.h"
 #include "engine/IBL.h"
@@ -55,7 +56,7 @@ public:
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
 
-    void AddCubeObject();
+    int AddObject(ScenePrimitive primitive);
     bool RemoveObject(std::size_t index);
 
     bool GetShowLightGizmos() const;
@@ -69,7 +70,14 @@ private:
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass() const;
 
+    Mesh* GetMeshForPrimitive(ScenePrimitive primitive);
+    int GetNextObjectNumber(ScenePrimitive primitive);
+
     std::unique_ptr<Mesh> m_cubeMesh;
+    std::unique_ptr<Mesh> m_sphereMesh;
+    std::unique_ptr<Mesh> m_cylinderMesh;
+    std::unique_ptr<Mesh> m_capsuleMesh;
+    std::unique_ptr<Mesh> m_planeMesh;
     std::unique_ptr<Mesh> m_floorMesh;
     std::vector<SceneObject> m_objects;
     std::unique_ptr<GridRenderer> m_grid;
@@ -83,4 +91,8 @@ private:
     bool m_showLightGizmos = true;
     int m_selectedLightIndex = 0;
     int m_nextCubeNumber = 2;
+    int m_nextSphereNumber = 1;
+    int m_nextCylinderNumber = 1;
+    int m_nextCapsuleNumber = 1;
+    int m_nextPlaneNumber = 1;
 };

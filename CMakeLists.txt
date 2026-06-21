@@ -172,6 +172,8 @@ add_executable(game-engine
 
     src/engine/ScenePicker.cpp
 
+    src/engine/ScenePrimitive.cpp
+
     src/engine/SelectionRenderer.cpp
 
     src/engine/GizmoGeometry.cpp
@@ -201,6 +203,16 @@ add_executable(game-engine
     src/primitives/Cube.cpp
 
     src/primitives/Floor.cpp
+
+    src/primitives/PrimitiveMeshUtils.cpp
+
+    src/primitives/Sphere.cpp
+
+    src/primitives/Cylinder.cpp
+
+    src/primitives/Capsule.cpp
+
+    src/primitives/Plane.cpp
 
     src/primitives/Triangle.cpp
 
