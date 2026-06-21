@@ -159,6 +159,9 @@ void Application::Render()
     m_shader->SetMat4("uView", m_camera->GetViewMatrix());
     m_shader->SetMat4("uProjection", m_camera->GetProjectionMatrix());
 
+    m_shader->SetVec3("uLightPos", glm::vec3(2.0f, 2.0f, 2.0f));
+    m_shader->SetVec3("uObjectColor", glm::vec3(0.75f, 0.78f, 0.85f));
+
     m_mesh->Draw();
 
     m_renderer->EndFrame(m_window);

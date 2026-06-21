@@ -24,3 +24,8 @@ glm::mat4 Camera::GetProjectionMatrix() const
 {
     return glm::perspective(glm::radians(m_fov), m_aspect, m_near, m_far);
 }
+
+glm::vec3 Camera::GetPosition() const
+{
+    return m_position;
+}
