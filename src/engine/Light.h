@@ -50,9 +50,12 @@ public:
     float GetInnerCutoffCos() const;
     float GetOuterCutoffCos() const;
 
+    void SetPosition(const glm::vec3& position);
     void SetDirection(const glm::vec3& directionTowardLight);
     void SetColor(const glm::vec3& color);
     void SetIntensity(float intensity);
+    void SetRange(float range);
+    void SetSpotCutoffDegrees(float innerCutoffDegrees, float outerCutoffDegrees);
 
 private:
     Light(

@@ -2,6 +2,7 @@
 
 #include "engine/Shader.h"
 
+#include <glm/glm.hpp>
 #include <stdexcept>
 
 void SceneLighting::AddLight(const Light& light)
@@ -65,7 +66,7 @@ void SceneLighting::Apply(Shader& shader) const
         const Light& light = m_lights[static_cast<size_t>(i)];
         lightTypes[i] = static_cast<int>(light.GetType());
         lightPositions[i] = light.GetPosition();
-        lightDirections[i] = light.GetDirection();
+        lightDirections[i] = glm::normalize(light.GetDirection());
         lightColors[i] = light.GetColor();
         lightIntensities[i] = light.GetIntensity();
         lightAttenConstant[i] = light.GetConstantAttenuation();

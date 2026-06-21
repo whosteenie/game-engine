@@ -49,10 +49,11 @@ Light Light::MakeDirectional(
     const glm::vec3& color,
     float intensity)
 {
+    const glm::vec3 direction = NormalizeOrFallback(directionTowardLight, glm::vec3(0.0f, 1.0f, 0.0f));
     return Light(
         LightType::Directional,
-        glm::vec3(0.0f),
-        NormalizeOrFallback(directionTowardLight, glm::vec3(0.0f, 1.0f, 0.0f)),
+        direction * 14.0f,
+        direction,
         color,
         intensity,
         1.0f,
@@ -170,14 +171,18 @@ float Light::GetOuterCutoffCos() const
     return m_outerCutoffCos;
 }
 
-void Light::SetDirection(const glm::vec3& directionTowardLight)
+void Light::SetPosition(const glm::vec3& position)
 {
-    const float length = glm::length(directionTowardLight);
-    if (length > 0.0001f)
-    {
-        m_direction = directionTowardLight / length;
-    }
+    m_position = position;
 }
+
+    void Light::SetDirection(const glm::vec3& directionTowardLight)
+    {
+        if (glm::length(directionTowardLight) > 0.0001f)
+        {
+            m_direction = directionTowardLight;
+        }
+    }
 
 void Light::SetColor(const glm::vec3& color)
 {
@@ -187,4 +192,15 @@ void Light::SetColor(const glm::vec3& color)
 void Light::SetIntensity(float intensity)
 {
     m_intensity = intensity;
+}
+
+void Light::SetRange(float range)
+{
+    m_range = range;
+}
+
+void Light::SetSpotCutoffDegrees(float innerCutoffDegrees, float outerCutoffDegrees)
+{
+    m_innerCutoffCos = std::cos(glm::radians(innerCutoffDegrees));
+    m_outerCutoffCos = std::cos(glm::radians(outerCutoffDegrees));
 }

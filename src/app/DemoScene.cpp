@@ -8,6 +8,7 @@
 #include "primitives/Cube.h"
 #include "primitives/Floor.h"
 #include "engine/GridRenderer.h"
+#include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
 #include "engine/ShadowMap.h"
 
@@ -18,6 +19,7 @@ DemoScene::DemoScene()
     : m_cubeMesh(CreateCubeMesh()),
       m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
       m_grid(std::make_unique<GridRenderer>()),
+      m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
       m_shadowMap(std::make_unique<ShadowMap>()),
       m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
       m_shadowDepthShader(std::make_unique<Shader>(
@@ -66,6 +68,38 @@ IBL& DemoScene::GetIBL()
 Material& DemoScene::GetFloorMaterial()
 {
     return *m_floorMaterial;
+}
+
+bool DemoScene::GetShowLightGizmos() const
+{
+    return m_showLightGizmos;
+}
+
+void DemoScene::SetShowLightGizmos(bool showLightGizmos)
+{
+    m_showLightGizmos = showLightGizmos;
+}
+
+int DemoScene::GetSelectedLightIndex() const
+{
+    return m_selectedLightIndex;
+}
+
+void DemoScene::SetSelectedLightIndex(int selectedLightIndex)
+{
+    if (selectedLightIndex < 0)
+    {
+        m_selectedLightIndex = 0;
+        return;
+    }
+
+    if (static_cast<std::size_t>(selectedLightIndex) >= m_lighting.GetLightCount())
+    {
+        m_selectedLightIndex = static_cast<int>(m_lighting.GetLightCount()) - 1;
+        return;
+    }
+
+    m_selectedLightIndex = selectedLightIndex;
 }
 
 glm::vec3 DemoScene::GetSunDirection() const
@@ -165,6 +199,11 @@ void DemoScene::Render(
     m_floorMesh->Draw();
 
     m_grid->Draw(camera);
+
+    if (m_showLightGizmos)
+    {
+        m_lightGizmos->Draw(camera, m_lighting, m_selectedLightIndex);
+    }
 
     cubeMaterial.Apply(camera, m_lighting, *m_ibl, cubeModel, m_shadowMap.get(), false);
     m_cubeMesh->Draw();
