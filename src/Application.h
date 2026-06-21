@@ -1,5 +1,7 @@
 #pragma once
 
+#include <glm/glm.hpp>
+
 struct GLFWwindow;
 class Mesh;
 class Shader;
@@ -18,7 +20,7 @@ private:
 
     void Update(double deltaTime);
     void Render();
-    void HandleInput();
+    void HandleInput(double deltaTime);
     void OnFramebufferResize(int width, int height);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
@@ -35,4 +37,6 @@ private:
 
     Shader* m_shader = nullptr;
     Mesh* m_mesh = nullptr;
+
+    glm::vec3 m_position = glm::vec3(0.0f);
 };

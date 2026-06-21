@@ -93,7 +93,7 @@ void Application::InitGLAD()
 void Application::Update(double deltaTime)
 {
     glfwPollEvents();
-    HandleInput();
+    HandleInput(deltaTime);
 
     if (!m_paused)
     {
@@ -101,7 +101,7 @@ void Application::Update(double deltaTime)
     }
 }
 
-void Application::HandleInput()
+void Application::HandleInput(double deltaTime)
 {
     if (glfwGetKey(m_window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
     {
@@ -114,6 +114,24 @@ void Application::HandleInput()
         m_paused = !m_paused;
     }
     m_spaceWasDown = spaceDown;
+
+    const float moveSpeed = 2.0f;
+    if (glfwGetKey(m_window, GLFW_KEY_LEFT) == GLFW_PRESS)
+    {
+        m_position.x -= moveSpeed * static_cast<float>(deltaTime);
+    }
+    if (glfwGetKey(m_window, GLFW_KEY_RIGHT) == GLFW_PRESS)
+    {
+        m_position.x += moveSpeed * static_cast<float>(deltaTime);
+    }
+    if (glfwGetKey(m_window, GLFW_KEY_UP) == GLFW_PRESS)
+    {
+        m_position.y += moveSpeed * static_cast<float>(deltaTime);
+    }
+    if (glfwGetKey(m_window, GLFW_KEY_DOWN) == GLFW_PRESS)
+    {
+        m_position.y -= moveSpeed * static_cast<float>(deltaTime);
+    }
 }
 
 void Application::OnFramebufferResize(int width, int height)
@@ -139,8 +157,10 @@ void Application::Render()
 
     m_shader->Use();
     glm::mat4 model = glm::mat4(1.0f);
+    model = glm::translate(model, m_position);
     model = glm::rotate(model, (float)m_animationTime * 1.5f, glm::vec3(0.0f, 1.0f, 0.0f));
     model = glm::rotate(model, (float)m_animationTime * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
+
     glm::mat4 view = glm::lookAt(
         glm::vec3(0.0f, 0.0f, 3.0f),   // camera position
         glm::vec3(0.0f, 0.0f, 0.0f),   // look-at target
@@ -152,6 +172,7 @@ void Application::Render()
         0.1f,
         100.0f
     );
+    
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", view);
     m_shader->SetMat4("uProjection", projection);
