@@ -10,7 +10,7 @@ class Input
 public:
     explicit Input(GLFWwindow* window);
 
-    void UpdateMouseCapture();
+    void UpdateMouseCapture(bool allowStartCapture);
     void ReleaseMouseCapture();
 
     bool IsKeyDown(int key) const;

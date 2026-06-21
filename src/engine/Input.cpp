@@ -10,11 +10,11 @@ Input::Input(GLFWwindow* window)
 {
 }
 
-void Input::UpdateMouseCapture()
+void Input::UpdateMouseCapture(bool allowStartCapture)
 {
-    bool rightMouseDown = IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT);
+    const bool rightMouseDown = IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT);
 
-    if (rightMouseDown && !m_capturingMouse)
+    if (rightMouseDown && !m_capturingMouse && allowStartCapture)
     {
         m_capturingMouse = true;
         m_firstMouse = true;

@@ -113,7 +113,7 @@ void Application::Update(double deltaTime)
 
     const ImGuiIO& io = ImGui::GetIO();
 
-    m_input->UpdateMouseCapture();
+    m_input->UpdateMouseCapture(!io.WantCaptureMouse);
 
     const bool flyCameraActive = m_input->IsCapturingMouse();
     if (io.WantCaptureMouse && !flyCameraActive)
