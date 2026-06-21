@@ -18,6 +18,10 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(glfw)
 
-add_executable(game-engine src/main.cpp)
+add_executable(game-engine
+    src/main.cpp
+    vendor/glad/src/glad.c
+)
+target_include_directories(game-engine PRIVATE vendor/glad/include)
 find_package(OpenGL REQUIRED)
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL)
