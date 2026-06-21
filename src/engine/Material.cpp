@@ -1,6 +1,7 @@
 #include "engine/Material.h"
 
 #include "engine/Camera.h"
+#include "engine/IBL.h"
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
 #include "engine/ShadowMap.h"
@@ -25,6 +26,7 @@ Material::~Material() = default;
 void Material::Apply(
     const Camera& camera,
     const SceneLighting& lighting,
+    const IBL& ibl,
     const glm::mat4& model,
     const ShadowMap* shadowMap,
     bool receiveShadow) const
@@ -51,9 +53,8 @@ void Material::Apply(
         m_shader->SetInt("uReceiveShadow", 0);
     }
 
-    m_shader->SetInt("uShadowLightIndex", lighting.GetShadowLightIndex());
-
     lighting.Apply(*m_shader);
+    ibl.BindTextures(*m_shader);
 }
 
 const glm::vec3& Material::GetAlbedo() const

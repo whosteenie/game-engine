@@ -19,6 +19,7 @@ DemoScene::DemoScene()
       m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
       m_grid(std::make_unique<GridRenderer>()),
       m_shadowMap(std::make_unique<ShadowMap>()),
+      m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
       m_shadowDepthShader(std::make_unique<Shader>(
           EngineConstants::ShadowDepthVertexShader,
           EngineConstants::ShadowDepthFragmentShader)),
@@ -42,16 +43,9 @@ void DemoScene::SetupLighting()
     m_lighting.AddLight(Light::MakeDirectional(
         sunDirection,
         sunColor,
-        0.9f));
-
-    m_lighting.AddLight(Light::MakeDirectional(
-        glm::normalize(glm::vec3(-0.4f, 0.25f, -0.55f)),
-        glm::vec3(0.65f, 0.72f, 0.9f),
-        0.25f));
+        2.5f));
 
     m_lighting.SetShadowLightIndex(0);
-    m_lighting.SetIndirectBounceDirection(sunDirection);
-    m_lighting.SetIndirectBounceColor(sunColor);
 }
 
 const SceneLighting& DemoScene::GetLighting() const
@@ -149,11 +143,11 @@ void DemoScene::Render(
 
     glViewport(0, 0, viewportWidth, viewportHeight);
 
-    m_floorMaterial->Apply(camera, m_lighting, floorModel, m_shadowMap.get(), true);
+    m_floorMaterial->Apply(camera, m_lighting, *m_ibl, floorModel, m_shadowMap.get(), true);
     m_floorMesh->Draw();
 
     m_grid->Draw(camera);
 
-    cubeMaterial.Apply(camera, m_lighting, cubeModel, m_shadowMap.get(), false);
+    cubeMaterial.Apply(camera, m_lighting, *m_ibl, cubeModel, m_shadowMap.get(), false);
     m_cubeMesh->Draw();
 }

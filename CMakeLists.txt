@@ -34,6 +34,7 @@ add_executable(game-engine
     src/engine/Light.cpp
     src/engine/SceneLighting.cpp
     src/engine/ShadowMap.cpp
+    src/engine/IBL.cpp
     src/engine/Material.cpp
     src/engine/Mesh.cpp
     src/engine/Renderer.cpp
@@ -45,7 +46,7 @@ add_executable(game-engine
     vendor/glad/src/glad.c
 )
 
-target_include_directories(game-engine PRIVATE vendor/glad/include src)
+target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb src)
 
 find_package(OpenGL REQUIRED)
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm)

@@ -8,6 +8,7 @@
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
 #include "engine/ShadowMap.h"
+#include "engine/IBL.h"
 
 class Camera;
 class Input;
@@ -40,6 +41,7 @@ private:
     std::unique_ptr<Mesh> m_floorMesh;
     std::unique_ptr<GridRenderer> m_grid;
     std::unique_ptr<ShadowMap> m_shadowMap;
+    std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<Shader> m_shadowDepthShader;
     std::unique_ptr<Material> m_floorMaterial;
     SceneLighting m_lighting;

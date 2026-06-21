@@ -31,14 +31,15 @@ uniform float uLightRange[MAX_LIGHTS];
 uniform float uLightInnerCutoffCos[MAX_LIGHTS];
 uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 
-uniform float uAmbientStrength;
-uniform float uIndirectStrength;
-uniform vec3 uIndirectBounceDirection;
-uniform vec3 uIndirectBounceColor;
-
 uniform sampler2D uShadowMap;
 uniform int uShadowLightIndex;
 uniform int uReceiveShadow;
+
+uniform samplerCube uIrradianceMap;
+uniform samplerCube uPrefilterMap;
+uniform sampler2D uBrdfLut;
+uniform float uMaxReflectionLod;
+uniform float uEnvironmentIntensity;
 
 vec3 SrgbToLinear(vec3 srgb)
 {
@@ -87,6 +88,12 @@ float GeometrySmith(vec3 normal, vec3 viewDir, vec3 lightDir, float roughness)
 vec3 FresnelSchlick(float cosineTheta, vec3 f0)
 {
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosineTheta, 0.0, 1.0), 5.0);
+}
+
+vec3 FresnelSchlickRoughness(float cosineTheta, vec3 f0, float roughness)
+{
+    vec3 maxReflection = max(vec3(1.0 - roughness), f0);
+    return f0 + (maxReflection - f0) * pow(clamp(1.0 - cosineTheta, 0.0, 1.0), 5.0);
 }
 
 float CalcAttenuation(
@@ -219,15 +226,19 @@ void main()
     vec3 albedo = SrgbToLinear(uAlbedo);
     float roughness = clamp(uRoughness, 0.04, 1.0);
     float metallic = clamp(uMetallic, 0.0, 1.0);
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
 
-    vec3 skyAmbient = vec3(0.06, 0.06, 0.09);
-    vec3 groundAmbient = vec3(0.02, 0.02, 0.025);
-    float hemisphere = normal.y * 0.5 + 0.5;
-    vec3 ambient = mix(groundAmbient, skyAmbient, hemisphere) * albedo * (1.0 - metallic) * uAmbientStrength;
+    vec3 irradiance = texture(uIrradianceMap, normal).rgb;
+    vec3 diffuseIbl = irradiance * albedo;
 
-    vec3 bounceDir = normalize(uIndirectBounceDirection);
-    float bounce = max(dot(normal, bounceDir), 0.0);
-    vec3 indirect = bounce * uIndirectStrength * albedo * (1.0 - metallic) * SrgbToLinear(uIndirectBounceColor);
+    vec3 reflection = reflect(-viewDir, normal);
+    vec3 prefilteredColor = textureLod(uPrefilterMap, reflection, roughness * uMaxReflectionLod).rgb;
+    vec2 envBrdf = texture(uBrdfLut, vec2(max(dot(normal, viewDir), 0.0), roughness)).rg;
+    vec3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y);
+
+    vec3 specularEnergy = FresnelSchlickRoughness(max(dot(normal, viewDir), 0.0), f0, roughness);
+    vec3 diffuseEnergy = (vec3(1.0) - specularEnergy) * (1.0 - metallic);
+    vec3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity;
 
     vec3 directLighting = vec3(0.0);
 
@@ -270,6 +281,6 @@ void main()
         directLighting += contribution * attenuation * spotIntensity * shadow;
     }
 
-    vec3 result = ambient + indirect + directLighting;
+    vec3 result = ambient + directLighting;
     FragColor = vec4(LinearToSrgb(result), 1.0);
 }

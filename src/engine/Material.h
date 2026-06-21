@@ -4,6 +4,7 @@
 #include <memory>
 
 class Camera;
+class IBL;
 class SceneLighting;
 class Shader;
 class ShadowMap;
@@ -23,6 +24,7 @@ public:
     void Apply(
         const Camera& camera,
         const SceneLighting& lighting,
+        const IBL& ibl,
         const glm::mat4& model,
         const ShadowMap* shadowMap = nullptr,
         bool receiveShadow = false) const;

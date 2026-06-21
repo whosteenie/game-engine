@@ -17,18 +17,6 @@ public:
 
     const std::vector<Light>& GetLights() const;
 
-    float GetAmbientStrength() const;
-    void SetAmbientStrength(float ambientStrength);
-
-    float GetIndirectStrength() const;
-    void SetIndirectStrength(float indirectStrength);
-
-    const glm::vec3& GetIndirectBounceDirection() const;
-    void SetIndirectBounceDirection(const glm::vec3& direction);
-
-    const glm::vec3& GetIndirectBounceColor() const;
-    void SetIndirectBounceColor(const glm::vec3& color);
-
     int GetShadowLightIndex() const;
     void SetShadowLightIndex(int shadowLightIndex);
 
@@ -36,9 +24,5 @@ public:
 
 private:
     std::vector<Light> m_lights;
-    float m_ambientStrength = 0.05f;
-    float m_indirectStrength = 0.12f;
     int m_shadowLightIndex = -1;
-    glm::vec3 m_indirectBounceDirection{0.0f, 1.0f, 0.0f};
-    glm::vec3 m_indirectBounceColor{1.0f, 0.97f, 0.92f};
 };

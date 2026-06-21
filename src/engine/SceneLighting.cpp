@@ -24,46 +24,6 @@ const std::vector<Light>& SceneLighting::GetLights() const
     return m_lights;
 }
 
-float SceneLighting::GetAmbientStrength() const
-{
-    return m_ambientStrength;
-}
-
-void SceneLighting::SetAmbientStrength(float ambientStrength)
-{
-    m_ambientStrength = ambientStrength;
-}
-
-float SceneLighting::GetIndirectStrength() const
-{
-    return m_indirectStrength;
-}
-
-void SceneLighting::SetIndirectStrength(float indirectStrength)
-{
-    m_indirectStrength = indirectStrength;
-}
-
-const glm::vec3& SceneLighting::GetIndirectBounceDirection() const
-{
-    return m_indirectBounceDirection;
-}
-
-void SceneLighting::SetIndirectBounceDirection(const glm::vec3& direction)
-{
-    m_indirectBounceDirection = direction;
-}
-
-const glm::vec3& SceneLighting::GetIndirectBounceColor() const
-{
-    return m_indirectBounceColor;
-}
-
-void SceneLighting::SetIndirectBounceColor(const glm::vec3& color)
-{
-    m_indirectBounceColor = color;
-}
-
 int SceneLighting::GetShadowLightIndex() const
 {
     return m_shadowLightIndex;
@@ -118,9 +78,5 @@ void SceneLighting::Apply(Shader& shader) const
     shader.SetFloatArray("uLightRange", lightRange, lightCount);
     shader.SetFloatArray("uLightInnerCutoffCos", lightInnerCutoffCos, lightCount);
     shader.SetFloatArray("uLightOuterCutoffCos", lightOuterCutoffCos, lightCount);
-
-    shader.SetFloat("uAmbientStrength", m_ambientStrength);
-    shader.SetFloat("uIndirectStrength", m_indirectStrength);
-    shader.SetVec3("uIndirectBounceDirection", m_indirectBounceDirection);
-    shader.SetVec3("uIndirectBounceColor", m_indirectBounceColor);
+    shader.SetInt("uShadowLightIndex", m_shadowLightIndex);
 }
