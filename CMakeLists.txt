@@ -20,8 +20,18 @@ FetchContent_MakeAvailable(glfw)
 
 add_executable(game-engine
     src/main.cpp
+    src/Application.cpp
+    src/Shader.cpp
     vendor/glad/src/glad.c
 )
-target_include_directories(game-engine PRIVATE vendor/glad/include)
+
+target_include_directories(game-engine PRIVATE vendor/glad/include src)
+
 find_package(OpenGL REQUIRED)
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL)
+
+add_custom_command(TARGET game-engine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:game-engine>/assets"
+    COMMENT "Copying assets to output directory")
