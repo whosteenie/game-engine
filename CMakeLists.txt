@@ -19,4 +19,5 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glfw)
 
 add_executable(game-engine src/main.cpp)
-target_link_libraries(game-engine PRIVATE glfw)
+find_package(OpenGL REQUIRED)
+target_link_libraries(game-engine PRIVATE glfw OpenGL::GL)

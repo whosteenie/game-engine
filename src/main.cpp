@@ -1,4 +1,11 @@
+#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+#include <GL/gl.h>
+
 #include <iostream>
 
 int main()
@@ -17,6 +24,9 @@ int main()
         return 1;
     }
 
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
+
     double lastFrameTime = glfwGetTime();
     
     while (!glfwWindowShouldClose(window))
@@ -26,6 +36,10 @@ int main()
         lastFrameTime = currentTime;
 
         glfwPollEvents();
+
+        glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glfwSwapBuffers(window);
 
         // Print FPS once per second
         static double fpsTimer = 0.0;
