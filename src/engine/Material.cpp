@@ -5,8 +5,17 @@
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
 #include "engine/ShadowMap.h"
+#include "engine/Texture.h"
 
 #include <glm/glm.hpp>
+
+namespace
+{
+    constexpr unsigned int AlbedoMapUnit = 4;
+    constexpr unsigned int NormalMapUnit = 5;
+    constexpr unsigned int AoMapUnit = 6;
+    constexpr unsigned int RoughnessMapUnit = 7;
+}
 
 Material::Material(
     const char* vertexShaderPath,
@@ -40,6 +49,12 @@ void Material::Apply(
     m_shader->SetFloat("uRoughness", m_roughness);
     m_shader->SetFloat("uMetallic", m_metallic);
 
+    m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
+    m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);
+    m_shader->SetInt("uUseAoMap", HasAoMap() ? 1 : 0);
+    m_shader->SetInt("uUseRoughnessMap", HasRoughnessMap() ? 1 : 0);
+    BindMaps();
+
     if (shadowMap != nullptr)
     {
         m_shader->SetMat4("uLightSpaceMatrix", shadowMap->GetLightSpaceMatrix());
@@ -55,6 +70,33 @@ void Material::Apply(
 
     lighting.Apply(*m_shader);
     ibl.BindTextures(*m_shader);
+}
+
+void Material::BindMaps() const
+{
+    if (HasAlbedoMap())
+    {
+        m_albedoMap->Bind(AlbedoMapUnit);
+        m_shader->SetInt("uAlbedoMap", static_cast<int>(AlbedoMapUnit));
+    }
+
+    if (HasNormalMap())
+    {
+        m_normalMap->Bind(NormalMapUnit);
+        m_shader->SetInt("uNormalMap", static_cast<int>(NormalMapUnit));
+    }
+
+    if (HasAoMap())
+    {
+        m_aoMap->Bind(AoMapUnit);
+        m_shader->SetInt("uAoMap", static_cast<int>(AoMapUnit));
+    }
+
+    if (HasRoughnessMap())
+    {
+        m_roughnessMap->Bind(RoughnessMapUnit);
+        m_shader->SetInt("uRoughnessMap", static_cast<int>(RoughnessMapUnit));
+    }
 }
 
 const glm::vec3& Material::GetAlbedo() const
@@ -85,4 +127,44 @@ void Material::SetRoughness(float roughness)
 void Material::SetMetallic(float metallic)
 {
     m_metallic = metallic;
+}
+
+void Material::SetAlbedoMap(std::shared_ptr<Texture> texture)
+{
+    m_albedoMap = std::move(texture);
+}
+
+void Material::SetNormalMap(std::shared_ptr<Texture> texture)
+{
+    m_normalMap = std::move(texture);
+}
+
+void Material::SetAoMap(std::shared_ptr<Texture> texture)
+{
+    m_aoMap = std::move(texture);
+}
+
+void Material::SetRoughnessMap(std::shared_ptr<Texture> texture)
+{
+    m_roughnessMap = std::move(texture);
+}
+
+bool Material::HasAlbedoMap() const
+{
+    return m_albedoMap != nullptr && m_albedoMap->IsValid();
+}
+
+bool Material::HasNormalMap() const
+{
+    return m_normalMap != nullptr && m_normalMap->IsValid();
+}
+
+bool Material::HasAoMap() const
+{
+    return m_aoMap != nullptr && m_aoMap->IsValid();
+}
+
+bool Material::HasRoughnessMap() const
+{
+    return m_roughnessMap != nullptr && m_roughnessMap->IsValid();
 }

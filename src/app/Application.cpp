@@ -10,6 +10,7 @@
 #include "engine/ImGuiLayer.h"
 #include "engine/Input.h"
 #include "engine/Material.h"
+#include "engine/MaterialTextures.h"
 #include "engine/Renderer.h"
 
 #include <imgui.h>
@@ -38,9 +39,10 @@ Application::Application(int width, int height, const char* title)
     m_material = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
         EngineConstants::PbrFragmentShader,
-        glm::vec3(0.9f, 0.15f, 0.1f),
-        0.5f,
+        glm::vec3(1.0f),
+        0.85f,
         0.0f);
+    ApplyWoodTableMaterialMaps(*m_material);
 
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);

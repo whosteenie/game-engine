@@ -124,6 +124,12 @@ add_executable(game-engine
 
     src/engine/Material.cpp
 
+    src/engine/Texture.cpp
+
+    src/engine/TextureCache.cpp
+
+    src/engine/MaterialTextures.cpp
+
     src/engine/Mesh.cpp
 
     src/engine/Renderer.cpp

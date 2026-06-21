@@ -15,5 +15,5 @@ std::unique_ptr<Mesh> CreateTriangleMesh()
 
     unsigned int indices[] = { 0, 1, 2 };
 
-    return std::make_unique<Mesh>(vertices, 3, indices, 3);
+    return std::make_unique<Mesh>(vertices, 3, Mesh::BasicVertexFloatCount, indices, 3);
 }

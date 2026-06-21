@@ -3,8 +3,15 @@
 class Mesh
 {
 public:
-    Mesh(const float* vertices, unsigned int vertexCount,
-         const unsigned int* indices, unsigned int indexCount);
+    static constexpr unsigned int BasicVertexFloatCount = 6;
+    static constexpr unsigned int TexturedVertexFloatCount = 11;
+
+    Mesh(
+        const float* vertices,
+        unsigned int vertexCount,
+        unsigned int floatsPerVertex,
+        const unsigned int* indices,
+        unsigned int indexCount);
     ~Mesh();
 
     void Draw() const;

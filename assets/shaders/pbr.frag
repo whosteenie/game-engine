@@ -3,6 +3,8 @@ out vec4 FragColor;
 
 in vec3 vFragPos;
 in vec3 vNormal;
+in vec2 vTexCoord;
+in vec3 vTangent;
 in vec4 vFragPosLightSpace;
 
 #define MAX_LIGHTS 8
@@ -17,6 +19,16 @@ uniform vec3 uViewPos;
 uniform vec3 uAlbedo;
 uniform float uRoughness;
 uniform float uMetallic;
+
+uniform int uUseAlbedoMap;
+uniform int uUseNormalMap;
+uniform int uUseAoMap;
+uniform int uUseRoughnessMap;
+
+uniform sampler2D uAlbedoMap;
+uniform sampler2D uNormalMap;
+uniform sampler2D uAoMap;
+uniform sampler2D uRoughnessMap;
 
 uniform int uLightCount;
 uniform int uLightTypes[MAX_LIGHTS];
@@ -218,15 +230,50 @@ float CalcShadow(vec3 normal, vec3 lightDir)
     return shadow / 9.0;
 }
 
+vec3 CalcNormalFromMap(vec3 normal, vec3 tangent, vec2 texCoord)
+{
+    vec3 tangentNormal = texture(uNormalMap, texCoord).rgb * 2.0 - 1.0;
+
+    vec3 tangentVector = normalize(tangent);
+    tangentVector = normalize(tangentVector - dot(tangentVector, normal) * normal);
+    vec3 bitangent = cross(normal, tangentVector);
+    mat3 tbn = mat3(tangentVector, bitangent, normal);
+
+    return normalize(tbn * tangentNormal);
+}
+
 void main()
 {
     vec3 normal = normalize(vNormal);
+    if (uUseNormalMap != 0)
+    {
+        normal = CalcNormalFromMap(normal, vTangent, vTexCoord);
+    }
+
     vec3 viewDir = normalize(uViewPos - vFragPos);
 
-    vec3 albedo = SrgbToLinear(uAlbedo);
-    float roughness = clamp(uRoughness, 0.04, 1.0);
+    vec3 albedo = uAlbedo;
+    if (uUseAlbedoMap != 0)
+    {
+        albedo *= texture(uAlbedoMap, vTexCoord).rgb;
+    }
+    albedo = SrgbToLinear(albedo);
+
+    float roughness = uRoughness;
+    if (uUseRoughnessMap != 0)
+    {
+        roughness *= texture(uRoughnessMap, vTexCoord).r;
+    }
+    roughness = clamp(roughness, 0.04, 1.0);
+
     float metallic = clamp(uMetallic, 0.0, 1.0);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
+
+    float ambientOcclusion = 1.0;
+    if (uUseAoMap != 0)
+    {
+        ambientOcclusion = texture(uAoMap, vTexCoord).r;
+    }
 
     vec3 irradiance = texture(uIrradianceMap, normal).rgb;
     vec3 diffuseIbl = irradiance * albedo;
@@ -238,7 +285,7 @@ void main()
 
     vec3 specularEnergy = FresnelSchlickRoughness(max(dot(normal, viewDir), 0.0), f0, roughness);
     vec3 diffuseEnergy = (vec3(1.0) - specularEnergy) * (1.0 - metallic);
-    vec3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity;
+    vec3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity * ambientOcclusion;
 
     vec3 directLighting = vec3(0.0);
 

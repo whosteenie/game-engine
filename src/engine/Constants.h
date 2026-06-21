@@ -17,4 +17,14 @@ namespace EngineConstants
     inline constexpr const char* IblBrdfFragmentShader = "assets/shaders/ibl_brdf.frag";
 
     inline constexpr const char* EnvironmentHdr = "assets/environment/studio_small_09_1k.hdr";
+
+    inline constexpr const char* CubeAlbedoTexture = "assets/textures/cube_albedo.jpg";
+    inline constexpr const char* CubeNormalTexture = "assets/textures/cube_normal.jpg";
+    inline constexpr const char* CubeAoTexture = "assets/textures/cube_ao.jpg";
+    inline constexpr const char* CubeRoughnessTexture = "assets/textures/cube_roughness.jpg";
+
+    inline constexpr const char* FloorAlbedoTexture = "assets/textures/floor_albedo.jpg";
+    inline constexpr const char* FloorNormalTexture = "assets/textures/floor_normal.jpg";
+    inline constexpr const char* FloorAoTexture = "assets/textures/floor_ao.jpg";
+    inline constexpr const char* FloorRoughnessTexture = "assets/textures/floor_roughness.jpg";
 }

@@ -269,6 +269,11 @@ void DebugPanel::Draw(
             cubeMaterial.SetMetallic(metallic);
         }
 
+        if (cubeMaterial.HasAlbedoMap())
+        {
+            ImGui::TextUnformatted("Albedo tints the albedo map.");
+        }
+
         ImGui::PopID();
     }
 
@@ -293,6 +298,11 @@ void DebugPanel::Draw(
         if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
         {
             floorMaterial.SetMetallic(metallic);
+        }
+
+        if (floorMaterial.HasAlbedoMap())
+        {
+            ImGui::TextUnformatted("Albedo tints the albedo map.");
         }
 
         ImGui::PopID();

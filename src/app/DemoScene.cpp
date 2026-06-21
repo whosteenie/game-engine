@@ -4,6 +4,7 @@
 #include "engine/Input.h"
 #include "engine/Light.h"
 #include "engine/Material.h"
+#include "engine/MaterialTextures.h"
 #include "engine/Mesh.h"
 #include "primitives/Cube.h"
 #include "primitives/Floor.h"
@@ -28,10 +29,11 @@ DemoScene::DemoScene()
       m_floorMaterial(std::make_unique<Material>(
           EngineConstants::LitVertexShader,
           EngineConstants::PbrFragmentShader,
-          glm::vec3(0.12f, 0.12f, 0.14f),
-          0.9f,
+          glm::vec3(1.0f),
+          1.0f,
           0.0f))
 {
+    ApplyConcreteFloorMaterialMaps(*m_floorMaterial);
     SetupLighting();
 }
 
