@@ -32,6 +32,7 @@ add_executable(game-engine
     src/engine/Camera.cpp
     src/engine/Input.cpp
     src/engine/Light.cpp
+    src/engine/SceneLighting.cpp
     src/engine/Material.cpp
     src/engine/Mesh.cpp
     src/engine/Renderer.cpp

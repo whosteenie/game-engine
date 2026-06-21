@@ -6,7 +6,6 @@ struct GLFWwindow;
 class Camera;
 class DemoScene;
 class Input;
-class Light;
 class Material;
 class Renderer;
 
@@ -39,7 +38,6 @@ private:
 
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<Light> m_light;
     std::unique_ptr<Material> m_material;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<DemoScene> m_scene;

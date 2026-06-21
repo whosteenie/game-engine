@@ -2,43 +2,77 @@
 
 #include <glm/glm.hpp>
 
+enum class LightType
+{
+    Directional = 0,
+    Point = 1,
+    Spot = 2
+};
+
 class Light
 {
 public:
-    explicit Light(const glm::vec3& position);
+    static Light MakeDirectional(
+        const glm::vec3& directionTowardLight,
+        const glm::vec3& color,
+        float intensity);
 
+    static Light MakePoint(
+        const glm::vec3& position,
+        const glm::vec3& color,
+        float intensity,
+        float constantAttenuation = 1.0f,
+        float linearAttenuation = 0.07f,
+        float quadraticAttenuation = 0.017f,
+        float range = 0.0f);
+
+    static Light MakeSpot(
+        const glm::vec3& position,
+        const glm::vec3& directionTowardLight,
+        const glm::vec3& color,
+        float intensity,
+        float innerCutoffDegrees,
+        float outerCutoffDegrees,
+        float constantAttenuation = 1.0f,
+        float linearAttenuation = 0.07f,
+        float quadraticAttenuation = 0.017f,
+        float range = 0.0f);
+
+    LightType GetType() const;
     const glm::vec3& GetPosition() const;
+    const glm::vec3& GetDirection() const;
     const glm::vec3& GetColor() const;
-    float GetAmbientStrength() const;
-    float GetDiffuseStrength() const;
-    float GetSpecularStrength() const;
-    float GetShininess() const;
+    float GetIntensity() const;
     float GetConstantAttenuation() const;
     float GetLinearAttenuation() const;
     float GetQuadraticAttenuation() const;
-    float GetDiffuseWrap() const;
-    float GetIndirectStrength() const;
-    const glm::vec3& GetFillLightDirection() const;
-    const glm::vec3& GetFillLightColor() const;
-    float GetFillLightStrength() const;
-
-    void SetPosition(const glm::vec3& position);
+    float GetRange() const;
+    float GetInnerCutoffCos() const;
+    float GetOuterCutoffCos() const;
 
 private:
-    glm::vec3 m_position;
-    glm::vec3 m_color{1.0f, 0.97f, 0.92f};
-    float m_ambientStrength = 0.05f;
-    float m_diffuseStrength = 1.0f;
-    float m_specularStrength = 0.45f;
-    float m_shininess = 64.0f;
-    float m_constantAttenuation = 1.0f;
-    float m_linearAttenuation = 0.07f;
-    float m_quadraticAttenuation = 0.017f;
-    float m_diffuseWrap = 0.35f;
-    float m_indirectStrength = 0.12f;
+    Light(
+        LightType type,
+        const glm::vec3& position,
+        const glm::vec3& direction,
+        const glm::vec3& color,
+        float intensity,
+        float constantAttenuation,
+        float linearAttenuation,
+        float quadraticAttenuation,
+        float range,
+        float innerCutoffCos,
+        float outerCutoffCos);
 
-    // Direction toward the fill light source (at infinity).
-    glm::vec3 m_fillLightDirection{glm::normalize(glm::vec3(-0.4f, 0.25f, -0.55f))};
-    glm::vec3 m_fillLightColor{0.65f, 0.72f, 0.9f};
-    float m_fillLightStrength = 0.3f;
+    LightType m_type;
+    glm::vec3 m_position;
+    glm::vec3 m_direction;
+    glm::vec3 m_color;
+    float m_intensity;
+    float m_constantAttenuation;
+    float m_linearAttenuation;
+    float m_quadraticAttenuation;
+    float m_range;
+    float m_innerCutoffCos;
+    float m_outerCutoffCos;
 };

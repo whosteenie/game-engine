@@ -36,6 +36,21 @@ void Shader::SetFloat(const char* name, float value) const
     glUniform1f(glGetUniformLocation(m_programID, name), value);
 }
 
+void Shader::SetInt(const char* name, int value) const
+{
+    glUniform1i(glGetUniformLocation(m_programID, name), value);
+}
+
+void Shader::SetIntArray(const char* name, const int* values, int count) const
+{
+    glUniform1iv(glGetUniformLocation(m_programID, name), count, values);
+}
+
+void Shader::SetFloatArray(const char* name, const float* values, int count) const
+{
+    glUniform1fv(glGetUniformLocation(m_programID, name), count, values);
+}
+
 void Shader::SetMat4(const char* name, const glm::mat4& value) const
 {
     glUniformMatrix4fv(
@@ -48,6 +63,11 @@ void Shader::SetMat4(const char* name, const glm::mat4& value) const
 void Shader::SetVec3(const char* name, const glm::vec3& value) const
 {
     glUniform3fv(glGetUniformLocation(m_programID, name), 1, glm::value_ptr(value));
+}
+
+void Shader::SetVec3Array(const char* name, const glm::vec3* values, int count) const
+{
+    glUniform3fv(glGetUniformLocation(m_programID, name), count, glm::value_ptr(values[0]));
 }
 
 std::string Shader::ReadFile(const char* filepath) const

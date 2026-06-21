@@ -7,6 +7,7 @@
 #include "engine/Mesh.h"
 #include "primitives/Cube.h"
 #include "engine/GridRenderer.h"
+#include "engine/SceneLighting.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -15,9 +16,37 @@ DemoScene::DemoScene()
     : m_mesh(CreateCubeMesh()),
       m_grid(std::make_unique<GridRenderer>())
 {
+    SetupLighting();
 }
 
 DemoScene::~DemoScene() = default;
+
+void DemoScene::SetupLighting()
+{
+    const glm::vec3 keyLightPosition(4.0f, 6.0f, 3.0f);
+    const glm::vec3 keyLightColor(1.0f, 0.97f, 0.92f);
+
+    m_lighting.AddLight(Light::MakePoint(
+        keyLightPosition,
+        keyLightColor,
+        1.0f,
+        1.0f,
+        0.07f,
+        0.017f));
+
+    m_lighting.AddLight(Light::MakeDirectional(
+        glm::normalize(glm::vec3(-0.4f, 0.25f, -0.55f)),
+        glm::vec3(0.65f, 0.72f, 0.9f),
+        0.3f));
+
+    m_lighting.SetIndirectBounceDirection(glm::normalize(keyLightPosition));
+    m_lighting.SetIndirectBounceColor(keyLightColor);
+}
+
+const SceneLighting& DemoScene::GetLighting() const
+{
+    return m_lighting;
+}
 
 void DemoScene::Update(double deltaTime, bool paused, Input& input)
 {
@@ -69,10 +98,10 @@ glm::mat4 DemoScene::BuildModelMatrix() const
     return model;
 }
 
-void DemoScene::Render(const Camera& camera, const Light& light, const Material& material) const
+void DemoScene::Render(const Camera& camera, const Material& material) const
 {
     m_grid->Draw(camera);
-    
-    material.Apply(camera, light, BuildModelMatrix());
+
+    material.Apply(camera, m_lighting, BuildModelMatrix());
     m_mesh->Draw();
 }

@@ -7,7 +7,6 @@
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/Input.h"
-#include "engine/Light.h"
 #include "engine/Material.h"
 #include "engine/Renderer.h"
 
@@ -31,11 +30,12 @@ Application::Application(int width, int height, const char* title)
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
         -35.0f);
-    m_light = std::make_unique<Light>(glm::vec3(4.0f, 6.0f, 3.0f));
     m_material = std::make_unique<Material>(
         EngineConstants::PhongVertexShader,
         EngineConstants::PhongFragmentShader,
-        glm::vec3(0.9f, 0.15f, 0.1f));
+        glm::vec3(0.9f, 0.15f, 0.1f),
+        0.5f,
+        0.0f);
 
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
@@ -145,7 +145,7 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 void Application::Render()
 {
     m_renderer->BeginFrame();
-    m_scene->Render(*m_camera, *m_light, *m_material);
+    m_scene->Render(*m_camera, *m_material);
     m_renderer->EndFrame(m_window);
 }
 

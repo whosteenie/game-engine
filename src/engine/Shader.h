@@ -11,8 +11,12 @@ public:
 
     void Use() const;
     void SetFloat(const char* name, float value) const;
+    void SetInt(const char* name, int value) const;
+    void SetIntArray(const char* name, const int* values, int count) const;
+    void SetFloatArray(const char* name, const float* values, int count) const;
     void SetMat4(const char* name, const glm::mat4& value) const;
     void SetVec3(const char* name, const glm::vec3& value) const;
+    void SetVec3Array(const char* name, const glm::vec3* values, int count) const;
 
 private:
     unsigned int m_programID;
