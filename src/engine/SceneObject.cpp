@@ -93,19 +93,9 @@ void SceneObject::SetReceiveShadow(bool receiveShadow)
     m_receiveShadow = receiveShadow;
 }
 
-glm::mat4 SceneObject::BuildModelMatrix() const
-{
-    return m_transform.ToMatrix();
-}
-
-void SceneObject::ApplyTransformFromMatrix(const glm::mat4& matrix)
-{
-    m_transform.SetFromMatrix(matrix);
-}
-
 void SceneObject::GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const
 {
-    const glm::mat4 modelMatrix = BuildModelMatrix();
+    const glm::mat4 modelMatrix = m_transform.ToMatrix();
     const std::array<glm::vec3, 8> corners = {
         glm::vec3(m_localBoundsMin.x, m_localBoundsMin.y, m_localBoundsMin.z),
         glm::vec3(m_localBoundsMax.x, m_localBoundsMin.y, m_localBoundsMin.z),

@@ -43,8 +43,6 @@ public:
     bool ReceivesShadow() const;
     void SetReceiveShadow(bool receiveShadow);
 
-    glm::mat4 BuildModelMatrix() const;
-    void ApplyTransformFromMatrix(const glm::mat4& matrix);
     void GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const;
 
     const glm::vec3& GetLocalBoundsMin() const;

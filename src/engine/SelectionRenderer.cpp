@@ -36,7 +36,7 @@ void SelectionRenderer::Draw(const Camera& camera, const SceneObject& object) co
     std::vector<float> vertices;
     GizmoGeometry::AppendOrientedBoxOutline(
         vertices,
-        object.BuildModelMatrix(),
+        object.GetTransform().ToMatrix(),
         object.GetLocalBoundsMin(),
         object.GetLocalBoundsMax(),
         0.03f);

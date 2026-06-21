@@ -65,7 +65,8 @@ namespace
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
 
-        glm::mat4 modelMatrix = selectedObject.BuildModelMatrix();
+        Transform& transform = selectedObject.GetTransform();
+        glm::mat4 modelMatrix = transform.ToMatrix();
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
@@ -76,7 +77,7 @@ namespace
                 ToImGuizmoMode(space),
                 glm::value_ptr(modelMatrix)))
         {
-            selectedObject.ApplyTransformFromMatrix(modelMatrix);
+            transform.SetFromMatrix(modelMatrix);
         }
     }
 }

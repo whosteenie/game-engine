@@ -446,7 +446,7 @@ void DemoScene::RenderShadowPass() const
             continue;
         }
 
-        m_shadowDepthShader->SetMat4("uModel", object.BuildModelMatrix());
+        m_shadowDepthShader->SetMat4("uModel", object.GetTransform().ToMatrix());
         object.GetMesh()->Draw();
     }
 }
@@ -463,7 +463,7 @@ void DemoScene::Render(
 
     for (const SceneObject& object : m_objects)
     {
-        const glm::mat4 modelMatrix = object.BuildModelMatrix();
+        const glm::mat4 modelMatrix = object.GetTransform().ToMatrix();
         object.GetMaterial().Apply(
             camera,
             m_lighting,
