@@ -17,9 +17,26 @@ int main()
         return 1;
     }
 
+    double lastFrameTime = glfwGetTime();
+    
     while (!glfwWindowShouldClose(window))
     {
+        double currentTime = glfwGetTime();
+        double deltaTime = currentTime - lastFrameTime;
+        lastFrameTime = currentTime;
+
         glfwPollEvents();
+
+        // Print FPS once per second
+        static double fpsTimer = 0.0;
+        fpsTimer += deltaTime;
+
+        if (fpsTimer >= 1.0)
+        {
+            double fps = 1.0 / deltaTime;
+            std::cout << "FPS: " << fps << "  (delta: " << deltaTime << "s)\n";
+            fpsTimer = 0.0;
+        }
     }
 
     glfwDestroyWindow(window);
