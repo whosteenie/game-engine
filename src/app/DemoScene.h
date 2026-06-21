@@ -24,10 +24,13 @@ public:
     DemoScene();
     ~DemoScene();
 
-    void Update(double deltaTime, bool paused, Input& input);
+    void Update(double deltaTime, bool paused, Input& input, bool allowCubeMovement);
     void Render(const Camera& camera, const Material& cubeMaterial, int viewportWidth, int viewportHeight) const;
 
     const SceneLighting& GetLighting() const;
+    SceneLighting& GetLighting();
+    IBL& GetIBL();
+    Material& GetFloorMaterial();
 
 private:
     void HandleMovement(Input& input, double deltaTime);
@@ -45,6 +48,6 @@ private:
     std::unique_ptr<Shader> m_shadowDepthShader;
     std::unique_ptr<Material> m_floorMaterial;
     SceneLighting m_lighting;
-    glm::vec3 m_position = glm::vec3(0.0f);
+    glm::vec3 m_position = glm::vec3(0.0f, 1.5f, 0.0f);
     double m_animationTime = 0.0;
 };

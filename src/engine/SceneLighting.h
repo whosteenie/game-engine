@@ -16,6 +16,8 @@ public:
     void ClearLights();
 
     const std::vector<Light>& GetLights() const;
+    Light& GetLight(std::size_t index);
+    std::size_t GetLightCount() const;
 
     int GetShadowLightIndex() const;
     void SetShadowLightIndex(int shadowLightIndex);

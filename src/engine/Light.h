@@ -50,6 +50,10 @@ public:
     float GetInnerCutoffCos() const;
     float GetOuterCutoffCos() const;
 
+    void SetDirection(const glm::vec3& directionTowardLight);
+    void SetColor(const glm::vec3& color);
+    void SetIntensity(float intensity);
+
 private:
     Light(
         LightType type,

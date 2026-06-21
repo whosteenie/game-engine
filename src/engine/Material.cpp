@@ -71,3 +71,18 @@ float Material::GetMetallic() const
 {
     return m_metallic;
 }
+
+void Material::SetAlbedo(const glm::vec3& albedo)
+{
+    m_albedo = albedo;
+}
+
+void Material::SetRoughness(float roughness)
+{
+    m_roughness = roughness;
+}
+
+void Material::SetMetallic(float metallic)
+{
+    m_metallic = metallic;
+}

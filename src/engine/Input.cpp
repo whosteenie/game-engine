@@ -23,12 +23,22 @@ void Input::UpdateMouseCapture()
     }
     else if (!rightMouseDown && m_capturingMouse)
     {
-        m_capturingMouse = false;
-        m_mouseDeltaX = 0.0f;
-        m_mouseDeltaY = 0.0f;
-        SetRawMouseMotion(false);
-        glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+        ReleaseMouseCapture();
     }
+}
+
+void Input::ReleaseMouseCapture()
+{
+    if (!m_capturingMouse)
+    {
+        return;
+    }
+
+    m_capturingMouse = false;
+    m_mouseDeltaX = 0.0f;
+    m_mouseDeltaY = 0.0f;
+    SetRawMouseMotion(false);
+    glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 }
 
 void Input::SetRawMouseMotion(bool enabled)

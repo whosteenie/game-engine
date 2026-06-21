@@ -24,6 +24,16 @@ const std::vector<Light>& SceneLighting::GetLights() const
     return m_lights;
 }
 
+Light& SceneLighting::GetLight(std::size_t index)
+{
+    return m_lights.at(index);
+}
+
+std::size_t SceneLighting::GetLightCount() const
+{
+    return m_lights.size();
+}
+
 int SceneLighting::GetShadowLightIndex() const
 {
     return m_shadowLightIndex;

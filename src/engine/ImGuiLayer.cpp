@@ -1,0 +1,51 @@
+#include "engine/ImGuiLayer.h"
+
+#include <glad/glad.h>
+
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
+
+#include <stdexcept>
+
+ImGuiLayer::ImGuiLayer(GLFWwindow* window)
+    : m_window(window)
+{
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+
+    ImGui::StyleColorsDark();
+
+    if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
+    {
+        throw std::runtime_error("Failed to initialize ImGui GLFW backend");
+    }
+
+    if (!ImGui_ImplOpenGL3_Init("#version 330"))
+    {
+        throw std::runtime_error("Failed to initialize ImGui OpenGL3 backend");
+    }
+}
+
+ImGuiLayer::~ImGuiLayer()
+{
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+}
+
+void ImGuiLayer::BeginFrame()
+{
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+}
+
+void ImGuiLayer::EndFrame()
+{
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}

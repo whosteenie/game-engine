@@ -1,5 +1,6 @@
 #include "engine/Light.h"
 
+#include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
 #include <cmath>
 
@@ -167,4 +168,23 @@ float Light::GetInnerCutoffCos() const
 float Light::GetOuterCutoffCos() const
 {
     return m_outerCutoffCos;
+}
+
+void Light::SetDirection(const glm::vec3& directionTowardLight)
+{
+    const float length = glm::length(directionTowardLight);
+    if (length > 0.0001f)
+    {
+        m_direction = directionTowardLight / length;
+    }
+}
+
+void Light::SetColor(const glm::vec3& color)
+{
+    m_color = color;
+}
+
+void Light::SetIntensity(float intensity)
+{
+    m_intensity = intensity;
 }

@@ -53,6 +53,21 @@ const SceneLighting& DemoScene::GetLighting() const
     return m_lighting;
 }
 
+SceneLighting& DemoScene::GetLighting()
+{
+    return m_lighting;
+}
+
+IBL& DemoScene::GetIBL()
+{
+    return *m_ibl;
+}
+
+Material& DemoScene::GetFloorMaterial()
+{
+    return *m_floorMaterial;
+}
+
 glm::vec3 DemoScene::GetSunDirection() const
 {
     const auto& lights = m_lighting.GetLights();
@@ -64,9 +79,12 @@ glm::vec3 DemoScene::GetSunDirection() const
     return lights.front().GetDirection();
 }
 
-void DemoScene::Update(double deltaTime, bool paused, Input& input)
+void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowCubeMovement)
 {
-    HandleMovement(input, deltaTime);
+    if (allowCubeMovement)
+    {
+        HandleMovement(input, deltaTime);
+    }
 
     if (!paused)
     {

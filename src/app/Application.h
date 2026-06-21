@@ -4,7 +4,9 @@
 
 struct GLFWwindow;
 class Camera;
+class DebugPanel;
 class DemoScene;
+class ImGuiLayer;
 class Input;
 class Material;
 class Renderer;
@@ -37,6 +39,8 @@ private:
     bool m_paused = false;
 
     std::unique_ptr<Renderer> m_renderer;
+    std::unique_ptr<ImGuiLayer> m_imguiLayer;
+    std::unique_ptr<DebugPanel> m_debugPanel;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Material> m_material;
     std::unique_ptr<Input> m_input;

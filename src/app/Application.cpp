@@ -3,12 +3,17 @@
 #include <glad/glad.h>
 
 #include "app/Application.h"
+#include "app/DebugPanel.h"
 #include "app/DemoScene.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
+#include "engine/ImGuiLayer.h"
 #include "engine/Input.h"
 #include "engine/Material.h"
 #include "engine/Renderer.h"
+
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
 
 #include <stdexcept>
 
@@ -20,12 +25,12 @@ Application::Application(int width, int height, const char* title)
     InitGLFW();
     InitGLAD();
 
-    glfwSetCursorPosCallback(m_window, MouseCallback);
-
     glfwSwapInterval(1);
     glEnable(GL_DEPTH_TEST);
 
     m_renderer = std::make_unique<Renderer>();
+    m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
+    m_debugPanel = std::make_unique<DebugPanel>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
@@ -43,10 +48,13 @@ Application::Application(int width, int height, const char* title)
 
     m_input = std::make_unique<Input>(m_window);
     m_scene = std::make_unique<DemoScene>();
+
+    glfwSetCursorPosCallback(m_window, MouseCallback);
 }
 
 Application::~Application()
 {
+    m_imguiLayer.reset();
     glfwDestroyWindow(m_window);
     glfwTerminate();
 }
@@ -101,21 +109,36 @@ void Application::Update(double deltaTime)
 {
     glfwPollEvents();
 
+    m_imguiLayer->BeginFrame();
+    m_debugPanel->Draw(*m_scene, *m_material, *m_camera, m_paused);
+
+    const ImGuiIO& io = ImGui::GetIO();
+
     m_input->UpdateMouseCapture();
+    if (io.WantCaptureMouse)
+    {
+        m_input->ReleaseMouseCapture();
+    }
+
+    const bool allowGameKeyboard = !io.WantCaptureKeyboard;
+    const bool allowGameMouse = !io.WantCaptureMouse;
 
     if (m_input->IsKeyDown(GLFW_KEY_ESCAPE))
     {
         glfwSetWindowShouldClose(m_window, true);
     }
 
-    if (m_input->WasKeyPressed(GLFW_KEY_SPACE))
+    if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_SPACE))
     {
         m_paused = !m_paused;
     }
 
-    m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
+    if (allowGameKeyboard)
+    {
+        m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
+    }
 
-    if (m_input->IsCapturingMouse())
+    if (allowGameMouse && m_input->IsCapturingMouse())
     {
         m_camera->ProcessMouseMovement(
             m_input->ConsumeMouseDeltaX(),
@@ -127,7 +150,7 @@ void Application::Update(double deltaTime)
         m_input->ConsumeMouseDeltaY();
     }
 
-    m_scene->Update(deltaTime, m_paused, *m_input);
+    m_scene->Update(deltaTime, m_paused, *m_input, allowGameKeyboard);
 }
 
 void Application::OnFramebufferResize(int width, int height)
@@ -150,11 +173,14 @@ void Application::Render()
 
     m_renderer->BeginFrame();
     m_scene->Render(*m_camera, *m_material, viewportWidth, viewportHeight);
+    m_imguiLayer->EndFrame();
     m_renderer->EndFrame(m_window);
 }
 
 void Application::MouseCallback(GLFWwindow* window, double xPos, double yPos)
 {
+    ImGui_ImplGlfw_CursorPosCallback(window, xPos, yPos);
+
     auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
     app->m_input->OnMouseMove(xPos, yPos);
 }

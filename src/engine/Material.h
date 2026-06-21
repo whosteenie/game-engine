@@ -33,6 +33,10 @@ public:
     float GetRoughness() const;
     float GetMetallic() const;
 
+    void SetAlbedo(const glm::vec3& albedo);
+    void SetRoughness(float roughness);
+    void SetMetallic(float metallic);
+
 private:
     std::unique_ptr<Shader> m_shader;
     glm::vec3 m_albedo;
