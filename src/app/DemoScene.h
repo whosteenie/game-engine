@@ -16,7 +16,7 @@ class Input;
 class Mesh;
 class GridRenderer;
 class LightGizmoRenderer;
-class Material;
+class SceneEditor;
 
 class DemoScene
 {
@@ -26,7 +26,19 @@ public:
     DemoScene();
     ~DemoScene();
 
-    void Update(double deltaTime, bool paused, Input& input, bool allowObjectMovement);
+    void Update(
+        double deltaTime,
+        bool paused,
+        Input& input,
+        bool allowObjectMovement,
+        const Camera& camera,
+        int framebufferWidth,
+        int framebufferHeight,
+        int windowWidth,
+        int windowHeight,
+        bool allowMouseInput,
+        bool allowKeyboardInput);
+
     void Render(const Camera& camera, int viewportWidth, int viewportHeight) const;
 
     const SceneLighting& GetLighting() const;
@@ -40,8 +52,15 @@ public:
 
     int GetSelectedObjectIndex() const;
     void SetSelectedObjectIndex(int selectedObjectIndex);
+    void ClearSelection();
+    bool HasSelection() const;
+
+    double GetAnimationTime() const;
+    SceneEditor& GetSceneEditor();
+    const SceneEditor& GetSceneEditor() const;
 
     void AddCubeObject();
+    bool RemoveObject(std::size_t index);
 
     bool GetShowLightGizmos() const;
     void SetShowLightGizmos(bool showLightGizmos);
@@ -60,6 +79,7 @@ private:
     std::vector<SceneObject> m_objects;
     std::unique_ptr<GridRenderer> m_grid;
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
+    std::unique_ptr<SceneEditor> m_sceneEditor;
     std::unique_ptr<ShadowMap> m_shadowMap;
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<Shader> m_shadowDepthShader;

@@ -7,6 +7,8 @@
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
+
+#include <ImGuizmo.h>
 #include <imgui_impl_opengl3.h>
 
 #include <stdexcept>
@@ -42,6 +44,7 @@ void ImGuiLayer::BeginFrame()
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+    ImGuizmo::BeginFrame();
 }
 
 void ImGuiLayer::EndFrame()

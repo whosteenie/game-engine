@@ -5,6 +5,7 @@
 #include "app/Application.h"
 #include "app/DebugPanel.h"
 #include "app/DemoScene.h"
+#include "app/SceneEditor.h"
 #include "app/SceneHierarchyPanel.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
@@ -146,7 +147,27 @@ void Application::Update(double deltaTime)
         m_input->ConsumeMouseDeltaY();
     }
 
-    m_scene->Update(deltaTime, m_paused, *m_input, allowGameKeyboard);
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+    int windowWidth = 0;
+    int windowHeight = 0;
+    glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
+    glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
+
+    m_scene->Update(
+        deltaTime,
+        m_paused,
+        *m_input,
+        allowGameKeyboard,
+        *m_camera,
+        viewportWidth,
+        viewportHeight,
+        windowWidth,
+        windowHeight,
+        allowGameMouse,
+        allowGameKeyboard);
+
+    m_input->EndFrame();
 }
 
 void Application::OnFramebufferResize(int width, int height)
@@ -169,6 +190,7 @@ void Application::Render()
 
     m_renderer->BeginFrame();
     m_scene->Render(*m_camera, viewportWidth, viewportHeight);
+    m_scene->GetSceneEditor().RenderOverlays(*m_scene, *m_camera, viewportWidth, viewportHeight);
     m_imguiLayer->EndFrame();
     m_renderer->EndFrame(m_window);
 }

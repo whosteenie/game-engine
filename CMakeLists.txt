@@ -66,6 +66,28 @@ FetchContent_MakeAvailable(imgui)
 
 
 
+FetchContent_Declare(
+
+    imguizmo
+
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+
+    GIT_TAG be8aa4aeab86b402701c8c1df011bd8cd776760b
+
+)
+
+
+
+FetchContent_GetProperties(imguizmo)
+
+if(NOT imguizmo_POPULATED)
+
+    FetchContent_Populate(imguizmo)
+
+endif()
+
+
+
 add_library(imgui_lib STATIC
 
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -98,6 +120,28 @@ target_link_libraries(imgui_lib PUBLIC glfw)
 
 
 
+add_library(imguizmo_lib STATIC
+
+    ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp
+
+)
+
+
+
+target_include_directories(imguizmo_lib PUBLIC
+
+    ${imguizmo_SOURCE_DIR}/src)
+
+
+
+target_compile_definitions(imguizmo_lib PUBLIC IMGUI_DEFINE_MATH_OPERATORS)
+
+
+
+target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
+
+
+
 add_executable(game-engine
 
     src/main.cpp
@@ -107,6 +151,8 @@ add_executable(game-engine
     src/app/DebugPanel.cpp
 
     src/app/SceneHierarchyPanel.cpp
+
+    src/app/SceneEditor.cpp
 
     src/app/DemoScene.cpp
 
@@ -123,6 +169,12 @@ add_executable(game-engine
     src/engine/SceneObject.cpp
 
     src/engine/Transform.cpp
+
+    src/engine/ScenePicker.cpp
+
+    src/engine/SelectionRenderer.cpp
+
+    src/engine/GizmoGeometry.cpp
 
     src/engine/ShadowMap.cpp
 
@@ -164,7 +216,7 @@ target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb sr
 
 find_package(OpenGL REQUIRED)
 
-target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib)
+target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib)
 
 
 

@@ -1,11 +1,13 @@
 #include "app/SceneHierarchyPanel.h"
 
 #include "app/DemoScene.h"
+#include "app/SceneEditor.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
 
 #include <imgui.h>
 
+#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <cstdio>
 
@@ -63,11 +65,33 @@ namespace
 
         SliderVec3("Scale", transform.scale, 0.1f, 5.0f);
     }
+
+    bool DrawToolButton(const char* label, TransformTool tool, TransformTool activeTool, DemoScene& scene)
+    {
+        const bool isActive = tool == activeTool;
+        if (isActive)
+        {
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.35f, 0.55f, 0.85f, 1.0f));
+        }
+
+        const bool clicked = ImGui::Button(label);
+        if (isActive)
+        {
+            ImGui::PopStyleColor();
+        }
+
+        if (clicked)
+        {
+            scene.GetSceneEditor().SetTool(tool);
+        }
+
+        return clicked;
+    }
 }
 
 void SceneHierarchyPanel::Draw(DemoScene& scene) const
 {
-    ImGui::SetNextWindowSize(ImVec2(360.0f, 520.0f), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(360.0f, 560.0f), ImGuiCond_FirstUseEver);
 
     if (!ImGui::Begin("Scene", &m_showPanel, ImGuiWindowFlags_None))
     {
@@ -75,7 +99,16 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
         return;
     }
 
-    ImGui::TextUnformatted("Arrow keys / Page Up-Down move selected object.");
+    SceneEditor& editor = scene.GetSceneEditor();
+    const TransformTool activeTool = editor.GetTool();
+
+    DrawToolButton("Move (W)", TransformTool::Translate, activeTool, scene);
+    ImGui::SameLine();
+    DrawToolButton("Rotate (E)", TransformTool::Rotate, activeTool, scene);
+    ImGui::SameLine();
+    DrawToolButton("Scale (R)", TransformTool::Scale, activeTool, scene);
+
+    ImGui::TextUnformatted("LMB: select/deselect or drag gizmo. RMB: fly camera.");
     ImGui::Separator();
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
@@ -95,6 +128,12 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
     }
 
     ImGui::TextUnformatted("Hierarchy");
+    if (ImGui::Selectable("(none)", selectedIndex < 0))
+    {
+        scene.ClearSelection();
+        selectedIndex = -1;
+    }
+
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
         const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
@@ -110,11 +149,26 @@ void SceneHierarchyPanel::Draw(DemoScene& scene) const
     if (ImGui::Button("Add cube"))
     {
         scene.AddCubeObject();
-        selectedIndex = static_cast<int>(scene.GetObjects().size()) - 1;
-        scene.SetSelectedObjectIndex(selectedIndex);
+        scene.SetSelectedObjectIndex(static_cast<int>(scene.GetObjects().size()) - 1);
     }
 
+    ImGui::SameLine();
+  ImGui::BeginDisabled(!scene.HasSelection());
+    if (ImGui::Button("Delete"))
+    {
+        scene.RemoveObject(static_cast<std::size_t>(selectedIndex));
+        selectedIndex = scene.GetSelectedObjectIndex();
+    }
+    ImGui::EndDisabled();
+
     ImGui::Separator();
+
+    if (!scene.HasSelection())
+    {
+        ImGui::TextUnformatted("No object selected.");
+        ImGui::End();
+        return;
+    }
 
     SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
     ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());

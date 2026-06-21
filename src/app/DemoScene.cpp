@@ -1,5 +1,6 @@
 #include "app/DemoScene.h"
 
+#include "app/SceneEditor.h"
 #include "engine/Camera.h"
 #include "engine/Input.h"
 #include "engine/Light.h"
@@ -24,6 +25,7 @@ DemoScene::DemoScene()
       m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
       m_grid(std::make_unique<GridRenderer>()),
       m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
+      m_sceneEditor(std::make_unique<SceneEditor>()),
       m_shadowMap(std::make_unique<ShadowMap>()),
       m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
       m_shadowDepthShader(std::make_unique<Shader>(
@@ -63,6 +65,8 @@ void DemoScene::SetupObjects()
         "Floor",
         m_floorMesh.get(),
         std::move(floorMaterial),
+        glm::vec3(-FloorHalfExtent, -0.05f, -FloorHalfExtent),
+        glm::vec3(FloorHalfExtent, 0.05f, FloorHalfExtent),
         Transform{},
         false,
         false,
@@ -84,6 +88,8 @@ void DemoScene::SetupObjects()
         "Cube",
         m_cubeMesh.get(),
         std::move(cubeMaterial),
+        glm::vec3(-0.5f),
+        glm::vec3(0.5f),
         cubeTransform,
         true,
         true,
@@ -113,11 +119,51 @@ void DemoScene::AddCubeObject()
         cubeName,
         m_cubeMesh.get(),
         std::move(cubeMaterial),
+        glm::vec3(-0.5f),
+        glm::vec3(0.5f),
         cubeTransform,
         true,
         false,
         true,
         false);
+}
+
+bool DemoScene::RemoveObject(std::size_t index)
+{
+    if (index >= m_objects.size())
+    {
+        return false;
+    }
+
+    m_objects.erase(m_objects.begin() + static_cast<std::ptrdiff_t>(index));
+
+    if (m_objects.empty())
+    {
+        m_selectedObjectIndex = -1;
+        return true;
+    }
+
+    if (m_selectedObjectIndex == static_cast<int>(index))
+    {
+        if (m_objects.empty())
+        {
+            m_selectedObjectIndex = -1;
+        }
+        else if (index >= m_objects.size())
+        {
+            m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
+        }
+        else
+        {
+            m_selectedObjectIndex = static_cast<int>(index);
+        }
+    }
+    else if (m_selectedObjectIndex > static_cast<int>(index))
+    {
+        --m_selectedObjectIndex;
+    }
+
+    return true;
 }
 
 const SceneLighting& DemoScene::GetLighting() const
@@ -164,13 +210,13 @@ void DemoScene::SetSelectedObjectIndex(int selectedObjectIndex)
 {
     if (m_objects.empty())
     {
-        m_selectedObjectIndex = 0;
+        m_selectedObjectIndex = -1;
         return;
     }
 
     if (selectedObjectIndex < 0)
     {
-        m_selectedObjectIndex = 0;
+        m_selectedObjectIndex = -1;
         return;
     }
 
@@ -181,6 +227,31 @@ void DemoScene::SetSelectedObjectIndex(int selectedObjectIndex)
     }
 
     m_selectedObjectIndex = selectedObjectIndex;
+}
+
+void DemoScene::ClearSelection()
+{
+    m_selectedObjectIndex = -1;
+}
+
+bool DemoScene::HasSelection() const
+{
+    return m_selectedObjectIndex >= 0 && static_cast<std::size_t>(m_selectedObjectIndex) < m_objects.size();
+}
+
+double DemoScene::GetAnimationTime() const
+{
+    return m_animationTime;
+}
+
+SceneEditor& DemoScene::GetSceneEditor()
+{
+    return *m_sceneEditor;
+}
+
+const SceneEditor& DemoScene::GetSceneEditor() const
+{
+    return *m_sceneEditor;
 }
 
 bool DemoScene::GetShowLightGizmos() const
@@ -226,9 +297,20 @@ glm::vec3 DemoScene::GetSunDirection() const
     return lights.front().GetDirection();
 }
 
-void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowObjectMovement)
+void DemoScene::Update(
+    double deltaTime,
+    bool paused,
+    Input& input,
+    bool allowObjectMovement,
+    const Camera& camera,
+    int framebufferWidth,
+    int framebufferHeight,
+    int windowWidth,
+    int windowHeight,
+    bool allowMouseInput,
+    bool allowKeyboardInput)
 {
-    if (allowObjectMovement)
+    if (allowObjectMovement && !m_sceneEditor->IsGizmoDragging())
     {
         HandleSelectedObjectMovement(input, deltaTime);
     }
@@ -237,11 +319,22 @@ void DemoScene::Update(double deltaTime, bool paused, Input& input, bool allowOb
     {
         m_animationTime += deltaTime;
     }
+
+    m_sceneEditor->Update(
+        *this,
+        camera,
+        input,
+        framebufferWidth,
+        framebufferHeight,
+        windowWidth,
+        windowHeight,
+        allowMouseInput,
+        allowKeyboardInput);
 }
 
 void DemoScene::HandleSelectedObjectMovement(Input& input, double deltaTime)
 {
-    if (m_objects.empty())
+    if (!HasSelection())
     {
         return;
     }

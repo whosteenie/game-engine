@@ -3,6 +3,8 @@
 
 #include "engine/Input.h"
 
+#include <glm/glm.hpp>
+
 Input::Input(GLFWwindow* window)
     : m_window(window)
 {
@@ -109,4 +111,46 @@ float Input::ConsumeMouseDeltaY()
     float delta = m_mouseDeltaY;
     m_mouseDeltaY = 0.0f;
     return delta;
+}
+
+bool Input::WasMouseButtonPressed(int button)
+{
+    const bool down = IsMouseButtonDown(button);
+    const bool wasDown = m_previousMouseButtonState[button];
+    return down && !wasDown;
+}
+
+bool Input::WasMouseButtonReleased(int button)
+{
+    const bool down = IsMouseButtonDown(button);
+    const bool wasDown = m_previousMouseButtonState[button];
+    return !down && wasDown;
+}
+
+void Input::GetCursorPosition(double& x, double& y) const
+{
+    glfwGetCursorPos(m_window, &x, &y);
+}
+
+glm::vec2 Input::GetCursorPositionFramebufferScaled(
+    int framebufferWidth,
+    int framebufferHeight,
+    int windowWidth,
+    int windowHeight) const
+{
+    double cursorX = 0.0;
+    double cursorY = 0.0;
+    GetCursorPosition(cursorX, cursorY);
+
+    const float scaleX = windowWidth > 0 ? static_cast<float>(framebufferWidth) / static_cast<float>(windowWidth) : 1.0f;
+    const float scaleY = windowHeight > 0 ? static_cast<float>(framebufferHeight) / static_cast<float>(windowHeight) : 1.0f;
+    return glm::vec2(static_cast<float>(cursorX) * scaleX, static_cast<float>(cursorY) * scaleY);
+}
+
+void Input::EndFrame()
+{
+    for (int button = GLFW_MOUSE_BUTTON_1; button <= GLFW_MOUSE_BUTTON_8; ++button)
+    {
+        m_previousMouseButtonState[button] = IsMouseButtonDown(button);
+    }
 }
