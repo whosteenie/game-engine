@@ -114,20 +114,23 @@ void Application::Update(double deltaTime)
     const ImGuiIO& io = ImGui::GetIO();
 
     m_input->UpdateMouseCapture();
-    if (io.WantCaptureMouse)
+
+    const bool flyCameraActive = m_input->IsCapturingMouse();
+    if (io.WantCaptureMouse && !flyCameraActive)
     {
         m_input->ReleaseMouseCapture();
     }
 
-    const bool allowGameKeyboard = !io.WantCaptureKeyboard;
-    const bool allowGameMouse = !io.WantCaptureMouse;
+    const bool allowGameKeyboard = !io.WantCaptureKeyboard || flyCameraActive;
+    const bool allowGameMouse = flyCameraActive || !io.WantCaptureMouse;
+    const bool allowSceneMouse = !flyCameraActive && allowGameMouse;
 
     if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_ESCAPE))
     {
         glfwSetWindowShouldClose(m_window, true);
     }
 
-    if (allowGameMouse && m_input->IsCapturingMouse())
+    if (allowGameMouse && flyCameraActive)
     {
         m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
         m_camera->ProcessMouseMovement(
@@ -154,7 +157,7 @@ void Application::Update(double deltaTime)
         viewportHeight,
         windowWidth,
         windowHeight,
-        allowGameMouse,
+        allowSceneMouse,
         allowGameKeyboard);
 
     m_input->EndFrame();
