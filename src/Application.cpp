@@ -3,12 +3,13 @@
 #include <glad/glad.h>
 
 #include "Application.h"
+#include "Camera.h"
 #include "Mesh.h"
+#include "Renderer.h"
 #include "Shader.h"
 
 #include <stdexcept>
 
-#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 Application::Application(int width, int height, const char* title)
@@ -20,11 +21,16 @@ Application::Application(int width, int height, const char* title)
     glfwSwapInterval(1);
     glEnable(GL_DEPTH_TEST);
 
+    m_renderer = std::make_unique<Renderer>();
+    m_camera = std::make_unique<Camera>(
+        glm::vec3(0.0f, 0.0f, 3.0f),
+        glm::vec3(0.0f, 0.0f, 0.0f));
+
     int framebufferWidth, framebufferHeight;
     glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
     OnFramebufferResize(framebufferWidth, framebufferHeight);
 
-    m_shader = new Shader("assets/shaders/triangle.vert", "assets/shaders/triangle.frag");
+    m_shader = std::make_unique<Shader>("assets/shaders/triangle.vert", "assets/shaders/triangle.frag");
 
     const float k = 0.4330127f;
     float vertices[] = {
@@ -32,14 +38,11 @@ Application::Application(int width, int height, const char* title)
         -k,    -0.25f, 0.0f,
          k,    -0.25f, 0.0f
     };
-    m_mesh = new Mesh(vertices, 3);
+    m_mesh = std::make_unique<Mesh>(vertices, 3);
 }
 
 Application::~Application()
 {
-    delete m_mesh;
-    delete m_shader;
-
     glfwDestroyWindow(m_window);
     glfwTerminate();
 }
@@ -136,12 +139,8 @@ void Application::HandleInput(double deltaTime)
 
 void Application::OnFramebufferResize(int width, int height)
 {
-    glViewport(0, 0, width, height);
-
-    if (width > 0 && height > 0)
-    {
-        m_aspect = static_cast<float>(height) / static_cast<float>(width);
-    }
+    m_renderer->SetViewport(width, height);
+    m_camera->SetAspectFromFramebuffer(width, height);
 }
 
 void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
@@ -152,32 +151,21 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 
 void Application::Render()
 {
-    glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    m_renderer->BeginFrame();
 
     m_shader->Use();
+
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::translate(model, m_position);
     model = glm::rotate(model, (float)m_animationTime * 1.5f, glm::vec3(0.0f, 1.0f, 0.0f));
     model = glm::rotate(model, (float)m_animationTime * 0.6f, glm::vec3(1.0f, 0.0f, 0.0f));
 
-    glm::mat4 view = glm::lookAt(
-        glm::vec3(0.0f, 0.0f, 3.0f),   // camera position
-        glm::vec3(0.0f, 0.0f, 0.0f),   // look-at target
-        glm::vec3(0.0f, 1.0f, 0.0f)    // up direction
-    );
-    glm::mat4 projection = glm::perspective(
-        glm::radians(45.0f),
-        1.0f / m_aspect,
-        0.1f,
-        100.0f
-    );
-    
     m_shader->SetMat4("uModel", model);
-    m_shader->SetMat4("uView", view);
-    m_shader->SetMat4("uProjection", projection);
+    m_shader->SetMat4("uView", m_camera->GetViewMatrix());
+    m_shader->SetMat4("uProjection", m_camera->GetProjectionMatrix());
     m_shader->SetFloat("uTime", static_cast<float>(m_animationTime));
+
     m_mesh->Draw();
 
-    glfwSwapBuffers(m_window);
+    m_renderer->EndFrame(m_window);
 }

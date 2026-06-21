@@ -28,7 +28,9 @@ FetchContent_MakeAvailable(glm)
 add_executable(game-engine
     src/main.cpp
     src/Application.cpp
+    src/Camera.cpp
     src/Mesh.cpp
+    src/Renderer.cpp
     src/Shader.cpp
     vendor/glad/src/glad.c
 )

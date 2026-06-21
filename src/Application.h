@@ -1,9 +1,12 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <memory>
 
 struct GLFWwindow;
+class Camera;
 class Mesh;
+class Renderer;
 class Shader;
 
 class Application
@@ -30,13 +33,14 @@ private:
     const char* m_title;
 
     GLFWwindow* m_window = nullptr;
-    float m_aspect = 1.0f;
     double m_animationTime = 0.0;
     bool m_paused = false;
     bool m_spaceWasDown = false;
 
-    Shader* m_shader = nullptr;
-    Mesh* m_mesh = nullptr;
+    std::unique_ptr<Renderer> m_renderer;
+    std::unique_ptr<Camera> m_camera;
+    std::unique_ptr<Shader> m_shader;
+    std::unique_ptr<Mesh> m_mesh;
 
     glm::vec3 m_position = glm::vec3(0.0f);
 };
