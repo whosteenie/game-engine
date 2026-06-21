@@ -3,8 +3,9 @@ out vec4 FragColor;
 
 in vec3 vFragPos;
 in vec3 vNormal;
-in vec2 vTexCoord;
-in vec3 vTangent;
+in vec2 vTexCoord0;
+in vec2 vTexCoord1;
+in vec4 vTangent;
 in vec4 vFragPosLightSpace;
 
 #define MAX_LIGHTS 8
@@ -24,6 +25,11 @@ uniform int uUseAlbedoMap;
 uniform int uUseNormalMap;
 uniform int uUseAoMap;
 uniform int uUseRoughnessMap;
+
+uniform int uAlbedoTexCoordSet;
+uniform int uNormalTexCoordSet;
+uniform int uAoTexCoordSet;
+uniform int uRoughnessTexCoordSet;
 
 uniform sampler2D uAlbedoMap;
 uniform sampler2D uNormalMap;
@@ -233,13 +239,18 @@ float CalcShadow(vec3 geometricNormal, vec3 lightDir)
     return shadow / 25.0;
 }
 
-vec3 CalcNormalFromMap(vec3 normal, vec3 tangent, vec2 texCoord)
+vec2 SelectTexCoord(int texCoordSet)
+{
+    return texCoordSet == 1 ? vTexCoord1 : vTexCoord0;
+}
+
+vec3 CalcNormalFromMap(vec3 normal, vec4 tangent, vec2 texCoord)
 {
     vec3 tangentNormal = texture(uNormalMap, texCoord).rgb * 2.0 - 1.0;
 
-    vec3 tangentVector = normalize(tangent);
+    vec3 tangentVector = normalize(tangent.xyz);
     tangentVector = normalize(tangentVector - dot(tangentVector, normal) * normal);
-    vec3 bitangent = cross(normal, tangentVector);
+    vec3 bitangent = normalize(cross(normal, tangentVector) * tangent.w);
     mat3 tbn = mat3(tangentVector, bitangent, normal);
 
     return normalize(tbn * tangentNormal);
@@ -248,9 +259,13 @@ vec3 CalcNormalFromMap(vec3 normal, vec3 tangent, vec2 texCoord)
 void main()
 {
     vec3 normal = normalize(vNormal);
+    vec2 albedoTexCoord = SelectTexCoord(uAlbedoTexCoordSet);
+    vec2 normalTexCoord = SelectTexCoord(uNormalTexCoordSet);
+    vec2 aoTexCoord = SelectTexCoord(uAoTexCoordSet);
+    vec2 roughnessTexCoord = SelectTexCoord(uRoughnessTexCoordSet);
     if (uUseNormalMap != 0)
     {
-        normal = CalcNormalFromMap(normal, vTangent, vTexCoord);
+        normal = CalcNormalFromMap(normal, vTangent, normalTexCoord);
     }
 
     vec3 viewDir = normalize(uViewPos - vFragPos);
@@ -258,14 +273,13 @@ void main()
     vec3 albedo = uAlbedo;
     if (uUseAlbedoMap != 0)
     {
-        albedo *= texture(uAlbedoMap, vTexCoord).rgb;
+        albedo *= texture(uAlbedoMap, albedoTexCoord).rgb;
     }
-    albedo = SrgbToLinear(albedo);
 
     float roughness = uRoughness;
     if (uUseRoughnessMap != 0)
     {
-        roughness *= texture(uRoughnessMap, vTexCoord).r;
+        roughness *= texture(uRoughnessMap, roughnessTexCoord).r;
     }
     roughness = clamp(roughness, 0.04, 1.0);
 
@@ -275,7 +289,7 @@ void main()
     float ambientOcclusion = 1.0;
     if (uUseAoMap != 0)
     {
-        ambientOcclusion = texture(uAoMap, vTexCoord).r;
+        ambientOcclusion = texture(uAoMap, aoTexCoord).r;
     }
 
     vec3 irradiance = texture(uIrradianceMap, normal).rgb;

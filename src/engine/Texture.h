@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/TextureSamplerSettings.h"
+
 #include <memory>
 
 enum class TextureColorSpace
@@ -11,13 +13,20 @@ enum class TextureColorSpace
 class Texture
 {
 public:
-    Texture(const char* path, TextureColorSpace colorSpace);
+    Texture(const char* path, TextureColorSpace colorSpace, bool flipVertically = true);
+    Texture(
+        const char* path,
+        TextureColorSpace colorSpace,
+        const TextureSamplerSettings& samplerSettings,
+        bool flipVertically = true);
     static std::shared_ptr<Texture> CreateFromPixels(
         const unsigned char* pixels,
         int width,
         int height,
         int channelCount,
-        TextureColorSpace colorSpace);
+        TextureColorSpace colorSpace,
+        const TextureSamplerSettings& samplerSettings = TextureSamplerSettings{},
+        bool flipVertically = false);
     ~Texture();
 
     Texture(const Texture&) = delete;

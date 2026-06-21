@@ -29,7 +29,7 @@ std::unique_ptr<Mesh> CreateCylinderMesh(float radius, float height, int slices)
             const glm::vec3 position = normal * radius + glm::vec3(0.0f, y, 0.0f);
             const glm::vec3 tangent(-std::sin(theta), 0.0f, std::cos(theta));
 
-            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, v), tangent);
+            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, v), glm::vec4(tangent, 1.0f));
         }
     }
 
@@ -47,15 +47,15 @@ std::unique_ptr<Mesh> CreateCylinderMesh(float radius, float height, int slices)
         indices.push_back(top + 1);
     }
 
-    const unsigned int topCenterIndex = static_cast<unsigned int>(vertices.size() / 11);
+    const unsigned int topCenterIndex = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
     PrimitiveMesh::PushVertex(
         vertices,
         glm::vec3(0.0f, halfHeight, 0.0f),
         glm::vec3(0.0f, 1.0f, 0.0f),
         glm::vec2(0.5f, 0.5f),
-        glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
 
-    const unsigned int topCapRingStart = static_cast<unsigned int>(vertices.size() / 11);
+    const unsigned int topCapRingStart = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
     for (int slice = 0; slice <= slices; ++slice)
     {
         const float u = static_cast<float>(slice) / static_cast<float>(slices);
@@ -63,7 +63,7 @@ std::unique_ptr<Mesh> CreateCylinderMesh(float radius, float height, int slices)
         const glm::vec3 position(radius * std::cos(theta), halfHeight, radius * std::sin(theta));
         const glm::vec3 tangent(-std::sin(theta), 0.0f, std::cos(theta));
 
-        PrimitiveMesh::PushVertex(vertices, position, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec2(u, 1.0f), tangent);
+        PrimitiveMesh::PushVertex(vertices, position, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec2(u, 1.0f), glm::vec4(tangent, 1.0f));
     }
 
     for (int slice = 0; slice < slices; ++slice)
@@ -73,15 +73,15 @@ std::unique_ptr<Mesh> CreateCylinderMesh(float radius, float height, int slices)
         indices.push_back(topCapRingStart + static_cast<unsigned int>(slice + 1));
     }
 
-    const unsigned int bottomCenterIndex = static_cast<unsigned int>(vertices.size() / 11);
+    const unsigned int bottomCenterIndex = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
     PrimitiveMesh::PushVertex(
         vertices,
         glm::vec3(0.0f, -halfHeight, 0.0f),
         glm::vec3(0.0f, -1.0f, 0.0f),
         glm::vec2(0.5f, 0.5f),
-        glm::vec3(1.0f, 0.0f, 0.0f));
+        glm::vec4(1.0f, 0.0f, 0.0f, 1.0f));
 
-    const unsigned int bottomCapRingStart = static_cast<unsigned int>(vertices.size() / 11);
+    const unsigned int bottomCapRingStart = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
     for (int slice = 0; slice <= slices; ++slice)
     {
         const float u = static_cast<float>(slice) / static_cast<float>(slices);
@@ -89,7 +89,7 @@ std::unique_ptr<Mesh> CreateCylinderMesh(float radius, float height, int slices)
         const glm::vec3 position(radius * std::cos(theta), -halfHeight, radius * std::sin(theta));
         const glm::vec3 tangent(-std::sin(theta), 0.0f, std::cos(theta));
 
-        PrimitiveMesh::PushVertex(vertices, position, glm::vec3(0.0f, -1.0f, 0.0f), glm::vec2(u, 0.0f), tangent);
+        PrimitiveMesh::PushVertex(vertices, position, glm::vec3(0.0f, -1.0f, 0.0f), glm::vec2(u, 0.0f), glm::vec4(tangent, 1.0f));
     }
 
     for (int slice = 0; slice < slices; ++slice)

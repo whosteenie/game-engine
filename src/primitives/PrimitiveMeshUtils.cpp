@@ -10,20 +10,27 @@ namespace PrimitiveMesh
         std::vector<float>& vertices,
         const glm::vec3& position,
         const glm::vec3& normal,
-        const glm::vec2& uv,
-        const glm::vec3& tangent)
+        const glm::vec2& uv0,
+        const glm::vec4& tangent,
+        const glm::vec2& uv1,
+        bool hasSecondUv)
     {
+        const glm::vec2 resolvedUv1 = hasSecondUv ? uv1 : uv0;
+
         vertices.push_back(position.x);
         vertices.push_back(position.y);
         vertices.push_back(position.z);
         vertices.push_back(normal.x);
         vertices.push_back(normal.y);
         vertices.push_back(normal.z);
-        vertices.push_back(uv.x);
-        vertices.push_back(uv.y);
+        vertices.push_back(uv0.x);
+        vertices.push_back(uv0.y);
+        vertices.push_back(resolvedUv1.x);
+        vertices.push_back(resolvedUv1.y);
         vertices.push_back(tangent.x);
         vertices.push_back(tangent.y);
         vertices.push_back(tangent.z);
+        vertices.push_back(tangent.w);
     }
 
     std::unique_ptr<Mesh> BuildMesh(

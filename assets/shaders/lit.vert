@@ -1,13 +1,15 @@
 #version 330 core
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
-layout (location = 2) in vec2 aTexCoord;
-layout (location = 3) in vec3 aTangent;
+layout (location = 2) in vec2 aTexCoord0;
+layout (location = 3) in vec2 aTexCoord1;
+layout (location = 4) in vec4 aTangent;
 
 out vec3 vFragPos;
 out vec3 vNormal;
-out vec2 vTexCoord;
-out vec3 vTangent;
+out vec2 vTexCoord0;
+out vec2 vTexCoord1;
+out vec4 vTangent;
 out vec4 vFragPosLightSpace;
 
 uniform mat4 uModel;
@@ -22,8 +24,9 @@ void main()
 
     mat3 normalMatrix = mat3(transpose(inverse(uModel)));
     vNormal = normalMatrix * aNormal;
-    vTangent = normalMatrix * aTangent;
-    vTexCoord = aTexCoord;
+    vTangent = vec4(normalize(normalMatrix * aTangent.xyz), aTangent.w);
+    vTexCoord0 = aTexCoord0;
+    vTexCoord1 = aTexCoord1;
 
     vFragPosLightSpace = uLightSpaceMatrix * worldPos;
     gl_Position = uProjection * uView * worldPos;

@@ -43,6 +43,14 @@ public:
     void SetAoMap(std::shared_ptr<Texture> texture);
     void SetRoughnessMap(std::shared_ptr<Texture> texture);
 
+    void SetAlbedoTexCoordSet(int texCoordSet);
+    void SetNormalTexCoordSet(int texCoordSet);
+    void SetAoTexCoordSet(int texCoordSet);
+    void SetRoughnessTexCoordSet(int texCoordSet);
+
+    void SetDoubleSided(bool doubleSided);
+    bool IsDoubleSided() const;
+
     bool HasAlbedoMap() const;
     bool HasNormalMap() const;
     bool HasAoMap() const;
@@ -60,4 +68,10 @@ private:
     std::shared_ptr<Texture> m_normalMap;
     std::shared_ptr<Texture> m_aoMap;
     std::shared_ptr<Texture> m_roughnessMap;
+
+    int m_albedoTexCoordSet = 0;
+    int m_normalTexCoordSet = 0;
+    int m_aoTexCoordSet = 0;
+    int m_roughnessTexCoordSet = 0;
+    bool m_doubleSided = false;
 };

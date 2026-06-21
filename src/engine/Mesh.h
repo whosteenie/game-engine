@@ -4,7 +4,7 @@ class Mesh
 {
 public:
     static constexpr unsigned int BasicVertexFloatCount = 6;
-    static constexpr unsigned int TexturedVertexFloatCount = 11;
+    static constexpr unsigned int TexturedVertexFloatCount = 14;
 
     Mesh(
         const float* vertices,

@@ -53,6 +53,10 @@ void Material::Apply(
     m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);
     m_shader->SetInt("uUseAoMap", HasAoMap() ? 1 : 0);
     m_shader->SetInt("uUseRoughnessMap", HasRoughnessMap() ? 1 : 0);
+    m_shader->SetInt("uAlbedoTexCoordSet", m_albedoTexCoordSet);
+    m_shader->SetInt("uNormalTexCoordSet", m_normalTexCoordSet);
+    m_shader->SetInt("uAoTexCoordSet", m_aoTexCoordSet);
+    m_shader->SetInt("uRoughnessTexCoordSet", m_roughnessTexCoordSet);
     BindMaps();
 
     if (shadowMap != nullptr)
@@ -147,6 +151,36 @@ void Material::SetAoMap(std::shared_ptr<Texture> texture)
 void Material::SetRoughnessMap(std::shared_ptr<Texture> texture)
 {
     m_roughnessMap = std::move(texture);
+}
+
+void Material::SetAlbedoTexCoordSet(int texCoordSet)
+{
+    m_albedoTexCoordSet = texCoordSet;
+}
+
+void Material::SetNormalTexCoordSet(int texCoordSet)
+{
+    m_normalTexCoordSet = texCoordSet;
+}
+
+void Material::SetAoTexCoordSet(int texCoordSet)
+{
+    m_aoTexCoordSet = texCoordSet;
+}
+
+void Material::SetRoughnessTexCoordSet(int texCoordSet)
+{
+    m_roughnessTexCoordSet = texCoordSet;
+}
+
+void Material::SetDoubleSided(bool doubleSided)
+{
+    m_doubleSided = doubleSided;
+}
+
+bool Material::IsDoubleSided() const
+{
+    return m_doubleSided;
 }
 
 bool Material::HasAlbedoMap() const

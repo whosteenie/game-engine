@@ -33,7 +33,7 @@ std::unique_ptr<Mesh> CreateSphereMesh(float radius, int slices, int stacks)
             const glm::vec3 position = normal * radius;
             const glm::vec3 tangent(-std::sin(theta), 0.0f, std::cos(theta));
 
-            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, 1.0f - v), tangent);
+            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, 1.0f - v), glm::vec4(tangent, 1.0f));
         }
     }
 

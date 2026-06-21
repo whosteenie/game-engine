@@ -7,16 +7,48 @@
 
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
+    std::vector<unsigned char> FlipRowsVertically(
+        const unsigned char* pixels,
+        int width,
+        int height,
+        int channelCount)
+    {
+        const int rowBytes = width * channelCount;
+        std::vector<unsigned char> flipped(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(height));
+        for (int row = 0; row < height; ++row)
+        {
+            const int destinationRow = height - 1 - row;
+            const std::size_t sourceOffset = static_cast<std::size_t>(row) * static_cast<std::size_t>(rowBytes);
+            const std::size_t destinationOffset = static_cast<std::size_t>(destinationRow) * static_cast<std::size_t>(rowBytes);
+            std::copy(
+                pixels + sourceOffset,
+                pixels + sourceOffset + static_cast<std::size_t>(rowBytes),
+                flipped.begin() + destinationOffset);
+        }
+        return flipped;
+    }
+
+    void ApplySamplerSettings(const TextureSamplerSettings& samplerSettings)
+    {
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, static_cast<GLint>(samplerSettings.wrapS));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, static_cast<GLint>(samplerSettings.wrapT));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, static_cast<GLint>(samplerSettings.minFilter));
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(samplerSettings.magFilter));
+    }
+
     void UploadTexture2D(
         unsigned int& textureId,
         int width,
         int height,
         int channelCount,
         const unsigned char* pixels,
-        TextureColorSpace colorSpace)
+        TextureColorSpace colorSpace,
+        const TextureSamplerSettings& samplerSettings,
+        bool generateMipmaps)
     {
         GLenum format = GL_RGB;
         if (channelCount == 1)
@@ -34,19 +66,28 @@ namespace
 
         glGenTextures(1, &textureId);
         glBindTexture(GL_TEXTURE_2D, textureId);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        ApplySamplerSettings(samplerSettings);
         glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, GL_UNSIGNED_BYTE, pixels);
-        glGenerateMipmap(GL_TEXTURE_2D);
+        if (generateMipmaps)
+        {
+            glGenerateMipmap(GL_TEXTURE_2D);
+        }
         glBindTexture(GL_TEXTURE_2D, 0);
     }
 }
 
-Texture::Texture(const char* path, TextureColorSpace colorSpace)
+Texture::Texture(const char* path, TextureColorSpace colorSpace, bool flipVertically)
+    : Texture(path, colorSpace, TextureSamplerSettings{}, flipVertically)
 {
-    stbi_set_flip_vertically_on_load(true);
+}
+
+Texture::Texture(
+    const char* path,
+    TextureColorSpace colorSpace,
+    const TextureSamplerSettings& samplerSettings,
+    bool flipVertically)
+{
+    stbi_set_flip_vertically_on_load(flipVertically ? 1 : 0);
 
     int width = 0;
     int height = 0;
@@ -57,7 +98,7 @@ Texture::Texture(const char* path, TextureColorSpace colorSpace)
         throw std::runtime_error(std::string("Failed to load texture: ") + path);
     }
 
-    UploadTexture2D(m_id, width, height, channelCount, pixels, colorSpace);
+    UploadTexture2D(m_id, width, height, channelCount, pixels, colorSpace, samplerSettings, true);
     stbi_image_free(pixels);
     m_valid = true;
 }
@@ -67,10 +108,33 @@ std::shared_ptr<Texture> Texture::CreateFromPixels(
     int width,
     int height,
     int channelCount,
-    TextureColorSpace colorSpace)
+    TextureColorSpace colorSpace,
+    const TextureSamplerSettings& samplerSettings,
+    bool flipVertically)
 {
     auto texture = std::shared_ptr<Texture>(new Texture());
-    UploadTexture2D(texture->m_id, width, height, channelCount, pixels, colorSpace);
+    const bool generateMipmaps = samplerSettings.minFilter == GL_LINEAR_MIPMAP_LINEAR ||
+        samplerSettings.minFilter == GL_LINEAR_MIPMAP_NEAREST ||
+        samplerSettings.minFilter == GL_NEAREST_MIPMAP_LINEAR ||
+        samplerSettings.minFilter == GL_NEAREST_MIPMAP_NEAREST;
+
+    std::vector<unsigned char> flippedPixels;
+    const unsigned char* uploadPixels = pixels;
+    if (flipVertically)
+    {
+        flippedPixels = FlipRowsVertically(pixels, width, height, channelCount);
+        uploadPixels = flippedPixels.data();
+    }
+
+    UploadTexture2D(
+        texture->m_id,
+        width,
+        height,
+        channelCount,
+        uploadPixels,
+        colorSpace,
+        samplerSettings,
+        generateMipmaps);
     texture->m_valid = true;
     return texture;
 }

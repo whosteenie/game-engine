@@ -11,7 +11,11 @@ class TextureCache
 public:
     static TextureCache& Get();
 
-    std::shared_ptr<Texture> Load(const char* path, TextureColorSpace colorSpace);
+    std::shared_ptr<Texture> Load(
+        const char* path,
+        TextureColorSpace colorSpace,
+        const TextureSamplerSettings& samplerSettings = TextureSamplerSettings{},
+        bool flipVertically = true);
 
 private:
     TextureCache() = default;

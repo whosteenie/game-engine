@@ -31,7 +31,7 @@ namespace
             const glm::vec3 position = glm::vec3(0.0f, centerY, 0.0f) + normal * radius;
             const glm::vec3 tangent(-std::sin(theta), 0.0f, std::cos(theta));
 
-            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, v), tangent);
+            PrimitiveMesh::PushVertex(vertices, position, normal, glm::vec2(u, v), glm::vec4(tangent, 1.0f));
         }
     }
 }
@@ -58,11 +58,11 @@ std::unique_ptr<Mesh> CreateCapsuleMesh(float radius, float height, int slices, 
         const float phi = t * glm::half_pi<float>();
         const float v = static_cast<float>(capStacks - capStack) / static_cast<float>(capStacks * 2 + 1);
 
-        ringStarts.push_back(static_cast<unsigned int>(vertices.size() / 11));
+        ringStarts.push_back(static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount));
         AppendHemisphereRing(vertices, radius, topCenterY, phi, slices, v);
     }
 
-    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / 11));
+    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount));
     for (int slice = 0; slice <= slices; ++slice)
     {
         const float u = static_cast<float>(slice) / static_cast<float>(slices);
@@ -76,10 +76,10 @@ std::unique_ptr<Mesh> CreateCapsuleMesh(float radius, float height, int slices, 
             position,
             normal,
             glm::vec2(u, static_cast<float>(capStacks) / static_cast<float>(capStacks * 2 + 1)),
-            tangent);
+            glm::vec4(tangent, 1.0f));
     }
 
-    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / 11));
+    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount));
     for (int slice = 0; slice <= slices; ++slice)
     {
         const float u = static_cast<float>(slice) / static_cast<float>(slices);
@@ -93,7 +93,7 @@ std::unique_ptr<Mesh> CreateCapsuleMesh(float radius, float height, int slices, 
             position,
             normal,
             glm::vec2(u, static_cast<float>(capStacks + 1) / static_cast<float>(capStacks * 2 + 1)),
-            tangent);
+            glm::vec4(tangent, 1.0f));
     }
 
     for (int capStack = 1; capStack <= capStacks; ++capStack)
@@ -102,11 +102,11 @@ std::unique_ptr<Mesh> CreateCapsuleMesh(float radius, float height, int slices, 
         const float phi = glm::pi<float>() - t * glm::half_pi<float>();
         const float v = static_cast<float>(capStacks + 1 + capStack) / static_cast<float>(capStacks * 2 + 1);
 
-        ringStarts.push_back(static_cast<unsigned int>(vertices.size() / 11));
+        ringStarts.push_back(static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount));
         AppendHemisphereRing(vertices, radius, bottomCenterY, phi, slices, v);
     }
 
-    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / 11));
+    ringStarts.push_back(static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount));
 
     for (std::size_t ring = 0; ring + 1 < ringStarts.size(); ++ring)
     {

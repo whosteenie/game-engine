@@ -656,8 +656,19 @@ void Scene::RenderShadowPass() const
             continue;
         }
 
+        const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+        if (object.GetMaterial().IsDoubleSided())
+        {
+            glDisable(GL_CULL_FACE);
+        }
+
         m_shadowDepthShader->SetMat4("uModel", GetWorldMatrix(static_cast<int>(objectIndex)));
         object.GetMesh()->Draw();
+
+        if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
+        {
+            glEnable(GL_CULL_FACE);
+        }
     }
 }
 
@@ -680,6 +691,12 @@ void Scene::Render(
         }
 
         const glm::mat4 modelMatrix = GetWorldMatrix(static_cast<int>(objectIndex));
+        const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+        if (object.GetMaterial().IsDoubleSided())
+        {
+            glDisable(GL_CULL_FACE);
+        }
+
         object.GetMaterial().Apply(
             camera,
             m_lighting,
@@ -688,6 +705,11 @@ void Scene::Render(
             m_shadowMap.get(),
             object.ReceivesShadow());
         object.GetMesh()->Draw();
+
+        if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
+        {
+            glEnable(GL_CULL_FACE);
+        }
     }
 
     m_grid->Draw(camera);

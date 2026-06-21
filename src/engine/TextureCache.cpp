@@ -1,7 +1,27 @@
 #include "engine/TextureCache.h"
 
+#include "engine/TextureSamplerSettings.h"
+
 #include <stdexcept>
 #include <string>
+
+namespace
+{
+    std::string MakeCacheKey(
+        const char* path,
+        TextureColorSpace colorSpace,
+        const TextureSamplerSettings& samplerSettings,
+        bool flipVertically)
+    {
+        return std::string(path) + "|" +
+            (colorSpace == TextureColorSpace::SRGB ? "srgb" : "linear") + "|" +
+            std::to_string(samplerSettings.wrapS) + "|" +
+            std::to_string(samplerSettings.wrapT) + "|" +
+            std::to_string(samplerSettings.minFilter) + "|" +
+            std::to_string(samplerSettings.magFilter) + "|" +
+            (flipVertically ? "flip" : "noflip");
+    }
+}
 
 TextureCache& TextureCache::Get()
 {
@@ -9,9 +29,13 @@ TextureCache& TextureCache::Get()
     return cache;
 }
 
-std::shared_ptr<Texture> TextureCache::Load(const char* path, TextureColorSpace colorSpace)
+std::shared_ptr<Texture> TextureCache::Load(
+    const char* path,
+    TextureColorSpace colorSpace,
+    const TextureSamplerSettings& samplerSettings,
+    bool flipVertically)
 {
-    const std::string cacheKey = std::string(path) + (colorSpace == TextureColorSpace::SRGB ? "|srgb" : "|linear");
+    const std::string cacheKey = MakeCacheKey(path, colorSpace, samplerSettings, flipVertically);
 
     const auto existing = m_textures.find(cacheKey);
     if (existing != m_textures.end())
@@ -25,7 +49,7 @@ std::shared_ptr<Texture> TextureCache::Load(const char* path, TextureColorSpace 
     std::shared_ptr<Texture> texture;
     try
     {
-        texture = std::make_shared<Texture>(path, colorSpace);
+        texture = std::make_shared<Texture>(path, colorSpace, samplerSettings, flipVertically);
     }
     catch (const std::exception& exception)
     {
