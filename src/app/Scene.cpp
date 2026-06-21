@@ -9,6 +9,8 @@
 #include "engine/Material.h"
 #include "engine/MaterialTextures.h"
 #include "engine/Mesh.h"
+#include "engine/ModelImporter.h"
+#include "engine/SceneHierarchy.h"
 #include "primitives/Cube.h"
 #include "primitives/Floor.h"
 #include "primitives/Sphere.h"
@@ -240,6 +242,159 @@ int Scene::AddObject(ScenePrimitive primitive)
     return static_cast<int>(m_objects.size()) - 1;
 }
 
+int Scene::AddEmptyObject(int parentIndex)
+{
+    const std::string objectName = "Empty " + std::to_string(m_nextEmptyNumber++);
+
+    m_objects.emplace_back(
+        objectName,
+        nullptr,
+        nullptr,
+        glm::vec3(0.0f),
+        glm::vec3(0.0f),
+        Transform{},
+        true,
+        false,
+        false,
+        parentIndex);
+
+    return static_cast<int>(m_objects.size()) - 1;
+}
+
+glm::mat4 Scene::GetWorldMatrix(int objectIndex) const
+{
+    return GetObjectWorldMatrix(m_objects, objectIndex);
+}
+
+void Scene::GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const
+{
+    GetObjectWorldBounds(m_objects, objectIndex, boundsMin, boundsMax);
+}
+
+std::vector<int> Scene::GetChildren(int objectIndex) const
+{
+    return GetObjectChildren(m_objects, objectIndex);
+}
+
+std::vector<int> Scene::GetRootObjectIndices() const
+{
+    return ::GetRootObjectIndices(m_objects);
+}
+
+void Scene::CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const
+{
+    outIndices.push_back(objectIndex);
+    for (int childIndex : GetChildren(objectIndex))
+    {
+        CollectDescendantIndices(childIndex, outIndices);
+    }
+}
+
+void Scene::RemapParentIndicesAfterRemoval(int removedIndex)
+{
+    for (SceneObject& object : m_objects)
+    {
+        int parentIndex = object.GetParentIndex();
+        if (parentIndex > removedIndex)
+        {
+            object.SetParentIndex(parentIndex - 1);
+        }
+    }
+
+    if (m_selectedObjectIndex > removedIndex)
+    {
+        --m_selectedObjectIndex;
+    }
+    else if (m_selectedObjectIndex == removedIndex)
+    {
+        m_selectedObjectIndex = -1;
+    }
+}
+
+std::vector<int> Scene::ImportModel(const std::string& path)
+{
+    m_lastImportError.clear();
+
+    ImportedModel importedModel = LoadModelFromFile(path);
+    if (!importedModel.errorMessage.empty())
+    {
+        m_lastImportError = importedModel.errorMessage;
+        return {};
+    }
+
+    if (importedModel.nodes.empty() || importedModel.rootNodeIndex < 0)
+    {
+        m_lastImportError = "No meshes were imported from the model.";
+        return {};
+    }
+
+    const float spread = static_cast<float>(m_nextImportNumber) * 2.5f;
+    ++m_nextImportNumber;
+
+    float minWorldY = std::numeric_limits<float>::max();
+    for (std::size_t nodeIndex = 0; nodeIndex < importedModel.nodes.size(); ++nodeIndex)
+    {
+        const ImportedSceneNode& node = importedModel.nodes[nodeIndex];
+        if (!node.hasMesh)
+        {
+            continue;
+        }
+
+        const glm::mat4 worldMatrix = GetImportedNodeWorldMatrix(importedModel.nodes, static_cast<int>(nodeIndex));
+        const glm::vec3 corners[2] = {node.boundsMin, node.boundsMax};
+        for (const glm::vec3& corner : corners)
+        {
+            const glm::vec4 worldCorner = worldMatrix * glm::vec4(corner, 1.0f);
+            minWorldY = std::min(minWorldY, worldCorner.y);
+        }
+    }
+
+    const float floorOffset = minWorldY < std::numeric_limits<float>::max() ? -minWorldY : 0.0f;
+    importedModel.nodes[static_cast<std::size_t>(importedModel.rootNodeIndex)].transform.position +=
+        glm::vec3(spread, floorOffset, 0.0f);
+
+    const int baseObjectIndex = static_cast<int>(m_objects.size());
+    std::vector<int> importedSceneIndices;
+    importedSceneIndices.reserve(importedModel.nodes.size());
+
+    for (ImportedSceneNode& node : importedModel.nodes)
+    {
+        Mesh* mesh = nullptr;
+        if (node.hasMesh && node.mesh != nullptr)
+        {
+            m_importedMeshes.push_back(std::move(node.mesh));
+            mesh = m_importedMeshes.back().get();
+        }
+
+        int parentSceneIndex = -1;
+        if (node.parentIndex >= 0)
+        {
+            parentSceneIndex = importedSceneIndices[static_cast<std::size_t>(node.parentIndex)];
+        }
+
+        m_objects.emplace_back(
+            node.name,
+            mesh,
+            node.hasMesh ? std::move(node.material) : nullptr,
+            node.hasMesh ? node.boundsMin : glm::vec3(0.0f),
+            node.hasMesh ? node.boundsMax : glm::vec3(0.0f),
+            node.transform,
+            true,
+            node.hasMesh,
+            node.hasMesh,
+            parentSceneIndex);
+
+        importedSceneIndices.push_back(static_cast<int>(m_objects.size()) - 1);
+    }
+
+    return {baseObjectIndex + importedModel.rootNodeIndex};
+}
+
+const std::string& Scene::GetLastImportError() const
+{
+    return m_lastImportError;
+}
+
 bool Scene::RemoveObject(std::size_t index)
 {
     if (index >= m_objects.size())
@@ -247,23 +402,19 @@ bool Scene::RemoveObject(std::size_t index)
         return false;
     }
 
-    m_objects.erase(m_objects.begin() + static_cast<std::ptrdiff_t>(index));
+    std::vector<int> indicesToRemove;
+    CollectDescendantIndices(static_cast<int>(index), indicesToRemove);
+    std::sort(indicesToRemove.begin(), indicesToRemove.end(), std::greater<int>());
+
+    for (int removeIndex : indicesToRemove)
+    {
+        m_objects.erase(m_objects.begin() + removeIndex);
+        RemapParentIndicesAfterRemoval(removeIndex);
+    }
 
     if (m_objects.empty())
     {
         m_selectedObjectIndex = -1;
-        return true;
-    }
-
-    if (m_selectedObjectIndex == static_cast<int>(index))
-    {
-        m_selectedObjectIndex = std::min(
-            static_cast<int>(index),
-            static_cast<int>(m_objects.size()) - 1);
-    }
-    else if (m_selectedObjectIndex > static_cast<int>(index))
-    {
-        --m_selectedObjectIndex;
     }
 
     return true;
@@ -439,8 +590,9 @@ void Scene::RenderShadowPass() const
     glm::vec3 boundsMin(std::numeric_limits<float>::max());
     glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
 
-    for (const SceneObject& object : m_objects)
+    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
     {
+        const SceneObject& object = m_objects[objectIndex];
         if (!object.CastsShadow() && !object.ReceivesShadow())
         {
             continue;
@@ -448,7 +600,7 @@ void Scene::RenderShadowPass() const
 
         glm::vec3 objectBoundsMin;
         glm::vec3 objectBoundsMax;
-        object.GetWorldBounds(objectBoundsMin, objectBoundsMax);
+        GetWorldBounds(static_cast<int>(objectIndex), objectBoundsMin, objectBoundsMax);
         boundsMin = glm::min(boundsMin, objectBoundsMin);
         boundsMax = glm::max(boundsMax, objectBoundsMax);
     }
@@ -458,14 +610,15 @@ void Scene::RenderShadowPass() const
     m_shadowDepthShader->Use();
     m_shadowDepthShader->SetMat4("uLightSpaceMatrix", m_shadowMap->GetLightSpaceMatrix());
 
-    for (const SceneObject& object : m_objects)
+    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
     {
-        if (!object.CastsShadow())
+        const SceneObject& object = m_objects[objectIndex];
+        if (!object.IsRenderable() || !object.CastsShadow())
         {
             continue;
         }
 
-        m_shadowDepthShader->SetMat4("uModel", object.GetTransform().ToMatrix());
+        m_shadowDepthShader->SetMat4("uModel", GetWorldMatrix(static_cast<int>(objectIndex)));
         object.GetMesh()->Draw();
     }
 }
@@ -480,9 +633,15 @@ void Scene::Render(
 
     glViewport(0, 0, viewportWidth, viewportHeight);
 
-    for (const SceneObject& object : m_objects)
+    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
     {
-        const glm::mat4 modelMatrix = object.GetTransform().ToMatrix();
+        const SceneObject& object = m_objects[objectIndex];
+        if (!object.IsRenderable())
+        {
+            continue;
+        }
+
+        const glm::mat4 modelMatrix = GetWorldMatrix(static_cast<int>(objectIndex));
         object.GetMaterial().Apply(
             camera,
             m_lighting,

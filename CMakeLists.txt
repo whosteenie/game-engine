@@ -68,6 +68,20 @@ FetchContent_MakeAvailable(imgui)
 
 FetchContent_Declare(
 
+    tinygltf
+
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+
+    GIT_TAG v2.9.3
+
+)
+
+FetchContent_MakeAvailable(tinygltf)
+
+
+
+FetchContent_Declare(
+
     imguizmo
 
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
@@ -174,6 +188,8 @@ add_executable(game-engine
 
     src/engine/ScenePicker.cpp
 
+    src/engine/SceneHierarchy.cpp
+
     src/engine/ScenePrimitive.cpp
 
     src/engine/SelectionRenderer.cpp
@@ -193,6 +209,10 @@ add_executable(game-engine
     src/engine/MaterialTextures.cpp
 
     src/engine/Mesh.cpp
+
+    src/engine/ModelImporter.cpp
+
+    src/engine/FileDialog.cpp
 
     src/engine/Renderer.cpp
 
@@ -222,13 +242,17 @@ add_executable(game-engine
 
 
 
-target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb src)
+target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb src ${tinygltf_SOURCE_DIR})
 
 
 
 find_package(OpenGL REQUIRED)
 
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib)
+
+if(WIN32)
+    target_link_libraries(game-engine PRIVATE comdlg32)
+endif()
 
 
 

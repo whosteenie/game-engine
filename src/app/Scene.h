@@ -57,7 +57,15 @@ public:
     const SceneEditor& GetSceneEditor() const;
 
     int AddObject(ScenePrimitive primitive);
+    int AddEmptyObject(int parentIndex = -1);
+    std::vector<int> ImportModel(const std::string& path);
+    const std::string& GetLastImportError() const;
     bool RemoveObject(std::size_t index);
+
+    glm::mat4 GetWorldMatrix(int objectIndex) const;
+    void GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
+    std::vector<int> GetChildren(int objectIndex) const;
+    std::vector<int> GetRootObjectIndices() const;
 
     bool GetShowLightGizmos() const;
     void SetShowLightGizmos(bool showLightGizmos);
@@ -74,6 +82,8 @@ private:
 
     Mesh* GetMeshForPrimitive(ScenePrimitive primitive);
     int GetNextObjectNumber(ScenePrimitive primitive);
+    void RemapParentIndicesAfterRemoval(int removedIndex);
+    void CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const;
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
@@ -81,6 +91,7 @@ private:
     std::unique_ptr<Mesh> m_capsuleMesh;
     std::unique_ptr<Mesh> m_planeMesh;
     std::unique_ptr<Mesh> m_floorMesh;
+    std::vector<std::unique_ptr<Mesh>> m_importedMeshes;
     std::vector<SceneObject> m_objects;
     std::unique_ptr<GridRenderer> m_grid;
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
@@ -97,4 +108,7 @@ private:
     int m_nextCylinderNumber = 1;
     int m_nextCapsuleNumber = 1;
     int m_nextPlaneNumber = 1;
+    int m_nextEmptyNumber = 1;
+    int m_nextImportNumber = 1;
+    std::string m_lastImportError;
 };

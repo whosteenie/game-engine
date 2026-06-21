@@ -2,6 +2,7 @@
 
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
+#include "engine/FileDialog.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
 #include "engine/ScenePrimitive.h"
@@ -231,6 +232,57 @@ namespace
         return false;
     }
 
+    bool AddEmptyFromMenu(Scene& scene)
+    {
+        if (ImGui::MenuItem("Empty"))
+        {
+            const int parentIndex = scene.HasSelection() ? scene.GetSelectedObjectIndex() : -1;
+            const int newIndex = scene.AddEmptyObject(parentIndex);
+            scene.SetSelectedObjectIndex(newIndex);
+            return true;
+        }
+
+        return false;
+    }
+
+    void DrawHierarchyNode(Scene& scene, int objectIndex, int selectedIndex)
+    {
+        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const std::vector<int> children = scene.GetChildren(objectIndex);
+
+        ImGui::PushID(objectIndex);
+
+        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (objectIndex == selectedIndex)
+        {
+            flags |= ImGuiTreeNodeFlags_Selected;
+        }
+
+        if (children.empty())
+        {
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        }
+
+        const std::string label = object.IsRenderable() ? object.GetName() : "[Empty] " + object.GetName();
+        const bool opened = ImGui::TreeNodeEx(label.c_str(), flags);
+        if (ImGui::IsItemClicked())
+        {
+            scene.SetSelectedObjectIndex(objectIndex);
+        }
+
+        if (opened && !children.empty())
+        {
+            for (int childIndex : children)
+            {
+                DrawHierarchyNode(scene, childIndex, selectedIndex);
+            }
+
+            ImGui::TreePop();
+        }
+
+        ImGui::PopID();
+    }
+
     void Draw3DObjectMenu(Scene& scene)
     {
         if (ImGui::BeginMenu("3D Object"))
@@ -244,11 +296,33 @@ namespace
         }
     }
 
+    void ImportModelFromDialog(Scene& scene)
+    {
+        std::string modelPath;
+        if (!FileDialog::OpenModelFile(modelPath))
+        {
+            return;
+        }
+
+        const std::vector<int> importedIndices = scene.ImportModel(modelPath);
+        if (importedIndices.empty())
+        {
+            return;
+        }
+
+        scene.SetSelectedObjectIndex(importedIndices.front());
+    }
+
     void DrawAddObjectPopup(Scene& scene)
     {
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
+            AddEmptyFromMenu(scene);
             Draw3DObjectMenu(scene);
+            if (ImGui::MenuItem("Import Model..."))
+            {
+                ImportModelFromDialog(scene);
+            }
             ImGui::EndPopup();
         }
     }
@@ -312,6 +386,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
         ImGui::OpenPopup("AddObjectPopup");
     }
     DrawAddObjectPopup(scene);
+    selectedIndex = scene.GetSelectedObjectIndex();
 
     ImGui::BeginChild("HierarchyList", ImVec2(0.0f, 180.0f), ImGuiChildFlags_Borders);
     if (ImGui::Selectable("(none)", selectedIndex < 0))
@@ -322,28 +397,38 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
 
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        const bool isSelected = objectIndex == selectedIndex;
-
-        if (ImGui::Selectable(object.GetName().c_str(), isSelected))
+        if (objects[static_cast<std::size_t>(objectIndex)].GetParentIndex() >= 0)
         {
-            scene.SetSelectedObjectIndex(objectIndex);
-            selectedIndex = objectIndex;
+            continue;
         }
+
+        DrawHierarchyNode(scene, objectIndex, selectedIndex);
     }
 
     if (ImGui::BeginPopupContextWindow("HierarchyContextMenu", ImGuiPopupFlags_MouseButtonRight))
     {
+        AddEmptyFromMenu(scene);
         Draw3DObjectMenu(scene);
+        if (ImGui::MenuItem("Import Model..."))
+        {
+            ImportModelFromDialog(scene);
+        }
         ImGui::EndPopup();
     }
 
+    const std::string& importError = scene.GetLastImportError();
+    if (!importError.empty())
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Import failed: %s", importError.c_str());
+    }
+
     ImGui::EndChild();
+    selectedIndex = scene.GetSelectedObjectIndex();
 
     ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {
-        scene.RemoveObject(static_cast<std::size_t>(selectedIndex));
+        scene.RemoveObject(static_cast<std::size_t>(scene.GetSelectedObjectIndex()));
         selectedIndex = scene.GetSelectedObjectIndex();
     }
     ImGui::EndDisabled();
@@ -357,6 +442,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
         return;
     }
 
+    selectedIndex = scene.GetSelectedObjectIndex();
     SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
     ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());
 
@@ -385,26 +471,38 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
 
     if (ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        bool movable = selectedObject.IsMovable();
-        if (ImGui::Checkbox("Movable", &movable))
+        if (selectedObject.IsRenderable())
         {
-            selectedObject.SetMovable(movable);
-        }
+            bool movable = selectedObject.IsMovable();
+            if (ImGui::Checkbox("Movable", &movable))
+            {
+                selectedObject.SetMovable(movable);
+            }
 
-        bool castShadow = selectedObject.CastsShadow();
-        if (ImGui::Checkbox("Cast shadow", &castShadow))
-        {
-            selectedObject.SetCastShadow(castShadow);
-        }
+            bool castShadow = selectedObject.CastsShadow();
+            if (ImGui::Checkbox("Cast shadow", &castShadow))
+            {
+                selectedObject.SetCastShadow(castShadow);
+            }
 
-        bool receiveShadow = selectedObject.ReceivesShadow();
-        if (ImGui::Checkbox("Receive shadow", &receiveShadow))
+            bool receiveShadow = selectedObject.ReceivesShadow();
+            if (ImGui::Checkbox("Receive shadow", &receiveShadow))
+            {
+                selectedObject.SetReceiveShadow(receiveShadow);
+            }
+        }
+        else
         {
-            selectedObject.SetReceiveShadow(receiveShadow);
+            ImGui::TextUnformatted("Empty object (transform container only).");
+            bool movable = selectedObject.IsMovable();
+            if (ImGui::Checkbox("Movable", &movable))
+            {
+                selectedObject.SetMovable(movable);
+            }
         }
     }
 
-    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
+    if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::PushID(selectedIndex);
         DrawMaterialSection(selectedObject.GetMaterial());

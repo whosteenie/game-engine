@@ -1,5 +1,6 @@
 #include "engine/ScenePicker.h"
 
+#include "engine/SceneHierarchy.h"
 #include "engine/SceneObject.h"
 
 #include <limits>
@@ -53,9 +54,7 @@ bool IntersectRayAabb(
     return hitDistance >= 0.0f;
 }
 
-int PickSceneObject(
-    const std::vector<SceneObject>& objects,
-    const Ray& ray)
+int PickSceneObject(const std::vector<SceneObject>& objects, const Ray& ray)
 {
     int closestIndex = -1;
     float closestDistance = std::numeric_limits<float>::max();
@@ -63,9 +62,14 @@ int PickSceneObject(
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
         const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.IsRenderable())
+        {
+            continue;
+        }
+
         glm::vec3 boundsMin;
         glm::vec3 boundsMax;
-        object.GetWorldBounds(boundsMin, boundsMax);
+        GetObjectWorldBounds(objects, objectIndex, boundsMin, boundsMax);
 
         float hitDistance = 0.0f;
         if (!IntersectRayAabb(ray, boundsMin, boundsMax, hitDistance))

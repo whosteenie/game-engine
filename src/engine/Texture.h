@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 enum class TextureColorSpace
 {
     Linear = 0,
@@ -10,6 +12,12 @@ class Texture
 {
 public:
     Texture(const char* path, TextureColorSpace colorSpace);
+    static std::shared_ptr<Texture> CreateFromPixels(
+        const unsigned char* pixels,
+        int width,
+        int height,
+        int channelCount,
+        TextureColorSpace colorSpace);
     ~Texture();
 
     Texture(const Texture&) = delete;
@@ -20,6 +28,8 @@ public:
     bool IsValid() const;
 
 private:
+    Texture() = default;
+
     unsigned int m_id = 0;
     bool m_valid = false;
 };

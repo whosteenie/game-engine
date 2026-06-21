@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/glm.hpp>
 #include <memory>
 
 class Camera;
@@ -12,7 +13,7 @@ public:
     SelectionRenderer();
     ~SelectionRenderer();
 
-    void Draw(const Camera& camera, const SceneObject& object) const;
+    void Draw(const Camera& camera, const SceneObject& object, const glm::mat4& worldMatrix) const;
 
 private:
     std::unique_ptr<Shader> m_shader;

@@ -68,7 +68,7 @@ namespace
         ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
 
         Transform& transform = selectedObject.GetTransform();
-        glm::mat4 modelMatrix = transform.ToMatrix();
+        glm::mat4 worldMatrix = scene.GetWorldMatrix(selectedIndex);
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
@@ -77,9 +77,16 @@ namespace
                 glm::value_ptr(projectionMatrix),
                 ToImGuizmoOperation(tool),
                 ToImGuizmoMode(space),
-                glm::value_ptr(modelMatrix)))
+                glm::value_ptr(worldMatrix)))
         {
-            transform.SetFromMatrix(modelMatrix);
+            glm::mat4 parentWorldMatrix(1.0f);
+            const int parentIndex = selectedObject.GetParentIndex();
+            if (parentIndex >= 0)
+            {
+                parentWorldMatrix = scene.GetWorldMatrix(parentIndex);
+            }
+
+            transform.SetFromMatrix(glm::inverse(parentWorldMatrix) * worldMatrix);
         }
     }
 }
@@ -194,5 +201,5 @@ void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camer
     }
 
     const SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
-    m_selectionRenderer->Draw(camera, selectedObject);
+    m_selectionRenderer->Draw(camera, selectedObject, scene.GetWorldMatrix(selectedIndex));
 }

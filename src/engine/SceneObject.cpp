@@ -4,6 +4,7 @@
 
 #include <array>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 SceneObject::SceneObject(
@@ -15,13 +16,15 @@ SceneObject::SceneObject(
     Transform transform,
     bool movable,
     bool castShadow,
-    bool receiveShadow)
+    bool receiveShadow,
+    int parentIndex)
     : m_name(std::move(name)),
       m_mesh(mesh),
       m_material(std::move(material)),
       m_transform(transform),
       m_localBoundsMin(localBoundsMin),
       m_localBoundsMax(localBoundsMax),
+      m_parentIndex(parentIndex),
       m_movable(movable),
       m_castShadow(castShadow),
       m_receiveShadow(receiveShadow)
@@ -50,17 +53,52 @@ const Transform& SceneObject::GetTransform() const
 
 Material& SceneObject::GetMaterial()
 {
+    if (m_material == nullptr)
+    {
+        throw std::logic_error("SceneObject has no material.");
+    }
+
     return *m_material;
 }
 
 const Material& SceneObject::GetMaterial() const
 {
+    if (m_material == nullptr)
+    {
+        throw std::logic_error("SceneObject has no material.");
+    }
+
     return *m_material;
 }
 
 Mesh* SceneObject::GetMesh() const
 {
     return m_mesh;
+}
+
+bool SceneObject::HasMesh() const
+{
+    return m_mesh != nullptr;
+}
+
+bool SceneObject::HasMaterial() const
+{
+    return m_material != nullptr;
+}
+
+bool SceneObject::IsRenderable() const
+{
+    return m_mesh != nullptr && m_material != nullptr;
+}
+
+int SceneObject::GetParentIndex() const
+{
+    return m_parentIndex;
+}
+
+void SceneObject::SetParentIndex(int parentIndex)
+{
+    m_parentIndex = parentIndex;
 }
 
 bool SceneObject::IsMovable() const
@@ -93,9 +131,11 @@ void SceneObject::SetReceiveShadow(bool receiveShadow)
     m_receiveShadow = receiveShadow;
 }
 
-void SceneObject::GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const
+void SceneObject::GetWorldBounds(
+    const glm::mat4& worldMatrix,
+    glm::vec3& boundsMin,
+    glm::vec3& boundsMax) const
 {
-    const glm::mat4 modelMatrix = m_transform.ToMatrix();
     const std::array<glm::vec3, 8> corners = {
         glm::vec3(m_localBoundsMin.x, m_localBoundsMin.y, m_localBoundsMin.z),
         glm::vec3(m_localBoundsMax.x, m_localBoundsMin.y, m_localBoundsMin.z),
@@ -112,7 +152,7 @@ void SceneObject::GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) con
 
     for (const glm::vec3& corner : corners)
     {
-        const glm::vec4 worldCorner = modelMatrix * glm::vec4(corner, 1.0f);
+        const glm::vec4 worldCorner = worldMatrix * glm::vec4(corner, 1.0f);
         const glm::vec3 worldPosition = glm::vec3(worldCorner);
         boundsMin = glm::min(boundsMin, worldPosition);
         boundsMax = glm::max(boundsMax, worldPosition);

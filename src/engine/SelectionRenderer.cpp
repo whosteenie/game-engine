@@ -31,15 +31,33 @@ SelectionRenderer::~SelectionRenderer()
     glDeleteBuffers(1, &m_vbo);
 }
 
-void SelectionRenderer::Draw(const Camera& camera, const SceneObject& object) const
+void SelectionRenderer::Draw(
+    const Camera& camera,
+    const SceneObject& object,
+    const glm::mat4& worldMatrix) const
 {
     std::vector<float> vertices;
-    GizmoGeometry::AppendOrientedBoxOutline(
-        vertices,
-        object.GetTransform().ToMatrix(),
-        object.GetLocalBoundsMin(),
-        object.GetLocalBoundsMax(),
-        0.03f);
+
+    if (object.IsRenderable())
+    {
+        GizmoGeometry::AppendOrientedBoxOutline(
+            vertices,
+            worldMatrix,
+            object.GetLocalBoundsMin(),
+            object.GetLocalBoundsMax(),
+            0.03f);
+    }
+    else
+    {
+        const glm::vec3 pivotBoundsMin(-0.15f);
+        const glm::vec3 pivotBoundsMax(0.15f);
+        GizmoGeometry::AppendOrientedBoxOutline(
+            vertices,
+            worldMatrix,
+            pivotBoundsMin,
+            pivotBoundsMax,
+            0.02f);
+    }
 
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
