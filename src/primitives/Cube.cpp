@@ -1,6 +1,6 @@
 #include "primitives/Cube.h"
 
-#include "Mesh.h"
+#include "engine/Mesh.h"
 
 #include <memory>
 

@@ -19,14 +19,11 @@ void main()
     vec3 lightDir = normalize(uLightPos - vFragPos);
     vec3 viewDir = normalize(uViewPos - vFragPos);
 
-    // Ambient
     vec3 ambient = ambientStrength * uObjectColor;
 
-    // Diffuse
     float diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = diffuseStrength * diff * uObjectColor;
 
-    // Specular (Phong)
     vec3 reflectDir = reflect(-lightDir, norm);
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), shininess);
     vec3 specular = specularStrength * spec * vec3(1.0);

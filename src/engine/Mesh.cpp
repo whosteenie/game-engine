@@ -1,6 +1,6 @@
 #include <glad/glad.h>
 
-#include "Mesh.h"
+#include "engine/Mesh.h"
 
 Mesh::Mesh(const float* vertices, unsigned int vertexCount,
            const unsigned int* indices, unsigned int indexCount)
@@ -20,11 +20,9 @@ Mesh::Mesh(const float* vertices, unsigned int vertexCount,
 
     const int stride = 6 * sizeof(float);
 
-    // location 0: position
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
     glEnableVertexAttribArray(0);
 
-    // location 1: normal
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 

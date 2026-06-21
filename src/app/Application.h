@@ -1,13 +1,14 @@
 #pragma once
 
-#include <glm/glm.hpp>
 #include <memory>
 
 struct GLFWwindow;
 class Camera;
-class Mesh;
+class DemoScene;
+class Input;
+class Light;
+class Material;
 class Renderer;
-class Shader;
 
 class Application
 {
@@ -23,7 +24,6 @@ private:
 
     void Update(double deltaTime);
     void Render();
-    void HandleInput(double deltaTime);
     void OnFramebufferResize(int width, int height);
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
@@ -33,14 +33,12 @@ private:
     const char* m_title;
 
     GLFWwindow* m_window = nullptr;
-    double m_animationTime = 0.0;
     bool m_paused = false;
-    bool m_spaceWasDown = false;
 
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<Camera> m_camera;
-    std::unique_ptr<Shader> m_shader;
-    std::unique_ptr<Mesh> m_mesh;
-
-    glm::vec3 m_position = glm::vec3(0.0f);
+    std::unique_ptr<Light> m_light;
+    std::unique_ptr<Material> m_material;
+    std::unique_ptr<Input> m_input;
+    std::unique_ptr<DemoScene> m_scene;
 };

@@ -27,13 +27,17 @@ FetchContent_MakeAvailable(glm)
 
 add_executable(game-engine
     src/main.cpp
-    src/Application.cpp
-    src/Camera.cpp
-    src/Mesh.cpp
-    src/Renderer.cpp
-    src/Shader.cpp
-    src/primitives/Triangle.cpp
+    src/app/Application.cpp
+    src/app/DemoScene.cpp
+    src/engine/Camera.cpp
+    src/engine/Input.cpp
+    src/engine/Light.cpp
+    src/engine/Material.cpp
+    src/engine/Mesh.cpp
+    src/engine/Renderer.cpp
+    src/engine/Shader.cpp
     src/primitives/Cube.cpp
+    src/primitives/Triangle.cpp
     vendor/glad/src/glad.c
 )
 

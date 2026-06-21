@@ -1,6 +1,6 @@
 #include <glad/glad.h>
 
-#include "Shader.h"
+#include "engine/Shader.h"
 
 #include <fstream>
 #include <iostream>
@@ -34,6 +34,20 @@ void Shader::Use() const
 void Shader::SetFloat(const char* name, float value) const
 {
     glUniform1f(glGetUniformLocation(m_programID, name), value);
+}
+
+void Shader::SetMat4(const char* name, const glm::mat4& value) const
+{
+    glUniformMatrix4fv(
+        glGetUniformLocation(m_programID, name),
+        1,
+        GL_FALSE,
+        glm::value_ptr(value));
+}
+
+void Shader::SetVec3(const char* name, const glm::vec3& value) const
+{
+    glUniform3fv(glGetUniformLocation(m_programID, name), 1, glm::value_ptr(value));
 }
 
 std::string Shader::ReadFile(const char* filepath) const
@@ -85,19 +99,4 @@ unsigned int Shader::Link(unsigned int vertex, unsigned int fragment) const
     }
 
     return program;
-}
-
-void Shader::SetMat4(const char* name, const glm::mat4& value) const
-{
-    glUniformMatrix4fv(
-        glGetUniformLocation(m_programID, name),
-        1,
-        GL_FALSE,
-        glm::value_ptr(value)
-    );
-}
-
-void Shader::SetVec3(const char* name, const glm::vec3& value) const
-{
-    glUniform3fv(glGetUniformLocation(m_programID, name), 1, glm::value_ptr(value));
 }

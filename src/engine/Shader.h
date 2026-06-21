@@ -1,7 +1,7 @@
 #pragma once
 
-#include <string>
 #include <glm/glm.hpp>
+#include <string>
 
 class Shader
 {
@@ -13,6 +13,7 @@ public:
     void SetFloat(const char* name, float value) const;
     void SetMat4(const char* name, const glm::mat4& value) const;
     void SetVec3(const char* name, const glm::vec3& value) const;
+
 private:
     unsigned int m_programID;
 

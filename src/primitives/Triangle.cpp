@@ -1,6 +1,6 @@
 #include "primitives/Triangle.h"
 
-#include "Mesh.h"
+#include "engine/Mesh.h"
 
 #include <memory>
 
