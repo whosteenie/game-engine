@@ -28,7 +28,7 @@ namespace
         return ImGui::ColorEdit3(label, &value.x);
     }
 
-    void DrawTransformRowLabel(const char* label, glm::vec3& value, const glm::vec3& resetValue)
+    bool DrawTransformRowLabel(const char* label, glm::vec3& value, const glm::vec3& resetValue)
     {
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -36,6 +36,7 @@ namespace
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImGui::GetStyleColorVec4(ImGuiCol_FrameBgActive));
         ImGui::Selectable(label, false, ImGuiSelectableFlags_None);
 
+        bool changed = false;
         if (ImGui::BeginPopupContextItem())
         {
             char menuLabel[64];
@@ -43,15 +44,17 @@ namespace
             if (ImGui::MenuItem(menuLabel))
             {
                 value = resetValue;
+                changed = true;
             }
 
             ImGui::EndPopup();
         }
 
         ImGui::PopStyleColor(3);
+        return changed;
     }
 
-    void DrawTransformAxisField(
+    bool DrawTransformAxisField(
         int axis,
         const char* label,
         glm::vec3& value,
@@ -68,8 +71,9 @@ namespace
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
-        ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
 
+        bool changed = dragged;
         if (ImGui::BeginPopupContextItem())
         {
             char menuLabel[64];
@@ -77,15 +81,17 @@ namespace
             if (ImGui::MenuItem(menuLabel))
             {
                 value[axis] = resetValue[axis];
+                changed = true;
             }
 
             ImGui::EndPopup();
         }
 
         ImGui::PopID();
+        return changed;
     }
 
-    void DrawTransformRow(
+    bool DrawTransformRow(
         const char* label,
         glm::vec3& value,
         const glm::vec3& resetValue,
@@ -96,15 +102,16 @@ namespace
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
-        DrawTransformRowLabel(label, value, resetValue);
+        bool changed = DrawTransformRowLabel(label, value, resetValue);
 
         for (int axis = 0; axis < 3; ++axis)
         {
             ImGui::TableSetColumnIndex(axis + 1);
-            DrawTransformAxisField(axis, label, value, resetValue, dragSpeed, format);
+            changed |= DrawTransformAxisField(axis, label, value, resetValue, dragSpeed, format);
         }
 
         ImGui::PopID();
+        return changed;
     }
 
     void DrawMaterialSection(Material& material)
@@ -135,9 +142,7 @@ namespace
 
     void ResetTransform(Transform& transform)
     {
-        transform.position = glm::vec3(0.0f);
-        transform.rotationDegrees = glm::vec3(0.0f);
-        transform.scale = glm::vec3(1.0f);
+        transform.Reset();
     }
 
     void DrawTransformSection(SceneObject& object)
@@ -156,7 +161,13 @@ namespace
             ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
             DrawTransformRow("Position", transform.position, glm::vec3(0.0f), 0.1f);
-            DrawTransformRow("Rotation", transform.rotationDegrees, glm::vec3(0.0f), 0.5f);
+
+            glm::vec3 rotationDegrees = transform.GetRotationDegrees();
+            if (DrawTransformRow("Rotation", rotationDegrees, glm::vec3(0.0f), 0.5f))
+            {
+                transform.SetRotationDegrees(rotationDegrees);
+            }
+
             DrawTransformRow("Scale", transform.scale, glm::vec3(1.0f), 0.01f);
 
             ImGui::EndTable();

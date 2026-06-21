@@ -2,11 +2,7 @@
 
 #include "engine/Mesh.h"
 
-#include <imgui.h>
-#include <ImGuizmo.h>
-
 #include <array>
-#include <glm/gtc/type_ptr.hpp>
 #include <limits>
 #include <utility>
 
@@ -99,38 +95,12 @@ void SceneObject::SetReceiveShadow(bool receiveShadow)
 
 glm::mat4 SceneObject::BuildModelMatrix() const
 {
-    glm::mat4 matrix(1.0f);
-
-    const float translation[3] = {
-        m_transform.position.x,
-        m_transform.position.y,
-        m_transform.position.z,
-    };
-    const float rotation[3] = {
-        m_transform.rotationDegrees.x,
-        m_transform.rotationDegrees.y,
-        m_transform.rotationDegrees.z,
-    };
-    const float scale[3] = {
-        m_transform.scale.x,
-        m_transform.scale.y,
-        m_transform.scale.z,
-    };
-
-    ImGuizmo::RecomposeMatrixFromComponents(translation, rotation, scale, glm::value_ptr(matrix));
-    return matrix;
+    return m_transform.ToMatrix();
 }
 
 void SceneObject::ApplyTransformFromMatrix(const glm::mat4& matrix)
 {
-    float translation[3];
-    float rotationDegrees[3];
-    float scale[3];
-    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(matrix), translation, rotationDegrees, scale);
-
-    m_transform.position = glm::make_vec3(translation);
-    m_transform.rotationDegrees = glm::make_vec3(rotationDegrees);
-    m_transform.scale = glm::make_vec3(scale);
+    m_transform.SetFromMatrix(matrix);
 }
 
 void SceneObject::GetWorldBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const
