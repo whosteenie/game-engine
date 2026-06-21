@@ -21,6 +21,7 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <limits>
@@ -254,18 +255,9 @@ bool DemoScene::RemoveObject(std::size_t index)
 
     if (m_selectedObjectIndex == static_cast<int>(index))
     {
-        if (m_objects.empty())
-        {
-            m_selectedObjectIndex = -1;
-        }
-        else if (index >= m_objects.size())
-        {
-            m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
-        }
-        else
-        {
-            m_selectedObjectIndex = static_cast<int>(index);
-        }
+        m_selectedObjectIndex = std::min(
+            static_cast<int>(index),
+            static_cast<int>(m_objects.size()) - 1);
     }
     else if (m_selectedObjectIndex > static_cast<int>(index))
     {
