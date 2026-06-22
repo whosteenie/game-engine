@@ -168,6 +168,10 @@ add_executable(game-engine
 
     src/app/SceneHierarchyPanel.cpp
 
+    src/app/SceneInspectorPanel.cpp
+
+    src/app/SceneToolbarPanel.cpp
+
     src/app/SceneEditor.cpp
 
     src/app/Scene.cpp

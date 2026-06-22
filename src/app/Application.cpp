@@ -7,6 +7,8 @@
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
 #include "app/SceneHierarchyPanel.h"
+#include "app/SceneInspectorPanel.h"
+#include "app/SceneToolbarPanel.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/ImGuiLayer.h"
@@ -33,7 +35,9 @@ Application::Application(int width, int height, const char* title)
     m_renderer = std::make_unique<Renderer>();
     m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
     m_debugPanel = std::make_unique<DebugPanel>();
+    m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
     m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
+    m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
@@ -108,7 +112,9 @@ void Application::Update(double deltaTime)
     glfwPollEvents();
 
     m_imguiLayer->BeginFrame();
+    m_sceneToolbarPanel->Draw(*m_scene);
     m_sceneHierarchyPanel->Draw(*m_scene);
+    m_sceneInspectorPanel->Draw(*m_scene);
     m_debugPanel->Draw(*m_scene, *m_camera);
 
     const ImGuiIO& io = ImGui::GetIO();
