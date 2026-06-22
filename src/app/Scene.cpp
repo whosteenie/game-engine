@@ -1335,6 +1335,7 @@ void Scene::Render(
         m_screenSpaceEffects->EndScenePass();
         m_screenSpaceEffects->Apply(camera, GetSunDirection(), viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitDepthToDefaultFramebuffer(viewportWidth, viewportHeight);
+        m_sceneEditor->RenderSelectionOverlay(*this, camera);
     }
     else if (m_showGrid)
     {
@@ -1350,5 +1351,8 @@ void Scene::Render(
             m_selectedObjectIndex);
     }
 
-    m_sceneEditor->RenderSelectionOverlay(*this, camera);
+    if (!usePostProcess)
+    {
+        m_sceneEditor->RenderSelectionOverlay(*this, camera);
+    }
 }

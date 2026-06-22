@@ -1,6 +1,5 @@
 #pragma once
 
-#include <glm/glm.hpp>
 #include <memory>
 #include <vector>
 
@@ -18,5 +17,11 @@ public:
     void Draw(const Camera& camera, const std::vector<SelectionMeshDraw>& meshes) const;
 
 private:
-    std::unique_ptr<Shader> m_shader;
+    void DrawOutline(
+        const Camera& camera,
+        const std::vector<SelectionMeshDraw>& meshes,
+        int width,
+        int height) const;
+
+    std::unique_ptr<Shader> m_outlineShader;
 };

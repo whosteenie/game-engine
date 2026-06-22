@@ -302,7 +302,7 @@ void ScreenSpaceEffects::BeginScenePass() const
         SrgbChannelToLinear(kBackgroundSrgb[1]),
         SrgbChannelToLinear(kBackgroundSrgb[2]),
         1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
 void ScreenSpaceEffects::EndScenePass() const

@@ -7,6 +7,7 @@ uniform mat4 uView;
 uniform mat4 uProjection;
 uniform float uOutlineWidth;
 uniform float uOutlineWidthWorld;
+uniform float uRadialExpand;
 uniform float uViewportHeight;
 
 void main()
@@ -17,13 +18,18 @@ void main()
 
     if (uOutlineWidth > 0.0)
     {
+        vec3 modelOrigin = vec3(uModel[3]);
+        vec3 fromOrigin = worldPosition.xyz - modelOrigin;
+        float originDistance = length(fromOrigin);
+        if (originDistance > 0.0001)
+        {
+            worldPosition.xyz = modelOrigin + fromOrigin * (1.0 + uRadialExpand);
+        }
+
+        worldPosition.xyz += worldNormal * uOutlineWidthWorld;
+
+        vec4 clipPosition = uProjection * uView * vec4(worldPosition.xyz, 1.0);
         vec3 viewNormal = normalize(mat3(uView) * worldNormal);
-        float silhouette = 1.0 - clamp(abs(viewNormal.z), 0.0, 1.0);
-        silhouette *= silhouette;
-
-        worldPosition.xyz += worldNormal * (uOutlineWidthWorld * silhouette);
-
-        vec4 clipPosition = uProjection * uView * worldPosition;
         vec3 clipNormal = mat3(uProjection) * viewNormal;
 
         vec2 offset = clipNormal.xy;
@@ -33,9 +39,8 @@ void main()
             offset /= offsetLength;
         }
 
-        float pixelToClip = (2.0 * uOutlineWidth * silhouette) / max(uViewportHeight, 1.0);
+        float pixelToClip = (2.0 * uOutlineWidth) / max(uViewportHeight, 1.0);
         clipPosition.xy += offset * pixelToClip * clipPosition.w;
-        clipPosition.z -= 0.0002 * clipPosition.w;
         gl_Position = clipPosition;
         return;
     }
