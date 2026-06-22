@@ -1,10 +1,12 @@
 #pragma once
 
+#include "engine/LightComponent.h"
 #include "engine/Material.h"
 #include "engine/Transform.h"
 
 #include <glm/glm.hpp>
 #include <memory>
+#include <optional>
 #include <string>
 
 class Mesh;
@@ -23,7 +25,8 @@ public:
         bool castShadow = true,
         bool receiveShadow = true,
         int parentIndex = -1,
-        int siblingOrder = 0);
+        int siblingOrder = 0,
+        std::optional<LightComponent> light = std::nullopt);
 
     const std::string& GetName() const;
     void SetName(const std::string& name);
@@ -39,6 +42,12 @@ public:
     bool HasMesh() const;
     bool HasMaterial() const;
     bool IsRenderable() const;
+
+    bool HasLight() const;
+    LightComponent& GetLight();
+    const LightComponent& GetLight() const;
+    void SetLight(LightComponent light);
+    void ClearLight();
 
     int GetParentIndex() const;
     void SetParentIndex(int parentIndex);
@@ -72,4 +81,5 @@ private:
     bool m_movable = true;
     bool m_castShadow = true;
     bool m_receiveShadow = true;
+    std::optional<LightComponent> m_light;
 };

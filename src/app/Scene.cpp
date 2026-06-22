@@ -17,6 +17,7 @@
 #include "primitives/Capsule.h"
 #include "primitives/Plane.h"
 #include "engine/GridRenderer.h"
+#include "engine/LightComponent.h"
 #include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
 #include "engine/ScreenSpaceEffects.h"
@@ -48,23 +49,60 @@ Scene::Scene()
           EngineConstants::ShadowDepthVertexShader,
           EngineConstants::ShadowDepthFragmentShader))
 {
-    SetupLighting();
+    SetupDefaultSunLight();
     SetupObjects();
 }
 
 Scene::~Scene() = default;
 
-void Scene::SetupLighting()
+void Scene::SetupDefaultSunLight()
 {
-    const glm::vec3 sunDirection = glm::normalize(glm::vec3(0.45f, 0.7f, 0.55f));
-    const glm::vec3 sunColor(1.0f, 0.97f, 0.92f);
+    LightComponent sunLight = MakeDefaultLightComponent(LightType::Directional);
+    Transform sunTransform = MakeDefaultLightTransform(LightType::Directional);
 
-    m_lighting.AddLight(Light::MakeDirectional(
-        sunDirection,
-        sunColor,
-        2.5f));
+    m_objects.emplace_back(
+        "Sun",
+        nullptr,
+        nullptr,
+        glm::vec3(-0.15f),
+        glm::vec3(0.15f),
+        sunTransform,
+        true,
+        false,
+        false,
+        -1,
+        0,
+        std::move(sunLight));
+}
 
-    m_lighting.SetShadowLightIndex(0);
+void Scene::SyncLighting() const
+{
+    m_lighting.ClearLights();
+    int shadowLightIndex = -1;
+
+    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
+    {
+        const SceneObject& object = m_objects[objectIndex];
+        if (!object.HasLight())
+        {
+            continue;
+        }
+
+        if (m_lighting.GetLightCount() >= static_cast<std::size_t>(SceneLighting::MaxLights))
+        {
+            break;
+        }
+
+        const int lightSlot = static_cast<int>(m_lighting.GetLightCount());
+        m_lighting.AddLight(BuildLightFromSceneObject(object, GetWorldMatrix(static_cast<int>(objectIndex))));
+
+        if (shadowLightIndex < 0 && object.GetLight().castsShadow)
+        {
+            shadowLightIndex = lightSlot;
+        }
+    }
+
+    m_lighting.SetShadowLightIndex(shadowLightIndex);
 }
 
 void Scene::SetupObjects()
@@ -88,7 +126,7 @@ void Scene::SetupObjects()
         true,
         true,
         -1,
-        0);
+        1);
 
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -112,9 +150,9 @@ void Scene::SetupObjects()
         true,
         true,
         -1,
-        1);
+        2);
 
-    m_selectedObjectIndex = 1;
+    m_selectedObjectIndex = 2;
 }
 
 namespace
@@ -273,6 +311,54 @@ int Scene::AddEmptyObject(int parentIndex)
         false,
         parentIndex,
         AllocateSiblingOrder(parentIndex));
+
+    return static_cast<int>(m_objects.size()) - 1;
+}
+
+int Scene::AddLightObject(LightType type, int parentIndex)
+{
+    LightComponent lightComponent = MakeDefaultLightComponent(type);
+    Transform transform = MakeDefaultLightTransform(type);
+
+    if (lightComponent.castsShadow)
+    {
+        for (const SceneObject& object : m_objects)
+        {
+            if (object.HasLight() && object.GetLight().castsShadow)
+            {
+                lightComponent.castsShadow = false;
+                break;
+            }
+        }
+    }
+
+    std::string objectName;
+    switch (type)
+    {
+    case LightType::Directional:
+        objectName = "Directional Light " + std::to_string(m_nextDirectionalLightNumber++);
+        break;
+    case LightType::Point:
+        objectName = "Point Light " + std::to_string(m_nextPointLightNumber++);
+        break;
+    case LightType::Spot:
+        objectName = "Spot Light " + std::to_string(m_nextSpotLightNumber++);
+        break;
+    }
+
+    m_objects.emplace_back(
+        objectName,
+        nullptr,
+        nullptr,
+        glm::vec3(-0.15f),
+        glm::vec3(0.15f),
+        transform,
+        true,
+        false,
+        false,
+        parentIndex,
+        AllocateSiblingOrder(parentIndex),
+        std::move(lightComponent));
 
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -551,6 +637,12 @@ int Scene::DuplicateObject(int objectIndex)
             objectName = MakeDuplicateObjectName(source.GetName());
         }
 
+        std::optional<LightComponent> lightClone;
+        if (source.HasLight())
+        {
+            lightClone = source.GetLight();
+        }
+
         m_objects.emplace_back(
             objectName,
             source.GetMesh(),
@@ -562,7 +654,8 @@ int Scene::DuplicateObject(int objectIndex)
             source.CastsShadow(),
             source.ReceivesShadow(),
             newParentIndex,
-            source.GetSiblingOrder());
+            source.GetSiblingOrder(),
+            std::move(lightClone));
 
         const int newIndex = static_cast<int>(m_objects.size()) - 1;
         indexMap[sourceIndex] = newIndex;
@@ -970,45 +1063,6 @@ void Scene::SetShowLightGizmos(bool showLightGizmos)
     m_showLightGizmos = showLightGizmos;
 }
 
-int Scene::GetSelectedLightIndex() const
-{
-    return m_selectedLightIndex;
-}
-
-void Scene::SetSelectedLightIndex(int selectedLightIndex)
-{
-    if (m_lighting.GetLightCount() == 0)
-    {
-        m_selectedLightIndex = -1;
-        return;
-    }
-
-    if (selectedLightIndex < 0)
-    {
-        m_selectedLightIndex = -1;
-        return;
-    }
-
-    if (static_cast<std::size_t>(selectedLightIndex) >= m_lighting.GetLightCount())
-    {
-        m_selectedLightIndex = static_cast<int>(m_lighting.GetLightCount()) - 1;
-        return;
-    }
-
-    m_selectedLightIndex = selectedLightIndex;
-}
-
-void Scene::ClearLightSelection()
-{
-    m_selectedLightIndex = -1;
-}
-
-bool Scene::HasLightSelection() const
-{
-    return m_selectedLightIndex >= 0 &&
-        static_cast<std::size_t>(m_selectedLightIndex) < m_lighting.GetLightCount();
-}
-
 ScreenSpaceEffects& Scene::GetScreenSpaceEffects()
 {
     return *m_screenSpaceEffects;
@@ -1021,13 +1075,23 @@ const ScreenSpaceEffects& Scene::GetScreenSpaceEffects() const
 
 glm::vec3 Scene::GetSunDirection() const
 {
-    const auto& lights = m_lighting.GetLights();
-    if (lights.empty())
+    const int shadowLightIndex = m_lighting.GetShadowLightIndex();
+    if (shadowLightIndex >= 0 &&
+        static_cast<std::size_t>(shadowLightIndex) < m_lighting.GetLightCount())
     {
-        return glm::vec3(0.0f, 1.0f, 0.0f);
+        return m_lighting.GetLight(static_cast<std::size_t>(shadowLightIndex)).GetDirection();
     }
 
-    return lights.front().GetDirection();
+    for (std::size_t lightIndex = 0; lightIndex < m_lighting.GetLightCount(); ++lightIndex)
+    {
+        const Light& light = m_lighting.GetLight(lightIndex);
+        if (light.GetType() == LightType::Directional)
+        {
+            return light.GetDirection();
+        }
+    }
+
+    return glm::vec3(0.0f, 1.0f, 0.0f);
 }
 
 void Scene::Update(
@@ -1106,6 +1170,8 @@ void Scene::Render(
     int viewportWidth,
     int viewportHeight) const
 {
+    SyncLighting();
+
     RenderShadowPass();
     m_shadowMap->EndPass();
 
@@ -1165,7 +1231,11 @@ void Scene::Render(
 
     if (m_showLightGizmos)
     {
-        m_lightGizmos->Draw(camera, m_lighting, m_selectedLightIndex);
+        m_lightGizmos->Draw(
+            camera,
+            m_objects,
+            [this](int objectIndex) { return GetWorldMatrix(objectIndex); },
+            m_selectedObjectIndex);
     }
 
     m_sceneEditor->RenderSelectionOverlay(*this, camera);

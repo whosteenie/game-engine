@@ -2,6 +2,7 @@
 
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
+#include "engine/Light.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneHierarchy.h"
 #include "engine/ScenePrimitive.h"
@@ -160,6 +161,58 @@ namespace
         return false;
     }
 
+    bool AddLightFromMenu(Scene& scene, LightType type, int parentIndex)
+    {
+        const char* label = "Light";
+        switch (type)
+        {
+        case LightType::Directional:
+            label = "Directional Light";
+            break;
+        case LightType::Point:
+            label = "Point Light";
+            break;
+        case LightType::Spot:
+            label = "Spot Light";
+            break;
+        }
+
+        if (ImGui::MenuItem(label))
+        {
+            const int newIndex = scene.AddLightObject(type, parentIndex);
+            scene.SetSelectedObjectIndex(newIndex);
+            return true;
+        }
+
+        return false;
+    }
+
+    void DrawLightMenu(Scene& scene, int parentIndex)
+    {
+        if (ImGui::BeginMenu("Light"))
+        {
+            AddLightFromMenu(scene, LightType::Directional, parentIndex);
+            AddLightFromMenu(scene, LightType::Point, parentIndex);
+            AddLightFromMenu(scene, LightType::Spot, parentIndex);
+            ImGui::EndMenu();
+        }
+    }
+
+    std::string BuildHierarchyLabel(const SceneObject& object)
+    {
+        if (object.HasLight())
+        {
+            return "[Light] " + object.GetName();
+        }
+
+        if (object.IsRenderable())
+        {
+            return object.GetName();
+        }
+
+        return "[Empty] " + object.GetName();
+    }
+
     void Draw3DObjectMenu(Scene& scene, int parentIndex)
     {
         if (ImGui::BeginMenu("3D Object"))
@@ -193,6 +246,7 @@ namespace
     void DrawCreateObjectMenu(Scene& scene, int parentIndex)
     {
         AddEmptyFromMenu(scene, parentIndex);
+        DrawLightMenu(scene, parentIndex);
         Draw3DObjectMenu(scene, parentIndex);
         if (ImGui::MenuItem("Import Model..."))
         {
@@ -447,7 +501,7 @@ namespace
             ImGui::SetNextItemOpen(IsNodeExpanded(objectIndex, openStates), ImGuiCond_Always);
         }
 
-        const std::string label = object.IsRenderable() ? object.GetName() : "[Empty] " + object.GetName();
+        const std::string label = BuildHierarchyLabel(object);
         bool opened = false;
         bool cancelRename = false;
 

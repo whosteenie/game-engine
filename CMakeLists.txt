@@ -192,6 +192,8 @@ add_executable(game-engine
 
     src/engine/Light.cpp
 
+    src/engine/LightComponent.cpp
+
     src/engine/SceneLighting.cpp
 
     src/engine/SceneObject.cpp

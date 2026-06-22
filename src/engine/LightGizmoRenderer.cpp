@@ -4,7 +4,8 @@
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/Light.h"
-#include "engine/SceneLighting.h"
+#include "engine/LightComponent.h"
+#include "engine/SceneObject.h"
 #include "engine/Shader.h"
 
 #include <glm/glm.hpp>
@@ -166,10 +167,13 @@ LightGizmoRenderer::~LightGizmoRenderer()
     glDeleteBuffers(1, &m_vbo);
 }
 
-void LightGizmoRenderer::Draw(const Camera& camera, const SceneLighting& lighting, int selectedLightIndex) const
+void LightGizmoRenderer::Draw(
+    const Camera& camera,
+    const std::vector<SceneObject>& objects,
+    const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
+    int selectedObjectIndex) const
 {
-    const std::size_t lightCount = lighting.GetLightCount();
-    if (lightCount == 0)
+    if (objects.empty())
     {
         return;
     }
@@ -180,10 +184,18 @@ void LightGizmoRenderer::Draw(const Camera& camera, const SceneLighting& lightin
 
     glBindVertexArray(m_vao);
 
-    for (std::size_t lightIndex = 0; lightIndex < lightCount; ++lightIndex)
+    for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
+        const SceneObject& object = objects[objectIndex];
+        if (!object.HasLight())
+        {
+            continue;
+        }
+
+        const Light light = BuildLightFromSceneObject(object, getWorldMatrix(objectIndex));
+
         std::vector<float> vertices;
-        AppendLightGizmo(vertices, lighting.GetLights()[lightIndex]);
+        AppendLightGizmo(vertices, light);
         if (vertices.empty())
         {
             continue;
@@ -192,9 +204,8 @@ void LightGizmoRenderer::Draw(const Camera& camera, const SceneLighting& lightin
         glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
 
-        const bool selected =
-            selectedLightIndex >= 0 && static_cast<int>(lightIndex) == selectedLightIndex;
-        m_shader->SetVec3("uColor", GizmoColor(lighting.GetLights()[lightIndex], selected));
+        const bool selected = selectedObjectIndex >= 0 && objectIndex == selectedObjectIndex;
+        m_shader->SetVec3("uColor", GizmoColor(light, selected));
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
     }
 

@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "engine/Constants.h"
+#include "engine/Light.h"
 #include "engine/SceneLighting.h"
 #include "engine/ScenePrimitive.h"
 #include "engine/Shader.h"
@@ -66,6 +67,7 @@ public:
 
     int AddObject(ScenePrimitive primitive, int parentIndex = -1);
     int AddEmptyObject(int parentIndex = -1);
+    int AddLightObject(LightType type, int parentIndex = -1);
     std::vector<int> ImportModel(const std::string& path, int parentIndex = -1);
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
@@ -89,16 +91,13 @@ public:
 
     bool GetShowLightGizmos() const;
     void SetShowLightGizmos(bool showLightGizmos);
-    int GetSelectedLightIndex() const;
-    void SetSelectedLightIndex(int selectedLightIndex);
-    void ClearLightSelection();
-    bool HasLightSelection() const;
 
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
 
 private:
-    void SetupLighting();
+    void SetupDefaultSunLight();
+    void SyncLighting() const;
     void SetupObjects();
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass() const;
@@ -126,10 +125,12 @@ private:
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;
-    SceneLighting m_lighting;
+    mutable SceneLighting m_lighting;
     int m_selectedObjectIndex = 1;
     bool m_showLightGizmos = true;
-    int m_selectedLightIndex = 0;
+    int m_nextDirectionalLightNumber = 2;
+    int m_nextPointLightNumber = 1;
+    int m_nextSpotLightNumber = 1;
     int m_nextCubeNumber = 2;
     int m_nextSphereNumber = 1;
     int m_nextCylinderNumber = 1;

@@ -2,6 +2,8 @@
 
 #include "app/EditorWidgets.h"
 #include "app/Scene.h"
+#include "engine/Light.h"
+#include "engine/LightComponent.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
 #include "engine/Transform.h"
@@ -9,6 +11,7 @@
 #include <imgui.h>
 
 #include <glm/glm.hpp>
+#include <cmath>
 #include <cstdio>
 
 namespace
@@ -163,6 +166,73 @@ namespace
         }
         ImGui::PopID();
     }
+
+    void DrawLightSection(SceneObject& object, Scene& scene)
+    {
+        LightComponent& light = object.GetLight();
+
+        int lightTypeIndex = static_cast<int>(light.type);
+        if (ImGui::Combo(
+                "Type",
+                &lightTypeIndex,
+                "Directional\0Point\0Spot\0",
+                3))
+        {
+            const LightType newType = static_cast<LightType>(lightTypeIndex);
+            if (newType != light.type)
+            {
+                const bool preserveShadow = light.castsShadow;
+                light = MakeDefaultLightComponent(newType);
+                light.castsShadow = preserveShadow && newType == LightType::Directional;
+            }
+        }
+
+        if (EditorWidgets::ColorEditVec3("Color", light.color))
+        {
+        }
+
+        ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 8.0f);
+
+        if (light.type == LightType::Directional)
+        {
+            bool castsShadow = light.castsShadow;
+            if (ImGui::Checkbox("Cast shadows", &castsShadow))
+            {
+                if (castsShadow)
+                {
+                    for (SceneObject& otherObject : scene.GetObjects())
+                    {
+                        if (&otherObject != &object && otherObject.HasLight())
+                        {
+                            otherObject.GetLight().castsShadow = false;
+                        }
+                    }
+                }
+
+                light.castsShadow = castsShadow;
+            }
+
+            ImGui::TextUnformatted("Rotation aims local +Y toward the light source.");
+            ImGui::TextUnformatted("Position sets the gizmo anchor in the scene.");
+        }
+        else
+        {
+            light.castsShadow = false;
+            ImGui::SliderFloat("Range", &light.range, 0.0f, 25.0f);
+
+            if (light.type == LightType::Spot)
+            {
+                ImGui::SliderFloat("Inner angle", &light.innerCutoffDegrees, 0.0f, light.outerCutoffDegrees - 1.0f);
+                ImGui::SliderFloat("Outer angle", &light.outerCutoffDegrees, 1.0f, 89.0f);
+                if (light.innerCutoffDegrees >= light.outerCutoffDegrees)
+                {
+                    light.innerCutoffDegrees = light.outerCutoffDegrees - 1.0f;
+                }
+            }
+
+            ImGui::TextUnformatted("Position sets the light source. Rotation aims local +Y toward the source.");
+        }
+    }
 }
 
 void SceneInspectorPanel::Draw(Scene& scene) const
@@ -219,7 +289,14 @@ void SceneInspectorPanel::Draw(Scene& scene) const
         DrawTransformSection(selectedObject);
     }
 
-    if (ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
+    if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::PushID("LightSection");
+        DrawLightSection(selectedObject, scene);
+        ImGui::PopID();
+    }
+
+    if (!selectedObject.HasLight() && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
     {
         if (selectedObject.IsRenderable())
         {

@@ -18,7 +18,8 @@ SceneObject::SceneObject(
     bool castShadow,
     bool receiveShadow,
     int parentIndex,
-    int siblingOrder)
+    int siblingOrder,
+    std::optional<LightComponent> light)
     : m_name(std::move(name)),
       m_mesh(mesh),
       m_material(std::move(material)),
@@ -29,7 +30,8 @@ SceneObject::SceneObject(
       m_siblingOrder(siblingOrder),
       m_movable(movable),
       m_castShadow(castShadow),
-      m_receiveShadow(receiveShadow)
+      m_receiveShadow(receiveShadow),
+      m_light(std::move(light))
 {
 }
 
@@ -91,6 +93,41 @@ bool SceneObject::HasMaterial() const
 bool SceneObject::IsRenderable() const
 {
     return m_mesh != nullptr && m_material != nullptr;
+}
+
+bool SceneObject::HasLight() const
+{
+    return m_light.has_value();
+}
+
+LightComponent& SceneObject::GetLight()
+{
+    if (!m_light.has_value())
+    {
+        throw std::logic_error("SceneObject has no light component.");
+    }
+
+    return *m_light;
+}
+
+const LightComponent& SceneObject::GetLight() const
+{
+    if (!m_light.has_value())
+    {
+        throw std::logic_error("SceneObject has no light component.");
+    }
+
+    return *m_light;
+}
+
+void SceneObject::SetLight(LightComponent light)
+{
+    m_light = std::move(light);
+}
+
+void SceneObject::ClearLight()
+{
+    m_light.reset();
 }
 
 int SceneObject::GetParentIndex() const
