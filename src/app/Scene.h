@@ -53,6 +53,7 @@ public:
     const SceneLighting& GetLighting() const;
     SceneLighting& GetLighting();
     IBL& GetIBL();
+    const IBL& GetIBL() const;
 
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();

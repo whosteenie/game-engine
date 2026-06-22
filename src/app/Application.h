@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/ProjectEditorState.h"
+
 #include <memory>
 
 struct GLFWwindow;
@@ -36,6 +38,9 @@ private:
     void RequestClose();
     void RequestNewProject();
     void DrawUnsavedChangesDialog();
+    void CaptureProjectEditorState(ProjectEditorState& editorState) const;
+    void ApplyProjectEditorState(const ProjectEditorState& editorState);
+    bool TrySaveProject();
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
@@ -64,4 +69,5 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
+    ProjectEditorState m_projectEditorState;
 };

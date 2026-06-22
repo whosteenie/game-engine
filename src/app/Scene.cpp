@@ -1071,6 +1071,11 @@ IBL& Scene::GetIBL()
     return *m_ibl;
 }
 
+const IBL& Scene::GetIBL() const
+{
+    return *m_ibl;
+}
+
 const std::vector<SceneObject>& Scene::GetObjects() const
 {
     return m_objects;

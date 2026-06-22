@@ -12,6 +12,9 @@ public:
 
     bool& ShowPanel() const { return m_showPanel; }
 
+    const std::unordered_map<int, bool>& GetNodeOpenStates() const { return m_nodeOpenStates; }
+    void SetNodeOpenStates(const std::unordered_map<int, bool>& openStates) { m_nodeOpenStates = openStates; }
+
 private:
     mutable bool m_showPanel = true;
     mutable int m_pendingDeleteIndex = -1;

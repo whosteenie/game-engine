@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/ProjectEditorState.h"
+
 #include <functional>
 #include <string>
 
@@ -11,15 +13,17 @@ class ProjectChooser
 {
 public:
     using RequestCloseCallback = std::function<void()>;
-    using NewProjectRequestedCallback = std::function<bool()>;
+    using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
 
     bool Draw(
         ProjectSession& project,
         Scene& scene,
         EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const ApplyEditorStateFn& applyEditorState,
         const RequestCloseCallback& requestClose);
 
-    void OpenNewProjectForm();
+    void OpenNewProjectForm(EditorSettings& settings);
     bool IsBlockingEditor() const;
 
 private:
@@ -27,15 +31,23 @@ private:
         ProjectSession& project,
         Scene& scene,
         EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const ApplyEditorStateFn& applyEditorState,
         const RequestCloseCallback& requestClose);
 
-    bool DrawNewProjectForm(ProjectSession& project, Scene& scene, EditorSettings& settings);
+    bool DrawNewProjectForm(
+        ProjectSession& project,
+        Scene& scene,
+        EditorSettings& settings,
+        const ApplyEditorStateFn& applyEditorState);
 
     bool TryOpenProject(
         ProjectSession& project,
         Scene& scene,
         EditorSettings& settings,
+        ProjectEditorState& editorState,
         const std::string& projectFilePath,
+        const ApplyEditorStateFn& applyEditorState,
         std::string& outError);
 
     bool m_showNewProjectForm = false;

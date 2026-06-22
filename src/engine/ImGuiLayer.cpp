@@ -21,6 +21,8 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window)
 
     ImGui::StyleColorsDark();
 
+    ImGui::GetIO().IniFilename = nullptr;
+
     if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
     {
         throw std::runtime_error("Failed to initialize ImGui GLFW backend");

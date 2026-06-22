@@ -1,5 +1,6 @@
 #include "app/SceneProjectIO.h"
 
+#include "app/ProjectEditorState.h"
 #include "engine/NativeProgressWindow.h"
 
 #include "app/Scene.h"
@@ -11,13 +12,16 @@
 #include "engine/ModelImporter.h"
 #include "engine/SceneObject.h"
 #include "engine/ScenePrimitive.h"
+#include "engine/ScreenSpaceEffects.h"
 #include "engine/Texture.h"
 #include "engine/TextureCache.h"
 
+#include <imgui.h>
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <unordered_map>
 
@@ -532,9 +536,342 @@ namespace
         outError = "Unknown mesh kind in project file.";
         return false;
     }
+
+    json SerializeBoolMap(const std::unordered_map<std::string, bool>& values)
+    {
+        json result = json::object();
+        for (const auto& [key, value] : values)
+        {
+            result[key] = value;
+        }
+        return result;
+    }
+
+    std::unordered_map<std::string, bool> DeserializeBoolMap(const json& value)
+    {
+        std::unordered_map<std::string, bool> result;
+        if (!value.is_object())
+        {
+            return result;
+        }
+
+        for (const auto& [key, entry] : value.items())
+        {
+            if (entry.is_boolean())
+            {
+                result[key] = entry.get<bool>();
+            }
+        }
+
+        return result;
+    }
+
+    json SerializeHierarchyOpenStates(const std::unordered_map<int, bool>& openStates)
+    {
+        json result = json::object();
+        for (const auto& [nodeIndex, isOpen] : openStates)
+        {
+            if (isOpen)
+            {
+                result[std::to_string(nodeIndex)] = true;
+            }
+        }
+        return result;
+    }
+
+    std::unordered_map<int, bool> DeserializeHierarchyOpenStates(const json& value)
+    {
+        std::unordered_map<int, bool> result;
+        if (!value.is_object())
+        {
+            return result;
+        }
+
+        for (const auto& [key, entry] : value.items())
+        {
+            if (!entry.is_boolean() || !entry.get<bool>())
+            {
+                continue;
+            }
+
+            try
+            {
+                result[std::stoi(key)] = true;
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+
+        return result;
+    }
+
+    const char* TonemapModeToString(TonemapMode mode)
+    {
+        switch (mode)
+        {
+        case TonemapMode::Gamma:
+            return "Gamma";
+        case TonemapMode::Reinhard:
+            return "Reinhard";
+        case TonemapMode::ACES:
+            return "ACES";
+        }
+
+        return "Gamma";
+    }
+
+    TonemapMode TonemapModeFromString(const std::string& value)
+    {
+        if (value == "Reinhard")
+        {
+            return TonemapMode::Reinhard;
+        }
+        if (value == "ACES")
+        {
+            return TonemapMode::ACES;
+        }
+
+        return TonemapMode::Gamma;
+    }
+
+    json SerializeRenderer(const Scene& scene)
+    {
+        const ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
+        return json{
+            {"environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()},
+            {"screenSpaceEffects",
+             json{
+                 {"enabled", effects.IsEnabled()},
+                 {"ssaoEnabled", effects.IsSsaoEnabled()},
+                 {"contactShadowsEnabled", effects.IsContactShadowsEnabled()},
+                 {"ssaoRadius", effects.GetSsaoRadius()},
+                 {"ssaoBias", effects.GetSsaoBias()},
+                 {"ssaoPower", effects.GetSsaoPower()},
+                 {"aoStrength", effects.GetAoStrength()},
+                 {"contactStrength", effects.GetContactStrength()},
+                 {"contactShadowDistance", effects.GetContactShadowDistance()},
+                 {"contactShadowSteps", effects.GetContactShadowSteps()},
+                 {"exposure", effects.GetExposure()},
+                 {"tonemapMode", TonemapModeToString(effects.GetTonemapMode())},
+             }},
+        };
+    }
+
+    void DeserializeRenderer(Scene& scene, const json& rendererValue)
+    {
+        scene.GetIBL().SetEnvironmentIntensity(
+            rendererValue.value("environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()));
+
+        if (!rendererValue.contains("screenSpaceEffects"))
+        {
+            return;
+        }
+
+        const json& effectsValue = rendererValue.at("screenSpaceEffects");
+        ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
+        effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
+        effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
+        effects.SetContactShadowsEnabled(
+            effectsValue.value("contactShadowsEnabled", effects.IsContactShadowsEnabled()));
+        effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
+        effects.SetSsaoBias(effectsValue.value("ssaoBias", effects.GetSsaoBias()));
+        effects.SetSsaoPower(effectsValue.value("ssaoPower", effects.GetSsaoPower()));
+        effects.SetAoStrength(effectsValue.value("aoStrength", effects.GetAoStrength()));
+        effects.SetContactStrength(effectsValue.value("contactStrength", effects.GetContactStrength()));
+        effects.SetContactShadowDistance(
+            effectsValue.value("contactShadowDistance", effects.GetContactShadowDistance()));
+        effects.SetContactShadowSteps(effectsValue.value("contactShadowSteps", effects.GetContactShadowSteps()));
+        effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
+        effects.SetTonemapMode(
+            TonemapModeFromString(effectsValue.value("tonemapMode", TonemapModeToString(effects.GetTonemapMode()))));
+    }
+
+    json SerializeProjectFilesFolderOpenStates(
+        const std::unordered_map<std::string, bool>& openStates,
+        const std::string& projectRoot)
+    {
+        json result = json::object();
+        for (const auto& [path, isOpen] : openStates)
+        {
+            if (!isOpen)
+            {
+                continue;
+            }
+
+            const std::string storedPath = ToProjectRelativePath(projectRoot, path);
+            if (!storedPath.empty())
+            {
+                result[storedPath] = true;
+            }
+        }
+        return result;
+    }
+
+    std::unordered_map<std::string, bool> DeserializeProjectFilesFolderOpenStates(
+        const json& value,
+        const std::string& projectRoot)
+    {
+        std::unordered_map<std::string, bool> result;
+        if (!value.is_object())
+        {
+            return result;
+        }
+
+        for (const auto& [key, entry] : value.items())
+        {
+            if (!entry.is_boolean() || !entry.get<bool>())
+            {
+                continue;
+            }
+
+            const std::string resolvedPath = ResolveProjectPath(projectRoot, key);
+            if (!resolvedPath.empty())
+            {
+                result[resolvedPath] = true;
+            }
+        }
+
+        return result;
+    }
+
+    json SerializeEditorState(const Scene& scene, const ProjectEditorState& editorState, const std::string& projectRoot)
+    {
+        return json{
+            {"selectedObjectIndex", scene.GetSelectedObjectIndex()},
+            {"showGrid", scene.GetShowGrid()},
+            {"showLightGizmos", scene.GetShowLightGizmos()},
+            {"camera",
+             json{
+                 {"position", Vec3ToJson(editorState.cameraPosition)},
+                 {"yaw", editorState.cameraYaw},
+                 {"pitch", editorState.cameraPitch},
+             }},
+            {"panels",
+             json{
+                 {"hierarchy", editorState.showHierarchy},
+                 {"inspector", editorState.showInspector},
+                 {"toolbar", editorState.showToolbar},
+                 {"lighting", editorState.showLighting},
+                 {"projectFiles", editorState.showProjectFiles},
+             }},
+            {"hierarchyOpenNodes", SerializeHierarchyOpenStates(editorState.hierarchyNodeOpenStates)},
+            {"projectFiles",
+             json{
+                 {"browsedDirectory",
+                  ToProjectRelativePath(projectRoot, editorState.projectFilesBrowsedDirectory)},
+                 {"selectedPath", ToProjectRelativePath(projectRoot, editorState.projectFilesSelectedPath)},
+                 {"folderOpenStates", SerializeProjectFilesFolderOpenStates(
+                      editorState.projectFilesFolderOpenStates, projectRoot)},
+             }},
+        };
+    }
+
+    void DeserializeEditorState(
+        const json& editorValue,
+        ProjectEditorState& editorState,
+        const std::string& projectRoot)
+    {
+        editorState = ProjectEditorState::CreateDefault();
+
+        if (editorValue.contains("camera"))
+        {
+            const json& cameraValue = editorValue.at("camera");
+            editorState.cameraPosition = Vec3FromJson(cameraValue.at("position"));
+            editorState.cameraYaw = cameraValue.value("yaw", editorState.cameraYaw);
+            editorState.cameraPitch = cameraValue.value("pitch", editorState.cameraPitch);
+        }
+
+        if (editorValue.contains("panels"))
+        {
+            const json& panelsValue = editorValue.at("panels");
+            editorState.showHierarchy = panelsValue.value("hierarchy", editorState.showHierarchy);
+            editorState.showInspector = panelsValue.value("inspector", editorState.showInspector);
+            editorState.showToolbar = panelsValue.value("toolbar", editorState.showToolbar);
+            editorState.showLighting = panelsValue.value("lighting", editorState.showLighting);
+            editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
+        }
+
+        if (editorValue.contains("hierarchyOpenNodes"))
+        {
+            editorState.hierarchyNodeOpenStates =
+                DeserializeHierarchyOpenStates(editorValue.at("hierarchyOpenNodes"));
+        }
+
+        if (editorValue.contains("projectFiles"))
+        {
+            const json& projectFilesValue = editorValue.at("projectFiles");
+            const std::string browsedDirectory = projectFilesValue.value("browsedDirectory", std::string{});
+            const std::string selectedPath = projectFilesValue.value("selectedPath", std::string{});
+            editorState.projectFilesBrowsedDirectory = ResolveProjectPath(projectRoot, browsedDirectory);
+            editorState.projectFilesSelectedPath = ResolveProjectPath(projectRoot, selectedPath);
+            if (projectFilesValue.contains("folderOpenStates"))
+            {
+                editorState.projectFilesFolderOpenStates =
+                    DeserializeProjectFilesFolderOpenStates(projectFilesValue.at("folderOpenStates"), projectRoot);
+            }
+        }
+    }
+
+    fs::path GetEditorLayoutPath(const std::string& projectRoot)
+    {
+        return fs::path(projectRoot) / ".editor" / "imgui.ini";
+    }
+
+    bool SaveEditorLayout(const std::string& projectRoot)
+    {
+        std::size_t iniSize = 0;
+        const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+        if (iniData == nullptr || iniSize == 0)
+        {
+            return true;
+        }
+
+        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
+        std::error_code error;
+        fs::create_directories(layoutPath.parent_path(), error);
+
+        std::ofstream output(layoutPath, std::ios::binary);
+        if (!output)
+        {
+            return false;
+        }
+
+        output.write(iniData, static_cast<std::streamsize>(iniSize));
+        return static_cast<bool>(output);
+    }
+
+    bool LoadEditorLayout(const std::string& projectRoot)
+    {
+        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
+        if (!fs::exists(layoutPath))
+        {
+            return true;
+        }
+
+        std::ifstream input(layoutPath, std::ios::binary);
+        if (!input)
+        {
+            return false;
+        }
+
+        const std::string iniData(
+            (std::istreambuf_iterator<char>(input)),
+            std::istreambuf_iterator<char>());
+        if (iniData.empty())
+        {
+            return true;
+        }
+
+        ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
+        return true;
+    }
 }
 
-json SceneProjectIO::SerializeScene(const Scene& scene, const std::string& projectRoot)
+json SceneProjectIO::SerializeScene(
+    const Scene& scene,
+    const ProjectEditorState& editorState,
+    const std::string& projectRoot)
     {
         json objects = json::array();
         for (const SceneObject& object : scene.m_objects)
@@ -579,16 +916,8 @@ json SceneProjectIO::SerializeScene(const Scene& scene, const std::string& proje
             {"scene",
              json{
                  {"objects", objects},
-                 {"editor",
-                  json{
-                      {"selectedObjectIndex", scene.m_selectedObjectIndex},
-                      {"showGrid", scene.m_showGrid},
-                      {"showLightGizmos", scene.m_showLightGizmos},
-                  }},
-                 {"renderer",
-                  json{
-                      {"environmentIntensity", scene.m_ibl->GetEnvironmentIntensity()},
-                  }},
+                 {"editor", SerializeEditorState(scene, editorState, projectRoot)},
+                 {"renderer", SerializeRenderer(scene)},
                  {"spawnCounters",
                   json{
                       {"directionalLight", scene.m_nextDirectionalLightNumber},
@@ -608,6 +937,7 @@ json SceneProjectIO::SerializeScene(const Scene& scene, const std::string& proje
 
 bool SceneProjectIO::DeserializeScene(
     Scene& scene,
+    ProjectEditorState& editorState,
     const json& root,
     const std::string& projectRoot,
     std::string& outError)
@@ -721,10 +1051,12 @@ bool SceneProjectIO::DeserializeScene(
             scene.m_selectedObjectIndex = editor.value("selectedObjectIndex", -1);
             scene.m_showGrid = editor.value("showGrid", true);
             scene.m_showLightGizmos = editor.value("showLightGizmos", true);
+            DeserializeEditorState(editor, editorState, projectRoot);
         }
         else
         {
             scene.m_selectedObjectIndex = -1;
+            editorState = ProjectEditorState::CreateDefault();
         }
 
         if (scene.m_selectedObjectIndex < 0
@@ -735,8 +1067,7 @@ bool SceneProjectIO::DeserializeScene(
 
         if (sceneValue.contains("renderer"))
         {
-            scene.m_ibl->SetEnvironmentIntensity(
-                sceneValue.at("renderer").value("environmentIntensity", scene.m_ibl->GetEnvironmentIntensity()));
+            DeserializeRenderer(scene, sceneValue.at("renderer"));
         }
 
         if (sceneValue.contains("spawnCounters"))
@@ -754,11 +1085,18 @@ bool SceneProjectIO::DeserializeScene(
             scene.m_nextImportNumber = counters.value("import", scene.m_nextImportNumber);
         }
 
+        if (!LoadEditorLayout(projectRoot))
+        {
+            outError = "Failed to load editor layout.";
+            return false;
+        }
+
         return true;
 }
 
 bool SceneProjectIO::Save(
     const Scene& scene,
+    const ProjectEditorState& editorState,
     const std::string& projectRoot,
     const std::string& projectFilePath,
     std::string& outError)
@@ -767,9 +1105,7 @@ bool SceneProjectIO::Save(
 
     try
     {
-        ScopedNativeProgress progress("Saving Project", "Writing project file...");
-
-        const json root = SceneProjectIO::SerializeScene(scene, projectRoot);
+        const json root = SceneProjectIO::SerializeScene(scene, editorState, projectRoot);
 
         std::error_code error;
         const fs::path parentDirectory = fs::path(projectFilePath).parent_path();
@@ -786,6 +1122,13 @@ bool SceneProjectIO::Save(
         }
 
         output << root.dump(2);
+
+        if (!SaveEditorLayout(projectRoot))
+        {
+            outError = "Failed to save editor layout.";
+            return false;
+        }
+
         return true;
     }
     catch (const std::exception& exception)
@@ -797,6 +1140,7 @@ bool SceneProjectIO::Save(
 
 bool SceneProjectIO::Load(
     Scene& scene,
+    ProjectEditorState& editorState,
     const std::string& projectRoot,
     const std::string& projectFilePath,
     std::string& outError)
@@ -819,7 +1163,7 @@ bool SceneProjectIO::Load(
 
         progress.SetMessage("Loading scene...");
         progress.SetProgress(0.05f);
-        return SceneProjectIO::DeserializeScene(scene, root, projectRoot, outError);
+        return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)
     {

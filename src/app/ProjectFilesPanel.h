@@ -12,6 +12,16 @@ public:
 
     bool& ShowPanel() const { return m_showPanel; }
 
+    void GetBrowseState(
+        std::string& outBrowsedDirectory,
+        std::string& outSelectedPath,
+        std::unordered_map<std::string, bool>& outFolderOpenStates) const;
+
+    void SetBrowseState(
+        const std::string& browsedDirectory,
+        const std::string& selectedPath,
+        const std::unordered_map<std::string, bool>& folderOpenStates);
+
 private:
     void ResetBrowseState(const std::string& projectRoot);
     void DrawToolbar(ProjectSession& project);

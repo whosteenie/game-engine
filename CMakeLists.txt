@@ -184,6 +184,8 @@ add_executable(game-engine
 
     src/app/ProjectChooser.cpp
 
+    src/app/ProjectEditorState.cpp
+
     src/app/ProjectSession.cpp
 
     src/app/SceneProjectIO.cpp

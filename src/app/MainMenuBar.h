@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/ProjectEditorState.h"
+
 #include <functional>
 
 struct GLFWwindow;
@@ -17,6 +19,9 @@ struct EditorPanelVisibility
     bool* project = nullptr;
 };
 
+using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;
+using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
+
 class MainMenuBar
 {
 public:
@@ -26,6 +31,9 @@ public:
         EditorSettings& settings,
         GLFWwindow* window,
         const EditorPanelVisibility& panels,
+        ProjectEditorState& editorState,
+        const CaptureEditorStateFn& captureEditorState,
+        const ApplyEditorStateFn& applyEditorState,
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject);
 };

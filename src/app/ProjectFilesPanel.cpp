@@ -559,3 +559,25 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
 
     ImGui::End();
 }
+
+void ProjectFilesPanel::GetBrowseState(
+    std::string& outBrowsedDirectory,
+    std::string& outSelectedPath,
+    std::unordered_map<std::string, bool>& outFolderOpenStates) const
+{
+    outBrowsedDirectory = m_browsedDirectory;
+    outSelectedPath = m_selectedEntryPath;
+    outFolderOpenStates = m_folderOpenStates;
+}
+
+void ProjectFilesPanel::SetBrowseState(
+    const std::string& browsedDirectory,
+    const std::string& selectedPath,
+    const std::unordered_map<std::string, bool>& folderOpenStates)
+{
+    m_browsedDirectory = browsedDirectory;
+    m_selectedEntryPath = selectedPath;
+    m_folderOpenStates = folderOpenStates;
+    m_trackedProjectRoot.clear();
+    m_scrollSelectionIntoView = !selectedPath.empty();
+}

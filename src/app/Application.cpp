@@ -7,6 +7,7 @@
 #include "app/LightingPanel.h"
 #include "app/MainMenuBar.h"
 #include "app/ProjectChooser.h"
+#include "app/ProjectEditorState.h"
 #include "app/ProjectFilesPanel.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
@@ -28,24 +29,10 @@
 #include <stdexcept>
 
 #include <glm/glm.hpp>
+#include <unordered_map>
 
 namespace
 {
-    bool TrySaveProject(ProjectSession& project, Scene& scene)
-    {
-        if (!project.IsUntitled())
-        {
-            return project.Save(scene);
-        }
-
-        std::string projectPath;
-        if (!FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
-        {
-            return false;
-        }
-
-        return project.SaveAs(scene, projectPath);
-    }
 }
 
 Application::Application(int width, int height, const char* title)
@@ -156,6 +143,8 @@ void Application::Update(double deltaTime)
         *m_projectSession,
         *m_scene,
         *m_editorSettings,
+        m_projectEditorState,
+        [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
         [this]() { RequestClose(); });
 
     if (editorActive)
@@ -173,6 +162,9 @@ void Application::Update(double deltaTime)
             *m_editorSettings,
             m_window,
             panelVisibility,
+            m_projectEditorState,
+            [this](ProjectEditorState& editorState) { CaptureProjectEditorState(editorState); },
+            [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); });
 
@@ -259,7 +251,76 @@ void Application::RequestNewProject()
         return;
     }
 
-    m_projectChooser->OpenNewProjectForm();
+    m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+}
+
+void Application::CaptureProjectEditorState(ProjectEditorState& editorState) const
+{
+    editorState.cameraPosition = m_camera->GetPosition();
+    editorState.cameraYaw = m_camera->GetYaw();
+    editorState.cameraPitch = m_camera->GetPitch();
+    editorState.showHierarchy = m_sceneHierarchyPanel->ShowPanel();
+    editorState.showInspector = m_sceneInspectorPanel->ShowPanel();
+    editorState.showToolbar = m_sceneToolbarPanel->ShowPanel();
+    editorState.showLighting = m_lightingPanel->ShowPanel();
+    editorState.showProjectFiles = m_projectFilesPanel->ShowPanel();
+    editorState.hierarchyNodeOpenStates = m_sceneHierarchyPanel->GetNodeOpenStates();
+    m_projectFilesPanel->GetBrowseState(
+        editorState.projectFilesBrowsedDirectory,
+        editorState.projectFilesSelectedPath,
+        editorState.projectFilesFolderOpenStates);
+}
+
+void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
+{
+    m_camera->SetPosition(editorState.cameraPosition);
+    m_camera->SetOrientation(editorState.cameraYaw, editorState.cameraPitch);
+
+    m_sceneHierarchyPanel->ShowPanel() = editorState.showHierarchy;
+    m_sceneInspectorPanel->ShowPanel() = editorState.showInspector;
+    m_sceneToolbarPanel->ShowPanel() = editorState.showToolbar;
+    m_lightingPanel->ShowPanel() = editorState.showLighting;
+    m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
+
+    std::unordered_map<int, bool> hierarchyOpenStates;
+    const int objectCount = static_cast<int>(m_scene->GetObjects().size());
+    for (const auto& [nodeIndex, isOpen] : editorState.hierarchyNodeOpenStates)
+    {
+        if (isOpen && nodeIndex >= 0 && nodeIndex < objectCount)
+        {
+            hierarchyOpenStates[nodeIndex] = true;
+        }
+    }
+    m_sceneHierarchyPanel->SetNodeOpenStates(hierarchyOpenStates);
+
+    std::string browsedDirectory = editorState.projectFilesBrowsedDirectory;
+    if (browsedDirectory.empty())
+    {
+        browsedDirectory = m_projectSession->GetProjectRootDirectory();
+    }
+
+    m_projectFilesPanel->SetBrowseState(
+        browsedDirectory,
+        editorState.projectFilesSelectedPath,
+        editorState.projectFilesFolderOpenStates);
+}
+
+bool Application::TrySaveProject()
+{
+    CaptureProjectEditorState(m_projectEditorState);
+
+    if (!m_projectSession->IsUntitled())
+    {
+        return m_projectSession->Save(*m_scene, m_projectEditorState);
+    }
+
+    std::string projectPath;
+    if (!FileDialog::SaveProjectFile(projectPath, m_projectSession->GetProjectFilePath()))
+    {
+        return false;
+    }
+
+    return m_projectSession->SaveAs(*m_scene, projectPath, m_projectEditorState);
 }
 
 void Application::DrawUnsavedChangesDialog()
@@ -296,7 +357,7 @@ void Application::DrawUnsavedChangesDialog()
 
     if (ImGui::Button("Save", ImVec2(120.0f, 0.0f)))
     {
-        if (TrySaveProject(*m_projectSession, *m_scene))
+        if (TrySaveProject())
         {
             if (isClosePrompt)
             {
@@ -309,7 +370,7 @@ void Application::DrawUnsavedChangesDialog()
                 m_pendingNewProject = false;
                 ImGui::CloseCurrentPopup();
                 m_projectSession->CloseProject();
-                m_projectChooser->OpenNewProjectForm();
+                m_projectChooser->OpenNewProjectForm(*m_editorSettings);
             }
         }
     }
@@ -328,7 +389,7 @@ void Application::DrawUnsavedChangesDialog()
             m_pendingNewProject = false;
             ImGui::CloseCurrentPopup();
             m_projectSession->CloseProject();
-            m_projectChooser->OpenNewProjectForm();
+            m_projectChooser->OpenNewProjectForm(*m_editorSettings);
         }
     }
 

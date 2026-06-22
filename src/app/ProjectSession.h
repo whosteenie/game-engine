@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/ProjectEditorState.h"
+
 #include <string>
 
 class Scene;
@@ -23,11 +25,15 @@ public:
 
     void CloseProject();
 
-    bool CreateNewProject(Scene& scene, const std::string& directory, const std::string& projectName);
-    bool OpenProject(Scene& scene, const std::string& projectFilePath);
+    bool CreateNewProject(
+        Scene& scene,
+        const std::string& directory,
+        const std::string& projectName,
+        const ProjectEditorState& editorState);
+    bool OpenProject(Scene& scene, const std::string& projectFilePath, ProjectEditorState& editorState);
 
-    bool Save(Scene& scene);
-    bool SaveAs(Scene& scene, const std::string& projectFilePath);
+    bool Save(Scene& scene, const ProjectEditorState& editorState);
+    bool SaveAs(Scene& scene, const std::string& projectFilePath, const ProjectEditorState& editorState);
 
     static std::string SanitizeProjectName(const std::string& projectName);
 

@@ -89,6 +89,28 @@ glm::vec3 Camera::GetPosition() const
     return m_position;
 }
 
+float Camera::GetYaw() const
+{
+    return m_yaw;
+}
+
+float Camera::GetPitch() const
+{
+    return m_pitch;
+}
+
+void Camera::SetPosition(const glm::vec3& position)
+{
+    m_position = position;
+}
+
+void Camera::SetOrientation(float yaw, float pitch)
+{
+    m_yaw = yaw;
+    m_pitch = std::clamp(pitch, -89.0f, 89.0f);
+    UpdateCameraVectors();
+}
+
 void Camera::UpdateCameraVectors()
 {
     glm::vec3 front;

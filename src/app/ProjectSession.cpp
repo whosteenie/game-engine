@@ -1,5 +1,6 @@
 #include "app/ProjectSession.h"
 
+#include "app/ProjectEditorState.h"
 #include "app/Scene.h"
 #include "app/SceneProjectIO.h"
 
@@ -76,7 +77,11 @@ std::string ProjectSession::SanitizeProjectName(const std::string& projectName)
     return sanitized;
 }
 
-bool ProjectSession::CreateNewProject(Scene& scene, const std::string& directory, const std::string& projectName)
+bool ProjectSession::CreateNewProject(
+    Scene& scene,
+    const std::string& directory,
+    const std::string& projectName,
+    const ProjectEditorState& editorState)
 {
     if (directory.empty())
     {
@@ -115,7 +120,7 @@ bool ProjectSession::CreateNewProject(Scene& scene, const std::string& directory
 
     scene.ResetToDefault();
 
-    if (!Save(scene))
+    if (!Save(scene, editorState))
     {
         CloseProject();
         return false;
@@ -126,7 +131,7 @@ bool ProjectSession::CreateNewProject(Scene& scene, const std::string& directory
     return true;
 }
 
-bool ProjectSession::Save(Scene& scene)
+bool ProjectSession::Save(Scene& scene, const ProjectEditorState& editorState)
 {
     if (m_projectFilePath.empty())
     {
@@ -135,7 +140,7 @@ bool ProjectSession::Save(Scene& scene)
     }
 
     std::string error;
-    if (!SceneProjectIO::Save(scene, m_projectRootDirectory, m_projectFilePath, error))
+    if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
         m_statusMessage = error.empty() ? "Failed to save project." : error;
         return false;
@@ -146,12 +151,12 @@ bool ProjectSession::Save(Scene& scene)
     return true;
 }
 
-bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath)
+bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath, const ProjectEditorState& editorState)
 {
     SetProjectFilePath(projectFilePath);
 
     std::string error;
-    if (!SceneProjectIO::Save(scene, m_projectRootDirectory, m_projectFilePath, error))
+    if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
         m_statusMessage = error.empty() ? "Failed to save project." : error;
         return false;
@@ -162,12 +167,12 @@ bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath)
     return true;
 }
 
-bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePath)
+bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePath, ProjectEditorState& editorState)
 {
     SetProjectFilePath(projectFilePath);
 
     std::string error;
-    if (!SceneProjectIO::Load(scene, m_projectRootDirectory, m_projectFilePath, error))
+    if (!SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
         m_statusMessage = error.empty() ? "Failed to load project." : error;
         m_hasActiveProject = false;

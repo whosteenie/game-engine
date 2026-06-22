@@ -17,6 +17,10 @@ public:
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
     glm::vec3 GetPosition() const;
+    float GetYaw() const;
+    float GetPitch() const;
+    void SetPosition(const glm::vec3& position);
+    void SetOrientation(float yaw, float pitch);
 
 private:
     void UpdateCameraVectors();

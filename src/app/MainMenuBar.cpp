@@ -3,6 +3,7 @@
 
 #include "app/EditorSettings.h"
 #include "app/MainMenuBar.h"
+#include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
@@ -67,7 +68,12 @@ namespace
         }
     }
 
-    void OpenProject(Scene& scene, ProjectSession& project, EditorSettings& settings)
+    void OpenProject(
+        Scene& scene,
+        ProjectSession& project,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const ApplyEditorStateFn& applyEditorState)
     {
         std::string projectPath;
         if (!FileDialog::OpenProjectFile(projectPath))
@@ -75,36 +81,58 @@ namespace
             return;
         }
 
-        if (project.OpenProject(scene, projectPath))
+        if (project.OpenProject(scene, projectPath, editorState))
         {
             settings.AddRecentProject(projectPath);
             settings.Save();
+            if (applyEditorState)
+            {
+                applyEditorState(editorState);
+            }
         }
     }
 
-    void SaveProject(Scene& scene, ProjectSession& project)
+    void SaveProject(
+        Scene& scene,
+        ProjectSession& project,
+        ProjectEditorState& editorState,
+        const CaptureEditorStateFn& captureEditorState)
     {
         if (project.IsUntitled() || !project.IsDirty())
         {
             return;
         }
 
-        if (!project.Save(scene))
+        if (captureEditorState)
+        {
+            captureEditorState(editorState);
+        }
+
+        if (!project.Save(scene, editorState))
         {
             std::string projectPath;
             if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
             {
-                project.SaveAs(scene, projectPath);
+                project.SaveAs(scene, projectPath, editorState);
             }
         }
     }
 
-    void SaveProjectAs(Scene& scene, ProjectSession& project)
+    void SaveProjectAs(
+        Scene& scene,
+        ProjectSession& project,
+        ProjectEditorState& editorState,
+        const CaptureEditorStateFn& captureEditorState)
     {
         std::string projectPath;
         if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
         {
-            project.SaveAs(scene, projectPath);
+            if (captureEditorState)
+            {
+                captureEditorState(editorState);
+            }
+
+            project.SaveAs(scene, projectPath, editorState);
         }
     }
 
@@ -114,7 +142,13 @@ namespace
         return !io.WantTextInput && !ImGui::IsAnyItemActive();
     }
 
-    void HandleFileMenuShortcuts(Scene& scene, ProjectSession& project, EditorSettings& settings)
+    void HandleFileMenuShortcuts(
+        Scene& scene,
+        ProjectSession& project,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const CaptureEditorStateFn& captureEditorState,
+        const ApplyEditorStateFn& applyEditorState)
     {
         if (!AllowFileMenuShortcuts())
         {
@@ -124,17 +158,17 @@ namespace
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
         {
-            OpenProject(scene, project, settings);
+            OpenProject(scene, project, settings, editorState, applyEditorState);
         }
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            SaveProject(scene, project);
+            SaveProject(scene, project, editorState, captureEditorState);
         }
 
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            SaveProjectAs(scene, project);
+            SaveProjectAs(scene, project, editorState, captureEditorState);
         }
     }
 }
@@ -145,10 +179,13 @@ void MainMenuBar::Draw(
     EditorSettings& settings,
     GLFWwindow* window,
     const EditorPanelVisibility& panels,
+    ProjectEditorState& editorState,
+    const CaptureEditorStateFn& captureEditorState,
+    const ApplyEditorStateFn& applyEditorState,
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject)
 {
-    HandleFileMenuShortcuts(scene, project, settings);
+    HandleFileMenuShortcuts(scene, project, settings, editorState, captureEditorState, applyEditorState);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -167,7 +204,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            OpenProject(scene, project, settings);
+            OpenProject(scene, project, settings, editorState, applyEditorState);
         }
 
         ImGui::Separator();
@@ -175,12 +212,12 @@ void MainMenuBar::Draw(
         const bool canSave = !project.IsUntitled() && project.IsDirty();
         if (ImGui::MenuItem("Save", "Ctrl+S", false, canSave))
         {
-            SaveProject(scene, project);
+            SaveProject(scene, project, editorState, captureEditorState);
         }
 
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
         {
-            SaveProjectAs(scene, project);
+            SaveProjectAs(scene, project, editorState, captureEditorState);
         }
 
         ImGui::Separator();

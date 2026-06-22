@@ -40,6 +40,7 @@ std::string EditorSettings::GetSettingsFilePath()
 void EditorSettings::Load()
 {
     m_recentProjects.clear();
+    m_lastNewProjectParentDirectory.clear();
 
     const std::string settingsPath = GetSettingsFilePath();
     std::ifstream input(settingsPath);
@@ -58,26 +59,30 @@ void EditorSettings::Load()
         return;
     }
 
-    if (!root.contains("recentProjects") || !root.at("recentProjects").is_array())
+    if (root.contains("recentProjects") && root.at("recentProjects").is_array())
     {
-        return;
+        for (const json& entry : root.at("recentProjects"))
+        {
+            if (!entry.is_string())
+            {
+                continue;
+            }
+
+            const std::string projectPath = entry.get<std::string>();
+            if (!projectPath.empty())
+            {
+                m_recentProjects.push_back(projectPath);
+            }
+        }
     }
 
-    for (const json& entry : root.at("recentProjects"))
+    if (root.contains("lastNewProjectParentDirectory") && root.at("lastNewProjectParentDirectory").is_string())
     {
-        if (!entry.is_string())
-        {
-            continue;
-        }
-
-        const std::string projectPath = entry.get<std::string>();
-        if (!projectPath.empty())
-        {
-            m_recentProjects.push_back(projectPath);
-        }
+        m_lastNewProjectParentDirectory = root.at("lastNewProjectParentDirectory").get<std::string>();
     }
 
     RemoveMissingRecentProjects();
+    ValidateLastNewProjectParentDirectory();
 }
 
 void EditorSettings::Save() const
@@ -94,7 +99,10 @@ void EditorSettings::Save() const
         recentProjects.push_back(projectPath);
     }
 
-    const json root = json{{"recentProjects", recentProjects}};
+    const json root = json{
+        {"recentProjects", recentProjects},
+        {"lastNewProjectParentDirectory", m_lastNewProjectParentDirectory},
+    };
 
     std::ofstream output(settingsPath);
     if (!output.is_open())
@@ -134,4 +142,31 @@ void EditorSettings::RemoveMissingRecentProjects()
                 return !fs::exists(projectPath, error);
             }),
         m_recentProjects.end());
+}
+
+void EditorSettings::SetLastNewProjectParentDirectory(const std::string& directory)
+{
+    if (directory.empty())
+    {
+        m_lastNewProjectParentDirectory.clear();
+        return;
+    }
+
+    std::error_code error;
+    const fs::path canonical = fs::weakly_canonical(fs::path(directory), error);
+    m_lastNewProjectParentDirectory = error ? directory : canonical.string();
+}
+
+void EditorSettings::ValidateLastNewProjectParentDirectory()
+{
+    if (m_lastNewProjectParentDirectory.empty())
+    {
+        return;
+    }
+
+    std::error_code error;
+    if (!fs::exists(m_lastNewProjectParentDirectory, error) || !fs::is_directory(m_lastNewProjectParentDirectory, error))
+    {
+        m_lastNewProjectParentDirectory.clear();
+    }
 }

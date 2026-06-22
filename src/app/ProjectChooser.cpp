@@ -12,12 +12,26 @@
 
 namespace fs = std::filesystem;
 
-void ProjectChooser::OpenNewProjectForm()
+void ProjectChooser::OpenNewProjectForm(EditorSettings& settings)
 {
     m_showNewProjectForm = true;
     m_errorMessage.clear();
     std::snprintf(m_newProjectName, sizeof(m_newProjectName), "%s", "My Project");
-    m_newProjectDirectory[0] = '\0';
+
+    settings.ValidateLastNewProjectParentDirectory();
+    const std::string& lastParentDirectory = settings.GetLastNewProjectParentDirectory();
+    if (lastParentDirectory.empty())
+    {
+        m_newProjectDirectory[0] = '\0';
+    }
+    else
+    {
+        std::snprintf(
+            m_newProjectDirectory,
+            sizeof(m_newProjectDirectory),
+            "%s",
+            lastParentDirectory.c_str());
+    }
 }
 
 bool ProjectChooser::IsBlockingEditor() const
@@ -29,10 +43,12 @@ bool ProjectChooser::TryOpenProject(
     ProjectSession& project,
     Scene& scene,
     EditorSettings& settings,
+    ProjectEditorState& editorState,
     const std::string& projectFilePath,
+    const ApplyEditorStateFn& applyEditorState,
     std::string& outError)
 {
-    if (!project.OpenProject(scene, projectFilePath))
+    if (!project.OpenProject(scene, projectFilePath, editorState))
     {
         outError = project.GetStatusMessage();
         return false;
@@ -43,10 +59,18 @@ bool ProjectChooser::TryOpenProject(
     m_startupMode = false;
     m_showNewProjectForm = false;
     m_errorMessage.clear();
+    if (applyEditorState)
+    {
+        applyEditorState(editorState);
+    }
     return true;
 }
 
-bool ProjectChooser::DrawNewProjectForm(ProjectSession& project, Scene& scene, EditorSettings& settings)
+bool ProjectChooser::DrawNewProjectForm(
+    ProjectSession& project,
+    Scene& scene,
+    EditorSettings& settings,
+    const ApplyEditorStateFn& applyEditorState)
 {
     const bool startup = m_startupMode;
     const char* popupId = startup ? "Create Project###ProjectChooserCreate" : "New Project###ProjectChooserCreate";
@@ -78,6 +102,8 @@ bool ProjectChooser::DrawNewProjectForm(ProjectSession& project, Scene& scene, E
         if (FileDialog::ChooseProjectFolder(folderPath))
         {
             std::snprintf(m_newProjectDirectory, sizeof(m_newProjectDirectory), "%s", folderPath.c_str());
+            settings.SetLastNewProjectParentDirectory(folderPath);
+            settings.Save();
         }
     }
 
@@ -97,13 +123,22 @@ bool ProjectChooser::DrawNewProjectForm(ProjectSession& project, Scene& scene, E
         {
             m_errorMessage = "Choose a location for the new project folder.";
         }
-        else if (project.CreateNewProject(scene, m_newProjectDirectory, m_newProjectName))
+        else if (project.CreateNewProject(
+                     scene,
+                     m_newProjectDirectory,
+                     m_newProjectName,
+                     ProjectEditorState::CreateDefault()))
         {
+            settings.SetLastNewProjectParentDirectory(m_newProjectDirectory);
             settings.AddRecentProject(project.GetProjectFilePath());
             settings.Save();
             m_startupMode = false;
             m_showNewProjectForm = false;
             m_errorMessage.clear();
+            if (applyEditorState)
+            {
+                applyEditorState(ProjectEditorState::CreateDefault());
+            }
             ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
             return true;
@@ -130,6 +165,8 @@ bool ProjectChooser::DrawStartupScreen(
     ProjectSession& project,
     Scene& scene,
     EditorSettings& settings,
+    ProjectEditorState& editorState,
+    const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -169,7 +206,7 @@ bool ProjectChooser::DrawStartupScreen(
         if (FileDialog::OpenProjectFile(projectPath))
         {
             std::string error;
-            if (!TryOpenProject(project, scene, settings, projectPath, error))
+            if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))
             {
                 m_errorMessage = error;
             }
@@ -178,7 +215,7 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (ImGui::Button("New Project...", ImVec2(-FLT_MIN, 0.0f)))
     {
-        OpenNewProjectForm();
+        OpenNewProjectForm(settings);
     }
 
     settings.RemoveMissingRecentProjects();
@@ -197,7 +234,7 @@ bool ProjectChooser::DrawStartupScreen(
             if (ImGui::Selectable(label.c_str()))
             {
                 std::string error;
-                if (!TryOpenProject(project, scene, settings, projectPath, error))
+                if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))
                 {
                     m_errorMessage = error;
                     settings.RemoveMissingRecentProjects();
@@ -237,7 +274,7 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (m_showNewProjectForm)
     {
-        return DrawNewProjectForm(project, scene, settings);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState);
     }
 
     return false;
@@ -247,6 +284,8 @@ bool ProjectChooser::Draw(
     ProjectSession& project,
     Scene& scene,
     EditorSettings& settings,
+    ProjectEditorState& editorState,
+    const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose)
 {
     if (project.HasActiveProject() && !m_showNewProjectForm)
@@ -257,8 +296,8 @@ bool ProjectChooser::Draw(
 
     if (m_showNewProjectForm && !m_startupMode)
     {
-        return DrawNewProjectForm(project, scene, settings);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState);
     }
 
-    return DrawStartupScreen(project, scene, settings, requestClose);
+    return DrawStartupScreen(project, scene, settings, editorState, applyEditorState, requestClose);
 }
