@@ -58,6 +58,8 @@ public:
     bool HasRoughnessMap() const;
     bool HasMetallicRoughnessMap() const;
 
+    std::unique_ptr<Material> Clone() const;
+
 private:
     void BindMaps() const;
 

@@ -28,6 +28,7 @@
 #include <stdexcept>
 #include <string>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 
 Scene::Scene()
@@ -480,6 +481,102 @@ bool Scene::RemoveObject(std::size_t index)
     PruneUnusedImportedMeshes();
 
     return true;
+}
+
+std::string Scene::MakeDuplicateObjectName(const std::string& sourceName) const
+{
+    auto nameExists = [this](const std::string& name) {
+        for (const SceneObject& object : m_objects)
+        {
+            if (object.GetName() == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    for (int suffix = 1; suffix < 1000; ++suffix)
+    {
+        const std::string candidate = sourceName + " (" + std::to_string(suffix) + ")";
+        if (!nameExists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return sourceName + " (copy)";
+}
+
+int Scene::DuplicateObject(int objectIndex)
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(m_objects.size()))
+    {
+        return -1;
+    }
+
+    std::vector<int> sourceIndices;
+    CollectDescendantIndices(objectIndex, sourceIndices);
+
+    std::unordered_map<int, int> indexMap;
+    int duplicateRootIndex = -1;
+
+    for (int sourceIndex : sourceIndices)
+    {
+        const SceneObject& source = m_objects[static_cast<std::size_t>(sourceIndex)];
+
+        int newParentIndex = -1;
+        const int sourceParentIndex = source.GetParentIndex();
+        if (sourceIndex == objectIndex)
+        {
+            newParentIndex = sourceParentIndex;
+        }
+        else if (sourceParentIndex >= 0)
+        {
+            newParentIndex = indexMap.at(sourceParentIndex);
+        }
+
+        std::unique_ptr<Material> materialClone;
+        if (source.HasMaterial())
+        {
+            materialClone = source.GetMaterial().Clone();
+        }
+
+        std::string objectName = source.GetName();
+        if (sourceIndex == objectIndex)
+        {
+            objectName = MakeDuplicateObjectName(source.GetName());
+        }
+
+        m_objects.emplace_back(
+            objectName,
+            source.GetMesh(),
+            std::move(materialClone),
+            source.GetLocalBoundsMin(),
+            source.GetLocalBoundsMax(),
+            source.GetTransform(),
+            source.IsMovable(),
+            source.CastsShadow(),
+            source.ReceivesShadow(),
+            newParentIndex,
+            source.GetSiblingOrder());
+
+        const int newIndex = static_cast<int>(m_objects.size()) - 1;
+        indexMap[sourceIndex] = newIndex;
+        if (sourceIndex == objectIndex)
+        {
+            duplicateRootIndex = newIndex;
+        }
+    }
+
+    if (duplicateRootIndex < 0)
+    {
+        return -1;
+    }
+
+    PlaceObjectInHierarchy(duplicateRootIndex, objectIndex, HierarchyInsertMode::After);
+    return duplicateRootIndex;
 }
 
 bool Scene::CanReparentObject(int objectIndex, int newParentIndex) const

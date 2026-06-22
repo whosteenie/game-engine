@@ -1,6 +1,7 @@
 #include "engine/Material.h"
 
 #include "engine/Camera.h"
+#include "engine/Constants.h"
 #include "engine/IBL.h"
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
@@ -215,4 +216,49 @@ bool Material::HasRoughnessMap() const
 bool Material::HasMetallicRoughnessMap() const
 {
     return m_useMetallicRoughnessMap && HasRoughnessMap();
+}
+
+std::unique_ptr<Material> Material::Clone() const
+{
+    auto copy = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        m_albedo,
+        m_roughness,
+        m_metallic);
+
+    copy->SetAlbedoTexCoordSet(m_albedoTexCoordSet);
+    copy->SetNormalTexCoordSet(m_normalTexCoordSet);
+    copy->SetAoTexCoordSet(m_aoTexCoordSet);
+    copy->SetRoughnessTexCoordSet(m_roughnessTexCoordSet);
+    copy->SetDoubleSided(m_doubleSided);
+
+    if (m_albedoMap != nullptr)
+    {
+        copy->SetAlbedoMap(m_albedoMap);
+    }
+
+    if (m_normalMap != nullptr)
+    {
+        copy->SetNormalMap(m_normalMap);
+    }
+
+    if (m_aoMap != nullptr)
+    {
+        copy->SetAoMap(m_aoMap);
+    }
+
+    if (m_roughnessMap != nullptr)
+    {
+        if (m_useMetallicRoughnessMap)
+        {
+            copy->SetMetallicRoughnessMap(m_roughnessMap, m_roughnessTexCoordSet);
+        }
+        else
+        {
+            copy->SetRoughnessMap(m_roughnessMap);
+        }
+    }
+
+    return copy;
 }

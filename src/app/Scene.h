@@ -69,6 +69,7 @@ public:
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
+    int DuplicateObject(int objectIndex);
     bool ReparentObject(int objectIndex, int newParentIndex);
     bool CanReparentObject(int objectIndex, int newParentIndex) const;
     bool PlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode);
@@ -105,6 +106,7 @@ private:
     void PruneUnusedImportedMeshes();
     int AllocateSiblingOrder(int parentIndex) const;
     void SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex);
+    std::string MakeDuplicateObjectName(const std::string& sourceName) const;
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;

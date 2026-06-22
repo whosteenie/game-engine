@@ -233,6 +233,11 @@ namespace
             focusRenameInput = true;
         }
 
+        if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
+        {
+            scene.DuplicateObject(objectIndex);
+        }
+
         if (ImGui::MenuItem("Delete"))
         {
             pendingDeleteIndex = objectIndex;
