@@ -1,5 +1,7 @@
 #include "app/SceneProjectIO.h"
 
+#include "engine/NativeProgressWindow.h"
+
 #include "app/Scene.h"
 #include "engine/Constants.h"
 #include "engine/IBL.h"
@@ -639,8 +641,17 @@ bool SceneProjectIO::DeserializeScene(
         const json& objects = sceneValue.at("objects");
         scene.m_objects.reserve(objects.size());
 
+        const std::size_t objectCount = objects.size();
+        std::size_t objectIndex = 0;
         for (const json& objectValue : objects)
         {
+            ++objectIndex;
+            const float loadProgress =
+                objectCount > 0 ? static_cast<float>(objectIndex) / static_cast<float>(objectCount) : 1.0f;
+            NativeProgressWindow::Instance().SetMessage(
+                "Loading scene objects (" + std::to_string(objectIndex) + "/" + std::to_string(objectCount) + ")...");
+            NativeProgressWindow::Instance().SetProgress(0.05f + (loadProgress * 0.95f));
+
             Mesh* mesh = nullptr;
             std::string importAssetPath;
             int importNodeIndex = -1;
@@ -769,6 +780,8 @@ bool SceneProjectIO::Save(
 
     try
     {
+        ScopedNativeProgress progress("Saving Project", "Writing project file...");
+
         const json root = SceneProjectIO::SerializeScene(scene, projectRoot);
 
         std::error_code error;
@@ -805,6 +818,8 @@ bool SceneProjectIO::Load(
 
     try
     {
+        ScopedNativeProgress progress("Loading Project", "Reading project file...");
+
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
         {
@@ -814,6 +829,9 @@ bool SceneProjectIO::Load(
 
         json root;
         input >> root;
+
+        progress.SetMessage("Loading scene...");
+        progress.SetProgress(0.05f);
         return SceneProjectIO::DeserializeScene(scene, root, projectRoot, outError);
     }
     catch (const std::exception& exception)

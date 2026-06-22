@@ -208,6 +208,8 @@ add_executable(game-engine
 
     src/engine/ImGuiLayer.cpp
 
+    src/engine/NativeProgressWindow.cpp
+
     src/engine/Input.cpp
 
     src/engine/Light.cpp
@@ -289,7 +291,7 @@ find_package(OpenGL REQUIRED)
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib nlohmann_json::nlohmann_json)
 
 if(WIN32)
-    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32)
+    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32)
 endif()
 
 

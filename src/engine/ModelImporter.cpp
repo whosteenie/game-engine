@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <limits>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -92,10 +93,17 @@ namespace
         return JoinPath(modelDirectory, "textures/image_" + std::to_string(imageIndex) + ".png");
     }
 
-    void ExtractEmbeddedGltfImages(const tinygltf::Model& model, const std::string& modelDirectory)
+    void ExtractEmbeddedGltfImages(
+        const tinygltf::Model& model,
+        const std::string& modelDirectory,
+        const ModelOperationProgressFn& onProgress = {})
     {
         if (modelDirectory.empty() || model.images.empty())
         {
+            if (onProgress)
+            {
+                onProgress(1.0f, {});
+            }
             return;
         }
 
@@ -104,6 +112,8 @@ namespace
         std::error_code error;
         fs::create_directories(texturesDirectory, error);
 
+        std::vector<std::size_t> embeddedImageIndices;
+        embeddedImageIndices.reserve(model.images.size());
         for (std::size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
         {
             const tinygltf::Image& image = model.images[imageIndex];
@@ -123,17 +133,45 @@ namespace
                 continue;
             }
 
-            const int stride = image.width * image.component;
-            if (stbi_write_png(
-                    outputPath.string().c_str(),
-                    image.width,
-                    image.height,
-                    image.component,
-                    image.image.data(),
-                    stride) == 0)
+            embeddedImageIndices.push_back(imageIndex);
+        }
+
+        const std::size_t imageCount = embeddedImageIndices.size();
+        if (imageCount == 0)
+        {
+            if (onProgress)
             {
-                continue;
+                onProgress(1.0f, {});
             }
+            return;
+        }
+
+        for (std::size_t writeIndex = 0; writeIndex < imageCount; ++writeIndex)
+        {
+            const std::size_t imageIndex = embeddedImageIndices[writeIndex];
+            const tinygltf::Image& image = model.images[imageIndex];
+            const fs::path outputPath = texturesDirectory / ("image_" + std::to_string(imageIndex) + ".png");
+
+            if (onProgress)
+            {
+                const std::string detail =
+                    "texture " + std::to_string(writeIndex + 1) + "/" + std::to_string(imageCount);
+                onProgress(static_cast<float>(writeIndex) / static_cast<float>(imageCount), detail);
+            }
+
+            const int stride = image.width * image.component;
+            stbi_write_png(
+                outputPath.string().c_str(),
+                image.width,
+                image.height,
+                image.component,
+                image.image.data(),
+                stride);
+        }
+
+        if (onProgress)
+        {
+            onProgress(1.0f, {});
         }
     }
 
@@ -367,35 +405,16 @@ namespace
                 texture = nullptr;
             }
         }
-        else
+        else if (!image.image.empty() && image.width > 0 && image.height > 0)
         {
-            const std::string extractedPath = GetExtractedEmbeddedImagePath(modelDirectory, imageIndex);
-            if (std::filesystem::exists(extractedPath))
-            {
-                try
-                {
-                    texture = TextureCache::Get().Load(
-                        extractedPath.c_str(),
-                        colorSpace,
-                        samplerSettings,
-                        true);
-                }
-                catch (const std::exception&)
-                {
-                    texture = nullptr;
-                }
-            }
-            else if (!image.image.empty() && image.width > 0 && image.height > 0)
-            {
-                texture = Texture::CreateFromPixels(
-                    image.image.data(),
-                    image.width,
-                    image.height,
-                    image.component,
-                    colorSpace,
-                    samplerSettings,
-                    true);
-            }
+            texture = Texture::CreateFromPixels(
+                image.image.data(),
+                image.width,
+                image.height,
+                image.component,
+                colorSpace,
+                samplerSettings,
+                true);
         }
 
         if (texture != nullptr && texture->IsValid())
@@ -826,7 +845,10 @@ namespace
         const std::string& projectRoot,
         std::unordered_map<std::string, std::shared_ptr<Texture>>& textureCache,
         std::vector<ImportedSceneNode>& nodes,
-        int& nameCounter)
+        int& nameCounter,
+        int totalNodes,
+        int& processedNodes,
+        const ModelOperationProgressFn& onProgress)
     {
         const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
 
@@ -902,7 +924,19 @@ namespace
                 projectRoot,
                 textureCache,
                 nodes,
-                nameCounter);
+                nameCounter,
+                totalNodes,
+                processedNodes,
+                onProgress);
+        }
+
+        ++processedNodes;
+        if (onProgress && totalNodes > 0)
+        {
+            constexpr float kNodeProcessingStart = 0.35f;
+            const float progress = kNodeProcessingStart
+                + ((1.0f - kNodeProcessingStart) * static_cast<float>(processedNodes) / static_cast<float>(totalNodes));
+            onProgress(progress, nodes[static_cast<std::size_t>(nodeObjectIndex)].name);
         }
     }
 
@@ -922,9 +956,17 @@ glm::mat4 GetImportedNodeWorldMatrix(
     return GetImportedNodeWorldMatrix(nodes, node.parentIndex) * localMatrix;
 }
 
-ImportedModel LoadModelFromFile(const std::string& path, const std::string& projectRoot)
+ImportedModel LoadModelFromFile(
+    const std::string& path,
+    const std::string& projectRoot,
+    ModelOperationProgressFn onProgress)
 {
     ImportedModel importedModel;
+    if (onProgress)
+    {
+        onProgress(0.0f, "Reading model file...");
+    }
+
     tinygltf::TinyGLTF loader;
     loader.SetImageLoader(LoadImageData, nullptr);
 
@@ -949,9 +991,36 @@ ImportedModel LoadModelFromFile(const std::string& path, const std::string& proj
     }
 
     const std::string modelDirectory = GetModelDirectory(path);
-    ExtractEmbeddedGltfImages(model, modelDirectory);
     std::unordered_map<std::string, std::shared_ptr<Texture>> textureCache;
     int nameCounter = 1;
+    const int totalNodes = static_cast<int>(model.nodes.size());
+    int processedNodes = 0;
+
+    constexpr float kTextureExportStart = 0.05f;
+    constexpr float kTextureExportEnd = 0.35f;
+    constexpr float kNodeProcessingStart = kTextureExportEnd;
+
+    ExtractEmbeddedGltfImages(
+        model,
+        modelDirectory,
+        [&](float localProgress, const std::string& detail) {
+            if (onProgress)
+            {
+                const float progress =
+                    kTextureExportStart + (localProgress * (kTextureExportEnd - kTextureExportStart));
+                std::string message = "Writing embedded textures";
+                if (!detail.empty())
+                {
+                    message += " — " + detail;
+                }
+                onProgress(progress, message);
+            }
+        });
+
+    if (onProgress)
+    {
+        onProgress(kNodeProcessingStart, "Processing meshes and textures...");
+    }
 
     ImportedSceneNode importRoot;
     importRoot.name = std::filesystem::path(path).stem().string();
@@ -977,7 +1046,10 @@ ImportedModel LoadModelFromFile(const std::string& path, const std::string& proj
                 projectRoot,
                 textureCache,
                 importedModel.nodes,
-                nameCounter);
+                nameCounter,
+                totalNodes,
+                processedNodes,
+                onProgress);
         }
     }
     else
@@ -992,7 +1064,10 @@ ImportedModel LoadModelFromFile(const std::string& path, const std::string& proj
                 projectRoot,
                 textureCache,
                 importedModel.nodes,
-                nameCounter);
+                nameCounter,
+                totalNodes,
+                processedNodes,
+                onProgress);
         }
     }
 
@@ -1005,4 +1080,46 @@ ImportedModel LoadModelFromFile(const std::string& path, const std::string& proj
     }
 
     return importedModel;
+}
+
+bool EnsureGltfEmbeddedImagesOnDisk(
+    const std::string& modelPath,
+    std::string& outError,
+    ModelOperationProgressFn onProgress)
+{
+    outError.clear();
+
+    if (onProgress)
+    {
+        onProgress(0.0f, "Reading model file...");
+    }
+
+    tinygltf::TinyGLTF loader;
+    loader.SetImageLoader(LoadImageData, nullptr);
+
+    tinygltf::Model model;
+    std::string error;
+    std::string warning;
+
+    const std::string extension = GetFileExtensionLower(modelPath);
+    const bool loaded = extension == ".glb"
+        ? loader.LoadBinaryFromFile(&model, &error, &warning, modelPath)
+        : loader.LoadASCIIFromFile(&model, &error, &warning, modelPath);
+
+    if (!loaded)
+    {
+        outError = error.empty() ? "Failed to load model file for texture export." : error;
+        return false;
+    }
+
+    ExtractEmbeddedGltfImages(
+        model,
+        GetModelDirectory(modelPath),
+        [&](float localProgress, const std::string& detail) {
+            if (onProgress)
+            {
+                onProgress(0.1f + (localProgress * 0.9f), detail);
+            }
+        });
+    return true;
 }

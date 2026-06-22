@@ -18,6 +18,7 @@
 #include "engine/Constants.h"
 #include "engine/FileDialog.h"
 #include "engine/ImGuiLayer.h"
+#include "engine/NativeProgressWindow.h"
 #include "engine/Input.h"
 #include "engine/Renderer.h"
 
@@ -88,6 +89,7 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
+    NativeProgressWindow::Instance().Shutdown();
     m_imguiLayer.reset();
     glfwDestroyWindow(m_window);
     glfwTerminate();

@@ -10,6 +10,7 @@
 #include "engine/MaterialTextures.h"
 #include "engine/Mesh.h"
 #include "engine/ModelImporter.h"
+#include "engine/NativeProgressWindow.h"
 #include "engine/ProjectAssets.h"
 #include "engine/SceneHierarchy.h"
 #include "primitives/Cube.h"
@@ -28,6 +29,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <limits>
@@ -443,9 +445,13 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, co
     m_lastImportError.clear();
     m_lastImportWarning.clear();
 
+    const std::string modelName = std::filesystem::path(path).filename().string();
+    ScopedNativeProgress progress("Importing Model", modelName);
+
     std::string importPath = path;
     if (!projectRoot.empty())
     {
+        progress.SetMessage("Copying model into project...");
         const ImportModelAssetResult assetResult = ImportModelToProject(path, projectRoot);
         if (!assetResult.success)
         {
@@ -458,7 +464,17 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, co
         importPath = assetResult.absolutePath;
     }
 
-    ImportedModel importedModel = LoadModelFromFile(importPath, projectRoot);
+    progress.SetMessage("Loading meshes and textures...");
+    ImportedModel importedModel = LoadModelFromFile(
+        importPath,
+        projectRoot,
+        [&](float loadProgress, const std::string& detail) {
+            progress.SetProgress(loadProgress);
+            if (!detail.empty())
+            {
+                progress.SetMessage("Loading meshes and textures — " + detail);
+            }
+        });
     if (!importedModel.errorMessage.empty())
     {
         m_lastImportError = importedModel.errorMessage;

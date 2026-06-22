@@ -3,6 +3,7 @@
 #include "engine/Transform.h"
 
 #include <glm/glm.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -30,5 +31,14 @@ struct ImportedModel
     std::string warningMessage;
 };
 
-ImportedModel LoadModelFromFile(const std::string& path, const std::string& projectRoot = {});
+using ModelOperationProgressFn = std::function<void(float progress, const std::string& message)>;
+
+ImportedModel LoadModelFromFile(
+    const std::string& path,
+    const std::string& projectRoot = {},
+    ModelOperationProgressFn onProgress = {});
+bool EnsureGltfEmbeddedImagesOnDisk(
+    const std::string& modelPath,
+    std::string& outError,
+    ModelOperationProgressFn onProgress = {});
 glm::mat4 GetImportedNodeWorldMatrix(const std::vector<ImportedSceneNode>& nodes, int nodeIndex);
