@@ -16,6 +16,13 @@
 
 namespace
 {
+    constexpr float kBackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
+
+    float SrgbChannelToLinear(float channel)
+    {
+        return std::pow(channel, 2.2f);
+    }
+
     constexpr float kQuadVertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
          1.0f, -1.0f, 1.0f, 0.0f,
@@ -39,7 +46,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::ContactShadowFragmentShader)),
       m_compositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::ScreenCompositeFragmentShader))
+          EngineConstants::ScreenCompositeFragmentShader)),
+      m_tonemapShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::TonemapFragmentShader))
 {
     CreateFullscreenQuad();
     CreateNoiseTexture();
@@ -52,6 +62,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroySingleChannelTarget(m_ssaoBlurFbo, m_ssaoBlurTexture);
     DestroySingleChannelTarget(m_contactFbo, m_contactTexture);
     DestroySingleChannelTarget(m_contactBlurFbo, m_contactBlurTexture);
+    DestroyHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture);
 
     if (m_noiseTexture != 0)
     {
@@ -166,6 +177,52 @@ void ScreenSpaceEffects::CreateSingleChannelTarget(
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
+void ScreenSpaceEffects::CreateHdrColorTarget(
+    unsigned int& fbo,
+    unsigned int& texture,
+    int width,
+    int height) const
+{
+    glGenFramebuffers(1, &fbo);
+    glGenTextures(1, &texture);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+
+    const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
+    glDrawBuffers(1, attachments);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+void ScreenSpaceEffects::DestroyHdrColorTarget(unsigned int& fbo, unsigned int& texture) const
+{
+    if (texture != 0)
+    {
+        glDeleteTextures(1, &texture);
+        texture = 0;
+    }
+
+    if (fbo != 0)
+    {
+        glDeleteFramebuffers(1, &fbo);
+        fbo = 0;
+    }
+}
+
+void ScreenSpaceEffects::ResizeHdrColorTarget(int width, int height)
+{
+    DestroyHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture);
+    CreateHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture, width, height);
+}
+
 void ScreenSpaceEffects::DestroySingleChannelTarget(unsigned int& fbo, unsigned int& texture) const
 {
     if (texture != 0)
@@ -208,6 +265,7 @@ void ScreenSpaceEffects::Resize(int width, int height)
 
     m_sceneFramebuffer->Resize(width, height);
     ResizeSingleChannelTargets(width, height);
+    ResizeHdrColorTarget(width, height);
     m_width = width;
     m_height = height;
 }
@@ -215,7 +273,11 @@ void ScreenSpaceEffects::Resize(int width, int height)
 void ScreenSpaceEffects::BeginScenePass() const
 {
     m_sceneFramebuffer->Bind();
-    glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
+    glClearColor(
+        SrgbChannelToLinear(kBackgroundSrgb[0]),
+        SrgbChannelToLinear(kBackgroundSrgb[1]),
+        SrgbChannelToLinear(kBackgroundSrgb[2]),
+        1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 }
 
@@ -244,10 +306,7 @@ void ScreenSpaceEffects::Apply(
 
     const bool runSsao = m_ssaoEnabled;
     const bool runContactShadows = m_contactShadowsEnabled;
-    if (!runSsao && !runContactShadows)
-    {
-        return;
-    }
+    const bool runScreenSpace = runSsao || runContactShadows;
 
     GLint previousFramebuffer = 0;
     GLint previousViewport[4] = {0, 0, 0, 0};
@@ -337,25 +396,48 @@ void ScreenSpaceEffects::Apply(
         DrawFullscreenQuad();
     }
 
+    unsigned int hdrColorTexture = m_sceneFramebuffer->GetColorTexture();
+
+    if (runScreenSpace)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_hdrCompositeFbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_compositeShader->Use();
+        m_compositeShader->SetInt("uSceneColor", 0);
+        m_compositeShader->SetInt("uDepthMap", 3);
+        m_compositeShader->SetInt("uSsaoMap", 1);
+        m_compositeShader->SetInt("uContactShadowMap", 2);
+        m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
+        m_compositeShader->SetInt("uUseContactShadows", runContactShadows ? 1 : 0);
+        m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
+        m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
+        m_compositeShader->SetFloat("uContactStrength", m_contactStrength);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_contactBlurTexture);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
+        DrawFullscreenQuad();
+
+        hdrColorTexture = m_hdrCompositeTexture;
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
     glViewport(0, 0, viewportWidth, viewportHeight);
 
-    m_compositeShader->Use();
-    m_compositeShader->SetInt("uSceneColor", 0);
-    m_compositeShader->SetInt("uSsaoMap", 1);
-    m_compositeShader->SetInt("uContactShadowMap", 2);
-    m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
-    m_compositeShader->SetInt("uUseContactShadows", runContactShadows ? 1 : 0);
-    m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
-    m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
-    m_compositeShader->SetFloat("uContactStrength", m_contactStrength);
-
+    m_tonemapShader->Use();
+    m_tonemapShader->SetInt("uHdrColor", 0);
+    m_tonemapShader->SetFloat("uExposure", m_exposure);
+    m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, m_contactBlurTexture);
+    glBindTexture(GL_TEXTURE_2D, hdrColorTexture);
     DrawFullscreenQuad();
 
     glEnable(GL_DEPTH_TEST);
@@ -460,6 +542,26 @@ float ScreenSpaceEffects::GetContactStrength() const
 void ScreenSpaceEffects::SetContactStrength(float strength)
 {
     m_contactStrength = std::clamp(strength, 0.0f, 1.0f);
+}
+
+float ScreenSpaceEffects::GetExposure() const
+{
+    return m_exposure;
+}
+
+void ScreenSpaceEffects::SetExposure(float exposure)
+{
+    m_exposure = std::clamp(exposure, -4.0f, 6.0f);
+}
+
+TonemapMode ScreenSpaceEffects::GetTonemapMode() const
+{
+    return m_tonemapMode;
+}
+
+void ScreenSpaceEffects::SetTonemapMode(TonemapMode mode)
+{
+    m_tonemapMode = mode;
 }
 
 void ScreenSpaceEffects::BlitDepthToDefaultFramebuffer(int viewportWidth, int viewportHeight) const

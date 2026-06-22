@@ -58,7 +58,7 @@ void GridRenderer::BuildGridGeometry(float halfExtent)
     glBindVertexArray(0);
 }
 
-void GridRenderer::Draw(const Camera& camera) const
+void GridRenderer::Draw(const Camera& camera, bool outputLinear) const
 {
     m_shader->Use();
     m_shader->SetMat4("uView", camera.GetViewMatrix());
@@ -67,6 +67,7 @@ void GridRenderer::Draw(const Camera& camera) const
     m_shader->SetVec3("uCameraPosition", camera.GetPosition());
     m_shader->SetFloat("uCellSize", m_cellSize);
     m_shader->SetFloat("uMajorInterval", m_majorInterval);
+    m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
 
     GLboolean blendEnabled = glIsEnabled(GL_BLEND);
     GLboolean depthMaskEnabled = GL_TRUE;

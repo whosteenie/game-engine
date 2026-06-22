@@ -1063,6 +1063,16 @@ void Scene::SetShowLightGizmos(bool showLightGizmos)
     m_showLightGizmos = showLightGizmos;
 }
 
+bool Scene::GetShowGrid() const
+{
+    return m_showGrid;
+}
+
+void Scene::SetShowGrid(bool showGrid)
+{
+    m_showGrid = showGrid;
+}
+
 ScreenSpaceEffects& Scene::GetScreenSpaceEffects()
 {
     return *m_screenSpaceEffects;
@@ -1175,11 +1185,9 @@ void Scene::Render(
     RenderShadowPass();
     m_shadowMap->EndPass();
 
-    const bool useScreenSpace =
-        m_screenSpaceEffects->IsEnabled()
-        && (m_screenSpaceEffects->IsSsaoEnabled() || m_screenSpaceEffects->IsContactShadowsEnabled());
+    const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
 
-    if (useScreenSpace)
+    if (usePostProcess)
     {
         m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
         m_screenSpaceEffects->BeginScenePass();
@@ -1208,7 +1216,8 @@ void Scene::Render(
             *m_ibl,
             modelMatrix,
             m_shadowMap.get(),
-            object.ReceivesShadow());
+            object.ReceivesShadow(),
+            usePostProcess);
         object.GetMesh()->Draw();
 
         if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
@@ -1217,16 +1226,20 @@ void Scene::Render(
         }
     }
 
-    if (useScreenSpace)
+    if (usePostProcess)
     {
-        m_grid->Draw(camera);
+        if (m_showGrid)
+        {
+            m_grid->Draw(camera, true);
+        }
+
         m_screenSpaceEffects->EndScenePass();
         m_screenSpaceEffects->Apply(camera, GetSunDirection(), viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitDepthToDefaultFramebuffer(viewportWidth, viewportHeight);
     }
-    else
+    else if (m_showGrid)
     {
-        m_grid->Draw(camera);
+        m_grid->Draw(camera, false);
     }
 
     if (m_showLightGizmos)

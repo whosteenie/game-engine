@@ -86,6 +86,14 @@ void SceneToolbarPanel::Draw(Scene& scene) const
     }
 
     ImGui::Separator();
+
+    bool showGrid = scene.GetShowGrid();
+    if (ImGui::Checkbox("Grid", &showGrid))
+    {
+        scene.SetShowGrid(showGrid);
+    }
+
+    ImGui::Separator();
     ImGui::TextUnformatted("LMB: select/deselect or drag gizmo.");
     ImGui::SameLine();
     ImGui::TextUnformatted("RMB + WASD/Q/E: fly camera. Shift: move faster.");

@@ -47,10 +47,27 @@ void LightingPanel::Draw(
     }
 
     ScreenSpaceEffects& screenSpaceEffects = scene.GetScreenSpaceEffects();
+
+    if (ImGui::CollapsingHeader("HDR", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        float exposure = screenSpaceEffects.GetExposure();
+        if (ImGui::SliderFloat("Exposure (stops)", &exposure, -2.0f, 4.0f))
+        {
+            screenSpaceEffects.SetExposure(exposure);
+        }
+
+        int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
+        const char* tonemapModes[] = {"Gamma", "Reinhard", "ACES"};
+        if (ImGui::Combo("Tonemap", &tonemapMode, tonemapModes, IM_ARRAYSIZE(tonemapModes)))
+        {
+            screenSpaceEffects.SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
+        }
+    }
+
     if (ImGui::CollapsingHeader("Screen Space", ImGuiTreeNodeFlags_DefaultOpen))
     {
         bool enabled = screenSpaceEffects.IsEnabled();
-        if (ImGui::Checkbox("Enable screen-space effects", &enabled))
+        if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
             screenSpaceEffects.SetEnabled(enabled);
         }

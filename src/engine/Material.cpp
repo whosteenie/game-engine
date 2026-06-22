@@ -39,7 +39,8 @@ void Material::Apply(
     const IBL& ibl,
     const glm::mat4& model,
     const ShadowMap* shadowMap,
-    bool receiveShadow) const
+    bool receiveShadow,
+    bool outputLinear) const
 {
     m_shader->Use();
     m_shader->SetMat4("uModel", model);
@@ -49,6 +50,7 @@ void Material::Apply(
     m_shader->SetVec3("uAlbedo", m_albedo);
     m_shader->SetFloat("uRoughness", m_roughness);
     m_shader->SetFloat("uMetallic", m_metallic);
+    m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
 
     m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
     m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);

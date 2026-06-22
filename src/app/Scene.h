@@ -92,6 +92,9 @@ public:
     bool GetShowLightGizmos() const;
     void SetShowLightGizmos(bool showLightGizmos);
 
+    bool GetShowGrid() const;
+    void SetShowGrid(bool showGrid);
+
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
 
@@ -128,6 +131,7 @@ private:
     mutable SceneLighting m_lighting;
     int m_selectedObjectIndex = 1;
     bool m_showLightGizmos = true;
+    bool m_showGrid = true;
     int m_nextDirectionalLightNumber = 2;
     int m_nextPointLightNumber = 1;
     int m_nextSpotLightNumber = 1;

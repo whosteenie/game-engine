@@ -28,7 +28,8 @@ public:
         const IBL& ibl,
         const glm::mat4& model,
         const ShadowMap* shadowMap = nullptr,
-        bool receiveShadow = true) const;
+        bool receiveShadow = true,
+        bool outputLinear = false) const;
 
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;

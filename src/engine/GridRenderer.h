@@ -11,7 +11,7 @@ public:
     GridRenderer();
     ~GridRenderer();
 
-    void Draw(const Camera& camera) const;
+    void Draw(const Camera& camera, bool outputLinear = false) const;
 
 private:
     void BuildGridGeometry(float halfExtent);

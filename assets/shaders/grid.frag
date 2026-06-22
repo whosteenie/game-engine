@@ -8,6 +8,7 @@ uniform vec3 uColor;
 uniform vec3 uCameraPosition;
 uniform float uCellSize;
 uniform float uMajorInterval;
+uniform int uOutputLinear;
 
 vec3 LinearToSrgb(vec3 linear)
 {
@@ -47,5 +48,13 @@ void main()
     }
 
     vec3 linearColor = pow(uColor, vec3(2.2));
-    FragColor = vec4(LinearToSrgb(linearColor), alpha);
+
+    if (uOutputLinear != 0)
+    {
+        FragColor = vec4(linearColor, alpha);
+    }
+    else
+    {
+        FragColor = vec4(LinearToSrgb(linearColor), alpha);
+    }
 }

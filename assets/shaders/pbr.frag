@@ -53,6 +53,7 @@ uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 uniform sampler2DShadow uShadowMap;
 uniform int uShadowLightIndex;
 uniform int uReceiveShadow;
+uniform int uOutputLinear;
 
 uniform samplerCube uIrradianceMap;
 uniform samplerCube uPrefilterMap;
@@ -354,5 +355,13 @@ void main()
     }
 
     vec3 result = ambient + directLighting;
-    FragColor = vec4(LinearToSrgb(result), 1.0);
+
+    if (uOutputLinear != 0)
+    {
+        FragColor = vec4(result, 1.0);
+    }
+    else
+    {
+        FragColor = vec4(LinearToSrgb(result), 1.0);
+    }
 }
