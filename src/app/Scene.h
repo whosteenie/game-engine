@@ -18,6 +18,7 @@ class Mesh;
 class GridRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
+class ScreenSpaceEffects;
 
 enum class HierarchyInsertMode
 {
@@ -93,6 +94,9 @@ public:
     void ClearLightSelection();
     bool HasLightSelection() const;
 
+    ScreenSpaceEffects& GetScreenSpaceEffects();
+    const ScreenSpaceEffects& GetScreenSpaceEffects() const;
+
 private:
     void SetupLighting();
     void SetupObjects();
@@ -120,6 +124,7 @@ private:
     std::unique_ptr<SceneEditor> m_sceneEditor;
     std::unique_ptr<ShadowMap> m_shadowMap;
     std::unique_ptr<IBL> m_ibl;
+    std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;
     SceneLighting m_lighting;
     int m_selectedObjectIndex = 1;

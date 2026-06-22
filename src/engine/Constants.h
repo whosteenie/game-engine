@@ -10,6 +10,12 @@ namespace EngineConstants
     inline constexpr const char* GridFragmentShader = "assets/shaders/grid.frag";
     inline constexpr const char* LineFragmentShader = "assets/shaders/line.frag";
 
+    inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vert";
+    inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.frag";
+    inline constexpr const char* SsaoBlurFragmentShader = "assets/shaders/ssao_blur.frag";
+    inline constexpr const char* ContactShadowFragmentShader = "assets/shaders/contact_shadow.frag";
+    inline constexpr const char* ScreenCompositeFragmentShader = "assets/shaders/screen_composite.frag";
+
     inline constexpr const char* IblCubemapVertexShader = "assets/shaders/ibl_cubemap.vert";
     inline constexpr const char* IblEquirectToCubemapFragmentShader = "assets/shaders/ibl_equirect_to_cubemap.frag";
     inline constexpr const char* IblIrradianceFragmentShader = "assets/shaders/ibl_irradiance.frag";

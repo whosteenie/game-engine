@@ -228,6 +228,10 @@ add_executable(game-engine
 
     src/engine/Renderer.cpp
 
+    src/engine/Framebuffer.cpp
+
+    src/engine/ScreenSpaceEffects.cpp
+
     src/engine/Shader.cpp
 
     src/engine/GridRenderer.cpp

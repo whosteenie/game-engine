@@ -19,6 +19,7 @@
 #include "engine/GridRenderer.h"
 #include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
+#include "engine/ScreenSpaceEffects.h"
 #include "engine/ShadowMap.h"
 
 #include <GLFW/glfw3.h>
@@ -42,6 +43,7 @@ Scene::Scene()
       m_sceneEditor(std::make_unique<SceneEditor>()),
       m_shadowMap(std::make_unique<ShadowMap>()),
       m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
+      m_screenSpaceEffects(std::make_unique<ScreenSpaceEffects>()),
       m_shadowDepthShader(std::make_unique<Shader>(
           EngineConstants::ShadowDepthVertexShader,
           EngineConstants::ShadowDepthFragmentShader))
@@ -1007,6 +1009,16 @@ bool Scene::HasLightSelection() const
         static_cast<std::size_t>(m_selectedLightIndex) < m_lighting.GetLightCount();
 }
 
+ScreenSpaceEffects& Scene::GetScreenSpaceEffects()
+{
+    return *m_screenSpaceEffects;
+}
+
+const ScreenSpaceEffects& Scene::GetScreenSpaceEffects() const
+{
+    return *m_screenSpaceEffects;
+}
+
 glm::vec3 Scene::GetSunDirection() const
 {
     const auto& lights = m_lighting.GetLights();
@@ -1097,6 +1109,16 @@ void Scene::Render(
     RenderShadowPass();
     m_shadowMap->EndPass();
 
+    const bool useScreenSpace =
+        m_screenSpaceEffects->IsEnabled()
+        && (m_screenSpaceEffects->IsSsaoEnabled() || m_screenSpaceEffects->IsContactShadowsEnabled());
+
+    if (useScreenSpace)
+    {
+        m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BeginScenePass();
+    }
+
     glViewport(0, 0, viewportWidth, viewportHeight);
 
     for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
@@ -1129,7 +1151,17 @@ void Scene::Render(
         }
     }
 
-    m_grid->Draw(camera);
+    if (useScreenSpace)
+    {
+        m_grid->Draw(camera);
+        m_screenSpaceEffects->EndScenePass();
+        m_screenSpaceEffects->Apply(camera, GetSunDirection(), viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitDepthToDefaultFramebuffer(viewportWidth, viewportHeight);
+    }
+    else
+    {
+        m_grid->Draw(camera);
+    }
 
     if (m_showLightGizmos)
     {
