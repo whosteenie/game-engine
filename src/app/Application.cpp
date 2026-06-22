@@ -4,6 +4,9 @@
 
 #include "app/Application.h"
 #include "app/LightingPanel.h"
+#include "app/MainMenuBar.h"
+#include "app/ProjectFilesPanel.h"
+#include "app/ProjectSession.h"
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
 #include "app/SceneHierarchyPanel.h"
@@ -34,10 +37,13 @@ Application::Application(int width, int height, const char* title)
 
     m_renderer = std::make_unique<Renderer>();
     m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
+    m_projectSession = std::make_unique<ProjectSession>();
+    m_mainMenuBar = std::make_unique<MainMenuBar>();
     m_lightingPanel = std::make_unique<LightingPanel>();
     m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
     m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
     m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
+    m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
@@ -113,9 +119,20 @@ void Application::Update(double deltaTime)
     glfwPollEvents();
 
     m_imguiLayer->BeginFrame();
+
+    EditorPanelVisibility panelVisibility;
+    panelVisibility.hierarchy = &m_sceneHierarchyPanel->ShowPanel();
+    panelVisibility.inspector = &m_sceneInspectorPanel->ShowPanel();
+    panelVisibility.toolbar = &m_sceneToolbarPanel->ShowPanel();
+    panelVisibility.lighting = &m_lightingPanel->ShowPanel();
+    panelVisibility.project = &m_projectFilesPanel->ShowPanel();
+
+    m_mainMenuBar->Draw(*m_scene, *m_projectSession, m_window, panelVisibility);
+
     m_sceneToolbarPanel->Draw(*m_scene);
     m_sceneHierarchyPanel->Draw(*m_scene);
     m_sceneInspectorPanel->Draw(*m_scene);
+    m_projectFilesPanel->Draw(*m_projectSession);
     m_lightingPanel->Draw(*m_scene, *m_camera);
 
     const ImGuiIO& io = ImGui::GetIO();

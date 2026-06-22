@@ -164,6 +164,12 @@ add_executable(game-engine
 
     src/app/Application.cpp
 
+    src/app/MainMenuBar.cpp
+
+    src/app/ProjectSession.cpp
+
+    src/app/ProjectFilesPanel.cpp
+
     src/app/LightingPanel.cpp
 
     src/app/EditorWidgets.cpp
@@ -255,7 +261,7 @@ find_package(OpenGL REQUIRED)
 target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib)
 
 if(WIN32)
-    target_link_libraries(game-engine PRIVATE comdlg32)
+    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32)
 endif()
 
 

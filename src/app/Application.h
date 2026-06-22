@@ -5,6 +5,9 @@
 struct GLFWwindow;
 class Camera;
 class LightingPanel;
+class MainMenuBar;
+class ProjectFilesPanel;
+class ProjectSession;
 class Scene;
 class ImGuiLayer;
 class Input;
@@ -41,10 +44,13 @@ private:
 
     std::unique_ptr<Renderer> m_renderer;
     std::unique_ptr<ImGuiLayer> m_imguiLayer;
+    std::unique_ptr<ProjectSession> m_projectSession;
+    std::unique_ptr<MainMenuBar> m_mainMenuBar;
     std::unique_ptr<LightingPanel> m_lightingPanel;
     std::unique_ptr<SceneToolbarPanel> m_sceneToolbarPanel;
     std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<SceneInspectorPanel> m_sceneInspectorPanel;
+    std::unique_ptr<ProjectFilesPanel> m_projectFilesPanel;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;

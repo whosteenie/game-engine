@@ -7,10 +7,131 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstdio>
+#include <vector>
 
 namespace
 {
+    bool IsNodeExpanded(int objectIndex, const std::unordered_map<int, bool>& openStates)
+    {
+        const auto iterator = openStates.find(objectIndex);
+        return iterator != openStates.end() && iterator->second;
+    }
+
+    void BuildVisibleObjectOrder(
+        const Scene& scene,
+        int objectIndex,
+        const std::unordered_map<int, bool>& openStates,
+        std::vector<int>& outVisibleIndices)
+    {
+        outVisibleIndices.push_back(objectIndex);
+
+        if (!IsNodeExpanded(objectIndex, openStates))
+        {
+            return;
+        }
+
+        for (int childIndex : scene.GetChildren(objectIndex))
+        {
+            BuildVisibleObjectOrder(scene, childIndex, openStates, outVisibleIndices);
+        }
+    }
+
+    void BuildVisibleObjectOrder(
+        const Scene& scene,
+        const std::unordered_map<int, bool>& openStates,
+        std::vector<int>& outVisibleIndices)
+    {
+        outVisibleIndices.clear();
+        for (int rootIndex : scene.GetRootObjectIndices())
+        {
+            BuildVisibleObjectOrder(scene, rootIndex, openStates, outVisibleIndices);
+        }
+    }
+
+    void HandleHierarchyKeyboardNavigation(
+        Scene& scene,
+        int& selectedIndex,
+        std::unordered_map<int, bool>& openStates,
+        bool& scrollSelectionIntoView)
+    {
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
+        {
+            return;
+        }
+
+        if (ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        std::vector<int> visibleIndices;
+        BuildVisibleObjectOrder(scene, openStates, visibleIndices);
+        if (visibleIndices.empty())
+        {
+            return;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+        {
+            if (selectedIndex < 0)
+            {
+                selectedIndex = visibleIndices.front();
+            }
+            else
+            {
+                const auto currentIterator =
+                    std::find(visibleIndices.begin(), visibleIndices.end(), selectedIndex);
+                if (currentIterator != visibleIndices.end() && currentIterator + 1 != visibleIndices.end())
+                {
+                    selectedIndex = *(currentIterator + 1);
+                }
+            }
+
+            scene.SetSelectedObjectIndex(selectedIndex);
+            scrollSelectionIntoView = true;
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+        {
+            if (selectedIndex < 0)
+            {
+                selectedIndex = visibleIndices.back();
+            }
+            else
+            {
+                const auto currentIterator =
+                    std::find(visibleIndices.begin(), visibleIndices.end(), selectedIndex);
+                if (currentIterator != visibleIndices.end() && currentIterator != visibleIndices.begin())
+                {
+                    selectedIndex = *(currentIterator - 1);
+                }
+            }
+
+            scene.SetSelectedObjectIndex(selectedIndex);
+            scrollSelectionIntoView = true;
+        }
+        else if (selectedIndex >= 0)
+        {
+            const std::vector<int> children = scene.GetChildren(selectedIndex);
+            if (children.empty())
+            {
+                return;
+            }
+
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && !IsNodeExpanded(selectedIndex, openStates))
+            {
+                openStates[selectedIndex] = true;
+                scrollSelectionIntoView = true;
+            }
+            else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && IsNodeExpanded(selectedIndex, openStates))
+            {
+                openStates[selectedIndex] = false;
+                scrollSelectionIntoView = true;
+            }
+        }
+    }
+
     bool AddPrimitiveFromMenu(Scene& scene, ScenePrimitive primitive, int parentIndex)
     {
         if (ImGui::MenuItem(GetScenePrimitiveDisplayName(primitive)))
@@ -164,6 +285,8 @@ namespace
         Scene& scene,
         int objectIndex,
         int selectedIndex,
+        std::unordered_map<int, bool>& openStates,
+        bool& scrollSelectionIntoView,
         int& pendingDeleteIndex,
         int& pendingRenameIndex,
         int& renameTargetIndex,
@@ -188,6 +311,10 @@ namespace
         if (children.empty())
         {
             flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        }
+        else
+        {
+            ImGui::SetNextItemOpen(IsNodeExpanded(objectIndex, openStates), ImGuiCond_Always);
         }
 
         const std::string label = object.IsRenderable() ? object.GetName() : "[Empty] " + object.GetName();
@@ -238,6 +365,16 @@ namespace
         else
         {
             opened = ImGui::TreeNodeEx(label.c_str(), flags);
+            if (!children.empty())
+            {
+                openStates[objectIndex] = opened;
+            }
+
+            if (objectIndex == selectedIndex && scrollSelectionIntoView)
+            {
+                ImGui::SetScrollHereY(0.5f);
+            }
+
             if (ImGui::IsItemClicked())
             {
                 scene.SetSelectedObjectIndex(objectIndex);
@@ -266,6 +403,8 @@ namespace
                     scene,
                     childIndex,
                     selectedIndex,
+                    openStates,
+                    scrollSelectionIntoView,
                     pendingDeleteIndex,
                     pendingRenameIndex,
                     renameTargetIndex,
@@ -336,23 +475,19 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
         m_renameInputEngaged = false;
     }
 
-    if (ImGui::Selectable("(none)", selectedIndex < 0))
+    if (m_pendingRenameIndex < 0)
     {
-        scene.ClearSelection();
-        selectedIndex = -1;
+        HandleHierarchyKeyboardNavigation(scene, selectedIndex, m_nodeOpenStates, m_scrollSelectionIntoView);
     }
 
-    for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
+    for (int objectIndex : scene.GetRootObjectIndices())
     {
-        if (objects[static_cast<std::size_t>(objectIndex)].GetParentIndex() >= 0)
-        {
-            continue;
-        }
-
         DrawHierarchyNode(
             scene,
             objectIndex,
             selectedIndex,
+            m_nodeOpenStates,
+            m_scrollSelectionIntoView,
             m_pendingDeleteIndex,
             m_pendingRenameIndex,
             m_renameTargetIndex,
@@ -363,9 +498,12 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
             m_renameInputEngaged);
     }
 
+    m_scrollSelectionIntoView = false;
+
     if (m_pendingDeleteIndex >= 0)
     {
         scene.RemoveObject(static_cast<std::size_t>(m_pendingDeleteIndex));
+        m_nodeOpenStates.clear();
         m_pendingDeleteIndex = -1;
         m_pendingRenameIndex = -1;
         m_renameTargetIndex = -1;
@@ -401,6 +539,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
     if (ImGui::Button("Delete"))
     {
         scene.RemoveObject(static_cast<std::size_t>(scene.GetSelectedObjectIndex()));
+        m_nodeOpenStates.clear();
     }
     ImGui::EndDisabled();
 

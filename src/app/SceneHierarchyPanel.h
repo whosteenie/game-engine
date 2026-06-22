@@ -1,11 +1,15 @@
 #pragma once
 
+#include <unordered_map>
+
 class Scene;
 
 class SceneHierarchyPanel
 {
 public:
     void Draw(Scene& scene) const;
+
+    bool& ShowPanel() const { return m_showPanel; }
 
 private:
     mutable bool m_showPanel = true;
@@ -16,4 +20,6 @@ private:
     mutable char m_renameBuffer[128] = {};
     mutable bool m_focusRenameInput = false;
     mutable bool m_renameInputEngaged = false;
+    mutable std::unordered_map<int, bool> m_nodeOpenStates;
+    mutable bool m_scrollSelectionIntoView = false;
 };
