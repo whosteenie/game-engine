@@ -1,5 +1,6 @@
 #include "app/ProjectFilesPanel.h"
 
+#include "app/EditorPanelLayout.h"
 #include "app/ProjectSession.h"
 
 #include <imgui.h>
@@ -454,8 +455,7 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
 
 void ProjectFilesPanel::Draw(ProjectSession& project)
 {
-    ImGui::SetNextWindowPos(ImVec2(8.0f, 520.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(720.0f, 220.0f), ImGuiCond_FirstUseEver);
+    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::ProjectFiles);
 
     if (!ImGui::Begin("Project", &m_showPanel))
     {

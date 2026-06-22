@@ -1,5 +1,6 @@
 #include "app/LightingPanel.h"
 
+#include "app/EditorPanelLayout.h"
 #include "app/Scene.h"
 #include "engine/Camera.h"
 #include "engine/IBL.h"
@@ -13,7 +14,7 @@ void LightingPanel::Draw(
     Scene& scene,
     const Camera& camera) const
 {
-    ImGui::SetNextWindowSize(ImVec2(440.0f, 620.0f), ImGuiCond_FirstUseEver);
+    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::RendererTuning);
 
     if (!ImGui::Begin("Renderer Tuning", &m_showPanel, ImGuiWindowFlags_None))
     {
@@ -64,6 +65,44 @@ void LightingPanel::Draw(
         {
             screenSpaceEffects.SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
             scene.MarkDirty();
+        }
+
+        bool bloomEnabled = screenSpaceEffects.IsBloomEnabled();
+        if (ImGui::Checkbox("Bloom", &bloomEnabled))
+        {
+            screenSpaceEffects.SetBloomEnabled(bloomEnabled);
+            scene.MarkDirty();
+        }
+
+        if (bloomEnabled)
+        {
+            float bloomThreshold = screenSpaceEffects.GetBloomThreshold();
+            if (ImGui::SliderFloat("Bloom threshold", &bloomThreshold, 0.0f, 3.0f))
+            {
+                screenSpaceEffects.SetBloomThreshold(bloomThreshold);
+                scene.MarkDirty();
+            }
+
+            float bloomSoftKnee = screenSpaceEffects.GetBloomSoftKnee();
+            if (ImGui::SliderFloat("Bloom soft knee", &bloomSoftKnee, 0.0f, 1.0f))
+            {
+                screenSpaceEffects.SetBloomSoftKnee(bloomSoftKnee);
+                scene.MarkDirty();
+            }
+
+            float bloomIntensity = screenSpaceEffects.GetBloomIntensity();
+            if (ImGui::SliderFloat("Bloom intensity", &bloomIntensity, 0.0f, 2.0f))
+            {
+                screenSpaceEffects.SetBloomIntensity(bloomIntensity);
+                scene.MarkDirty();
+            }
+
+            float bloomBlurRadius = screenSpaceEffects.GetBloomBlurRadius();
+            if (ImGui::SliderFloat("Bloom blur radius", &bloomBlurRadius, 0.25f, 4.0f))
+            {
+                screenSpaceEffects.SetBloomBlurRadius(bloomBlurRadius);
+                scene.MarkDirty();
+            }
         }
     }
 

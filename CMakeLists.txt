@@ -180,6 +180,8 @@ add_executable(game-engine
 
     src/app/EditorSettings.cpp
 
+    src/app/EditorPanelLayout.cpp
+
     src/app/MainMenuBar.cpp
 
     src/app/ProjectChooser.cpp

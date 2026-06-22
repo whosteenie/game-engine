@@ -1,5 +1,6 @@
 #include "app/SceneHierarchyPanel.h"
 
+#include "app/EditorPanelLayout.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
@@ -638,8 +639,7 @@ namespace
 
 void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project) const
 {
-    ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(280.0f, 700.0f), ImGuiCond_FirstUseEver);
+    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
 
     if (!ImGui::Begin("Hierarchy", &m_showPanel, ImGuiWindowFlags_None))
     {

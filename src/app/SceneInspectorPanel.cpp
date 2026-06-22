@@ -1,5 +1,6 @@
 #include "app/SceneInspectorPanel.h"
 
+#include "app/EditorPanelLayout.h"
 #include "app/EditorWidgets.h"
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
@@ -493,9 +494,7 @@ namespace
 
 void SceneInspectorPanel::Draw(Scene& scene) const
 {
-    const ImVec2 displaySize = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImVec2(displaySize.x - 288.0f, 8.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(280.0f, 700.0f), ImGuiCond_FirstUseEver);
+    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Inspector);
 
     if (!ImGui::Begin("Inspector", &m_showPanel, ImGuiWindowFlags_None))
     {

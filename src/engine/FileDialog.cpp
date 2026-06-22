@@ -12,15 +12,36 @@
 namespace FileDialog
 {
 #ifdef _WIN32
-    bool ShowOpenFileDialog(std::string& outPath, const char* filter, const char* title)
+    bool ShowOpenFileDialog(
+        std::string& outPath,
+        const char* filter,
+        const char* title,
+        const std::string& initialDirectory = "",
+        const char* initialFilePattern = "*.*")
     {
         char filePath[MAX_PATH] = {};
+        if (!initialDirectory.empty())
+        {
+            std::string seededPath = initialDirectory;
+            const char lastCharacter = seededPath.back();
+            if (lastCharacter != '\\' && lastCharacter != '/')
+            {
+                seededPath += '\\';
+            }
+
+            seededPath += initialFilePattern;
+            if (seededPath.size() < MAX_PATH)
+            {
+                std::strncpy(filePath, seededPath.c_str(), MAX_PATH - 1);
+            }
+        }
+
         OPENFILENAMEA openInfo = {};
         openInfo.lStructSize = sizeof(openInfo);
         openInfo.lpstrFilter = filter;
         openInfo.lpstrFile = filePath;
         openInfo.nMaxFile = MAX_PATH;
-        openInfo.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        openInfo.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR | OFN_EXPLORER;
         openInfo.lpstrTitle = title;
 
         if (!GetOpenFileNameA(&openInfo))
@@ -90,15 +111,18 @@ namespace FileDialog
 #endif
     }
 
-    bool OpenProjectFile(std::string& outPath)
+    bool OpenProjectFile(std::string& outPath, const std::string& initialDirectory)
     {
 #ifdef _WIN32
         return ShowOpenFileDialog(
             outPath,
             "Game Project (*.gameproject)\0*.gameproject\0All Files (*.*)\0*.*\0",
-            "Open Project");
+            "Open Project",
+            initialDirectory,
+            "*.gameproject");
 #else
         (void)outPath;
+        (void)initialDirectory;
         return false;
 #endif
     }

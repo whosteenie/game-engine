@@ -1,5 +1,6 @@
 #include "app/SceneToolbarPanel.h"
 
+#include "app/EditorPanelLayout.h"
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
 
@@ -54,7 +55,7 @@ namespace
 
 void SceneToolbarPanel::Draw(Scene& scene) const
 {
-    ImGui::SetNextWindowPos(ImVec2(296.0f, 8.0f), ImGuiCond_FirstUseEver);
+    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Toolbar);
 
     if (!ImGui::Begin("Toolbar", &m_showPanel, ImGuiWindowFlags_AlwaysAutoResize))
     {

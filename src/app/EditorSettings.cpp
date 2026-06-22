@@ -157,6 +157,25 @@ void EditorSettings::SetLastNewProjectParentDirectory(const std::string& directo
     m_lastNewProjectParentDirectory = error ? directory : canonical.string();
 }
 
+void EditorSettings::SetLastNewProjectParentDirectoryFromProjectFile(const std::string& projectFilePath)
+{
+    if (projectFilePath.empty())
+    {
+        return;
+    }
+
+    std::error_code error;
+    const fs::path projectRoot = fs::path(projectFilePath).parent_path();
+    const fs::path browseDirectory = projectRoot.parent_path();
+    if (!browseDirectory.empty() && fs::exists(browseDirectory, error) && fs::is_directory(browseDirectory, error))
+    {
+        SetLastNewProjectParentDirectory(browseDirectory.string());
+        return;
+    }
+
+    SetLastNewProjectParentDirectory(projectRoot.string());
+}
+
 void EditorSettings::ValidateLastNewProjectParentDirectory()
 {
     if (m_lastNewProjectParentDirectory.empty())

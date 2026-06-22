@@ -73,6 +73,21 @@ public:
     TonemapMode GetTonemapMode() const;
     void SetTonemapMode(TonemapMode mode);
 
+    bool IsBloomEnabled() const;
+    void SetBloomEnabled(bool enabled);
+
+    float GetBloomThreshold() const;
+    void SetBloomThreshold(float threshold);
+
+    float GetBloomSoftKnee() const;
+    void SetBloomSoftKnee(float softKnee);
+
+    float GetBloomIntensity() const;
+    void SetBloomIntensity(float intensity);
+
+    float GetBloomBlurRadius() const;
+    void SetBloomBlurRadius(float blurRadius);
+
     void BlitDepthToDefaultFramebuffer(int viewportWidth, int viewportHeight) const;
 
 private:
@@ -85,6 +100,7 @@ private:
     void DestroyHdrColorTarget(unsigned int& fbo, unsigned int& texture) const;
     void ResizeSingleChannelTargets(int width, int height);
     void ResizeHdrColorTarget(int width, int height);
+    void ResizeBloomTargets(int width, int height);
     void DrawFullscreenQuad() const;
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
@@ -92,6 +108,8 @@ private:
     std::unique_ptr<Shader> m_blurShader;
     std::unique_ptr<Shader> m_contactShadowShader;
     std::unique_ptr<Shader> m_compositeShader;
+    std::unique_ptr<Shader> m_bloomExtractShader;
+    std::unique_ptr<Shader> m_bloomBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
 
     unsigned int m_quadVao = 0;
@@ -108,6 +126,12 @@ private:
     unsigned int m_contactBlurTexture = 0;
     unsigned int m_hdrCompositeFbo = 0;
     unsigned int m_hdrCompositeTexture = 0;
+    unsigned int m_bloomExtractFbo = 0;
+    unsigned int m_bloomExtractTexture = 0;
+    unsigned int m_bloomBlurFbo = 0;
+    unsigned int m_bloomBlurTexture = 0;
+    unsigned int m_bloomBlur2Fbo = 0;
+    unsigned int m_bloomBlur2Texture = 0;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -125,4 +149,9 @@ private:
     int m_contactShadowSteps = 6;
     float m_exposure = 0.0f;
     TonemapMode m_tonemapMode = TonemapMode::Gamma;
+    bool m_bloomEnabled = false;
+    float m_bloomThreshold = 1.0f;
+    float m_bloomSoftKnee = 0.5f;
+    float m_bloomIntensity = 0.4f;
+    float m_bloomBlurRadius = 1.0f;
 };

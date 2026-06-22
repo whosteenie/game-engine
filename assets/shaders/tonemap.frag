@@ -6,6 +6,9 @@ in vec2 vTexCoord;
 uniform sampler2D uHdrColor;
 uniform float uExposure;
 uniform int uTonemapMode;
+uniform int uUseBloom;
+uniform sampler2D uBloom;
+uniform float uBloomIntensity;
 
 vec3 LinearToSrgb(vec3 linear)
 {
@@ -32,6 +35,12 @@ vec3 Reinhard(vec3 color)
 void main()
 {
     vec3 hdr = texture(uHdrColor, vTexCoord).rgb * exp2(uExposure);
+
+    if (uUseBloom != 0)
+    {
+        hdr += texture(uBloom, vTexCoord).rgb * uBloomIntensity * exp2(uExposure);
+    }
+
     vec3 mapped;
 
     if (uTonemapMode == 0)

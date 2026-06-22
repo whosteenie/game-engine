@@ -10,6 +10,7 @@
 
 #include <imgui.h>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -75,8 +76,9 @@ namespace
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState)
     {
+        settings.ValidateLastNewProjectParentDirectory();
         std::string projectPath;
-        if (!FileDialog::OpenProjectFile(projectPath))
+        if (!FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
         {
             return;
         }
@@ -84,6 +86,7 @@ namespace
         if (project.OpenProject(scene, projectPath, editorState))
         {
             settings.AddRecentProject(projectPath);
+            settings.SetLastNewProjectParentDirectoryFromProjectFile(projectPath);
             settings.Save();
             if (applyEditorState)
             {

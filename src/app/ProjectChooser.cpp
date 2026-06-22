@@ -55,6 +55,7 @@ bool ProjectChooser::TryOpenProject(
     }
 
     settings.AddRecentProject(projectFilePath);
+    settings.SetLastNewProjectParentDirectoryFromProjectFile(projectFilePath);
     settings.Save();
     m_startupMode = false;
     m_showNewProjectForm = false;
@@ -202,8 +203,9 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (ImGui::Button("Open Project...", ImVec2(-FLT_MIN, 0.0f)))
     {
+        settings.ValidateLastNewProjectParentDirectory();
         std::string projectPath;
-        if (FileDialog::OpenProjectFile(projectPath))
+        if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
         {
             std::string error;
             if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))

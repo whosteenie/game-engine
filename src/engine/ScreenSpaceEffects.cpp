@@ -47,6 +47,12 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_compositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::ScreenCompositeFragmentShader)),
+      m_bloomExtractShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::BloomExtractFragmentShader)),
+      m_bloomBlurShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::BloomBlurFragmentShader)),
       m_tonemapShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::TonemapFragmentShader))
@@ -63,6 +69,9 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroySingleChannelTarget(m_contactFbo, m_contactTexture);
     DestroySingleChannelTarget(m_contactBlurFbo, m_contactBlurTexture);
     DestroyHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture);
+    DestroyHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture);
+    DestroyHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture);
+    DestroyHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture);
 
     if (m_noiseTexture != 0)
     {
@@ -223,6 +232,20 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(int width, int height)
     CreateHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture, width, height);
 }
 
+void ScreenSpaceEffects::ResizeBloomTargets(int width, int height)
+{
+    const int bloomWidth = std::max(1, width / 2);
+    const int bloomHeight = std::max(1, height / 2);
+
+    DestroyHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture);
+    DestroyHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture);
+    DestroyHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture);
+
+    CreateHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture, bloomWidth, bloomHeight);
+    CreateHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture, bloomWidth, bloomHeight);
+    CreateHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture, bloomWidth, bloomHeight);
+}
+
 void ScreenSpaceEffects::DestroySingleChannelTarget(unsigned int& fbo, unsigned int& texture) const
 {
     if (texture != 0)
@@ -266,6 +289,7 @@ void ScreenSpaceEffects::Resize(int width, int height)
     m_sceneFramebuffer->Resize(width, height);
     ResizeSingleChannelTargets(width, height);
     ResizeHdrColorTarget(width, height);
+    ResizeBloomTargets(width, height);
     m_width = width;
     m_height = height;
 }
@@ -429,6 +453,57 @@ void ScreenSpaceEffects::Apply(
         hdrColorTexture = m_hdrCompositeTexture;
     }
 
+    unsigned int bloomTexture = 0;
+    if (m_bloomEnabled)
+    {
+        const int bloomWidth = std::max(1, m_width / 2);
+        const int bloomHeight = std::max(1, m_height / 2);
+        const glm::vec2 bloomTexelSize(
+            1.0f / static_cast<float>(bloomWidth),
+            1.0f / static_cast<float>(bloomHeight));
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomExtractFbo);
+        glViewport(0, 0, bloomWidth, bloomHeight);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_bloomExtractShader->Use();
+        m_bloomExtractShader->SetInt("uHdrColor", 0);
+        m_bloomExtractShader->SetFloat("uThreshold", m_bloomThreshold);
+        m_bloomExtractShader->SetFloat("uSoftKnee", m_bloomSoftKnee);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, hdrColorTexture);
+        DrawFullscreenQuad();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomBlurFbo);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_bloomBlurShader->Use();
+        m_bloomBlurShader->SetInt("uInput", 0);
+        m_bloomBlurShader->SetFloat("uDirectionX", bloomTexelSize.x);
+        m_bloomBlurShader->SetFloat("uDirectionY", 0.0f);
+        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_bloomExtractTexture);
+        DrawFullscreenQuad();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomBlur2Fbo);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_bloomBlurShader->Use();
+        m_bloomBlurShader->SetInt("uInput", 0);
+        m_bloomBlurShader->SetFloat("uDirectionX", 0.0f);
+        m_bloomBlurShader->SetFloat("uDirectionY", bloomTexelSize.y);
+        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_bloomBlurTexture);
+        DrawFullscreenQuad();
+
+        bloomTexture = m_bloomBlur2Texture;
+    }
+
     glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
     glViewport(0, 0, viewportWidth, viewportHeight);
 
@@ -436,8 +511,16 @@ void ScreenSpaceEffects::Apply(
     m_tonemapShader->SetInt("uHdrColor", 0);
     m_tonemapShader->SetFloat("uExposure", m_exposure);
     m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
+    m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
+    m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
+    m_tonemapShader->SetInt("uBloom", 1);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, hdrColorTexture);
+    if (m_bloomEnabled)
+    {
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, bloomTexture);
+    }
     DrawFullscreenQuad();
 
     glEnable(GL_DEPTH_TEST);
@@ -562,6 +645,56 @@ TonemapMode ScreenSpaceEffects::GetTonemapMode() const
 void ScreenSpaceEffects::SetTonemapMode(TonemapMode mode)
 {
     m_tonemapMode = mode;
+}
+
+bool ScreenSpaceEffects::IsBloomEnabled() const
+{
+    return m_bloomEnabled;
+}
+
+void ScreenSpaceEffects::SetBloomEnabled(bool enabled)
+{
+    m_bloomEnabled = enabled;
+}
+
+float ScreenSpaceEffects::GetBloomThreshold() const
+{
+    return m_bloomThreshold;
+}
+
+void ScreenSpaceEffects::SetBloomThreshold(float threshold)
+{
+    m_bloomThreshold = std::max(threshold, 0.0f);
+}
+
+float ScreenSpaceEffects::GetBloomSoftKnee() const
+{
+    return m_bloomSoftKnee;
+}
+
+void ScreenSpaceEffects::SetBloomSoftKnee(float softKnee)
+{
+    m_bloomSoftKnee = std::clamp(softKnee, 0.0f, 1.0f);
+}
+
+float ScreenSpaceEffects::GetBloomIntensity() const
+{
+    return m_bloomIntensity;
+}
+
+void ScreenSpaceEffects::SetBloomIntensity(float intensity)
+{
+    m_bloomIntensity = std::max(intensity, 0.0f);
+}
+
+float ScreenSpaceEffects::GetBloomBlurRadius() const
+{
+    return m_bloomBlurRadius;
+}
+
+void ScreenSpaceEffects::SetBloomBlurRadius(float blurRadius)
+{
+    m_bloomBlurRadius = std::clamp(blurRadius, 0.25f, 4.0f);
 }
 
 void ScreenSpaceEffects::BlitDepthToDefaultFramebuffer(int viewportWidth, int viewportHeight) const

@@ -654,6 +654,11 @@ namespace
                  {"contactShadowSteps", effects.GetContactShadowSteps()},
                  {"exposure", effects.GetExposure()},
                  {"tonemapMode", TonemapModeToString(effects.GetTonemapMode())},
+                 {"bloomEnabled", effects.IsBloomEnabled()},
+                 {"bloomThreshold", effects.GetBloomThreshold()},
+                 {"bloomSoftKnee", effects.GetBloomSoftKnee()},
+                 {"bloomIntensity", effects.GetBloomIntensity()},
+                 {"bloomBlurRadius", effects.GetBloomBlurRadius()},
              }},
         };
     }
@@ -685,6 +690,11 @@ namespace
         effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
         effects.SetTonemapMode(
             TonemapModeFromString(effectsValue.value("tonemapMode", TonemapModeToString(effects.GetTonemapMode()))));
+        effects.SetBloomEnabled(effectsValue.value("bloomEnabled", effects.IsBloomEnabled()));
+        effects.SetBloomThreshold(effectsValue.value("bloomThreshold", effects.GetBloomThreshold()));
+        effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
+        effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
+        effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
     }
 
     json SerializeProjectFilesFolderOpenStates(

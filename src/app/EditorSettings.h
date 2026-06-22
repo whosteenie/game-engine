@@ -17,6 +17,7 @@ public:
 
     const std::string& GetLastNewProjectParentDirectory() const { return m_lastNewProjectParentDirectory; }
     void SetLastNewProjectParentDirectory(const std::string& directory);
+    void SetLastNewProjectParentDirectoryFromProjectFile(const std::string& projectFilePath);
     void ValidateLastNewProjectParentDirectory();
 
     static std::string GetSettingsFilePath();
