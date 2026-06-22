@@ -27,6 +27,7 @@ struct ImportedModel
     std::vector<ImportedSceneNode> nodes;
     int rootNodeIndex = -1;
     std::string errorMessage;
+    std::string warningMessage;
 };
 
 ImportedModel LoadModelFromFile(const std::string& path);

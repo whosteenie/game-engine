@@ -25,6 +25,7 @@ uniform int uUseAlbedoMap;
 uniform int uUseNormalMap;
 uniform int uUseAoMap;
 uniform int uUseRoughnessMap;
+uniform int uUseMetallicRoughnessMap;
 
 uniform int uAlbedoTexCoordSet;
 uniform int uNormalTexCoordSet;
@@ -277,13 +278,20 @@ void main()
     }
 
     float roughness = uRoughness;
-    if (uUseRoughnessMap != 0)
+    float metallic = uMetallic;
+    if (uUseMetallicRoughnessMap != 0)
+    {
+        vec3 metallicRoughnessSample = texture(uRoughnessMap, roughnessTexCoord).rgb;
+        roughness *= metallicRoughnessSample.g;
+        metallic *= metallicRoughnessSample.b;
+    }
+    else if (uUseRoughnessMap != 0)
     {
         roughness *= texture(uRoughnessMap, roughnessTexCoord).r;
     }
     roughness = clamp(roughness, 0.04, 1.0);
+    metallic = clamp(metallic, 0.0, 1.0);
 
-    float metallic = clamp(uMetallic, 0.0, 1.0);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
 
     float ambientOcclusion = 1.0;

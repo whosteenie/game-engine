@@ -42,6 +42,7 @@ public:
     void SetNormalMap(std::shared_ptr<Texture> texture);
     void SetAoMap(std::shared_ptr<Texture> texture);
     void SetRoughnessMap(std::shared_ptr<Texture> texture);
+    void SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int texCoordSet = 0);
 
     void SetAlbedoTexCoordSet(int texCoordSet);
     void SetNormalTexCoordSet(int texCoordSet);
@@ -55,6 +56,7 @@ public:
     bool HasNormalMap() const;
     bool HasAoMap() const;
     bool HasRoughnessMap() const;
+    bool HasMetallicRoughnessMap() const;
 
 private:
     void BindMaps() const;
@@ -74,4 +76,5 @@ private:
     int m_aoTexCoordSet = 0;
     int m_roughnessTexCoordSet = 0;
     bool m_doubleSided = false;
+    bool m_useMetallicRoughnessMap = false;
 };

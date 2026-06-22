@@ -40,6 +40,14 @@ namespace
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, static_cast<GLint>(samplerSettings.magFilter));
     }
 
+    bool ShouldGenerateMipmaps(const TextureSamplerSettings& samplerSettings)
+    {
+        return samplerSettings.minFilter == GL_LINEAR_MIPMAP_LINEAR ||
+            samplerSettings.minFilter == GL_LINEAR_MIPMAP_NEAREST ||
+            samplerSettings.minFilter == GL_NEAREST_MIPMAP_LINEAR ||
+            samplerSettings.minFilter == GL_NEAREST_MIPMAP_NEAREST;
+    }
+
     void UploadTexture2D(
         unsigned int& textureId,
         int width,
@@ -98,7 +106,7 @@ Texture::Texture(
         throw std::runtime_error(std::string("Failed to load texture: ") + path);
     }
 
-    UploadTexture2D(m_id, width, height, channelCount, pixels, colorSpace, samplerSettings, true);
+    UploadTexture2D(m_id, width, height, channelCount, pixels, colorSpace, samplerSettings, ShouldGenerateMipmaps(samplerSettings));
     stbi_image_free(pixels);
     m_valid = true;
 }
@@ -113,10 +121,7 @@ std::shared_ptr<Texture> Texture::CreateFromPixels(
     bool flipVertically)
 {
     auto texture = std::shared_ptr<Texture>(new Texture());
-    const bool generateMipmaps = samplerSettings.minFilter == GL_LINEAR_MIPMAP_LINEAR ||
-        samplerSettings.minFilter == GL_LINEAR_MIPMAP_NEAREST ||
-        samplerSettings.minFilter == GL_NEAREST_MIPMAP_LINEAR ||
-        samplerSettings.minFilter == GL_NEAREST_MIPMAP_NEAREST;
+    const bool generateMipmaps = ShouldGenerateMipmaps(samplerSettings);
 
     std::vector<unsigned char> flippedPixels;
     const unsigned char* uploadPixels = pixels;

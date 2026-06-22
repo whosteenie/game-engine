@@ -60,6 +60,7 @@ public:
     int AddEmptyObject(int parentIndex = -1);
     std::vector<int> ImportModel(const std::string& path, int parentIndex = -1);
     const std::string& GetLastImportError() const;
+    const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
@@ -114,4 +115,5 @@ private:
     int m_nextEmptyNumber = 1;
     int m_nextImportNumber = 1;
     std::string m_lastImportError;
+    std::string m_lastImportWarning;
 };

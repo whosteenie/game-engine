@@ -336,6 +336,7 @@ void Scene::RemapParentIndicesAfterRemoval(int removedIndex)
 std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
 {
     m_lastImportError.clear();
+    m_lastImportWarning.clear();
 
     ImportedModel importedModel = LoadModelFromFile(path);
     if (!importedModel.errorMessage.empty())
@@ -343,6 +344,8 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
         m_lastImportError = importedModel.errorMessage;
         return {};
     }
+
+    m_lastImportWarning = importedModel.warningMessage;
 
     if (importedModel.nodes.empty() || importedModel.rootNodeIndex < 0)
     {
@@ -430,6 +433,11 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
 const std::string& Scene::GetLastImportError() const
 {
     return m_lastImportError;
+}
+
+const std::string& Scene::GetLastImportWarning() const
+{
+    return m_lastImportWarning;
 }
 
 bool Scene::RemoveObject(std::size_t index)

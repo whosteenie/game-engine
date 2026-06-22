@@ -1,5 +1,7 @@
 #include "engine/ModelImporter.h"
 
+#include <glad/glad.h>
+
 #include "engine/Constants.h"
 #include "engine/Material.h"
 #include "engine/Mesh.h"
@@ -126,13 +128,13 @@ namespace
     {
         switch (wrap)
         {
-        case 33071:
-            return 0x812F; // GL_CLAMP_TO_EDGE
-        case 33648:
-            return 0x8370; // GL_MIRRORED_REPEAT
-        case 10497:
+        case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
+            return GL_CLAMP_TO_EDGE;
+        case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
+            return GL_MIRRORED_REPEAT;
+        case TINYGLTF_TEXTURE_WRAP_REPEAT:
         default:
-            return 0x2901; // GL_REPEAT
+            return GL_REPEAT;
         }
     }
 
@@ -140,19 +142,19 @@ namespace
     {
         switch (filter)
         {
-        case 9728:
-            return 0x2600; // GL_NEAREST
-        case 9984:
-            return 0x2700; // GL_NEAREST_MIPMAP_NEAREST
-        case 9985:
-            return 0x2701; // GL_LINEAR_MIPMAP_NEAREST
-        case 9986:
-            return 0x2702; // GL_NEAREST_MIPMAP_LINEAR
-        case 9987:
-            return 0x2703; // GL_LINEAR_MIPMAP_LINEAR
-        case 9729:
+        case TINYGLTF_TEXTURE_FILTER_NEAREST:
+            return GL_NEAREST;
+        case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
+            return GL_NEAREST_MIPMAP_NEAREST;
+        case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+            return GL_NEAREST_MIPMAP_LINEAR;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+            return GL_LINEAR_MIPMAP_NEAREST;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+            return GL_LINEAR_MIPMAP_LINEAR;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-            return 0x2601; // GL_LINEAR
+            return GL_LINEAR;
         }
     }
 
@@ -160,21 +162,17 @@ namespace
     {
         switch (filter)
         {
-        case 9728:
-            return 0x2600; // GL_NEAREST
-        case 9729:
+        case TINYGLTF_TEXTURE_FILTER_NEAREST:
+            return GL_NEAREST;
+        case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-            return 0x2601; // GL_LINEAR
+            return GL_LINEAR;
         }
     }
 
     TextureSamplerSettings GetGltfSamplerSettings(const tinygltf::Model& model, int textureIndex)
     {
         TextureSamplerSettings settings;
-        settings.wrapS = 0x812F; // GL_CLAMP_TO_EDGE
-        settings.wrapT = 0x812F;
-        settings.minFilter = 0x2601; // GL_LINEAR (no mipmaps — avoids atlas bleed)
-        settings.magFilter = 0x2601;
 
         if (textureIndex < 0 || textureIndex >= static_cast<int>(model.textures.size()))
         {
@@ -192,20 +190,6 @@ namespace
         settings.wrapT = ToGlWrap(sampler.wrapT);
         settings.minFilter = ToGlMinFilter(sampler.minFilter);
         settings.magFilter = ToGlMagFilter(sampler.magFilter);
-
-        // Mipmaps bleed between atlas islands; sample base level only.
-        if (settings.minFilter == 0x2700 || settings.minFilter == 0x2702)
-        {
-            settings.minFilter = 0x2600; // GL_NEAREST
-        }
-        else if (settings.minFilter == 0x2701 || settings.minFilter == 0x2703)
-        {
-            settings.minFilter = 0x2601; // GL_LINEAR
-        }
-
-        // Atlases rely on edge clamping; glTF defaults to REPEAT which bleeds neighboring texels.
-        settings.wrapS = 0x812F; // GL_CLAMP_TO_EDGE
-        settings.wrapT = 0x812F;
 
         return settings;
     }
@@ -372,64 +356,6 @@ namespace
             textureCache);
     }
 
-    std::shared_ptr<Texture> CreateRoughnessMapFromMetallicRoughness(
-        const tinygltf::Model& model,
-        int textureIndex,
-        const std::string& modelDirectory,
-        std::unordered_map<std::string, std::shared_ptr<Texture>>& textureCache)
-    {
-        if (textureIndex < 0)
-        {
-            return nullptr;
-        }
-
-        const tinygltf::Texture& texture = model.textures[static_cast<std::size_t>(textureIndex)];
-        const int imageIndex = texture.source;
-        if (imageIndex < 0)
-        {
-            return nullptr;
-        }
-
-        const TextureSamplerSettings samplerSettings = GetGltfSamplerSettings(model, textureIndex);
-        const std::string cacheKey = MakeTextureCacheKey(imageIndex, samplerSettings, TextureColorSpace::Linear, "roughness:");
-        const auto cachedTexture = textureCache.find(cacheKey);
-        if (cachedTexture != textureCache.end())
-        {
-            return cachedTexture->second;
-        }
-
-        const tinygltf::Image& image = model.images[static_cast<std::size_t>(imageIndex)];
-        if (image.width <= 0 || image.height <= 0 || image.component < 1)
-        {
-            return LoadGltfTexture(model, textureIndex, modelDirectory, TextureColorSpace::Linear, textureCache);
-        }
-
-        std::vector<unsigned char> roughnessPixels(
-            static_cast<std::size_t>(image.width) * static_cast<std::size_t>(image.height));
-        for (int pixelIndex = 0; pixelIndex < image.width * image.height; ++pixelIndex)
-        {
-            const int sourceIndex = pixelIndex * image.component;
-            const unsigned char greenChannel = image.component > 1 ? image.image[static_cast<std::size_t>(sourceIndex + 1)] : image.image[static_cast<std::size_t>(sourceIndex)];
-            roughnessPixels[static_cast<std::size_t>(pixelIndex)] = greenChannel;
-        }
-
-        std::shared_ptr<Texture> roughnessTexture = Texture::CreateFromPixels(
-            roughnessPixels.data(),
-            image.width,
-            image.height,
-            1,
-            TextureColorSpace::Linear,
-            samplerSettings,
-            true);
-
-        if (roughnessTexture != nullptr && roughnessTexture->IsValid())
-        {
-            textureCache.emplace(cacheKey, roughnessTexture);
-        }
-
-        return roughnessTexture;
-    }
-
     std::unique_ptr<Material> CreateMaterialFromGltf(
         const tinygltf::Model& model,
         int materialIndex,
@@ -472,12 +398,14 @@ namespace
 
             if (pbr.metallicRoughnessTexture.index >= 0)
             {
-                material->SetRoughnessTexCoordSet(pbr.metallicRoughnessTexture.texCoord);
-                material->SetRoughnessMap(CreateRoughnessMapFromMetallicRoughness(
-                    model,
-                    pbr.metallicRoughnessTexture.index,
-                    modelDirectory,
-                    textureCache));
+                material->SetMetallicRoughnessMap(
+                    LoadGltfTexture(
+                        model,
+                        pbr.metallicRoughnessTexture.index,
+                        modelDirectory,
+                        TextureColorSpace::Linear,
+                        textureCache),
+                    pbr.metallicRoughnessTexture.texCoord);
             }
 
             if (gltfMaterial.normalTexture.index >= 0)
@@ -848,7 +776,7 @@ ImportedModel LoadModelFromFile(const std::string& path)
 
     if (!warning.empty())
     {
-        // Warnings are non-fatal; keep going.
+        importedModel.warningMessage = warning;
     }
 
     if (!loaded)

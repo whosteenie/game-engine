@@ -391,6 +391,12 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Import failed: %s", importError.c_str());
     }
 
+    const std::string& importWarning = scene.GetLastImportWarning();
+    if (!importWarning.empty())
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Import warning: %s", importWarning.c_str());
+    }
+
     ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {

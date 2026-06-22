@@ -52,7 +52,8 @@ void Material::Apply(
     m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
     m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);
     m_shader->SetInt("uUseAoMap", HasAoMap() ? 1 : 0);
-    m_shader->SetInt("uUseRoughnessMap", HasRoughnessMap() ? 1 : 0);
+    m_shader->SetInt("uUseRoughnessMap", HasRoughnessMap() && !m_useMetallicRoughnessMap ? 1 : 0);
+    m_shader->SetInt("uUseMetallicRoughnessMap", HasMetallicRoughnessMap() ? 1 : 0);
     m_shader->SetInt("uAlbedoTexCoordSet", m_albedoTexCoordSet);
     m_shader->SetInt("uNormalTexCoordSet", m_normalTexCoordSet);
     m_shader->SetInt("uAoTexCoordSet", m_aoTexCoordSet);
@@ -103,6 +104,19 @@ void Material::BindMaps() const
     }
 }
 
+void Material::SetRoughnessMap(std::shared_ptr<Texture> texture)
+{
+    m_roughnessMap = std::move(texture);
+    m_useMetallicRoughnessMap = false;
+}
+
+void Material::SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int texCoordSet)
+{
+    m_roughnessMap = std::move(texture);
+    m_roughnessTexCoordSet = texCoordSet;
+    m_useMetallicRoughnessMap = true;
+}
+
 const glm::vec3& Material::GetAlbedo() const
 {
     return m_albedo;
@@ -146,11 +160,6 @@ void Material::SetNormalMap(std::shared_ptr<Texture> texture)
 void Material::SetAoMap(std::shared_ptr<Texture> texture)
 {
     m_aoMap = std::move(texture);
-}
-
-void Material::SetRoughnessMap(std::shared_ptr<Texture> texture)
-{
-    m_roughnessMap = std::move(texture);
 }
 
 void Material::SetAlbedoTexCoordSet(int texCoordSet)
@@ -201,4 +210,9 @@ bool Material::HasAoMap() const
 bool Material::HasRoughnessMap() const
 {
     return m_roughnessMap != nullptr && m_roughnessMap->IsValid();
+}
+
+bool Material::HasMetallicRoughnessMap() const
+{
+    return m_useMetallicRoughnessMap && HasRoughnessMap();
 }
