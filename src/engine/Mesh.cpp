@@ -2,6 +2,56 @@
 
 #include "engine/Mesh.h"
 
+#include <cmath>
+#include <limits>
+
+namespace
+{
+    constexpr float kRayEpsilon = 1e-7f;
+
+    bool IntersectRayTriangle(
+        const glm::vec3& origin,
+        const glm::vec3& direction,
+        const glm::vec3& v0,
+        const glm::vec3& v1,
+        const glm::vec3& v2,
+        float& hitDistance)
+    {
+        const glm::vec3 edge1 = v1 - v0;
+        const glm::vec3 edge2 = v2 - v0;
+        const glm::vec3 pvec = glm::cross(direction, edge2);
+        const float determinant = glm::dot(edge1, pvec);
+        if (std::abs(determinant) < kRayEpsilon)
+        {
+            return false;
+        }
+
+        const float inverseDeterminant = 1.0f / determinant;
+        const glm::vec3 tvec = origin - v0;
+        const float u = glm::dot(tvec, pvec) * inverseDeterminant;
+        if (u < 0.0f || u > 1.0f)
+        {
+            return false;
+        }
+
+        const glm::vec3 qvec = glm::cross(tvec, edge1);
+        const float v = glm::dot(direction, qvec) * inverseDeterminant;
+        if (v < 0.0f || u + v > 1.0f)
+        {
+            return false;
+        }
+
+        const float distance = glm::dot(edge2, qvec) * inverseDeterminant;
+        if (distance < kRayEpsilon)
+        {
+            return false;
+        }
+
+        hitDistance = distance;
+        return true;
+    }
+}
+
 Mesh::Mesh(
     const float* vertices,
     unsigned int vertexCount,
@@ -10,6 +60,15 @@ Mesh::Mesh(
     unsigned int indexCount)
     : m_indexCount(indexCount)
 {
+    m_positions.reserve(vertexCount);
+    for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+    {
+        const float* vertex = vertices + vertexIndex * floatsPerVertex;
+        m_positions.emplace_back(vertex[0], vertex[1], vertex[2]);
+    }
+
+    m_indices.assign(indices, indices + indexCount);
+
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
     glGenBuffers(1, &m_ebo);
@@ -60,4 +119,45 @@ void Mesh::Draw() const
 {
     glBindVertexArray(m_vao);
     glDrawElements(GL_TRIANGLES, m_indexCount, GL_UNSIGNED_INT, 0);
+}
+
+bool Mesh::IntersectRay(
+    const glm::vec3& localOrigin,
+    const glm::vec3& localDirection,
+    float& hitDistance) const
+{
+    if (m_indices.size() < 3)
+    {
+        return false;
+    }
+
+    float closestDistance = std::numeric_limits<float>::max();
+    bool hit = false;
+
+    for (std::size_t index = 0; index + 2 < m_indices.size(); index += 3)
+    {
+        const glm::vec3& v0 = m_positions[m_indices[index]];
+        const glm::vec3& v1 = m_positions[m_indices[index + 1]];
+        const glm::vec3& v2 = m_positions[m_indices[index + 2]];
+
+        float triangleDistance = 0.0f;
+        if (!IntersectRayTriangle(localOrigin, localDirection, v0, v1, v2, triangleDistance))
+        {
+            continue;
+        }
+
+        if (triangleDistance < closestDistance)
+        {
+            closestDistance = triangleDistance;
+            hit = true;
+        }
+    }
+
+    if (!hit)
+    {
+        return false;
+    }
+
+    hitDistance = closestDistance;
+    return true;
 }
