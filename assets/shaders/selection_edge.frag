@@ -7,9 +7,8 @@ in vec2 vTexCoord;
 uniform sampler2D uMask;
 uniform vec2 uTexelSize;
 uniform float uOutlineWidth;
-uniform vec3 uColor;
 
-void main()
+float ComputeEdgeAlpha(vec2 uv)
 {
     const int radius = 4;
     float dilated = 0.0;
@@ -25,19 +24,19 @@ void main()
                 continue;
             }
 
-            vec2 uv = vTexCoord + vec2(x, y) * uTexelSize;
-            float maskSample = texture(uMask, uv).r;
+            vec2 sampleUv = uv + vec2(x, y) * uTexelSize;
+            float maskSample = texture(uMask, sampleUv).r;
             dilated = max(dilated, maskSample);
             eroded = min(eroded, maskSample);
         }
     }
 
     float edge = dilated - eroded;
-    float alpha = smoothstep(0.12, 0.88, edge);
-    if (alpha < 0.004)
-    {
-        discard;
-    }
+    return smoothstep(0.12, 0.88, edge);
+}
 
-    FragColor = vec4(uColor, alpha);
+void main()
+{
+    float alpha = ComputeEdgeAlpha(vTexCoord);
+    FragColor = vec4(vec3(alpha), alpha);
 }

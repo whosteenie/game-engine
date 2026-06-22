@@ -14,6 +14,8 @@ namespace EngineConstants
     inline constexpr const char* SelectionMaskVertexShader = "assets/shaders/selection_mask.vert";
     inline constexpr const char* SelectionMaskFragmentShader = "assets/shaders/selection_mask.frag";
     inline constexpr const char* SelectionEdgeFragmentShader = "assets/shaders/selection_edge.frag";
+    inline constexpr const char* SelectionGlowFragmentShader = "assets/shaders/selection_glow.frag";
+    inline constexpr const char* SelectionSharpFragmentShader = "assets/shaders/selection_sharp.frag";
 
     inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vert";
     inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.frag";

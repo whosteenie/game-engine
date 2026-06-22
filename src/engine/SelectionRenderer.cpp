@@ -17,7 +17,10 @@ namespace
     constexpr float kOutlineWidthPixels = 2.0f;
     constexpr float kOutlineWidthWorld = 0.004f;
     constexpr float kRadialExpand = 0.012f;
-    constexpr glm::vec3 kSelectionColor(1.0f, 0.82f, 0.2f);
+    constexpr float kGlowBlurRadius = 2.0f;
+    constexpr float kGlowIntensity = 1.1f;
+    constexpr glm::vec3 kSelectionColor(1.0f, 0.85f, 0.22f);
+    constexpr glm::vec3 kSelectionGlowColor(1.15f, 0.95f, 0.35f);
 
     constexpr float kQuadVertices[] = {
         -1.0f, -1.0f, 0.0f, 0.0f,
@@ -80,6 +83,15 @@ SelectionRenderer::SelectionRenderer()
       m_edgeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SelectionEdgeFragmentShader)),
+      m_blurShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::BloomBlurFragmentShader)),
+      m_glowShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SelectionGlowFragmentShader)),
+      m_sharpShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SelectionSharpFragmentShader)),
       m_hullShader(std::make_unique<Shader>(
           EngineConstants::SelectionOutlineVertexShader,
           EngineConstants::SelectionOutlineFragmentShader))
@@ -89,7 +101,7 @@ SelectionRenderer::SelectionRenderer()
 
 SelectionRenderer::~SelectionRenderer()
 {
-    DestroyMaskTarget();
+    DestroyTargets();
 
     if (m_quadVbo != 0)
     {
@@ -122,19 +134,19 @@ void SelectionRenderer::CreateFullscreenQuad()
     glBindVertexArray(0);
 }
 
-void SelectionRenderer::CreateMaskTarget(int width, int height) const
+void SelectionRenderer::CreateColorTarget(unsigned int& fbo, unsigned int& texture, int width, int height) const
 {
-    glGenFramebuffers(1, &m_maskFbo);
-    glGenTextures(1, &m_maskTexture);
+    glGenFramebuffers(1, &fbo);
+    glGenTextures(1, &texture);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, m_maskFbo);
-    glBindTexture(GL_TEXTURE_2D, m_maskTexture);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glBindTexture(GL_TEXTURE_2D, texture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_maskTexture, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
 
     const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
     glDrawBuffers(1, attachments);
@@ -143,40 +155,55 @@ void SelectionRenderer::CreateMaskTarget(int width, int height) const
     glBindTexture(GL_TEXTURE_2D, 0);
 }
 
-void SelectionRenderer::DestroyMaskTarget() const
+void SelectionRenderer::DestroyColorTarget(unsigned int& fbo, unsigned int& texture) const
 {
-    if (m_maskTexture != 0)
+    if (texture != 0)
     {
-        glDeleteTextures(1, &m_maskTexture);
-        m_maskTexture = 0;
+        glDeleteTextures(1, &texture);
+        texture = 0;
     }
 
-    if (m_maskFbo != 0)
+    if (fbo != 0)
     {
-        glDeleteFramebuffers(1, &m_maskFbo);
-        m_maskFbo = 0;
+        glDeleteFramebuffers(1, &fbo);
+        fbo = 0;
     }
-
-    m_maskWidth = 0;
-    m_maskHeight = 0;
 }
 
-void SelectionRenderer::ResizeMaskTarget(int width, int height) const
+void SelectionRenderer::DestroyTargets() const
+{
+    DestroyColorTarget(m_maskFbo, m_maskTexture);
+    DestroyColorTarget(m_edgeFbo, m_edgeTexture);
+    DestroyColorTarget(m_glowBlurFbo, m_glowBlurTexture);
+    DestroyColorTarget(m_glowBlur2Fbo, m_glowBlur2Texture);
+    m_targetWidth = 0;
+    m_targetHeight = 0;
+}
+
+void SelectionRenderer::ResizeTargets(int width, int height) const
 {
     if (width <= 0 || height <= 0)
     {
         return;
     }
 
-    if (m_maskWidth == width && m_maskHeight == height && m_maskFbo != 0)
+    if (m_targetWidth == width && m_targetHeight == height && m_maskFbo != 0)
     {
         return;
     }
 
-    DestroyMaskTarget();
-    CreateMaskTarget(width, height);
-    m_maskWidth = width;
-    m_maskHeight = height;
+    DestroyTargets();
+
+    CreateColorTarget(m_maskFbo, m_maskTexture, width, height);
+    CreateColorTarget(m_edgeFbo, m_edgeTexture, width, height);
+
+    const int blurWidth = std::max(1, width / 2);
+    const int blurHeight = std::max(1, height / 2);
+    CreateColorTarget(m_glowBlurFbo, m_glowBlurTexture, blurWidth, blurHeight);
+    CreateColorTarget(m_glowBlur2Fbo, m_glowBlur2Texture, blurWidth, blurHeight);
+
+    m_targetWidth = width;
+    m_targetHeight = height;
 }
 
 void SelectionRenderer::DrawFullscreenQuad() const
@@ -216,7 +243,12 @@ void SelectionRenderer::DrawScreenSpace(
     glGetIntegerv(GL_BLEND_SRC_ALPHA, &blendSrcAlpha);
     glGetIntegerv(GL_BLEND_DST_ALPHA, &blendDstAlpha);
 
-    ResizeMaskTarget(width, height);
+    ResizeTargets(width, height);
+
+    const int blurWidth = std::max(1, width / 2);
+    const int blurHeight = std::max(1, height / 2);
+    const float blurTexelSizeX = 1.0f / static_cast<float>(blurWidth);
+    const float blurTexelSizeY = 1.0f / static_cast<float>(blurHeight);
 
     glDisable(GL_MULTISAMPLE);
     glDisable(GL_DEPTH_TEST);
@@ -225,8 +257,9 @@ void SelectionRenderer::DrawScreenSpace(
     glDepthMask(GL_FALSE);
     glDisable(GL_CULL_FACE);
     glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glViewport(0, 0, width, height);
 
+    // 1) Object mask (full silhouette, ignores scene depth).
+    glViewport(0, 0, width, height);
     glBindFramebuffer(GL_FRAMEBUFFER, m_maskFbo);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -234,11 +267,10 @@ void SelectionRenderer::DrawScreenSpace(
     m_maskShader->Use();
     DrawMeshesMask(*m_maskShader, camera, meshes);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, width, height);
-
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    // 2) Edge extraction to offscreen buffer.
+    glBindFramebuffer(GL_FRAMEBUFFER, m_edgeFbo);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     m_edgeShader->Use();
     m_edgeShader->SetInt("uMask", 0);
@@ -246,9 +278,59 @@ void SelectionRenderer::DrawScreenSpace(
         "uTexelSize",
         glm::vec2(1.0f / static_cast<float>(width), 1.0f / static_cast<float>(height)));
     m_edgeShader->SetFloat("uOutlineWidth", kOutlineWidthPixels);
-    m_edgeShader->SetVec3("uColor", kSelectionColor);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, m_maskTexture);
+    DrawFullscreenQuad();
+
+    // 3) Blur edge mask for subtle glow (fixed internal settings).
+    glBindFramebuffer(GL_FRAMEBUFFER, m_glowBlurFbo);
+    glViewport(0, 0, blurWidth, blurHeight);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    m_blurShader->Use();
+    m_blurShader->SetInt("uInput", 0);
+    m_blurShader->SetFloat("uDirectionX", blurTexelSizeX);
+    m_blurShader->SetFloat("uDirectionY", 0.0f);
+    m_blurShader->SetFloat("uBlurRadius", kGlowBlurRadius);
+    glBindTexture(GL_TEXTURE_2D, m_edgeTexture);
+    DrawFullscreenQuad();
+
+    glBindFramebuffer(GL_FRAMEBUFFER, m_glowBlur2Fbo);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    m_blurShader->Use();
+    m_blurShader->SetInt("uInput", 0);
+    m_blurShader->SetFloat("uDirectionX", 0.0f);
+    m_blurShader->SetFloat("uDirectionY", blurTexelSizeY);
+    m_blurShader->SetFloat("uBlurRadius", kGlowBlurRadius);
+    glBindTexture(GL_TEXTURE_2D, m_glowBlurTexture);
+    DrawFullscreenQuad();
+
+    // 4) Additive glow, then crisp outline on top.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, width, height);
+    glEnable(GL_BLEND);
+
+    glBlendFunc(GL_ONE, GL_ONE);
+    m_glowShader->Use();
+    m_glowShader->SetInt("uGlow", 0);
+    m_glowShader->SetInt("uEdge", 1);
+    m_glowShader->SetVec3("uColor", kSelectionGlowColor);
+    m_glowShader->SetFloat("uGlowIntensity", kGlowIntensity);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_glowBlur2Texture);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, m_edgeTexture);
+    DrawFullscreenQuad();
+
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    m_sharpShader->Use();
+    m_sharpShader->SetInt("uEdge", 0);
+    m_sharpShader->SetVec3("uColor", kSelectionColor);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, m_edgeTexture);
     DrawFullscreenQuad();
 
     glBindTexture(GL_TEXTURE_2D, 0);

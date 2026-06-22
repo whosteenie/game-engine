@@ -17,9 +17,10 @@ public:
     void Draw(const Camera& camera, const std::vector<SelectionMeshDraw>& meshes, bool useScreenSpace) const;
 
 private:
-    void ResizeMaskTarget(int width, int height) const;
-    void DestroyMaskTarget() const;
-    void CreateMaskTarget(int width, int height) const;
+    void ResizeTargets(int width, int height) const;
+    void DestroyTargets() const;
+    void CreateColorTarget(unsigned int& fbo, unsigned int& texture, int width, int height) const;
+    void DestroyColorTarget(unsigned int& fbo, unsigned int& texture) const;
     void CreateFullscreenQuad();
     void DrawFullscreenQuad() const;
 
@@ -37,12 +38,21 @@ private:
 
     std::unique_ptr<Shader> m_maskShader;
     std::unique_ptr<Shader> m_edgeShader;
+    std::unique_ptr<Shader> m_blurShader;
+    std::unique_ptr<Shader> m_glowShader;
+    std::unique_ptr<Shader> m_sharpShader;
     std::unique_ptr<Shader> m_hullShader;
 
     mutable unsigned int m_maskFbo = 0;
     mutable unsigned int m_maskTexture = 0;
-    mutable int m_maskWidth = 0;
-    mutable int m_maskHeight = 0;
+    mutable unsigned int m_edgeFbo = 0;
+    mutable unsigned int m_edgeTexture = 0;
+    mutable unsigned int m_glowBlurFbo = 0;
+    mutable unsigned int m_glowBlurTexture = 0;
+    mutable unsigned int m_glowBlur2Fbo = 0;
+    mutable unsigned int m_glowBlur2Texture = 0;
+    mutable int m_targetWidth = 0;
+    mutable int m_targetHeight = 0;
 
     unsigned int m_quadVao = 0;
     unsigned int m_quadVbo = 0;
