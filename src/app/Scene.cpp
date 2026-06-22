@@ -12,7 +12,6 @@
 #include "engine/ModelImporter.h"
 #include "engine/SceneHierarchy.h"
 #include "primitives/Cube.h"
-#include "primitives/Floor.h"
 #include "primitives/Sphere.h"
 #include "primitives/Cylinder.h"
 #include "primitives/Capsule.h"
@@ -29,14 +28,14 @@
 #include <stdexcept>
 #include <string>
 #include <limits>
+#include <unordered_set>
 
 Scene::Scene()
     : m_cubeMesh(CreateCubeMesh()),
       m_sphereMesh(CreateSphereMesh()),
       m_cylinderMesh(CreateCylinderMesh()),
       m_capsuleMesh(CreateCapsuleMesh()),
-      m_planeMesh(CreatePlaneMesh()),
-      m_floorMesh(CreateFloorMesh(FloorHalfExtent)),
+      m_planeMesh(CreatePlaneMesh(FloorHalfExtent)),
       m_grid(std::make_unique<GridRenderer>()),
       m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
       m_sceneEditor(std::make_unique<SceneEditor>()),
@@ -77,13 +76,13 @@ void Scene::SetupObjects()
 
     m_objects.emplace_back(
         "Floor",
-        m_floorMesh.get(),
+        m_planeMesh.get(),
         std::move(floorMaterial),
-        glm::vec3(-FloorHalfExtent, -0.05f, -FloorHalfExtent),
-        glm::vec3(FloorHalfExtent, 0.05f, FloorHalfExtent),
+        glm::vec3(-FloorHalfExtent, -0.01f, -FloorHalfExtent),
+        glm::vec3(FloorHalfExtent, 0.01f, FloorHalfExtent),
         Transform{},
-        false,
-        false,
+        true,
+        true,
         true);
 
     auto cubeMaterial = std::make_unique<Material>(
@@ -155,8 +154,8 @@ namespace
             };
         case ScenePrimitive::Plane:
             return {
-                glm::vec3(-5.0f, -0.01f, -5.0f),
-                glm::vec3(5.0f, 0.01f, 5.0f),
+                glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent),
+                glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent),
                 glm::vec3(spread, 0.0f, -3.0f),
             };
         }
@@ -444,18 +443,51 @@ bool Scene::RemoveObject(std::size_t index)
     CollectDescendantIndices(static_cast<int>(index), indicesToRemove);
     std::sort(indicesToRemove.begin(), indicesToRemove.end(), std::greater<int>());
 
+    const bool selectionRemoved = m_selectedObjectIndex >= 0
+        && std::find(indicesToRemove.begin(), indicesToRemove.end(), m_selectedObjectIndex)
+            != indicesToRemove.end();
+
     for (int removeIndex : indicesToRemove)
     {
         m_objects.erase(m_objects.begin() + removeIndex);
         RemapParentIndicesAfterRemoval(removeIndex);
     }
 
-    if (m_objects.empty())
+    if (m_objects.empty() || selectionRemoved)
     {
         m_selectedObjectIndex = -1;
     }
+    else if (m_selectedObjectIndex >= static_cast<int>(m_objects.size()))
+    {
+        m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
+    }
+
+    PruneUnusedImportedMeshes();
 
     return true;
+}
+
+void Scene::PruneUnusedImportedMeshes()
+{
+    std::unordered_set<Mesh*> referencedMeshes;
+    referencedMeshes.reserve(m_objects.size());
+
+    for (const SceneObject& object : m_objects)
+    {
+        if (object.HasMesh())
+        {
+            referencedMeshes.insert(object.GetMesh());
+        }
+    }
+
+    m_importedMeshes.erase(
+        std::remove_if(
+            m_importedMeshes.begin(),
+            m_importedMeshes.end(),
+            [&](const std::unique_ptr<Mesh>& mesh) {
+                return referencedMeshes.find(mesh.get()) == referencedMeshes.end();
+            }),
+        m_importedMeshes.end());
 }
 
 const SceneLighting& Scene::GetLighting() const

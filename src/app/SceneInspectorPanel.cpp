@@ -1,5 +1,6 @@
 #include "app/SceneInspectorPanel.h"
 
+#include "app/EditorWidgets.h"
 #include "app/Scene.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
@@ -20,11 +21,6 @@ namespace
         ImVec4(0.52f, 0.78f, 0.40f, 1.0f),
         ImVec4(0.42f, 0.58f, 0.92f, 1.0f),
     };
-
-    bool ColorEditVec3(const char* label, glm::vec3& value)
-    {
-        return ImGui::ColorEdit3(label, &value.x);
-    }
 
     bool DrawTransformRowLabel(const char* label, glm::vec3& value, const glm::vec3& resetValue)
     {
@@ -115,7 +111,7 @@ namespace
     void DrawMaterialSection(Material& material)
     {
         glm::vec3 albedo = material.GetAlbedo();
-        if (ColorEditVec3("Albedo", albedo))
+        if (EditorWidgets::ColorEditVec3("Albedo", albedo))
         {
             material.SetAlbedo(albedo);
         }

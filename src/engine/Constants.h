@@ -8,6 +8,7 @@ namespace EngineConstants
     inline constexpr const char* ShadowDepthFragmentShader = "assets/shaders/shadow_depth.frag";
     inline constexpr const char* GridVertexShader = "assets/shaders/grid.vert";
     inline constexpr const char* GridFragmentShader = "assets/shaders/grid.frag";
+    inline constexpr const char* LineFragmentShader = "assets/shaders/line.frag";
 
     inline constexpr const char* IblCubemapVertexShader = "assets/shaders/ibl_cubemap.vert";
     inline constexpr const char* IblEquirectToCubemapFragmentShader = "assets/shaders/ibl_equirect_to_cubemap.frag";

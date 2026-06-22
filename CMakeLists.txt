@@ -164,7 +164,9 @@ add_executable(game-engine
 
     src/app/Application.cpp
 
-    src/app/DebugPanel.cpp
+    src/app/LightingPanel.cpp
+
+    src/app/EditorWidgets.cpp
 
     src/app/SceneHierarchyPanel.cpp
 
@@ -227,8 +229,6 @@ add_executable(game-engine
     src/engine/LightGizmoRenderer.cpp
 
     src/primitives/Cube.cpp
-
-    src/primitives/Floor.cpp
 
     src/primitives/PrimitiveMeshUtils.cpp
 

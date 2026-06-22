@@ -1,5 +1,6 @@
-#include "app/DebugPanel.h"
+#include "app/LightingPanel.h"
 
+#include "app/EditorWidgets.h"
 #include "app/Scene.h"
 #include "engine/Camera.h"
 #include "engine/IBL.h"
@@ -16,17 +17,6 @@
 
 namespace
 {
-    bool SliderVec3(const char* label, glm::vec3& value, float min, float max)
-    {
-        const bool changed = ImGui::SliderFloat3(label, &value.x, min, max);
-        return changed;
-    }
-
-    bool ColorEditVec3(const char* label, glm::vec3& value)
-    {
-        return ImGui::ColorEdit3(label, &value.x);
-    }
-
     const char* LightTypeLabel(LightType type)
     {
         switch (type)
@@ -43,7 +33,7 @@ namespace
     }
 }
 
-void DebugPanel::Draw(
+void LightingPanel::Draw(
     Scene& scene,
     const Camera& camera) const
 {
@@ -115,7 +105,7 @@ void DebugPanel::Draw(
             ImGui::Text("Type: %s", LightTypeLabel(activeLight.GetType()));
 
             glm::vec3 color = activeLight.GetColor();
-            if (ColorEditVec3("Color", color))
+            if (EditorWidgets::ColorEditVec3("Color", color))
             {
                 activeLight.SetColor(color);
             }
@@ -131,7 +121,7 @@ void DebugPanel::Draw(
             case LightType::Directional:
             {
                 glm::vec3 direction = activeLight.GetDirection();
-                if (SliderVec3("Direction (toward source)", direction, -1.0f, 1.0f))
+                if (EditorWidgets::SliderVec3("Direction (toward source)", direction, -1.0f, 1.0f))
                 {
                     activeLight.SetDirection(direction);
                 }
@@ -153,7 +143,7 @@ void DebugPanel::Draw(
             case LightType::Point:
             {
                 glm::vec3 position = activeLight.GetPosition();
-                if (SliderVec3("Position", position, -20.0f, 20.0f))
+                if (EditorWidgets::SliderVec3("Position", position, -20.0f, 20.0f))
                 {
                     activeLight.SetPosition(position);
                 }
@@ -170,13 +160,13 @@ void DebugPanel::Draw(
             case LightType::Spot:
             {
                 glm::vec3 position = activeLight.GetPosition();
-                if (SliderVec3("Position", position, -20.0f, 20.0f))
+                if (EditorWidgets::SliderVec3("Position", position, -20.0f, 20.0f))
                 {
                     activeLight.SetPosition(position);
                 }
 
                 glm::vec3 direction = activeLight.GetDirection();
-                if (SliderVec3("Direction (toward source)", direction, -1.0f, 1.0f))
+                if (EditorWidgets::SliderVec3("Direction (toward source)", direction, -1.0f, 1.0f))
                 {
                     activeLight.SetDirection(direction);
                 }

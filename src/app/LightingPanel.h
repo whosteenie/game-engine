@@ -3,7 +3,7 @@
 class Camera;
 class Scene;
 
-class DebugPanel
+class LightingPanel
 {
 public:
     void Draw(Scene& scene, const Camera& camera) const;

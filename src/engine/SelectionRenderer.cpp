@@ -11,7 +11,7 @@
 #include <vector>
 
 SelectionRenderer::SelectionRenderer()
-    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
 {
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
@@ -52,6 +52,20 @@ void SelectionRenderer::Draw(
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
     m_shader->SetVec3("uColor", glm::vec3(1.0f, 0.82f, 0.2f));
+
+    GLboolean polygonOffsetLineEnabled = glIsEnabled(GL_POLYGON_OFFSET_LINE);
+    if (!polygonOffsetLineEnabled)
+    {
+        glEnable(GL_POLYGON_OFFSET_LINE);
+    }
+
+    glPolygonOffset(-1.0f, -1.0f);
     glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
+
+    if (!polygonOffsetLineEnabled)
+    {
+        glDisable(GL_POLYGON_OFFSET_LINE);
+    }
+
     glBindVertexArray(0);
 }

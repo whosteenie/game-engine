@@ -87,13 +87,13 @@ private:
     int GetNextObjectNumber(ScenePrimitive primitive);
     void RemapParentIndicesAfterRemoval(int removedIndex);
     void CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const;
+    void PruneUnusedImportedMeshes();
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
     std::unique_ptr<Mesh> m_cylinderMesh;
     std::unique_ptr<Mesh> m_capsuleMesh;
     std::unique_ptr<Mesh> m_planeMesh;
-    std::unique_ptr<Mesh> m_floorMesh;
     std::vector<std::unique_ptr<Mesh>> m_importedMeshes;
     std::vector<SceneObject> m_objects;
     std::unique_ptr<GridRenderer> m_grid;
