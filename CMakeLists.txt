@@ -82,6 +82,20 @@ FetchContent_MakeAvailable(tinygltf)
 
 FetchContent_Declare(
 
+    json
+
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+
+    GIT_TAG v3.11.3
+
+)
+
+FetchContent_MakeAvailable(json)
+
+
+
+FetchContent_Declare(
+
     imguizmo
 
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
@@ -164,9 +178,15 @@ add_executable(game-engine
 
     src/app/Application.cpp
 
+    src/app/EditorSettings.cpp
+
     src/app/MainMenuBar.cpp
 
+    src/app/ProjectChooser.cpp
+
     src/app/ProjectSession.cpp
+
+    src/app/SceneProjectIO.cpp
 
     src/app/ProjectFilesPanel.cpp
 
@@ -226,6 +246,8 @@ add_executable(game-engine
 
     src/engine/ModelImporter.cpp
 
+    src/engine/ProjectAssets.cpp
+
     src/engine/FileDialog.cpp
 
     src/engine/Renderer.cpp
@@ -264,7 +286,7 @@ target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb sr
 
 find_package(OpenGL REQUIRED)
 
-target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib)
+target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib nlohmann_json::nlohmann_json)
 
 if(WIN32)
     target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32)

@@ -10,3 +10,5 @@ enum class ScenePrimitive
 };
 
 const char* GetScenePrimitiveDisplayName(ScenePrimitive primitive);
+bool TryParseScenePrimitive(const char* name, ScenePrimitive& outPrimitive);
+const char* ScenePrimitiveToString(ScenePrimitive primitive);

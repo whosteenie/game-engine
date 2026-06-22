@@ -1,5 +1,6 @@
 #include "app/SceneHierarchyPanel.h"
 
+#include "app/ProjectSession.h"
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
 #include "engine/Light.h"
@@ -226,7 +227,7 @@ namespace
         }
     }
 
-    void ImportModelFromDialog(Scene& scene, int parentIndex)
+    void ImportModelFromDialog(Scene& scene, ProjectSession& project, int parentIndex)
     {
         std::string modelPath;
         if (!FileDialog::OpenModelFile(modelPath))
@@ -234,28 +235,40 @@ namespace
             return;
         }
 
-        const std::vector<int> importedIndices = scene.ImportModel(modelPath, parentIndex);
+        const std::vector<int> importedIndices = scene.ImportModel(
+            modelPath,
+            parentIndex,
+            project.GetProjectRootDirectory());
         if (importedIndices.empty())
         {
+            if (!scene.GetLastImportError().empty())
+            {
+                project.SetStatusMessage(scene.GetLastImportError());
+            }
             return;
         }
 
         scene.SetSelectedObjectIndex(importedIndices.front());
+        if (!scene.GetLastImportWarning().empty())
+        {
+            project.SetStatusMessage(scene.GetLastImportWarning());
+        }
     }
 
-    void DrawCreateObjectMenu(Scene& scene, int parentIndex)
+    void DrawCreateObjectMenu(Scene& scene, ProjectSession& project, int parentIndex)
     {
         AddEmptyFromMenu(scene, parentIndex);
         DrawLightMenu(scene, parentIndex);
         Draw3DObjectMenu(scene, parentIndex);
         if (ImGui::MenuItem("Import Model..."))
         {
-            ImportModelFromDialog(scene, parentIndex);
+            ImportModelFromDialog(scene, project, parentIndex);
         }
     }
 
     void DrawObjectContextMenu(
         Scene& scene,
+        ProjectSession& project,
         int objectIndex,
         int& pendingDeleteIndex,
         int& pendingRenameIndex,
@@ -271,7 +284,7 @@ namespace
         }
 
         scene.SetSelectedObjectIndex(objectIndex);
-        DrawCreateObjectMenu(scene, objectIndex);
+        DrawCreateObjectMenu(scene, project, objectIndex);
 
         ImGui::Separator();
         if (ImGui::MenuItem("Rename"))
@@ -454,17 +467,18 @@ namespace
         ImGui::EndDragDropTarget();
     }
 
-    void DrawHierarchyBackgroundContextMenu(Scene& scene)
+    void DrawHierarchyBackgroundContextMenu(Scene& scene, ProjectSession& project)
     {
         if (ImGui::BeginPopupContextItem())
         {
-            DrawCreateObjectMenu(scene, -1);
+            DrawCreateObjectMenu(scene, project, -1);
             ImGui::EndPopup();
         }
     }
 
     void DrawHierarchyNode(
         Scene& scene,
+        ProjectSession& project,
         int objectIndex,
         int selectedIndex,
         std::unordered_map<int, bool>& openStates,
@@ -533,6 +547,7 @@ namespace
                 if (renameBuffer[0] != '\0')
                 {
                     scene.GetObject(static_cast<std::size_t>(objectIndex)).SetName(renameBuffer);
+                    scene.MarkDirty();
                 }
 
                 pendingRenameIndex = -1;
@@ -573,6 +588,7 @@ namespace
         {
             DrawObjectContextMenu(
                 scene,
+                project,
                 objectIndex,
                 pendingDeleteIndex,
                 pendingRenameIndex,
@@ -589,6 +605,7 @@ namespace
             {
                 DrawHierarchyNode(
                     scene,
+                    project,
                     childIndex,
                     selectedIndex,
                     openStates,
@@ -609,17 +626,17 @@ namespace
         ImGui::PopID();
     }
 
-    void DrawAddObjectPopup(Scene& scene)
+    void DrawAddObjectPopup(Scene& scene, ProjectSession& project)
     {
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
-            DrawCreateObjectMenu(scene, -1);
+            DrawCreateObjectMenu(scene, project, -1);
             ImGui::EndPopup();
         }
     }
 }
 
-void SceneHierarchyPanel::Draw(Scene& scene) const
+void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project) const
 {
     ImGui::SetNextWindowPos(ImVec2(8.0f, 8.0f), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(280.0f, 700.0f), ImGuiCond_FirstUseEver);
@@ -650,7 +667,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
     {
         ImGui::OpenPopup("AddObjectPopup");
     }
-    DrawAddObjectPopup(scene);
+    DrawAddObjectPopup(scene, project);
     selectedIndex = scene.GetSelectedObjectIndex();
 
     const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2.0f;
@@ -672,6 +689,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
     {
         DrawHierarchyNode(
             scene,
+            project,
             objectIndex,
             selectedIndex,
             m_nodeOpenStates,
@@ -700,7 +718,7 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
     if (backgroundSpace.y > 0.0f)
     {
         ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
-        DrawHierarchyBackgroundContextMenu(scene);
+        DrawHierarchyBackgroundContextMenu(scene, project);
     }
 
     m_scrollSelectionIntoView = false;

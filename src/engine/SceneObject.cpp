@@ -217,3 +217,25 @@ const glm::vec3& SceneObject::GetLocalBoundsMax() const
 {
     return m_localBoundsMax;
 }
+
+const std::string& SceneObject::GetImportAssetPath() const
+{
+    return m_importAssetPath;
+}
+
+int SceneObject::GetImportNodeIndex() const
+{
+    return m_importNodeIndex;
+}
+
+void SceneObject::SetImportSource(const std::string& assetPath, int nodeIndex)
+{
+    m_importAssetPath = assetPath;
+    m_importNodeIndex = nodeIndex;
+}
+
+void SceneObject::ClearImportSource()
+{
+    m_importAssetPath.clear();
+    m_importNodeIndex = -1;
+}

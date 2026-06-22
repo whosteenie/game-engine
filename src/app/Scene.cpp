@@ -10,6 +10,7 @@
 #include "engine/MaterialTextures.h"
 #include "engine/Mesh.h"
 #include "engine/ModelImporter.h"
+#include "engine/ProjectAssets.h"
 #include "engine/SceneHierarchy.h"
 #include "primitives/Cube.h"
 #include "primitives/Sphere.h"
@@ -50,7 +51,6 @@ Scene::Scene()
           EngineConstants::ShadowDepthFragmentShader))
 {
     SetupDefaultSunLight();
-    SetupObjects();
 }
 
 Scene::~Scene() = default;
@@ -223,7 +223,7 @@ namespace
     }
 }
 
-Mesh* Scene::GetMeshForPrimitive(ScenePrimitive primitive)
+Mesh* Scene::GetMeshForPrimitive(ScenePrimitive primitive) const
 {
     switch (primitive)
     {
@@ -240,6 +240,12 @@ Mesh* Scene::GetMeshForPrimitive(ScenePrimitive primitive)
     }
 
     return m_cubeMesh.get();
+}
+
+Mesh* Scene::AdoptImportedMesh(std::unique_ptr<Mesh> mesh)
+{
+    m_importedMeshes.push_back(std::move(mesh));
+    return m_importedMeshes.back().get();
 }
 
 int Scene::GetNextObjectNumber(ScenePrimitive primitive)
@@ -292,6 +298,7 @@ int Scene::AddObject(ScenePrimitive primitive, int parentIndex)
         parentIndex,
         AllocateSiblingOrder(parentIndex));
 
+    MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
 
@@ -312,6 +319,7 @@ int Scene::AddEmptyObject(int parentIndex)
         parentIndex,
         AllocateSiblingOrder(parentIndex));
 
+    MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
 
@@ -360,6 +368,7 @@ int Scene::AddLightObject(LightType type, int parentIndex)
         AllocateSiblingOrder(parentIndex),
         std::move(lightComponent));
 
+    MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
 
@@ -381,6 +390,7 @@ void Scene::GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::
 void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix)
 {
     ApplyObjectGizmoWorldMatrix(m_objects, objectIndex, gizmoWorldMatrix);
+    MarkDirty();
 }
 
 void Scene::GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const
@@ -428,12 +438,27 @@ void Scene::RemapParentIndicesAfterRemoval(int removedIndex)
     }
 }
 
-std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
+std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, const std::string& projectRoot)
 {
     m_lastImportError.clear();
     m_lastImportWarning.clear();
 
-    ImportedModel importedModel = LoadModelFromFile(path);
+    std::string importPath = path;
+    if (!projectRoot.empty())
+    {
+        const ImportModelAssetResult assetResult = ImportModelToProject(path, projectRoot);
+        if (!assetResult.success)
+        {
+            m_lastImportError = assetResult.errorMessage.empty()
+                ? "Failed to copy model into project assets."
+                : assetResult.errorMessage;
+            return {};
+        }
+
+        importPath = assetResult.absolutePath;
+    }
+
+    ImportedModel importedModel = LoadModelFromFile(importPath, projectRoot);
     if (!importedModel.errorMessage.empty())
     {
         m_lastImportError = importedModel.errorMessage;
@@ -521,8 +546,12 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
             AllocateSiblingOrder(parentSceneIndex));
 
         importedSceneIndices.push_back(static_cast<int>(m_objects.size()) - 1);
+
+        SceneObject& createdObject = m_objects.back();
+        createdObject.SetImportSource(importPath, static_cast<int>(importedNodeIndex));
     }
 
+    MarkDirty();
     return {baseObjectIndex + importedModel.rootNodeIndex};
 }
 
@@ -568,6 +597,7 @@ bool Scene::RemoveObject(std::size_t index)
 
     PruneUnusedImportedMeshes();
 
+    MarkDirty();
     return true;
 }
 
@@ -722,6 +752,7 @@ bool Scene::ReparentObject(int objectIndex, int newParentIndex)
 
     object.SetParentIndex(newParentIndex);
     object.GetTransform().SetFromMatrix(glm::inverse(newParentWorldMatrix) * worldMatrix);
+    MarkDirty();
     return true;
 }
 
@@ -875,6 +906,7 @@ bool Scene::PlaceObjectInHierarchy(int objectIndex, int referenceIndex, Hierarch
         const int childIndex = static_cast<int>(
             std::find(children.begin(), children.end(), objectIndex) - children.begin());
         SetSiblingIndexAmongParent(objectIndex, referenceIndex, childIndex);
+        MarkDirty();
         return true;
     }
 
@@ -900,6 +932,7 @@ bool Scene::PlaceObjectInHierarchy(int objectIndex, int referenceIndex, Hierarch
     }
 
     SetSiblingIndexAmongParent(objectIndex, referenceParent, insertIndex);
+    MarkDirty();
     return true;
 }
 
@@ -968,6 +1001,43 @@ void Scene::PruneUnusedImportedMeshes()
                 return referencedMeshes.find(mesh.get()) == referencedMeshes.end();
             }),
         m_importedMeshes.end());
+}
+
+void Scene::MarkDirty()
+{
+    if (m_dirtyCallback)
+    {
+        m_dirtyCallback();
+    }
+}
+
+void Scene::SetDirtyCallback(std::function<void()> callback)
+{
+    m_dirtyCallback = std::move(callback);
+}
+
+void Scene::ResetToDefault()
+{
+    m_objects.clear();
+    m_importedMeshes.clear();
+    m_selectedObjectIndex = -1;
+    m_showLightGizmos = true;
+    m_showGrid = true;
+    m_nextDirectionalLightNumber = 2;
+    m_nextPointLightNumber = 1;
+    m_nextSpotLightNumber = 1;
+    m_nextCubeNumber = 2;
+    m_nextSphereNumber = 1;
+    m_nextCylinderNumber = 1;
+    m_nextCapsuleNumber = 1;
+    m_nextPlaneNumber = 1;
+    m_nextEmptyNumber = 1;
+    m_nextImportNumber = 1;
+    m_lastImportError.clear();
+    m_lastImportWarning.clear();
+
+    SetupDefaultSunLight();
+    SetupObjects();
 }
 
 const SceneLighting& Scene::GetLighting() const
@@ -1060,7 +1130,11 @@ bool Scene::GetShowLightGizmos() const
 
 void Scene::SetShowLightGizmos(bool showLightGizmos)
 {
-    m_showLightGizmos = showLightGizmos;
+    if (m_showLightGizmos != showLightGizmos)
+    {
+        m_showLightGizmos = showLightGizmos;
+        MarkDirty();
+    }
 }
 
 bool Scene::GetShowGrid() const
@@ -1070,7 +1144,11 @@ bool Scene::GetShowGrid() const
 
 void Scene::SetShowGrid(bool showGrid)
 {
-    m_showGrid = showGrid;
+    if (m_showGrid != showGrid)
+    {
+        m_showGrid = showGrid;
+        MarkDirty();
+    }
 }
 
 ScreenSpaceEffects& Scene::GetScreenSpaceEffects()

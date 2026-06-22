@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <unordered_map>
 
 class ProjectSession;
 
@@ -21,4 +22,6 @@ private:
     mutable std::string m_browsedDirectory;
     mutable std::string m_selectedEntryPath;
     mutable std::string m_trackedProjectRoot;
+    mutable std::unordered_map<std::string, bool> m_folderOpenStates;
+    mutable bool m_scrollSelectionIntoView = false;
 };

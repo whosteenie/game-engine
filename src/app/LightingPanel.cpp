@@ -43,6 +43,7 @@ void LightingPanel::Draw(
         if (ImGui::SliderFloat("Environment intensity", &environmentIntensity, 0.0f, 2.0f))
         {
             ibl.SetEnvironmentIntensity(environmentIntensity);
+            scene.MarkDirty();
         }
     }
 
@@ -54,6 +55,7 @@ void LightingPanel::Draw(
         if (ImGui::SliderFloat("Exposure (stops)", &exposure, -2.0f, 4.0f))
         {
             screenSpaceEffects.SetExposure(exposure);
+            scene.MarkDirty();
         }
 
         int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
@@ -61,6 +63,7 @@ void LightingPanel::Draw(
         if (ImGui::Combo("Tonemap", &tonemapMode, tonemapModes, IM_ARRAYSIZE(tonemapModes)))
         {
             screenSpaceEffects.SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
+            scene.MarkDirty();
         }
     }
 
@@ -70,42 +73,49 @@ void LightingPanel::Draw(
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
             screenSpaceEffects.SetEnabled(enabled);
+            scene.MarkDirty();
         }
 
         bool ssaoEnabled = screenSpaceEffects.IsSsaoEnabled();
         if (ImGui::Checkbox("SSAO", &ssaoEnabled))
         {
             screenSpaceEffects.SetSsaoEnabled(ssaoEnabled);
+            scene.MarkDirty();
         }
 
         float ssaoRadius = screenSpaceEffects.GetSsaoRadius();
         if (ImGui::SliderFloat("SSAO radius", &ssaoRadius, 0.05f, 1.0f))
         {
             screenSpaceEffects.SetSsaoRadius(ssaoRadius);
+            scene.MarkDirty();
         }
 
         float ssaoBias = screenSpaceEffects.GetSsaoBias();
         if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
         {
             screenSpaceEffects.SetSsaoBias(ssaoBias);
+            scene.MarkDirty();
         }
 
         float ssaoPower = screenSpaceEffects.GetSsaoPower();
         if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
         {
             screenSpaceEffects.SetSsaoPower(ssaoPower);
+            scene.MarkDirty();
         }
 
         float aoStrength = screenSpaceEffects.GetAoStrength();
         if (ImGui::SliderFloat("SSAO blend strength", &aoStrength, 0.0f, 1.0f))
         {
             screenSpaceEffects.SetAoStrength(aoStrength);
+            scene.MarkDirty();
         }
 
         bool contactShadowsEnabled = screenSpaceEffects.IsContactShadowsEnabled();
         if (ImGui::Checkbox("Contact shadows", &contactShadowsEnabled))
         {
             screenSpaceEffects.SetContactShadowsEnabled(contactShadowsEnabled);
+            scene.MarkDirty();
         }
 
         if (contactShadowsEnabled)
@@ -114,18 +124,21 @@ void LightingPanel::Draw(
             if (ImGui::SliderFloat("Contact shadow strength", &contactStrength, 0.0f, 1.0f))
             {
                 screenSpaceEffects.SetContactStrength(contactStrength);
+                scene.MarkDirty();
             }
 
             float contactDistance = screenSpaceEffects.GetContactShadowDistance();
             if (ImGui::SliderFloat("Contact shadow distance", &contactDistance, 0.02f, 0.5f))
             {
                 screenSpaceEffects.SetContactShadowDistance(contactDistance);
+                scene.MarkDirty();
             }
 
             int contactSteps = screenSpaceEffects.GetContactShadowSteps();
             if (ImGui::SliderInt("Contact shadow steps", &contactSteps, 4, 32))
             {
                 screenSpaceEffects.SetContactShadowSteps(contactSteps);
+                scene.MarkDirty();
             }
         }
     }

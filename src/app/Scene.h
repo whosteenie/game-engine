@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -20,6 +21,7 @@ class GridRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
 class ScreenSpaceEffects;
+struct SceneProjectIO;
 
 enum class HierarchyInsertMode
 {
@@ -68,7 +70,13 @@ public:
     int AddObject(ScenePrimitive primitive, int parentIndex = -1);
     int AddEmptyObject(int parentIndex = -1);
     int AddLightObject(LightType type, int parentIndex = -1);
-    std::vector<int> ImportModel(const std::string& path, int parentIndex = -1);
+    std::vector<int> ImportModel(
+        const std::string& path,
+        int parentIndex = -1,
+        const std::string& projectRoot = {});
+
+    void MarkDirty();
+    void SetDirtyCallback(std::function<void()> callback);
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
@@ -98,14 +106,20 @@ public:
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
 
+    void ResetToDefault();
+
+    Mesh* GetMeshForPrimitive(ScenePrimitive primitive) const;
+    Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
+
 private:
+    friend struct SceneProjectIO;
+
     void SetupDefaultSunLight();
     void SyncLighting() const;
     void SetupObjects();
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass() const;
 
-    Mesh* GetMeshForPrimitive(ScenePrimitive primitive);
     int GetNextObjectNumber(ScenePrimitive primitive);
     void RemapParentIndicesAfterRemoval(int removedIndex);
     void CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const;
@@ -144,4 +158,5 @@ private:
     int m_nextImportNumber = 1;
     std::string m_lastImportError;
     std::string m_lastImportWarning;
+    std::function<void()> m_dirtyCallback;
 };

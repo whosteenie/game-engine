@@ -1,7 +1,10 @@
 #pragma once
 
+#include <functional>
+
 struct GLFWwindow;
 
+class EditorSettings;
 class ProjectSession;
 class Scene;
 
@@ -20,6 +23,9 @@ public:
     void Draw(
         Scene& scene,
         ProjectSession& project,
+        EditorSettings& settings,
         GLFWwindow* window,
-        const EditorPanelVisibility& panels);
+        const EditorPanelVisibility& panels,
+        const std::function<void()>& requestClose,
+        const std::function<void()>& requestNewProject);
 };

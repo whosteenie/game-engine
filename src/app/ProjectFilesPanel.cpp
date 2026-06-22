@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <system_error>
+#include <unordered_map>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -105,6 +106,169 @@ namespace
 
         return true;
     }
+
+    bool IsFolderExpanded(
+        const std::string& folderPath,
+        const std::string& rootPath,
+        const std::unordered_map<std::string, bool>& openStates)
+    {
+        if (folderPath == rootPath)
+        {
+            // Root defaults to expanded so the tree isn't empty.
+            const auto it = openStates.find(folderPath);
+            return it != openStates.end() ? it->second : true;
+        }
+
+        const auto it = openStates.find(folderPath);
+        return it != openStates.end() && it->second;
+    }
+
+    bool HasChildFolders(const std::string& folderPath)
+    {
+        std::vector<DirectoryEntry> entries;
+        if (!CollectDirectoryEntries(folderPath, entries))
+        {
+            return false;
+        }
+
+        for (const DirectoryEntry& entry : entries)
+        {
+            if (entry.isDirectory)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void CollectChildFolders(const std::string& folderPath, std::vector<std::string>& outChildFolders)
+    {
+        outChildFolders.clear();
+        std::vector<DirectoryEntry> entries;
+        if (!CollectDirectoryEntries(folderPath, entries))
+        {
+            return;
+        }
+
+        for (const DirectoryEntry& entry : entries)
+        {
+            if (entry.isDirectory)
+            {
+                outChildFolders.push_back(entry.path);
+            }
+        }
+    }
+
+    void BuildVisibleFolderOrder(
+        const std::string& folderPath,
+        const std::string& rootPath,
+        const std::unordered_map<std::string, bool>& openStates,
+        std::vector<std::string>& outVisibleFolders)
+    {
+        outVisibleFolders.push_back(folderPath);
+
+        if (!IsFolderExpanded(folderPath, rootPath, openStates))
+        {
+            return;
+        }
+
+        std::vector<std::string> childFolders;
+        CollectChildFolders(folderPath, childFolders);
+        for (const std::string& childFolder : childFolders)
+        {
+            BuildVisibleFolderOrder(childFolder, rootPath, openStates, outVisibleFolders);
+        }
+    }
+
+    void HandleProjectFilesKeyboardNavigation(
+        const std::string& rootPath,
+        const bool hasProjectRoot,
+        std::unordered_map<std::string, bool>& openStates,
+        std::string& browsedDirectory,
+        std::string& selectedEntryPath,
+        bool& scrollSelectionIntoView)
+    {
+        if (!hasProjectRoot)
+        {
+            return;
+        }
+
+        if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
+        {
+            return;
+        }
+
+        if (ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        std::vector<std::string> visibleFolders;
+        BuildVisibleFolderOrder(rootPath, rootPath, openStates, visibleFolders);
+        if (visibleFolders.empty())
+        {
+            return;
+        }
+
+        const std::string currentSelection =
+            std::find(visibleFolders.begin(), visibleFolders.end(), selectedEntryPath) != visibleFolders.end()
+                ? selectedEntryPath
+                : browsedDirectory;
+
+        const auto currentIt = std::find(visibleFolders.begin(), visibleFolders.end(), currentSelection);
+        if (currentIt == visibleFolders.end())
+        {
+            return;
+        }
+
+        const int currentIndex = static_cast<int>(currentIt - visibleFolders.begin());
+
+        bool selectionChanged = false;
+
+        if (ImGui::IsKeyPressed(ImGuiKey_DownArrow))
+        {
+            const int nextIndex = currentIndex + 1;
+            if (nextIndex < static_cast<int>(visibleFolders.size()))
+            {
+                selectedEntryPath = visibleFolders[nextIndex];
+                browsedDirectory = selectedEntryPath;
+                selectionChanged = true;
+            }
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow))
+        {
+            const int prevIndex = currentIndex - 1;
+            if (prevIndex >= 0)
+            {
+                selectedEntryPath = visibleFolders[prevIndex];
+                browsedDirectory = selectedEntryPath;
+                selectionChanged = true;
+            }
+        }
+        else if (currentIndex >= 0)
+        {
+            const std::string selectedFolder = visibleFolders[currentIndex];
+            if (HasChildFolders(selectedFolder))
+            {
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && !IsFolderExpanded(selectedFolder, rootPath, openStates))
+                {
+                    openStates[selectedFolder] = true;
+                    selectionChanged = true; // keeps it visible/scrollable
+                }
+                else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && IsFolderExpanded(selectedFolder, rootPath, openStates))
+                {
+                    openStates[selectedFolder] = false;
+                    selectionChanged = true;
+                }
+            }
+        }
+
+        if (selectionChanged)
+        {
+            scrollSelectionIntoView = true;
+        }
+    }
 }
 
 void ProjectFilesPanel::ResetBrowseState(const std::string& projectRoot)
@@ -112,6 +276,8 @@ void ProjectFilesPanel::ResetBrowseState(const std::string& projectRoot)
     m_browsedDirectory = projectRoot;
     m_selectedEntryPath.clear();
     m_trackedProjectRoot = projectRoot;
+    m_folderOpenStates.clear();
+    m_scrollSelectionIntoView = false;
 }
 
 void ProjectFilesPanel::DrawToolbar(ProjectSession& project)
@@ -164,19 +330,44 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
         }
 
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (entry.path == m_browsedDirectory)
+        if (entry.path == m_selectedEntryPath)
         {
             flags |= ImGuiTreeNodeFlags_Selected;
         }
 
-        const bool opened = ImGui::TreeNodeEx(entry.name.c_str(), flags);
+        const bool hasChildren = HasChildFolders(entry.path);
+        if (!hasChildren)
+        {
+            flags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        }
+        else
+        {
+            // Keep open state in our control so keyboard left/right works reliably.
+            const bool isOpen = IsFolderExpanded(entry.path, m_trackedProjectRoot, m_folderOpenStates);
+            ImGui::SetNextItemOpen(isOpen, ImGuiCond_Always);
+        }
+
+        bool opened = ImGui::TreeNodeEx(entry.name.c_str(), flags);
+        if (hasChildren)
+        {
+            m_folderOpenStates[entry.path] = opened;
+        }
+
         if (ImGui::IsItemClicked())
         {
             m_browsedDirectory = entry.path;
             m_selectedEntryPath = entry.path;
+            m_scrollSelectionIntoView = false;
         }
 
-        if (opened)
+        if (m_scrollSelectionIntoView && entry.path == m_selectedEntryPath)
+        {
+            ImGui::SetScrollHereY(0.5f);
+            // Reset once we actually drew the selected row.
+            m_scrollSelectionIntoView = false;
+        }
+
+        if (opened && hasChildren)
         {
             DrawFolderTree(entry.path);
             ImGui::TreePop();
@@ -275,8 +466,6 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     const std::string& projectRoot = project.GetProjectRootDirectory();
     if (projectRoot.empty())
     {
-        ImGui::TextDisabled("No project folder yet.");
-        ImGui::TextUnformatted("Use File > New Project or Open Project to browse assets here.");
         ImGui::End();
         return;
     }
@@ -291,6 +480,12 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_browsedDirectory = projectRoot;
     }
 
+    if (m_selectedEntryPath.empty())
+    {
+        // Default selection drives the file list; needed for keyboard navigation to work immediately.
+        m_selectedEntryPath = m_browsedDirectory;
+    }
+
     DrawToolbar(project);
     ImGui::Separator();
 
@@ -302,15 +497,36 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     ImGui::TextDisabled("Folders");
     ImGui::Separator();
 
+    HandleProjectFilesKeyboardNavigation(
+        projectRoot,
+        true,
+        m_folderOpenStates,
+        m_browsedDirectory,
+        m_selectedEntryPath,
+        m_scrollSelectionIntoView);
+
     ImGuiTreeNodeFlags rootFlags =
         ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-    if (m_browsedDirectory == projectRoot)
+    if (m_selectedEntryPath == projectRoot)
     {
         rootFlags |= ImGuiTreeNodeFlags_Selected;
     }
 
     const std::string rootLabel = fs::path(projectRoot).filename().string();
+    const bool rootHasChildren = HasChildFolders(projectRoot);
+    const bool rootIsOpen = IsFolderExpanded(projectRoot, projectRoot, m_folderOpenStates);
+    ImGui::SetNextItemOpen(rootIsOpen, ImGuiCond_Always);
+
+    if (!rootHasChildren)
+    {
+        rootFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+    }
+
     const bool rootOpen = ImGui::TreeNodeEx(rootLabel.c_str(), rootFlags);
+    if (rootHasChildren)
+    {
+        m_folderOpenStates[projectRoot] = rootOpen;
+    }
     if (ImGui::IsItemClicked())
     {
         m_browsedDirectory = projectRoot;

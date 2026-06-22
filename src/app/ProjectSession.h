@@ -2,11 +2,14 @@
 
 #include <string>
 
+class Scene;
+
 class ProjectSession
 {
 public:
     static constexpr const char* ProjectFileExtension = ".gameproject";
 
+    bool HasActiveProject() const { return m_hasActiveProject; }
     bool IsUntitled() const { return m_projectFilePath.empty(); }
     bool IsDirty() const { return m_dirty; }
     const std::string& GetDisplayName() const { return m_displayName; }
@@ -16,13 +19,17 @@ public:
 
     void MarkDirty();
     void MarkClean();
+    void SetStatusMessage(const std::string& message);
 
-    void NewUntitled();
-    void NewAt(const std::string& directory);
+    void CloseProject();
 
-    bool Save();
-    bool SaveAs(const std::string& projectFilePath);
-    bool Load(const std::string& projectFilePath);
+    bool CreateNewProject(Scene& scene, const std::string& directory, const std::string& projectName);
+    bool OpenProject(Scene& scene, const std::string& projectFilePath);
+
+    bool Save(Scene& scene);
+    bool SaveAs(Scene& scene, const std::string& projectFilePath);
+
+    static std::string SanitizeProjectName(const std::string& projectName);
 
 private:
     void SetProjectFilePath(const std::string& projectFilePath);
@@ -34,4 +41,5 @@ private:
     std::string m_displayName = "Untitled";
     std::string m_statusMessage;
     bool m_dirty = false;
+    bool m_hasActiveProject = false;
 };

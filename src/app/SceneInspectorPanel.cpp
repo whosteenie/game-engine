@@ -122,6 +122,7 @@ namespace
         bool hasMap,
         const std::string& path,
         TextureColorSpace colorSpace,
+        Scene& scene,
         const std::function<void(std::shared_ptr<Texture>, const std::string&)>& assign,
         const std::function<void()>& clear)
     {
@@ -161,6 +162,7 @@ namespace
                         selectedPath.c_str(),
                         colorSpace);
                     assign(texture, selectedPath);
+                    scene.MarkDirty();
                 }
                 catch (const std::exception&)
                 {
@@ -185,36 +187,41 @@ namespace
         if (ImGui::Button("Clear"))
         {
             clear();
+            scene.MarkDirty();
         }
         ImGui::EndDisabled();
 
         ImGui::PopID();
     }
 
-    void DrawMaterialSection(Material& material)
+    void DrawMaterialSection(Material& material, Scene& scene)
     {
         glm::vec3 albedo = material.GetAlbedo();
         if (EditorWidgets::ColorEditVec3("Albedo", albedo))
         {
             material.SetAlbedo(albedo);
+            scene.MarkDirty();
         }
 
         float roughness = material.GetRoughness();
         if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
         {
             material.SetRoughness(roughness);
+            scene.MarkDirty();
         }
 
         float metallic = material.GetMetallic();
         if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
         {
             material.SetMetallic(metallic);
+            scene.MarkDirty();
         }
 
         bool doubleSided = material.IsDoubleSided();
         if (ImGui::Checkbox("Double sided", &doubleSided))
         {
             material.SetDoubleSided(doubleSided);
+            scene.MarkDirty();
         }
 
         ImGui::Separator();
@@ -225,6 +232,7 @@ namespace
             material.HasAlbedoMap(),
             material.GetAlbedoMapPath(),
             TextureColorSpace::SRGB,
+            scene,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetAlbedoMap(std::move(texture), path);
             },
@@ -236,6 +244,7 @@ namespace
             if (ImGui::Combo("Albedo UV set", &albedoTexCoordSet, "0\0" "1\0"))
             {
                 material.SetAlbedoTexCoordSet(albedoTexCoordSet);
+                scene.MarkDirty();
             }
         }
 
@@ -244,6 +253,7 @@ namespace
             material.HasNormalMap(),
             material.GetNormalMapPath(),
             TextureColorSpace::Linear,
+            scene,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetNormalMap(std::move(texture), path);
             },
@@ -255,6 +265,7 @@ namespace
             if (ImGui::Combo("Normal UV set", &normalTexCoordSet, "0\0" "1\0"))
             {
                 material.SetNormalTexCoordSet(normalTexCoordSet);
+                scene.MarkDirty();
             }
         }
 
@@ -263,6 +274,7 @@ namespace
             material.HasAoMap(),
             material.GetAoMapPath(),
             TextureColorSpace::Linear,
+            scene,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetAoMap(std::move(texture), path);
             },
@@ -274,6 +286,7 @@ namespace
             if (ImGui::Combo("AO UV set", &aoTexCoordSet, "0\0" "1\0"))
             {
                 material.SetAoTexCoordSet(aoTexCoordSet);
+                scene.MarkDirty();
             }
         }
 
@@ -284,6 +297,7 @@ namespace
                 true,
                 material.GetRoughnessMapPath(),
                 TextureColorSpace::Linear,
+                scene,
                 [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                     material.SetMetallicRoughnessMap(
                         std::move(texture),
@@ -296,6 +310,7 @@ namespace
             if (ImGui::Combo("Metallic-roughness UV set", &roughnessTexCoordSet, "0\0" "1\0"))
             {
                 material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
+                scene.MarkDirty();
             }
 
             ImGui::TextDisabled("Uses glTF packing: green = roughness, blue = metallic.");
@@ -307,6 +322,7 @@ namespace
                 material.HasRoughnessMap(),
                 material.GetRoughnessMapPath(),
                 TextureColorSpace::Linear,
+                scene,
                 [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                     material.SetRoughnessMap(std::move(texture), path);
                 },
@@ -318,6 +334,7 @@ namespace
                 if (ImGui::Combo("Roughness UV set", &roughnessTexCoordSet, "0\0" "1\0"))
                 {
                     material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
+                    scene.MarkDirty();
                 }
             }
 
@@ -336,6 +353,7 @@ namespace
                             std::move(texture),
                             material.GetRoughnessTexCoordSet(),
                             selectedPath);
+                        scene.MarkDirty();
                     }
                     catch (const std::exception&)
                     {
@@ -352,7 +370,7 @@ namespace
         }
     }
 
-    void DrawTransformSection(SceneObject& object)
+    void DrawTransformSection(SceneObject& object, Scene& scene)
     {
         Transform& transform = object.GetTransform();
 
@@ -367,15 +385,22 @@ namespace
             ImGui::TableSetupColumn("##y", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
-            DrawTransformRow("Position", transform.position, glm::vec3(0.0f), 0.1f);
+            if (DrawTransformRow("Position", transform.position, glm::vec3(0.0f), 0.1f))
+            {
+                scene.MarkDirty();
+            }
 
             glm::vec3 rotationDegrees = transform.GetRotationDegrees();
             if (DrawTransformRow("Rotation", rotationDegrees, glm::vec3(0.0f), 0.5f))
             {
                 transform.SetRotationDegrees(rotationDegrees);
+                scene.MarkDirty();
             }
 
-            DrawTransformRow("Scale", transform.scale, glm::vec3(1.0f), 0.01f);
+            if (DrawTransformRow("Scale", transform.scale, glm::vec3(1.0f), 0.01f))
+            {
+                scene.MarkDirty();
+            }
 
             ImGui::EndTable();
         }
@@ -399,14 +424,19 @@ namespace
                 const bool preserveShadow = light.castsShadow;
                 light = MakeDefaultLightComponent(newType);
                 light.castsShadow = preserveShadow && newType == LightType::Directional;
+                scene.MarkDirty();
             }
         }
 
         if (EditorWidgets::ColorEditVec3("Color", light.color))
         {
+            scene.MarkDirty();
         }
 
-        ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 8.0f);
+        if (ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 8.0f))
+        {
+            scene.MarkDirty();
+        }
 
         if (light.type == LightType::Directional)
         {
@@ -425,6 +455,7 @@ namespace
                 }
 
                 light.castsShadow = castsShadow;
+                scene.MarkDirty();
             }
 
             ImGui::TextUnformatted("Rotation aims local +Y toward the light source.");
@@ -433,12 +464,22 @@ namespace
         else
         {
             light.castsShadow = false;
-            ImGui::SliderFloat("Range", &light.range, 0.0f, 25.0f);
+            if (ImGui::SliderFloat("Range", &light.range, 0.0f, 25.0f))
+            {
+                scene.MarkDirty();
+            }
 
             if (light.type == LightType::Spot)
             {
-                ImGui::SliderFloat("Inner angle", &light.innerCutoffDegrees, 0.0f, light.outerCutoffDegrees - 1.0f);
-                ImGui::SliderFloat("Outer angle", &light.outerCutoffDegrees, 1.0f, 89.0f);
+                if (ImGui::SliderFloat("Inner angle", &light.innerCutoffDegrees, 0.0f, light.outerCutoffDegrees - 1.0f))
+                {
+                    scene.MarkDirty();
+                }
+
+                if (ImGui::SliderFloat("Outer angle", &light.outerCutoffDegrees, 1.0f, 89.0f))
+                {
+                    scene.MarkDirty();
+                }
                 if (light.innerCutoffDegrees >= light.outerCutoffDegrees)
                 {
                     light.innerCutoffDegrees = light.outerCutoffDegrees - 1.0f;
@@ -486,6 +527,7 @@ void SceneInspectorPanel::Draw(Scene& scene) const
     if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
     {
         selectedObject.SetName(nameBuffer);
+        scene.MarkDirty();
     }
 
     const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
@@ -494,6 +536,7 @@ void SceneInspectorPanel::Draw(Scene& scene) const
         if (ImGui::MenuItem("Reset Transform"))
         {
             selectedObject.GetTransform().Reset();
+            scene.MarkDirty();
         }
 
         ImGui::EndPopup();
@@ -501,7 +544,7 @@ void SceneInspectorPanel::Draw(Scene& scene) const
 
     if (transformOpen)
     {
-        DrawTransformSection(selectedObject);
+        DrawTransformSection(selectedObject, scene);
     }
 
     if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
@@ -519,18 +562,21 @@ void SceneInspectorPanel::Draw(Scene& scene) const
             if (ImGui::Checkbox("Movable", &movable))
             {
                 selectedObject.SetMovable(movable);
+                scene.MarkDirty();
             }
 
             bool castShadow = selectedObject.CastsShadow();
             if (ImGui::Checkbox("Cast shadow", &castShadow))
             {
                 selectedObject.SetCastShadow(castShadow);
+                scene.MarkDirty();
             }
 
             bool receiveShadow = selectedObject.ReceivesShadow();
             if (ImGui::Checkbox("Receive shadow", &receiveShadow))
             {
                 selectedObject.SetReceiveShadow(receiveShadow);
+                scene.MarkDirty();
             }
         }
         else
@@ -540,6 +586,7 @@ void SceneInspectorPanel::Draw(Scene& scene) const
             if (ImGui::Checkbox("Movable", &movable))
             {
                 selectedObject.SetMovable(movable);
+                scene.MarkDirty();
             }
         }
     }
@@ -547,7 +594,7 @@ void SceneInspectorPanel::Draw(Scene& scene) const
     if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
     {
         ImGui::PushID(selectedIndex);
-        DrawMaterialSection(selectedObject.GetMaterial());
+        DrawMaterialSection(selectedObject.GetMaterial(), scene);
         ImGui::PopID();
     }
 

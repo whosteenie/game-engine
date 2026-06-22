@@ -5,6 +5,7 @@
 #include "engine/Constants.h"
 #include "engine/Material.h"
 #include "engine/Mesh.h"
+#include "engine/ProjectAssets.h"
 #include "engine/Texture.h"
 #include "engine/TextureCache.h"
 #include "engine/TextureSamplerSettings.h"
@@ -16,6 +17,9 @@
 #include <tiny_gltf.h>
 
 #include <stb_image.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include <stb_image_write.h>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
@@ -81,6 +85,56 @@ namespace
     std::string JoinPath(const std::string& directory, const std::string& relativePath)
     {
         return (std::filesystem::path(directory) / relativePath).string();
+    }
+
+    std::string GetExtractedEmbeddedImagePath(const std::string& modelDirectory, int imageIndex)
+    {
+        return JoinPath(modelDirectory, "textures/image_" + std::to_string(imageIndex) + ".png");
+    }
+
+    void ExtractEmbeddedGltfImages(const tinygltf::Model& model, const std::string& modelDirectory)
+    {
+        if (modelDirectory.empty() || model.images.empty())
+        {
+            return;
+        }
+
+        namespace fs = std::filesystem;
+        const fs::path texturesDirectory = fs::path(modelDirectory) / "textures";
+        std::error_code error;
+        fs::create_directories(texturesDirectory, error);
+
+        for (std::size_t imageIndex = 0; imageIndex < model.images.size(); ++imageIndex)
+        {
+            const tinygltf::Image& image = model.images[imageIndex];
+            if (!image.uri.empty() && image.uri.rfind("data:", 0) != 0)
+            {
+                continue;
+            }
+
+            if (image.image.empty() || image.width <= 0 || image.height <= 0 || image.component < 1)
+            {
+                continue;
+            }
+
+            const fs::path outputPath = texturesDirectory / ("image_" + std::to_string(imageIndex) + ".png");
+            if (fs::exists(outputPath))
+            {
+                continue;
+            }
+
+            const int stride = image.width * image.component;
+            if (stbi_write_png(
+                    outputPath.string().c_str(),
+                    image.width,
+                    image.height,
+                    image.component,
+                    image.image.data(),
+                    stride) == 0)
+            {
+                continue;
+            }
+        }
     }
 
     template<typename T>
@@ -313,16 +367,35 @@ namespace
                 texture = nullptr;
             }
         }
-        else if (!image.image.empty() && image.width > 0 && image.height > 0)
+        else
         {
-            texture = Texture::CreateFromPixels(
-                image.image.data(),
-                image.width,
-                image.height,
-                image.component,
-                colorSpace,
-                samplerSettings,
-                true);
+            const std::string extractedPath = GetExtractedEmbeddedImagePath(modelDirectory, imageIndex);
+            if (std::filesystem::exists(extractedPath))
+            {
+                try
+                {
+                    texture = TextureCache::Get().Load(
+                        extractedPath.c_str(),
+                        colorSpace,
+                        samplerSettings,
+                        true);
+                }
+                catch (const std::exception&)
+                {
+                    texture = nullptr;
+                }
+            }
+            else if (!image.image.empty() && image.width > 0 && image.height > 0)
+            {
+                texture = Texture::CreateFromPixels(
+                    image.image.data(),
+                    image.width,
+                    image.height,
+                    image.component,
+                    colorSpace,
+                    samplerSettings,
+                    true);
+            }
         }
 
         if (texture != nullptr && texture->IsValid())
@@ -331,6 +404,59 @@ namespace
         }
 
         return texture;
+    }
+
+    std::string GetGltfImageFilePath(
+        const tinygltf::Model& model,
+        int imageIndex,
+        const std::string& modelDirectory)
+    {
+        if (imageIndex < 0)
+        {
+            return {};
+        }
+
+        const tinygltf::Image& image = model.images[static_cast<std::size_t>(imageIndex)];
+        if (!image.uri.empty() && image.uri.rfind("data:", 0) != 0)
+        {
+            return JoinPath(modelDirectory, image.uri);
+        }
+
+        if (!image.image.empty() && image.width > 0 && image.height > 0)
+        {
+            return GetExtractedEmbeddedImagePath(modelDirectory, imageIndex);
+        }
+
+        return {};
+    }
+
+    std::string GetGltfTextureFilePath(
+        const tinygltf::Model& model,
+        int textureIndex,
+        const std::string& modelDirectory)
+    {
+        if (textureIndex < 0)
+        {
+            return {};
+        }
+
+        const tinygltf::Texture& texture = model.textures[static_cast<std::size_t>(textureIndex)];
+        return GetGltfImageFilePath(model, texture.source, modelDirectory);
+    }
+
+    std::string StoreTexturePath(const std::string& projectRoot, const std::string& absolutePath)
+    {
+        if (absolutePath.empty())
+        {
+            return {};
+        }
+
+        if (projectRoot.empty())
+        {
+            return absolutePath;
+        }
+
+        return MakeProjectRelativePath(projectRoot, absolutePath);
     }
 
     std::shared_ptr<Texture> LoadGltfTexture(
@@ -360,6 +486,7 @@ namespace
         const tinygltf::Model& model,
         int materialIndex,
         const std::string& modelDirectory,
+        const std::string& projectRoot,
         std::unordered_map<std::string, std::shared_ptr<Texture>>& textureCache)
     {
         glm::vec3 albedo(0.8f);
@@ -388,46 +515,79 @@ namespace
             if (pbr.baseColorTexture.index >= 0)
             {
                 material->SetAlbedoTexCoordSet(pbr.baseColorTexture.texCoord);
-                material->SetAlbedoMap(LoadGltfTexture(
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    pbr.baseColorTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
                     model,
                     pbr.baseColorTexture.index,
                     modelDirectory,
                     TextureColorSpace::SRGB,
-                    textureCache));
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetAlbedoMap(texture, StoreTexturePath(projectRoot, texturePath));
+                }
             }
 
             if (pbr.metallicRoughnessTexture.index >= 0)
             {
-                material->SetMetallicRoughnessMap(
-                    LoadGltfTexture(
-                        model,
-                        pbr.metallicRoughnessTexture.index,
-                        modelDirectory,
-                        TextureColorSpace::Linear,
-                        textureCache),
-                    pbr.metallicRoughnessTexture.texCoord);
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    pbr.metallicRoughnessTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
+                    model,
+                    pbr.metallicRoughnessTexture.index,
+                    modelDirectory,
+                    TextureColorSpace::Linear,
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetMetallicRoughnessMap(
+                        texture,
+                        pbr.metallicRoughnessTexture.texCoord,
+                        StoreTexturePath(projectRoot, texturePath));
+                }
             }
 
             if (gltfMaterial.normalTexture.index >= 0)
             {
                 material->SetNormalTexCoordSet(gltfMaterial.normalTexture.texCoord);
-                material->SetNormalMap(LoadGltfTexture(
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    gltfMaterial.normalTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
                     model,
                     gltfMaterial.normalTexture.index,
                     modelDirectory,
                     TextureColorSpace::Linear,
-                    textureCache));
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetNormalMap(texture, StoreTexturePath(projectRoot, texturePath));
+                }
             }
 
             if (gltfMaterial.occlusionTexture.index >= 0)
             {
                 material->SetAoTexCoordSet(gltfMaterial.occlusionTexture.texCoord);
-                material->SetAoMap(LoadGltfTexture(
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    gltfMaterial.occlusionTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
                     model,
                     gltfMaterial.occlusionTexture.index,
                     modelDirectory,
                     TextureColorSpace::Linear,
-                    textureCache));
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetAoMap(texture, StoreTexturePath(projectRoot, texturePath));
+                }
             }
 
             return material;
@@ -663,6 +823,7 @@ namespace
         int nodeIndex,
         int parentNodeIndex,
         const std::string& modelDirectory,
+        const std::string& projectRoot,
         std::unordered_map<std::string, std::shared_ptr<Texture>>& textureCache,
         std::vector<ImportedSceneNode>& nodes,
         int& nameCounter)
@@ -704,6 +865,7 @@ namespace
                     model,
                     primitive.material,
                     modelDirectory,
+                    projectRoot,
                     textureCache);
 
                 if (singlePrimitive)
@@ -737,6 +899,7 @@ namespace
                 childIndex,
                 nodeObjectIndex,
                 modelDirectory,
+                projectRoot,
                 textureCache,
                 nodes,
                 nameCounter);
@@ -759,7 +922,7 @@ glm::mat4 GetImportedNodeWorldMatrix(
     return GetImportedNodeWorldMatrix(nodes, node.parentIndex) * localMatrix;
 }
 
-ImportedModel LoadModelFromFile(const std::string& path)
+ImportedModel LoadModelFromFile(const std::string& path, const std::string& projectRoot)
 {
     ImportedModel importedModel;
     tinygltf::TinyGLTF loader;
@@ -786,6 +949,7 @@ ImportedModel LoadModelFromFile(const std::string& path)
     }
 
     const std::string modelDirectory = GetModelDirectory(path);
+    ExtractEmbeddedGltfImages(model, modelDirectory);
     std::unordered_map<std::string, std::shared_ptr<Texture>> textureCache;
     int nameCounter = 1;
 
@@ -810,6 +974,7 @@ ImportedModel LoadModelFromFile(const std::string& path)
                 nodeIndex,
                 importedModel.rootNodeIndex,
                 modelDirectory,
+                projectRoot,
                 textureCache,
                 importedModel.nodes,
                 nameCounter);
@@ -824,6 +989,7 @@ ImportedModel LoadModelFromFile(const std::string& path)
                 nodeIndex,
                 importedModel.rootNodeIndex,
                 modelDirectory,
+                projectRoot,
                 textureCache,
                 importedModel.nodes,
                 nameCounter);

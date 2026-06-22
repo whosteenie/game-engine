@@ -1,6 +1,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include "app/EditorSettings.h"
 #include "app/MainMenuBar.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
@@ -19,8 +20,7 @@ namespace
         {
             ImGui::TextUnformatted("Game Engine Editor");
             ImGui::Separator();
-            ImGui::TextUnformatted("Project file management is scaffolded.");
-            ImGui::TextUnformatted("Save/load and preferences are not wired yet.");
+            ImGui::TextUnformatted("Projects are saved as JSON .gameproject files.");
             if (ImGui::Button("Close"))
             {
                 ImGui::CloseCurrentPopup();
@@ -47,23 +47,109 @@ namespace
             return;
         }
 
-        const std::vector<int> importedIndices = scene.ImportModel(modelPath, parentIndex);
+        const std::vector<int> importedIndices = scene.ImportModel(
+            modelPath,
+            parentIndex,
+            project.GetProjectRootDirectory());
         if (importedIndices.empty())
         {
+            if (!scene.GetLastImportError().empty())
+            {
+                project.SetStatusMessage(scene.GetLastImportError());
+            }
             return;
         }
 
         scene.SetSelectedObjectIndex(importedIndices.front());
-        project.MarkDirty();
+        if (!scene.GetLastImportWarning().empty())
+        {
+            project.SetStatusMessage(scene.GetLastImportWarning());
+        }
+    }
+
+    void OpenProject(Scene& scene, ProjectSession& project, EditorSettings& settings)
+    {
+        std::string projectPath;
+        if (!FileDialog::OpenProjectFile(projectPath))
+        {
+            return;
+        }
+
+        if (project.OpenProject(scene, projectPath))
+        {
+            settings.AddRecentProject(projectPath);
+            settings.Save();
+        }
+    }
+
+    void SaveProject(Scene& scene, ProjectSession& project)
+    {
+        if (project.IsUntitled() || !project.IsDirty())
+        {
+            return;
+        }
+
+        if (!project.Save(scene))
+        {
+            std::string projectPath;
+            if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
+            {
+                project.SaveAs(scene, projectPath);
+            }
+        }
+    }
+
+    void SaveProjectAs(Scene& scene, ProjectSession& project)
+    {
+        std::string projectPath;
+        if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
+        {
+            project.SaveAs(scene, projectPath);
+        }
+    }
+
+    bool AllowFileMenuShortcuts()
+    {
+        const ImGuiIO& io = ImGui::GetIO();
+        return !io.WantTextInput && !ImGui::IsAnyItemActive();
+    }
+
+    void HandleFileMenuShortcuts(Scene& scene, ProjectSession& project, EditorSettings& settings)
+    {
+        if (!AllowFileMenuShortcuts())
+        {
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
+        {
+            OpenProject(scene, project, settings);
+        }
+
+        if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        {
+            SaveProject(scene, project);
+        }
+
+        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
+        {
+            SaveProjectAs(scene, project);
+        }
     }
 }
 
 void MainMenuBar::Draw(
     Scene& scene,
     ProjectSession& project,
+    EditorSettings& settings,
     GLFWwindow* window,
-    const EditorPanelVisibility& panels)
+    const EditorPanelVisibility& panels,
+    const std::function<void()>& requestClose,
+    const std::function<void()>& requestNewProject)
 {
+    HandleFileMenuShortcuts(scene, project, settings);
+
     if (!ImGui::BeginMainMenuBar())
     {
         return;
@@ -73,44 +159,28 @@ void MainMenuBar::Draw(
     {
         if (ImGui::MenuItem("New Project..."))
         {
-            std::string folderPath;
-            if (FileDialog::ChooseProjectFolder(folderPath))
+            if (requestNewProject)
             {
-                project.NewAt(folderPath);
+                requestNewProject();
             }
         }
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            std::string projectPath;
-            if (FileDialog::OpenProjectFile(projectPath))
-            {
-                project.Load(projectPath);
-            }
+            OpenProject(scene, project, settings);
         }
 
         ImGui::Separator();
 
-        const bool canSaveInPlace = !project.IsUntitled();
-        if (ImGui::MenuItem("Save", "Ctrl+S", false, canSaveInPlace))
+        const bool canSave = !project.IsUntitled() && project.IsDirty();
+        if (ImGui::MenuItem("Save", "Ctrl+S", false, canSave))
         {
-            if (!project.Save())
-            {
-                std::string projectPath;
-                if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
-                {
-                    project.SaveAs(projectPath);
-                }
-            }
+            SaveProject(scene, project);
         }
 
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
         {
-            std::string projectPath;
-            if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
-            {
-                project.SaveAs(projectPath);
-            }
+            SaveProjectAs(scene, project);
         }
 
         ImGui::Separator();
@@ -124,7 +194,14 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Exit", "Alt+F4"))
         {
-            glfwSetWindowShouldClose(window, GLFW_TRUE);
+            if (requestClose)
+            {
+                requestClose();
+            }
+            else
+            {
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+            }
         }
 
         ImGui::EndMenu();

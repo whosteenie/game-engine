@@ -2,12 +2,13 @@
 
 #include <unordered_map>
 
+class ProjectSession;
 class Scene;
 
 class SceneHierarchyPanel
 {
 public:
-    void Draw(Scene& scene) const;
+    void Draw(Scene& scene, ProjectSession& project) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 

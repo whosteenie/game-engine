@@ -30,5 +30,5 @@ struct ImportedModel
     std::string warningMessage;
 };
 
-ImportedModel LoadModelFromFile(const std::string& path);
+ImportedModel LoadModelFromFile(const std::string& path, const std::string& projectRoot = {});
 glm::mat4 GetImportedNodeWorldMatrix(const std::vector<ImportedSceneNode>& nodes, int nodeIndex);

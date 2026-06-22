@@ -69,6 +69,8 @@ public:
     void SetDoubleSided(bool doubleSided);
     bool IsDoubleSided() const;
 
+    void ApplyMissingTextureMapsFrom(const Material& source);
+
     bool HasAlbedoMap() const;
     bool HasNormalMap() const;
     bool HasAoMap() const;

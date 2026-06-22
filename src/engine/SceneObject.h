@@ -69,6 +69,11 @@ public:
     const glm::vec3& GetLocalBoundsMin() const;
     const glm::vec3& GetLocalBoundsMax() const;
 
+    const std::string& GetImportAssetPath() const;
+    int GetImportNodeIndex() const;
+    void SetImportSource(const std::string& assetPath, int nodeIndex);
+    void ClearImportSource();
+
 private:
     std::string m_name;
     Mesh* m_mesh = nullptr;
@@ -82,4 +87,6 @@ private:
     bool m_castShadow = true;
     bool m_receiveShadow = true;
     std::optional<LightComponent> m_light;
+    std::string m_importAssetPath;
+    int m_importNodeIndex = -1;
 };

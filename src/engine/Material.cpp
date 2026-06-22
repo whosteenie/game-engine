@@ -290,6 +290,43 @@ bool Material::HasMetallicRoughnessMap() const
     return m_useMetallicRoughnessMap && HasRoughnessMap();
 }
 
+void Material::ApplyMissingTextureMapsFrom(const Material& source)
+{
+    if (!HasAlbedoMap() && source.m_albedoMap != nullptr && source.m_albedoMap->IsValid())
+    {
+        SetAlbedoMap(source.m_albedoMap, source.m_albedoMapPath);
+        SetAlbedoTexCoordSet(source.m_albedoTexCoordSet);
+    }
+
+    if (!HasNormalMap() && source.m_normalMap != nullptr && source.m_normalMap->IsValid())
+    {
+        SetNormalMap(source.m_normalMap, source.m_normalMapPath);
+        SetNormalTexCoordSet(source.m_normalTexCoordSet);
+    }
+
+    if (!HasAoMap() && source.m_aoMap != nullptr && source.m_aoMap->IsValid())
+    {
+        SetAoMap(source.m_aoMap, source.m_aoMapPath);
+        SetAoTexCoordSet(source.m_aoTexCoordSet);
+    }
+
+    if (!HasRoughnessMap() && source.m_roughnessMap != nullptr && source.m_roughnessMap->IsValid())
+    {
+        if (source.m_useMetallicRoughnessMap)
+        {
+            SetMetallicRoughnessMap(
+                source.m_roughnessMap,
+                source.m_roughnessTexCoordSet,
+                source.m_roughnessMapPath);
+        }
+        else
+        {
+            SetRoughnessMap(source.m_roughnessMap, source.m_roughnessMapPath);
+            SetRoughnessTexCoordSet(source.m_roughnessTexCoordSet);
+        }
+    }
+}
+
 std::unique_ptr<Material> Material::Clone() const
 {
     auto copy = std::make_unique<Material>(
