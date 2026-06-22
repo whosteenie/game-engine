@@ -69,6 +69,13 @@ namespace
         }
     }
 
+    void RecordRecentProject(EditorSettings& settings, const std::string& projectFilePath)
+    {
+        settings.AddRecentProject(projectFilePath);
+        settings.SetLastNewProjectParentDirectoryFromProjectFile(projectFilePath);
+        settings.Save();
+    }
+
     void OpenProject(
         Scene& scene,
         ProjectSession& project,
@@ -85,9 +92,7 @@ namespace
 
         if (project.OpenProject(scene, projectPath, editorState))
         {
-            settings.AddRecentProject(projectPath);
-            settings.SetLastNewProjectParentDirectoryFromProjectFile(projectPath);
-            settings.Save();
+            RecordRecentProject(settings, project.GetProjectFilePath());
             if (applyEditorState)
             {
                 applyEditorState(editorState);
@@ -98,6 +103,7 @@ namespace
     void SaveProject(
         Scene& scene,
         ProjectSession& project,
+        EditorSettings& settings,
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState)
     {
@@ -116,7 +122,10 @@ namespace
             std::string projectPath;
             if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
             {
-                project.SaveAs(scene, projectPath, editorState);
+                if (project.SaveAs(scene, projectPath, editorState))
+                {
+                    RecordRecentProject(settings, project.GetProjectFilePath());
+                }
             }
         }
     }
@@ -124,6 +133,7 @@ namespace
     void SaveProjectAs(
         Scene& scene,
         ProjectSession& project,
+        EditorSettings& settings,
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState)
     {
@@ -135,7 +145,10 @@ namespace
                 captureEditorState(editorState);
             }
 
-            project.SaveAs(scene, projectPath, editorState);
+            if (project.SaveAs(scene, projectPath, editorState))
+            {
+                RecordRecentProject(settings, project.GetProjectFilePath());
+            }
         }
     }
 
@@ -166,12 +179,12 @@ namespace
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            SaveProject(scene, project, editorState, captureEditorState);
+            SaveProject(scene, project, settings, editorState, captureEditorState);
         }
 
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            SaveProjectAs(scene, project, editorState, captureEditorState);
+            SaveProjectAs(scene, project, settings, editorState, captureEditorState);
         }
     }
 }
@@ -215,12 +228,12 @@ void MainMenuBar::Draw(
         const bool canSave = !project.IsUntitled() && project.IsDirty();
         if (ImGui::MenuItem("Save", "Ctrl+S", false, canSave))
         {
-            SaveProject(scene, project, editorState, captureEditorState);
+            SaveProject(scene, project, settings, editorState, captureEditorState);
         }
 
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
         {
-            SaveProjectAs(scene, project, editorState, captureEditorState);
+            SaveProjectAs(scene, project, settings, editorState, captureEditorState);
         }
 
         ImGui::Separator();

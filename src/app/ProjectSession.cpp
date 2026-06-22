@@ -187,10 +187,20 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
 
 void ProjectSession::SetProjectFilePath(const std::string& projectFilePath)
 {
-    m_projectFilePath = projectFilePath;
-    m_displayName = ExtractDisplayName(projectFilePath);
+    if (projectFilePath.empty())
+    {
+        m_projectFilePath.clear();
+        m_displayName = "Untitled";
+        m_projectRootDirectory.clear();
+        return;
+    }
 
-    const fs::path parent = fs::path(projectFilePath).parent_path();
+    std::error_code error;
+    const fs::path canonical = fs::weakly_canonical(fs::path(projectFilePath), error);
+    m_projectFilePath = error ? projectFilePath : canonical.string();
+    m_displayName = ExtractDisplayName(m_projectFilePath);
+
+    const fs::path parent = fs::path(m_projectFilePath).parent_path();
     if (!parent.empty())
     {
         SetProjectRootDirectory(parent.string());

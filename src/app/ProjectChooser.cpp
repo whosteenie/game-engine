@@ -54,8 +54,8 @@ bool ProjectChooser::TryOpenProject(
         return false;
     }
 
-    settings.AddRecentProject(projectFilePath);
-    settings.SetLastNewProjectParentDirectoryFromProjectFile(projectFilePath);
+    settings.AddRecentProject(project.GetProjectFilePath());
+    settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
     settings.Save();
     m_startupMode = false;
     m_showNewProjectForm = false;
@@ -220,7 +220,6 @@ bool ProjectChooser::DrawStartupScreen(
         OpenNewProjectForm(settings);
     }
 
-    settings.RemoveMissingRecentProjects();
     const std::vector<std::string>& recentProjects = settings.GetRecentProjects();
     if (!recentProjects.empty())
     {
@@ -231,7 +230,7 @@ bool ProjectChooser::DrawStartupScreen(
 
         for (const std::string& projectPath : recentProjects)
         {
-            const std::string label = fs::path(projectPath).filename().string();
+            const std::string label = fs::path(projectPath).stem().string();
             ImGui::PushID(projectPath.c_str());
             if (ImGui::Selectable(label.c_str()))
             {
@@ -239,7 +238,7 @@ bool ProjectChooser::DrawStartupScreen(
                 if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))
                 {
                     m_errorMessage = error;
-                    settings.RemoveMissingRecentProjects();
+                    settings.RemoveRecentProject(projectPath);
                     settings.Save();
                 }
             }

@@ -76,6 +76,11 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
+    if (m_editorSettings)
+    {
+        m_editorSettings->Save();
+    }
+
     NativeProgressWindow::Instance().Shutdown();
     m_imguiLayer.reset();
     glfwDestroyWindow(m_window);
@@ -320,7 +325,15 @@ bool Application::TrySaveProject()
         return false;
     }
 
-    return m_projectSession->SaveAs(*m_scene, projectPath, m_projectEditorState);
+    if (!m_projectSession->SaveAs(*m_scene, projectPath, m_projectEditorState))
+    {
+        return false;
+    }
+
+    m_editorSettings->AddRecentProject(m_projectSession->GetProjectFilePath());
+    m_editorSettings->SetLastNewProjectParentDirectoryFromProjectFile(m_projectSession->GetProjectFilePath());
+    m_editorSettings->Save();
+    return true;
 }
 
 void Application::DrawUnsavedChangesDialog()

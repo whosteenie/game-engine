@@ -13,7 +13,8 @@ public:
 
     const std::vector<std::string>& GetRecentProjects() const { return m_recentProjects; }
     void AddRecentProject(const std::string& projectFilePath);
-    void RemoveMissingRecentProjects();
+    void RemoveRecentProject(const std::string& projectFilePath);
+    bool PruneRecentProjects();
 
     const std::string& GetLastNewProjectParentDirectory() const { return m_lastNewProjectParentDirectory; }
     void SetLastNewProjectParentDirectory(const std::string& directory);
@@ -21,6 +22,7 @@ public:
     void ValidateLastNewProjectParentDirectory();
 
     static std::string GetSettingsFilePath();
+    static std::string NormalizeProjectFilePath(const std::string& projectFilePath);
 
 private:
     std::vector<std::string> m_recentProjects;
