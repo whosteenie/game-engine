@@ -77,6 +77,19 @@ namespace FileDialog
 #endif
     }
 
+    bool OpenImageFile(std::string& outPath)
+    {
+#ifdef _WIN32
+        return ShowOpenFileDialog(
+            outPath,
+            "Images (*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr)\0*.png;*.jpg;*.jpeg;*.tga;*.bmp;*.hdr\0All Files (*.*)\0*.*\0",
+            "Choose Texture");
+#else
+        (void)outPath;
+        return false;
+#endif
+    }
+
     bool OpenProjectFile(std::string& outPath)
     {
 #ifdef _WIN32

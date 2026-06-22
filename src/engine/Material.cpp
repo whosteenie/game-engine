@@ -107,15 +107,17 @@ void Material::BindMaps() const
     }
 }
 
-void Material::SetRoughnessMap(std::shared_ptr<Texture> texture)
+void Material::SetRoughnessMap(std::shared_ptr<Texture> texture, std::string path)
 {
     m_roughnessMap = std::move(texture);
+    m_roughnessMapPath = std::move(path);
     m_useMetallicRoughnessMap = false;
 }
 
-void Material::SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int texCoordSet)
+void Material::SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int texCoordSet, std::string path)
 {
     m_roughnessMap = std::move(texture);
+    m_roughnessMapPath = std::move(path);
     m_roughnessTexCoordSet = texCoordSet;
     m_useMetallicRoughnessMap = true;
 }
@@ -150,19 +152,87 @@ void Material::SetMetallic(float metallic)
     m_metallic = metallic;
 }
 
-void Material::SetAlbedoMap(std::shared_ptr<Texture> texture)
+void Material::SetAlbedoMap(std::shared_ptr<Texture> texture, std::string path)
 {
     m_albedoMap = std::move(texture);
+    m_albedoMapPath = std::move(path);
 }
 
-void Material::SetNormalMap(std::shared_ptr<Texture> texture)
+void Material::SetNormalMap(std::shared_ptr<Texture> texture, std::string path)
 {
     m_normalMap = std::move(texture);
+    m_normalMapPath = std::move(path);
 }
 
-void Material::SetAoMap(std::shared_ptr<Texture> texture)
+void Material::SetAoMap(std::shared_ptr<Texture> texture, std::string path)
 {
     m_aoMap = std::move(texture);
+    m_aoMapPath = std::move(path);
+}
+
+void Material::ClearAlbedoMap()
+{
+    m_albedoMap.reset();
+    m_albedoMapPath.clear();
+}
+
+void Material::ClearNormalMap()
+{
+    m_normalMap.reset();
+    m_normalMapPath.clear();
+}
+
+void Material::ClearAoMap()
+{
+    m_aoMap.reset();
+    m_aoMapPath.clear();
+}
+
+void Material::ClearRoughnessMap()
+{
+    m_roughnessMap.reset();
+    m_roughnessMapPath.clear();
+    m_useMetallicRoughnessMap = false;
+}
+
+const std::string& Material::GetAlbedoMapPath() const
+{
+    return m_albedoMapPath;
+}
+
+const std::string& Material::GetNormalMapPath() const
+{
+    return m_normalMapPath;
+}
+
+const std::string& Material::GetAoMapPath() const
+{
+    return m_aoMapPath;
+}
+
+const std::string& Material::GetRoughnessMapPath() const
+{
+    return m_roughnessMapPath;
+}
+
+int Material::GetAlbedoTexCoordSet() const
+{
+    return m_albedoTexCoordSet;
+}
+
+int Material::GetNormalTexCoordSet() const
+{
+    return m_normalTexCoordSet;
+}
+
+int Material::GetAoTexCoordSet() const
+{
+    return m_aoTexCoordSet;
+}
+
+int Material::GetRoughnessTexCoordSet() const
+{
+    return m_roughnessTexCoordSet;
 }
 
 void Material::SetAlbedoTexCoordSet(int texCoordSet)
@@ -237,28 +307,28 @@ std::unique_ptr<Material> Material::Clone() const
 
     if (m_albedoMap != nullptr)
     {
-        copy->SetAlbedoMap(m_albedoMap);
+        copy->SetAlbedoMap(m_albedoMap, m_albedoMapPath);
     }
 
     if (m_normalMap != nullptr)
     {
-        copy->SetNormalMap(m_normalMap);
+        copy->SetNormalMap(m_normalMap, m_normalMapPath);
     }
 
     if (m_aoMap != nullptr)
     {
-        copy->SetAoMap(m_aoMap);
+        copy->SetAoMap(m_aoMap, m_aoMapPath);
     }
 
     if (m_roughnessMap != nullptr)
     {
         if (m_useMetallicRoughnessMap)
         {
-            copy->SetMetallicRoughnessMap(m_roughnessMap, m_roughnessTexCoordSet);
+            copy->SetMetallicRoughnessMap(m_roughnessMap, m_roughnessTexCoordSet, m_roughnessMapPath);
         }
         else
         {
-            copy->SetRoughnessMap(m_roughnessMap);
+            copy->SetRoughnessMap(m_roughnessMap, m_roughnessMapPath);
         }
     }
 

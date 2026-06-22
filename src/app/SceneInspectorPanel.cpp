@@ -2,10 +2,13 @@
 
 #include "app/EditorWidgets.h"
 #include "app/Scene.h"
+#include "engine/FileDialog.h"
 #include "engine/Light.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
+#include "engine/Texture.h"
+#include "engine/TextureCache.h"
 #include "engine/Transform.h"
 
 #include <imgui.h>
@@ -13,6 +16,9 @@
 #include <glm/glm.hpp>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <functional>
+#include <stdexcept>
 
 namespace
 {
@@ -111,6 +117,80 @@ namespace
         return changed;
     }
 
+    void DrawMaterialTextureSlot(
+        const char* label,
+        bool hasMap,
+        const std::string& path,
+        TextureColorSpace colorSpace,
+        const std::function<void(std::shared_ptr<Texture>, const std::string&)>& assign,
+        const std::function<void()>& clear)
+    {
+        ImGui::PushID(label);
+        ImGui::TextUnformatted(label);
+        ImGui::SameLine();
+
+        if (hasMap)
+        {
+            if (path.empty())
+            {
+                ImGui::TextUnformatted("(embedded)");
+            }
+            else
+            {
+                const std::string fileName = std::filesystem::path(path).filename().string();
+                ImGui::TextUnformatted(fileName.c_str());
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("%s", path.c_str());
+                }
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("None");
+        }
+
+        if (ImGui::Button("Browse"))
+        {
+            std::string selectedPath;
+            if (FileDialog::OpenImageFile(selectedPath))
+            {
+                try
+                {
+                    std::shared_ptr<Texture> texture = TextureCache::Get().Load(
+                        selectedPath.c_str(),
+                        colorSpace);
+                    assign(texture, selectedPath);
+                }
+                catch (const std::exception&)
+                {
+                    ImGui::OpenPopup("TextureLoadError");
+                }
+            }
+        }
+
+        if (ImGui::BeginPopup("TextureLoadError"))
+        {
+            ImGui::TextUnformatted("Failed to load texture.");
+            if (ImGui::Button("OK"))
+            {
+                ImGui::CloseCurrentPopup();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!hasMap);
+        if (ImGui::Button("Clear"))
+        {
+            clear();
+        }
+        ImGui::EndDisabled();
+
+        ImGui::PopID();
+    }
+
     void DrawMaterialSection(Material& material)
     {
         glm::vec3 albedo = material.GetAlbedo();
@@ -129,6 +209,141 @@ namespace
         if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
         {
             material.SetMetallic(metallic);
+        }
+
+        bool doubleSided = material.IsDoubleSided();
+        if (ImGui::Checkbox("Double sided", &doubleSided))
+        {
+            material.SetDoubleSided(doubleSided);
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Maps");
+
+        DrawMaterialTextureSlot(
+            "Albedo",
+            material.HasAlbedoMap(),
+            material.GetAlbedoMapPath(),
+            TextureColorSpace::SRGB,
+            [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                material.SetAlbedoMap(std::move(texture), path);
+            },
+            [&material]() { material.ClearAlbedoMap(); });
+
+        if (material.HasAlbedoMap())
+        {
+            int albedoTexCoordSet = material.GetAlbedoTexCoordSet();
+            if (ImGui::Combo("Albedo UV set", &albedoTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetAlbedoTexCoordSet(albedoTexCoordSet);
+            }
+        }
+
+        DrawMaterialTextureSlot(
+            "Normal",
+            material.HasNormalMap(),
+            material.GetNormalMapPath(),
+            TextureColorSpace::Linear,
+            [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                material.SetNormalMap(std::move(texture), path);
+            },
+            [&material]() { material.ClearNormalMap(); });
+
+        if (material.HasNormalMap())
+        {
+            int normalTexCoordSet = material.GetNormalTexCoordSet();
+            if (ImGui::Combo("Normal UV set", &normalTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetNormalTexCoordSet(normalTexCoordSet);
+            }
+        }
+
+        DrawMaterialTextureSlot(
+            "Ambient occlusion",
+            material.HasAoMap(),
+            material.GetAoMapPath(),
+            TextureColorSpace::Linear,
+            [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                material.SetAoMap(std::move(texture), path);
+            },
+            [&material]() { material.ClearAoMap(); });
+
+        if (material.HasAoMap())
+        {
+            int aoTexCoordSet = material.GetAoTexCoordSet();
+            if (ImGui::Combo("AO UV set", &aoTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetAoTexCoordSet(aoTexCoordSet);
+            }
+        }
+
+        if (material.HasMetallicRoughnessMap())
+        {
+            DrawMaterialTextureSlot(
+                "Metallic-roughness",
+                true,
+                material.GetRoughnessMapPath(),
+                TextureColorSpace::Linear,
+                [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                    material.SetMetallicRoughnessMap(
+                        std::move(texture),
+                        material.GetRoughnessTexCoordSet(),
+                        path);
+                },
+                [&material]() { material.ClearRoughnessMap(); });
+
+            int roughnessTexCoordSet = material.GetRoughnessTexCoordSet();
+            if (ImGui::Combo("Metallic-roughness UV set", &roughnessTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
+            }
+
+            ImGui::TextDisabled("Uses glTF packing: green = roughness, blue = metallic.");
+        }
+        else
+        {
+            DrawMaterialTextureSlot(
+                "Roughness",
+                material.HasRoughnessMap(),
+                material.GetRoughnessMapPath(),
+                TextureColorSpace::Linear,
+                [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                    material.SetRoughnessMap(std::move(texture), path);
+                },
+                [&material]() { material.ClearRoughnessMap(); });
+
+            if (material.HasRoughnessMap())
+            {
+                int roughnessTexCoordSet = material.GetRoughnessTexCoordSet();
+                if (ImGui::Combo("Roughness UV set", &roughnessTexCoordSet, "0\0" "1\0"))
+                {
+                    material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
+                }
+            }
+
+            ImGui::PushID("MetallicRoughnessAssign");
+            if (ImGui::Button("Assign metallic-roughness map"))
+            {
+                std::string selectedPath;
+                if (FileDialog::OpenImageFile(selectedPath))
+                {
+                    try
+                    {
+                        std::shared_ptr<Texture> texture = TextureCache::Get().Load(
+                            selectedPath.c_str(),
+                            TextureColorSpace::Linear);
+                        material.SetMetallicRoughnessMap(
+                            std::move(texture),
+                            material.GetRoughnessTexCoordSet(),
+                            selectedPath);
+                    }
+                    catch (const std::exception&)
+                    {
+                        ImGui::OpenPopup("TextureLoadError");
+                    }
+                }
+            }
+            ImGui::PopID();
         }
 
         if (material.HasAlbedoMap())
