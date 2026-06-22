@@ -2,9 +2,12 @@
 
 #include <glm/glm.hpp>
 #include <memory>
+#include <vector>
 
 class Camera;
 class Shader;
+
+struct SelectionMeshDraw;
 
 class SelectionRenderer
 {
@@ -12,14 +15,8 @@ public:
     SelectionRenderer();
     ~SelectionRenderer();
 
-    void Draw(
-        const Camera& camera,
-        const glm::mat4& worldMatrix,
-        const glm::vec3& localBoundsMin,
-        const glm::vec3& localBoundsMax) const;
+    void Draw(const Camera& camera, const std::vector<SelectionMeshDraw>& meshes) const;
 
 private:
     std::unique_ptr<Shader> m_shader;
-    mutable unsigned int m_vao = 0;
-    mutable unsigned int m_vbo = 0;
 };

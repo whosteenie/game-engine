@@ -9,6 +9,8 @@ namespace EngineConstants
     inline constexpr const char* GridVertexShader = "assets/shaders/grid.vert";
     inline constexpr const char* GridFragmentShader = "assets/shaders/grid.frag";
     inline constexpr const char* LineFragmentShader = "assets/shaders/line.frag";
+    inline constexpr const char* SelectionOutlineVertexShader = "assets/shaders/selection_outline.vert";
+    inline constexpr const char* SelectionOutlineFragmentShader = "assets/shaders/selection_outline.frag";
 
     inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vert";
     inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.frag";

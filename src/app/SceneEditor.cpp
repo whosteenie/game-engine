@@ -7,6 +7,7 @@
 #include "engine/Input.h"
 #include "engine/SceneObject.h"
 #include "engine/ScenePicker.h"
+#include "engine/SceneHierarchy.h"
 #include "engine/SelectionRenderer.h"
 
 #include <GLFW/glfw3.h>
@@ -14,6 +15,8 @@
 #include <ImGuizmo.h>
 
 #include <glm/gtc/type_ptr.hpp>
+
+#include <vector>
 
 namespace
 {
@@ -214,12 +217,12 @@ void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camer
         return;
     }
 
-    glm::vec3 localBoundsMin;
-    glm::vec3 localBoundsMax;
-    scene.GetLocalSelectionBounds(selectedIndex, localBoundsMin, localBoundsMax);
-    m_selectionRenderer->Draw(
-        camera,
-        scene.GetWorldMatrix(selectedIndex),
-        localBoundsMin,
-        localBoundsMax);
+    std::vector<SelectionMeshDraw> meshes;
+    CollectRenderableSelectionMeshes(scene.GetObjects(), selectedIndex, meshes);
+    if (meshes.empty())
+    {
+        return;
+    }
+
+    m_selectionRenderer->Draw(camera, meshes);
 }

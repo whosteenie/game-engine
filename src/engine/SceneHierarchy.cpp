@@ -2,6 +2,7 @@
 
 #include "engine/SceneHierarchy.h"
 
+#include "engine/Mesh.h"
 #include "engine/SceneObject.h"
 
 #include <algorithm>
@@ -188,6 +189,28 @@ std::vector<int> GetObjectChildren(const std::vector<SceneObject>& objects, int 
         });
 
     return children;
+}
+
+void CollectRenderableSelectionMeshes(
+    const std::vector<SceneObject>& objects,
+    int objectIndex,
+    std::vector<SelectionMeshDraw>& outMeshes)
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(objects.size()))
+    {
+        return;
+    }
+
+    const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+    if (object.IsRenderable() && object.HasMesh())
+    {
+        outMeshes.push_back(SelectionMeshDraw{object.GetMesh(), GetObjectWorldMatrix(objects, objectIndex)});
+    }
+
+    for (int childIndex : GetObjectChildren(objects, objectIndex))
+    {
+        CollectRenderableSelectionMeshes(objects, childIndex, outMeshes);
+    }
 }
 
 std::vector<int> GetRootObjectIndices(const std::vector<SceneObject>& objects)
