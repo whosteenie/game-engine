@@ -33,10 +33,17 @@ struct ImportedModel
 
 using ModelOperationProgressFn = std::function<void(float progress, const std::string& message)>;
 
+enum class ModelLoadMode
+{
+    Full,
+    GeometryOnly,
+};
+
 ImportedModel LoadModelFromFile(
     const std::string& path,
     const std::string& projectRoot = {},
-    ModelOperationProgressFn onProgress = {});
+    ModelOperationProgressFn onProgress = {},
+    ModelLoadMode loadMode = ModelLoadMode::Full);
 bool EnsureGltfEmbeddedImagesOnDisk(
     const std::string& modelPath,
     std::string& outError,

@@ -848,6 +848,8 @@ namespace
         int& nameCounter,
         int totalNodes,
         int& processedNodes,
+        float nodeProgressStart,
+        ModelLoadMode loadMode,
         const ModelOperationProgressFn& onProgress)
     {
         const tinygltf::Node& node = model.nodes[static_cast<std::size_t>(nodeIndex)];
@@ -883,12 +885,16 @@ namespace
                     continue;
                 }
 
-                auto material = CreateMaterialFromGltf(
-                    model,
-                    primitive.material,
-                    modelDirectory,
-                    projectRoot,
-                    textureCache);
+                std::unique_ptr<Material> material;
+                if (loadMode == ModelLoadMode::Full)
+                {
+                    material = CreateMaterialFromGltf(
+                        model,
+                        primitive.material,
+                        modelDirectory,
+                        projectRoot,
+                        textureCache);
+                }
 
                 if (singlePrimitive)
                 {
@@ -927,15 +933,17 @@ namespace
                 nameCounter,
                 totalNodes,
                 processedNodes,
+                nodeProgressStart,
+                loadMode,
                 onProgress);
         }
 
         ++processedNodes;
         if (onProgress && totalNodes > 0)
         {
-            constexpr float kNodeProcessingStart = 0.35f;
-            const float progress = kNodeProcessingStart
-                + ((1.0f - kNodeProcessingStart) * static_cast<float>(processedNodes) / static_cast<float>(totalNodes));
+            const float nodeProgressSpan = 1.0f - nodeProgressStart;
+            const float progress = nodeProgressStart
+                + (nodeProgressSpan * static_cast<float>(processedNodes) / static_cast<float>(totalNodes));
             onProgress(progress, nodes[static_cast<std::size_t>(nodeObjectIndex)].name);
         }
     }
@@ -959,7 +967,8 @@ glm::mat4 GetImportedNodeWorldMatrix(
 ImportedModel LoadModelFromFile(
     const std::string& path,
     const std::string& projectRoot,
-    ModelOperationProgressFn onProgress)
+    ModelOperationProgressFn onProgress,
+    ModelLoadMode loadMode)
 {
     ImportedModel importedModel;
     if (onProgress)
@@ -996,30 +1005,36 @@ ImportedModel LoadModelFromFile(
     const int totalNodes = static_cast<int>(model.nodes.size());
     int processedNodes = 0;
 
-    constexpr float kTextureExportStart = 0.05f;
-    constexpr float kTextureExportEnd = 0.35f;
-    constexpr float kNodeProcessingStart = kTextureExportEnd;
+    constexpr float kFullTextureExportStart = 0.05f;
+    constexpr float kFullTextureExportEnd = 0.35f;
+    const float nodeProgressStart = loadMode == ModelLoadMode::Full ? kFullTextureExportEnd : 0.05f;
 
-    ExtractEmbeddedGltfImages(
-        model,
-        modelDirectory,
-        [&](float localProgress, const std::string& detail) {
-            if (onProgress)
-            {
-                const float progress =
-                    kTextureExportStart + (localProgress * (kTextureExportEnd - kTextureExportStart));
-                std::string message = "Writing embedded textures";
-                if (!detail.empty())
+    if (loadMode == ModelLoadMode::Full)
+    {
+        ExtractEmbeddedGltfImages(
+            model,
+            modelDirectory,
+            [&](float localProgress, const std::string& detail) {
+                if (onProgress)
                 {
-                    message += " — " + detail;
+                    const float progress = kFullTextureExportStart
+                        + (localProgress * (kFullTextureExportEnd - kFullTextureExportStart));
+                    std::string message = "Writing embedded textures";
+                    if (!detail.empty())
+                    {
+                        message += " — " + detail;
+                    }
+                    onProgress(progress, message);
                 }
-                onProgress(progress, message);
-            }
-        });
+            });
+    }
 
     if (onProgress)
     {
-        onProgress(kNodeProcessingStart, "Processing meshes and textures...");
+        const char* processingMessage = loadMode == ModelLoadMode::Full
+            ? "Processing meshes and textures..."
+            : "Processing meshes...";
+        onProgress(nodeProgressStart, processingMessage);
     }
 
     ImportedSceneNode importRoot;
@@ -1049,6 +1064,8 @@ ImportedModel LoadModelFromFile(
                 nameCounter,
                 totalNodes,
                 processedNodes,
+                nodeProgressStart,
+                loadMode,
                 onProgress);
         }
     }
@@ -1067,6 +1084,8 @@ ImportedModel LoadModelFromFile(
                 nameCounter,
                 totalNodes,
                 processedNodes,
+                nodeProgressStart,
+                loadMode,
                 onProgress);
         }
     }

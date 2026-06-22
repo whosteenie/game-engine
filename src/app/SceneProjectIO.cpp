@@ -450,7 +450,11 @@ namespace
         ImportedAssetCacheEntry& cacheEntry = importCache[resolvedPath];
         if (!cacheEntry.loaded)
         {
-            cacheEntry.model = LoadModelFromFile(resolvedPath, projectRoot);
+            cacheEntry.model = LoadModelFromFile(
+                resolvedPath,
+                projectRoot,
+                {},
+                ModelLoadMode::GeometryOnly);
             cacheEntry.loaded = true;
             cacheEntry.errorMessage = cacheEntry.model.errorMessage;
         }
@@ -672,23 +676,6 @@ bool SceneProjectIO::DeserializeScene(
             if (objectValue.contains("material"))
             {
                 material = DeserializeMaterial(objectValue.at("material"), projectRoot);
-            }
-
-            if (material != nullptr && !importAssetPath.empty() && importNodeIndex >= 0)
-            {
-                const auto cacheIterator = importCache.find(importAssetPath);
-                if (cacheIterator != importCache.end()
-                    && cacheIterator->second.errorMessage.empty()
-                    && importNodeIndex >= 0
-                    && importNodeIndex < static_cast<int>(cacheIterator->second.model.nodes.size()))
-                {
-                    const ImportedSceneNode& importedNode =
-                        cacheIterator->second.model.nodes[static_cast<std::size_t>(importNodeIndex)];
-                    if (importedNode.material != nullptr)
-                    {
-                        material->ApplyMissingTextureMapsFrom(*importedNode.material);
-                    }
-                }
             }
 
             std::optional<LightComponent> light;
