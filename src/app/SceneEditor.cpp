@@ -209,7 +209,10 @@ void SceneEditor::Update(
     }
 }
 
-void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camera) const
+void SceneEditor::RenderSelectionOverlay(
+    const Scene& scene,
+    const Camera& camera,
+    bool useScreenSpace) const
 {
     const int selectedIndex = scene.GetSelectedObjectIndex();
     if (selectedIndex < 0)
@@ -224,5 +227,5 @@ void SceneEditor::RenderSelectionOverlay(const Scene& scene, const Camera& camer
         return;
     }
 
-    m_selectionRenderer->Draw(camera, meshes);
+    m_selectionRenderer->Draw(camera, meshes, useScreenSpace);
 }

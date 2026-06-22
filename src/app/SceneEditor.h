@@ -43,7 +43,7 @@ public:
         bool allowMouseInput,
         bool allowKeyboardInput);
 
-    void RenderSelectionOverlay(const Scene& scene, const Camera& camera) const;
+    void RenderSelectionOverlay(const Scene& scene, const Camera& camera, bool useScreenSpace) const;
 
 private:
     TransformTool m_tool = TransformTool::Translate;
