@@ -17,7 +17,8 @@ SceneObject::SceneObject(
     bool movable,
     bool castShadow,
     bool receiveShadow,
-    int parentIndex)
+    int parentIndex,
+    int siblingOrder)
     : m_name(std::move(name)),
       m_mesh(mesh),
       m_material(std::move(material)),
@@ -25,6 +26,7 @@ SceneObject::SceneObject(
       m_localBoundsMin(localBoundsMin),
       m_localBoundsMax(localBoundsMax),
       m_parentIndex(parentIndex),
+      m_siblingOrder(siblingOrder),
       m_movable(movable),
       m_castShadow(castShadow),
       m_receiveShadow(receiveShadow)
@@ -99,6 +101,16 @@ int SceneObject::GetParentIndex() const
 void SceneObject::SetParentIndex(int parentIndex)
 {
     m_parentIndex = parentIndex;
+}
+
+int SceneObject::GetSiblingOrder() const
+{
+    return m_siblingOrder;
+}
+
+void SceneObject::SetSiblingOrder(int siblingOrder)
+{
+    m_siblingOrder = siblingOrder;
 }
 
 bool SceneObject::IsMovable() const

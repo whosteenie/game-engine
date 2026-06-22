@@ -15,6 +15,7 @@
 namespace
 {
     constexpr const char* kHierarchyDragDropPayload = "SCENE_HIERARCHY_ITEM";
+    constexpr float kHierarchyInsertGapHeight = 4.0f;
 
     bool IsNodeExpanded(int objectIndex, const std::unordered_map<int, bool>& openStates)
     {
@@ -299,9 +300,66 @@ namespace
         }
     }
 
-    void DrawHierarchyDropTarget(
+    void DrawHierarchyInsertGapLine()
+    {
+        const ImVec2 gapMin = ImGui::GetItemRectMin();
+        const ImVec2 gapMax = ImGui::GetItemRectMax();
+        const float lineY = (gapMin.y + gapMax.y) * 0.5f;
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(gapMin.x, lineY),
+            ImVec2(gapMax.x, lineY),
+            IM_COL32(90, 150, 255, 255),
+            2.0f);
+    }
+
+    void DrawHierarchyInsertGap(Scene& scene, int referenceIndex, HierarchyInsertMode mode)
+    {
+        ImGui::PushID(referenceIndex);
+        ImGui::PushID(static_cast<int>(mode));
+        ImGui::InvisibleButton("##HierarchyInsertGap", ImVec2(-FLT_MIN, kHierarchyInsertGapHeight));
+
+        if (ImGui::BeginDragDropTarget())
+        {
+            const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
+            if (activePayload != nullptr && activePayload->IsDataType(kHierarchyDragDropPayload))
+            {
+                const int draggedIndex = *static_cast<const int*>(activePayload->Data);
+                if (scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
+                    && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
+                {
+                    DrawHierarchyInsertGapLine();
+
+                    const ImGuiDragDropFlags acceptFlags =
+                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload, acceptFlags))
+                    {
+                        if (payload->IsDelivery())
+                        {
+                            scene.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
+                            scene.SetSelectedObjectIndex(draggedIndex);
+                        }
+                    }
+                }
+            }
+
+            ImGui::EndDragDropTarget();
+        }
+
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+
+    void DrawHierarchyReparentIndicator()
+    {
+        const ImVec2 rowMin = ImGui::GetItemRectMin();
+        const ImVec2 rowMax = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(rowMin, rowMax, IM_COL32(90, 150, 255, 255), 0.0f, 0, 2.0f);
+    }
+
+    void DrawHierarchyRowDropTarget(
         Scene& scene,
-        int newParentIndex,
+        int referenceIndex,
         std::unordered_map<int, bool>& openStates)
     {
         if (!ImGui::BeginDragDropTarget())
@@ -313,22 +371,37 @@ namespace
         if (activePayload != nullptr && activePayload->IsDataType(kHierarchyDragDropPayload))
         {
             const int draggedIndex = *static_cast<const int*>(activePayload->Data);
-            if (scene.CanReparentObject(draggedIndex, newParentIndex))
+            const HierarchyInsertMode mode = HierarchyInsertMode::AsChild;
+            if (scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
+                && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
             {
-                if (newParentIndex >= 0)
-                {
-                    openStates[newParentIndex] = true;
-                }
+                DrawHierarchyReparentIndicator();
+                openStates[referenceIndex] = true;
 
-                if (ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload) != nullptr)
+                const ImGuiDragDropFlags acceptFlags =
+                    ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+                if (const ImGuiPayload* payload =
+                        ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload, acceptFlags))
                 {
-                    scene.ReparentObject(draggedIndex, newParentIndex);
-                    scene.SetSelectedObjectIndex(draggedIndex);
+                    if (payload->IsDelivery())
+                    {
+                        scene.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
+                        scene.SetSelectedObjectIndex(draggedIndex);
+                    }
                 }
             }
         }
 
         ImGui::EndDragDropTarget();
+    }
+
+    void DrawHierarchyBackgroundContextMenu(Scene& scene)
+    {
+        if (ImGui::BeginPopupContextItem())
+        {
+            DrawCreateObjectMenu(scene, -1);
+            ImGui::EndPopup();
+        }
     }
 
     void DrawHierarchyNode(
@@ -346,6 +419,8 @@ namespace
         bool& focusRenameInput,
         bool& renameInputEngaged)
     {
+        DrawHierarchyInsertGap(scene, objectIndex, HierarchyInsertMode::Before);
+
         const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
         const bool isRenaming = objectIndex == pendingRenameIndex;
@@ -432,7 +507,7 @@ namespace
 
             const bool allowDragDrop = true;
             DrawHierarchyDragDropSource(objectIndex, label, allowDragDrop);
-            DrawHierarchyDropTarget(scene, objectIndex, openStates);
+            DrawHierarchyRowDropTarget(scene, objectIndex, openStates);
         }
 
         if (!isRenaming)
@@ -552,11 +627,21 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
             m_renameInputEngaged);
     }
 
-    const ImVec2 rootDropSize = ImGui::GetContentRegionAvail();
-    if (rootDropSize.y > 0.0f)
+    std::vector<int> visibleObjectIndices;
+    BuildVisibleObjectOrder(scene, m_nodeOpenStates, visibleObjectIndices);
+    if (!visibleObjectIndices.empty())
     {
-        ImGui::InvisibleButton("##HierarchyRootDrop", rootDropSize);
-        DrawHierarchyDropTarget(scene, -1, m_nodeOpenStates);
+        DrawHierarchyInsertGap(
+            scene,
+            visibleObjectIndices.back(),
+            HierarchyInsertMode::After);
+    }
+
+    const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
+    if (backgroundSpace.y > 0.0f)
+    {
+        ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
+        DrawHierarchyBackgroundContextMenu(scene);
     }
 
     m_scrollSelectionIntoView = false;
@@ -572,14 +657,6 @@ void SceneHierarchyPanel::Draw(Scene& scene) const
         m_focusRenameInput = false;
         m_renameInputEngaged = false;
         selectedIndex = scene.GetSelectedObjectIndex();
-    }
-
-    if (ImGui::BeginPopupContextWindow(
-            "HierarchyContextMenu",
-            ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
-    {
-        DrawCreateObjectMenu(scene, -1);
-        ImGui::EndPopup();
     }
 
     ImGui::EndChild();

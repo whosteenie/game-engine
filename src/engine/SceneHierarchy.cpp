@@ -4,6 +4,8 @@
 
 #include "engine/SceneObject.h"
 
+#include <algorithm>
+
 #include <array>
 #include <limits>
 
@@ -177,21 +179,20 @@ std::vector<int> GetObjectChildren(const std::vector<SceneObject>& objects, int 
         }
     }
 
+    std::sort(
+        children.begin(),
+        children.end(),
+        [&objects](int leftIndex, int rightIndex) {
+            return objects[static_cast<std::size_t>(leftIndex)].GetSiblingOrder()
+                < objects[static_cast<std::size_t>(rightIndex)].GetSiblingOrder();
+        });
+
     return children;
 }
 
 std::vector<int> GetRootObjectIndices(const std::vector<SceneObject>& objects)
 {
-    std::vector<int> roots;
-    for (int index = 0; index < static_cast<int>(objects.size()); ++index)
-    {
-        if (objects[static_cast<std::size_t>(index)].GetParentIndex() < 0)
-        {
-            roots.push_back(index);
-        }
-    }
-
-    return roots;
+    return GetObjectChildren(objects, -1);
 }
 
 bool IsObjectDescendantOf(const std::vector<SceneObject>& objects, int ancestor, int objectIndex)

@@ -83,7 +83,9 @@ void Scene::SetupObjects()
         Transform{},
         true,
         true,
-        true);
+        true,
+        -1,
+        0);
 
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -105,7 +107,9 @@ void Scene::SetupObjects()
         cubeTransform,
         true,
         true,
-        true);
+        true,
+        -1,
+        1);
 
     m_selectedObjectIndex = 1;
 }
@@ -244,7 +248,8 @@ int Scene::AddObject(ScenePrimitive primitive, int parentIndex)
         spawnInfo.movable,
         spawnInfo.castShadow,
         spawnInfo.receiveShadow,
-        parentIndex);
+        parentIndex,
+        AllocateSiblingOrder(parentIndex));
 
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -263,7 +268,8 @@ int Scene::AddEmptyObject(int parentIndex)
         true,
         false,
         false,
-        parentIndex);
+        parentIndex,
+        AllocateSiblingOrder(parentIndex));
 
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -422,7 +428,8 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex)
             true,
             node.hasMesh,
             node.hasMesh,
-            parentSceneIndex);
+            parentSceneIndex,
+            AllocateSiblingOrder(parentSceneIndex));
 
         importedSceneIndices.push_back(static_cast<int>(m_objects.size()) - 1);
     }
@@ -524,6 +531,228 @@ bool Scene::ReparentObject(int objectIndex, int newParentIndex)
     object.SetParentIndex(newParentIndex);
     object.GetTransform().SetFromMatrix(glm::inverse(newParentWorldMatrix) * worldMatrix);
     return true;
+}
+
+int Scene::AllocateSiblingOrder(int parentIndex) const
+{
+    int maxOrder = -1;
+    for (const SceneObject& object : m_objects)
+    {
+        if (object.GetParentIndex() == parentIndex)
+        {
+            maxOrder = std::max(maxOrder, object.GetSiblingOrder());
+        }
+    }
+
+    return maxOrder + 1;
+}
+
+void Scene::SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex)
+{
+    std::vector<int> siblings = GetObjectChildren(m_objects, parentIndex);
+    siblings.erase(
+        std::remove(siblings.begin(), siblings.end(), objectIndex),
+        siblings.end());
+
+    if (siblingIndex < 0)
+    {
+        siblingIndex = 0;
+    }
+    else if (siblingIndex > static_cast<int>(siblings.size()))
+    {
+        siblingIndex = static_cast<int>(siblings.size());
+    }
+
+    siblings.insert(siblings.begin() + siblingIndex, objectIndex);
+
+    for (int index = 0; index < static_cast<int>(siblings.size()); ++index)
+    {
+        m_objects[static_cast<std::size_t>(siblings[static_cast<std::size_t>(index)])].SetSiblingOrder(index);
+    }
+}
+
+bool Scene::CanPlaceObjectInHierarchy(
+    int objectIndex,
+    int referenceIndex,
+    HierarchyInsertMode mode) const
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(m_objects.size()))
+    {
+        return false;
+    }
+
+    if (referenceIndex < 0 || referenceIndex >= static_cast<int>(m_objects.size()))
+    {
+        return false;
+    }
+
+    if (objectIndex == referenceIndex)
+    {
+        return false;
+    }
+
+    if (IsObjectDescendantOf(m_objects, objectIndex, referenceIndex))
+    {
+        return false;
+    }
+
+    if (mode == HierarchyInsertMode::AsChild)
+    {
+        return CanReparentObject(objectIndex, referenceIndex);
+    }
+
+    const int referenceParent = m_objects[static_cast<std::size_t>(referenceIndex)].GetParentIndex();
+    return CanReparentObject(objectIndex, referenceParent);
+}
+
+bool Scene::WouldPlaceObjectInHierarchyChange(
+    int objectIndex,
+    int referenceIndex,
+    HierarchyInsertMode mode) const
+{
+    if (!CanPlaceObjectInHierarchy(objectIndex, referenceIndex, mode))
+    {
+        return false;
+    }
+
+    if (mode == HierarchyInsertMode::AsChild)
+    {
+        if (m_objects[static_cast<std::size_t>(objectIndex)].GetParentIndex() != referenceIndex)
+        {
+            return true;
+        }
+
+        const std::vector<int> children = GetChildren(referenceIndex);
+        return children.empty() || children.back() != objectIndex;
+    }
+
+    const int targetParent = m_objects[static_cast<std::size_t>(referenceIndex)].GetParentIndex();
+    const int currentParent = m_objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
+
+    std::vector<int> siblings = GetObjectChildren(m_objects, targetParent);
+    siblings.erase(
+        std::remove(siblings.begin(), siblings.end(), objectIndex),
+        siblings.end());
+
+    int targetSiblingIndex = static_cast<int>(siblings.size());
+    for (int index = 0; index < static_cast<int>(siblings.size()); ++index)
+    {
+        if (siblings[static_cast<std::size_t>(index)] == referenceIndex)
+        {
+            targetSiblingIndex = index + (mode == HierarchyInsertMode::After ? 1 : 0);
+            break;
+        }
+    }
+
+    if (currentParent != targetParent)
+    {
+        return true;
+    }
+
+    const std::vector<int> siblingsWithSelf = GetObjectChildren(m_objects, targetParent);
+    const auto currentIterator = std::find(siblingsWithSelf.begin(), siblingsWithSelf.end(), objectIndex);
+    if (currentIterator == siblingsWithSelf.end())
+    {
+        return true;
+    }
+
+    const int currentSiblingIndex = static_cast<int>(currentIterator - siblingsWithSelf.begin());
+    return currentSiblingIndex != targetSiblingIndex;
+}
+
+bool Scene::PlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode)
+{
+    if (!CanPlaceObjectInHierarchy(objectIndex, referenceIndex, mode))
+    {
+        return false;
+    }
+
+    if (!WouldPlaceObjectInHierarchyChange(objectIndex, referenceIndex, mode))
+    {
+        return true;
+    }
+
+    if (mode == HierarchyInsertMode::AsChild)
+    {
+        if (!ReparentObject(objectIndex, referenceIndex))
+        {
+            return false;
+        }
+
+        const std::vector<int> children = GetChildren(referenceIndex);
+        const int childIndex = static_cast<int>(
+            std::find(children.begin(), children.end(), objectIndex) - children.begin());
+        SetSiblingIndexAmongParent(objectIndex, referenceIndex, childIndex);
+        return true;
+    }
+
+    const int referenceParent = m_objects[static_cast<std::size_t>(referenceIndex)].GetParentIndex();
+    if (!ReparentObject(objectIndex, referenceParent))
+    {
+        return false;
+    }
+
+    std::vector<int> siblings = GetObjectChildren(m_objects, referenceParent);
+    siblings.erase(
+        std::remove(siblings.begin(), siblings.end(), objectIndex),
+        siblings.end());
+
+    int insertIndex = 0;
+    for (int index = 0; index < static_cast<int>(siblings.size()); ++index)
+    {
+        if (siblings[static_cast<std::size_t>(index)] == referenceIndex)
+        {
+            insertIndex = index + (mode == HierarchyInsertMode::After ? 1 : 0);
+            break;
+        }
+    }
+
+    SetSiblingIndexAmongParent(objectIndex, referenceParent, insertIndex);
+    return true;
+}
+
+bool Scene::PlaceObjectAtRootEnd(int objectIndex)
+{
+    if (!CanReparentObject(objectIndex, -1))
+    {
+        return false;
+    }
+
+    const std::vector<int> roots = GetRootObjectIndices();
+    if (roots.empty())
+    {
+        if (!ReparentObject(objectIndex, -1))
+        {
+            return false;
+        }
+
+        m_objects[static_cast<std::size_t>(objectIndex)].SetSiblingOrder(0);
+        return true;
+    }
+
+    return PlaceObjectInHierarchy(objectIndex, roots.back(), HierarchyInsertMode::After);
+}
+
+bool Scene::PlaceObjectAtRootBeginning(int objectIndex)
+{
+    if (!CanReparentObject(objectIndex, -1))
+    {
+        return false;
+    }
+
+    const std::vector<int> roots = GetRootObjectIndices();
+    if (roots.empty())
+    {
+        if (!ReparentObject(objectIndex, -1))
+        {
+            return false;
+        }
+
+        m_objects[static_cast<std::size_t>(objectIndex)].SetSiblingOrder(0);
+        return true;
+    }
+
+    return PlaceObjectInHierarchy(objectIndex, roots.front(), HierarchyInsertMode::Before);
 }
 
 void Scene::PruneUnusedImportedMeshes()

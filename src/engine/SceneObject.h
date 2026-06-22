@@ -22,7 +22,8 @@ public:
         bool movable = true,
         bool castShadow = true,
         bool receiveShadow = true,
-        int parentIndex = -1);
+        int parentIndex = -1,
+        int siblingOrder = 0);
 
     const std::string& GetName() const;
     void SetName(const std::string& name);
@@ -41,6 +42,9 @@ public:
 
     int GetParentIndex() const;
     void SetParentIndex(int parentIndex);
+
+    int GetSiblingOrder() const;
+    void SetSiblingOrder(int siblingOrder);
 
     bool IsMovable() const;
     void SetMovable(bool movable);
@@ -64,6 +68,7 @@ private:
     glm::vec3 m_localBoundsMin;
     glm::vec3 m_localBoundsMax;
     int m_parentIndex = -1;
+    int m_siblingOrder = 0;
     bool m_movable = true;
     bool m_castShadow = true;
     bool m_receiveShadow = true;

@@ -19,6 +19,13 @@ class GridRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
 
+enum class HierarchyInsertMode
+{
+    Before,
+    After,
+    AsChild
+};
+
 class Scene
 {
 public:
@@ -64,6 +71,11 @@ public:
     bool RemoveObject(std::size_t index);
     bool ReparentObject(int objectIndex, int newParentIndex);
     bool CanReparentObject(int objectIndex, int newParentIndex) const;
+    bool PlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode);
+    bool CanPlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode) const;
+    bool WouldPlaceObjectInHierarchyChange(int objectIndex, int referenceIndex, HierarchyInsertMode mode) const;
+    bool PlaceObjectAtRootEnd(int objectIndex);
+    bool PlaceObjectAtRootBeginning(int objectIndex);
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
@@ -91,6 +103,8 @@ private:
     void RemapParentIndicesAfterRemoval(int removedIndex);
     void CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const;
     void PruneUnusedImportedMeshes();
+    int AllocateSiblingOrder(int parentIndex) const;
+    void SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex);
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
