@@ -193,3 +193,19 @@ std::vector<int> GetRootObjectIndices(const std::vector<SceneObject>& objects)
 
     return roots;
 }
+
+bool IsObjectDescendantOf(const std::vector<SceneObject>& objects, int ancestor, int objectIndex)
+{
+    int current = objectIndex;
+    while (current >= 0)
+    {
+        if (current == ancestor)
+        {
+            return true;
+        }
+
+        current = objects[static_cast<std::size_t>(current)].GetParentIndex();
+    }
+
+    return false;
+}

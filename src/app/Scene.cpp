@@ -475,6 +475,57 @@ bool Scene::RemoveObject(std::size_t index)
     return true;
 }
 
+bool Scene::CanReparentObject(int objectIndex, int newParentIndex) const
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(m_objects.size()))
+    {
+        return false;
+    }
+
+    if (newParentIndex < -1 || newParentIndex >= static_cast<int>(m_objects.size()))
+    {
+        return false;
+    }
+
+    if (objectIndex == newParentIndex)
+    {
+        return false;
+    }
+
+    if (newParentIndex >= 0 && IsObjectDescendantOf(m_objects, objectIndex, newParentIndex))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool Scene::ReparentObject(int objectIndex, int newParentIndex)
+{
+    if (!CanReparentObject(objectIndex, newParentIndex))
+    {
+        return false;
+    }
+
+    SceneObject& object = m_objects[static_cast<std::size_t>(objectIndex)];
+    if (object.GetParentIndex() == newParentIndex)
+    {
+        return true;
+    }
+
+    const glm::mat4 worldMatrix = GetWorldMatrix(objectIndex);
+
+    glm::mat4 newParentWorldMatrix(1.0f);
+    if (newParentIndex >= 0)
+    {
+        newParentWorldMatrix = GetWorldMatrix(newParentIndex);
+    }
+
+    object.SetParentIndex(newParentIndex);
+    object.GetTransform().SetFromMatrix(glm::inverse(newParentWorldMatrix) * worldMatrix);
+    return true;
+}
+
 void Scene::PruneUnusedImportedMeshes()
 {
     std::unordered_set<Mesh*> referencedMeshes;

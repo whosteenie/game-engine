@@ -62,6 +62,8 @@ public:
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
+    bool ReparentObject(int objectIndex, int newParentIndex);
+    bool CanReparentObject(int objectIndex, int newParentIndex) const;
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
