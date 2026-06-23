@@ -46,9 +46,20 @@ public:
     void RenderSelectionOverlay(const Scene& scene, const Camera& camera, bool useScreenSpace) const;
 
 private:
+    void DrawMarqueeOverlay(
+        int framebufferWidth,
+        int framebufferHeight,
+        int windowWidth,
+        int windowHeight) const;
+    void CancelMarqueeDrag();
+
     TransformTool m_tool = TransformTool::Translate;
     TransformSpace m_transformSpace = TransformSpace::Local;
     std::unique_ptr<SelectionRenderer> m_selectionRenderer;
     glm::vec2 m_lastPickScreenPosition = glm::vec2(0.0f);
     bool m_hasLastPickScreenPosition = false;
+    bool m_trackingLeftDrag = false;
+    bool m_marqueeActive = false;
+    glm::vec2 m_dragStartFramebuffer = glm::vec2(0.0f);
+    glm::vec2 m_dragCurrentFramebuffer = glm::vec2(0.0f);
 };

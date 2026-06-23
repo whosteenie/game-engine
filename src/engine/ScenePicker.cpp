@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <array>
 #include <unordered_map>
+#include <unordered_set>
 
 Ray ScreenPointToRay(
     const glm::vec2& screenPoint,
@@ -161,6 +163,117 @@ namespace
         hitDistance = glm::length(worldHit - ray.origin);
         return true;
     }
+
+    bool TryWorldToScreenPoint(
+        const glm::vec3& worldPoint,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        const glm::vec2& viewportSize,
+        glm::vec2& outScreenPoint)
+    {
+        const glm::vec4 clipSpace = projectionMatrix * viewMatrix * glm::vec4(worldPoint, 1.0f);
+        if (clipSpace.w <= 1e-5f)
+        {
+            return false;
+        }
+
+        const glm::vec3 normalizedDeviceCoordinates = glm::vec3(clipSpace) / clipSpace.w;
+        constexpr float kFrustumMargin = 1.001f;
+        if (std::abs(normalizedDeviceCoordinates.x) > kFrustumMargin
+            || std::abs(normalizedDeviceCoordinates.y) > kFrustumMargin
+            || normalizedDeviceCoordinates.z < -1.0f || normalizedDeviceCoordinates.z > 1.0f)
+        {
+            return false;
+        }
+
+        outScreenPoint = glm::vec2(
+            (normalizedDeviceCoordinates.x * 0.5f + 0.5f) * viewportSize.x,
+            (1.0f - (normalizedDeviceCoordinates.y * 0.5f + 0.5f)) * viewportSize.y);
+        return true;
+    }
+
+    bool ScreenRectsOverlap(
+        float aMinX,
+        float aMinY,
+        float aMaxX,
+        float aMaxY,
+        float bMinX,
+        float bMinY,
+        float bMaxX,
+        float bMaxY)
+    {
+        return aMinX <= bMaxX && aMaxX >= bMinX && aMinY <= bMaxY && aMaxY >= bMinY;
+    }
+
+    bool BoundsIntersectScreenRect(
+        const glm::vec3& boundsMin,
+        const glm::vec3& boundsMax,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        const glm::vec2& viewportSize)
+    {
+        float objectMinX = std::numeric_limits<float>::max();
+        float objectMinY = std::numeric_limits<float>::max();
+        float objectMaxX = std::numeric_limits<float>::lowest();
+        float objectMaxY = std::numeric_limits<float>::lowest();
+        bool hasVisiblePoint = false;
+
+        const auto considerWorldPoint = [&](const glm::vec3& worldPoint) {
+            glm::vec2 screenPoint;
+            if (!TryWorldToScreenPoint(
+                    worldPoint,
+                    viewMatrix,
+                    projectionMatrix,
+                    viewportSize,
+                    screenPoint))
+            {
+                return;
+            }
+
+            hasVisiblePoint = true;
+            objectMinX = std::min(objectMinX, screenPoint.x);
+            objectMinY = std::min(objectMinY, screenPoint.y);
+            objectMaxX = std::max(objectMaxX, screenPoint.x);
+            objectMaxY = std::max(objectMaxY, screenPoint.y);
+        };
+
+        considerWorldPoint((boundsMin + boundsMax) * 0.5f);
+
+        const std::array<glm::vec3, 8> corners = {
+            glm::vec3(boundsMin.x, boundsMin.y, boundsMin.z),
+            glm::vec3(boundsMax.x, boundsMin.y, boundsMin.z),
+            glm::vec3(boundsMin.x, boundsMax.y, boundsMin.z),
+            glm::vec3(boundsMax.x, boundsMax.y, boundsMin.z),
+            glm::vec3(boundsMin.x, boundsMin.y, boundsMax.z),
+            glm::vec3(boundsMax.x, boundsMin.y, boundsMax.z),
+            glm::vec3(boundsMin.x, boundsMax.y, boundsMax.z),
+            glm::vec3(boundsMax.x, boundsMax.y, boundsMax.z),
+        };
+
+        for (const glm::vec3& corner : corners)
+        {
+            considerWorldPoint(corner);
+        }
+
+        if (!hasVisiblePoint)
+        {
+            return false;
+        }
+
+        return ScreenRectsOverlap(
+            objectMinX,
+            objectMinY,
+            objectMaxX,
+            objectMaxY,
+            rectMinX,
+            rectMinY,
+            rectMaxX,
+            rectMaxY);
+    }
 }
 
 std::vector<PickHit> PickAllSceneObjects(const std::vector<SceneObject>& objects, const Ray& ray)
@@ -265,4 +378,55 @@ int PickSceneObject(const std::vector<SceneObject>& objects, const Ray& ray)
     }
 
     return hits.front().objectIndex;
+}
+
+std::vector<int> PickObjectsInScreenRect(
+    const std::vector<SceneObject>& objects,
+    const glm::vec2& rectMin,
+    const glm::vec2& rectMax,
+    const glm::vec2& viewportSize,
+    const glm::mat4& viewMatrix,
+    const glm::mat4& projectionMatrix)
+{
+    const float selectionMinX = std::min(rectMin.x, rectMax.x);
+    const float selectionMinY = std::min(rectMin.y, rectMax.y);
+    const float selectionMaxX = std::max(rectMin.x, rectMax.x);
+    const float selectionMaxY = std::max(rectMin.y, rectMax.y);
+
+    std::unordered_set<int> matchedTargets;
+    for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
+    {
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.IsRenderable() || object.GetMesh() == nullptr)
+        {
+            continue;
+        }
+
+        const int targetIndex = ResolvePickTarget(objects, objectIndex);
+
+        const glm::mat4 worldMatrix = GetObjectWorldMatrix(objects, objectIndex);
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        object.GetWorldBounds(worldMatrix, boundsMin, boundsMax);
+
+        if (!BoundsIntersectScreenRect(
+                boundsMin,
+                boundsMax,
+                selectionMinX,
+                selectionMinY,
+                selectionMaxX,
+                selectionMaxY,
+                viewMatrix,
+                projectionMatrix,
+                viewportSize))
+        {
+            continue;
+        }
+
+        matchedTargets.insert(targetIndex);
+    }
+
+    std::vector<int> pickedIndices(matchedTargets.begin(), matchedTargets.end());
+    std::sort(pickedIndices.begin(), pickedIndices.end());
+    return pickedIndices;
 }
