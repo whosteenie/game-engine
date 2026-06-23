@@ -531,6 +531,108 @@ namespace
         return false;
     }
 
+    bool MeshScreenBoundsOverlapScreenRect(
+        const Mesh& mesh,
+        const glm::mat4& worldMatrix,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        const glm::vec2& viewportSize)
+    {
+        float objectMinX = std::numeric_limits<float>::max();
+        float objectMinY = std::numeric_limits<float>::max();
+        float objectMaxX = std::numeric_limits<float>::lowest();
+        float objectMaxY = std::numeric_limits<float>::lowest();
+        bool hasVisiblePoint = false;
+
+        for (const glm::vec3& localPosition : mesh.GetPositions())
+        {
+            const glm::vec3 worldPosition = glm::vec3(worldMatrix * glm::vec4(localPosition, 1.0f));
+            glm::vec2 screenPoint;
+            if (!TryWorldToScreenPointRelaxed(
+                    worldPosition,
+                    viewMatrix,
+                    projectionMatrix,
+                    viewportSize,
+                    screenPoint))
+            {
+                continue;
+            }
+
+            hasVisiblePoint = true;
+            objectMinX = std::min(objectMinX, screenPoint.x);
+            objectMinY = std::min(objectMinY, screenPoint.y);
+            objectMaxX = std::max(objectMaxX, screenPoint.x);
+            objectMaxY = std::max(objectMaxY, screenPoint.y);
+        }
+
+        if (!hasVisiblePoint)
+        {
+            return false;
+        }
+
+        return ScreenRectsOverlap(
+            objectMinX,
+            objectMinY,
+            objectMaxX,
+            objectMaxY,
+            rectMinX,
+            rectMinY,
+            rectMaxX,
+            rectMaxY);
+    }
+
+    bool MarqueeSampleRaysHitObject(
+        const SceneObject& object,
+        const glm::mat4& worldMatrix,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY,
+        const glm::vec2& viewportSize,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        int maxSampleCount)
+    {
+        const float centerX = (rectMinX + rectMaxX) * 0.5f;
+        const float centerY = (rectMinY + rectMaxY) * 0.5f;
+
+        const std::array<glm::vec2, 9> samplePoints = {{
+            glm::vec2(centerX, centerY),
+            glm::vec2(rectMinX, rectMinY),
+            glm::vec2(rectMaxX, rectMinY),
+            glm::vec2(rectMaxX, rectMaxY),
+            glm::vec2(rectMinX, rectMaxY),
+            glm::vec2(centerX, rectMinY),
+            glm::vec2(rectMaxX, centerY),
+            glm::vec2(centerX, rectMaxY),
+            glm::vec2(rectMinX, centerY),
+        }};
+
+        const int sampleCount = std::min(
+            maxSampleCount,
+            static_cast<int>(samplePoints.size()));
+
+        for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+        {
+            const Ray ray = ScreenPointToRay(
+                samplePoints[static_cast<std::size_t>(sampleIndex)],
+                viewportSize,
+                viewMatrix,
+                projectionMatrix);
+            float hitDistance = 0.0f;
+            if (IntersectSceneObjectMesh(object, worldMatrix, ray, hitDistance))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     bool BoundsIntersectScreenRect(
         const glm::vec3& boundsMin,
         const glm::vec3& boundsMax,
@@ -744,7 +846,28 @@ std::vector<int> PickObjectsInScreenRect(
                 selectionMaxY,
                 viewMatrix,
                 projectionMatrix,
-                viewportSize))
+                viewportSize)
+            && !MeshScreenBoundsOverlapScreenRect(
+                *object.GetMesh(),
+                worldMatrix,
+                selectionMinX,
+                selectionMinY,
+                selectionMaxX,
+                selectionMaxY,
+                viewMatrix,
+                projectionMatrix,
+                viewportSize)
+            && !MarqueeSampleRaysHitObject(
+                object,
+                worldMatrix,
+                selectionMinX,
+                selectionMinY,
+                selectionMaxX,
+                selectionMaxY,
+                viewportSize,
+                viewMatrix,
+                projectionMatrix,
+                1))
         {
             continue;
         }
@@ -758,7 +881,18 @@ std::vector<int> PickObjectsInScreenRect(
                 selectionMaxY,
                 viewMatrix,
                 projectionMatrix,
-                viewportSize))
+                viewportSize)
+            && !MarqueeSampleRaysHitObject(
+                object,
+                worldMatrix,
+                selectionMinX,
+                selectionMinY,
+                selectionMaxX,
+                selectionMaxY,
+                viewportSize,
+                viewMatrix,
+                projectionMatrix,
+                9))
         {
             continue;
         }
