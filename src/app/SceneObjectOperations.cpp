@@ -1,0 +1,235 @@
+#include "app/SceneMeshLibrary.h"
+#include "app/SceneObjectOperations.h"
+
+#include "app/Scene.h"
+#include "app/SceneHierarchyOps.h"
+#include "app/SceneObjectStore.h"
+#include "app/SceneSelectionController.h"
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
+#include "engine/LightComponent.h"
+#include "engine/Material.h"
+#include "engine/RigidBodyComponent.h"
+#include "engine/SceneHierarchy.h"
+#include "engine/SceneObject.h"
+
+#include <algorithm>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <unordered_map>
+
+bool SceneObjectOperations::RemoveObject(Scene& scene, std::size_t index)
+{
+    std::vector<SceneObject>& objects = scene.GetObjectStore().Objects();
+    if (index >= objects.size())
+    {
+        return false;
+    }
+
+    std::vector<int> indicesToRemove;
+    SceneHierarchyOps::CollectDescendantIndices(objects, static_cast<int>(index), indicesToRemove);
+    std::sort(indicesToRemove.begin(), indicesToRemove.end(), std::greater<int>());
+
+    for (int removeIndex : indicesToRemove)
+    {
+        objects.erase(objects.begin() + removeIndex);
+        SceneHierarchyOps::RemapParentIndicesAfterRemoval(objects, removeIndex);
+        scene.GetSelectionController().RemapAfterRemoval(removeIndex);
+    }
+
+    scene.GetSelectionController().Sanitize(objects);
+    scene.GetMeshLibrary().PruneUnusedImportedMeshes(objects);
+    scene.MarkDirty();
+    return true;
+}
+
+bool SceneObjectOperations::RemoveSelectedObjects(Scene& scene)
+{
+    if (!scene.HasSelection())
+    {
+        return false;
+    }
+
+    std::vector<SceneObject>& objects = scene.GetObjectStore().Objects();
+    std::vector<int> rootsToRemove =
+        FilterToTopmostSelectedIndices(objects, scene.GetSelection().indices);
+    if (rootsToRemove.empty())
+    {
+        return false;
+    }
+
+    std::sort(rootsToRemove.begin(), rootsToRemove.end(), std::greater<int>());
+    for (int objectIndex : rootsToRemove)
+    {
+        RemoveObject(scene, static_cast<std::size_t>(objectIndex));
+    }
+
+    return true;
+}
+
+std::string SceneObjectOperations::MakeDuplicateObjectName(
+    const Scene& scene,
+    const std::string& sourceName)
+{
+    auto nameExists = [&scene](const std::string& name) {
+        for (const SceneObject& object : scene.GetObjects())
+        {
+            if (object.GetName() == name)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    };
+
+    for (int suffix = 1; suffix < 1000; ++suffix)
+    {
+        const std::string candidate = sourceName + " (" + std::to_string(suffix) + ")";
+        if (!nameExists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return sourceName + " (copy)";
+}
+
+int SceneObjectOperations::DuplicateObject(Scene& scene, int objectIndex)
+{
+    std::vector<SceneObject>& objects = scene.GetObjectStore().Objects();
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(objects.size()))
+    {
+        return -1;
+    }
+
+    std::vector<int> sourceIndices;
+    SceneHierarchyOps::CollectDescendantIndices(objects, objectIndex, sourceIndices);
+
+    std::unordered_map<int, int> indexMap;
+    int duplicateRootIndex = -1;
+
+    for (int sourceIndex : sourceIndices)
+    {
+        const SceneObject& source = objects[static_cast<std::size_t>(sourceIndex)];
+
+        int newParentIndex = -1;
+        const int sourceParentIndex = source.GetParentIndex();
+        if (sourceIndex == objectIndex)
+        {
+            newParentIndex = sourceParentIndex;
+        }
+        else if (sourceParentIndex >= 0)
+        {
+            newParentIndex = indexMap.at(sourceParentIndex);
+        }
+
+        std::unique_ptr<Material> materialClone;
+        if (source.HasMaterial())
+        {
+            materialClone = source.GetMaterial().Clone();
+        }
+
+        std::string objectName = source.GetName();
+        if (sourceIndex == objectIndex)
+        {
+            objectName = MakeDuplicateObjectName(scene, source.GetName());
+        }
+
+        std::optional<LightComponent> lightClone;
+        if (source.HasLight())
+        {
+            lightClone = source.GetLight();
+        }
+
+        std::optional<CameraComponent> cameraClone;
+        if (source.HasCamera())
+        {
+            cameraClone = source.GetCamera();
+            if (sourceIndex == objectIndex && cameraClone->isMain)
+            {
+                cameraClone->isMain = false;
+            }
+        }
+
+        std::optional<RigidBodyComponent> rigidBodyClone;
+        if (source.HasRigidBody())
+        {
+            rigidBodyClone = source.GetRigidBody();
+        }
+
+        std::optional<ColliderComponent> colliderClone;
+        if (source.HasCollider())
+        {
+            colliderClone = source.GetCollider();
+        }
+
+        objects.emplace_back(
+            objectName,
+            source.GetMesh(),
+            std::move(materialClone),
+            source.GetLocalBoundsMin(),
+            source.GetLocalBoundsMax(),
+            source.GetTransform(),
+            source.CastsShadow(),
+            source.ReceivesShadow(),
+            newParentIndex,
+            source.GetSiblingOrder(),
+            std::move(lightClone),
+            std::move(cameraClone),
+            std::move(rigidBodyClone),
+            std::move(colliderClone));
+
+        scene.GetObjectStore().FinalizeNewObject(objects.back());
+        const int newIndex = static_cast<int>(objects.size()) - 1;
+        indexMap[sourceIndex] = newIndex;
+        if (sourceIndex == objectIndex)
+        {
+            duplicateRootIndex = newIndex;
+        }
+    }
+
+    if (duplicateRootIndex < 0)
+    {
+        return -1;
+    }
+
+    scene.PlaceObjectInHierarchy(duplicateRootIndex, objectIndex, HierarchyInsertMode::After);
+    return duplicateRootIndex;
+}
+
+std::vector<int> SceneObjectOperations::DuplicateSelectedObjects(Scene& scene)
+{
+    if (!scene.HasSelection())
+    {
+        return {};
+    }
+
+    std::vector<int> rootsToDuplicate =
+        FilterToTopmostSelectedIndices(scene.GetObjects(), scene.GetSelection().indices);
+    if (rootsToDuplicate.empty())
+    {
+        return {};
+    }
+
+    std::sort(rootsToDuplicate.begin(), rootsToDuplicate.end());
+
+    std::vector<int> duplicatedIndices;
+    duplicatedIndices.reserve(rootsToDuplicate.size());
+    for (int objectIndex : rootsToDuplicate)
+    {
+        const int duplicatedIndex = DuplicateObject(scene, objectIndex);
+        if (duplicatedIndex >= 0)
+        {
+            duplicatedIndices.push_back(duplicatedIndex);
+        }
+    }
+
+    if (!duplicatedIndices.empty())
+    {
+        scene.SetSelection(duplicatedIndices, duplicatedIndices.back());
+    }
+
+    return duplicatedIndices;
+}

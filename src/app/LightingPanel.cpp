@@ -3,6 +3,7 @@
 #include "app/EditorPanelConstraints.h"
 #include "app/RenderDiagnostics.h"
 #include "app/Scene.h"
+#include "app/SceneRenderer.h"
 #include "app/UndoCommand.h"
 #include "engine/Camera.h"
 #include "engine/CascadedShadowMap.h"
@@ -55,8 +56,9 @@ void LightingPanel::Draw(
     const glm::vec3 cameraPosition = camera.GetPosition();
     ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cameraPosition.x, cameraPosition.y, cameraPosition.z);
 
-    IBL& ibl = scene.GetIBL();
-    ScreenSpaceEffects& screenSpaceEffects = scene.GetScreenSpaceEffects();
+    SceneRenderer& renderer = scene.GetRenderer();
+    IBL& ibl = renderer.GetIBL();
+    ScreenSpaceEffects& screenSpaceEffects = renderer.GetScreenSpaceEffects();
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -95,8 +97,8 @@ void LightingPanel::Draw(
 
     if (ImGui::CollapsingHeader("Directional Shadows", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
-        const CascadedShadowMap& shadowMap = scene.GetShadowMap();
+        DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
+        const CascadedShadowMap& shadowMap = renderer.GetShadowMap();
 
         if (ImGui::TreeNodeEx("Quality & filtering", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -358,7 +360,7 @@ void LightingPanel::Draw(
                 scene,
                 "Tonemap",
                 [tonemapMode](Scene& target) {
-                    target.GetScreenSpaceEffects().SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
+                    target.GetRenderer().GetScreenSpaceEffects().SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
                     target.MarkDirty();
                 });
         }
@@ -371,7 +373,7 @@ void LightingPanel::Draw(
                 scene,
                 "Bloom",
                 [bloomEnabled](Scene& target) {
-                    target.GetScreenSpaceEffects().SetBloomEnabled(bloomEnabled);
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomEnabled(bloomEnabled);
                     target.MarkDirty();
                 });
         }
@@ -422,7 +424,7 @@ void LightingPanel::Draw(
                 scene,
                 "HDR post-processing",
                 [enabled](Scene& target) {
-                    target.GetScreenSpaceEffects().SetEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().SetEnabled(enabled);
                     target.MarkDirty();
                 });
         }
@@ -435,7 +437,7 @@ void LightingPanel::Draw(
                 scene,
                 "SSAO",
                 [ssaoEnabled](Scene& target) {
-                    target.GetScreenSpaceEffects().SetSsaoEnabled(ssaoEnabled);
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsaoEnabled(ssaoEnabled);
                     target.MarkDirty();
                 });
         }

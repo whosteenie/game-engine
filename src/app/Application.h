@@ -19,6 +19,7 @@ class ProjectChooser;
 class ProjectFilesPanel;
 class ProjectSession;
 class Scene;
+class SceneEditingController;
 class ImGuiLayer;
 class Input;
 class Renderer;
@@ -88,6 +89,7 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
+    std::unique_ptr<SceneEditingController> m_sceneEditingController;
     PlayModeController m_playModeController;
     UndoStack m_playModeDiscardUndoStack;
     bool m_wasPlayModeActive = false;

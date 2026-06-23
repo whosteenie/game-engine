@@ -470,7 +470,7 @@ void PushReparentObjects(
         return;
     }
 
-    scene.SetSelectedObjectIndex(objectIndex);
+    scene.SelectSingle(objectIndex);
     archive.selectionAfter = CaptureArchivedSelection(scene);
     undoStack.Push(std::make_unique<ReparentObjectsCommand>(std::move(archive), commandName));
 }

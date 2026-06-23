@@ -3,35 +3,27 @@
 #include <glm/glm.hpp>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "engine/Constants.h"
 #include "engine/Light.h"
-#include "engine/SceneLighting.h"
 #include "engine/ScenePrimitive.h"
-#include "engine/Shader.h"
-#include "engine/CascadedShadowMap.h"
-#include "engine/DirectionalShadowSettings.h"
-#include "engine/IBL.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
 
 #include "app/SceneSelection.h"
 #include "app/SceneImportedMeshPool.h"
-#include "app/EditorViewportRect.h"
+#include "app/SceneSpawnService.h"
 
 class Camera;
-class Input;
 class Mesh;
-class CameraGizmoRenderer;
-class GridRenderer;
-class ColliderGizmoRenderer;
-class LightGizmoRenderer;
 class SceneEditor;
-class ScreenSpaceEffects;
-class UndoStack;
-struct SceneProjectIO;
-class SceneDocument;
+class SceneImportService;
+class SceneMeshLibrary;
+class SceneObjectStore;
+class SceneRenderer;
+class SceneSelectionController;
+class SceneSpawnService;
 struct SceneSubtreeArchive;
 struct ArchivedSelectionState;
 
@@ -59,18 +51,18 @@ public:
     Scene();
     ~Scene();
 
-    void Update(
-        Input& input,
-        Camera& camera,
-        int framebufferWidth,
-        int framebufferHeight,
-        int windowWidth,
-        int windowHeight,
-        bool allowMouseInput,
-        bool allowKeyboardInput,
-        UndoStack* undoStack,
-        const std::string& projectRoot,
-        const EditorViewportRect* viewport);
+    SceneRenderer& GetRenderer();
+    const SceneRenderer& GetRenderer() const;
+    SceneObjectStore& GetObjectStore();
+    const SceneObjectStore& GetObjectStore() const;
+    SceneMeshLibrary& GetMeshLibrary();
+    const SceneMeshLibrary& GetMeshLibrary() const;
+    SceneSelectionController& GetSelectionController();
+    const SceneSelectionController& GetSelectionController() const;
+    SceneSpawnService& GetSpawnService();
+    const SceneSpawnService& GetSpawnService() const;
+    SceneImportService& GetImportService();
+    const SceneImportService& GetImportService() const;
 
     void Render(
         const Camera& camera,
@@ -79,25 +71,14 @@ public:
         unsigned int targetFramebuffer = 0,
         const SceneRenderOptions& options = SceneRenderOptions{}) const;
 
-    const SceneLighting& GetLighting() const;
-    SceneLighting& GetLighting();
-    IBL& GetIBL();
-    const IBL& GetIBL() const;
-
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();
     SceneObject& GetObject(std::size_t index);
     const SceneObject& GetObject(std::size_t index) const;
-
-    SceneObjectId AllocateObjectId();
     int FindObjectIndex(SceneObjectId id) const;
-    void RegisterObjectId(SceneObjectId id);
-    void FinalizeNewObject(SceneObject& object);
+
     std::vector<SceneObjectId> GetSelectionIds() const;
     void SetSelectionByIds(const std::vector<SceneObjectId>& ids, SceneObjectId primary);
-
-    int GetSelectedObjectIndex() const;
-    void SetSelectedObjectIndex(int selectedObjectIndex);
     const SceneSelection& GetSelection() const;
     int GetPrimarySelection() const;
     bool IsSelected(int objectIndex) const;
@@ -109,10 +90,11 @@ public:
     bool HasSelection() const;
     bool TryGetViewFocusPoint(glm::vec3& center, float& radius) const;
 
-    void HandleEscapeKey();
-
+    void BindSceneEditor(SceneEditor& editor);
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
+    SceneEditor* TryGetSceneEditor();
+    const SceneEditor* TryGetSceneEditor() const;
 
     int AddObject(ScenePrimitive primitive, int parentIndex = -1);
     int AddEmptyObject(int parentIndex = -1);
@@ -128,8 +110,7 @@ public:
 
     void MarkDirty();
     void SetDirtyCallback(std::function<void()> callback);
-    const std::string& GetLastImportError() const;
-    const std::string& GetLastImportWarning() const;
+
     bool RemoveObject(std::size_t index);
     bool RemoveSelectedObjects();
     int DuplicateObject(int objectIndex);
@@ -156,45 +137,10 @@ public:
 
     bool GetShowLightGizmos() const;
     void SetShowLightGizmos(bool showLightGizmos);
-
     bool GetShowGrid() const;
     void SetShowGrid(bool showGrid);
 
-    ScreenSpaceEffects& GetScreenSpaceEffects();
-    const ScreenSpaceEffects& GetScreenSpaceEffects() const;
-
-    bool ComputeShadowCasterBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const;
-    const DirectionalShadowSettings& GetDirectionalShadowSettings() const;
-    DirectionalShadowSettings& GetDirectionalShadowSettings();
-    const CascadedShadowMap& GetShadowMap() const;
-
     void ResetToDefault();
-
-    void ClearSceneObjectsAndImports();
-    void HarvestImportedMeshes(ImportedMeshReusePool& outPool);
-    SceneObjectId GetNextObjectIdValue() const;
-    void SetNextObjectIdValue(SceneObjectId nextObjectId);
-
-    struct SpawnCounters
-    {
-        int directionalLight = 2;
-        int pointLight = 1;
-        int spotLight = 1;
-        int cube = 2;
-        int sphere = 1;
-        int cylinder = 1;
-        int capsule = 1;
-        int plane = 1;
-        int empty = 1;
-        int camera = 1;
-        int import = 1;
-    };
-
-    SpawnCounters GetSpawnCounters() const;
-    void SetSpawnCounters(const SpawnCounters& counters);
-
-    Mesh* GetMeshForPrimitive(ScenePrimitive primitive) const;
-    Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
 
     bool CreateDeleteArchive(
         const std::vector<int>& rootIndices,
@@ -208,59 +154,17 @@ public:
         HierarchyInsertMode rootPlacement);
 
 private:
-    friend struct SceneProjectIO;
-    friend class SceneDocument;
-
-    void SetupDefaultSunLight();
-    void SyncLighting() const;
-    void SetupObjects();
-    glm::vec3 GetSunDirection() const;
-    void RenderShadowPass(const Camera& camera) const;
-
-    int GetNextObjectNumber(ScenePrimitive primitive);
-    void RemapParentIndicesAfterRemoval(int removedIndex);
     void CollectDescendantIndices(int objectIndex, std::vector<int>& outIndices) const;
-    void PruneUnusedImportedMeshes();
-    int AllocateSiblingOrder(int parentIndex) const;
-    void SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex);
     std::string MakeDuplicateObjectName(const std::string& sourceName) const;
-    void RemapSelectionAfterRemoval(int removedIndex);
-    void SanitizeSelection();
 
-    std::unique_ptr<Mesh> m_cubeMesh;
-    std::unique_ptr<Mesh> m_sphereMesh;
-    std::unique_ptr<Mesh> m_cylinderMesh;
-    std::unique_ptr<Mesh> m_capsuleMesh;
-    std::unique_ptr<Mesh> m_planeMesh;
-    std::vector<std::unique_ptr<Mesh>> m_importedMeshes;
-    std::vector<SceneObject> m_objects;
-    std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
-    std::unique_ptr<GridRenderer> m_grid;
-    std::unique_ptr<ColliderGizmoRenderer> m_colliderGizmos;
-    std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
-    std::unique_ptr<SceneEditor> m_sceneEditor;
-    std::unique_ptr<CascadedShadowMap> m_shadowMap;
-    std::unique_ptr<IBL> m_ibl;
-    std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
-    std::unique_ptr<Shader> m_shadowDepthShader;
-    mutable DirectionalShadowSettings m_directionalShadowSettings;
-    mutable SceneLighting m_lighting;
-    SceneSelection m_selection;
-    SceneObjectId m_nextObjectId = 1;
+    std::unique_ptr<SceneMeshLibrary> m_meshLibrary;
+    std::unique_ptr<SceneObjectStore> m_objectStore;
+    std::unique_ptr<SceneSpawnService> m_spawnService;
+    std::unique_ptr<SceneImportService> m_importService;
+    SceneEditor* m_sceneEditor = nullptr;
+    std::unique_ptr<SceneRenderer> m_renderer;
+    std::unique_ptr<SceneSelectionController> m_selectionController;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
-    int m_nextDirectionalLightNumber = 2;
-    int m_nextPointLightNumber = 1;
-    int m_nextSpotLightNumber = 1;
-    int m_nextCubeNumber = 2;
-    int m_nextSphereNumber = 1;
-    int m_nextCylinderNumber = 1;
-    int m_nextCapsuleNumber = 1;
-    int m_nextPlaneNumber = 1;
-    int m_nextEmptyNumber = 1;
-    int m_nextCameraNumber = 1;
-    int m_nextImportNumber = 1;
-    std::string m_lastImportError;
-    std::string m_lastImportWarning;
     std::function<void()> m_dirtyCallback;
 };

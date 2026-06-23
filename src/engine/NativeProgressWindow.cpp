@@ -241,6 +241,14 @@ namespace
                 LayoutControls(controls);
             }
             return 0;
+        case WM_CTLCOLORSTATIC:
+        {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, OPAQUE);
+            SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+            SetTextColor(hdc, GetSysColor(COLOR_WINDOWTEXT));
+            return reinterpret_cast<LRESULT>(GetSysColorBrush(COLOR_WINDOW));
+        }
         case WM_PROGRESS_SET_TITLE:
         {
             auto* title = reinterpret_cast<std::wstring*>(lParam);

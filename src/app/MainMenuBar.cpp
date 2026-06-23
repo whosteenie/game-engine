@@ -8,6 +8,7 @@
 #include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/SceneImportService.h"
 #include "app/UndoCommand.h"
 #include "app/UndoContext.h"
 #include "app/UndoStack.h"
@@ -65,19 +66,19 @@ namespace
                 target.ImportModel(modelPath, parentIndex, projectRoot);
             if (!importedIndices.empty())
             {
-                target.SetSelectedObjectIndex(importedIndices.front());
+                target.SelectSingle(importedIndices.front());
             }
 
             return importedIndices;
         });
 
-        if (!scene.GetLastImportError().empty())
+        if (!scene.GetImportService().GetLastImportError().empty())
         {
-            project.SetStatusMessage(scene.GetLastImportError());
+            project.SetStatusMessage(scene.GetImportService().GetLastImportError());
         }
-        else if (!scene.GetLastImportWarning().empty())
+        else if (!scene.GetImportService().GetLastImportWarning().empty())
         {
-            project.SetStatusMessage(scene.GetLastImportWarning());
+            project.SetStatusMessage(scene.GetImportService().GetLastImportWarning());
         }
     }
 

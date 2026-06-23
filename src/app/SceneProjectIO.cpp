@@ -5,6 +5,10 @@
 #include "engine/NativeProgressWindow.h"
 
 #include "app/Scene.h"
+#include "app/SceneMeshLibrary.h"
+#include "app/SceneObjectStore.h"
+#include "app/SceneRenderer.h"
+#include "app/SceneSpawnService.h"
 #include "engine/Constants.h"
 #include "engine/IBL.h"
 #include "engine/CameraComponent.h"
@@ -611,7 +615,7 @@ namespace SceneProjectIODetail
 
         for (ScenePrimitive primitive : primitives)
         {
-            if (mesh == scene.GetMeshForPrimitive(primitive))
+            if (mesh == scene.GetMeshLibrary().GetPrimitive(primitive))
             {
                 return primitive;
             }
@@ -670,7 +674,7 @@ namespace SceneProjectIODetail
             const auto reuseIterator = meshReusePool->find(reuseKey);
             if (reuseIterator != meshReusePool->end())
             {
-                Mesh* reusedMesh = scene.AdoptImportedMesh(std::move(reuseIterator->second));
+                Mesh* reusedMesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(reuseIterator->second));
                 meshReusePool->erase(reuseIterator);
                 return reusedMesh;
             }
@@ -707,7 +711,7 @@ namespace SceneProjectIODetail
             return nullptr;
         }
 
-        return scene.AdoptImportedMesh(std::move(node.mesh));
+        return scene.GetMeshLibrary().AdoptImportedMesh(std::move(node.mesh));
     }
 
     bool DeserializeObjectMesh(
@@ -740,7 +744,7 @@ namespace SceneProjectIODetail
                 return false;
             }
 
-            outMesh = scene.GetMeshForPrimitive(primitive);
+            outMesh = scene.GetMeshLibrary().GetPrimitive(primitive);
             return true;
         }
 
@@ -885,10 +889,10 @@ namespace SceneProjectIODetail
 
     json SerializeRenderer(const Scene& scene)
     {
-        const ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
-        const DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+        const ScreenSpaceEffects& effects = scene.GetRenderer().GetScreenSpaceEffects();
+        const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
         return json{
-            {"environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()},
+            {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
             {"directionalShadow",
              json{
                  {"filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode())},
@@ -934,13 +938,14 @@ namespace SceneProjectIODetail
 
     void DeserializeRenderer(Scene& scene, const json& rendererValue)
     {
-        scene.GetIBL().SetEnvironmentIntensity(
-            rendererValue.value("environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()));
+        SceneRenderer& renderer = scene.GetRenderer();
+        renderer.GetIBL().SetEnvironmentIntensity(
+            rendererValue.value("environmentIntensity", renderer.GetIBL().GetEnvironmentIntensity()));
 
         if (rendererValue.contains("directionalShadow"))
         {
             const json& shadowValue = rendererValue.at("directionalShadow");
-            DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+            DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
             shadowSettings.SetFilterMode(ShadowFilterModeFromString(
                 shadowValue.value("filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode()))));
             shadowSettings.SetShadowMapResolution(
@@ -991,7 +996,7 @@ namespace SceneProjectIODetail
         }
 
         const json& effectsValue = rendererValue.at("screenSpaceEffects");
-        ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
+        ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
         effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
         effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
         effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
@@ -1263,7 +1268,7 @@ namespace SceneProjectIODetail
 
     json SerializeSpawnCounters(const Scene& scene)
     {
-        const Scene::SpawnCounters counters = scene.GetSpawnCounters();
+        const SceneSpawnCounters counters = scene.GetSpawnService().GetCounters();
         return json{
             {"directionalLight", counters.directionalLight},
             {"pointLight", counters.pointLight},
@@ -1281,7 +1286,7 @@ namespace SceneProjectIODetail
 
     void DeserializeSpawnCounters(Scene& scene, const json& counters)
     {
-        Scene::SpawnCounters values = scene.GetSpawnCounters();
+        SceneSpawnCounters values = scene.GetSpawnService().GetCounters();
         values.directionalLight = counters.value("directionalLight", values.directionalLight);
         values.pointLight = counters.value("pointLight", values.pointLight);
         values.spotLight = counters.value("spotLight", values.spotLight);
@@ -1293,7 +1298,7 @@ namespace SceneProjectIODetail
         values.empty = counters.value("empty", values.empty);
         values.camera = counters.value("camera", values.camera);
         values.import = counters.value("import", values.import);
-        scene.SetSpawnCounters(values);
+        scene.GetSpawnService().SetCounters(values);
     }
 
     json SerializeSelection(const Scene& scene)
@@ -1454,11 +1459,11 @@ namespace SceneProjectIODetail
 
             if (formatVersion >= 3 && objectId != kInvalidSceneObjectId)
             {
-                scene.RegisterObjectId(objectId);
+                scene.GetObjectStore().RegisterId(objectId);
             }
             else
             {
-                scene.FinalizeNewObject(createdObject);
+                scene.GetObjectStore().FinalizeNewObject(createdObject);
             }
         }
 
@@ -1492,9 +1497,9 @@ namespace SceneProjectIODetail
             maxId = std::max(maxId, object.GetId());
         }
 
-        if (scene.GetNextObjectIdValue() <= maxId)
+        if (scene.GetObjectStore().GetNextId() <= maxId)
         {
-            scene.SetNextObjectIdValue(maxId + 1);
+            scene.GetObjectStore().SetNextId(maxId + 1);
         }
     }
 
@@ -1503,7 +1508,7 @@ namespace SceneProjectIODetail
         return json{
             {"objects", SerializeObjects(scene, projectRoot)},
             {"spawnCounters", SerializeSpawnCounters(scene)},
-            {"nextObjectId", scene.GetNextObjectIdValue()},
+            {"nextObjectId", scene.GetObjectStore().GetNextId()},
             {"selection", SerializeSelection(scene)},
         };
     }
@@ -1526,11 +1531,12 @@ namespace SceneProjectIODetail
         ImportedMeshReusePool harvestedMeshes;
         if (meshReusePool == nullptr)
         {
-            scene.HarvestImportedMeshes(harvestedMeshes);
+            scene.GetMeshLibrary().HarvestImportedMeshes(scene.GetObjects(), harvestedMeshes);
             meshReusePool = &harvestedMeshes;
         }
 
-        scene.ClearSceneObjectsAndImports();
+        scene.GetObjectStore().Clear();
+        scene.GetMeshLibrary().ClearImportedMeshes();
 
         if (!DeserializeObjects(
                 scene,
@@ -1551,7 +1557,7 @@ namespace SceneProjectIODetail
 
         if (content.contains("nextObjectId"))
         {
-            scene.SetNextObjectIdValue(content.at("nextObjectId").get<SceneObjectId>());
+            scene.GetObjectStore().SetNextId(content.at("nextObjectId").get<SceneObjectId>());
         }
         else
         {
@@ -1585,7 +1591,7 @@ json SceneProjectIO::SerializeScene(
                  {"editor", SceneProjectIODetail::SerializeEditorState(scene, editorState, projectRoot)},
                  {"renderer", SceneProjectIODetail::SerializeRenderer(scene)},
                  {"spawnCounters", SceneProjectIODetail::SerializeSpawnCounters(scene)},
-                 {"nextObjectId", scene.GetNextObjectIdValue()},
+                 {"nextObjectId", scene.GetObjectStore().GetNextId()},
              }},
         };
 }
@@ -1623,7 +1629,8 @@ bool SceneProjectIO::DeserializeScene(
             return false;
         }
 
-        scene.ClearSceneObjectsAndImports();
+        scene.GetObjectStore().Clear();
+        scene.GetMeshLibrary().ClearImportedMeshes();
 
         if (!SceneProjectIODetail::DeserializeObjects(
                 scene,
@@ -1663,7 +1670,7 @@ bool SceneProjectIO::DeserializeScene(
 
         if (sceneValue.contains("nextObjectId"))
         {
-            scene.SetNextObjectIdValue(sceneValue.at("nextObjectId").get<SceneObjectId>());
+            scene.GetObjectStore().SetNextId(sceneValue.at("nextObjectId").get<SceneObjectId>());
         }
         else
         {

@@ -5,6 +5,7 @@
 #include "app/EditorPanelConstraints.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/SceneImportService.h"
 #include "app/UndoCommand.h"
 #include "engine/FileDialog.h"
 #include "engine/Light.h"
@@ -271,7 +272,7 @@ namespace
                 std::string("Create ") + GetScenePrimitiveDisplayName(primitive);
             panel.PushInsertMutation(scene, commandName, [&](Scene& target) {
                 const int newIndex = target.AddObject(primitive, parentIndex);
-                target.SetSelectedObjectIndex(newIndex);
+                target.SelectSingle(newIndex);
                 return std::vector<int>{newIndex};
             });
             return true;
@@ -286,7 +287,7 @@ namespace
         {
             panel.PushInsertMutation(scene, "Create Empty", [&](Scene& target) {
                 const int newIndex = target.AddEmptyObject(parentIndex);
-                target.SetSelectedObjectIndex(newIndex);
+                target.SelectSingle(newIndex);
                 return std::vector<int>{newIndex};
             });
             return true;
@@ -323,7 +324,7 @@ namespace
         {
             panel.PushInsertMutation(scene, commandName, [&](Scene& target) {
                 const int newIndex = target.AddLightObject(type, parentIndex);
-                target.SetSelectedObjectIndex(newIndex);
+                target.SelectSingle(newIndex);
                 return std::vector<int>{newIndex};
             });
             return true;
@@ -338,7 +339,7 @@ namespace
         {
             panel.PushInsertMutation(scene, "Create Camera", [&](Scene& target) {
                 const int newIndex = target.AddCameraObject(parentIndex);
-                target.SetSelectedObjectIndex(newIndex);
+                target.SelectSingle(newIndex);
                 return std::vector<int>{newIndex};
             });
             return true;
@@ -409,19 +410,19 @@ namespace
                 target.ImportModel(modelPath, parentIndex, projectRoot);
             if (!importedIndices.empty())
             {
-                target.SetSelectedObjectIndex(importedIndices.front());
+                target.SelectSingle(importedIndices.front());
             }
 
             return importedIndices;
         });
 
-        if (!scene.GetLastImportError().empty())
+        if (!scene.GetImportService().GetLastImportError().empty())
         {
-            project.SetStatusMessage(scene.GetLastImportError());
+            project.SetStatusMessage(scene.GetImportService().GetLastImportError());
         }
-        else if (!scene.GetLastImportWarning().empty())
+        else if (!scene.GetImportService().GetLastImportWarning().empty())
         {
-            project.SetStatusMessage(scene.GetLastImportWarning());
+            project.SetStatusMessage(scene.GetImportService().GetLastImportWarning());
         }
     }
 
@@ -461,7 +462,7 @@ namespace
             return;
         }
 
-        scene.SetSelectedObjectIndex(objectIndex);
+        scene.SelectSingle(objectIndex);
         DrawCreateObjectMenu(panel, scene, project, objectIndex);
 
         ImGui::Separator();
@@ -484,7 +485,7 @@ namespace
                 const int duplicatedIndex = target.DuplicateObject(objectIndex);
                 if (duplicatedIndex >= 0)
                 {
-                    target.SetSelectedObjectIndex(duplicatedIndex);
+                    target.SelectSingle(duplicatedIndex);
                     return std::vector<int>{duplicatedIndex};
                 }
 
@@ -936,7 +937,7 @@ void SceneHierarchyPanel::PushReparentMutation(
     if (objectIndex >= 0 && referenceIndex >= 0)
     {
         scene.PlaceObjectInHierarchy(objectIndex, referenceIndex, mode);
-        scene.SetSelectedObjectIndex(objectIndex);
+        scene.SelectSingle(objectIndex);
     }
 }
 
@@ -1059,13 +1060,13 @@ void SceneHierarchyPanel::Draw(
 
     ImGui::EndChild();
 
-    const std::string& importError = scene.GetLastImportError();
+    const std::string& importError = scene.GetImportService().GetLastImportError();
     if (!importError.empty())
     {
         ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Import failed: %s", importError.c_str());
     }
 
-    const std::string& importWarning = scene.GetLastImportWarning();
+    const std::string& importWarning = scene.GetImportService().GetLastImportWarning();
     if (!importWarning.empty())
     {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Import warning: %s", importWarning.c_str());

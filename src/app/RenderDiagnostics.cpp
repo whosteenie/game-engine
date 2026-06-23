@@ -1,6 +1,7 @@
 #include "app/RenderDiagnostics.h"
 
 #include "app/Scene.h"
+#include "app/SceneRenderer.h"
 #include "engine/Camera.h"
 #include "engine/Light.h"
 #include "engine/RenderDebug.h"
@@ -32,7 +33,7 @@ namespace
 
     glm::vec3 GetPrimaryLightDirection(const Scene& scene)
     {
-        const SceneLighting& lighting = scene.GetLighting();
+        const SceneLighting& lighting = scene.GetRenderer().GetLighting();
         const int shadowLightIndex = lighting.GetShadowLightIndex();
         if (shadowLightIndex >= 0 &&
             static_cast<std::size_t>(shadowLightIndex) < lighting.GetLightCount())
@@ -53,7 +54,7 @@ namespace
 
     void ComputeShadowSceneBounds(const Scene& scene, glm::vec3& boundsMin, glm::vec3& boundsMax)
     {
-        if (!scene.ComputeShadowCasterBounds(boundsMin, boundsMax))
+        if (!scene.GetRenderer().ComputeShadowCasterBounds(scene, boundsMin, boundsMax))
         {
             boundsMin = glm::vec3(0.0f);
             boundsMax = glm::vec3(0.0f);
@@ -174,8 +175,8 @@ namespace RenderDiagnostics
             ComputeShadowSceneBounds(scene, shadowBoundsMin, shadowBoundsMax);
 
             const glm::vec3 lightDirection = GetPrimaryLightDirection(scene);
-            const DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
-            const CascadedShadowMap& shadowMap = scene.GetShadowMap();
+            const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
+            const CascadedShadowMap& shadowMap = scene.GetRenderer().GetShadowMap();
             const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(
                 shadowSettings.GetCascadeCount(),
                 camera.GetNearPlane(),
@@ -249,7 +250,7 @@ namespace RenderDiagnostics
                 shadowBoundsMax,
                 CascadedShadowMap::DefaultResolution);
 
-            const ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
+            const ScreenSpaceEffects& effects = scene.GetRenderer().GetScreenSpaceEffects();
             out << "[Screen-space effects]\n";
             out << "Post-processing enabled: " << (effects.IsEnabled() ? "yes" : "no") << "\n";
             out << "SSAO enabled: " << (effects.IsSsaoEnabled() ? "yes" : "no") << "\n";
@@ -258,7 +259,7 @@ namespace RenderDiagnostics
             out << "AO strength: " << effects.GetAoStrength() << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
 
-            const int selectedIndex = scene.GetSelectedObjectIndex();
+            const int selectedIndex = scene.GetPrimarySelection();
             out << "[Selected object shadow analysis]\n";
             if (selectedIndex < 0)
             {

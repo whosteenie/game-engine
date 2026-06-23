@@ -17,7 +17,8 @@
 #include "app/ProjectFilesPanel.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
-#include "app/SceneEditor.h"
+#include "app/SceneEditingController.h"
+#include "app/SceneEditorUpdateContext.h"
 #include "app/SceneHierarchyPanel.h"
 #include "app/SceneInspectorPanel.h"
 #include "app/SceneCamera.h"
@@ -234,6 +235,8 @@ Application::Application(int width, int height, const char* title)
 
     m_input = std::make_unique<Input>(m_window);
     m_scene = std::make_unique<Scene>();
+    m_sceneEditingController = std::make_unique<SceneEditingController>();
+    m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
     m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
 
     glfwSetCursorPosCallback(m_window, MouseCallback);
@@ -506,7 +509,7 @@ void Application::Update(double deltaTime)
         }
         else if (editorActive)
         {
-            GetEditorTargetScene()->HandleEscapeKey();
+            m_sceneEditingController->HandleEscapeKey(*GetEditorTargetScene());
         }
     }
 
@@ -538,7 +541,7 @@ void Application::Update(double deltaTime)
         const EditorViewportRect* viewportPtr =
             viewportRect.valid ? &viewportRect : nullptr;
 
-        GetEditorTargetScene()->Update(
+        const SceneEditorUpdateContext editorUpdateContext{
             *m_input,
             *m_camera,
             viewportWidth,
@@ -549,7 +552,9 @@ void Application::Update(double deltaTime)
             allowGameKeyboard,
             m_playModeController.IsActive() ? nullptr : &m_undoStack,
             m_projectSession->GetProjectRootDirectory(),
-            viewportPtr);
+            viewportPtr};
+
+        m_sceneEditingController->Update(*GetEditorTargetScene(), editorUpdateContext);
     }
 
     m_input->EndFrame();

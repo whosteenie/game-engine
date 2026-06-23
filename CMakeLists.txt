@@ -257,7 +257,17 @@ add_executable(game-engine
 
     src/app/SceneEditor.cpp
 
+    src/app/SceneEditingController.cpp
+
     src/app/Scene.cpp
+    src/app/SceneHierarchyOps.cpp
+    src/app/SceneImportService.cpp
+    src/app/SceneMeshLibrary.cpp
+    src/app/SceneObjectOperations.cpp
+    src/app/SceneObjectStore.cpp
+    src/app/SceneRenderer.cpp
+    src/app/SceneSelectionController.cpp
+    src/app/SceneSpawnService.cpp
     src/app/SceneCamera.cpp
 
     src/engine/Camera.cpp

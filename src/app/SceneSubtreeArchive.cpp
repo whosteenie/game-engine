@@ -1,6 +1,8 @@
 #include "app/SceneSubtreeArchive.h"
 
 #include "app/Scene.h"
+#include "app/SceneMeshLibrary.h"
+#include "app/SceneObjectStore.h"
 
 #include "engine/Mesh.h"
 #include "engine/SceneObject.h"
@@ -192,7 +194,7 @@ namespace
                 const auto poolIterator = archive.importedMeshes.find(archived.importedMeshKey);
                 if (poolIterator != archive.importedMeshes.end())
                 {
-                    mesh = scene.AdoptImportedMesh(std::move(poolIterator->second));
+                    mesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(poolIterator->second));
                     archive.importedMeshes.erase(poolIterator);
                     restoredImportedMeshes.emplace(archived.importedMeshKey, mesh);
                 }
@@ -297,12 +299,12 @@ bool Scene::CreateDeleteArchive(
     archive.removedRootIds.reserve(rootIndices.size());
     for (int rootIndex : rootIndices)
     {
-        if (rootIndex < 0 || rootIndex >= static_cast<int>(m_objects.size()))
+        if (rootIndex < 0 || rootIndex >= static_cast<int>(GetObjects().size()))
         {
             continue;
         }
 
-        archive.removedRootIds.push_back(m_objects[static_cast<std::size_t>(rootIndex)].GetId());
+        archive.removedRootIds.push_back(GetObjects()[static_cast<std::size_t>(rootIndex)].GetId());
     }
 
     if (archive.removedRootIds.empty())
@@ -313,14 +315,14 @@ bool Scene::CreateDeleteArchive(
     CaptureParentIds(*this, archive.parentIdByObjectId);
 
     std::unordered_set<Mesh*> externalMeshRefs;
-    for (int objectIndex = 0; objectIndex < static_cast<int>(m_objects.size()); ++objectIndex)
+    for (int objectIndex = 0; objectIndex < static_cast<int>(GetObjects().size()); ++objectIndex)
     {
         if (removalSet.find(objectIndex) != removalSet.end())
         {
             continue;
         }
 
-        const SceneObject& object = m_objects[static_cast<std::size_t>(objectIndex)];
+        const SceneObject& object = GetObjects()[static_cast<std::size_t>(objectIndex)];
         if (object.HasMesh())
         {
             externalMeshRefs.insert(object.GetMesh());
@@ -335,19 +337,13 @@ bool Scene::CreateDeleteArchive(
             && externalMeshRefs.find(archived.mesh) == externalMeshRefs.end()
             && harvestedMeshes.find(archived.mesh) == harvestedMeshes.end())
         {
-            for (std::unique_ptr<Mesh>& ownedMesh : m_importedMeshes)
+            std::unique_ptr<Mesh> ownedMesh = GetMeshLibrary().ExtractImportedMesh(archived.mesh);
+            if (ownedMesh != nullptr)
             {
-                if (ownedMesh.get() != archived.mesh)
-                {
-                    continue;
-                }
-
                 archive.importedMeshes.try_emplace(archived.importedMeshKey, std::move(ownedMesh));
-                break;
+                harvestedMeshes.insert(archived.mesh);
+                archived.ownsImportedMesh = true;
             }
-
-            harvestedMeshes.insert(archived.mesh);
-            archived.ownsImportedMesh = true;
         }
 
         archive.removedObjects.push_back(std::move(archived));
@@ -396,7 +392,7 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
     }
 
     std::vector<SceneObject> survivors;
-    survivors.swap(m_objects);
+    survivors.swap(GetObjects());
 
     const std::size_t totalCount = survivors.size() + archive.removedObjects.size();
     std::vector<SceneObject> merged;
@@ -434,9 +430,9 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
         return false;
     }
 
-    m_objects = std::move(merged);
+    GetObjects() = std::move(merged);
 
-    for (SceneObject& object : m_objects)
+    for (SceneObject& object : GetObjects())
     {
         const auto parentIterator = archive.parentIdByObjectId.find(object.GetId());
         if (parentIterator == archive.parentIdByObjectId.end())
@@ -447,7 +443,7 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
         const SceneObjectId parentId = parentIterator->second;
         const int parentIndex = parentId == kInvalidSceneObjectId ? -1 : FindObjectIndex(parentId);
         object.SetParentIndex(parentIndex);
-        RegisterObjectId(object.GetId());
+        GetObjectStore().RegisterId(object.GetId());
     }
 
     ApplyArchivedSelection(*this, selection);
@@ -516,7 +512,7 @@ void RemapSubtreeArchiveIds(Scene& scene, SceneSubtreeArchive& archive)
     for (ArchivedSceneObject& archivedObject : archive.removedObjects)
     {
         const SceneObjectId oldId = archivedObject.id;
-        const SceneObjectId newId = scene.AllocateObjectId();
+        const SceneObjectId newId = scene.GetObjectStore().AllocateId();
         archivedObject.id = newId;
         idMap.emplace(oldId, newId);
     }
@@ -579,10 +575,10 @@ std::vector<int> Scene::InsertSubtreeArchive(
 
     for (ArchivedSceneObject& archivedObject : archive.removedObjects)
     {
-        m_objects.push_back(BuildRestoredObject(*this, archivedObject, archive, restoredImportedMeshes));
-        SceneObject& object = m_objects.back();
-        FinalizeNewObject(object);
-        newIndexById.emplace(object.GetId(), static_cast<int>(m_objects.size()) - 1);
+        GetObjects().push_back(BuildRestoredObject(*this, archivedObject, archive, restoredImportedMeshes));
+        SceneObject& object = GetObjects().back();
+        GetObjectStore().FinalizeNewObject(object);
+        newIndexById.emplace(object.GetId(), static_cast<int>(GetObjects().size()) - 1);
     }
 
     for (const ArchivedSceneObject& archivedObject : archive.removedObjects)
@@ -593,7 +589,7 @@ std::vector<int> Scene::InsertSubtreeArchive(
             continue;
         }
 
-        SceneObject& object = m_objects[static_cast<std::size_t>(objectIterator->second)];
+        SceneObject& object = GetObjects()[static_cast<std::size_t>(objectIterator->second)];
         const auto parentIterator = archive.parentIdByObjectId.find(archivedObject.id);
         if (parentIterator == archive.parentIdByObjectId.end())
         {
