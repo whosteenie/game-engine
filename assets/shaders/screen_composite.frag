@@ -7,9 +7,11 @@ uniform sampler2D uDirectLighting;
 uniform sampler2D uIndirectLighting;
 uniform sampler2D uDepthMap;
 uniform sampler2D uSsaoMap;
+uniform sampler2D uShadowFactorMap;
 
 uniform int uUseSplitLighting;
 uniform int uUseSsao;
+uniform int uUseShadowFactor;
 uniform float uSsaoPower;
 uniform float uAoStrength;
 uniform int uDebugOcclusionOnly;
@@ -30,6 +32,12 @@ void main()
     {
         vec3 sceneColor = texture(uDirectLighting, vTexCoord).rgb;
         direct = sceneColor;
+    }
+
+    if (uUseShadowFactor != 0)
+    {
+        float shadowFactor = texture(uShadowFactorMap, vTexCoord).r;
+        direct *= shadowFactor;
     }
 
     if (depth >= 0.9999)

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/RenderDebug.h"
 #include <glm/glm.hpp>
 #include <memory>
@@ -32,7 +33,11 @@ public:
     void BeginScenePass() const;
     void EndScenePass() const;
 
-    void Apply(const Camera& camera, int viewportWidth, int viewportHeight) const;
+    void Apply(
+        const Camera& camera,
+        int viewportWidth,
+        int viewportHeight,
+        const DirectionalShadowSettings& shadowSettings) const;
 
     bool IsEnabled() const;
     void SetEnabled(bool enabled);
@@ -97,6 +102,7 @@ private:
     std::unique_ptr<Shader> m_compositeShader;
     std::unique_ptr<Shader> m_bloomExtractShader;
     std::unique_ptr<Shader> m_bloomBlurShader;
+    std::unique_ptr<Shader> m_shadowBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_debugChannelShader;
 
@@ -108,6 +114,10 @@ private:
     unsigned int m_ssaoTexture = 0;
     unsigned int m_ssaoBlurFbo = 0;
     unsigned int m_ssaoBlurTexture = 0;
+    unsigned int m_shadowBlurFbo = 0;
+    unsigned int m_shadowBlurTexture = 0;
+    unsigned int m_shadowBlur2Fbo = 0;
+    unsigned int m_shadowBlur2Texture = 0;
     unsigned int m_hdrCompositeFbo = 0;
     unsigned int m_hdrCompositeTexture = 0;
     unsigned int m_bloomExtractFbo = 0;

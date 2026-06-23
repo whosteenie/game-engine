@@ -2145,7 +2145,7 @@ void Scene::Render(
             glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
         }
 
-        m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight, m_directionalShadowSettings);
         m_screenSpaceEffects->BlitDepthToFramebuffer(
             renderToTarget ? targetFramebuffer : 0,
             viewportWidth,

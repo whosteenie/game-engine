@@ -811,6 +811,8 @@ namespace SceneProjectIODetail
                  {"pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()},
                  {"worldBiasScale", shadowSettings.GetWorldBiasScale()},
                  {"depthBiasScale", shadowSettings.GetDepthBiasScale()},
+                 {"shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()},
+                 {"shadowBlurRadius", shadowSettings.GetShadowBlurRadius()},
              }},
             {"screenSpaceEffects",
              json{
@@ -878,6 +880,10 @@ namespace SceneProjectIODetail
                 shadowValue.value("worldBiasScale", shadowSettings.GetWorldBiasScale()));
             shadowSettings.SetDepthBiasScale(
                 shadowValue.value("depthBiasScale", shadowSettings.GetDepthBiasScale()));
+            shadowSettings.SetShadowBlurEnabled(
+                shadowValue.value("shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()));
+            shadowSettings.SetShadowBlurRadius(
+                shadowValue.value("shadowBlurRadius", shadowSettings.GetShadowBlurRadius()));
         }
 
         if (!rendererValue.contains("screenSpaceEffects"))

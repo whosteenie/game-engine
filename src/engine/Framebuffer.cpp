@@ -21,6 +21,12 @@ void Framebuffer::Destroy()
         m_indirectColorTexture = 0;
     }
 
+    if (m_shadowFactorTexture != 0)
+    {
+        glDeleteTextures(1, &m_shadowFactorTexture);
+        m_shadowFactorTexture = 0;
+    }
+
     if (m_normalColorTexture != 0)
     {
         glDeleteTextures(1, &m_normalColorTexture);
@@ -78,11 +84,21 @@ void Framebuffer::Create(const int width, const int height)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, m_normalColorTexture, 0);
 
+        glGenTextures(1, &m_shadowFactorTexture);
+        glBindTexture(GL_TEXTURE_2D, m_shadowFactorTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3, GL_TEXTURE_2D, m_shadowFactorTexture, 0);
+
         const unsigned int attachments[] = {
             GL_COLOR_ATTACHMENT0,
             GL_COLOR_ATTACHMENT1,
-            GL_COLOR_ATTACHMENT2};
-        glDrawBuffers(3, attachments);
+            GL_COLOR_ATTACHMENT2,
+            GL_COLOR_ATTACHMENT3};
+        glDrawBuffers(4, attachments);
     }
     else
     {
@@ -154,12 +170,14 @@ void Framebuffer::Bind() const
         const unsigned int attachments[] = {
             GL_COLOR_ATTACHMENT0,
             GL_COLOR_ATTACHMENT1,
-            GL_COLOR_ATTACHMENT2};
-        glDrawBuffers(3, attachments);
+            GL_COLOR_ATTACHMENT2,
+            GL_COLOR_ATTACHMENT3};
+        glDrawBuffers(4, attachments);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         glColorMaski(2, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(3, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
     }
     else
     {
@@ -194,6 +212,11 @@ unsigned int Framebuffer::GetNormalColorTexture() const
     return m_normalColorTexture;
 }
 
+unsigned int Framebuffer::GetShadowFactorTexture() const
+{
+    return m_shadowFactorTexture;
+}
+
 unsigned int Framebuffer::GetDepthTexture() const
 {
     return m_depthTexture;
@@ -222,4 +245,9 @@ bool Framebuffer::HasSplitLighting() const
 bool Framebuffer::HasGeometryNormals() const
 {
     return HasSplitLighting() && m_normalColorTexture != 0;
+}
+
+bool Framebuffer::HasShadowFactor() const
+{
+    return HasSplitLighting() && m_shadowFactorTexture != 0;
 }

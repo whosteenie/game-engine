@@ -23,6 +23,7 @@ namespace EngineConstants
     inline constexpr const char* ScreenCompositeFragmentShader = "assets/shaders/screen_composite.frag";
     inline constexpr const char* BloomExtractFragmentShader = "assets/shaders/bloom_extract.frag";
     inline constexpr const char* BloomBlurFragmentShader = "assets/shaders/bloom_blur.frag";
+    inline constexpr const char* ShadowBlurFragmentShader = "assets/shaders/shadow_blur.frag";
     inline constexpr const char* TonemapFragmentShader = "assets/shaders/tonemap.frag";
     inline constexpr const char* DebugChannelFragmentShader = "assets/shaders/debug_channel.frag";
 

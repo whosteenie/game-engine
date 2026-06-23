@@ -145,6 +145,26 @@ void LightingPanel::Draw(
             }
             HandleRendererFieldEditEvents(editContext);
 
+            bool shadowBlurEnabled = shadowSettings.GetShadowBlurEnabled();
+            if (ImGui::Checkbox("Shadow penumbra blur", &shadowBlurEnabled))
+            {
+                shadowSettings.SetShadowBlurEnabled(shadowBlurEnabled);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Separable screen-space blur on shadow visibility (removes PCF grain).");
+
+            if (shadowBlurEnabled)
+            {
+                float shadowBlurRadius = shadowSettings.GetShadowBlurRadius();
+                if (ImGui::SliderFloat("Shadow blur radius (px)", &shadowBlurRadius, 0.0f, 8.0f))
+                {
+                    shadowSettings.SetShadowBlurRadius(shadowBlurRadius);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+            }
+
             if (shadowFilterMode == static_cast<int>(DirectionalShadowFilterMode::PCSS))
             {
                 float lightAngularSize = shadowSettings.GetPcssLightAngularSize();

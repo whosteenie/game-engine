@@ -3,6 +3,7 @@
 layout (location = 0) out vec4 oDirect;
 layout (location = 1) out vec4 oIndirect;
 layout (location = 2) out vec4 oNormal;
+layout (location = 3) out float oShadowFactor;
 
 in vec3 vWorldPos;
 
@@ -59,6 +60,7 @@ void main()
     {
         oDirect = vec4(linearColor, alpha);
         oIndirect = vec4(0.0);
+        oShadowFactor = 1.0;
         return;
     }
 
@@ -71,4 +73,5 @@ void main()
         oDirect = vec4(LinearToSrgb(linearColor), alpha);
     }
     oIndirect = vec4(0.0);
+    oShadowFactor = 1.0;
 }

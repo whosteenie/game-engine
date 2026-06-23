@@ -2,6 +2,7 @@
 layout (location = 0) out vec4 oDirect;
 layout (location = 1) out vec4 oIndirect;
 layout (location = 2) out vec4 oNormal;
+layout (location = 3) out float oShadowFactor;
 
 in vec3 vFragPos;
 in vec3 vNormal;
@@ -534,7 +535,9 @@ void main()
     vec3 diffuseEnergy = (vec3(1.0) - specularEnergy) * (1.0 - metallic);
     vec3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity * ambientOcclusion;
 
-    vec3 directLighting = vec3(0.0);
+    vec3 directShadowed = vec3(0.0);
+    vec3 directUnshadowed = vec3(0.0);
+    float shadowFactor = 1.0;
 
     for (int i = 0; i < uLightCount; ++i)
     {
@@ -566,16 +569,24 @@ void main()
             metallic,
             radiance);
 
-        float shadow = 1.0;
+        float lightShadow = 1.0;
         if (i == uShadowLightIndex)
         {
-            shadow = CalcShadow(lightDir);
+            lightShadow = CalcShadow(lightDir);
+            shadowFactor = lightShadow;
         }
 
-        directLighting += contribution * attenuation * spotIntensity * shadow;
+        vec3 litContribution = contribution * attenuation * spotIntensity;
+        directUnshadowed += litContribution;
+        directShadowed += litContribution * lightShadow;
     }
 
-    vec3 result = ambient + directLighting;
+    if (uShadowLightIndex < 0)
+    {
+        shadowFactor = 1.0;
+    }
+
+    vec3 result = ambient + directShadowed;
 
     if (uDebugMode != 0)
     {
@@ -591,7 +602,7 @@ void main()
         }
         else if (uDebugMode == 2)
         {
-            debugColor = directLighting / (directLighting + vec3(0.25));
+            debugColor = directShadowed / (directShadowed + vec3(0.25));
         }
         else if (uDebugMode == 3)
         {
@@ -632,14 +643,16 @@ void main()
 
         oDirect = vec4(debugColor, 1.0);
         oIndirect = vec4(0.0);
+        oShadowFactor = 1.0;
         WriteViewNormal(normal);
         return;
     }
 
     if (uSplitLightingOutput != 0)
     {
-        oDirect = vec4(directLighting, 1.0);
+        oDirect = vec4(directUnshadowed, 1.0);
         oIndirect = vec4(ambient, 1.0);
+        oShadowFactor = shadowFactor;
         WriteViewNormal(normal);
         return;
     }
@@ -654,5 +667,6 @@ void main()
         oDirect = vec4(LinearToSrgb(result), 1.0);
         oIndirect = vec4(0.0);
     }
+    oShadowFactor = 1.0;
     WriteViewNormal(normal);
 }

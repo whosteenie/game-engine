@@ -80,6 +80,12 @@ public:
     float GetDepthBiasScale() const { return m_depthBiasScale; }
     void SetDepthBiasScale(float scale) { m_depthBiasScale = std::clamp(scale, 0.0f, 4.0f); }
 
+    bool GetShadowBlurEnabled() const { return m_shadowBlurEnabled; }
+    void SetShadowBlurEnabled(bool enabled) { m_shadowBlurEnabled = enabled; }
+
+    float GetShadowBlurRadius() const { return m_shadowBlurRadius; }
+    void SetShadowBlurRadius(float radius) { m_shadowBlurRadius = std::clamp(radius, 0.0f, 8.0f); }
+
 private:
     DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCSS;
     int m_shadowMapResolution = 4096;
@@ -100,4 +106,6 @@ private:
     float m_pcssMaxPenumbraTexels = 32.0f;
     float m_worldBiasScale = 1.0f;
     float m_depthBiasScale = 1.0f;
+    bool m_shadowBlurEnabled = true;
+    float m_shadowBlurRadius = 2.5f;
 };

@@ -23,12 +23,14 @@ public:
     unsigned int GetColorTexture() const;
     unsigned int GetIndirectColorTexture() const;
     unsigned int GetNormalColorTexture() const;
+    unsigned int GetShadowFactorTexture() const;
     unsigned int GetDepthTexture() const;
     int GetWidth() const;
     int GetHeight() const;
     bool IsValid() const;
     bool HasSplitLighting() const;
     bool HasGeometryNormals() const;
+    bool HasShadowFactor() const;
 
 private:
     void Destroy();
@@ -39,6 +41,7 @@ private:
     unsigned int m_colorTexture = 0;
     unsigned int m_indirectColorTexture = 0;
     unsigned int m_normalColorTexture = 0;
+    unsigned int m_shadowFactorTexture = 0;
     unsigned int m_depthTexture = 0;
     int m_width = 0;
     int m_height = 0;
