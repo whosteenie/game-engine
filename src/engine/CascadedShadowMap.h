@@ -52,6 +52,9 @@ private:
     std::array<ShadowLightSpaceSetup, MaxCascades> m_cascadeSetups{};
     std::array<float, MaxCascades> m_cascadeEndSplits{};
     std::array<float, MaxCascades> m_stableOrthoHalfExtents{};
+    std::array<glm::vec2, MaxCascades> m_stableOrthoCentersLight{};
+    std::array<float, MaxCascades> m_stableOrthoZNear{};
+    std::array<float, MaxCascades> m_stableOrthoZFar{};
     glm::vec3 m_lastCameraPosition{0.0f};
     bool m_hasStableOrthoHalfExtents = false;
     int m_savedViewport[4]{0, 0, 0, 0};

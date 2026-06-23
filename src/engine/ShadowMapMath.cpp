@@ -10,6 +10,23 @@
 
 namespace
 {
+    // Fixed world anchor (not the camera): same orientation as the old per-camera lookAt, but
+    // translation stays constant so shadow texels do not swim when the view moves.
+    glm::mat4 BuildStableLightViewMatrix(const glm::vec3& lightDirectionTowardSource)
+    {
+        const glm::vec3 normalizedLightDirection = glm::normalize(lightDirectionTowardSource);
+        const glm::vec3 viewTarget = glm::vec3(0.0f);
+        const glm::vec3 lightEye = viewTarget + normalizedLightDirection * 50.0f;
+
+        glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (std::abs(glm::dot(normalizedLightDirection, up)) > 0.99f)
+        {
+            up = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+
+        return glm::lookAt(lightEye, viewTarget, up);
+    }
+
     std::array<glm::vec3, 8> BuildAxisAlignedBoxCorners(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
     {
         return {
@@ -33,7 +50,10 @@ namespace
         const float zMarginFraction,
         const glm::vec3* lightViewAnchor,
         float* stableOrthoHalfExtentInOut,
-        const bool allowOrthoShrink)
+        glm::vec2* stableOrthoCenterLightInOut,
+        float* stableOrthoZNearInOut,
+        float* stableOrthoZFarInOut,
+        const bool resetStableFit)
     {
         ShadowLightSpaceSetup setup;
         if (zWorldPoints.empty())
@@ -51,11 +71,8 @@ namespace
         }
         setup.sceneCenter /= static_cast<float>(centerPoints.size());
 
-        const glm::vec3 normalizedLightDirection = glm::normalize(lightDirectionTowardSource);
-        const glm::vec3 viewTarget =
-            lightViewAnchor != nullptr ? *lightViewAnchor : setup.sceneCenter;
-        const glm::vec3 lightEye = viewTarget + normalizedLightDirection * 50.0f;
-        setup.lightView = glm::lookAt(lightEye, viewTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+        setup.lightView = BuildStableLightViewMatrix(lightDirectionTowardSource);
+        (void)lightViewAnchor;
 
         float minX = std::numeric_limits<float>::max();
         float maxX = std::numeric_limits<float>::lowest();
@@ -109,40 +126,17 @@ namespace
         float centerY = (minY + maxY) * 0.5f;
         float halfExtent = std::max(spanX * 0.5f + marginX, spanY * 0.5f + marginY);
 
-        if (lightViewAnchor != nullptr)
-        {
-            const glm::vec3 anchorLight =
-                glm::vec3(setup.lightView * glm::vec4(*lightViewAnchor, 1.0f));
-            centerX = anchorLight.x;
-            centerY = anchorLight.y;
-            halfExtent = 0.0f;
-
-            const std::vector<glm::vec3>& extentPoints =
-                xyWorldPoints.empty() ? zWorldPoints : xyWorldPoints;
-            for (const glm::vec3& point : extentPoints)
-            {
-                const glm::vec3 lightSpacePoint =
-                    glm::vec3(setup.lightView * glm::vec4(point, 1.0f));
-                const float extentX = std::abs(lightSpacePoint.x - centerX);
-                const float extentY = std::abs(lightSpacePoint.y - centerY);
-                halfExtent = std::max(halfExtent, std::max(extentX, extentY));
-            }
-
-            const float extentMargin = std::max(0.25f, halfExtent * xyMarginFraction);
-            halfExtent += extentMargin;
-        }
-
         float texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
         halfExtent = std::ceil(halfExtent / texelWorldSize) * texelWorldSize;
         texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
 
         if (stableOrthoHalfExtentInOut != nullptr)
         {
-            if (allowOrthoShrink || *stableOrthoHalfExtentInOut <= 0.0f || halfExtent > *stableOrthoHalfExtentInOut)
+            if (resetStableFit || *stableOrthoHalfExtentInOut <= 0.0f)
             {
                 *stableOrthoHalfExtentInOut = halfExtent;
             }
-            else if (halfExtent < *stableOrthoHalfExtentInOut * 0.92f)
+            else if (halfExtent > *stableOrthoHalfExtentInOut)
             {
                 *stableOrthoHalfExtentInOut = halfExtent;
             }
@@ -151,10 +145,58 @@ namespace
             texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
         }
 
-        const float snappedCenterX =
+        const float desiredSnapCenterX =
             std::floor(centerX / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
-        const float snappedCenterY =
+        const float desiredSnapCenterY =
             std::floor(centerY / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
+
+        float snappedCenterX = desiredSnapCenterX;
+        float snappedCenterY = desiredSnapCenterY;
+        if (stableOrthoCenterLightInOut != nullptr)
+        {
+            if (resetStableFit)
+            {
+                *stableOrthoCenterLightInOut = glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
+            }
+            else
+            {
+                const float centerDeltaX =
+                    std::abs(desiredSnapCenterX - stableOrthoCenterLightInOut->x);
+                const float centerDeltaY =
+                    std::abs(desiredSnapCenterY - stableOrthoCenterLightInOut->y);
+                constexpr float kCenterSnapTexelThreshold = 2.0f;
+                if (centerDeltaX >= texelWorldSize * kCenterSnapTexelThreshold ||
+                    centerDeltaY >= texelWorldSize * kCenterSnapTexelThreshold)
+                {
+                    *stableOrthoCenterLightInOut =
+                        glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
+                }
+            }
+
+            snappedCenterX = stableOrthoCenterLightInOut->x;
+            snappedCenterY = stableOrthoCenterLightInOut->y;
+        }
+
+        const float orthoNear = -maxZ - marginZ;
+        const float orthoFar = -minZ + marginZ;
+        float stableOrthoNear = orthoNear;
+        float stableOrthoFar = orthoFar;
+        if (stableOrthoZNearInOut != nullptr && stableOrthoZFarInOut != nullptr)
+        {
+            if (resetStableFit || *stableOrthoZFarInOut <= *stableOrthoZNearInOut)
+            {
+                *stableOrthoZNearInOut = orthoNear;
+                *stableOrthoZFarInOut = orthoFar;
+            }
+            else
+            {
+                *stableOrthoZNearInOut = std::min(*stableOrthoZNearInOut, orthoNear);
+                *stableOrthoZFarInOut = std::max(*stableOrthoZFarInOut, orthoFar);
+            }
+
+            stableOrthoNear = *stableOrthoZNearInOut;
+            stableOrthoFar = *stableOrthoZFarInOut;
+        }
 
         setup.orthoWidth = halfExtent * 2.0f;
         setup.orthoHeight = halfExtent * 2.0f;
@@ -166,8 +208,8 @@ namespace
             snappedCenterX + halfExtent,
             snappedCenterY - halfExtent,
             snappedCenterY + halfExtent,
-            -maxZ - marginZ,
-            -minZ + marginZ);
+            stableOrthoNear,
+            stableOrthoFar);
 
         setup.lightSpaceMatrix = setup.lightProjection * setup.lightView;
         setup.snapOffsetNdc = glm::vec2(0.0f);
@@ -195,6 +237,9 @@ ShadowLightSpaceSetup BuildShadowLightSpace(
         std::max(marginFraction * 2.0f, 0.08f),
         nullptr,
         nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
         true);
 }
 
@@ -209,7 +254,10 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     const bool tightNearPlaneXyFit,
     const glm::vec3* lightViewAnchor,
     float* stableOrthoHalfExtentInOut,
-    const bool allowOrthoShrink)
+    glm::vec2* stableOrthoCenterLightInOut,
+    float* stableOrthoZNearInOut,
+    float* stableOrthoZFarInOut,
+    const bool resetStableFit)
 {
     std::vector<glm::vec3> zPoints(frustumCorners.begin(), frustumCorners.end());
     std::vector<glm::vec3> xyPoints(frustumCorners.begin(), frustumCorners.end());
@@ -234,7 +282,10 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
         zMarginFraction,
         lightViewAnchor,
         stableOrthoHalfExtentInOut,
-        allowOrthoShrink);
+        stableOrthoCenterLightInOut,
+        stableOrthoZNearInOut,
+        stableOrthoZFarInOut,
+        resetStableFit);
 }
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition)

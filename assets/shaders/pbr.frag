@@ -361,7 +361,7 @@ float FilterShadowPcss(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2
         max(uPcssMinPenumbraTexels, EffectiveMinPenumbraTexels()),
         uPcssMaxPenumbraTexels);
     filterRadius = ClampFilterRadiusTexels(filterRadius);
-    filterRadius = ceil(filterRadius * 2.0) * 0.5;
+    filterRadius = max(EffectiveMinPenumbraTexels(), ceil(filterRadius));
 
     if (uUsePoissonPcf != 0)
     {

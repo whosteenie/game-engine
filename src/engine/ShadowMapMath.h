@@ -35,7 +35,10 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     bool tightNearPlaneXyFit = true,
     const glm::vec3* lightViewAnchor = nullptr,
     float* stableOrthoHalfExtentInOut = nullptr,
-    bool allowOrthoShrink = true);
+    glm::vec2* stableOrthoCenterLightInOut = nullptr,
+    float* stableOrthoZNearInOut = nullptr,
+    float* stableOrthoZFarInOut = nullptr,
+    bool resetStableFit = true);
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition);
 

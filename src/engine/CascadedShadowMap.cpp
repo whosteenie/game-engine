@@ -122,10 +122,13 @@ void CascadedShadowMap::BeginFrame(
     const float cameraMoveDistance = m_hasStableOrthoHalfExtents
         ? glm::length(cameraPosition - m_lastCameraPosition)
         : std::numeric_limits<float>::max();
-    const bool allowOrthoShrink = cameraMoveDistance > 0.75f;
-    if (allowOrthoShrink)
+    const bool resetStableFit = cameraMoveDistance > 1.25f || !m_hasStableOrthoHalfExtents;
+    if (resetStableFit)
     {
         m_stableOrthoHalfExtents.fill(0.0f);
+        m_stableOrthoCentersLight.fill(glm::vec2(0.0f));
+        m_stableOrthoZNear.fill(0.0f);
+        m_stableOrthoZFar.fill(0.0f);
         m_hasStableOrthoHalfExtents = false;
     }
 
@@ -151,9 +154,12 @@ void CascadedShadowMap::BeginFrame(
             hasCasterBounds ? &casterBoundsMin : nullptr,
             hasCasterBounds ? &casterBoundsMax : nullptr,
             settings.GetTightNearPlaneXyFit(),
-            &cameraPosition,
+            nullptr,
             &m_stableOrthoHalfExtents[static_cast<std::size_t>(cascadeIndex)],
-            allowOrthoShrink);
+            &m_stableOrthoCentersLight[static_cast<std::size_t>(cascadeIndex)],
+            &m_stableOrthoZNear[static_cast<std::size_t>(cascadeIndex)],
+            &m_stableOrthoZFar[static_cast<std::size_t>(cascadeIndex)],
+            resetStableFit);
         m_lightSpaceMatrices[static_cast<std::size_t>(cascadeIndex)] =
             m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)].lightSpaceMatrix;
     }
