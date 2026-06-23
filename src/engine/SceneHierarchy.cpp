@@ -341,3 +341,39 @@ bool IsObjectDescendantOf(const std::vector<SceneObject>& objects, int ancestor,
 
     return false;
 }
+
+std::vector<int> FilterToTopmostSelectedIndices(
+    const std::vector<SceneObject>& objects,
+    const std::vector<int>& selectedIndices)
+{
+    std::vector<int> topmostIndices;
+    topmostIndices.reserve(selectedIndices.size());
+
+    for (int objectIndex : selectedIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        bool hasSelectedAncestor = false;
+        int parentIndex = objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
+        while (parentIndex >= 0)
+        {
+            if (std::find(selectedIndices.begin(), selectedIndices.end(), parentIndex) != selectedIndices.end())
+            {
+                hasSelectedAncestor = true;
+                break;
+            }
+
+            parentIndex = objects[static_cast<std::size_t>(parentIndex)].GetParentIndex();
+        }
+
+        if (!hasSelectedAncestor)
+        {
+            topmostIndices.push_back(objectIndex);
+        }
+    }
+
+    return topmostIndices;
+}

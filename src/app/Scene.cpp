@@ -727,6 +727,29 @@ bool Scene::RemoveObject(std::size_t index)
     return true;
 }
 
+bool Scene::RemoveSelectedObjects()
+{
+    if (!HasSelection())
+    {
+        return false;
+    }
+
+    std::vector<int> rootsToRemove =
+        FilterToTopmostSelectedIndices(m_objects, m_selection.indices);
+    if (rootsToRemove.empty())
+    {
+        return false;
+    }
+
+    std::sort(rootsToRemove.begin(), rootsToRemove.end(), std::greater<int>());
+    for (int objectIndex : rootsToRemove)
+    {
+        RemoveObject(static_cast<std::size_t>(objectIndex));
+    }
+
+    return true;
+}
+
 std::string Scene::MakeDuplicateObjectName(const std::string& sourceName) const
 {
     auto nameExists = [this](const std::string& name) {
@@ -828,6 +851,41 @@ int Scene::DuplicateObject(int objectIndex)
 
     PlaceObjectInHierarchy(duplicateRootIndex, objectIndex, HierarchyInsertMode::After);
     return duplicateRootIndex;
+}
+
+std::vector<int> Scene::DuplicateSelectedObjects()
+{
+    if (!HasSelection())
+    {
+        return {};
+    }
+
+    std::vector<int> rootsToDuplicate =
+        FilterToTopmostSelectedIndices(m_objects, m_selection.indices);
+    if (rootsToDuplicate.empty())
+    {
+        return {};
+    }
+
+    std::sort(rootsToDuplicate.begin(), rootsToDuplicate.end());
+
+    std::vector<int> duplicatedIndices;
+    duplicatedIndices.reserve(rootsToDuplicate.size());
+    for (int objectIndex : rootsToDuplicate)
+    {
+        const int duplicatedIndex = DuplicateObject(objectIndex);
+        if (duplicatedIndex >= 0)
+        {
+            duplicatedIndices.push_back(duplicatedIndex);
+        }
+    }
+
+    if (!duplicatedIndices.empty())
+    {
+        SetSelection(duplicatedIndices, duplicatedIndices.back());
+    }
+
+    return duplicatedIndices;
 }
 
 bool Scene::CanReparentObject(int objectIndex, int newParentIndex) const

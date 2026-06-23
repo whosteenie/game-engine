@@ -49,3 +49,6 @@ void ApplyGroupSelectionGizmoWorldMatrix(
 std::vector<int> GetObjectChildren(const std::vector<SceneObject>& objects, int parentIndex);
 std::vector<int> GetRootObjectIndices(const std::vector<SceneObject>& objects);
 bool IsObjectDescendantOf(const std::vector<SceneObject>& objects, int ancestor, int objectIndex);
+std::vector<int> FilterToTopmostSelectedIndices(
+    const std::vector<SceneObject>& objects,
+    const std::vector<int>& selectedIndices);

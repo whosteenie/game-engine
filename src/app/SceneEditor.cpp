@@ -144,7 +144,7 @@ void SceneEditor::Update(
 {
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
-        scene.RemoveObject(static_cast<std::size_t>(scene.GetSelectedObjectIndex()));
+        scene.RemoveSelectedObjects();
     }
 
     const ImGuiIO& io = ImGui::GetIO();
@@ -157,7 +157,7 @@ void SceneEditor::Update(
         && !io.WantTextInput
         && !ImGui::IsAnyItemActive())
     {
-        scene.DuplicateObject(scene.GetSelectedObjectIndex());
+        scene.DuplicateSelectedObjects();
     }
 
     const bool allowTransformShortcuts = allowKeyboardInput && !input.IsCapturingMouse();

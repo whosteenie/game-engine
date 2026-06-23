@@ -90,7 +90,9 @@ public:
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
+    bool RemoveSelectedObjects();
     int DuplicateObject(int objectIndex);
+    std::vector<int> DuplicateSelectedObjects();
     bool ReparentObject(int objectIndex, int newParentIndex);
     bool CanReparentObject(int objectIndex, int newParentIndex) const;
     bool PlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode);

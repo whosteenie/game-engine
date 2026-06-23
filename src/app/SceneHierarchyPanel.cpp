@@ -854,7 +854,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project) const
     ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {
-        scene.RemoveObject(static_cast<std::size_t>(scene.GetSelectedObjectIndex()));
+        scene.RemoveSelectedObjects();
         m_nodeOpenStates.clear();
     }
     ImGui::EndDisabled();
