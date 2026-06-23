@@ -268,9 +268,10 @@ namespace
         {
             const std::string commandName =
                 std::string("Create ") + GetScenePrimitiveDisplayName(primitive);
-            panel.PushSceneMutation(scene, commandName, [&](Scene& target) {
+            panel.PushInsertMutation(scene, commandName, [&](Scene& target) {
                 const int newIndex = target.AddObject(primitive, parentIndex);
                 target.SetSelectedObjectIndex(newIndex);
+                return std::vector<int>{newIndex};
             });
             return true;
         }
@@ -282,9 +283,10 @@ namespace
     {
         if (ImGui::MenuItem("Empty"))
         {
-            panel.PushSceneMutation(scene, "Create Empty", [&](Scene& target) {
+            panel.PushInsertMutation(scene, "Create Empty", [&](Scene& target) {
                 const int newIndex = target.AddEmptyObject(parentIndex);
                 target.SetSelectedObjectIndex(newIndex);
+                return std::vector<int>{newIndex};
             });
             return true;
         }
@@ -318,9 +320,10 @@ namespace
 
         if (ImGui::MenuItem(label))
         {
-            panel.PushSceneMutation(scene, commandName, [&](Scene& target) {
+            panel.PushInsertMutation(scene, commandName, [&](Scene& target) {
                 const int newIndex = target.AddLightObject(type, parentIndex);
                 target.SetSelectedObjectIndex(newIndex);
+                return std::vector<int>{newIndex};
             });
             return true;
         }
@@ -832,23 +835,6 @@ namespace
     }
 }
 
-void SceneHierarchyPanel::PushSceneMutation(
-    Scene& scene,
-    const std::string& commandName,
-    const std::function<void(Scene&)>& mutate) const
-{
-    if (m_drawUndoStack != nullptr && m_drawProjectRoot != nullptr)
-    {
-        PushSceneEdit(*m_drawUndoStack, scene, *m_drawProjectRoot, commandName, mutate);
-        return;
-    }
-
-    if (mutate)
-    {
-        mutate(scene);
-    }
-}
-
 void SceneHierarchyPanel::PushInsertMutation(
     Scene& scene,
     const std::string& commandName,
@@ -891,7 +877,6 @@ void SceneHierarchyPanel::PushReparentMutation(
 void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const
 {
     m_drawUndoStack = &undoStack;
-    m_drawProjectRoot = &project.GetProjectRootDirectory();
 
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
 
@@ -1012,7 +997,6 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     ImGui::EndDisabled();
 
     m_drawUndoStack = nullptr;
-    m_drawProjectRoot = nullptr;
 
     ImGui::End();
 }

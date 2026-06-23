@@ -933,7 +933,9 @@ namespace
         int selectedIndex,
         TransformEditContext& editContext,
         MaterialEditContext& materialEditContext,
-        LightEditContext& lightEditContext)
+        LightEditContext& lightEditContext,
+        SceneObjectId& nameEditObjectId,
+        std::string& nameEditOldName)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
         SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
@@ -942,10 +944,36 @@ namespace
 
         char nameBuffer[64];
         std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selectedObject.GetName().c_str());
+        const std::string nameBeforeEdit = selectedObject.GetName();
         if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
         {
             selectedObject.SetName(nameBuffer);
             scene.MarkDirty();
+        }
+
+        if (ImGui::IsItemActivated())
+        {
+            nameEditObjectId = selectedObject.GetId();
+            nameEditOldName = nameBeforeEdit;
+        }
+
+        if (ImGui::IsItemDeactivatedAfterEdit()
+            && editContext.undoStack != nullptr
+            && nameEditObjectId == selectedObject.GetId())
+        {
+            const std::string& newName = selectedObject.GetName();
+            if (newName != nameEditOldName)
+            {
+                PushSetObjectName(
+                    *editContext.undoStack,
+                    scene,
+                    nameEditObjectId,
+                    nameEditOldName,
+                    newName);
+            }
+
+            nameEditObjectId = kInvalidSceneObjectId;
+            nameEditOldName.clear();
         }
 
         const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
@@ -1163,6 +1191,20 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
         m_lightEditSelection = selectedIndices;
     }
 
+    if (selectedIndices.size() == 1
+        && selectedIndices.front() >= 0
+        && selectedIndices.front() < static_cast<int>(objects.size())
+        && objects[static_cast<std::size_t>(selectedIndices.front())].GetId() != m_nameEditObjectId)
+    {
+        m_nameEditObjectId = kInvalidSceneObjectId;
+        m_nameEditOldName.clear();
+    }
+    else if (selectedIndices.size() != 1)
+    {
+        m_nameEditObjectId = kInvalidSceneObjectId;
+        m_nameEditOldName.clear();
+    }
+
     TransformEditContext editContext = m_transformEditContext;
     editContext.undoStack = undoStack;
     editContext.scene = &scene;
@@ -1186,7 +1228,9 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
             selectedIndices.front(),
             editContext,
             m_materialEditContext,
-            m_lightEditContext);
+            m_lightEditContext,
+            m_nameEditObjectId,
+            m_nameEditOldName);
     }
     else
     {

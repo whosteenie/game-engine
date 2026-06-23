@@ -24,11 +24,6 @@ public:
     const std::unordered_map<SceneObjectId, bool>& GetNodeOpenStates() const { return m_nodeOpenStates; }
     void SetNodeOpenStates(const std::unordered_map<SceneObjectId, bool>& openStates) { m_nodeOpenStates = openStates; }
 
-    void PushSceneMutation(
-        Scene& scene,
-        const std::string& commandName,
-        const std::function<void(Scene&)>& mutate) const;
-
     void PushInsertMutation(
         Scene& scene,
         const std::string& commandName,
@@ -52,5 +47,4 @@ private:
     mutable std::unordered_map<SceneObjectId, bool> m_nodeOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
     mutable UndoStack* m_drawUndoStack = nullptr;
-    mutable const std::string* m_drawProjectRoot = nullptr;
 };
