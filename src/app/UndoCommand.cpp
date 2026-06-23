@@ -3,11 +3,15 @@
 #include "app/Scene.h"
 #include "app/SceneDocument.h"
 #include "app/SceneProjectIODetail.h"
+#include "app/SceneSubtreeArchive.h"
+#include "engine/Mesh.h"
 #include "app/UndoStack.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
+
+#include "engine/SceneHierarchy.h"
 
 #include <imgui.h>
 
@@ -201,6 +205,88 @@ void PushSceneEdit(
         std::move(after),
         commandName,
         projectRoot));
+}
+
+DeleteObjectsCommand::DeleteObjectsCommand(SceneSubtreeArchive archive, std::string name)
+    : m_archive(std::move(archive)),
+      m_name(std::move(name))
+{
+}
+
+void DeleteObjectsCommand::Undo(UndoContext& context)
+{
+    context.scene.RestoreDeleteArchive(m_archive);
+}
+
+void DeleteObjectsCommand::Redo(UndoContext& context)
+{
+    const ArchivedSelectionState selectionBefore = m_archive.selectionBefore;
+
+    std::vector<int> rootIndices;
+    rootIndices.reserve(m_archive.removedRootIds.size());
+    for (SceneObjectId rootId : m_archive.removedRootIds)
+    {
+        const int rootIndex = context.scene.FindObjectIndex(rootId);
+        if (rootIndex >= 0)
+        {
+            rootIndices.push_back(rootIndex);
+        }
+    }
+
+    if (rootIndices.empty() || !context.scene.CreateDeleteArchive(rootIndices, m_archive))
+    {
+        return;
+    }
+
+    m_archive.selectionBefore = selectionBefore;
+
+    if (!context.scene.DeleteUsingArchive(m_archive))
+    {
+        return;
+    }
+
+    m_archive.selectionAfter = CaptureArchivedSelection(context.scene);
+    ApplyArchivedSelection(context.scene, m_archive.selectionAfter);
+    context.scene.MarkDirty();
+}
+
+const char* DeleteObjectsCommand::GetName() const
+{
+    return m_name.c_str();
+}
+
+void PushDeleteObjects(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::vector<int>& rootIndices)
+{
+    if (rootIndices.empty())
+    {
+        return;
+    }
+
+    SceneSubtreeArchive archive;
+    if (!scene.CreateDeleteArchive(rootIndices, archive))
+    {
+        return;
+    }
+
+    if (!scene.DeleteUsingArchive(archive))
+    {
+        return;
+    }
+
+    archive.selectionAfter = CaptureArchivedSelection(scene);
+
+    undoStack.Push(std::make_unique<DeleteObjectsCommand>(std::move(archive), commandName));
+}
+
+void PushDeleteSelection(UndoStack& undoStack, Scene& scene, const std::string& commandName)
+{
+    const std::vector<int> roots =
+        FilterToTopmostSelectedIndices(scene.GetObjects(), scene.GetSelection().indices);
+    PushDeleteObjects(undoStack, scene, commandName, roots);
 }
 
 ObjectTransformMap CaptureLocalTransforms(const Scene& scene, const std::vector<int>& objectIndices)

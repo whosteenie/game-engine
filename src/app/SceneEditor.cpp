@@ -241,9 +241,7 @@ void SceneEditor::Update(
     {
         if (undoStack != nullptr)
         {
-            PushSceneEdit(*undoStack, scene, projectRoot, "Delete", [](Scene& target) {
-                target.RemoveSelectedObjects();
-            });
+            PushDeleteSelection(*undoStack, scene, "Delete");
         }
         else
         {

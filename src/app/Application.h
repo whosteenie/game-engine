@@ -42,6 +42,7 @@ private:
     void CaptureProjectEditorState(ProjectEditorState& editorState) const;
     void ApplyProjectEditorState(const ProjectEditorState& editorState);
     bool TrySaveProject();
+    bool IsEditorUndoRedoBlocked() const;
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);

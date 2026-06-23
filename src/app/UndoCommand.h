@@ -3,6 +3,7 @@
 #include "app/UndoContext.h"
 
 #include "app/SceneDocument.h"
+#include "app/SceneSubtreeArchive.h"
 
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
@@ -88,6 +89,28 @@ void PushSceneEdit(
     const std::string& projectRoot,
     const std::string& commandName,
     const std::function<void(Scene&)>& mutate);
+
+class DeleteObjectsCommand final : public IUndoCommand
+{
+public:
+    DeleteObjectsCommand(SceneSubtreeArchive archive, std::string name);
+
+    void Undo(UndoContext& context) override;
+    void Redo(UndoContext& context) override;
+    const char* GetName() const override;
+
+private:
+    SceneSubtreeArchive m_archive;
+    std::string m_name;
+};
+
+void PushDeleteObjects(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::vector<int>& rootIndices);
+
+void PushDeleteSelection(UndoStack& undoStack, Scene& scene, const std::string& commandName);
 
 using ObjectTransformMap = std::unordered_map<SceneObjectId, Transform>;
 
@@ -445,3 +468,12 @@ struct RendererEditContext
 };
 
 void HandleRendererFieldEditEvents(RendererEditContext& context);
+
+/*
+ * Adding a new undo command:
+ * 1. Implement IUndoCommand with Undo/Redo/GetName (and TryMerge when edits should coalesce).
+ * 2. Add Capture/Apply helpers if the command patches live scene state in place.
+ * 3. Expose PushXxxSettings (before/after) and/or PushXxxMutation (capture → mutate → capture).
+ * 4. Wire UI on edit end (IsItemDeactivatedAfterEdit) or transaction boundaries (gizmo drag).
+ * 5. Use PushSceneEdit only for structural changes that need a full SceneDocument snapshot.
+ */

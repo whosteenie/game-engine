@@ -15,6 +15,7 @@
 #include <imgui.h>
 
 #include <filesystem>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -206,9 +207,13 @@ namespace
         }
     }
 
-    void HandleEditMenuShortcuts(Scene& scene, ProjectSession& project, UndoStack& undoStack)
+    void HandleEditMenuShortcuts(
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        bool allowUndoRedo)
     {
-        if (!AllowFileMenuShortcuts())
+        if (!AllowFileMenuShortcuts() || !allowUndoRedo)
         {
             return;
         }
@@ -255,7 +260,8 @@ void MainMenuBar::Draw(
     const ApplyEditorStateFn& applyEditorState,
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
-    UndoStack& undoStack)
+    UndoStack& undoStack,
+    bool allowUndoRedo)
 {
     HandleFileMenuShortcuts(
         scene,
@@ -265,7 +271,7 @@ void MainMenuBar::Draw(
         captureEditorState,
         applyEditorState,
         undoStack);
-    HandleEditMenuShortcuts(scene, project, undoStack);
+    HandleEditMenuShortcuts(scene, project, undoStack, allowUndoRedo);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -327,12 +333,36 @@ void MainMenuBar::Draw(
     if (ImGui::BeginMenu("Edit"))
     {
         UndoContext context{scene, project.GetProjectRootDirectory()};
-        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undoStack.CanUndo()))
+
+        char undoLabel[256];
+        if (undoStack.CanUndo())
+        {
+            std::snprintf(undoLabel, sizeof(undoLabel), "Undo %s", undoStack.GetUndoName());
+        }
+        else
+        {
+            std::snprintf(undoLabel, sizeof(undoLabel), "Undo");
+        }
+
+        char redoLabel[256];
+        if (undoStack.CanRedo())
+        {
+            std::snprintf(redoLabel, sizeof(redoLabel), "Redo %s", undoStack.GetRedoName());
+        }
+        else
+        {
+            std::snprintf(redoLabel, sizeof(redoLabel), "Redo");
+        }
+
+        const bool canUndo = allowUndoRedo && undoStack.CanUndo();
+        const bool canRedo = allowUndoRedo && undoStack.CanRedo();
+
+        if (ImGui::MenuItem(undoLabel, "Ctrl+Z", false, canUndo))
         {
             undoStack.Undo(context);
         }
 
-        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, undoStack.CanRedo()))
+        if (ImGui::MenuItem(redoLabel, "Ctrl+Y, Ctrl+Shift+Z", false, canRedo))
         {
             undoStack.Redo(context);
         }

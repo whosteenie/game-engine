@@ -234,7 +234,8 @@ namespace
             primaryIndex = nextIndex;
             scrollSelectionIntoView = true;
         }
-        else if (primaryIndex >= 0)
+
+        if (!ImGui::IsKeyPressed(ImGuiKey_DownArrow) && !ImGui::IsKeyPressed(ImGuiKey_UpArrow) && primaryIndex >= 0)
         {
             const std::vector<int> children = scene.GetChildren(primaryIndex);
             if (children.empty())
@@ -419,6 +420,7 @@ namespace
         const SceneHierarchyPanel& panel,
         Scene& scene,
         ProjectSession& project,
+        UndoStack& undoStack,
         int objectIndex,
         std::unordered_map<SceneObjectId, bool>& openStates,
         int& pendingRenameIndex,
@@ -461,16 +463,15 @@ namespace
             });
         }
 
-        if (ImGui::MenuItem("Delete"))
+            if (ImGui::MenuItem("Delete"))
         {
             const std::string objectName =
                 scene.GetObject(static_cast<std::size_t>(objectIndex)).GetName();
-            panel.PushSceneMutation(
+            PushDeleteObjects(
+                undoStack,
                 scene,
                 "Delete \"" + objectName + "\"",
-                [objectIndex](Scene& target) {
-                    target.RemoveObject(static_cast<std::size_t>(objectIndex));
-                });
+                {objectIndex});
         }
 
         ImGui::EndPopup();
@@ -771,6 +772,7 @@ namespace
                 panel,
                 scene,
                 project,
+                undoStack,
                 objectIndex,
                 openStates,
                 pendingRenameIndex,
@@ -884,7 +886,11 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
 
     if (m_pendingRenameIndex < 0)
     {
-        HandleHierarchyKeyboardNavigation(scene, primaryIndex, m_nodeOpenStates, m_scrollSelectionIntoView);
+        HandleHierarchyKeyboardNavigation(
+            scene,
+            primaryIndex,
+            m_nodeOpenStates,
+            m_scrollSelectionIntoView);
     }
 
     for (int objectIndex : scene.GetRootObjectIndices())
@@ -944,9 +950,14 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {
-        PushSceneMutation(scene, "Delete", [](Scene& target) {
-            target.RemoveSelectedObjects();
-        });
+        if (m_drawUndoStack != nullptr)
+        {
+            PushDeleteSelection(*m_drawUndoStack, scene, "Delete");
+        }
+        else
+        {
+            scene.RemoveSelectedObjects();
+        }
     }
     ImGui::EndDisabled();
 

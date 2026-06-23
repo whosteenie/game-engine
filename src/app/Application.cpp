@@ -176,7 +176,8 @@ void Application::Update(double deltaTime)
             [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
-            m_undoStack);
+            m_undoStack,
+            !IsEditorUndoRedoBlocked());
 
         m_sceneToolbarPanel->Draw(*m_scene);
         m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
@@ -277,6 +278,11 @@ void Application::RequestNewProject()
     }
 
     m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+}
+
+bool Application::IsEditorUndoRedoBlocked() const
+{
+    return m_pendingClose || m_pendingNewProject;
 }
 
 void Application::CaptureProjectEditorState(ProjectEditorState& editorState) const

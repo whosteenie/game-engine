@@ -37,5 +37,6 @@ public:
         const ApplyEditorStateFn& applyEditorState,
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
-        UndoStack& undoStack);
+        UndoStack& undoStack,
+        bool allowUndoRedo = true);
 };

@@ -28,6 +28,7 @@ class ScreenSpaceEffects;
 class UndoStack;
 struct SceneProjectIO;
 class SceneDocument;
+#include "app/SceneSubtreeArchive.h"
 
 enum class HierarchyInsertMode
 {
@@ -163,6 +164,10 @@ public:
 
     Mesh* GetMeshForPrimitive(ScenePrimitive primitive) const;
     Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
+
+    bool CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtreeArchive& archive);
+    bool DeleteUsingArchive(const SceneSubtreeArchive& archive);
+    bool RestoreDeleteArchive(SceneSubtreeArchive& archive);
 
 private:
     friend struct SceneProjectIO;

@@ -190,6 +190,8 @@ add_executable(game-engine
 
     src/app/SceneDocument.cpp
 
+    src/app/SceneSubtreeArchive.cpp
+
     src/app/ProjectChooser.cpp
 
     src/app/ProjectEditorState.cpp
