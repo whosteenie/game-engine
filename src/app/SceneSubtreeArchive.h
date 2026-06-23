@@ -2,7 +2,10 @@
 
 #include "app/SceneImportedMeshPool.h"
 
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
 #include "engine/LightComponent.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
 #include "engine/SceneObjectId.h"
 #include "engine/Transform.h"
@@ -40,6 +43,9 @@ struct ArchivedSceneObject
     bool receiveShadow = true;
     int siblingOrder = 0;
     std::optional<LightComponent> light;
+    std::optional<CameraComponent> camera;
+    std::optional<RigidBodyComponent> rigidBody;
+    std::optional<ColliderComponent> collider;
 };
 
 struct SceneSubtreeArchive

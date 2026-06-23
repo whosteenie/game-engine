@@ -9,6 +9,7 @@ struct GLFWwindow;
 
 class EditorSettings;
 class EditorClipboard;
+class PlayModeController;
 class ProjectSession;
 class Scene;
 
@@ -20,6 +21,7 @@ struct EditorPanelVisibility
     bool* lighting = nullptr;
     bool* project = nullptr;
     bool* sceneView = nullptr;
+    bool* gameView = nullptr;
 };
 
 using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;
@@ -40,6 +42,8 @@ public:
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
         const std::function<void()>& requestResetLayout,
+        const std::function<void()>& alignSelectionToView,
+        PlayModeController& playMode,
         UndoStack& undoStack,
         EditorClipboard& clipboard,
         bool allowUndoRedo = true);

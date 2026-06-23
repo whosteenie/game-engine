@@ -29,12 +29,16 @@ void EditorDockLayout::BuildDefaultLayout(ImGuiID dockspaceId)
     ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);
     ImGui::DockBuilderDockWindow("Project", dockBottom);
     ImGui::DockBuilderDockWindow("Scene View", dockMain);
+    ImGui::DockBuilderDockWindow("Game View", dockMain);
 
     ImGui::DockBuilderFinish(dockspaceId);
+}
 
+void EditorDockLayout::AllowViewportUndocking(const ImGuiID dockspaceId)
+{
     if (ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockspaceId))
     {
         centralNode->SetLocalFlags(
-            centralNode->LocalFlags | ImGuiDockNodeFlags_NoUndocking);
+            centralNode->LocalFlags & ~ImGuiDockNodeFlags_NoUndocking);
     }
 }

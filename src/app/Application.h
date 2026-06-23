@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ProjectEditorState.h"
+#include "app/PlayModeController.h"
 #include "app/UndoStack.h"
 
 #include "app/EditorClipboard.h"
@@ -10,6 +11,7 @@
 struct GLFWwindow;
 class Camera;
 class EditorDockSpace;
+class EditorTopToolbar;
 class EditorSettings;
 class LightingPanel;
 class MainMenuBar;
@@ -24,6 +26,7 @@ class SceneHierarchyPanel;
 class SceneInspectorPanel;
 class SceneToolbarPanel;
 class SceneViewportPanel;
+class GameViewportPanel;
 
 class Application
 {
@@ -49,6 +52,11 @@ private:
     bool IsEditorUndoRedoBlocked() const;
     void ResetEditorLayout();
 
+    Scene* GetEditorTargetScene();
+    const Scene* GetEditorTargetScene() const;
+    UndoStack* GetEditorUndoStack();
+    const UndoStack* GetEditorUndoStack() const;
+
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
     static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
@@ -68,16 +76,22 @@ private:
     std::unique_ptr<ProjectSession> m_projectSession;
     std::unique_ptr<ProjectChooser> m_projectChooser;
     std::unique_ptr<MainMenuBar> m_mainMenuBar;
+    std::unique_ptr<EditorTopToolbar> m_editorTopToolbar;
     std::unique_ptr<LightingPanel> m_lightingPanel;
     std::unique_ptr<SceneToolbarPanel> m_sceneToolbarPanel;
     std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<SceneInspectorPanel> m_sceneInspectorPanel;
     std::unique_ptr<ProjectFilesPanel> m_projectFilesPanel;
     std::unique_ptr<SceneViewportPanel> m_sceneViewportPanel;
+    std::unique_ptr<GameViewportPanel> m_gameViewportPanel;
     std::unique_ptr<EditorDockSpace> m_editorDockSpace;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
+    PlayModeController m_playModeController;
+    UndoStack m_playModeDiscardUndoStack;
+    bool m_wasPlayModeActive = false;
+    bool m_gameViewRenderedLastFrame = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

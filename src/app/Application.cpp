@@ -6,9 +6,12 @@
 #include "app/EditorSettings.h"
 #include "app/SceneProjectIO.h"
 #include "app/EditorDockSpace.h"
+#include "app/EditorTopToolbar.h"
 #include "app/EditorViewportRect.h"
+#include "app/GameViewportPanel.h"
 #include "app/LightingPanel.h"
 #include "app/MainMenuBar.h"
+#include "app/PlayModeController.h"
 #include "app/ProjectChooser.h"
 #include "app/ProjectEditorState.h"
 #include "app/ProjectFilesPanel.h"
@@ -17,6 +20,7 @@
 #include "app/SceneEditor.h"
 #include "app/SceneHierarchyPanel.h"
 #include "app/SceneInspectorPanel.h"
+#include "app/SceneCamera.h"
 #include "app/SceneToolbarPanel.h"
 #include "app/SceneViewportPanel.h"
 #include "app/UndoContext.h"
@@ -37,10 +41,49 @@
 #include <stdexcept>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <unordered_map>
 
 namespace
 {
+    bool AlignPrimarySelectionToCameraView(Scene& scene, const Camera& camera, UndoStack* undoStack)
+    {
+        const int selectedIndex = scene.GetPrimarySelection();
+        if (selectedIndex < 0
+            || static_cast<std::size_t>(selectedIndex) >= scene.GetObjects().size())
+        {
+            return false;
+        }
+
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        const glm::mat4 cameraWorldMatrix = glm::affineInverse(camera.GetViewMatrix());
+        glm::mat4 localMatrix = cameraWorldMatrix;
+        if (object.GetParentIndex() >= 0)
+        {
+            const glm::mat4 parentWorldMatrix = scene.GetWorldMatrix(object.GetParentIndex());
+            localMatrix = glm::affineInverse(parentWorldMatrix) * cameraWorldMatrix;
+        }
+
+        ObjectTransformMap before;
+        if (undoStack != nullptr)
+        {
+            before = CaptureLocalTransforms(scene, {selectedIndex});
+        }
+
+        Transform& transform = object.GetTransform();
+        const glm::vec3 preservedScale = transform.scale;
+        transform.SetFromMatrix(localMatrix);
+        transform.scale = preservedScale;
+        scene.MarkDirty();
+
+        if (undoStack != nullptr)
+        {
+            ObjectTransformMap after = CaptureLocalTransforms(scene, {selectedIndex});
+            PushTransformObjects(*undoStack, std::move(before), std::move(after), "Align to View");
+        }
+
+        return true;
+    }
 }
 
 Application::Application(int width, int height, const char* title)
@@ -61,12 +104,14 @@ Application::Application(int width, int height, const char* title)
     m_projectSession = std::make_unique<ProjectSession>();
     m_projectChooser = std::make_unique<ProjectChooser>();
     m_mainMenuBar = std::make_unique<MainMenuBar>();
+    m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
     m_lightingPanel = std::make_unique<LightingPanel>();
     m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
     m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
     m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
     m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
     m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
+    m_gameViewportPanel = std::make_unique<GameViewportPanel>();
     m_editorDockSpace = std::make_unique<EditorDockSpace>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
@@ -180,6 +225,16 @@ void Application::Update(double deltaTime)
         panelVisibility.lighting = &m_lightingPanel->ShowPanel();
         panelVisibility.project = &m_projectFilesPanel->ShowPanel();
         panelVisibility.sceneView = &m_sceneViewportPanel->ShowPanel();
+        panelVisibility.gameView = &m_gameViewportPanel->ShowPanel();
+
+        const bool allowEditorUndo =
+            !IsEditorUndoRedoBlocked() && !m_playModeController.IsActive();
+        const bool playActive = m_playModeController.IsActive();
+        if (playActive != m_wasPlayModeActive)
+        {
+            m_playModeDiscardUndoStack.Clear();
+            m_wasPlayModeActive = playActive;
+        }
 
         m_mainMenuBar->Draw(
             *m_scene,
@@ -193,22 +248,58 @@ void Application::Update(double deltaTime)
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
             [this]() { ResetEditorLayout(); },
+            [this]() {
+                Scene* editorScene = GetEditorTargetScene();
+                UndoStack* editorUndoStack = GetEditorUndoStack();
+                if (!AlignPrimarySelectionToCameraView(*editorScene, *m_camera, editorUndoStack))
+                {
+                    m_projectSession->SetStatusMessage("Align to View requires a selected object.");
+                }
+            },
+            m_playModeController,
             m_undoStack,
             m_editorClipboard,
-            !IsEditorUndoRedoBlocked());
+            allowEditorUndo);
 
-        m_editorDockSpace->Begin();
-        m_sceneViewportPanel->Draw(*m_camera, *m_scene);
-        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack, m_editorClipboard);
-        m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
+        m_editorTopToolbar->Draw(m_playModeController, *m_scene, *m_projectSession);
+
+        Scene* editorScene = GetEditorTargetScene();
+        UndoStack* editorUndoStack = GetEditorUndoStack();
+
+        m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight());
+        m_sceneViewportPanel->Draw(*m_camera, *editorScene);
+
+        Scene* gameScene = m_scene.get();
+        if (m_playModeController.IsActive())
+        {
+            Scene* runtimeScene = m_playModeController.GetRuntimeScene();
+            if (runtimeScene != nullptr)
+            {
+                gameScene = runtimeScene;
+            }
+        }
+
+        const bool hasGameSceneCamera =
+            gameScene != nullptr && SceneCamera::SceneHasActiveCamera(*gameScene);
+        m_gameViewportPanel->Draw(hasGameSceneCamera, m_gameViewRenderedLastFrame);
+        m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
+        m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
-        m_lightingPanel->Draw(*m_scene, *m_camera, &m_undoStack);
+        m_lightingPanel->Draw(*editorScene, *m_camera, editorUndoStack);
+        m_editorDockSpace->AfterEditorPanels();
         m_editorDockSpace->End();
 
+        if (m_playModeController.ConsumeFocusGameViewRequest())
+        {
+            ImGui::SetWindowFocus("Game View");
+        }
+
+        const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
+
         m_sceneToolbarPanel->Draw(
-            *m_scene,
+            *editorScene,
             m_sceneViewportPanel->ShowPanel(),
-            m_sceneViewportPanel->GetInteractionRect());
+            sceneViewRect);
 
         if (m_sceneViewportPanel->HasValidRenderTarget())
         {
@@ -222,14 +313,20 @@ void Application::Update(double deltaTime)
 
     const ImGuiIO& io = ImGui::GetIO();
 
+    const bool gameViewBlocksSceneInput =
+        m_playModeController.IsActive() && m_gameViewportPanel->IsHovered();
+    const bool sceneInteractionHovered =
+        m_sceneViewportPanel->IsHovered()
+        || ImGuizmo::IsOver()
+        || ImGuizmo::IsUsing()
+        || ImGuizmo::IsViewManipulateHovered()
+        || ImGuizmo::IsUsingViewManipulate();
+
     const bool sceneViewHovered =
         editorActive
         && m_sceneViewportPanel->HasValidRenderTarget()
-        && (m_sceneViewportPanel->IsHovered()
-            || ImGuizmo::IsOver()
-            || ImGuizmo::IsUsing()
-            || ImGuizmo::IsViewManipulateHovered()
-            || ImGuizmo::IsUsingViewManipulate());
+        && sceneInteractionHovered
+        && !gameViewBlocksSceneInput;
     const bool blockSceneInput = io.WantTextInput || m_pendingClose || m_pendingNewProject;
 
     m_input->UpdateMouseCapture(sceneViewHovered && !blockSceneInput);
@@ -258,7 +355,7 @@ void Application::Update(double deltaTime)
         }
         else if (editorActive)
         {
-            m_scene->HandleEscapeKey();
+            GetEditorTargetScene()->HandleEscapeKey();
         }
     }
 
@@ -277,6 +374,8 @@ void Application::Update(double deltaTime)
 
     if (editorActive)
     {
+        m_playModeController.Simulate(deltaTime);
+
         int viewportWidth = 0;
         int viewportHeight = 0;
         int windowWidth = 0;
@@ -288,7 +387,7 @@ void Application::Update(double deltaTime)
         const EditorViewportRect* viewportPtr =
             viewportRect.valid ? &viewportRect : nullptr;
 
-        m_scene->Update(
+        GetEditorTargetScene()->Update(
             *m_input,
             *m_camera,
             viewportWidth,
@@ -297,7 +396,7 @@ void Application::Update(double deltaTime)
             windowHeight,
             allowSceneMouse,
             allowGameKeyboard,
-            &m_undoStack,
+            m_playModeController.IsActive() ? nullptr : &m_undoStack,
             m_projectSession->GetProjectRootDirectory(),
             viewportPtr);
     }
@@ -318,6 +417,11 @@ void Application::RequestClose()
 
 void Application::RequestNewProject()
 {
+    if (m_playModeController.IsActive())
+    {
+        m_playModeController.TogglePlayStop(*m_scene, m_projectSession->GetProjectRootDirectory());
+    }
+
     if (m_projectSession->IsDirty())
     {
         m_pendingNewProject = true;
@@ -332,6 +436,40 @@ bool Application::IsEditorUndoRedoBlocked() const
     return m_pendingClose || m_pendingNewProject;
 }
 
+Scene* Application::GetEditorTargetScene()
+{
+    if (m_playModeController.IsActive())
+    {
+        Scene* runtimeScene = m_playModeController.GetRuntimeScene();
+        if (runtimeScene != nullptr)
+        {
+            return runtimeScene;
+        }
+    }
+
+    return m_scene.get();
+}
+
+const Scene* Application::GetEditorTargetScene() const
+{
+    return const_cast<Application*>(this)->GetEditorTargetScene();
+}
+
+UndoStack* Application::GetEditorUndoStack()
+{
+    if (m_playModeController.IsActive())
+    {
+        return &m_playModeDiscardUndoStack;
+    }
+
+    return &m_undoStack;
+}
+
+const UndoStack* Application::GetEditorUndoStack() const
+{
+    return const_cast<Application*>(this)->GetEditorUndoStack();
+}
+
 void Application::CaptureProjectEditorState(ProjectEditorState& editorState) const
 {
     editorState.cameraPosition = m_camera->GetPosition();
@@ -343,6 +481,7 @@ void Application::CaptureProjectEditorState(ProjectEditorState& editorState) con
     editorState.showLighting = m_lightingPanel->ShowPanel();
     editorState.showProjectFiles = m_projectFilesPanel->ShowPanel();
     editorState.showSceneView = m_sceneViewportPanel->ShowPanel();
+    editorState.showGameView = m_gameViewportPanel->ShowPanel();
     editorState.hierarchyNodeOpenStates = m_sceneHierarchyPanel->GetNodeOpenStates();
     m_projectFilesPanel->GetBrowseState(
         editorState.projectFilesBrowsedDirectory,
@@ -361,6 +500,7 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_lightingPanel->ShowPanel() = editorState.showLighting;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
     m_sceneViewportPanel->ShowPanel() = editorState.showSceneView;
+    m_gameViewportPanel->ShowPanel() = editorState.showGameView;
 
     std::unordered_map<SceneObjectId, bool> hierarchyOpenStates;
     const int objectCount = static_cast<int>(m_scene->GetObjects().size());
@@ -543,16 +683,67 @@ void Application::Render()
 {
     m_renderer->BeginFrame();
 
+    m_gameViewRenderedLastFrame = false;
+
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
+        Scene* sceneViewScene = GetEditorTargetScene();
         m_sceneViewportPanel->EnsureFramebufferSized();
-        m_scene->Render(
+        m_camera->SetAspectFromFramebuffer(
+            m_sceneViewportPanel->GetRenderWidth(),
+            m_sceneViewportPanel->GetRenderHeight());
+        sceneViewScene->Render(
             *m_camera,
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
             m_sceneViewportPanel->GetFramebuffer());
+    }
+
+    if (editorActive && m_gameViewportPanel->HasValidRenderTarget())
+    {
+        Scene* gameScene = m_scene.get();
+        if (m_playModeController.IsActive())
+        {
+            Scene* runtimeScene = m_playModeController.GetRuntimeScene();
+            if (runtimeScene != nullptr)
+            {
+                gameScene = runtimeScene;
+            }
+        }
+
+        const int gameViewWidth = m_gameViewportPanel->GetRenderWidth();
+        const int gameViewHeight = m_gameViewportPanel->GetRenderHeight();
+        const float gameViewAspect =
+            gameViewHeight > 0
+                ? static_cast<float>(gameViewWidth) / static_cast<float>(gameViewHeight)
+                : 1.0f;
+
+        if (gameScene != nullptr)
+        {
+            const std::optional<SceneCamera> sceneCamera =
+                SceneCamera::TryFromScene(*gameScene, gameViewAspect);
+            if (sceneCamera.has_value())
+            {
+                m_gameViewportPanel->EnsureFramebufferSized();
+                const Camera renderCamera = sceneCamera->ToRenderCamera();
+                const SceneRenderOptions gameViewOptions{
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                };
+                gameScene->Render(
+                    renderCamera,
+                    gameViewWidth,
+                    gameViewHeight,
+                    m_gameViewportPanel->GetFramebuffer(),
+                    gameViewOptions);
+                m_gameViewRenderedLastFrame = true;
+            }
+        }
     }
 
     m_imguiLayer->EndFrame();

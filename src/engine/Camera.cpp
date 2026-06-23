@@ -127,6 +127,21 @@ void Camera::SetOrientationFromDirection(const glm::vec3& direction)
     UpdateCameraVectors();
 }
 
+void Camera::SetLens(float fovDegrees, float nearPlane, float farPlane)
+{
+    m_fov = fovDegrees;
+    m_near = nearPlane;
+    m_far = farPlane;
+}
+
+void Camera::SetAspect(float aspect)
+{
+    if (aspect > 0.0f)
+    {
+        m_aspect = aspect;
+    }
+}
+
 glm::mat4 Camera::BuildViewMatrixLookingAt(const glm::vec3& target, float distance) const
 {
     const glm::vec3 eye = target - m_front * distance;

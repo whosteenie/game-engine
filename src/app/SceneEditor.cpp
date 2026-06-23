@@ -285,6 +285,9 @@ void SceneEditor::Update(
     const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
         || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
         || io.KeyCtrl;
+    const bool shiftHeld = input.IsKeyDown(GLFW_KEY_LEFT_SHIFT)
+        || input.IsKeyDown(GLFW_KEY_RIGHT_SHIFT)
+        || io.KeyShift;
 
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
@@ -336,7 +339,7 @@ void SceneEditor::Update(
     {
         SetTransformSpace(TransformSpace::World);
     }
-    if (allowTransformShortcuts && input.WasKeyPressed(GLFW_KEY_F))
+    if (allowTransformShortcuts && !ctrlHeld && !shiftHeld && input.WasKeyPressed(GLFW_KEY_F))
     {
         glm::vec3 focus;
         float radius = 0.5f;

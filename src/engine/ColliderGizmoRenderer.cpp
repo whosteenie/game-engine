@@ -1,0 +1,236 @@
+#include <glad/glad.h>
+
+#include "engine/ColliderGizmoRenderer.h"
+#include "engine/Camera.h"
+#include "engine/ColliderComponent.h"
+#include "engine/Constants.h"
+#include "engine/SceneObject.h"
+#include "engine/Shader.h"
+
+#include <glm/glm.hpp>
+#include <glm/gtc/constants.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
+namespace
+{
+    constexpr int kCircleSegments = 32;
+    constexpr glm::vec3 kColliderGizmoColor(0.28f, 0.92f, 0.38f);
+
+    void AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
+    {
+        vertices.push_back(a.x);
+        vertices.push_back(a.y);
+        vertices.push_back(a.z);
+        vertices.push_back(b.x);
+        vertices.push_back(b.y);
+        vertices.push_back(b.z);
+    }
+
+    void DecomposeWorldMatrix(
+        const glm::mat4& worldMatrix,
+        glm::vec3& position,
+        glm::quat& rotation,
+        glm::vec3& scale)
+    {
+        position = glm::vec3(worldMatrix[3]);
+
+        const glm::vec3 column0 = glm::vec3(worldMatrix[0]);
+        const glm::vec3 column1 = glm::vec3(worldMatrix[1]);
+        const glm::vec3 column2 = glm::vec3(worldMatrix[2]);
+
+        scale.x = glm::length(column0);
+        scale.y = glm::length(column1);
+        scale.z = glm::length(column2);
+
+        glm::mat3 rotationMatrix(1.0f);
+        const float epsilon = 1e-6f;
+        if (scale.x > epsilon)
+        {
+            rotationMatrix[0] = column0 / scale.x;
+        }
+
+        if (scale.y > epsilon)
+        {
+            rotationMatrix[1] = column1 / scale.y;
+        }
+
+        if (scale.z > epsilon)
+        {
+            rotationMatrix[2] = column2 / scale.z;
+        }
+
+        rotation = glm::normalize(glm::quat_cast(rotationMatrix));
+    }
+
+    glm::vec3 GizmoColor(bool selected)
+    {
+        if (selected)
+        {
+            return glm::min(kColliderGizmoColor * 1.25f, glm::vec3(1.0f));
+        }
+
+        return kColliderGizmoColor * 0.85f;
+    }
+
+    void AppendCircle(
+        std::vector<float>& vertices,
+        const glm::vec3& center,
+        const glm::vec3& axis0,
+        const glm::vec3& axis1,
+        float radius,
+        int segments)
+    {
+        glm::vec3 previousPoint = center + axis0 * radius;
+        for (int segment = 1; segment <= segments; ++segment)
+        {
+            const float angle = glm::two_pi<float>() * static_cast<float>(segment) / static_cast<float>(segments);
+            const glm::vec3 point =
+                center + (axis0 * std::cos(angle) + axis1 * std::sin(angle)) * radius;
+            AppendLine(vertices, previousPoint, point);
+            previousPoint = point;
+        }
+    }
+
+    void AppendSphereWireframe(std::vector<float>& vertices, const glm::vec3& center, float radius)
+    {
+        AppendCircle(vertices, center, glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), radius, kCircleSegments);
+        AppendCircle(vertices, center, glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), radius, kCircleSegments);
+        AppendCircle(vertices, center, glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), radius, kCircleSegments);
+    }
+
+    void AppendOrientedBoxWireframe(
+        std::vector<float>& vertices,
+        const glm::vec3& center,
+        const glm::quat& rotation,
+        const glm::vec3& halfExtents)
+    {
+        const glm::mat3 rotationMatrix = glm::mat3_cast(rotation);
+        const float signs[2] = {-1.0f, 1.0f};
+        glm::vec3 corners[8];
+
+        int cornerIndex = 0;
+        for (float sx : signs)
+        {
+            for (float sy : signs)
+            {
+                for (float sz : signs)
+                {
+                    const glm::vec3 localCorner = glm::vec3(sx, sy, sz) * halfExtents;
+                    corners[cornerIndex++] = center + rotationMatrix * localCorner;
+                }
+            }
+        }
+
+        constexpr int edges[12][2] = {
+            {0, 1}, {1, 3}, {3, 2}, {2, 0},
+            {4, 5}, {5, 7}, {7, 6}, {6, 4},
+            {0, 4}, {1, 5}, {2, 6}, {3, 7},
+        };
+
+        for (const auto& edge : edges)
+        {
+            AppendLine(vertices, corners[edge[0]], corners[edge[1]]);
+        }
+    }
+
+    void AppendColliderGizmo(
+        std::vector<float>& vertices,
+        const ColliderComponent& collider,
+        const glm::mat4& worldMatrix)
+    {
+        glm::vec3 worldPosition;
+        glm::quat worldRotation;
+        glm::vec3 worldScale;
+        DecomposeWorldMatrix(worldMatrix, worldPosition, worldRotation, worldScale);
+        const glm::vec3 colliderCenter = glm::vec3(worldMatrix * glm::vec4(collider.offset, 1.0f));
+
+        const glm::vec3 absScale = glm::abs(worldScale);
+        if (collider.shape == ColliderShape::Sphere)
+        {
+            const float radius =
+                collider.radius * std::max(absScale.x, std::max(absScale.y, absScale.z));
+            AppendSphereWireframe(vertices, colliderCenter, std::max(radius, 0.01f));
+            return;
+        }
+
+        const glm::vec3 scaledHalfExtents = glm::max(collider.halfExtents * absScale, glm::vec3(0.01f));
+        AppendOrientedBoxWireframe(vertices, colliderCenter, worldRotation, scaledHalfExtents);
+    }
+}
+
+ColliderGizmoRenderer::ColliderGizmoRenderer()
+    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
+{
+    glGenVertexArrays(1, &m_vao);
+    glGenBuffers(1, &m_vbo);
+
+    glBindVertexArray(m_vao);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
+    glEnableVertexAttribArray(0);
+    glBindVertexArray(0);
+}
+
+ColliderGizmoRenderer::~ColliderGizmoRenderer()
+{
+    glDeleteVertexArrays(1, &m_vao);
+    glDeleteBuffers(1, &m_vbo);
+}
+
+void ColliderGizmoRenderer::Draw(
+    const Camera& camera,
+    const std::vector<SceneObject>& objects,
+    const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
+    const std::vector<int>& selectedObjectIndices) const
+{
+    if (objects.empty())
+    {
+        return;
+    }
+
+    m_shader->Use();
+    m_shader->SetMat4("uView", camera.GetViewMatrix());
+    m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
+
+    glBindVertexArray(m_vao);
+
+    for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
+    {
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.HasCollider())
+        {
+            continue;
+        }
+
+        const bool selected = std::find(
+                                  selectedObjectIndices.begin(),
+                                  selectedObjectIndices.end(),
+                                  objectIndex)
+            != selectedObjectIndices.end();
+        if (!selected)
+        {
+            continue;
+        }
+
+        std::vector<float> vertices;
+        AppendColliderGizmo(vertices, object.GetCollider(), getWorldMatrix(objectIndex));
+        if (vertices.empty())
+        {
+            continue;
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+
+        m_shader->SetVec3("uColor", GizmoColor(true));
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
+    }
+
+    glBindVertexArray(0);
+}

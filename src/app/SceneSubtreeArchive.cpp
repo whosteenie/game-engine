@@ -147,6 +147,21 @@ namespace
             archived.light = source.GetLight();
         }
 
+        if (source.HasCamera())
+        {
+            archived.camera = source.GetCamera();
+        }
+
+        if (source.HasRigidBody())
+        {
+            archived.rigidBody = source.GetRigidBody();
+        }
+
+        if (source.HasCollider())
+        {
+            archived.collider = source.GetCollider();
+        }
+
         if (!source.GetImportAssetPath().empty() && source.GetImportNodeIndex() >= 0)
         {
             archived.isImportedMesh = true;
@@ -188,6 +203,24 @@ namespace
             lightClone = archived.light;
         }
 
+        std::optional<CameraComponent> cameraClone;
+        if (archived.camera.has_value())
+        {
+            cameraClone = archived.camera;
+        }
+
+        std::optional<RigidBodyComponent> rigidBodyClone;
+        if (archived.rigidBody.has_value())
+        {
+            rigidBodyClone = archived.rigidBody;
+        }
+
+        std::optional<ColliderComponent> colliderClone;
+        if (archived.collider.has_value())
+        {
+            colliderClone = archived.collider;
+        }
+
         std::unique_ptr<Material> materialClone;
         if (archived.material)
         {
@@ -206,6 +239,9 @@ namespace
             -1,
             archived.siblingOrder,
             std::move(lightClone),
+            std::move(cameraClone),
+            std::move(rigidBodyClone),
+            std::move(colliderClone),
             archived.id);
 
         if (!archived.isImportedMesh)
@@ -443,6 +479,21 @@ SceneSubtreeArchive CloneSubtreeArchive(const SceneSubtreeArchive& source)
         if (archivedObject.light.has_value())
         {
             copy.light = archivedObject.light;
+        }
+
+        if (archivedObject.camera.has_value())
+        {
+            copy.camera = archivedObject.camera;
+        }
+
+        if (archivedObject.rigidBody.has_value())
+        {
+            copy.rigidBody = archivedObject.rigidBody;
+        }
+
+        if (archivedObject.collider.has_value())
+        {
+            copy.collider = archivedObject.collider;
         }
 
         clone.removedObjects.push_back(std::move(copy));

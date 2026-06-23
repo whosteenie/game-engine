@@ -5,6 +5,8 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 
+#include <algorithm>
+
 namespace
 {
     bool HasPersistedDockLayout(ImGuiID dockspaceId)
@@ -14,11 +16,16 @@ namespace
     }
 }
 
-void EditorDockSpace::Begin()
+void EditorDockSpace::Begin(const float topToolbarHeight)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    ImVec2 hostPos = viewport->WorkPos;
+    ImVec2 hostSize = viewport->WorkSize;
+    hostPos.y += topToolbarHeight;
+    hostSize.y = std::max(0.0f, hostSize.y - topToolbarHeight);
+
+    ImGui::SetNextWindowPos(hostPos);
+    ImGui::SetNextWindowSize(hostSize);
     ImGui::SetNextWindowViewport(viewport->ID);
 
     constexpr ImGuiWindowFlags hostFlags =
@@ -33,8 +40,7 @@ void EditorDockSpace::Begin()
     ImGui::PopStyleVar(3);
 
     const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
-    constexpr ImGuiDockNodeFlags kDockSpaceFlags = ImGuiDockNodeFlags_NoDockingOverCentralNode;
-    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), kDockSpaceFlags);
+    ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
     if (!m_layoutBuilt)
     {
@@ -51,6 +57,17 @@ void EditorDockSpace::Begin()
 void EditorDockSpace::End()
 {
     ImGui::End();
+}
+
+void EditorDockSpace::AfterEditorPanels()
+{
+    if (!m_layoutBuilt)
+    {
+        return;
+    }
+
+    const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
+    EditorDockLayout::AllowViewportUndocking(dockspaceId);
 }
 
 namespace ImGui

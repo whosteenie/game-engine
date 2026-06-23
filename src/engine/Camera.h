@@ -23,6 +23,8 @@ public:
     void SetPosition(const glm::vec3& position);
     void SetOrientation(float yaw, float pitch);
     void SetOrientationFromDirection(const glm::vec3& direction);
+    void SetLens(float fovDegrees, float nearPlane, float farPlane);
+    void SetAspect(float aspect);
 
     glm::mat4 BuildViewMatrixLookingAt(const glm::vec3& target, float distance) const;
     void ApplyViewManipulateResult(const glm::mat4& view, const glm::vec3& target, float distance);
@@ -47,5 +49,5 @@ private:
     float m_fov = 45.0f;
     float m_aspect = 1.0f;
     float m_near = 0.1f;
-    float m_far = 100.0f;
+    float m_far = 10000.0f;
 };

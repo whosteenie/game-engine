@@ -118,6 +118,26 @@ endif()
 
 
 
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
+set(INTERPROCEDURAL_OPTIMIZATION OFF CACHE BOOL "" FORCE)
+set(OVERRIDE_CXX_FLAGS OFF CACHE BOOL "" FORCE)
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG v5.3.0
+    SOURCE_SUBDIR Build
+)
+
+FetchContent_MakeAvailable(JoltPhysics)
+
+
+
 add_library(imgui_lib STATIC
 
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -186,6 +206,7 @@ add_executable(game-engine
     src/app/EditorDockLayout.cpp
 
     src/app/MainMenuBar.cpp
+    src/app/EditorTopToolbar.cpp
 
     src/app/EditorClipboard.cpp
 
@@ -202,6 +223,12 @@ add_executable(game-engine
     src/app/ProjectEditorState.cpp
 
     src/app/ProjectSession.cpp
+
+    src/app/PlayModeController.cpp
+
+    src/app/PhysicsWorld.cpp
+
+    src/app/SceneComponentCatalog.cpp
 
     src/app/SceneProjectIO.cpp
 
@@ -225,9 +252,12 @@ add_executable(game-engine
 
     src/app/SceneViewportPanel.cpp
 
+    src/app/GameViewportPanel.cpp
+
     src/app/SceneEditor.cpp
 
     src/app/Scene.cpp
+    src/app/SceneCamera.cpp
 
     src/engine/Camera.cpp
 
@@ -240,6 +270,11 @@ add_executable(game-engine
     src/engine/Light.cpp
 
     src/engine/LightComponent.cpp
+    src/engine/CameraComponent.cpp
+
+    src/engine/ColliderComponent.cpp
+
+    src/engine/RigidBodyComponent.cpp
 
     src/engine/SceneLighting.cpp
 
@@ -287,6 +322,10 @@ add_executable(game-engine
 
     src/engine/GridRenderer.cpp
 
+    src/engine/CameraGizmoRenderer.cpp
+
+    src/engine/ColliderGizmoRenderer.cpp
+
     src/engine/LightGizmoRenderer.cpp
 
     src/primitives/Cube.cpp
@@ -313,7 +352,9 @@ target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb sr
 
 find_package(OpenGL REQUIRED)
 
-target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib nlohmann_json::nlohmann_json)
+target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib nlohmann_json::nlohmann_json Jolt)
+
+target_compile_definitions(game-engine PRIVATE NOMINMAX)
 
 if(WIN32)
     target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32)

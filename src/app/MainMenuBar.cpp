@@ -4,6 +4,7 @@
 #include "app/EditorClipboard.h"
 #include "app/EditorSettings.h"
 #include "app/MainMenuBar.h"
+#include "app/PlayModeController.h"
 #include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
@@ -283,6 +284,38 @@ namespace
             }
         }
     }
+
+    void HandleGameMenuShortcuts(Scene& scene, ProjectSession& project, PlayModeController& playMode)
+    {
+        if (!AllowFileMenuShortcuts())
+        {
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_P, false))
+        {
+            if (!playMode.TogglePlayStop(scene, project.GetProjectRootDirectory())
+                && !playMode.GetLastError().empty())
+            {
+                project.SetStatusMessage(playMode.GetLastError());
+            }
+        }
+    }
+
+    void HandleGameObjectMenuShortcuts(const std::function<void()>& alignSelectionToView)
+    {
+        if (!AllowFileMenuShortcuts() || !alignSelectionToView)
+        {
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F, false))
+        {
+            alignSelectionToView();
+        }
+    }
 }
 
 void MainMenuBar::Draw(
@@ -297,6 +330,8 @@ void MainMenuBar::Draw(
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
     const std::function<void()>& requestResetLayout,
+    const std::function<void()>& alignSelectionToView,
+    PlayModeController& playMode,
     UndoStack& undoStack,
     EditorClipboard& clipboard,
     bool allowUndoRedo)
@@ -311,6 +346,8 @@ void MainMenuBar::Draw(
         undoStack,
         clipboard);
     HandleEditMenuShortcuts(scene, project, undoStack, clipboard, allowUndoRedo);
+    HandleGameMenuShortcuts(scene, project, playMode);
+    HandleGameObjectMenuShortcuts(alignSelectionToView);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -321,6 +358,11 @@ void MainMenuBar::Draw(
     {
         if (ImGui::MenuItem("New Project..."))
         {
+            if (playMode.IsActive())
+            {
+                playMode.TogglePlayStop(scene, project.GetProjectRootDirectory());
+            }
+
             if (requestNewProject)
             {
                 requestNewProject();
@@ -329,6 +371,11 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
+            if (playMode.IsActive())
+            {
+                playMode.TogglePlayStop(scene, project.GetProjectRootDirectory());
+            }
+
             OpenProject(scene, project, settings, editorState, applyEditorState, undoStack, clipboard);
         }
 
@@ -441,6 +488,7 @@ void MainMenuBar::Draw(
         DrawPanelToggle("Hierarchy", panels.hierarchy);
         DrawPanelToggle("Inspector", panels.inspector);
         DrawPanelToggle("Scene View", panels.sceneView);
+        DrawPanelToggle("Game View", panels.gameView);
         DrawPanelToggle("Toolbar", panels.toolbar);
         DrawPanelToggle("Renderer Tuning", panels.lighting);
         DrawPanelToggle("Project", panels.project);
@@ -451,6 +499,19 @@ void MainMenuBar::Draw(
             if (requestResetLayout)
             {
                 requestResetLayout();
+            }
+        }
+
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("GameObject"))
+    {
+        if (ImGui::MenuItem("Align to View", "Ctrl+Shift+F"))
+        {
+            if (alignSelectionToView)
+            {
+                alignSelectionToView();
             }
         }
 

@@ -6,11 +6,15 @@
 #include "app/InspectorMultiEdit.h"
 #include "app/InspectorTransform.h"
 #include "app/Scene.h"
+#include "app/SceneComponentCatalog.h"
 #include "app/UndoCommand.h"
+#include "engine/ColliderComponent.h"
 #include "engine/FileDialog.h"
+#include "engine/CameraComponent.h"
 #include "engine/Light.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/SceneObject.h"
 #include "engine/Texture.h"
 #include "engine/TextureCache.h"
@@ -29,6 +33,8 @@
 
 namespace
 {
+    constexpr float kMinColliderDimension = 0.05f;
+
     constexpr float kTransformRowLabelWidth = 68.0f;
 
     const char* const kAxisLabels[] = {"X", "Y", "Z"};
@@ -815,6 +821,161 @@ namespace
         ImGui::PopID();
     }
 
+    void DrawCameraSection(Scene& scene, int objectIndex)
+    {
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        CameraComponent& camera = object.GetCamera();
+
+        if (ImGui::SliderFloat("FOV", &camera.fovDegrees, 15.0f, 120.0f))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::DragFloat("Near", &camera.nearPlane, 0.01f, 0.01f, camera.farPlane - 0.01f))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::DragFloat("Far", &camera.farPlane, 1.0f, camera.nearPlane + 0.01f, 10000.0f))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::Checkbox("Enabled", &camera.enabled))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::DragInt("Depth", &camera.depth, 1.0f, -100, 100))
+        {
+            scene.MarkDirty();
+        }
+
+        bool isMain = camera.isMain;
+        if (ImGui::Checkbox("Main Camera", &isMain))
+        {
+            if (isMain != camera.isMain)
+            {
+                camera.isMain = isMain;
+                if (camera.isMain)
+                {
+                    scene.EnsureUniqueMainCamera(objectIndex);
+                }
+
+                scene.MarkDirty();
+            }
+        }
+    }
+
+    void DrawRigidBodySection(Scene& scene, int objectIndex)
+    {
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        RigidBodyComponent& rigidBody = object.GetRigidBody();
+
+        if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.001f, 10000.0f))
+        {
+            rigidBody.mass = std::max(rigidBody.mass, 0.001f);
+            scene.MarkDirty();
+        }
+
+        if (ImGui::Checkbox("Use Gravity", &rigidBody.useGravity))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::Checkbox("Is Kinematic", &rigidBody.isKinematic))
+        {
+            scene.MarkDirty();
+        }
+    }
+
+    void DrawColliderSection(Scene& scene, int objectIndex)
+    {
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        ColliderComponent& collider = object.GetCollider();
+
+        int shapeIndex = static_cast<int>(collider.shape);
+        if (ImGui::Combo("Shape", &shapeIndex, "Box\0Sphere\0", 2))
+        {
+            collider.shape = static_cast<ColliderShape>(shapeIndex);
+            scene.MarkDirty();
+        }
+
+        if (collider.shape == ColliderShape::Box)
+        {
+            if (ImGui::DragFloat3(
+                    "Half Extents",
+                    &collider.halfExtents.x,
+                    0.01f,
+                    kMinColliderDimension,
+                    1000.0f))
+            {
+                collider.halfExtents = glm::max(collider.halfExtents, glm::vec3(kMinColliderDimension));
+                scene.MarkDirty();
+            }
+        }
+        else
+        {
+            if (ImGui::DragFloat("Radius", &collider.radius, 0.01f, kMinColliderDimension, 1000.0f))
+            {
+                collider.radius = std::max(collider.radius, kMinColliderDimension);
+                scene.MarkDirty();
+            }
+        }
+
+        if (ImGui::DragFloat3("Offset", &collider.offset.x, 0.01f))
+        {
+            scene.MarkDirty();
+        }
+
+        if (ImGui::Checkbox("Is Trigger", &collider.isTrigger))
+        {
+            scene.MarkDirty();
+        }
+    }
+
+    void DrawComponentRemoveContext(Scene& scene, int objectIndex, SceneSystemComponentType type)
+    {
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem("Remove Component"))
+            {
+                RemoveSceneSystemComponent(scene, objectIndex, type);
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
+    void DrawAddComponentFooter(Scene& scene, int objectIndex)
+    {
+        std::vector<SceneSystemComponentType> addableComponents;
+        GetAddableSceneSystemComponents(scene.GetObject(static_cast<std::size_t>(objectIndex)), addableComponents);
+        if (addableComponents.empty())
+        {
+            return;
+        }
+
+        ImGui::Separator();
+        if (ImGui::Button("Add Component"))
+        {
+            ImGui::OpenPopup("AddComponentPopup");
+        }
+
+        if (ImGui::BeginPopup("AddComponentPopup"))
+        {
+            for (SceneSystemComponentType type : addableComponents)
+            {
+                if (ImGui::MenuItem(GetSceneSystemComponentLabel(type)))
+                {
+                    AddSceneSystemComponent(scene, objectIndex, type);
+                }
+            }
+
+            ImGui::EndPopup();
+        }
+    }
+
     void DrawMultiObjectSection(
         Scene& scene,
         const std::vector<int>& selectedIndices,
@@ -838,7 +999,8 @@ namespace
                 castShadowValues.push_back(object.CastsShadow());
                 receiveShadowValues.push_back(object.ReceivesShadow());
             }
-            else if (!object.HasLight())
+            else if (!object.HasLight() && !object.HasCamera()
+                && !object.HasRigidBody() && !object.HasCollider())
             {
                 allRenderable = false;
             }
@@ -1006,14 +1168,21 @@ namespace
             DrawTransformSection(selectedObject, scene, editContext);
         }
 
-        if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
+        if (selectedObject.HasLight())
         {
-            ImGui::PushID("LightSection");
-            DrawLightSection(scene, selectedIndex, lightEditContext);
-            ImGui::PopID();
+            const bool lightOpen = ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen);
+            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Light);
+            if (lightOpen)
+            {
+                ImGui::PushID("LightSection");
+                DrawLightSection(scene, selectedIndex, lightEditContext);
+                ImGui::PopID();
+            }
         }
 
-        if (!selectedObject.HasLight() && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
+        if (!selectedObject.HasLight() && !selectedObject.HasCamera()
+            && !selectedObject.HasRigidBody() && !selectedObject.HasCollider()
+            && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
         {
             if (selectedObject.IsRenderable())
             {
@@ -1075,6 +1244,44 @@ namespace
             DrawMaterialSection(selectedObject.GetMaterial(), scene, materialEditContext);
             ImGui::PopID();
         }
+
+        if (selectedObject.HasCamera())
+        {
+            const bool cameraOpen = ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen);
+            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Camera);
+            if (cameraOpen)
+            {
+                ImGui::PushID("CameraSection");
+                DrawCameraSection(scene, selectedIndex);
+                ImGui::PopID();
+            }
+        }
+
+        if (selectedObject.HasRigidBody())
+        {
+            const bool rigidBodyOpen = ImGui::CollapsingHeader("Rigid Body", ImGuiTreeNodeFlags_DefaultOpen);
+            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::RigidBody);
+            if (rigidBodyOpen)
+            {
+                ImGui::PushID("RigidBodySection");
+                DrawRigidBodySection(scene, selectedIndex);
+                ImGui::PopID();
+            }
+        }
+
+        if (selectedObject.HasCollider())
+        {
+            const bool colliderOpen = ImGui::CollapsingHeader("Collider", ImGuiTreeNodeFlags_DefaultOpen);
+            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Collider);
+            if (colliderOpen)
+            {
+                ImGui::PushID("ColliderSection");
+                DrawColliderSection(scene, selectedIndex);
+                ImGui::PopID();
+            }
+        }
+
+        DrawAddComponentFooter(scene, selectedIndex);
     }
 
     void DrawMultiObjectInspector(

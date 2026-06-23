@@ -19,6 +19,9 @@ SceneObject::SceneObject(
     int parentIndex,
     int siblingOrder,
     std::optional<LightComponent> light,
+    std::optional<CameraComponent> camera,
+    std::optional<RigidBodyComponent> rigidBody,
+    std::optional<ColliderComponent> collider,
     SceneObjectId id)
     : m_id(id),
       m_name(std::move(name)),
@@ -31,7 +34,10 @@ SceneObject::SceneObject(
       m_siblingOrder(siblingOrder),
       m_castShadow(castShadow),
       m_receiveShadow(receiveShadow),
-      m_light(std::move(light))
+      m_light(std::move(light)),
+      m_camera(std::move(camera)),
+      m_rigidBody(std::move(rigidBody)),
+      m_collider(std::move(collider))
 {
 }
 
@@ -143,6 +149,111 @@ void SceneObject::SetLight(LightComponent light)
 void SceneObject::ClearLight()
 {
     m_light.reset();
+}
+
+bool SceneObject::HasCamera() const
+{
+    return m_camera.has_value();
+}
+
+CameraComponent& SceneObject::GetCamera()
+{
+    if (!m_camera.has_value())
+    {
+        throw std::logic_error("SceneObject has no camera component.");
+    }
+
+    return *m_camera;
+}
+
+const CameraComponent& SceneObject::GetCamera() const
+{
+    if (!m_camera.has_value())
+    {
+        throw std::logic_error("SceneObject has no camera component.");
+    }
+
+    return *m_camera;
+}
+
+void SceneObject::SetCamera(CameraComponent camera)
+{
+    m_camera = std::move(camera);
+}
+
+void SceneObject::ClearCamera()
+{
+    m_camera.reset();
+}
+
+bool SceneObject::HasRigidBody() const
+{
+    return m_rigidBody.has_value();
+}
+
+RigidBodyComponent& SceneObject::GetRigidBody()
+{
+    if (!m_rigidBody.has_value())
+    {
+        throw std::logic_error("SceneObject has no rigid body component.");
+    }
+
+    return *m_rigidBody;
+}
+
+const RigidBodyComponent& SceneObject::GetRigidBody() const
+{
+    if (!m_rigidBody.has_value())
+    {
+        throw std::logic_error("SceneObject has no rigid body component.");
+    }
+
+    return *m_rigidBody;
+}
+
+void SceneObject::SetRigidBody(RigidBodyComponent rigidBody)
+{
+    m_rigidBody = std::move(rigidBody);
+}
+
+void SceneObject::ClearRigidBody()
+{
+    m_rigidBody.reset();
+}
+
+bool SceneObject::HasCollider() const
+{
+    return m_collider.has_value();
+}
+
+ColliderComponent& SceneObject::GetCollider()
+{
+    if (!m_collider.has_value())
+    {
+        throw std::logic_error("SceneObject has no collider component.");
+    }
+
+    return *m_collider;
+}
+
+const ColliderComponent& SceneObject::GetCollider() const
+{
+    if (!m_collider.has_value())
+    {
+        throw std::logic_error("SceneObject has no collider component.");
+    }
+
+    return *m_collider;
+}
+
+void SceneObject::SetCollider(ColliderComponent collider)
+{
+    m_collider = std::move(collider);
+}
+
+void SceneObject::ClearCollider()
+{
+    m_collider.reset();
 }
 
 int SceneObject::GetParentIndex() const

@@ -5,4 +5,5 @@
 namespace EditorDockLayout
 {
     void BuildDefaultLayout(ImGuiID dockspaceId);
+    void AllowViewportUndocking(ImGuiID dockspaceId);
 }

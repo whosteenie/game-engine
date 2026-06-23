@@ -1,6 +1,9 @@
 #pragma once
 
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
 #include "engine/LightComponent.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
 #include "engine/SceneObjectId.h"
 #include "engine/Transform.h"
@@ -27,6 +30,9 @@ public:
         int parentIndex = -1,
         int siblingOrder = 0,
         std::optional<LightComponent> light = std::nullopt,
+        std::optional<CameraComponent> camera = std::nullopt,
+        std::optional<RigidBodyComponent> rigidBody = std::nullopt,
+        std::optional<ColliderComponent> collider = std::nullopt,
         SceneObjectId id = kInvalidSceneObjectId);
 
     SceneObjectId GetId() const;
@@ -53,6 +59,24 @@ public:
     const LightComponent& GetLight() const;
     void SetLight(LightComponent light);
     void ClearLight();
+
+    bool HasCamera() const;
+    CameraComponent& GetCamera();
+    const CameraComponent& GetCamera() const;
+    void SetCamera(CameraComponent camera);
+    void ClearCamera();
+
+    bool HasRigidBody() const;
+    RigidBodyComponent& GetRigidBody();
+    const RigidBodyComponent& GetRigidBody() const;
+    void SetRigidBody(RigidBodyComponent rigidBody);
+    void ClearRigidBody();
+
+    bool HasCollider() const;
+    ColliderComponent& GetCollider();
+    const ColliderComponent& GetCollider() const;
+    void SetCollider(ColliderComponent collider);
+    void ClearCollider();
 
     int GetParentIndex() const;
     void SetParentIndex(int parentIndex);
@@ -89,6 +113,9 @@ private:
     bool m_castShadow = true;
     bool m_receiveShadow = true;
     std::optional<LightComponent> m_light;
+    std::optional<CameraComponent> m_camera;
+    std::optional<RigidBodyComponent> m_rigidBody;
+    std::optional<ColliderComponent> m_collider;
     std::string m_importAssetPath;
     int m_importNodeIndex = -1;
 };

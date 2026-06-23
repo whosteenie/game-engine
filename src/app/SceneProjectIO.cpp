@@ -7,7 +7,10 @@
 #include "app/Scene.h"
 #include "engine/Constants.h"
 #include "engine/IBL.h"
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
 #include "engine/LightComponent.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
 #include "engine/Mesh.h"
 #include "engine/ModelImporter.h"
@@ -220,6 +223,112 @@ namespace SceneProjectIODetail
         light.outerCutoffDegrees = value.value("outerCutoffDegrees", light.outerCutoffDegrees);
         light.castsShadow = value.value("castsShadow", light.castsShadow);
         return light;
+    }
+
+    json SerializeCamera(const CameraComponent& camera)
+    {
+        return json{
+            {"fovDegrees", camera.fovDegrees},
+            {"nearPlane", camera.nearPlane},
+            {"farPlane", camera.farPlane},
+            {"enabled", camera.enabled},
+            {"depth", camera.depth},
+            {"isMain", camera.isMain},
+        };
+    }
+
+    CameraComponent DeserializeCamera(const json& value)
+    {
+        CameraComponent camera = MakeDefaultCameraComponent();
+        camera.fovDegrees = value.value("fovDegrees", camera.fovDegrees);
+        camera.nearPlane = value.value("nearPlane", camera.nearPlane);
+        camera.farPlane = value.value("farPlane", camera.farPlane);
+        camera.enabled = value.value("enabled", camera.enabled);
+        camera.depth = value.value("depth", camera.depth);
+        camera.isMain = value.value("isMain", camera.isMain);
+        return camera;
+    }
+
+    const char* ColliderShapeToString(ColliderShape shape)
+    {
+        switch (shape)
+        {
+        case ColliderShape::Box:
+            return "box";
+        case ColliderShape::Sphere:
+            return "sphere";
+        }
+
+        return "box";
+    }
+
+    bool ColliderShapeFromString(const std::string& value, ColliderShape& outShape)
+    {
+        if (value == "box")
+        {
+            outShape = ColliderShape::Box;
+            return true;
+        }
+
+        if (value == "sphere")
+        {
+            outShape = ColliderShape::Sphere;
+            return true;
+        }
+
+        return false;
+    }
+
+    json SerializeCollider(const ColliderComponent& collider)
+    {
+        return json{
+            {"shape", ColliderShapeToString(collider.shape)},
+            {"offset", Vec3ToJson(collider.offset)},
+            {"halfExtents", Vec3ToJson(collider.halfExtents)},
+            {"radius", collider.radius},
+            {"isTrigger", collider.isTrigger},
+        };
+    }
+
+    ColliderComponent DeserializeCollider(const json& value)
+    {
+        ColliderComponent collider = MakeDefaultColliderComponent();
+        ColliderShape shape = ColliderShape::Box;
+        if (value.contains("shape"))
+        {
+            ColliderShapeFromString(value.at("shape").get<std::string>(), shape);
+        }
+
+        collider.shape = shape;
+        if (value.contains("offset"))
+        {
+            collider.offset = Vec3FromJson(value.at("offset"));
+        }
+        if (value.contains("halfExtents"))
+        {
+            collider.halfExtents = Vec3FromJson(value.at("halfExtents"));
+        }
+        collider.radius = value.value("radius", collider.radius);
+        collider.isTrigger = value.value("isTrigger", collider.isTrigger);
+        return collider;
+    }
+
+    json SerializeRigidBody(const RigidBodyComponent& rigidBody)
+    {
+        return json{
+            {"mass", rigidBody.mass},
+            {"useGravity", rigidBody.useGravity},
+            {"isKinematic", rigidBody.isKinematic},
+        };
+    }
+
+    RigidBodyComponent DeserializeRigidBody(const json& value)
+    {
+        RigidBodyComponent rigidBody = MakeDefaultRigidBodyComponent();
+        rigidBody.mass = value.value("mass", rigidBody.mass);
+        rigidBody.useGravity = value.value("useGravity", rigidBody.useGravity);
+        rigidBody.isKinematic = value.value("isKinematic", rigidBody.isKinematic);
+        return rigidBody;
     }
 
     json SerializeMaterial(const Material& material, const std::string& projectRoot)
@@ -788,6 +897,7 @@ namespace SceneProjectIODetail
                  {"lighting", editorState.showLighting},
                  {"projectFiles", editorState.showProjectFiles},
                  {"sceneView", editorState.showSceneView},
+                 {"gameView", editorState.showGameView},
              }},
             {"hierarchyOpenNodes", SerializeHierarchyOpenStates(editorState.hierarchyNodeOpenStates)},
             {"projectFiles",
@@ -825,6 +935,7 @@ namespace SceneProjectIODetail
             editorState.showLighting = panelsValue.value("lighting", editorState.showLighting);
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
             editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
+            editorState.showGameView = panelsValue.value("gameView", editorState.showGameView);
         }
 
         if (editorValue.contains("hierarchyOpenNodes"))
@@ -946,6 +1057,21 @@ namespace SceneProjectIODetail
                 entry["light"] = SerializeLight(object.GetLight());
             }
 
+            if (object.HasCamera())
+            {
+                entry["camera"] = SerializeCamera(object.GetCamera());
+            }
+
+            if (object.HasRigidBody())
+            {
+                entry["rigidBody"] = SerializeRigidBody(object.GetRigidBody());
+            }
+
+            if (object.HasCollider())
+            {
+                entry["collider"] = SerializeCollider(object.GetCollider());
+            }
+
             objects.push_back(std::move(entry));
         }
 
@@ -965,6 +1091,7 @@ namespace SceneProjectIODetail
             {"capsule", counters.capsule},
             {"plane", counters.plane},
             {"empty", counters.empty},
+            {"camera", counters.camera},
             {"import", counters.import},
         };
     }
@@ -981,6 +1108,7 @@ namespace SceneProjectIODetail
         values.capsule = counters.value("capsule", values.capsule);
         values.plane = counters.value("plane", values.plane);
         values.empty = counters.value("empty", values.empty);
+        values.camera = counters.value("camera", values.camera);
         values.import = counters.value("import", values.import);
         scene.SetSpawnCounters(values);
     }
@@ -1078,6 +1206,24 @@ namespace SceneProjectIODetail
                 light = DeserializeLight(objectValue.at("light"));
             }
 
+            std::optional<CameraComponent> camera;
+            if (objectValue.contains("camera"))
+            {
+                camera = DeserializeCamera(objectValue.at("camera"));
+            }
+
+            std::optional<RigidBodyComponent> rigidBody;
+            if (objectValue.contains("rigidBody"))
+            {
+                rigidBody = DeserializeRigidBody(objectValue.at("rigidBody"));
+            }
+
+            std::optional<ColliderComponent> collider;
+            if (objectValue.contains("collider"))
+            {
+                collider = DeserializeCollider(objectValue.at("collider"));
+            }
+
             Transform transform;
             const json& transformValue = objectValue.at("transform");
             transform.position = Vec3FromJson(transformValue.at("position"));
@@ -1106,6 +1252,9 @@ namespace SceneProjectIODetail
                 objectValue.at("parentIndex").get<int>(),
                 objectValue.at("siblingOrder").get<int>(),
                 std::move(light),
+                std::move(camera),
+                std::move(rigidBody),
+                std::move(collider),
                 objectId);
 
             SceneObject& createdObject = sceneObjects.back();
@@ -1121,6 +1270,25 @@ namespace SceneProjectIODetail
             else
             {
                 scene.FinalizeNewObject(createdObject);
+            }
+        }
+
+        int mainCameraIndex = -1;
+        for (std::size_t index = 0; index < sceneObjects.size(); ++index)
+        {
+            SceneObject& object = sceneObjects[index];
+            if (!object.HasCamera() || !object.GetCamera().isMain)
+            {
+                continue;
+            }
+
+            if (mainCameraIndex >= 0)
+            {
+                object.GetCamera().isMain = false;
+            }
+            else
+            {
+                mainCameraIndex = static_cast<int>(index);
             }
         }
 

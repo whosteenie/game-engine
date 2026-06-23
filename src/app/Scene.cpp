@@ -20,7 +20,10 @@
 #include "primitives/Capsule.h"
 #include "primitives/Plane.h"
 #include "engine/GridRenderer.h"
+#include "engine/CameraComponent.h"
+#include "engine/CameraGizmoRenderer.h"
 #include "engine/LightComponent.h"
+#include "engine/ColliderGizmoRenderer.h"
 #include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
 #include "engine/ScreenSpaceEffects.h"
@@ -37,13 +40,43 @@
 #include <unordered_map>
 #include <unordered_set>
 
+namespace
+{
+    void CopyRendererSettings(const Scene& source, Scene& destination)
+    {
+        destination.GetIBL().SetEnvironmentIntensity(source.GetIBL().GetEnvironmentIntensity());
+
+        const ScreenSpaceEffects& sourceEffects = source.GetScreenSpaceEffects();
+        ScreenSpaceEffects& destinationEffects = destination.GetScreenSpaceEffects();
+        destinationEffects.SetEnabled(sourceEffects.IsEnabled());
+        destinationEffects.SetSsaoEnabled(sourceEffects.IsSsaoEnabled());
+        destinationEffects.SetContactShadowsEnabled(sourceEffects.IsContactShadowsEnabled());
+        destinationEffects.SetSsaoRadius(sourceEffects.GetSsaoRadius());
+        destinationEffects.SetSsaoBias(sourceEffects.GetSsaoBias());
+        destinationEffects.SetSsaoPower(sourceEffects.GetSsaoPower());
+        destinationEffects.SetContactShadowDistance(sourceEffects.GetContactShadowDistance());
+        destinationEffects.SetContactShadowSteps(sourceEffects.GetContactShadowSteps());
+        destinationEffects.SetAoStrength(sourceEffects.GetAoStrength());
+        destinationEffects.SetContactStrength(sourceEffects.GetContactStrength());
+        destinationEffects.SetExposure(sourceEffects.GetExposure());
+        destinationEffects.SetTonemapMode(sourceEffects.GetTonemapMode());
+        destinationEffects.SetBloomEnabled(sourceEffects.IsBloomEnabled());
+        destinationEffects.SetBloomThreshold(sourceEffects.GetBloomThreshold());
+        destinationEffects.SetBloomSoftKnee(sourceEffects.GetBloomSoftKnee());
+        destinationEffects.SetBloomIntensity(sourceEffects.GetBloomIntensity());
+        destinationEffects.SetBloomBlurRadius(sourceEffects.GetBloomBlurRadius());
+    }
+}
+
 Scene::Scene()
     : m_cubeMesh(CreateCubeMesh()),
       m_sphereMesh(CreateSphereMesh()),
       m_cylinderMesh(CreateCylinderMesh()),
       m_capsuleMesh(CreateCapsuleMesh()),
       m_planeMesh(CreatePlaneMesh(FloorHalfExtent)),
+      m_cameraGizmos(std::make_unique<CameraGizmoRenderer>()),
       m_grid(std::make_unique<GridRenderer>()),
+      m_colliderGizmos(std::make_unique<ColliderGizmoRenderer>()),
       m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
       m_sceneEditor(std::make_unique<SceneEditor>()),
       m_shadowMap(std::make_unique<ShadowMap>()),
@@ -57,6 +90,115 @@ Scene::Scene()
 }
 
 Scene::~Scene() = default;
+
+std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
+{
+    auto clone = std::make_unique<Scene>();
+    clone->m_objects.clear();
+    clone->m_objects.reserve(source.m_objects.size());
+
+    const auto remapMesh = [&source](Mesh* sourceMesh, Scene& destination) -> Mesh* {
+        if (sourceMesh == nullptr)
+        {
+            return nullptr;
+        }
+
+        if (sourceMesh == source.m_cubeMesh.get())
+        {
+            return destination.m_cubeMesh.get();
+        }
+
+        if (sourceMesh == source.m_sphereMesh.get())
+        {
+            return destination.m_sphereMesh.get();
+        }
+
+        if (sourceMesh == source.m_cylinderMesh.get())
+        {
+            return destination.m_cylinderMesh.get();
+        }
+
+        if (sourceMesh == source.m_capsuleMesh.get())
+        {
+            return destination.m_capsuleMesh.get();
+        }
+
+        if (sourceMesh == source.m_planeMesh.get())
+        {
+            return destination.m_planeMesh.get();
+        }
+
+        return sourceMesh;
+    };
+
+    for (const SceneObject& sourceObject : source.m_objects)
+    {
+        std::unique_ptr<Material> materialClone;
+        if (sourceObject.HasMaterial())
+        {
+            materialClone = sourceObject.GetMaterial().Clone();
+        }
+
+        std::optional<LightComponent> lightClone;
+        if (sourceObject.HasLight())
+        {
+            lightClone = sourceObject.GetLight();
+        }
+
+        std::optional<CameraComponent> cameraClone;
+        if (sourceObject.HasCamera())
+        {
+            cameraClone = sourceObject.GetCamera();
+        }
+
+        std::optional<RigidBodyComponent> rigidBodyClone;
+        if (sourceObject.HasRigidBody())
+        {
+            rigidBodyClone = sourceObject.GetRigidBody();
+        }
+
+        std::optional<ColliderComponent> colliderClone;
+        if (sourceObject.HasCollider())
+        {
+            colliderClone = sourceObject.GetCollider();
+        }
+
+        clone->m_objects.emplace_back(
+            sourceObject.GetName(),
+            remapMesh(sourceObject.GetMesh(), *clone),
+            std::move(materialClone),
+            sourceObject.GetLocalBoundsMin(),
+            sourceObject.GetLocalBoundsMax(),
+            sourceObject.GetTransform(),
+            sourceObject.CastsShadow(),
+            sourceObject.ReceivesShadow(),
+            sourceObject.GetParentIndex(),
+            sourceObject.GetSiblingOrder(),
+            std::move(lightClone),
+            std::move(cameraClone),
+            std::move(rigidBodyClone),
+            std::move(colliderClone),
+            sourceObject.GetId());
+
+        SceneObject& clonedObject = clone->m_objects.back();
+        if (!sourceObject.GetImportAssetPath().empty())
+        {
+            clonedObject.SetImportSource(
+                sourceObject.GetImportAssetPath(),
+                sourceObject.GetImportNodeIndex());
+        }
+    }
+
+    clone->m_selection = source.m_selection;
+    clone->SetSpawnCounters(source.GetSpawnCounters());
+    clone->SetNextObjectIdValue(source.GetNextObjectIdValue());
+    clone->SetShowLightGizmos(source.GetShowLightGizmos());
+    clone->SetShowGrid(source.GetShowGrid());
+    clone->GetLighting() = source.GetLighting();
+    CopyRendererSettings(source, *clone);
+
+    return clone;
+}
 
 void Scene::SetupDefaultSunLight()
 {
@@ -374,6 +516,75 @@ int Scene::AddLightObject(LightType type, int parentIndex)
     FinalizeNewObject(m_objects.back());
     MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
+}
+
+int Scene::AddCameraObject(int parentIndex)
+{
+    CameraComponent cameraComponent = MakeDefaultCameraComponent();
+    Transform transform = MakeDefaultCameraTransform();
+
+    bool hasMainCamera = false;
+    for (const SceneObject& object : m_objects)
+    {
+        if (object.HasCamera() && object.GetCamera().isMain)
+        {
+            hasMainCamera = true;
+            break;
+        }
+    }
+
+    if (!hasMainCamera)
+    {
+        cameraComponent.isMain = true;
+    }
+
+    const std::string objectName = "Camera " + std::to_string(m_nextCameraNumber++);
+
+    m_objects.emplace_back(
+        objectName,
+        nullptr,
+        nullptr,
+        glm::vec3(-0.15f),
+        glm::vec3(0.15f),
+        transform,
+        false,
+        false,
+        parentIndex,
+        AllocateSiblingOrder(parentIndex),
+        std::nullopt,
+        std::move(cameraComponent));
+
+    FinalizeNewObject(m_objects.back());
+    MarkDirty();
+    return static_cast<int>(m_objects.size()) - 1;
+}
+
+void Scene::EnsureUniqueMainCamera(int objectIndex)
+{
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(m_objects.size()))
+    {
+        return;
+    }
+
+    SceneObject& object = m_objects[static_cast<std::size_t>(objectIndex)];
+    if (!object.HasCamera() || !object.GetCamera().isMain)
+    {
+        return;
+    }
+
+    for (std::size_t index = 0; index < m_objects.size(); ++index)
+    {
+        if (static_cast<int>(index) == objectIndex)
+        {
+            continue;
+        }
+
+        SceneObject& otherObject = m_objects[index];
+        if (otherObject.HasCamera() && otherObject.GetCamera().isMain)
+        {
+            otherObject.GetCamera().isMain = false;
+        }
+    }
 }
 
 glm::mat4 Scene::GetWorldMatrix(int objectIndex) const
@@ -802,6 +1013,28 @@ int Scene::DuplicateObject(int objectIndex)
             lightClone = source.GetLight();
         }
 
+        std::optional<CameraComponent> cameraClone;
+        if (source.HasCamera())
+        {
+            cameraClone = source.GetCamera();
+            if (sourceIndex == objectIndex && cameraClone->isMain)
+            {
+                cameraClone->isMain = false;
+            }
+        }
+
+        std::optional<RigidBodyComponent> rigidBodyClone;
+        if (source.HasRigidBody())
+        {
+            rigidBodyClone = source.GetRigidBody();
+        }
+
+        std::optional<ColliderComponent> colliderClone;
+        if (source.HasCollider())
+        {
+            colliderClone = source.GetCollider();
+        }
+
         m_objects.emplace_back(
             objectName,
             source.GetMesh(),
@@ -813,7 +1046,10 @@ int Scene::DuplicateObject(int objectIndex)
             source.ReceivesShadow(),
             newParentIndex,
             source.GetSiblingOrder(),
-            std::move(lightClone));
+            std::move(lightClone),
+            std::move(cameraClone),
+            std::move(rigidBodyClone),
+            std::move(colliderClone));
 
         FinalizeNewObject(m_objects.back());
         const int newIndex = static_cast<int>(m_objects.size()) - 1;
@@ -1272,6 +1508,7 @@ Scene::SpawnCounters Scene::GetSpawnCounters() const
         m_nextCapsuleNumber,
         m_nextPlaneNumber,
         m_nextEmptyNumber,
+        m_nextCameraNumber,
         m_nextImportNumber,
     };
 }
@@ -1287,6 +1524,7 @@ void Scene::SetSpawnCounters(const SpawnCounters& counters)
     m_nextCapsuleNumber = counters.capsule;
     m_nextPlaneNumber = counters.plane;
     m_nextEmptyNumber = counters.empty;
+    m_nextCameraNumber = counters.camera;
     m_nextImportNumber = counters.import;
 }
 
@@ -1770,7 +2008,8 @@ void Scene::Render(
     const Camera& camera,
     int viewportWidth,
     int viewportHeight,
-    unsigned int targetFramebuffer) const
+    unsigned int targetFramebuffer,
+    const SceneRenderOptions& options) const
 {
     GLint previousFramebuffer = 0;
     const bool renderToTarget = targetFramebuffer != 0;
@@ -1831,7 +2070,7 @@ void Scene::Render(
 
     if (usePostProcess)
     {
-        if (m_showGrid)
+        if (options.showGrid && m_showGrid)
         {
             m_grid->Draw(camera, true);
         }
@@ -1855,14 +2094,26 @@ void Scene::Render(
             glViewport(0, 0, viewportWidth, viewportHeight);
         }
 
-        m_sceneEditor->RenderSelectionOverlay(*this, camera, true);
+        if (options.showEditorOverlay)
+        {
+            m_sceneEditor->RenderSelectionOverlay(*this, camera, true);
+        }
     }
-    else if (m_showGrid)
+    else if (options.showGrid && m_showGrid)
     {
         m_grid->Draw(camera, false);
     }
 
-    if (m_showLightGizmos)
+    if (options.showCameraGizmos)
+    {
+        m_cameraGizmos->Draw(
+            camera,
+            m_objects,
+            [this](int objectIndex) { return GetWorldMatrix(objectIndex); },
+            m_selection.indices);
+    }
+
+    if (options.showLightGizmos && m_showLightGizmos)
     {
         m_lightGizmos->Draw(
             camera,
@@ -1871,7 +2122,16 @@ void Scene::Render(
             m_selection.indices);
     }
 
-    if (!usePostProcess)
+    if (options.showColliderGizmos)
+    {
+        m_colliderGizmos->Draw(
+            camera,
+            m_objects,
+            [this](int objectIndex) { return GetWorldMatrix(objectIndex); },
+            m_selection.indices);
+    }
+
+    if (!usePostProcess && options.showEditorOverlay)
     {
         m_sceneEditor->RenderSelectionOverlay(*this, camera, false);
     }

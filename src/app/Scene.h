@@ -22,7 +22,9 @@
 class Camera;
 class Input;
 class Mesh;
+class CameraGizmoRenderer;
 class GridRenderer;
+class ColliderGizmoRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
 class ScreenSpaceEffects;
@@ -37,6 +39,15 @@ enum class HierarchyInsertMode
     Before,
     After,
     AsChild
+};
+
+struct SceneRenderOptions
+{
+    bool showGrid = true;
+    bool showCameraGizmos = true;
+    bool showLightGizmos = true;
+    bool showColliderGizmos = true;
+    bool showEditorOverlay = true;
 };
 
 class Scene
@@ -60,7 +71,12 @@ public:
         const std::string& projectRoot,
         const EditorViewportRect* viewport);
 
-    void Render(const Camera& camera, int viewportWidth, int viewportHeight, unsigned int targetFramebuffer = 0) const;
+    void Render(
+        const Camera& camera,
+        int viewportWidth,
+        int viewportHeight,
+        unsigned int targetFramebuffer = 0,
+        const SceneRenderOptions& options = SceneRenderOptions{}) const;
 
     const SceneLighting& GetLighting() const;
     SceneLighting& GetLighting();
@@ -100,10 +116,14 @@ public:
     int AddObject(ScenePrimitive primitive, int parentIndex = -1);
     int AddEmptyObject(int parentIndex = -1);
     int AddLightObject(LightType type, int parentIndex = -1);
+    int AddCameraObject(int parentIndex = -1);
+    void EnsureUniqueMainCamera(int objectIndex);
     std::vector<int> ImportModel(
         const std::string& path,
         int parentIndex = -1,
         const std::string& projectRoot = {});
+
+    static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source);
 
     void MarkDirty();
     void SetDirtyCallback(std::function<void()> callback);
@@ -160,6 +180,7 @@ public:
         int capsule = 1;
         int plane = 1;
         int empty = 1;
+        int camera = 1;
         int import = 1;
     };
 
@@ -207,7 +228,9 @@ private:
     std::unique_ptr<Mesh> m_planeMesh;
     std::vector<std::unique_ptr<Mesh>> m_importedMeshes;
     std::vector<SceneObject> m_objects;
+    std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
+    std::unique_ptr<ColliderGizmoRenderer> m_colliderGizmos;
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
     std::unique_ptr<SceneEditor> m_sceneEditor;
     std::unique_ptr<ShadowMap> m_shadowMap;
@@ -228,6 +251,7 @@ private:
     int m_nextCapsuleNumber = 1;
     int m_nextPlaneNumber = 1;
     int m_nextEmptyNumber = 1;
+    int m_nextCameraNumber = 1;
     int m_nextImportNumber = 1;
     std::string m_lastImportError;
     std::string m_lastImportWarning;

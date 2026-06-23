@@ -332,6 +332,21 @@ namespace
         return false;
     }
 
+    bool AddCameraFromMenu(const SceneHierarchyPanel& panel, Scene& scene, int parentIndex)
+    {
+        if (ImGui::MenuItem("Camera"))
+        {
+            panel.PushInsertMutation(scene, "Create Camera", [&](Scene& target) {
+                const int newIndex = target.AddCameraObject(parentIndex);
+                target.SetSelectedObjectIndex(newIndex);
+                return std::vector<int>{newIndex};
+            });
+            return true;
+        }
+
+        return false;
+    }
+
     void DrawLightMenu(const SceneHierarchyPanel& panel, Scene& scene, int parentIndex)
     {
         if (ImGui::BeginMenu("Light"))
@@ -345,6 +360,11 @@ namespace
 
     std::string BuildHierarchyLabel(const SceneObject& object)
     {
+        if (object.HasCamera())
+        {
+            return "[Camera] " + object.GetName();
+        }
+
         if (object.HasLight())
         {
             return "[Light] " + object.GetName();
@@ -412,6 +432,7 @@ namespace
         int parentIndex)
     {
         AddEmptyFromMenu(panel, scene, parentIndex);
+        AddCameraFromMenu(panel, scene, parentIndex);
         DrawLightMenu(panel, scene, parentIndex);
         Draw3DObjectMenu(panel, scene, parentIndex);
         if (ImGui::MenuItem("Import Model..."))
@@ -975,8 +996,7 @@ void SceneHierarchyPanel::Draw(
     DrawAddObjectPopup(*this, scene, project);
     primaryIndex = scene.GetPrimarySelection();
 
-    const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2.0f;
-    ImGui::BeginChild("HierarchyList", ImVec2(0.0f, -footerHeight), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("HierarchyList", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 
     if (m_beginRenameNextFrame)
     {
@@ -1048,20 +1068,6 @@ void SceneHierarchyPanel::Draw(
     {
         ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "Import warning: %s", importWarning.c_str());
     }
-
-    ImGui::BeginDisabled(!scene.HasSelection());
-    if (ImGui::Button("Delete"))
-    {
-        if (m_drawUndoStack != nullptr)
-        {
-            PushDeleteSelection(*m_drawUndoStack, scene, "Delete");
-        }
-        else
-        {
-            scene.RemoveSelectedObjects();
-        }
-    }
-    ImGui::EndDisabled();
 
     m_drawUndoStack = nullptr;
     m_drawClipboard = nullptr;
