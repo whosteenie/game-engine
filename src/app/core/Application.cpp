@@ -609,15 +609,8 @@ bool Application::IsEditorUndoRedoBlocked() const
 
 Scene* Application::GetEditorTargetScene()
 {
-    if (m_playModeController.IsActive())
-    {
-        Scene* runtimeScene = m_playModeController.GetRuntimeScene();
-        if (runtimeScene != nullptr)
-        {
-            return runtimeScene;
-        }
-    }
-
+    // Editor panels (Scene View, hierarchy, inspector, toolbar) always target the authored
+    // edit scene. Game View uses the runtime clone separately while play mode is active.
     return m_scene.get();
 }
 

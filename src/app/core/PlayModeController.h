@@ -22,6 +22,7 @@ public:
     PlayModeState GetState() const { return m_state; }
     bool IsActive() const { return m_state != PlayModeState::Edit; }
     bool IsSimulating() const { return m_state == PlayModeState::Playing; }
+    bool IsStartPaused() const { return m_startPaused; }
 
     const std::string& GetLastError() const { return m_lastError; }
 
@@ -34,6 +35,7 @@ public:
     bool ConsumeFocusGameViewRequest();
 
     void Simulate(double deltaTime);
+    void StepOnce();
     void NotifyRuntimeSceneMutated();
 
     // Phase 1 debug helper — nudges the runtime selection so isolation can be verified without Game View.
@@ -49,4 +51,5 @@ private:
     std::string m_lastError;
     bool m_requestFocusGameView = false;
     bool m_physicsRebuildPending = false;
+    bool m_startPaused = false;
 };

@@ -27,6 +27,12 @@ bool PlayModeController::TogglePause()
 {
     m_lastError.clear();
 
+    if (m_state == PlayModeState::Edit)
+    {
+        m_startPaused = !m_startPaused;
+        return true;
+    }
+
     if (m_state == PlayModeState::Playing)
     {
         m_state = PlayModeState::Paused;
@@ -64,20 +70,57 @@ void PlayModeController::NotifyRuntimeSceneMutated()
     m_physicsRebuildPending = true;
 }
 
+namespace
+{
+    constexpr float kSimulationTick = 1.0f / 60.0f;
+
+    void AdvanceSimulation(
+        Scene* runtimeScene,
+        PhysicsWorld* physicsWorld,
+        bool& physicsRebuildPending,
+        float deltaTime)
+    {
+        if (runtimeScene == nullptr || physicsWorld == nullptr || deltaTime <= 0.0f)
+        {
+            return;
+        }
+
+        if (physicsRebuildPending)
+        {
+            physicsWorld->BuildFromScene(*runtimeScene);
+            physicsRebuildPending = false;
+        }
+
+        physicsWorld->Step(*runtimeScene, deltaTime);
+    }
+}
+
 void PlayModeController::Simulate(double deltaTime)
 {
-    if (!IsSimulating() || m_runtimeScene == nullptr || m_physicsWorld == nullptr)
+    if (!IsSimulating())
     {
         return;
     }
 
-    if (m_physicsRebuildPending)
+    AdvanceSimulation(
+        m_runtimeScene.get(),
+        m_physicsWorld.get(),
+        m_physicsRebuildPending,
+        static_cast<float>(deltaTime));
+}
+
+void PlayModeController::StepOnce()
+{
+    if (m_state != PlayModeState::Paused)
     {
-        m_physicsWorld->BuildFromScene(*m_runtimeScene);
-        m_physicsRebuildPending = false;
+        return;
     }
 
-    m_physicsWorld->Step(*m_runtimeScene, static_cast<float>(deltaTime));
+    AdvanceSimulation(
+        m_runtimeScene.get(),
+        m_physicsWorld.get(),
+        m_physicsRebuildPending,
+        kSimulationTick);
 }
 
 void PlayModeController::DebugNudgeRuntimeSelection(float deltaY)
@@ -132,7 +175,7 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
         return false;
     }
 
-    m_state = PlayModeState::Playing;
+    m_state = m_startPaused ? PlayModeState::Paused : PlayModeState::Playing;
     m_requestFocusGameView = true;
     return true;
 }
