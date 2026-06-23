@@ -167,7 +167,7 @@ public:
 
     bool CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtreeArchive& archive);
     bool DeleteUsingArchive(const SceneSubtreeArchive& archive);
-    bool RestoreDeleteArchive(SceneSubtreeArchive& archive);
+    bool RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSelectionState& selection);
 
 private:
     friend struct SceneProjectIO;

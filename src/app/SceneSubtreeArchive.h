@@ -52,7 +52,31 @@ struct SceneSubtreeArchive
     std::vector<SceneObjectId> removedRootIds;
 };
 
+struct ArchivedObjectHierarchy
+{
+    SceneObjectId parentId = kInvalidSceneObjectId;
+    int siblingOrder = 0;
+    Transform transform;
+};
+
+struct SceneHierarchyArchive
+{
+    std::unordered_map<SceneObjectId, ArchivedObjectHierarchy> states;
+};
+
+struct ReparentArchive
+{
+    SceneHierarchyArchive before;
+    SceneHierarchyArchive after;
+    ArchivedSelectionState selectionBefore;
+    ArchivedSelectionState selectionAfter;
+};
+
 class Scene;
 
 ArchivedSelectionState CaptureArchivedSelection(const Scene& scene);
 void ApplyArchivedSelection(Scene& scene, const ArchivedSelectionState& selection);
+
+SceneHierarchyArchive CaptureHierarchyArchive(const Scene& scene);
+bool AreHierarchyArchivesEqual(const SceneHierarchyArchive& left, const SceneHierarchyArchive& right);
+void ApplyHierarchyArchive(Scene& scene, const SceneHierarchyArchive& archive);

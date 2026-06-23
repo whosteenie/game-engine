@@ -380,15 +380,15 @@ namespace
         }
 
         const std::string& projectRoot = project.GetProjectRootDirectory();
-        panel.PushSceneMutation(scene, "Import Model", [&](Scene& target) {
+        panel.PushInsertMutation(scene, "Import Model", [&](Scene& target) {
             const std::vector<int> importedIndices =
                 target.ImportModel(modelPath, parentIndex, projectRoot);
-            if (importedIndices.empty())
+            if (!importedIndices.empty())
             {
-                return;
+                target.SetSelectedObjectIndex(importedIndices.front());
             }
 
-            target.SetSelectedObjectIndex(importedIndices.front());
+            return importedIndices;
         });
 
         if (!scene.GetLastImportError().empty())
@@ -454,12 +454,15 @@ namespace
 
         if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
         {
-            panel.PushSceneMutation(scene, "Duplicate", [objectIndex](Scene& target) {
+            panel.PushInsertMutation(scene, "Duplicate", [objectIndex](Scene& target) {
                 const int duplicatedIndex = target.DuplicateObject(objectIndex);
                 if (duplicatedIndex >= 0)
                 {
                     target.SetSelectedObjectIndex(duplicatedIndex);
+                    return std::vector<int>{duplicatedIndex};
                 }
+
+                return std::vector<int>{};
             });
         }
 
@@ -576,10 +579,14 @@ namespace
                     {
                         if (payload->IsDelivery())
                         {
-                            panel.PushSceneMutation(scene, "Reparent", [=](Scene& target) {
-                                target.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
-                                target.SetSelectedObjectIndex(draggedIndex);
-                            });
+                            const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
+                            const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
+                            panel.PushReparentMutation(
+                                scene,
+                                "Reparent",
+                                draggedId,
+                                referenceId,
+                                mode);
                         }
                     }
                 }
@@ -628,10 +635,14 @@ namespace
                 {
                     if (payload->IsDelivery())
                     {
-                        panel.PushSceneMutation(scene, "Reparent", [=](Scene& target) {
-                            target.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
-                            target.SetSelectedObjectIndex(draggedIndex);
-                        });
+                        const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
+                        const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
+                        panel.PushReparentMutation(
+                            scene,
+                            "Reparent",
+                            draggedId,
+                            referenceId,
+                            mode);
                     }
                 }
             }
@@ -835,6 +846,45 @@ void SceneHierarchyPanel::PushSceneMutation(
     if (mutate)
     {
         mutate(scene);
+    }
+}
+
+void SceneHierarchyPanel::PushInsertMutation(
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<std::vector<int>(Scene&)>& mutate) const
+{
+    if (m_drawUndoStack != nullptr)
+    {
+        PushInsertSubtree(*m_drawUndoStack, scene, commandName, mutate);
+        return;
+    }
+
+    if (mutate)
+    {
+        mutate(scene);
+    }
+}
+
+void SceneHierarchyPanel::PushReparentMutation(
+    Scene& scene,
+    const std::string& commandName,
+    SceneObjectId objectId,
+    SceneObjectId referenceId,
+    HierarchyInsertMode mode) const
+{
+    if (m_drawUndoStack != nullptr)
+    {
+        PushReparentObjects(*m_drawUndoStack, scene, commandName, objectId, referenceId, mode);
+        return;
+    }
+
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    const int referenceIndex = scene.FindObjectIndex(referenceId);
+    if (objectIndex >= 0 && referenceIndex >= 0)
+    {
+        scene.PlaceObjectInHierarchy(objectIndex, referenceIndex, mode);
+        scene.SetSelectedObjectIndex(objectIndex);
     }
 }
 

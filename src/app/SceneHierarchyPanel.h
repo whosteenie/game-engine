@@ -4,7 +4,11 @@
 #include <string>
 #include <unordered_map>
 
+#include <vector>
+
 #include "engine/SceneObjectId.h"
+
+enum class HierarchyInsertMode;
 
 class ProjectSession;
 class Scene;
@@ -24,6 +28,18 @@ public:
         Scene& scene,
         const std::string& commandName,
         const std::function<void(Scene&)>& mutate) const;
+
+    void PushInsertMutation(
+        Scene& scene,
+        const std::string& commandName,
+        const std::function<std::vector<int>(Scene&)>& mutate) const;
+
+    void PushReparentMutation(
+        Scene& scene,
+        const std::string& commandName,
+        SceneObjectId objectId,
+        SceneObjectId referenceId,
+        HierarchyInsertMode mode) const;
 
 private:
     mutable bool m_showPanel = true;

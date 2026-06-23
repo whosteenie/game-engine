@@ -8,7 +8,6 @@
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
 #include "app/UndoContext.h"
-#include "app/SceneDocument.h"
 #include "app/UndoStack.h"
 #include "engine/FileDialog.h"
 
@@ -59,27 +58,22 @@ namespace
         }
 
         const std::string& projectRoot = project.GetProjectRootDirectory();
-        SceneDocument before = SceneDocument::Capture(scene, projectRoot);
-        const std::vector<int> importedIndices =
-            scene.ImportModel(modelPath, parentIndex, projectRoot);
-        if (importedIndices.empty())
-        {
-            if (!scene.GetLastImportError().empty())
+        PushInsertSubtree(undoStack, scene, "Import Model", [&](Scene& target) {
+            const std::vector<int> importedIndices =
+                target.ImportModel(modelPath, parentIndex, projectRoot);
+            if (!importedIndices.empty())
             {
-                project.SetStatusMessage(scene.GetLastImportError());
+                target.SetSelectedObjectIndex(importedIndices.front());
             }
-            return;
+
+            return importedIndices;
+        });
+
+        if (!scene.GetLastImportError().empty())
+        {
+            project.SetStatusMessage(scene.GetLastImportError());
         }
-
-        scene.SetSelectedObjectIndex(importedIndices.front());
-        SceneDocument after = SceneDocument::Capture(scene, projectRoot);
-        undoStack.Push(std::make_unique<ApplySceneDocumentCommand>(
-            std::move(before),
-            std::move(after),
-            "Import Model",
-            projectRoot));
-
-        if (!scene.GetLastImportWarning().empty())
+        else if (!scene.GetLastImportWarning().empty())
         {
             project.SetStatusMessage(scene.GetLastImportWarning());
         }

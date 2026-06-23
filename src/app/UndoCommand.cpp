@@ -215,7 +215,7 @@ DeleteObjectsCommand::DeleteObjectsCommand(SceneSubtreeArchive archive, std::str
 
 void DeleteObjectsCommand::Undo(UndoContext& context)
 {
-    context.scene.RestoreDeleteArchive(m_archive);
+    context.scene.RestoreDeleteArchive(m_archive, m_archive.selectionBefore);
 }
 
 void DeleteObjectsCommand::Redo(UndoContext& context)
@@ -267,6 +267,7 @@ void PushDeleteObjects(
     }
 
     SceneSubtreeArchive archive;
+    archive.selectionBefore = CaptureArchivedSelection(scene);
     if (!scene.CreateDeleteArchive(rootIndices, archive))
     {
         return;
@@ -287,6 +288,125 @@ void PushDeleteSelection(UndoStack& undoStack, Scene& scene, const std::string& 
     const std::vector<int> roots =
         FilterToTopmostSelectedIndices(scene.GetObjects(), scene.GetSelection().indices);
     PushDeleteObjects(undoStack, scene, commandName, roots);
+}
+
+InsertSubtreeCommand::InsertSubtreeCommand(SceneSubtreeArchive archive, std::string name)
+    : m_archive(std::move(archive)),
+      m_name(std::move(name))
+{
+}
+
+void InsertSubtreeCommand::Undo(UndoContext& context)
+{
+    if (!context.scene.DeleteUsingArchive(m_archive))
+    {
+        return;
+    }
+
+    ApplyArchivedSelection(context.scene, m_archive.selectionBefore);
+    context.scene.MarkDirty();
+}
+
+void InsertSubtreeCommand::Redo(UndoContext& context)
+{
+    context.scene.RestoreDeleteArchive(m_archive, m_archive.selectionAfter);
+}
+
+const char* InsertSubtreeCommand::GetName() const
+{
+    return m_name.c_str();
+}
+
+ReparentObjectsCommand::ReparentObjectsCommand(ReparentArchive archive, std::string name)
+    : m_archive(std::move(archive)),
+      m_name(std::move(name))
+{
+}
+
+void ReparentObjectsCommand::Undo(UndoContext& context)
+{
+    ApplyHierarchyArchive(context.scene, m_archive.before);
+    ApplyArchivedSelection(context.scene, m_archive.selectionBefore);
+}
+
+void ReparentObjectsCommand::Redo(UndoContext& context)
+{
+    ApplyHierarchyArchive(context.scene, m_archive.after);
+    ApplyArchivedSelection(context.scene, m_archive.selectionAfter);
+}
+
+const char* ReparentObjectsCommand::GetName() const
+{
+    return m_name.c_str();
+}
+
+void PushInsertSubtree(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<std::vector<int>(Scene&)>& mutate)
+{
+    if (!mutate)
+    {
+        return;
+    }
+
+    const ArchivedSelectionState selectionBefore = CaptureArchivedSelection(scene);
+    const std::vector<int> insertedRoots = mutate(scene);
+    if (insertedRoots.empty())
+    {
+        return;
+    }
+
+    SceneSubtreeArchive archive;
+    if (!scene.CreateDeleteArchive(insertedRoots, archive))
+    {
+        return;
+    }
+
+    archive.selectionBefore = selectionBefore;
+    archive.selectionAfter = CaptureArchivedSelection(scene);
+    undoStack.Push(std::make_unique<InsertSubtreeCommand>(std::move(archive), commandName));
+}
+
+void PushReparentObjects(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    SceneObjectId objectId,
+    SceneObjectId referenceId,
+    HierarchyInsertMode mode)
+{
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    const int referenceIndex = scene.FindObjectIndex(referenceId);
+    if (objectIndex < 0 || referenceIndex < 0)
+    {
+        return;
+    }
+
+    if (!scene.CanPlaceObjectInHierarchy(objectIndex, referenceIndex, mode)
+        || !scene.WouldPlaceObjectInHierarchyChange(objectIndex, referenceIndex, mode))
+    {
+        return;
+    }
+
+    ReparentArchive archive;
+    archive.selectionBefore = CaptureArchivedSelection(scene);
+    archive.before = CaptureHierarchyArchive(scene);
+    if (!scene.PlaceObjectInHierarchy(objectIndex, referenceIndex, mode))
+    {
+        return;
+    }
+
+    archive.after = CaptureHierarchyArchive(scene);
+    if (AreHierarchyArchivesEqual(archive.before, archive.after))
+    {
+        return;
+    }
+
+    scene.SetSelectedObjectIndex(objectIndex);
+    archive.selectionAfter = CaptureArchivedSelection(scene);
+    undoStack.Push(std::make_unique<ReparentObjectsCommand>(std::move(archive), commandName));
 }
 
 ObjectTransformMap CaptureLocalTransforms(const Scene& scene, const std::vector<int>& objectIndices)

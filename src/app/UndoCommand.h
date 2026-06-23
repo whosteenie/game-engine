@@ -1,9 +1,8 @@
 #pragma once
 
 #include "app/UndoContext.h"
-
-#include "app/SceneDocument.h"
 #include "app/SceneSubtreeArchive.h"
+#include "app/SceneDocument.h"
 
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
@@ -19,6 +18,8 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+
+enum class HierarchyInsertMode;
 
 class IUndoCommand
 {
@@ -104,6 +105,34 @@ private:
     std::string m_name;
 };
 
+class InsertSubtreeCommand final : public IUndoCommand
+{
+public:
+    InsertSubtreeCommand(SceneSubtreeArchive archive, std::string name);
+
+    void Undo(UndoContext& context) override;
+    void Redo(UndoContext& context) override;
+    const char* GetName() const override;
+
+private:
+    SceneSubtreeArchive m_archive;
+    std::string m_name;
+};
+
+class ReparentObjectsCommand final : public IUndoCommand
+{
+public:
+    ReparentObjectsCommand(ReparentArchive archive, std::string name);
+
+    void Undo(UndoContext& context) override;
+    void Redo(UndoContext& context) override;
+    const char* GetName() const override;
+
+private:
+    ReparentArchive m_archive;
+    std::string m_name;
+};
+
 void PushDeleteObjects(
     UndoStack& undoStack,
     Scene& scene,
@@ -111,6 +140,20 @@ void PushDeleteObjects(
     const std::vector<int>& rootIndices);
 
 void PushDeleteSelection(UndoStack& undoStack, Scene& scene, const std::string& commandName);
+
+void PushInsertSubtree(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<std::vector<int>(Scene&)>& mutate);
+
+void PushReparentObjects(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    SceneObjectId objectId,
+    SceneObjectId referenceId,
+    HierarchyInsertMode mode);
 
 using ObjectTransformMap = std::unordered_map<SceneObjectId, Transform>;
 

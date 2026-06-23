@@ -260,8 +260,8 @@ void SceneEditor::Update(
     {
         if (undoStack != nullptr)
         {
-            PushSceneEdit(*undoStack, scene, projectRoot, "Duplicate", [](Scene& target) {
-                target.DuplicateSelectedObjects();
+            PushInsertSubtree(*undoStack, scene, "Duplicate", [](Scene& target) {
+                return target.DuplicateSelectedObjects();
             });
         }
         else

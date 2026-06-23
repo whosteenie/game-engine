@@ -27,6 +27,79 @@ void ApplyArchivedSelection(Scene& scene, const ArchivedSelectionState& selectio
     scene.SetSelectionByIds(selection.ids, selection.primary);
 }
 
+SceneHierarchyArchive CaptureHierarchyArchive(const Scene& scene)
+{
+    SceneHierarchyArchive archive;
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+    archive.states.reserve(objects.size());
+
+    for (const SceneObject& object : objects)
+    {
+        SceneObjectId parentId = kInvalidSceneObjectId;
+        const int parentIndex = object.GetParentIndex();
+        if (parentIndex >= 0 && parentIndex < static_cast<int>(objects.size()))
+        {
+            parentId = objects[static_cast<std::size_t>(parentIndex)].GetId();
+        }
+
+        archive.states.emplace(
+            object.GetId(),
+            ArchivedObjectHierarchy{parentId, object.GetSiblingOrder(), object.GetTransform()});
+    }
+
+    return archive;
+}
+
+bool AreHierarchyArchivesEqual(const SceneHierarchyArchive& left, const SceneHierarchyArchive& right)
+{
+    if (left.states.size() != right.states.size())
+    {
+        return false;
+    }
+
+    for (const auto& [objectId, state] : left.states)
+    {
+        const auto iterator = right.states.find(objectId);
+        if (iterator == right.states.end())
+        {
+            return false;
+        }
+
+        const ArchivedObjectHierarchy& other = iterator->second;
+        if (state.parentId != other.parentId || state.siblingOrder != other.siblingOrder
+            || state.transform.position != other.transform.position
+            || state.transform.rotation != other.transform.rotation
+            || state.transform.scale != other.transform.scale)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void ApplyHierarchyArchive(Scene& scene, const SceneHierarchyArchive& archive)
+{
+    std::vector<SceneObject>& objects = scene.GetObjects();
+    for (SceneObject& object : objects)
+    {
+        const auto iterator = archive.states.find(object.GetId());
+        if (iterator == archive.states.end())
+        {
+            continue;
+        }
+
+        const ArchivedObjectHierarchy& state = iterator->second;
+        const int parentIndex =
+            state.parentId == kInvalidSceneObjectId ? -1 : scene.FindObjectIndex(state.parentId);
+        object.SetParentIndex(parentIndex);
+        object.SetSiblingOrder(state.siblingOrder);
+        object.GetTransform() = state.transform;
+    }
+
+    scene.MarkDirty();
+}
+
 namespace
 {
     void CaptureParentIds(const Scene& scene, std::unordered_map<SceneObjectId, SceneObjectId>& outParentIdByObjectId)
@@ -194,7 +267,6 @@ bool Scene::CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtre
     }
 
     CaptureParentIds(*this, archive.parentIdByObjectId);
-    archive.selectionBefore = CaptureArchivedSelection(*this);
 
     std::unordered_set<Mesh*> externalMeshRefs;
     for (int objectIndex = 0; objectIndex < static_cast<int>(m_objects.size()); ++objectIndex)
@@ -272,7 +344,7 @@ bool Scene::DeleteUsingArchive(const SceneSubtreeArchive& archive)
     return true;
 }
 
-bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive)
+bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSelectionState& selection)
 {
     if (archive.removedObjects.empty())
     {
@@ -334,7 +406,7 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive)
         RegisterObjectId(object.GetId());
     }
 
-    ApplyArchivedSelection(*this, archive.selectionBefore);
+    ApplyArchivedSelection(*this, selection);
     MarkDirty();
     return true;
 }
