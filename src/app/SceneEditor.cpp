@@ -22,6 +22,26 @@ namespace
 {
     constexpr float PickRepeatThresholdPixels = 8.0f;
 
+    // Depth cycling always walks the full hit list at the click pixel (see PickSceneObjectCycling).
+    // Without Ctrl the cycled object replaces the selection; with Ctrl it is toggled in/out.
+    void ApplyViewportPickSelection(Scene& scene, int pickedIndex, bool ctrlHeld)
+    {
+        if (pickedIndex < 0)
+        {
+            scene.ClearSelection();
+            return;
+        }
+
+        if (ctrlHeld)
+        {
+            scene.ToggleSelected(pickedIndex);
+        }
+        else
+        {
+            scene.SelectSingle(pickedIndex);
+        }
+    }
+
     ImGuizmo::OPERATION ToImGuizmoOperation(TransformTool tool)
     {
         switch (tool)
@@ -132,7 +152,9 @@ void SceneEditor::Update(
     }
 
     const ImGuiIO& io = ImGui::GetIO();
-    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
+        || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
+        || io.KeyCtrl;
     if (ctrlHeld
         && input.WasKeyPressed(GLFW_KEY_D)
         && scene.HasSelection()
@@ -197,16 +219,9 @@ void SceneEditor::Update(
     const int pickedIndex = PickSceneObjectCycling(
         scene.GetObjects(),
         ray,
-        scene.GetSelectedObjectIndex(),
+        scene.GetPrimarySelection(),
         repeatClickAtSameSpot);
-    if (pickedIndex >= 0)
-    {
-        scene.SetSelectedObjectIndex(pickedIndex);
-    }
-    else
-    {
-        scene.ClearSelection();
-    }
+    ApplyViewportPickSelection(scene, pickedIndex, ctrlHeld);
 }
 
 void SceneEditor::RenderSelectionOverlay(
