@@ -209,6 +209,8 @@ namespace
         const std::string& path,
         TextureColorSpace colorSpace,
         Scene& scene,
+        UndoStack* undoStack,
+        const std::vector<int>& objectIndices,
         const std::function<void(std::shared_ptr<Texture>, const std::string&)>& assign,
         const std::function<void()>& clear)
     {
@@ -247,8 +249,23 @@ namespace
                     std::shared_ptr<Texture> texture = TextureCache::Get().Load(
                         selectedPath.c_str(),
                         colorSpace);
-                    assign(texture, selectedPath);
-                    scene.MarkDirty();
+                    if (undoStack != nullptr)
+                    {
+                        PushMaterialMutation(
+                            *undoStack,
+                            scene,
+                            objectIndices,
+                            "Material",
+                            [&](Scene& target) {
+                                assign(texture, selectedPath);
+                                target.MarkDirty();
+                            });
+                    }
+                    else
+                    {
+                        assign(texture, selectedPath);
+                        scene.MarkDirty();
+                    }
                 }
                 catch (const std::exception&)
                 {
@@ -272,15 +289,33 @@ namespace
         ImGui::BeginDisabled(!hasMap);
         if (ImGui::Button("Clear"))
         {
-            clear();
-            scene.MarkDirty();
+            if (undoStack != nullptr)
+            {
+                PushMaterialMutation(
+                    *undoStack,
+                    scene,
+                    objectIndices,
+                    "Material",
+                    [&](Scene& target) {
+                        clear();
+                        target.MarkDirty();
+                    });
+            }
+            else
+            {
+                clear();
+                scene.MarkDirty();
+            }
         }
         ImGui::EndDisabled();
 
         ImGui::PopID();
     }
 
-    void DrawMaterialSection(Material& material, Scene& scene)
+    void DrawMaterialSection(
+        Material& material,
+        Scene& scene,
+        MaterialEditContext& editContext)
     {
         glm::vec3 albedo = material.GetAlbedo();
         if (EditorWidgets::ColorEditVec3("Albedo", albedo))
@@ -288,6 +323,7 @@ namespace
             material.SetAlbedo(albedo);
             scene.MarkDirty();
         }
+        HandleMaterialFieldEditEvents(editContext);
 
         float roughness = material.GetRoughness();
         if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
@@ -295,6 +331,7 @@ namespace
             material.SetRoughness(roughness);
             scene.MarkDirty();
         }
+        HandleMaterialFieldEditEvents(editContext);
 
         float metallic = material.GetMetallic();
         if (ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f))
@@ -302,12 +339,28 @@ namespace
             material.SetMetallic(metallic);
             scene.MarkDirty();
         }
+        HandleMaterialFieldEditEvents(editContext);
 
         bool doubleSided = material.IsDoubleSided();
         if (ImGui::Checkbox("Double sided", &doubleSided))
         {
-            material.SetDoubleSided(doubleSided);
-            scene.MarkDirty();
+            if (editContext.undoStack != nullptr)
+            {
+                PushMaterialMutation(
+                    *editContext.undoStack,
+                    scene,
+                    editContext.objectIndices,
+                    "Material",
+                    [&](Scene& target) {
+                        material.SetDoubleSided(doubleSided);
+                        target.MarkDirty();
+                    });
+            }
+            else
+            {
+                material.SetDoubleSided(doubleSided);
+                scene.MarkDirty();
+            }
         }
 
         ImGui::Separator();
@@ -319,6 +372,8 @@ namespace
             material.GetAlbedoMapPath(),
             TextureColorSpace::SRGB,
             scene,
+            editContext.undoStack,
+            editContext.objectIndices,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetAlbedoMap(std::move(texture), path);
             },
@@ -332,6 +387,7 @@ namespace
                 material.SetAlbedoTexCoordSet(albedoTexCoordSet);
                 scene.MarkDirty();
             }
+            HandleMaterialFieldEditEvents(editContext);
         }
 
         DrawMaterialTextureSlot(
@@ -340,6 +396,8 @@ namespace
             material.GetNormalMapPath(),
             TextureColorSpace::Linear,
             scene,
+            editContext.undoStack,
+            editContext.objectIndices,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetNormalMap(std::move(texture), path);
             },
@@ -353,6 +411,7 @@ namespace
                 material.SetNormalTexCoordSet(normalTexCoordSet);
                 scene.MarkDirty();
             }
+            HandleMaterialFieldEditEvents(editContext);
         }
 
         DrawMaterialTextureSlot(
@@ -361,6 +420,8 @@ namespace
             material.GetAoMapPath(),
             TextureColorSpace::Linear,
             scene,
+            editContext.undoStack,
+            editContext.objectIndices,
             [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                 material.SetAoMap(std::move(texture), path);
             },
@@ -374,6 +435,7 @@ namespace
                 material.SetAoTexCoordSet(aoTexCoordSet);
                 scene.MarkDirty();
             }
+            HandleMaterialFieldEditEvents(editContext);
         }
 
         if (material.HasMetallicRoughnessMap())
@@ -384,6 +446,8 @@ namespace
                 material.GetRoughnessMapPath(),
                 TextureColorSpace::Linear,
                 scene,
+                editContext.undoStack,
+                editContext.objectIndices,
                 [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                     material.SetMetallicRoughnessMap(
                         std::move(texture),
@@ -398,6 +462,7 @@ namespace
                 material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
                 scene.MarkDirty();
             }
+            HandleMaterialFieldEditEvents(editContext);
 
             ImGui::TextDisabled("Uses glTF packing: green = roughness, blue = metallic.");
         }
@@ -409,6 +474,8 @@ namespace
                 material.GetRoughnessMapPath(),
                 TextureColorSpace::Linear,
                 scene,
+                editContext.undoStack,
+                editContext.objectIndices,
                 [&material](std::shared_ptr<Texture> texture, const std::string& path) {
                     material.SetRoughnessMap(std::move(texture), path);
                 },
@@ -422,6 +489,7 @@ namespace
                     material.SetRoughnessTexCoordSet(roughnessTexCoordSet);
                     scene.MarkDirty();
                 }
+                HandleMaterialFieldEditEvents(editContext);
             }
 
             ImGui::PushID("MetallicRoughnessAssign");
@@ -435,11 +503,29 @@ namespace
                         std::shared_ptr<Texture> texture = TextureCache::Get().Load(
                             selectedPath.c_str(),
                             TextureColorSpace::Linear);
-                        material.SetMetallicRoughnessMap(
-                            std::move(texture),
-                            material.GetRoughnessTexCoordSet(),
-                            selectedPath);
-                        scene.MarkDirty();
+                        if (editContext.undoStack != nullptr)
+                        {
+                            PushMaterialMutation(
+                                *editContext.undoStack,
+                                scene,
+                                editContext.objectIndices,
+                                "Material",
+                                [&](Scene& target) {
+                                    material.SetMetallicRoughnessMap(
+                                        std::move(texture),
+                                        material.GetRoughnessTexCoordSet(),
+                                        selectedPath);
+                                    target.MarkDirty();
+                                });
+                        }
+                        else
+                        {
+                            material.SetMetallicRoughnessMap(
+                                std::move(texture),
+                                material.GetRoughnessTexCoordSet(),
+                                selectedPath);
+                            scene.MarkDirty();
+                        }
                     }
                     catch (const std::exception&)
                     {
@@ -508,8 +594,9 @@ namespace
         ImGui::PopID();
     }
 
-    void DrawLightSection(SceneObject& object, Scene& scene)
+    void DrawLightSection(Scene& scene, int objectIndex, LightEditContext& editContext)
     {
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         LightComponent& light = object.GetLight();
 
         int lightTypeIndex = static_cast<int>(light.type);
@@ -522,10 +609,32 @@ namespace
             const LightType newType = static_cast<LightType>(lightTypeIndex);
             if (newType != light.type)
             {
-                const bool preserveShadow = light.castsShadow;
-                light = MakeDefaultLightComponent(newType);
-                light.castsShadow = preserveShadow && newType == LightType::Directional;
-                scene.MarkDirty();
+                if (editContext.undoStack != nullptr)
+                {
+                    PushLightMutation(
+                        *editContext.undoStack,
+                        scene,
+                        editContext.objectIndices,
+                        "Light",
+                        CaptureObjectLights,
+                        [&](Scene& target) {
+                            SceneObject& targetObject =
+                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                            LightComponent& targetLight = targetObject.GetLight();
+                            const bool preserveShadow = targetLight.castsShadow;
+                            targetLight = MakeDefaultLightComponent(newType);
+                            targetLight.castsShadow =
+                                preserveShadow && newType == LightType::Directional;
+                            target.MarkDirty();
+                        });
+                }
+                else
+                {
+                    const bool preserveShadow = light.castsShadow;
+                    light = MakeDefaultLightComponent(newType);
+                    light.castsShadow = preserveShadow && newType == LightType::Directional;
+                    scene.MarkDirty();
+                }
             }
         }
 
@@ -533,30 +642,64 @@ namespace
         {
             scene.MarkDirty();
         }
+        HandleLightFieldEditEvents(editContext);
 
         if (ImGui::SliderFloat("Intensity", &light.intensity, 0.0f, 8.0f))
         {
             scene.MarkDirty();
         }
+        HandleLightFieldEditEvents(editContext);
 
         if (light.type == LightType::Directional)
         {
             bool castsShadow = light.castsShadow;
             if (ImGui::Checkbox("Cast shadows", &castsShadow))
             {
-                if (castsShadow)
+                if (editContext.undoStack != nullptr)
                 {
-                    for (SceneObject& otherObject : scene.GetObjects())
+                    PushLightMutation(
+                        *editContext.undoStack,
+                        scene,
+                        editContext.objectIndices,
+                        "Light",
+                        [](const Scene& targetScene, const std::vector<int>&) {
+                            return CaptureAllObjectLights(targetScene);
+                        },
+                        [&](Scene& target) {
+                            SceneObject& targetObject =
+                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                            LightComponent& targetLight = targetObject.GetLight();
+                            if (castsShadow)
+                            {
+                                for (SceneObject& otherObject : target.GetObjects())
+                                {
+                                    if (&otherObject != &targetObject && otherObject.HasLight())
+                                    {
+                                        otherObject.GetLight().castsShadow = false;
+                                    }
+                                }
+                            }
+
+                            targetLight.castsShadow = castsShadow;
+                            target.MarkDirty();
+                        });
+                }
+                else
+                {
+                    if (castsShadow)
                     {
-                        if (&otherObject != &object && otherObject.HasLight())
+                        for (SceneObject& otherObject : scene.GetObjects())
                         {
-                            otherObject.GetLight().castsShadow = false;
+                            if (&otherObject != &object && otherObject.HasLight())
+                            {
+                                otherObject.GetLight().castsShadow = false;
+                            }
                         }
                     }
-                }
 
-                light.castsShadow = castsShadow;
-                scene.MarkDirty();
+                    light.castsShadow = castsShadow;
+                    scene.MarkDirty();
+                }
             }
 
             ImGui::TextUnformatted("Rotation aims local +Y toward the light source.");
@@ -569,18 +712,25 @@ namespace
             {
                 scene.MarkDirty();
             }
+            HandleLightFieldEditEvents(editContext);
 
             if (light.type == LightType::Spot)
             {
-                if (ImGui::SliderFloat("Inner angle", &light.innerCutoffDegrees, 0.0f, light.outerCutoffDegrees - 1.0f))
+                if (ImGui::SliderFloat(
+                        "Inner angle",
+                        &light.innerCutoffDegrees,
+                        0.0f,
+                        light.outerCutoffDegrees - 1.0f))
                 {
                     scene.MarkDirty();
                 }
+                HandleLightFieldEditEvents(editContext);
 
                 if (ImGui::SliderFloat("Outer angle", &light.outerCutoffDegrees, 1.0f, 89.0f))
                 {
                     scene.MarkDirty();
                 }
+                HandleLightFieldEditEvents(editContext);
                 if (light.innerCutoffDegrees >= light.outerCutoffDegrees)
                 {
                     light.innerCutoffDegrees = light.outerCutoffDegrees - 1.0f;
@@ -665,7 +815,10 @@ namespace
         ImGui::PopID();
     }
 
-    void DrawMultiObjectSection(Scene& scene, const std::vector<int>& selectedIndices)
+    void DrawMultiObjectSection(
+        Scene& scene,
+        const std::vector<int>& selectedIndices,
+        UndoStack* undoStack)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
 
@@ -714,29 +867,73 @@ namespace
             MultiBool castShadowField = MultiBool::Collect(castShadowValues);
             if (DrawMultiCheckbox("Cast shadow", castShadowField))
             {
-                for (int objectIndex : selectedIndices)
+                if (undoStack != nullptr)
                 {
-                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadowField.value);
+                    PushShadowFlagsMutation(
+                        *undoStack,
+                        scene,
+                        selectedIndices,
+                        "Cast shadow",
+                        [&](Scene& target) {
+                            for (int objectIndex : selectedIndices)
+                            {
+                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                    .SetCastShadow(castShadowField.value);
+                            }
+                            target.MarkDirty();
+                        });
                 }
+                else
+                {
+                    for (int objectIndex : selectedIndices)
+                    {
+                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                            .SetCastShadow(castShadowField.value);
+                    }
 
-                scene.MarkDirty();
+                    scene.MarkDirty();
+                }
             }
 
             MultiBool receiveShadowField = MultiBool::Collect(receiveShadowValues);
             if (DrawMultiCheckbox("Receive shadow", receiveShadowField))
             {
-                for (int objectIndex : selectedIndices)
+                if (undoStack != nullptr)
                 {
-                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetReceiveShadow(
-                        receiveShadowField.value);
+                    PushShadowFlagsMutation(
+                        *undoStack,
+                        scene,
+                        selectedIndices,
+                        "Receive shadow",
+                        [&](Scene& target) {
+                            for (int objectIndex : selectedIndices)
+                            {
+                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                    .SetReceiveShadow(receiveShadowField.value);
+                            }
+                            target.MarkDirty();
+                        });
                 }
+                else
+                {
+                    for (int objectIndex : selectedIndices)
+                    {
+                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                            .SetReceiveShadow(receiveShadowField.value);
+                    }
 
-                scene.MarkDirty();
+                    scene.MarkDirty();
+                }
             }
         }
     }
 
-    void DrawSingleObjectInspector(Scene& scene, int selectedIndex, TransformEditContext& editContext)
+    void DrawSingleObjectInspector(
+        Scene& scene,
+        int selectedIndex,
+        TransformEditContext& editContext,
+        MaterialEditContext& materialEditContext,
+        LightEditContext& lightEditContext)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
         SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
@@ -785,7 +982,7 @@ namespace
         if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::PushID("LightSection");
-            DrawLightSection(selectedObject, scene);
+            DrawLightSection(scene, selectedIndex, lightEditContext);
             ImGui::PopID();
         }
 
@@ -796,15 +993,47 @@ namespace
                 bool castShadow = selectedObject.CastsShadow();
                 if (ImGui::Checkbox("Cast shadow", &castShadow))
                 {
-                    selectedObject.SetCastShadow(castShadow);
-                    scene.MarkDirty();
+                    if (editContext.undoStack != nullptr)
+                    {
+                        PushShadowFlagsMutation(
+                            *editContext.undoStack,
+                            scene,
+                            {selectedIndex},
+                            "Cast shadow",
+                            [&](Scene& target) {
+                                target.GetObject(static_cast<std::size_t>(selectedIndex))
+                                    .SetCastShadow(castShadow);
+                                target.MarkDirty();
+                            });
+                    }
+                    else
+                    {
+                        selectedObject.SetCastShadow(castShadow);
+                        scene.MarkDirty();
+                    }
                 }
 
                 bool receiveShadow = selectedObject.ReceivesShadow();
                 if (ImGui::Checkbox("Receive shadow", &receiveShadow))
                 {
-                    selectedObject.SetReceiveShadow(receiveShadow);
-                    scene.MarkDirty();
+                    if (editContext.undoStack != nullptr)
+                    {
+                        PushShadowFlagsMutation(
+                            *editContext.undoStack,
+                            scene,
+                            {selectedIndex},
+                            "Receive shadow",
+                            [&](Scene& target) {
+                                target.GetObject(static_cast<std::size_t>(selectedIndex))
+                                    .SetReceiveShadow(receiveShadow);
+                                target.MarkDirty();
+                            });
+                    }
+                    else
+                    {
+                        selectedObject.SetReceiveShadow(receiveShadow);
+                        scene.MarkDirty();
+                    }
                 }
             }
             else
@@ -816,7 +1045,7 @@ namespace
         if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
         {
             ImGui::PushID(selectedIndex);
-            DrawMaterialSection(selectedObject.GetMaterial(), scene);
+            DrawMaterialSection(selectedObject.GetMaterial(), scene, materialEditContext);
             ImGui::PopID();
         }
     }
@@ -824,7 +1053,8 @@ namespace
     void DrawMultiObjectInspector(
         Scene& scene,
         const std::vector<int>& selectedIndices,
-        TransformEditContext& editContext)
+        TransformEditContext& editContext,
+        UndoStack* undoStack)
     {
         const std::size_t selectionCount = selectedIndices.size();
         ImGui::Text("%zu objects selected", selectionCount);
@@ -871,7 +1101,7 @@ namespace
         if (ShouldShowInspectorSection(InspectorSectionKind::Object, scene, selectedIndices)
             && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            DrawMultiObjectSection(scene, selectedIndices);
+            DrawMultiObjectSection(scene, selectedIndices, undoStack);
         }
     }
 }
@@ -919,19 +1149,48 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
         m_transformEditSelection = selectedIndices;
     }
 
+    if (selectedIndices != m_materialEditSelection)
+    {
+        m_materialEditContext.sessionOpen = false;
+        m_materialEditContext.pendingBefore.clear();
+        m_materialEditSelection = selectedIndices;
+    }
+
+    if (selectedIndices != m_lightEditSelection)
+    {
+        m_lightEditContext.sessionOpen = false;
+        m_lightEditContext.pendingBefore.clear();
+        m_lightEditSelection = selectedIndices;
+    }
+
     TransformEditContext editContext = m_transformEditContext;
     editContext.undoStack = undoStack;
     editContext.scene = &scene;
     editContext.objectIndices = selectedIndices;
     editContext.commandName = "Transform";
 
+    m_materialEditContext.undoStack = undoStack;
+    m_materialEditContext.scene = &scene;
+    m_materialEditContext.objectIndices = selectedIndices;
+    m_materialEditContext.commandName = "Material";
+
+    m_lightEditContext.undoStack = undoStack;
+    m_lightEditContext.scene = &scene;
+    m_lightEditContext.objectIndices = selectedIndices;
+    m_lightEditContext.commandName = "Light";
+
     if (selectedIndices.size() == 1)
     {
-        DrawSingleObjectInspector(scene, selectedIndices.front(), editContext);
+        DrawSingleObjectInspector(
+            scene,
+            selectedIndices.front(),
+            editContext,
+            m_materialEditContext,
+            m_lightEditContext);
     }
     else
     {
-        DrawMultiObjectInspector(scene, selectedIndices, editContext);
+        DrawMultiObjectInspector(scene, selectedIndices, editContext, undoStack);
     }
 
     m_transformEditContext = editContext;

@@ -85,6 +85,11 @@ const Material& SceneObject::GetMaterial() const
     return *m_material;
 }
 
+void SceneObject::ReplaceMaterial(std::unique_ptr<Material> material)
+{
+    m_material = std::move(material);
+}
+
 Mesh* SceneObject::GetMesh() const
 {
     return m_mesh;

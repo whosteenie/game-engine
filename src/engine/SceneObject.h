@@ -40,6 +40,7 @@ public:
 
     Material& GetMaterial();
     const Material& GetMaterial() const;
+    void ReplaceMaterial(std::unique_ptr<Material> material);
 
     Mesh* GetMesh() const;
 

@@ -18,4 +18,8 @@ private:
     mutable bool m_showPanel = true;
     mutable TransformEditContext m_transformEditContext;
     mutable std::vector<int> m_transformEditSelection;
+    mutable MaterialEditContext m_materialEditContext;
+    mutable std::vector<int> m_materialEditSelection;
+    mutable LightEditContext m_lightEditContext;
+    mutable std::vector<int> m_lightEditSelection;
 };
