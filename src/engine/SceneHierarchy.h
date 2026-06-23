@@ -3,8 +3,19 @@
 #include <glm/glm.hpp>
 #include <vector>
 
+class Mesh;
 class SceneObject;
 
+struct SelectionMeshDraw
+{
+    const Mesh* mesh = nullptr;
+    glm::mat4 worldMatrix = glm::mat4(1.0f);
+};
+
+void CollectRenderableSelectionMeshes(
+    const std::vector<SceneObject>& objects,
+    int objectIndex,
+    std::vector<SelectionMeshDraw>& outMeshes);
 glm::mat4 GetObjectWorldMatrix(const std::vector<SceneObject>& objects, int objectIndex);
 void GetObjectWorldBounds(
     const std::vector<SceneObject>& objects,

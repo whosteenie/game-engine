@@ -1,5 +1,8 @@
 #pragma once
 
+#include <glm/glm.hpp>
+#include <vector>
+
 class Mesh
 {
 public:
@@ -16,9 +19,16 @@ public:
 
     void Draw() const;
 
+    bool IntersectRay(
+        const glm::vec3& localOrigin,
+        const glm::vec3& localDirection,
+        float& hitDistance) const;
+
 private:
     unsigned int m_vao = 0;
     unsigned int m_vbo = 0;
     unsigned int m_ebo = 0;
     unsigned int m_indexCount = 0;
+    std::vector<glm::vec3> m_positions;
+    std::vector<unsigned int> m_indices;
 };
