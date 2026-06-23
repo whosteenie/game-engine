@@ -21,7 +21,6 @@
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtx/matrix_decompose.hpp>
 
 #include <algorithm>
 #include <cstdio>
@@ -143,17 +142,6 @@ namespace
         initialized = true;
     }
 
-    void DecomposeWorldMatrix(
-        const glm::mat4& worldMatrix,
-        glm::vec3& position,
-        glm::quat& rotation,
-        glm::vec3& scale)
-    {
-        glm::vec3 skew;
-        glm::vec4 perspective;
-        glm::decompose(worldMatrix, scale, rotation, position, skew, perspective);
-    }
-
     glm::mat4 BuildWorldMatrix(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale)
     {
         glm::mat4 matrix(1.0f);
@@ -186,7 +174,8 @@ namespace
 
     JPH::Quat ToJoltQuat(const glm::quat& rotation)
     {
-        return JPH::Quat(rotation.w, rotation.x, rotation.y, rotation.z);
+        // Jolt stores quaternions as (x, y, z, w); GLM's constructor is (w, x, y, z).
+        return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w);
     }
 
     JPH::Vec3 ToJoltVec3(const glm::vec3& value)
@@ -333,10 +322,10 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
         const ColliderComponent& collider = object.GetCollider();
         const glm::mat4 worldMatrix = scene.GetWorldMatrix(objectIndex);
         const glm::vec3 colliderWorldCenter = glm::vec3(worldMatrix * glm::vec4(collider.offset, 1.0f));
-        glm::vec3 worldScale;
-        glm::quat worldRotation;
-        glm::vec3 worldPosition;
-        DecomposeWorldMatrix(worldMatrix, worldPosition, worldRotation, worldScale);
+        Transform worldTransform;
+        worldTransform.SetFromMatrix(worldMatrix);
+        const glm::vec3& worldScale = worldTransform.scale;
+        const glm::quat& worldRotation = worldTransform.rotation;
         if (!IsFiniteVec3(colliderWorldCenter) || !IsFiniteVec3(worldScale) || !IsFiniteQuat(worldRotation))
         {
             std::fprintf(
@@ -493,10 +482,23 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
 
         const RVec3 position = bodyInterface.GetCenterOfMassPosition(trackedBody.bodyId);
         const Quat rotation = bodyInterface.GetRotation(trackedBody.bodyId);
+        const glm::quat worldRotation = FromJoltQuat(rotation);
+        const glm::vec3 colliderWorldCenter =
+            FromJoltVec3(Vec3(position.GetX(), position.GetY(), position.GetZ()));
+
+        const SceneObject& object =
+            scene.GetObject(static_cast<std::size_t>(trackedBody.objectIndex));
+        const ColliderComponent& collider = object.GetCollider();
+
+        Transform worldTransform;
+        worldTransform.SetFromMatrix(scene.GetWorldMatrix(trackedBody.objectIndex));
+        const glm::vec3 objectWorldPosition =
+            colliderWorldCenter - worldRotation * (collider.offset * worldTransform.scale);
+
         ApplyWorldTransformToObject(
             scene,
             trackedBody.objectIndex,
-            FromJoltVec3(Vec3(position.GetX(), position.GetY(), position.GetZ())),
-            FromJoltQuat(rotation));
+            objectWorldPosition,
+            worldRotation);
     }
 }
