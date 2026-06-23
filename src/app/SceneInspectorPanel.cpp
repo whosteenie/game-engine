@@ -989,13 +989,12 @@ namespace
                         {selectedIndex},
                         "Reset Transform",
                         [&](Scene& target) {
-                            target.GetObject(static_cast<std::size_t>(selectedIndex)).GetTransform().Reset();
+                            ResetTransformsOnObjects(target, {selectedIndex});
                         });
                 }
                 else
                 {
-                    selectedObject.GetTransform().Reset();
-                    scene.MarkDirty();
+                    ResetTransformsOnObjects(scene, {selectedIndex});
                 }
             }
 
@@ -1205,7 +1204,7 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
         m_nameEditOldName.clear();
     }
 
-    TransformEditContext editContext = m_transformEditContext;
+    TransformEditContext& editContext = m_transformEditContext;
     editContext.undoStack = undoStack;
     editContext.scene = &scene;
     editContext.objectIndices = selectedIndices;
@@ -1236,8 +1235,6 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
     {
         DrawMultiObjectInspector(scene, selectedIndices, editContext, undoStack);
     }
-
-    m_transformEditContext = editContext;
 
     ImGui::End();
 }

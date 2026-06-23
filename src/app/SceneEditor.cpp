@@ -147,10 +147,11 @@ namespace
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
-        const bool gizmoUsing = ImGuizmo::IsUsing();
-        if (gizmoUsing && !gizmoWasUsing && undoStack != nullptr)
+        const bool wasUsing = gizmoWasUsing;
+        ObjectTransformMap frameStartTransforms;
+        if (!wasUsing && undoStack != nullptr)
         {
-            gizmoTransformBefore =
+            frameStartTransforms =
                 CaptureLocalTransforms(scene, scene.GetSelection().indices);
         }
 
@@ -164,7 +165,13 @@ namespace
             scene.ApplySelectionGizmoWorldMatrix(gizmoWorldMatrixBefore, gizmoWorldMatrix);
         }
 
-        if (!gizmoUsing && gizmoWasUsing && undoStack != nullptr && !gizmoTransformBefore.empty())
+        const bool isUsing = ImGuizmo::IsUsing();
+        if (isUsing && !wasUsing && undoStack != nullptr)
+        {
+            gizmoTransformBefore = std::move(frameStartTransforms);
+        }
+
+        if (!isUsing && wasUsing && undoStack != nullptr && !gizmoTransformBefore.empty())
         {
             const ObjectTransformMap after =
                 CaptureLocalTransforms(scene, scene.GetSelection().indices);
@@ -176,7 +183,7 @@ namespace
             gizmoTransformBefore.clear();
         }
 
-        gizmoWasUsing = gizmoUsing;
+        gizmoWasUsing = isUsing;
     }
 
     const char* GetGizmoCommandName(TransformTool tool)

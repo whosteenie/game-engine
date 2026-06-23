@@ -524,6 +524,11 @@ void PushTransformMutation(
     ObjectTransformMap before = CaptureLocalTransforms(scene, objectIndices);
     mutate(scene);
     ObjectTransformMap after = CaptureLocalTransforms(scene, objectIndices);
+    if (!AreLocalTransformsEqual(before, after))
+    {
+        scene.MarkDirty();
+    }
+
     PushTransformObjects(undoStack, std::move(before), std::move(after), commandName);
 }
 

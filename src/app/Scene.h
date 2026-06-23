@@ -28,7 +28,8 @@ class ScreenSpaceEffects;
 class UndoStack;
 struct SceneProjectIO;
 class SceneDocument;
-#include "app/SceneSubtreeArchive.h"
+struct SceneSubtreeArchive;
+struct ArchivedSelectionState;
 
 enum class HierarchyInsertMode
 {
