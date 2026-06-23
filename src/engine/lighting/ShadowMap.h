@@ -10,6 +10,11 @@ public:
     explicit ShadowMap(int resolution = DefaultResolution);
     ~ShadowMap();
 
+    ShadowMap(const ShadowMap&) = delete;
+    ShadowMap& operator=(const ShadowMap&) = delete;
+    ShadowMap(ShadowMap&& other) noexcept;
+    ShadowMap& operator=(ShadowMap&& other) noexcept;
+
     void BeginPass(
         const glm::vec3& lightDirectionTowardSource,
         const glm::vec3& boundsMin,
@@ -21,6 +26,7 @@ public:
 
 private:
     void CreateResources();
+    void DestroyResources();
 
     int m_resolution;
     unsigned int m_fbo = 0;

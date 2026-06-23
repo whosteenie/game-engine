@@ -9,6 +9,11 @@ public:
     Shader(const char* vertexPath, const char* fragmentPath);
     ~Shader();
 
+    Shader(const Shader&) = delete;
+    Shader& operator=(const Shader&) = delete;
+    Shader(Shader&& other) noexcept;
+    Shader& operator=(Shader&& other) noexcept;
+
     void Use() const;
     void SetFloat(const char* name, float value) const;
     void SetInt(const char* name, int value) const;

@@ -8,6 +8,11 @@ public:
     explicit IBL(const char* hdrPath);
     ~IBL();
 
+    IBL(const IBL&) = delete;
+    IBL& operator=(const IBL&) = delete;
+    IBL(IBL&& other) noexcept;
+    IBL& operator=(IBL&& other) noexcept;
+
     void BindTextures(Shader& shader) const;
     float GetMaxReflectionLod() const;
     float GetEnvironmentIntensity() const;
@@ -15,6 +20,7 @@ public:
 
 private:
     void CreateCaptureResources();
+    void DestroyResources();
     void LoadHdrEquirectangular(const char* hdrPath);
     void CreateEnvironmentCubemap();
     void CreateIrradianceMap();

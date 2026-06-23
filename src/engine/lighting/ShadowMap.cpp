@@ -15,8 +15,49 @@ ShadowMap::ShadowMap(int resolution)
 
 ShadowMap::~ShadowMap()
 {
-    glDeleteFramebuffers(1, &m_fbo);
-    glDeleteTextures(1, &m_depthTexture);
+    DestroyResources();
+}
+
+ShadowMap::ShadowMap(ShadowMap&& other) noexcept
+    : m_resolution(other.m_resolution),
+      m_fbo(other.m_fbo),
+      m_depthTexture(other.m_depthTexture),
+      m_lightSpaceMatrix(other.m_lightSpaceMatrix)
+{
+    other.m_fbo = 0;
+    other.m_depthTexture = 0;
+}
+
+ShadowMap& ShadowMap::operator=(ShadowMap&& other) noexcept
+{
+    if (this != &other)
+    {
+        DestroyResources();
+        m_resolution = other.m_resolution;
+        m_fbo = other.m_fbo;
+        m_depthTexture = other.m_depthTexture;
+        m_lightSpaceMatrix = other.m_lightSpaceMatrix;
+
+        other.m_fbo = 0;
+        other.m_depthTexture = 0;
+    }
+
+    return *this;
+}
+
+void ShadowMap::DestroyResources()
+{
+    if (m_fbo != 0)
+    {
+        glDeleteFramebuffers(1, &m_fbo);
+        m_fbo = 0;
+    }
+
+    if (m_depthTexture != 0)
+    {
+        glDeleteTextures(1, &m_depthTexture);
+        m_depthTexture = 0;
+    }
 }
 
 void ShadowMap::CreateResources()

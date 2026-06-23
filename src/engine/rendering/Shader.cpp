@@ -10,18 +10,78 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+namespace
+{
+    class ShaderObjectGuard
+    {
+    public:
+        explicit ShaderObjectGuard(unsigned int shaderId = 0)
+            : m_shaderId(shaderId)
+        {
+        }
+
+        ~ShaderObjectGuard()
+        {
+            if (m_shaderId != 0)
+            {
+                glDeleteShader(m_shaderId);
+            }
+        }
+
+        ShaderObjectGuard(const ShaderObjectGuard&) = delete;
+        ShaderObjectGuard& operator=(const ShaderObjectGuard&) = delete;
+
+        ShaderObjectGuard(ShaderObjectGuard&& other) noexcept
+            : m_shaderId(other.m_shaderId)
+        {
+            other.m_shaderId = 0;
+        }
+
+        ShaderObjectGuard& operator=(ShaderObjectGuard&& other) noexcept
+        {
+            if (this != &other)
+            {
+                if (m_shaderId != 0)
+                {
+                    glDeleteShader(m_shaderId);
+                }
+
+                m_shaderId = other.m_shaderId;
+                other.m_shaderId = 0;
+            }
+
+            return *this;
+        }
+
+        unsigned int Get() const
+        {
+            return m_shaderId;
+        }
+
+        unsigned int Release()
+        {
+            const unsigned int released = m_shaderId;
+            m_shaderId = 0;
+            return released;
+        }
+
+    private:
+        unsigned int m_shaderId = 0;
+    };
+}
+
 Shader::Shader(const char* vertexPath, const char* fragmentPath)
 {
-    std::string vertexSource = ReadFile(vertexPath);
-    std::string fragmentSource = ReadFile(fragmentPath);
+    const std::string vertexSource = ReadFile(vertexPath);
+    const std::string fragmentSource = ReadFile(fragmentPath);
 
-    unsigned int vertex = Compile(GL_VERTEX_SHADER, vertexSource.c_str());
-    unsigned int fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource.c_str());
-    m_programID = Link(vertex, fragment);
+    ShaderObjectGuard vertex(Compile(GL_VERTEX_SHADER, vertexSource.c_str()));
+    ShaderObjectGuard fragment(Compile(GL_FRAGMENT_SHADER, fragmentSource.c_str()));
+    m_programID = Link(vertex.Get(), fragment.Get());
     m_isLinked = m_programID != 0;
 
-    glDeleteShader(vertex);
-    glDeleteShader(fragment);
+    glDeleteShader(vertex.Release());
+    glDeleteShader(fragment.Release());
 }
 
 Shader::~Shader()
@@ -30,6 +90,32 @@ Shader::~Shader()
     {
         glDeleteProgram(m_programID);
     }
+}
+
+Shader::Shader(Shader&& other) noexcept
+    : m_programID(other.m_programID),
+      m_isLinked(other.m_isLinked)
+{
+    other.m_programID = 0;
+    other.m_isLinked = false;
+}
+
+Shader& Shader::operator=(Shader&& other) noexcept
+{
+    if (this != &other)
+    {
+        if (m_programID != 0)
+        {
+            glDeleteProgram(m_programID);
+        }
+
+        m_programID = other.m_programID;
+        m_isLinked = other.m_isLinked;
+        other.m_programID = 0;
+        other.m_isLinked = false;
+    }
+
+    return *this;
 }
 
 void Shader::Use() const

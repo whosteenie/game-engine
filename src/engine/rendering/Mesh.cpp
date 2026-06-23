@@ -127,11 +127,65 @@ Mesh::Mesh(
     glBindVertexArray(0);
 }
 
+Mesh::Mesh(Mesh&& other) noexcept
+    : m_vao(other.m_vao),
+      m_vbo(other.m_vbo),
+      m_ebo(other.m_ebo),
+      m_indexCount(other.m_indexCount),
+      m_positions(std::move(other.m_positions)),
+      m_indices(std::move(other.m_indices))
+{
+    other.m_vao = 0;
+    other.m_vbo = 0;
+    other.m_ebo = 0;
+    other.m_indexCount = 0;
+}
+
+Mesh& Mesh::operator=(Mesh&& other) noexcept
+{
+    if (this != &other)
+    {
+        DestroyGlResources();
+        m_vao = other.m_vao;
+        m_vbo = other.m_vbo;
+        m_ebo = other.m_ebo;
+        m_indexCount = other.m_indexCount;
+        m_positions = std::move(other.m_positions);
+        m_indices = std::move(other.m_indices);
+
+        other.m_vao = 0;
+        other.m_vbo = 0;
+        other.m_ebo = 0;
+        other.m_indexCount = 0;
+    }
+
+    return *this;
+}
+
+void Mesh::DestroyGlResources()
+{
+    if (m_vao != 0)
+    {
+        glDeleteVertexArrays(1, &m_vao);
+        m_vao = 0;
+    }
+
+    if (m_vbo != 0)
+    {
+        glDeleteBuffers(1, &m_vbo);
+        m_vbo = 0;
+    }
+
+    if (m_ebo != 0)
+    {
+        glDeleteBuffers(1, &m_ebo);
+        m_ebo = 0;
+    }
+}
+
 Mesh::~Mesh()
 {
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
-    glDeleteBuffers(1, &m_ebo);
+    DestroyGlResources();
 }
 
 void Mesh::Draw() const

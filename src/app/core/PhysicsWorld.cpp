@@ -5,6 +5,7 @@
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
+#include "engine/scene/SceneObjectId.h"
 #include "engine/scene/Transform.h"
 
 #include <Jolt/Jolt.h>
@@ -180,11 +181,36 @@ struct PhysicsWorld::Impl
     struct TrackedBody
     {
         BodyID bodyId;
-        int objectIndex = -1;
+        SceneObjectId objectId = kInvalidSceneObjectId;
         bool syncFromPhysics = false;
     };
 
     std::vector<TrackedBody> trackedBodies;
+
+    void PruneStaleBodies(Scene& scene)
+    {
+        BodyInterface& bodyInterface = physicsSystem.GetBodyInterface();
+        const auto isStale = [&](const TrackedBody& trackedBody) {
+            return trackedBody.objectId == kInvalidSceneObjectId
+                || scene.FindObjectIndex(trackedBody.objectId) < 0;
+        };
+
+        for (TrackedBody& trackedBody : trackedBodies)
+        {
+            if (!isStale(trackedBody) || trackedBody.bodyId.IsInvalid())
+            {
+                continue;
+            }
+
+            bodyInterface.RemoveBody(trackedBody.bodyId);
+            bodyInterface.DestroyBody(trackedBody.bodyId);
+            trackedBody.bodyId = BodyID();
+        }
+
+        trackedBodies.erase(
+            std::remove_if(trackedBodies.begin(), trackedBodies.end(), isStale),
+            trackedBodies.end());
+    }
 
     Impl()
     {
@@ -334,14 +360,14 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             continue;
         }
 
-        body->SetUserData(static_cast<uint64_t>(objectIndex));
+        body->SetUserData(static_cast<uint64_t>(object.GetId()));
         const EActivation activation =
             motionType == EMotionType::Static ? EActivation::DontActivate : EActivation::Activate;
         bodyInterface.AddBody(body->GetID(), activation);
 
         m_impl->trackedBodies.push_back(Impl::TrackedBody{
             body->GetID(),
-            objectIndex,
+            object.GetId(),
             syncFromPhysics,
         });
     }
@@ -365,6 +391,8 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
         &m_impl->tempAllocator,
         &m_impl->jobSystem);
 
+    m_impl->PruneStaleBodies(scene);
+
     BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
     for (const Impl::TrackedBody& trackedBody : m_impl->trackedBodies)
     {
@@ -378,24 +406,29 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
             continue;
         }
 
+        const int objectIndex = scene.FindObjectIndex(trackedBody.objectId);
+        if (objectIndex < 0)
+        {
+            continue;
+        }
+
         const RVec3 position = bodyInterface.GetCenterOfMassPosition(trackedBody.bodyId);
         const Quat rotation = bodyInterface.GetRotation(trackedBody.bodyId);
         const glm::quat worldRotation = JoltConversion::FromQuat(rotation);
         const glm::vec3 colliderWorldCenter = JoltConversion::FromVec3(
             Vec3(position.GetX(), position.GetY(), position.GetZ()));
 
-        const SceneObject& object =
-            scene.GetObject(static_cast<std::size_t>(trackedBody.objectIndex));
+        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         const ColliderComponent& collider = object.GetCollider();
 
         Transform worldTransform;
-        worldTransform.SetFromMatrix(scene.GetWorldMatrix(trackedBody.objectIndex));
+        worldTransform.SetFromMatrix(scene.GetWorldMatrix(objectIndex));
         const glm::vec3 objectWorldPosition =
             colliderWorldCenter - worldRotation * (collider.offset * worldTransform.scale);
 
         ApplyWorldTransformToObject(
             scene,
-            trackedBody.objectIndex,
+            objectIndex,
             objectWorldPosition,
             worldRotation);
     }

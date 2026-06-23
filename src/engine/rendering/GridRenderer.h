@@ -11,10 +11,16 @@ public:
     GridRenderer();
     ~GridRenderer();
 
+    GridRenderer(const GridRenderer&) = delete;
+    GridRenderer& operator=(const GridRenderer&) = delete;
+    GridRenderer(GridRenderer&& other) noexcept;
+    GridRenderer& operator=(GridRenderer&& other) noexcept;
+
     void Draw(const Camera& camera, bool outputLinear = false) const;
 
 private:
     void BuildGridGeometry(float halfExtent);
+    void DestroyGlResources();
 
     std::unique_ptr<Shader> m_shader;
     unsigned int m_vao = 0;

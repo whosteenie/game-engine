@@ -96,17 +96,139 @@ IBL::IBL(const char* hdrPath)
 
 IBL::~IBL()
 {
-    glDeleteTextures(1, &m_hdrTexture);
-    glDeleteTextures(1, &m_environmentCubemap);
-    glDeleteTextures(1, &m_irradianceMap);
-    glDeleteTextures(1, &m_prefilterMap);
-    glDeleteTextures(1, &m_brdfLut);
-    glDeleteFramebuffers(1, &m_captureFbo);
-    glDeleteRenderbuffers(1, &m_captureRbo);
-    glDeleteVertexArrays(1, &m_cubeVao);
-    glDeleteBuffers(1, &m_cubeVbo);
-    glDeleteVertexArrays(1, &m_quadVao);
-    glDeleteBuffers(1, &m_quadVbo);
+    DestroyResources();
+}
+
+IBL::IBL(IBL&& other) noexcept
+    : m_hdrTexture(other.m_hdrTexture),
+      m_environmentCubemap(other.m_environmentCubemap),
+      m_irradianceMap(other.m_irradianceMap),
+      m_prefilterMap(other.m_prefilterMap),
+      m_brdfLut(other.m_brdfLut),
+      m_captureFbo(other.m_captureFbo),
+      m_captureRbo(other.m_captureRbo),
+      m_cubeVao(other.m_cubeVao),
+      m_cubeVbo(other.m_cubeVbo),
+      m_quadVao(other.m_quadVao),
+      m_quadVbo(other.m_quadVbo),
+      m_maxPrefilterMipLevel(other.m_maxPrefilterMipLevel),
+      m_environmentIntensity(other.m_environmentIntensity)
+{
+    other.m_hdrTexture = 0;
+    other.m_environmentCubemap = 0;
+    other.m_irradianceMap = 0;
+    other.m_prefilterMap = 0;
+    other.m_brdfLut = 0;
+    other.m_captureFbo = 0;
+    other.m_captureRbo = 0;
+    other.m_cubeVao = 0;
+    other.m_cubeVbo = 0;
+    other.m_quadVao = 0;
+    other.m_quadVbo = 0;
+}
+
+IBL& IBL::operator=(IBL&& other) noexcept
+{
+    if (this != &other)
+    {
+        DestroyResources();
+        m_hdrTexture = other.m_hdrTexture;
+        m_environmentCubemap = other.m_environmentCubemap;
+        m_irradianceMap = other.m_irradianceMap;
+        m_prefilterMap = other.m_prefilterMap;
+        m_brdfLut = other.m_brdfLut;
+        m_captureFbo = other.m_captureFbo;
+        m_captureRbo = other.m_captureRbo;
+        m_cubeVao = other.m_cubeVao;
+        m_cubeVbo = other.m_cubeVbo;
+        m_quadVao = other.m_quadVao;
+        m_quadVbo = other.m_quadVbo;
+        m_maxPrefilterMipLevel = other.m_maxPrefilterMipLevel;
+        m_environmentIntensity = other.m_environmentIntensity;
+
+        other.m_hdrTexture = 0;
+        other.m_environmentCubemap = 0;
+        other.m_irradianceMap = 0;
+        other.m_prefilterMap = 0;
+        other.m_brdfLut = 0;
+        other.m_captureFbo = 0;
+        other.m_captureRbo = 0;
+        other.m_cubeVao = 0;
+        other.m_cubeVbo = 0;
+        other.m_quadVao = 0;
+        other.m_quadVbo = 0;
+    }
+
+    return *this;
+}
+
+void IBL::DestroyResources()
+{
+    if (m_hdrTexture != 0)
+    {
+        glDeleteTextures(1, &m_hdrTexture);
+        m_hdrTexture = 0;
+    }
+
+    if (m_environmentCubemap != 0)
+    {
+        glDeleteTextures(1, &m_environmentCubemap);
+        m_environmentCubemap = 0;
+    }
+
+    if (m_irradianceMap != 0)
+    {
+        glDeleteTextures(1, &m_irradianceMap);
+        m_irradianceMap = 0;
+    }
+
+    if (m_prefilterMap != 0)
+    {
+        glDeleteTextures(1, &m_prefilterMap);
+        m_prefilterMap = 0;
+    }
+
+    if (m_brdfLut != 0)
+    {
+        glDeleteTextures(1, &m_brdfLut);
+        m_brdfLut = 0;
+    }
+
+    if (m_captureFbo != 0)
+    {
+        glDeleteFramebuffers(1, &m_captureFbo);
+        m_captureFbo = 0;
+    }
+
+    if (m_captureRbo != 0)
+    {
+        glDeleteRenderbuffers(1, &m_captureRbo);
+        m_captureRbo = 0;
+    }
+
+    if (m_cubeVao != 0)
+    {
+        glDeleteVertexArrays(1, &m_cubeVao);
+        m_cubeVao = 0;
+    }
+
+    if (m_cubeVbo != 0)
+    {
+        glDeleteBuffers(1, &m_cubeVbo);
+        m_cubeVbo = 0;
+    }
+
+    if (m_quadVao != 0)
+    {
+        glDeleteVertexArrays(1, &m_quadVao);
+        m_quadVao = 0;
+    }
+
+    if (m_quadVbo != 0)
+    {
+        glDeleteBuffers(1, &m_quadVbo);
+        m_quadVbo = 0;
+    }
 }
 
 void IBL::CreateCaptureResources()

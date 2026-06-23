@@ -17,6 +17,11 @@ public:
         unsigned int indexCount);
     ~Mesh();
 
+    Mesh(const Mesh&) = delete;
+    Mesh& operator=(const Mesh&) = delete;
+    Mesh(Mesh&& other) noexcept;
+    Mesh& operator=(Mesh&& other) noexcept;
+
     void Draw() const;
 
     bool IntersectRay(
@@ -28,6 +33,8 @@ public:
     const std::vector<unsigned int>& GetIndices() const;
 
 private:
+    void DestroyGlResources();
+
     unsigned int m_vao = 0;
     unsigned int m_vbo = 0;
     unsigned int m_ebo = 0;

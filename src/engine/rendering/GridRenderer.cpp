@@ -17,9 +17,67 @@ GridRenderer::GridRenderer()
 
 GridRenderer::~GridRenderer()
 {
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
-    glDeleteBuffers(1, &m_ebo);
+    DestroyGlResources();
+}
+
+GridRenderer::GridRenderer(GridRenderer&& other) noexcept
+    : m_shader(std::move(other.m_shader)),
+      m_vao(other.m_vao),
+      m_vbo(other.m_vbo),
+      m_ebo(other.m_ebo),
+      m_indexCount(other.m_indexCount),
+      m_halfExtent(other.m_halfExtent),
+      m_cellSize(other.m_cellSize),
+      m_majorInterval(other.m_majorInterval)
+{
+    other.m_vao = 0;
+    other.m_vbo = 0;
+    other.m_ebo = 0;
+    other.m_indexCount = 0;
+}
+
+GridRenderer& GridRenderer::operator=(GridRenderer&& other) noexcept
+{
+    if (this != &other)
+    {
+        DestroyGlResources();
+        m_shader = std::move(other.m_shader);
+        m_vao = other.m_vao;
+        m_vbo = other.m_vbo;
+        m_ebo = other.m_ebo;
+        m_indexCount = other.m_indexCount;
+        m_halfExtent = other.m_halfExtent;
+        m_cellSize = other.m_cellSize;
+        m_majorInterval = other.m_majorInterval;
+
+        other.m_vao = 0;
+        other.m_vbo = 0;
+        other.m_ebo = 0;
+        other.m_indexCount = 0;
+    }
+
+    return *this;
+}
+
+void GridRenderer::DestroyGlResources()
+{
+    if (m_vao != 0)
+    {
+        glDeleteVertexArrays(1, &m_vao);
+        m_vao = 0;
+    }
+
+    if (m_vbo != 0)
+    {
+        glDeleteBuffers(1, &m_vbo);
+        m_vbo = 0;
+    }
+
+    if (m_ebo != 0)
+    {
+        glDeleteBuffers(1, &m_ebo);
+        m_ebo = 0;
+    }
 }
 
 void GridRenderer::BuildGridGeometry(float halfExtent)
