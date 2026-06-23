@@ -192,6 +192,17 @@ namespace
         return true;
     }
 
+    bool IsPointInScreenRect(
+        float screenX,
+        float screenY,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY)
+    {
+        return screenX >= rectMinX && screenX <= rectMaxX && screenY >= rectMinY && screenY <= rectMaxY;
+    }
+
     bool ScreenRectsOverlap(
         float aMinX,
         float aMinY,
@@ -203,6 +214,95 @@ namespace
         float bMaxY)
     {
         return aMinX <= bMaxX && aMaxX >= bMinX && aMinY <= bMaxY && aMaxY >= bMinY;
+    }
+
+    bool WorldPointProjectsIntoScreenRect(
+        const glm::vec3& worldPoint,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        const glm::vec2& viewportSize)
+    {
+        glm::vec2 screenPoint;
+        if (!TryWorldToScreenPoint(
+                worldPoint,
+                viewMatrix,
+                projectionMatrix,
+                viewportSize,
+                screenPoint))
+        {
+            return false;
+        }
+
+        return IsPointInScreenRect(
+            screenPoint.x,
+            screenPoint.y,
+            rectMinX,
+            rectMinY,
+            rectMaxX,
+            rectMaxY);
+    }
+
+    bool MeshIntersectsScreenRect(
+        const Mesh& mesh,
+        const glm::mat4& worldMatrix,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY,
+        const glm::mat4& viewMatrix,
+        const glm::mat4& projectionMatrix,
+        const glm::vec2& viewportSize)
+    {
+        for (const glm::vec3& localPosition : mesh.GetPositions())
+        {
+            const glm::vec3 worldPosition = glm::vec3(worldMatrix * glm::vec4(localPosition, 1.0f));
+            if (WorldPointProjectsIntoScreenRect(
+                    worldPosition,
+                    rectMinX,
+                    rectMinY,
+                    rectMaxX,
+                    rectMaxY,
+                    viewMatrix,
+                    projectionMatrix,
+                    viewportSize))
+            {
+                return true;
+            }
+        }
+
+        const std::vector<unsigned int>& indices = mesh.GetIndices();
+        const std::vector<glm::vec3>& positions = mesh.GetPositions();
+        for (std::size_t index = 0; index + 2 < indices.size(); index += 3)
+        {
+            const unsigned int i0 = indices[index];
+            const unsigned int i1 = indices[index + 1];
+            const unsigned int i2 = indices[index + 2];
+            if (i0 >= positions.size() || i1 >= positions.size() || i2 >= positions.size())
+            {
+                continue;
+            }
+
+            const glm::vec3 localCentroid = (positions[i0] + positions[i1] + positions[i2]) / 3.0f;
+            const glm::vec3 worldCentroid = glm::vec3(worldMatrix * glm::vec4(localCentroid, 1.0f));
+            if (WorldPointProjectsIntoScreenRect(
+                    worldCentroid,
+                    rectMinX,
+                    rectMinY,
+                    rectMaxX,
+                    rectMaxY,
+                    viewMatrix,
+                    projectionMatrix,
+                    viewportSize))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     bool BoundsIntersectScreenRect(
@@ -412,6 +512,20 @@ std::vector<int> PickObjectsInScreenRect(
         if (!BoundsIntersectScreenRect(
                 boundsMin,
                 boundsMax,
+                selectionMinX,
+                selectionMinY,
+                selectionMaxX,
+                selectionMaxY,
+                viewMatrix,
+                projectionMatrix,
+                viewportSize))
+        {
+            continue;
+        }
+
+        if (!MeshIntersectsScreenRect(
+                *object.GetMesh(),
+                worldMatrix,
                 selectionMinX,
                 selectionMinY,
                 selectionMaxX,

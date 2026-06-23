@@ -140,6 +140,16 @@ void Mesh::Draw() const
     glDrawElements(GL_TRIANGLES, m_indexCount, GL_UNSIGNED_INT, 0);
 }
 
+const std::vector<glm::vec3>& Mesh::GetPositions() const
+{
+    return m_positions;
+}
+
+const std::vector<unsigned int>& Mesh::GetIndices() const
+{
+    return m_indices;
+}
+
 bool Mesh::IntersectRay(
     const glm::vec3& localOrigin,
     const glm::vec3& localDirection,
