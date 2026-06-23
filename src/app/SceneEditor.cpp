@@ -189,12 +189,13 @@ void SceneEditor::Update(
     bool allowMouseInput,
     bool allowKeyboardInput)
 {
+    const ImGuiIO& io = ImGui::GetIO();
+
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
         scene.RemoveSelectedObjects();
     }
 
-    const ImGuiIO& io = ImGui::GetIO();
     const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
         || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
         || io.KeyCtrl;
@@ -299,6 +300,26 @@ void SceneEditor::Update(
         }
 
         CancelMarqueeDrag();
+    }
+}
+
+void SceneEditor::HandleEscapeKey(Scene& scene)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput
+        || ImGui::IsAnyItemActive()
+        || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
+    {
+        return;
+    }
+
+    if (m_trackingLeftDrag || m_marqueeActive)
+    {
+        CancelMarqueeDrag();
+    }
+    else if (scene.HasSelection())
+    {
+        scene.ClearSelection();
     }
 }
 

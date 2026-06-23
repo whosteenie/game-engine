@@ -1416,6 +1416,11 @@ bool Scene::HasSelection() const
     return !m_selection.indices.empty();
 }
 
+void Scene::HandleEscapeKey()
+{
+    m_sceneEditor->HandleEscapeKey(*this);
+}
+
 SceneEditor& Scene::GetSceneEditor()
 {
     return *m_sceneEditor;

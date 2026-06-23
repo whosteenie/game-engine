@@ -199,7 +199,20 @@ void Application::Update(double deltaTime)
 
     if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_ESCAPE))
     {
-        RequestClose();
+        if (m_pendingClose || m_pendingNewProject)
+        {
+            m_pendingClose = false;
+            m_pendingNewProject = false;
+            ImGui::CloseCurrentPopup();
+        }
+        else if (flyCameraActive)
+        {
+            m_input->ReleaseMouseCapture();
+        }
+        else if (editorActive)
+        {
+            m_scene->HandleEscapeKey();
+        }
     }
 
     if (editorActive && allowGameMouse && flyCameraActive)

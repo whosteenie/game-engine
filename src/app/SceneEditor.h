@@ -43,6 +43,8 @@ public:
         bool allowMouseInput,
         bool allowKeyboardInput);
 
+    void HandleEscapeKey(Scene& scene);
+
     void RenderSelectionOverlay(const Scene& scene, const Camera& camera, bool useScreenSpace) const;
 
 private:

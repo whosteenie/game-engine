@@ -74,6 +74,8 @@ public:
     void ClearSelection();
     bool HasSelection() const;
 
+    void HandleEscapeKey();
+
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
 
