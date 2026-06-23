@@ -85,7 +85,7 @@ void CascadedShadowMap::BeginFrame(
         CascadeCount,
         camera.GetNearPlane(),
         cascadeFarPlane,
-        0.75f);
+        0.82f);
 
     const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
 
@@ -109,7 +109,8 @@ void CascadedShadowMap::BeginFrame(
             lightDirectionTowardSource,
             frustumMin,
             frustumMax,
-            m_resolution);
+            m_resolution,
+            0.25f);
         m_lightSpaceMatrices[static_cast<std::size_t>(cascadeIndex)] =
             m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)].lightSpaceMatrix;
     }

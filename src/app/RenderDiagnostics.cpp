@@ -260,11 +260,6 @@ namespace RenderDiagnostics
             out << "SSAO radius: " << effects.GetSsaoRadius() << "\n";
             out << "SSAO bias: " << effects.GetSsaoBias() << "\n";
             out << "AO strength: " << effects.GetAoStrength() << "\n";
-            out << "Contact shadows enabled: " << (effects.IsContactShadowsEnabled() ? "yes" : "no") << "\n";
-            out << "Contact shadows active this frame: "
-                << (effects.IsContactShadowsEnabled() && scene.GetLighting().GetShadowLightIndex() < 0 ? "yes"
-                                                                                                        : "no")
-                << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
 
             const int selectedIndex = scene.GetSelectedObjectIndex();
@@ -290,8 +285,7 @@ namespace RenderDiagnostics
             out << "2. Direct lighting (PBR): sun/specular only\n";
             out << "3. Ambient / IBL (PBR): indirect before SSAO\n";
             out << "4. SSAO buffer: screen-space AO applied to indirect only\n";
-            out << "5. Composite occlusion: SSAO (+ contact if active) multiplier on indirect\n";
-            out << "6. Contact shadows are disabled when a directional shadow light is active.\n";
+            out << "5. Composite occlusion: SSAO multiplier on indirect\n";
 
             statusMessage = "Wrote " + fs::absolute(outputFilePath).string();
             return true;

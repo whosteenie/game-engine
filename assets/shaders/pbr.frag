@@ -57,8 +57,10 @@ uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 uniform sampler2DArrayShadow uShadowMap;
 uniform mat4 uLightSpaceMatrices[MAX_CASCADES];
 uniform float uCascadeEndSplits[MAX_CASCADES];
+uniform float uCascadeTexelWorldSizes[MAX_CASCADES];
 uniform float uCascadeBlendRatio;
 uniform int uCascadeCount;
+uniform float uCascadeNearPlane;
 uniform mat4 uLightSpaceMatrix;
 uniform mat4 uView;
 uniform int uShadowLightIndex;
@@ -218,9 +220,21 @@ vec3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
-float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 normal, vec3 lightDir)
+float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 geomNormal, vec3 lightDir)
 {
-    vec4 lightSpace = uLightSpaceMatrices[cascadeIndex] * vec4(worldPos, 1.0);
+    vec3 normal = normalize(geomNormal);
+    float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
+
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0).xy);
+    float texelUvSpan = max(texelSize.x, texelSize.y);
+    float texelWorldSpan = uCascadeTexelWorldSizes[cascadeIndex];
+
+    float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15));
+    float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15));
+
+    vec3 biasedWorldPos = worldPos + normal * worldBias;
+    vec4 lightSpace = uLightSpaceMatrices[cascadeIndex] * vec4(biasedWorldPos, 1.0);
     vec3 projCoords = lightSpace.xyz / lightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
 
@@ -231,15 +245,8 @@ float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 normal, vec3 lig
         return 1.0;
     }
 
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0).xy);
-    float texelSpan = max(texelSize.x, texelSize.y);
-
-    float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
-    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
-    float bias = texelSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.1));
-
-    vec2 shadowUv = projCoords.xy + normal.xy * bias * 0.75;
-    float compareDepth = projCoords.z - bias;
+    vec2 shadowUv = projCoords.xy;
+    float compareDepth = projCoords.z - depthBias;
 
     float shadow = 0.0;
     for (int x = -2; x <= 2; ++x)
@@ -270,30 +277,36 @@ int SelectCascadeIndex(float viewDepth)
     return cascadeIndex;
 }
 
-float CalcShadow(vec3 geometricNormal, vec3 lightDir)
+float CalcShadow(vec3 lightDir)
 {
     if (uReceiveShadow == 0)
     {
         return 1.0;
     }
 
-    vec3 normal = normalize(geometricNormal);
-    int cascadeIndex = SelectCascadeIndex(vViewDepth);
+    vec3 geomNormal = normalize(vNormal);
 
-    if (uCascadeCount > 1 && cascadeIndex > 0)
+    for (int boundaryIndex = 0; boundaryIndex < uCascadeCount - 1; ++boundaryIndex)
     {
-        float blendEnd = uCascadeEndSplits[cascadeIndex - 1];
-        float blendStart = blendEnd * (1.0 - uCascadeBlendRatio);
-        if (vViewDepth > blendStart)
+        float splitDistance = uCascadeEndSplits[boundaryIndex];
+        float previousSplit = boundaryIndex == 0
+            ? uCascadeNearPlane
+            : uCascadeEndSplits[boundaryIndex - 1];
+        float cascadeSpan = max(splitDistance - previousSplit, 1e-4);
+        float blendWidth = cascadeSpan * uCascadeBlendRatio;
+        float blendStart = splitDistance - blendWidth;
+
+        if (vViewDepth > blendStart && vViewDepth <= splitDistance)
         {
-            float blendFactor = clamp((vViewDepth - blendStart) / max(blendEnd - blendStart, 1e-5), 0.0, 1.0);
-            float nearShadow = SampleCascadeShadow(cascadeIndex - 1, vFragPos, normal, lightDir);
-            float farShadow = SampleCascadeShadow(cascadeIndex, vFragPos, normal, lightDir);
+            float nearShadow = SampleCascadeShadow(boundaryIndex, vFragPos, geomNormal, lightDir);
+            float farShadow = SampleCascadeShadow(boundaryIndex + 1, vFragPos, geomNormal, lightDir);
+            float blendFactor = smoothstep(blendStart, splitDistance, vViewDepth);
             return mix(nearShadow, farShadow, blendFactor);
         }
     }
 
-    return SampleCascadeShadow(cascadeIndex, vFragPos, normal, lightDir);
+    int cascadeIndex = SelectCascadeIndex(vViewDepth);
+    return SampleCascadeShadow(cascadeIndex, vFragPos, geomNormal, lightDir);
 }
 
 vec2 SelectTexCoord(int texCoordSet)
@@ -413,7 +426,7 @@ void main()
         float shadow = 1.0;
         if (i == uShadowLightIndex)
         {
-            shadow = CalcShadow(vNormal, lightDir);
+            shadow = CalcShadow(lightDir);
         }
 
         directLighting += contribution * attenuation * spotIntensity * shadow;
@@ -429,7 +442,7 @@ void main()
             float shadow = 1.0;
             if (uShadowLightIndex >= 0)
             {
-                shadow = CalcShadow(vNormal, normalize(uLightDirections[uShadowLightIndex]));
+                shadow = CalcShadow(normalize(uLightDirections[uShadowLightIndex]));
             }
             debugColor = vec3(shadow);
         }
@@ -464,9 +477,13 @@ void main()
             {
                 debugColor = vec3(0.2, 1.0, 0.2);
             }
-            else
+            else if (cascadeIndex == 2)
             {
                 debugColor = vec3(0.2, 0.35, 1.0);
+            }
+            else
+            {
+                debugColor = vec3(1.0, 0.85, 0.2);
             }
         }
 

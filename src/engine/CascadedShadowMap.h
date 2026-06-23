@@ -10,9 +10,9 @@ class Camera;
 class CascadedShadowMap
 {
 public:
-    static constexpr int CascadeCount = 3;
+    static constexpr int CascadeCount = 4;
     static constexpr int DefaultResolution = 4096;
-    static constexpr float CascadeBlendRatio = 0.08f;
+    static constexpr float CascadeBlendRatio = 0.25f;
 
     explicit CascadedShadowMap(int resolutionPerCascade = DefaultResolution);
     ~CascadedShadowMap();

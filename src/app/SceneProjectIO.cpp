@@ -777,14 +777,10 @@ namespace SceneProjectIODetail
              json{
                  {"enabled", effects.IsEnabled()},
                  {"ssaoEnabled", effects.IsSsaoEnabled()},
-                 {"contactShadowsEnabled", effects.IsContactShadowsEnabled()},
                  {"ssaoRadius", effects.GetSsaoRadius()},
                  {"ssaoBias", effects.GetSsaoBias()},
                  {"ssaoPower", effects.GetSsaoPower()},
                  {"aoStrength", effects.GetAoStrength()},
-                 {"contactStrength", effects.GetContactStrength()},
-                 {"contactShadowDistance", effects.GetContactShadowDistance()},
-                 {"contactShadowSteps", effects.GetContactShadowSteps()},
                  {"exposure", effects.GetExposure()},
                  {"tonemapMode", TonemapModeToString(effects.GetTonemapMode())},
                  {"bloomEnabled", effects.IsBloomEnabled()},
@@ -810,16 +806,10 @@ namespace SceneProjectIODetail
         ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
         effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
         effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
-        effects.SetContactShadowsEnabled(
-            effectsValue.value("contactShadowsEnabled", effects.IsContactShadowsEnabled()));
         effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
         effects.SetSsaoBias(effectsValue.value("ssaoBias", effects.GetSsaoBias()));
         effects.SetSsaoPower(effectsValue.value("ssaoPower", effects.GetSsaoPower()));
         effects.SetAoStrength(effectsValue.value("aoStrength", effects.GetAoStrength()));
-        effects.SetContactStrength(effectsValue.value("contactStrength", effects.GetContactStrength()));
-        effects.SetContactShadowDistance(
-            effectsValue.value("contactShadowDistance", effects.GetContactShadowDistance()));
-        effects.SetContactShadowSteps(effectsValue.value("contactShadowSteps", effects.GetContactShadowSteps()));
         effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
         effects.SetTonemapMode(
             TonemapModeFromString(effectsValue.value("tonemapMode", TonemapModeToString(effects.GetTonemapMode()))));

@@ -7,14 +7,11 @@ uniform sampler2D uDirectLighting;
 uniform sampler2D uIndirectLighting;
 uniform sampler2D uDepthMap;
 uniform sampler2D uSsaoMap;
-uniform sampler2D uContactShadowMap;
 
 uniform int uUseSplitLighting;
 uniform int uUseSsao;
-uniform int uUseContactShadows;
 uniform float uSsaoPower;
 uniform float uAoStrength;
-uniform float uContactStrength;
 uniform int uDebugOcclusionOnly;
 
 void main()
@@ -47,12 +44,6 @@ void main()
     {
         float ssao = pow(texture(uSsaoMap, vTexCoord).r, uSsaoPower);
         indirectOcclusion *= mix(1.0, ssao, uAoStrength);
-    }
-
-    if (uUseContactShadows != 0)
-    {
-        float contact = texture(uContactShadowMap, vTexCoord).r;
-        indirectOcclusion *= mix(1.0, contact, uContactStrength);
     }
 
     if (uDebugOcclusionOnly != 0)

@@ -51,14 +51,10 @@ namespace
         ScreenSpaceEffects& destinationEffects = destination.GetScreenSpaceEffects();
         destinationEffects.SetEnabled(sourceEffects.IsEnabled());
         destinationEffects.SetSsaoEnabled(sourceEffects.IsSsaoEnabled());
-        destinationEffects.SetContactShadowsEnabled(sourceEffects.IsContactShadowsEnabled());
         destinationEffects.SetSsaoRadius(sourceEffects.GetSsaoRadius());
         destinationEffects.SetSsaoBias(sourceEffects.GetSsaoBias());
         destinationEffects.SetSsaoPower(sourceEffects.GetSsaoPower());
-        destinationEffects.SetContactShadowDistance(sourceEffects.GetContactShadowDistance());
-        destinationEffects.SetContactShadowSteps(sourceEffects.GetContactShadowSteps());
         destinationEffects.SetAoStrength(sourceEffects.GetAoStrength());
-        destinationEffects.SetContactStrength(sourceEffects.GetContactStrength());
         destinationEffects.SetExposure(sourceEffects.GetExposure());
         destinationEffects.SetTonemapMode(sourceEffects.GetTonemapMode());
         destinationEffects.SetBloomEnabled(sourceEffects.IsBloomEnabled());
@@ -2109,12 +2105,7 @@ void Scene::Render(
             glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
         }
 
-        m_screenSpaceEffects->Apply(
-            camera,
-            GetSunDirection(),
-            viewportWidth,
-            viewportHeight,
-            m_lighting.GetShadowLightIndex() >= 0);
+        m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitDepthToFramebuffer(
             renderToTarget ? targetFramebuffer : 0,
             viewportWidth,

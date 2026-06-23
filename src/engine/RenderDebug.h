@@ -10,7 +10,6 @@ enum class RenderDebugMode
     LightSpaceDepth,
     CascadeIndex,
     Ssao,
-    ContactShadows,
     CompositeOcclusion,
 };
 

@@ -210,53 +210,6 @@ void LightingPanel::Draw(
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
-
-        bool contactShadowsEnabled = screenSpaceEffects.IsContactShadowsEnabled();
-        if (ImGui::Checkbox("Contact shadows", &contactShadowsEnabled))
-        {
-            ApplyRendererChange(
-                editContext,
-                scene,
-                "Contact shadows",
-                [contactShadowsEnabled](Scene& target) {
-                    target.GetScreenSpaceEffects().SetContactShadowsEnabled(contactShadowsEnabled);
-                    target.MarkDirty();
-                });
-        }
-
-        if (scene.GetLighting().GetShadowLightIndex() >= 0)
-        {
-            ImGui::TextDisabled(
-                "Suppressed while a directional shadow-casting light is active "
-                "(shadow map already covers sun shadows).");
-        }
-
-        if (contactShadowsEnabled)
-        {
-            float contactStrength = screenSpaceEffects.GetContactStrength();
-            if (ImGui::SliderFloat("Contact shadow strength", &contactStrength, 0.0f, 1.0f))
-            {
-                screenSpaceEffects.SetContactStrength(contactStrength);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-
-            float contactDistance = screenSpaceEffects.GetContactShadowDistance();
-            if (ImGui::SliderFloat("Contact shadow distance", &contactDistance, 0.02f, 0.5f))
-            {
-                screenSpaceEffects.SetContactShadowDistance(contactDistance);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-
-            int contactSteps = screenSpaceEffects.GetContactShadowSteps();
-            if (ImGui::SliderInt("Contact shadow steps", &contactSteps, 4, 32))
-            {
-                screenSpaceEffects.SetContactShadowSteps(contactSteps);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-        }
     }
 
     if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
@@ -275,7 +228,6 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::LightSpaceDepth),
             RenderDebugModeLabel(RenderDebugMode::CascadeIndex),
             RenderDebugModeLabel(RenderDebugMode::Ssao),
-            RenderDebugModeLabel(RenderDebugMode::ContactShadows),
             RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),
         };
 

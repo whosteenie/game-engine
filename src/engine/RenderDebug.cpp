@@ -20,10 +20,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Cascade index (PBR)";
     case RenderDebugMode::Ssao:
         return "SSAO buffer";
-    case RenderDebugMode::ContactShadows:
-        return "Contact shadows buffer";
     case RenderDebugMode::CompositeOcclusion:
-        return "Composite occlusion (SSAO + contact)";
+        return "Composite occlusion (SSAO)";
     default:
         return "Unknown";
     }

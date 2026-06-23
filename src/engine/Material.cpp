@@ -133,8 +133,24 @@ void Material::Apply(
             "uCascadeEndSplits",
             cascadeEndSplits.data(),
             CascadedShadowMap::CascadeCount);
+
+        const std::array<ShadowLightSpaceSetup, CascadedShadowMap::CascadeCount>& cascadeSetups =
+            shadowMap->GetCascadeSetups();
+        std::array<float, CascadedShadowMap::CascadeCount> cascadeTexelWorldSizes{};
+        for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::CascadeCount; ++cascadeIndex)
+        {
+            const ShadowLightSpaceSetup& setup = cascadeSetups[static_cast<std::size_t>(cascadeIndex)];
+            cascadeTexelWorldSizes[static_cast<std::size_t>(cascadeIndex)] =
+                std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
+        }
+        m_shader->SetFloatArray(
+            "uCascadeTexelWorldSizes",
+            cascadeTexelWorldSizes.data(),
+            CascadedShadowMap::CascadeCount);
+
         m_shader->SetFloat("uCascadeBlendRatio", CascadedShadowMap::CascadeBlendRatio);
         m_shader->SetInt("uCascadeCount", CascadedShadowMap::CascadeCount);
+        m_shader->SetFloat("uCascadeNearPlane", camera.GetNearPlane());
 
         shadowMap->BindDepthTexture(ShadowMapUnit);
         m_shader->SetInt("uShadowMap", static_cast<int>(ShadowMapUnit));
