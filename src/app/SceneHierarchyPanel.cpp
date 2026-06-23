@@ -1,3 +1,4 @@
+#include "app/EditorReorderDragDrop.h"
 #include "app/SceneHierarchyPanel.h"
 
 #include "app/EditorClipboard.h"
@@ -21,7 +22,6 @@
 namespace
 {
     constexpr const char* kHierarchyDragDropPayload = "SCENE_HIERARCHY_ITEM";
-    constexpr float kHierarchyInsertGapHeight = 4.0f;
 
     SceneObjectId GetObjectId(const Scene& scene, int objectIndex)
     {
@@ -607,7 +607,9 @@ namespace
     {
         ImGui::PushID(referenceIndex);
         ImGui::PushID(static_cast<int>(mode));
-        ImGui::InvisibleButton("##HierarchyInsertGap", ImVec2(-FLT_MIN, kHierarchyInsertGapHeight));
+        ImGui::InvisibleButton(
+            "##HierarchyInsertGap",
+            ImVec2(-FLT_MIN, EditorReorderDragDrop::kInsertGapHitHeight));
 
         if (ImGui::BeginDragDropTarget())
         {

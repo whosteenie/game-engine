@@ -1,0 +1,12 @@
+Font Awesome Free 6 (fa-solid-900.ttf)
+- Icons: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+- Fonts: SIL Open Font License 1.1
+- Source: https://fontawesome.com
+
+Optional UI text font (not bundled): Inter Regular
+- SIL Open Font License 1.1
+- Source: https://github.com/rsms/inter
+- Place Inter-Regular.ttf in this folder to replace the embedded ImGui default text font.
+
+Icon C++ constants: IconsFontAwesome6.h from IconFontCppHeaders (MIT)
+- https://github.com/juliettef/IconFontCppHeaders

@@ -264,6 +264,8 @@ add_executable(game-engine
 
     src/engine/ImGuiLayer.cpp
 
+    src/engine/ImGuiFonts.cpp
+
     src/engine/NativeProgressWindow.cpp
 
     src/engine/Input.cpp
@@ -353,7 +355,7 @@ add_executable(game-engine
 
 
 
-target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb src ${tinygltf_SOURCE_DIR})
+target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb vendor/IconFontCppHeaders src ${tinygltf_SOURCE_DIR})
 
 
 

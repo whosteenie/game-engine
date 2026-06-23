@@ -1,3 +1,4 @@
+#include "app/EditorReorderDragDrop.h"
 #include "app/SceneInspectorPanel.h"
 
 #include "app/EditorPanelConstraints.h"
@@ -1053,7 +1054,6 @@ namespace
     }
 
     constexpr const char* kInspectorComponentDragPayload = "INSP_COMP_REORDER";
-    constexpr float kInspectorInsertGapHeight = 4.0f;
 
     struct InspectorComponentDragPayload
     {
@@ -1080,7 +1080,9 @@ namespace
     {
         ImGui::PushID(beforeIndex);
         ImGui::PushID("InspectorInsertGap");
-        ImGui::InvisibleButton("##InspectorInsertGap", ImVec2(-FLT_MIN, kInspectorInsertGapHeight));
+        ImGui::InvisibleButton(
+            "##InspectorInsertGap",
+            ImVec2(-FLT_MIN, EditorReorderDragDrop::kInsertGapHitHeight));
 
         if (ImGui::BeginDragDropTarget())
         {

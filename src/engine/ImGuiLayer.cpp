@@ -1,5 +1,7 @@
 #include "engine/ImGuiLayer.h"
 
+#include "engine/ImGuiFonts.h"
+
 #include <glad/glad.h>
 
 #define GLFW_INCLUDE_NONE
@@ -33,6 +35,8 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window, const std::string& iniPath)
     {
         io.IniFilename = nullptr;
     }
+
+    ImGuiFonts::LoadEditorFonts(io);
 
     if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
     {
