@@ -3,10 +3,10 @@
 #include <memory>
 #include <vector>
 
+#include "engine/SceneHierarchy.h"
+
 class Camera;
 class Shader;
-
-struct SelectionMeshDraw;
 
 class SelectionRenderer
 {

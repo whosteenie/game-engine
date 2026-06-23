@@ -356,7 +356,11 @@ void SelectionRenderer::DrawScreenSpace(
     }
 
     glCullFace(cullFaceMode);
-    if (!cullFaceEnabled)
+    if (cullFaceEnabled)
+    {
+        glEnable(GL_CULL_FACE);
+    }
+    else
     {
         glDisable(GL_CULL_FACE);
     }
@@ -463,7 +467,11 @@ void SelectionRenderer::DrawHullFallback(
     }
 
     glCullFace(cullFaceMode);
-    if (!cullFaceEnabled)
+    if (cullFaceEnabled)
+    {
+        glEnable(GL_CULL_FACE);
+    }
+    else
     {
         glDisable(GL_CULL_FACE);
     }

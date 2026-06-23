@@ -58,7 +58,6 @@ Mesh::Mesh(
     unsigned int floatsPerVertex,
     const unsigned int* indices,
     unsigned int indexCount)
-    : m_indexCount(indexCount)
 {
     m_positions.reserve(vertexCount);
     for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
@@ -67,7 +66,23 @@ Mesh::Mesh(
         m_positions.emplace_back(vertex[0], vertex[1], vertex[2]);
     }
 
-    m_indices.assign(indices, indices + indexCount);
+    m_indices.reserve(indexCount);
+    for (unsigned int index = 0; index + 2 < indexCount; index += 3)
+    {
+        const unsigned int i0 = indices[index];
+        const unsigned int i1 = indices[index + 1];
+        const unsigned int i2 = indices[index + 2];
+        if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount)
+        {
+            continue;
+        }
+
+        m_indices.push_back(i0);
+        m_indices.push_back(i1);
+        m_indices.push_back(i2);
+    }
+
+    m_indexCount = static_cast<unsigned int>(m_indices.size());
 
     glGenVertexArrays(1, &m_vao);
     glGenBuffers(1, &m_vbo);
@@ -83,7 +98,11 @@ Mesh::Mesh(
         GL_STATIC_DRAW);
 
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, indexCount * sizeof(unsigned int), indices, GL_STATIC_DRAW);
+    glBufferData(
+        GL_ELEMENT_ARRAY_BUFFER,
+        m_indices.size() * sizeof(unsigned int),
+        m_indices.data(),
+        GL_STATIC_DRAW);
 
     const int stride = static_cast<int>(floatsPerVertex * sizeof(float));
 
@@ -136,9 +155,17 @@ bool Mesh::IntersectRay(
 
     for (std::size_t index = 0; index + 2 < m_indices.size(); index += 3)
     {
-        const glm::vec3& v0 = m_positions[m_indices[index]];
-        const glm::vec3& v1 = m_positions[m_indices[index + 1]];
-        const glm::vec3& v2 = m_positions[m_indices[index + 2]];
+        const unsigned int i0 = m_indices[index];
+        const unsigned int i1 = m_indices[index + 1];
+        const unsigned int i2 = m_indices[index + 2];
+        if (i0 >= m_positions.size() || i1 >= m_positions.size() || i2 >= m_positions.size())
+        {
+            continue;
+        }
+
+        const glm::vec3& v0 = m_positions[i0];
+        const glm::vec3& v1 = m_positions[i1];
+        const glm::vec3& v2 = m_positions[i2];
 
         float triangleDistance = 0.0f;
         if (!IntersectRayTriangle(localOrigin, localDirection, v0, v1, v2, triangleDistance))
