@@ -7,10 +7,11 @@
 #include "engine/SceneLighting.h"
 #include "engine/SceneObject.h"
 #include "engine/ScreenSpaceEffects.h"
-#include "engine/ShadowMap.h"
+#include "engine/CascadedShadowMap.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/ShadowMapMath.h"
 
-#include <array>
+#include <glm/gtc/matrix_inverse.hpp>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -52,22 +53,10 @@ namespace
 
     void ComputeShadowSceneBounds(const Scene& scene, glm::vec3& boundsMin, glm::vec3& boundsMax)
     {
-        boundsMin = glm::vec3(std::numeric_limits<float>::max());
-        boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
-
-        for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
+        if (!scene.ComputeShadowCasterBounds(boundsMin, boundsMax))
         {
-            const SceneObject& object = scene.GetObjects()[objectIndex];
-            if (!object.CastsShadow() && !object.ReceivesShadow())
-            {
-                continue;
-            }
-
-            glm::vec3 objectBoundsMin;
-            glm::vec3 objectBoundsMax;
-            scene.GetWorldBounds(static_cast<int>(objectIndex), objectBoundsMin, objectBoundsMax);
-            boundsMin = glm::min(boundsMin, objectBoundsMin);
-            boundsMax = glm::max(boundsMax, objectBoundsMax);
+            boundsMin = glm::vec3(0.0f);
+            boundsMax = glm::vec3(0.0f);
         }
     }
 
@@ -135,10 +124,6 @@ namespace
             const glm::vec3 worldNormal = glm::normalize(normalMatrix * faceNormals[faceIndex]);
             const float sunAlignment = glm::dot(worldNormal, glm::normalize(lightDirection));
             out << "    face " << faceNames[faceIndex] << ": " << sunAlignment;
-            if (sunAlignment > 0.65f)
-            {
-                out << "  [SSAO skipped]";
-            }
             if (sunAlignment < 0.0f)
             {
                 out << "  [shadowed side]";
@@ -189,30 +174,80 @@ namespace RenderDiagnostics
             ComputeShadowSceneBounds(scene, shadowBoundsMin, shadowBoundsMax);
 
             const glm::vec3 lightDirection = GetPrimaryLightDirection(scene);
+            const DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+            const CascadedShadowMap& shadowMap = scene.GetShadowMap();
+            const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(
+                shadowSettings.GetCascadeCount(),
+                camera.GetNearPlane(),
+                ComputeShadowDrawDistance(camera.GetPosition(), shadowBoundsMin, shadowBoundsMax),
+                shadowSettings.GetCascadeSplitLambda());
+
+            out << "[Directional shadow cascades]\n";
+            out << "Cascade count: " << shadowSettings.GetCascadeCount() << "\n";
+            out << "Resolution per cascade: " << shadowMap.GetResolution() << "\n";
+            out << "Split lambda: " << shadowSettings.GetCascadeSplitLambda() << "\n";
+            out << "Filter mode: "
+                << (shadowSettings.GetFilterMode() == DirectionalShadowFilterMode::PCSS ? "PCSS" : "PCF")
+                << "\n";
+            out << "Light direction: " << FormatVec3(lightDirection) << "\n";
+            out << "Caster bounds min: " << FormatVec3(shadowBoundsMin) << "\n";
+            out << "Caster bounds max: " << FormatVec3(shadowBoundsMax) << "\n";
+            out << "Shadow draw distance: "
+                << ComputeShadowDrawDistance(camera.GetPosition(), shadowBoundsMin, shadowBoundsMax)
+                << "\n";
+            out << "Cascade split distances: ";
+            for (std::size_t splitIndex = 0; splitIndex < cascadeSplits.size(); ++splitIndex)
+            {
+                if (splitIndex > 0)
+                {
+                    out << ", ";
+                }
+                out << cascadeSplits[splitIndex];
+            }
+            out << "\n";
+
+            const ShadowLightSpaceSetup legacySetup = BuildShadowLightSpace(
+                lightDirection,
+                shadowBoundsMin,
+                shadowBoundsMax,
+                CascadedShadowMap::DefaultResolution);
+            out << "Legacy single-map texel size (full scene fit): "
+                << legacySetup.texelWorldSizeX << " / " << legacySetup.texelWorldSizeY << "\n\n";
+
+            const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
+            for (int cascadeIndex = 0; cascadeIndex < shadowSettings.GetCascadeCount(); ++cascadeIndex)
+            {
+                const float cascadeNear = cascadeSplits[static_cast<std::size_t>(cascadeIndex)];
+                const float cascadeFar = cascadeSplits[static_cast<std::size_t>(cascadeIndex + 1)];
+                const std::array<glm::vec3, 8> frustumCorners = ComputeCascadeFrustumCorners(
+                    inverseViewMatrix,
+                    camera.GetAspect(),
+                    camera.GetFov(),
+                    cascadeNear,
+                    cascadeFar);
+                const ShadowLightSpaceSetup cascadeSetup = BuildShadowLightSpace(
+                    lightDirection,
+                    ComputeBoundsMin(frustumCorners),
+                    ComputeBoundsMax(frustumCorners),
+                    CascadedShadowMap::DefaultResolution);
+
+                out << "[Cascade " << cascadeIndex << "]\n";
+                out << "Near / far (view depth): " << cascadeNear << " / " << cascadeFar << "\n";
+                out << "Ortho width / height (world units): "
+                    << cascadeSetup.orthoWidth << " / " << cascadeSetup.orthoHeight << "\n";
+                out << "Texel size (world units / texel): "
+                    << cascadeSetup.texelWorldSizeX << " / " << cascadeSetup.texelWorldSizeY << "\n";
+                out << "Texel span used for bias: "
+                    << std::max(cascadeSetup.texelWorldSizeX, cascadeSetup.texelWorldSizeY) << "\n";
+                out << "Snap offset (NDC): "
+                    << FormatVec3(glm::vec3(cascadeSetup.snapOffsetNdc, 0.0f)) << "\n\n";
+            }
+
             const ShadowLightSpaceSetup shadowSetup = BuildShadowLightSpace(
                 lightDirection,
                 shadowBoundsMin,
                 shadowBoundsMax,
-                ShadowMap::DefaultResolution);
-
-            out << "[Directional shadow map]\n";
-            out << "Resolution: " << ShadowMap::DefaultResolution << "\n";
-            out << "Light direction: " << FormatVec3(lightDirection) << "\n";
-            out << "Scene shadow bounds min: " << FormatVec3(shadowBoundsMin) << "\n";
-            out << "Scene shadow bounds max: " << FormatVec3(shadowBoundsMax) << "\n";
-            out << "Ortho width / height (world units): "
-                << shadowSetup.orthoWidth << " / " << shadowSetup.orthoHeight << "\n";
-            out << "Texel size (world units / texel): "
-                << shadowSetup.texelWorldSizeX << " / " << shadowSetup.texelWorldSizeY << "\n";
-            out << "Texel span used for bias: "
-                << std::max(shadowSetup.texelWorldSizeX, shadowSetup.texelWorldSizeY) << "\n";
-            out << "Snap offset (NDC): " << FormatVec3(glm::vec3(shadowSetup.snapOffsetNdc, 0.0f)) << "\n";
-            out << "Bias at nDotL=1.0: "
-                << ComputeShadowBias(1.0f, std::max(shadowSetup.texelWorldSizeX, shadowSetup.texelWorldSizeY))
-                << "\n";
-            out << "Bias at nDotL=0.0: "
-                << ComputeShadowBias(0.0f, std::max(shadowSetup.texelWorldSizeX, shadowSetup.texelWorldSizeY))
-                << "\n\n";
+                CascadedShadowMap::DefaultResolution);
 
             const ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
             out << "[Screen-space effects]\n";
@@ -221,11 +256,6 @@ namespace RenderDiagnostics
             out << "SSAO radius: " << effects.GetSsaoRadius() << "\n";
             out << "SSAO bias: " << effects.GetSsaoBias() << "\n";
             out << "AO strength: " << effects.GetAoStrength() << "\n";
-            out << "Contact shadows enabled: " << (effects.IsContactShadowsEnabled() ? "yes" : "no") << "\n";
-            out << "Contact shadows active this frame: "
-                << (effects.IsContactShadowsEnabled() && scene.GetLighting().GetShadowLightIndex() < 0 ? "yes"
-                                                                                                        : "no")
-                << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
 
             const int selectedIndex = scene.GetSelectedObjectIndex();
@@ -246,15 +276,12 @@ namespace RenderDiagnostics
             }
 
             out << "[How to isolate the artifact]\n";
-            out << "1. In Renderer Tuning -> Diagnostics, switch Debug view between:\n";
-            out << "   - Shadow factor (PBR): triangles here => shadow map / PCF / bias issue\n";
-            out << "   - SSAO buffer: triangles here => SSAO depth-reconstruction issue\n";
-            out << "   - Composite occlusion: final multiply applied before tonemap\n";
-            out << "2. Toggle SSAO off. If artifact disappears on shadowed side, SSAO is the cause.\n";
-            out << "3. Contact shadows are disabled automatically when a directional shadow light is active.\n";
-            out << "4. Compare Light-space depth view: flat face should be a uniform value per face.\n";
-            out << "   Visible diagonal splits => interpolation / precision issue in light-space coords.\n";
-            out << "5. Share this file when asking for help.\n";
+            out << "Lighting model: color = direct + indirect * ambientOcclusion\n";
+            out << "1. Shadow factor (PBR): shadow map / PCF issues\n";
+            out << "2. Direct lighting (PBR): sun/specular only\n";
+            out << "3. Ambient / IBL (PBR): indirect before SSAO\n";
+            out << "4. SSAO buffer: screen-space AO applied to indirect only\n";
+            out << "5. Composite occlusion: SSAO multiplier on indirect\n";
 
             statusMessage = "Wrote " + fs::absolute(outputFilePath).string();
             return true;

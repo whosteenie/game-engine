@@ -1,5 +1,8 @@
 #version 330 core
-out vec4 FragColor;
+layout (location = 0) out vec4 oDirect;
+layout (location = 1) out vec4 oIndirect;
+layout (location = 2) out vec4 oNormal;
+layout (location = 3) out float oShadowFactor;
 
 in vec3 vFragPos;
 in vec3 vNormal;
@@ -7,8 +10,10 @@ in vec2 vTexCoord0;
 in vec2 vTexCoord1;
 in vec4 vTangent;
 in vec4 vFragPosLightSpace;
+in float vViewDepth;
 
 #define MAX_LIGHTS 8
+#define MAX_CASCADES 4
 
 const float PI = 3.14159265359;
 
@@ -50,10 +55,30 @@ uniform float uLightRange[MAX_LIGHTS];
 uniform float uLightInnerCutoffCos[MAX_LIGHTS];
 uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 
-uniform sampler2DShadow uShadowMap;
+uniform sampler2DArray uShadowMap;
+uniform mat4 uLightSpaceMatrices[MAX_CASCADES];
+uniform float uCascadeEndSplits[MAX_CASCADES];
+uniform float uCascadeTexelWorldSizes[MAX_CASCADES];
+uniform float uCascadeBlendRatio;
+uniform int uCascadeCount;
+uniform float uCascadeNearPlane;
+uniform int uShadowFilterMode;
+uniform int uPcfKernelRadius;
+uniform int uUsePoissonPcf;
+uniform float uMinPenumbraTexels;
+uniform int uPcssBlockerRadius;
+uniform float uPcssLightAngularSize;
+uniform float uPcssMinPenumbraTexels;
+uniform float uPcssMaxPenumbraTexels;
+uniform float uWorldBiasScale;
+uniform float uDepthBiasScale;
+uniform float uShadowMapResolution;
+uniform mat4 uLightSpaceMatrix;
+uniform mat4 uView;
 uniform int uShadowLightIndex;
 uniform int uReceiveShadow;
 uniform int uOutputLinear;
+uniform int uSplitLightingOutput;
 uniform int uDebugMode;
 
 uniform samplerCube uIrradianceMap;
@@ -207,47 +232,225 @@ vec3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
-float CalcShadow(vec3 geometricNormal, vec3 lightDir)
+float FetchShadowDepth(int cascadeIndex, vec2 shadowUv)
+{
+    return texture(uShadowMap, vec3(shadowUv, float(cascadeIndex))).r;
+}
+
+bool IsShadowBlocked(int cascadeIndex, vec2 shadowUv, float compareDepth)
+{
+    return FetchShadowDepth(cascadeIndex, shadowUv) < compareDepth;
+}
+
+float ShadowFilterRotation(int cascadeIndex)
+{
+    // Fixed angle per cascade: stable when the camera rotates (no screen/texel hash popping).
+    return float(cascadeIndex) * 0.78539816339 + 0.39269908169;
+}
+
+const int kMaxRotatedGridRadius = 4;
+
+float EffectiveMinPenumbraTexels()
+{
+    return clamp(uMinPenumbraTexels, 0.0, 8.0);
+}
+
+float ClampFilterRadiusTexels(float filterRadiusTexels)
+{
+    return clamp(filterRadiusTexels, 0.5, 12.0);
+}
+
+// Rotated regular grid with Gaussian weights: stable rotation, smooth penumbra.
+float FilterShadowRotatedGrid(
+    int cascadeIndex,
+    vec2 shadowUv,
+    float compareDepth,
+    vec2 texelSize,
+    float filterRadiusTexels,
+    int kernelRadius)
+{
+    int radius = min(kernelRadius, kMaxRotatedGridRadius);
+    float phi = ShadowFilterRotation(cascadeIndex);
+    float cosine = cos(phi);
+    float sine = sin(phi);
+    mat2 rotation = mat2(cosine, -sine, sine, cosine);
+    vec2 texelStep = texelSize * (filterRadiusTexels / max(float(radius), 1.0));
+    float radiusSquared = max(float(radius * radius), 1.0);
+
+    float shadow = 0.0;
+    float weightSum = 0.0;
+    for (int x = -kMaxRotatedGridRadius; x <= kMaxRotatedGridRadius; ++x)
+    {
+        for (int y = -kMaxRotatedGridRadius; y <= kMaxRotatedGridRadius; ++y)
+        {
+            if (abs(x) > radius || abs(y) > radius)
+            {
+                continue;
+            }
+
+            float distSquared = float(x * x + y * y);
+            float weight = exp(-distSquared / (radiusSquared * 0.45));
+            vec2 offset = rotation * vec2(float(x), float(y)) * texelStep;
+            shadow += (IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0) * weight;
+            weightSum += weight;
+        }
+    }
+
+    return shadow / max(weightSum, 1e-5);
+}
+
+float FilterShadowGridPcf(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize, int kernelRadius)
+{
+    float shadow = 0.0;
+    float sampleCount = 0.0;
+    for (int x = -kernelRadius; x <= kernelRadius; ++x)
+    {
+        for (int y = -kernelRadius; y <= kernelRadius; ++y)
+        {
+            vec2 offset = vec2(x, y) * texelSize;
+            shadow += IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0;
+            sampleCount += 1.0;
+        }
+    }
+
+    return shadow / max(sampleCount, 1.0);
+}
+
+float FilterShadowPcf(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize, int kernelRadius)
+{
+    if (uUsePoissonPcf != 0)
+    {
+        float filterRadiusTexels = ClampFilterRadiusTexels(
+            max(float(kernelRadius), EffectiveMinPenumbraTexels()));
+        return FilterShadowRotatedGrid(
+            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadiusTexels, kernelRadius);
+    }
+
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+}
+
+float FilterShadowPcss(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize)
+{
+    float blockerDepthSum = 0.0;
+    int blockerCount = 0;
+
+    for (int x = -uPcssBlockerRadius; x <= uPcssBlockerRadius; ++x)
+    {
+        for (int y = -uPcssBlockerRadius; y <= uPcssBlockerRadius; ++y)
+        {
+            vec2 offset = vec2(x, y) * texelSize;
+            float blockerDepth = FetchShadowDepth(cascadeIndex, shadowUv + offset);
+            if (blockerDepth < compareDepth)
+            {
+                blockerDepthSum += blockerDepth;
+                blockerCount++;
+            }
+        }
+    }
+
+    if (blockerCount == 0)
+    {
+        return FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
+    }
+
+    float avgBlockerDepth = blockerDepthSum / float(blockerCount);
+    float penumbraRatio = (compareDepth - avgBlockerDepth) / max(avgBlockerDepth, 1e-5);
+    float filterRadius = penumbraRatio * uPcssLightAngularSize;
+    filterRadius = clamp(
+        filterRadius,
+        max(uPcssMinPenumbraTexels, EffectiveMinPenumbraTexels()),
+        uPcssMaxPenumbraTexels);
+    filterRadius = ClampFilterRadiusTexels(filterRadius);
+    filterRadius = max(EffectiveMinPenumbraTexels(), ceil(filterRadius));
+
+    if (uUsePoissonPcf != 0)
+    {
+        int kernelRadius = min(int(ceil(filterRadius)), kMaxRotatedGridRadius);
+        return FilterShadowRotatedGrid(
+            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadius, kernelRadius);
+    }
+
+    int kernelRadius = int(ceil(filterRadius));
+    kernelRadius = min(kernelRadius, kMaxRotatedGridRadius);
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+}
+
+float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 geomNormal, vec3 lightDir)
+{
+    vec3 normal = normalize(geomNormal);
+    float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
+
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0).xy);
+    float texelUvSpan = max(texelSize.x, texelSize.y);
+    float texelWorldSpan = uCascadeTexelWorldSizes[cascadeIndex];
+
+    float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15)) * uWorldBiasScale;
+    float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
+
+    vec3 biasedWorldPos = worldPos + normal * worldBias;
+    vec4 lightSpace = uLightSpaceMatrices[cascadeIndex] * vec4(biasedWorldPos, 1.0);
+    vec3 projCoords = lightSpace.xyz / lightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5;
+
+    if (projCoords.z < 0.0 || projCoords.z > 1.0)
+    {
+        return 1.0;
+    }
+
+    vec2 shadowUv = clamp(projCoords.xy, vec2(0.0), vec2(1.0));
+    float compareDepth = clamp(projCoords.z - depthBias, 0.0, 1.0);
+
+    float shadow = uShadowFilterMode == 1
+        ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, texelSize)
+        : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
+
+    return shadow;
+}
+
+int SelectCascadeIndex(float viewDepth)
+{
+    int cascadeIndex = 0;
+    for (int i = 0; i < uCascadeCount - 1; ++i)
+    {
+        if (viewDepth > uCascadeEndSplits[i])
+        {
+            cascadeIndex = i + 1;
+        }
+    }
+    return cascadeIndex;
+}
+
+float CalcShadow(vec3 lightDir)
 {
     if (uReceiveShadow == 0)
     {
         return 1.0;
     }
 
-    vec3 projCoords = vFragPosLightSpace.xyz / vFragPosLightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
+    vec3 geomNormal = normalize(vNormal);
 
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
-        projCoords.z > 1.0)
+    for (int boundaryIndex = 0; boundaryIndex < uCascadeCount - 1; ++boundaryIndex)
     {
-        return 1.0;
-    }
+        float splitDistance = uCascadeEndSplits[boundaryIndex];
+        float previousSplit = boundaryIndex == 0
+            ? uCascadeNearPlane
+            : uCascadeEndSplits[boundaryIndex - 1];
+        float cascadeSpan = max(splitDistance - previousSplit, 1e-4);
+        float blendWidth = cascadeSpan * uCascadeBlendRatio;
+        float blendStart = splitDistance - blendWidth;
 
-    vec3 normal = normalize(geometricNormal);
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-    float texelSpan = max(texelSize.x, texelSize.y);
-
-    float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
-    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
-    float bias = texelSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.1));
-
-    vec2 shadowUv = projCoords.xy + normal.xy * bias * 0.75;
-    float compareDepth = projCoords.z - bias;
-
-    float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x)
-    {
-        for (int y = -1; y <= 1; ++y)
+        if (vViewDepth > blendStart && vViewDepth <= splitDistance)
         {
-            vec2 offset = vec2(x, y) * texelSize;
-            shadow += texture(uShadowMap, vec3(shadowUv + offset, compareDepth));
+            float nearShadow = SampleCascadeShadow(boundaryIndex, vFragPos, geomNormal, lightDir);
+            float farShadow = SampleCascadeShadow(boundaryIndex + 1, vFragPos, geomNormal, lightDir);
+            float blendFactor = smoothstep(blendStart, splitDistance, vViewDepth);
+            return mix(nearShadow, farShadow, blendFactor);
         }
     }
-    shadow /= 9.0;
 
-    // Soften penumbra transitions to reduce visible banding in soft shadows.
-    return shadow * shadow * (3.0 - 2.0 * shadow);
+    int cascadeIndex = SelectCascadeIndex(vViewDepth);
+    return SampleCascadeShadow(cascadeIndex, vFragPos, geomNormal, lightDir);
 }
 
 vec2 SelectTexCoord(int texCoordSet)
@@ -265,6 +468,16 @@ vec3 CalcNormalFromMap(vec3 normal, vec4 tangent, vec2 texCoord)
     mat3 tbn = mat3(tangentVector, bitangent, normal);
 
     return normalize(tbn * tangentNormal);
+}
+
+vec3 ToViewNormal(vec3 worldNormal)
+{
+    return normalize(mat3(uView) * worldNormal);
+}
+
+void WriteViewNormal(vec3 worldNormal)
+{
+    oNormal = vec4(ToViewNormal(worldNormal), 1.0);
 }
 
 void main()
@@ -322,7 +535,9 @@ void main()
     vec3 diffuseEnergy = (vec3(1.0) - specularEnergy) * (1.0 - metallic);
     vec3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity * ambientOcclusion;
 
-    vec3 directLighting = vec3(0.0);
+    vec3 directShadowed = vec3(0.0);
+    vec3 directUnshadowed = vec3(0.0);
+    float shadowFactor = 1.0;
 
     for (int i = 0; i < uLightCount; ++i)
     {
@@ -354,16 +569,24 @@ void main()
             metallic,
             radiance);
 
-        float shadow = 1.0;
+        float lightShadow = 1.0;
         if (i == uShadowLightIndex)
         {
-            shadow = CalcShadow(vNormal, lightDir);
+            lightShadow = CalcShadow(lightDir);
+            shadowFactor = lightShadow;
         }
 
-        directLighting += contribution * attenuation * spotIntensity * shadow;
+        vec3 litContribution = contribution * attenuation * spotIntensity;
+        directUnshadowed += litContribution;
+        directShadowed += litContribution * lightShadow;
     }
 
-    vec3 result = ambient + directLighting;
+    if (uShadowLightIndex < 0)
+    {
+        shadowFactor = 1.0;
+    }
+
+    vec3 result = ambient + directShadowed;
 
     if (uDebugMode != 0)
     {
@@ -373,13 +596,13 @@ void main()
             float shadow = 1.0;
             if (uShadowLightIndex >= 0)
             {
-                shadow = CalcShadow(vNormal, normalize(uLightDirections[uShadowLightIndex]));
+                shadow = CalcShadow(normalize(uLightDirections[uShadowLightIndex]));
             }
             debugColor = vec3(shadow);
         }
         else if (uDebugMode == 2)
         {
-            debugColor = directLighting / (directLighting + vec3(0.25));
+            debugColor = directShadowed / (directShadowed + vec3(0.25));
         }
         else if (uDebugMode == 3)
         {
@@ -397,17 +620,53 @@ void main()
             projCoords = projCoords * 0.5 + 0.5;
             debugColor = vec3(projCoords.z);
         }
+        else if (uDebugMode == 6)
+        {
+            int cascadeIndex = SelectCascadeIndex(vViewDepth);
+            if (cascadeIndex == 0)
+            {
+                debugColor = vec3(1.0, 0.2, 0.2);
+            }
+            else if (cascadeIndex == 1)
+            {
+                debugColor = vec3(0.2, 1.0, 0.2);
+            }
+            else if (cascadeIndex == 2)
+            {
+                debugColor = vec3(0.2, 0.35, 1.0);
+            }
+            else
+            {
+                debugColor = vec3(1.0, 0.85, 0.2);
+            }
+        }
 
-        FragColor = vec4(debugColor, 1.0);
+        oDirect = vec4(debugColor, 1.0);
+        oIndirect = vec4(0.0);
+        oShadowFactor = 1.0;
+        WriteViewNormal(normal);
+        return;
+    }
+
+    if (uSplitLightingOutput != 0)
+    {
+        oDirect = vec4(directUnshadowed, 1.0);
+        oIndirect = vec4(ambient, 1.0);
+        oShadowFactor = shadowFactor;
+        WriteViewNormal(normal);
         return;
     }
 
     if (uOutputLinear != 0)
     {
-        FragColor = vec4(result, 1.0);
+        oDirect = vec4(result, 1.0);
+        oIndirect = vec4(0.0);
     }
     else
     {
-        FragColor = vec4(LinearToSrgb(result), 1.0);
+        oDirect = vec4(LinearToSrgb(result), 1.0);
+        oIndirect = vec4(0.0);
     }
+    oShadowFactor = 1.0;
+    WriteViewNormal(normal);
 }

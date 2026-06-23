@@ -8,8 +8,8 @@ enum class RenderDebugMode
     AmbientIbl,
     LightSpaceUv,
     LightSpaceDepth,
+    CascadeIndex,
     Ssao,
-    ContactShadows,
     CompositeOcclusion,
 };
 

@@ -11,6 +11,7 @@ out vec2 vTexCoord0;
 out vec2 vTexCoord1;
 out vec4 vTangent;
 out vec4 vFragPosLightSpace;
+out float vViewDepth;
 
 uniform mat4 uModel;
 uniform mat4 uView;
@@ -28,6 +29,9 @@ void main()
     vTexCoord0 = aTexCoord0;
     vTexCoord1 = aTexCoord1;
 
+    vec4 viewPos = uView * worldPos;
+    vViewDepth = -viewPos.z;
+
     vFragPosLightSpace = uLightSpaceMatrix * worldPos;
-    gl_Position = uProjection * uView * worldPos;
+    gl_Position = uProjection * viewPos;
 }

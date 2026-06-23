@@ -1,7 +1,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <cmath>
+#include <vector>
 #include <cstdlib>
 #include <iostream>
 
@@ -64,6 +66,181 @@ int main()
     ExpectTrue(
         snapMagnitude < (2.0f / 4096.0f),
         "Texel snap offset should be smaller than one shadow texel in NDC");
+
+    const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(4, 0.1f, 100.0f);
+    ExpectTrue(cascadeSplits.size() == 5U, "Four cascades should produce five split boundaries");
+    ExpectNear(cascadeSplits.front(), 0.1f, 1e-4f, "First cascade split should start at the near plane");
+    ExpectNear(cascadeSplits.back(), 100.0f, 1e-4f, "Last cascade split should end at the far plane");
+    ExpectTrue(
+        cascadeSplits[1] > cascadeSplits[0] && cascadeSplits[2] > cascadeSplits[1] &&
+            cascadeSplits[3] > cascadeSplits[2],
+        "Cascade split distances should be monotonically increasing");
+
+    const glm::mat4 inverseView = glm::inverse(glm::lookAt(
+        glm::vec3(0.0f, 2.0f, 6.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)));
+    const std::array<glm::vec3, 8> nearFrustumCorners = ComputeCascadeFrustumCorners(
+        inverseView,
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[0],
+        cascadeSplits[1]);
+    const std::array<glm::vec3, 8> farFrustumCorners = ComputeCascadeFrustumCorners(
+        inverseView,
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[2],
+        cascadeSplits[3]);
+
+    const ShadowLightSpaceSetup nearCascadeSetup = BuildShadowLightSpace(
+        lightDirection,
+        ComputeBoundsMin(nearFrustumCorners),
+        ComputeBoundsMax(nearFrustumCorners),
+        4096);
+    const ShadowLightSpaceSetup farCascadeSetup = BuildShadowLightSpace(
+        lightDirection,
+        ComputeBoundsMin(farFrustumCorners),
+        ComputeBoundsMax(farFrustumCorners),
+        4096);
+
+    ExpectTrue(
+        nearCascadeSetup.texelWorldSizeX < farCascadeSetup.texelWorldSizeX,
+        "Near cascade texels should be smaller than the farthest cascade");
+
+    const glm::vec3 casterBoundsMin(-20.0f, 0.0f, -20.0f);
+    const glm::vec3 casterBoundsMax(20.0f, 10.0f, 20.0f);
+    const ShadowLightSpaceSetup frustumOnlyXySetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true);
+    const ShadowLightSpaceSetup frustumPlusCasterXySetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        false);
+
+    ExpectTrue(
+        frustumOnlyXySetup.orthoWidth <= frustumPlusCasterXySetup.orthoWidth + 1e-3f,
+        "Frustum-only XY fit should not enlarge ortho width versus frustum + caster fit");
+    ExpectTrue(
+        frustumOnlyXySetup.texelWorldSizeX <= frustumPlusCasterXySetup.texelWorldSizeX + 1e-6f,
+        "Frustum-only XY fit should produce equal or smaller texels");
+
+    const glm::vec3 floorPoint(0.0f, 0.0f, 0.0f);
+    float stableHalfExtent = 0.0f;
+    glm::vec2 stableCenterLight(0.0f);
+    float stableOrthoNear = 0.0f;
+    float stableOrthoFar = 0.0f;
+
+    const glm::mat4 nearCameraView = glm::lookAt(
+        glm::vec3(0.0f, 2.0f, 6.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::mat4 dollyCameraView = glm::lookAt(
+        glm::vec3(0.0f, 2.0f, 4.5f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f));
+
+    const std::array<glm::vec3, 8> dollyFrustumCorners = ComputeCascadeFrustumCorners(
+        glm::inverse(dollyCameraView),
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[0],
+        cascadeSplits[1]);
+
+    const ShadowLightSpaceSetup stablePassSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true,
+        nullptr,
+        &stableHalfExtent,
+        &stableCenterLight,
+        &stableOrthoNear,
+        &stableOrthoFar,
+        true);
+    const ShadowLightSpaceSetup stableRetainedSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true,
+        nullptr,
+        &stableHalfExtent,
+        &stableCenterLight,
+        &stableOrthoNear,
+        &stableOrthoFar,
+        false);
+
+    const glm::vec3 floorShadowNdcStart = WorldToShadowNdc(stablePassSetup.lightSpaceMatrix, floorPoint);
+    const glm::vec3 floorShadowNdcEnd = WorldToShadowNdc(stableRetainedSetup.lightSpaceMatrix, floorPoint);
+    ExpectNear(
+        floorShadowNdcStart.x,
+        floorShadowNdcEnd.x,
+        1e-5f,
+        "Floor shadow UV.x should stay stable when the frustum is unchanged");
+    ExpectNear(
+        floorShadowNdcStart.y,
+        floorShadowNdcEnd.y,
+        1e-5f,
+        "Floor shadow UV.y should stay stable when the frustum is unchanged");
+
+    const ShadowLightSpaceSetup dollyFrustumSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        dollyFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        true);
+    ExpectNear(
+        stablePassSetup.lightView[0][0],
+        dollyFrustumSetup.lightView[0][0],
+        1e-5f,
+        "Light view should not change when the camera dollies");
+    ExpectNear(
+        stablePassSetup.lightView[3][0],
+        dollyFrustumSetup.lightView[3][0],
+        1e-5f,
+        "Light view translation should stay anchored to world origin");
+
+    glm::vec3 intersectionMin;
+    glm::vec3 intersectionMax;
+    ExpectTrue(
+        ComputeBoundsIntersection(
+            glm::vec3(-2.0f, 0.0f, -2.0f),
+            glm::vec3(2.0f, 4.0f, 2.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(6.0f, 2.0f, 6.0f),
+            intersectionMin,
+            intersectionMax),
+        "Overlapping bounds should intersect");
+    ExpectNear(intersectionMin.x, 0.0f, 1e-4f, "Intersection min X");
+    ExpectNear(intersectionMax.y, 2.0f, 1e-4f, "Intersection max Y");
 
     if (gFailures == 0)
     {

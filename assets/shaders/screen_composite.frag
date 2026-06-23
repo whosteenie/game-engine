@@ -3,59 +3,62 @@ out vec4 FragColor;
 
 in vec2 vTexCoord;
 
-uniform sampler2D uSceneColor;
+uniform sampler2D uDirectLighting;
+uniform sampler2D uIndirectLighting;
 uniform sampler2D uDepthMap;
 uniform sampler2D uSsaoMap;
-uniform sampler2D uContactShadowMap;
+uniform sampler2D uShadowFactorMap;
 
+uniform int uUseSplitLighting;
 uniform int uUseSsao;
-uniform int uUseContactShadows;
+uniform int uUseShadowFactor;
 uniform float uSsaoPower;
 uniform float uAoStrength;
-uniform float uContactStrength;
 uniform int uDebugOcclusionOnly;
-
-vec3 LinearToPerceptual(vec3 linear)
-{
-    return pow(max(linear, vec3(0.0)), vec3(1.0 / 2.2));
-}
 
 void main()
 {
-    vec3 sceneColor = texture(uSceneColor, vTexCoord).rgb;
-
     float depth = texture(uDepthMap, vTexCoord).r;
+
+    vec3 direct = vec3(0.0);
+    vec3 indirect = vec3(0.0);
+
+    if (uUseSplitLighting != 0)
+    {
+        direct = texture(uDirectLighting, vTexCoord).rgb;
+        indirect = texture(uIndirectLighting, vTexCoord).rgb;
+    }
+    else
+    {
+        vec3 sceneColor = texture(uDirectLighting, vTexCoord).rgb;
+        direct = sceneColor;
+    }
+
+    if (uUseShadowFactor != 0)
+    {
+        float shadowFactor = texture(uShadowFactorMap, vTexCoord).r;
+        direct *= shadowFactor;
+    }
+
     if (depth >= 0.9999)
     {
-        FragColor = vec4(sceneColor, 1.0);
+        FragColor = vec4(direct + indirect, 1.0);
         return;
     }
 
-    float occlusion = 1.0;
+    float indirectOcclusion = 1.0;
 
     if (uUseSsao != 0)
     {
         float ssao = pow(texture(uSsaoMap, vTexCoord).r, uSsaoPower);
-        float luma = dot(LinearToPerceptual(sceneColor), vec3(0.2126, 0.7152, 0.0722));
-        float indirectWeight = 1.0 - smoothstep(0.03, 0.22, luma);
-        float ssaoBlend = mix(1.0, ssao, uAoStrength * mix(0.2, 1.0, indirectWeight));
-        occlusion *= ssaoBlend;
-    }
-
-    if (uUseContactShadows != 0)
-    {
-        float contact = texture(uContactShadowMap, vTexCoord).r;
-        float luma = dot(LinearToPerceptual(sceneColor), vec3(0.2126, 0.7152, 0.0722));
-        float directWeight = 1.0 - smoothstep(0.12, 0.45, luma);
-        float contactBlend = mix(1.0, contact, uContactStrength * mix(0.2, 1.0, directWeight));
-        occlusion *= contactBlend;
+        indirectOcclusion *= mix(1.0, ssao, uAoStrength);
     }
 
     if (uDebugOcclusionOnly != 0)
     {
-        FragColor = vec4(vec3(occlusion), 1.0);
+        FragColor = vec4(vec3(indirectOcclusion), 1.0);
         return;
     }
 
-    FragColor = vec4(sceneColor * occlusion, 1.0);
+    FragColor = vec4(direct + indirect * indirectOcclusion, 1.0);
 }

@@ -16,12 +16,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Light-space UV (PBR)";
     case RenderDebugMode::LightSpaceDepth:
         return "Light-space depth (PBR)";
+    case RenderDebugMode::CascadeIndex:
+        return "Cascade index (PBR)";
     case RenderDebugMode::Ssao:
         return "SSAO buffer";
-    case RenderDebugMode::ContactShadows:
-        return "Contact shadows buffer";
     case RenderDebugMode::CompositeOcclusion:
-        return "Composite occlusion (SSAO + contact)";
+        return "Composite occlusion (SSAO)";
     default:
         return "Unknown";
     }

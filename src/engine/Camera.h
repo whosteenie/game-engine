@@ -30,6 +30,11 @@ public:
     void ApplyViewManipulateResult(const glm::mat4& view, const glm::vec3& target, float distance);
     void FrameTarget(const glm::vec3& target, float boundsRadius);
 
+    float GetNearPlane() const;
+    float GetFarPlane() const;
+    float GetFov() const;
+    float GetAspect() const;
+
 private:
     void UpdateCameraVectors();
     float ComputeFitDistance(float boundsRadius, float padding = 1.2f) const;

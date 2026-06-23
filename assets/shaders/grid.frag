@@ -1,14 +1,19 @@
 #version 330 core
 
-in vec3 vWorldPos;
+layout (location = 0) out vec4 oDirect;
+layout (location = 1) out vec4 oIndirect;
+layout (location = 2) out vec4 oNormal;
+layout (location = 3) out float oShadowFactor;
 
-out vec4 FragColor;
+in vec3 vWorldPos;
 
 uniform vec3 uColor;
 uniform vec3 uCameraPosition;
+uniform mat4 uView;
 uniform float uCellSize;
 uniform float uMajorInterval;
 uniform int uOutputLinear;
+uniform int uSplitLightingOutput;
 
 vec3 LinearToSrgb(vec3 linear)
 {
@@ -48,13 +53,25 @@ void main()
     }
 
     vec3 linearColor = pow(uColor, vec3(2.2));
+    vec3 viewNormal = normalize(mat3(uView) * vec3(0.0, 1.0, 0.0));
+    oNormal = vec4(viewNormal, 1.0);
+
+    if (uSplitLightingOutput != 0)
+    {
+        oDirect = vec4(linearColor, alpha);
+        oIndirect = vec4(0.0);
+        oShadowFactor = 1.0;
+        return;
+    }
 
     if (uOutputLinear != 0)
     {
-        FragColor = vec4(linearColor, alpha);
+        oDirect = vec4(linearColor, alpha);
     }
     else
     {
-        FragColor = vec4(LinearToSrgb(linearColor), alpha);
+        oDirect = vec4(LinearToSrgb(linearColor), alpha);
     }
+    oIndirect = vec4(0.0);
+    oShadowFactor = 1.0;
 }
