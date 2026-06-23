@@ -216,34 +216,204 @@ namespace
         return aMinX <= bMaxX && aMaxX >= bMinX && aMinY <= bMaxY && aMaxY >= bMinY;
     }
 
-    bool WorldPointProjectsIntoScreenRect(
+    bool TryWorldToScreenPointRelaxed(
         const glm::vec3& worldPoint,
-        float rectMinX,
-        float rectMinY,
-        float rectMaxX,
-        float rectMaxY,
         const glm::mat4& viewMatrix,
         const glm::mat4& projectionMatrix,
-        const glm::vec2& viewportSize)
+        const glm::vec2& viewportSize,
+        glm::vec2& outScreenPoint)
     {
-        glm::vec2 screenPoint;
-        if (!TryWorldToScreenPoint(
-                worldPoint,
-                viewMatrix,
-                projectionMatrix,
-                viewportSize,
-                screenPoint))
+        const glm::vec4 clipSpace = projectionMatrix * viewMatrix * glm::vec4(worldPoint, 1.0f);
+        if (clipSpace.w <= 1e-5f)
         {
             return false;
         }
 
-        return IsPointInScreenRect(
-            screenPoint.x,
-            screenPoint.y,
-            rectMinX,
-            rectMinY,
-            rectMaxX,
-            rectMaxY);
+        const glm::vec3 normalizedDeviceCoordinates = glm::vec3(clipSpace) / clipSpace.w;
+        if (normalizedDeviceCoordinates.z < -1.0f || normalizedDeviceCoordinates.z > 1.0f)
+        {
+            return false;
+        }
+
+        outScreenPoint = glm::vec2(
+            (normalizedDeviceCoordinates.x * 0.5f + 0.5f) * viewportSize.x,
+            (1.0f - (normalizedDeviceCoordinates.y * 0.5f + 0.5f)) * viewportSize.y);
+        return true;
+    }
+
+    float Cross2D(const glm::vec2& left, const glm::vec2& right)
+    {
+        return left.x * right.y - left.y * right.x;
+    }
+
+    bool IsPointInTriangle2D(
+        const glm::vec2& point,
+        const glm::vec2& t0,
+        const glm::vec2& t1,
+        const glm::vec2& t2)
+    {
+        const float area = Cross2D(t1 - t0, t2 - t0);
+        if (std::abs(area) < 1e-8f)
+        {
+            return false;
+        }
+
+        const float weight0 = Cross2D(t1 - point, t2 - point) / area;
+        const float weight1 = Cross2D(t2 - point, t0 - point) / area;
+        const float weight2 = 1.0f - weight0 - weight1;
+        constexpr float epsilon = 1e-5f;
+        return weight0 >= -epsilon && weight1 >= -epsilon && weight2 >= -epsilon;
+    }
+
+    bool SegmentsIntersect2D(
+        const glm::vec2& segmentStartA,
+        const glm::vec2& segmentEndA,
+        const glm::vec2& segmentStartB,
+        const glm::vec2& segmentEndB)
+    {
+        const auto orientation = [](const glm::vec2& p, const glm::vec2& q, const glm::vec2& r) {
+            return Cross2D(q - p, r - p);
+        };
+
+        const auto onSegment = [](const glm::vec2& p, const glm::vec2& q, const glm::vec2& r) {
+            constexpr float epsilon = 1e-5f;
+            return q.x <= std::max(p.x, r.x) + epsilon && q.x >= std::min(p.x, r.x) - epsilon
+                && q.y <= std::max(p.y, r.y) + epsilon && q.y >= std::min(p.y, r.y) - epsilon;
+        };
+
+        const float orientationAB_C = orientation(segmentStartA, segmentEndA, segmentStartB);
+        const float orientationAB_D = orientation(segmentStartA, segmentEndA, segmentEndB);
+        const float orientationCD_A = orientation(segmentStartB, segmentEndB, segmentStartA);
+        const float orientationCD_B = orientation(segmentStartB, segmentEndB, segmentEndA);
+
+        if (orientationAB_C * orientationAB_D < 0.0f && orientationCD_A * orientationCD_B < 0.0f)
+        {
+            return true;
+        }
+
+        constexpr float epsilon = 1e-5f;
+        if (std::abs(orientationAB_C) < epsilon && onSegment(segmentStartA, segmentStartB, segmentEndA))
+        {
+            return true;
+        }
+        if (std::abs(orientationAB_D) < epsilon && onSegment(segmentStartA, segmentEndB, segmentEndA))
+        {
+            return true;
+        }
+        if (std::abs(orientationCD_A) < epsilon && onSegment(segmentStartB, segmentStartA, segmentEndB))
+        {
+            return true;
+        }
+        if (std::abs(orientationCD_B) < epsilon && onSegment(segmentStartB, segmentEndA, segmentEndB))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    bool SegmentOverlapsScreenRect(
+        const glm::vec2& segmentStart,
+        const glm::vec2& segmentEnd,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY)
+    {
+        if (IsPointInScreenRect(segmentStart.x, segmentStart.y, rectMinX, rectMinY, rectMaxX, rectMaxY)
+            || IsPointInScreenRect(segmentEnd.x, segmentEnd.y, rectMinX, rectMinY, rectMaxX, rectMaxY))
+        {
+            return true;
+        }
+
+        const std::array<glm::vec2, 4> rectCorners = {
+            glm::vec2(rectMinX, rectMinY),
+            glm::vec2(rectMaxX, rectMinY),
+            glm::vec2(rectMaxX, rectMaxY),
+            glm::vec2(rectMinX, rectMaxY),
+        };
+
+        for (std::size_t cornerIndex = 0; cornerIndex < rectCorners.size(); ++cornerIndex)
+        {
+            const glm::vec2& rectStart = rectCorners[cornerIndex];
+            const glm::vec2& rectEnd = rectCorners[(cornerIndex + 1) % rectCorners.size()];
+            if (SegmentsIntersect2D(segmentStart, segmentEnd, rectStart, rectEnd))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TriangleOverlapsScreenRect(
+        const glm::vec2& t0,
+        const glm::vec2& t1,
+        const glm::vec2& t2,
+        int projectedVertexCount,
+        float rectMinX,
+        float rectMinY,
+        float rectMaxX,
+        float rectMaxY)
+    {
+        if (projectedVertexCount >= 3)
+        {
+            const std::array<glm::vec2, 3> triangleVertices = {t0, t1, t2};
+            for (const glm::vec2& vertex : triangleVertices)
+            {
+                if (IsPointInScreenRect(vertex.x, vertex.y, rectMinX, rectMinY, rectMaxX, rectMaxY))
+                {
+                    return true;
+                }
+            }
+
+            const std::array<glm::vec2, 4> rectCorners = {
+                glm::vec2(rectMinX, rectMinY),
+                glm::vec2(rectMaxX, rectMinY),
+                glm::vec2(rectMaxX, rectMaxY),
+                glm::vec2(rectMinX, rectMaxY),
+            };
+
+            for (const glm::vec2& corner : rectCorners)
+            {
+                if (IsPointInTriangle2D(corner, t0, t1, t2))
+                {
+                    return true;
+                }
+            }
+
+            const std::array<std::pair<glm::vec2, glm::vec2>, 3> triangleEdges = {{
+                {t0, t1},
+                {t1, t2},
+                {t2, t0},
+            }};
+
+            for (const auto& triangleEdge : triangleEdges)
+            {
+                for (std::size_t cornerIndex = 0; cornerIndex < rectCorners.size(); ++cornerIndex)
+                {
+                    const glm::vec2& rectStart = rectCorners[cornerIndex];
+                    const glm::vec2& rectEnd = rectCorners[(cornerIndex + 1) % rectCorners.size()];
+                    if (SegmentsIntersect2D(
+                            triangleEdge.first,
+                            triangleEdge.second,
+                            rectStart,
+                            rectEnd))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        if (projectedVertexCount == 2)
+        {
+            return SegmentOverlapsScreenRect(t0, t1, rectMinX, rectMinY, rectMaxX, rectMaxY);
+        }
+
+        return false;
     }
 
     bool MeshIntersectsScreenRect(
@@ -257,23 +427,6 @@ namespace
         const glm::mat4& projectionMatrix,
         const glm::vec2& viewportSize)
     {
-        for (const glm::vec3& localPosition : mesh.GetPositions())
-        {
-            const glm::vec3 worldPosition = glm::vec3(worldMatrix * glm::vec4(localPosition, 1.0f));
-            if (WorldPointProjectsIntoScreenRect(
-                    worldPosition,
-                    rectMinX,
-                    rectMinY,
-                    rectMaxX,
-                    rectMaxY,
-                    viewMatrix,
-                    projectionMatrix,
-                    viewportSize))
-            {
-                return true;
-            }
-        }
-
         const std::vector<unsigned int>& indices = mesh.GetIndices();
         const std::vector<glm::vec3>& positions = mesh.GetPositions();
         for (std::size_t index = 0; index + 2 < indices.size(); index += 3)
@@ -286,19 +439,92 @@ namespace
                 continue;
             }
 
-            const glm::vec3 localCentroid = (positions[i0] + positions[i1] + positions[i2]) / 3.0f;
-            const glm::vec3 worldCentroid = glm::vec3(worldMatrix * glm::vec4(localCentroid, 1.0f));
-            if (WorldPointProjectsIntoScreenRect(
-                    worldCentroid,
+            const glm::vec3 worldVertices[3] = {
+                glm::vec3(worldMatrix * glm::vec4(positions[i0], 1.0f)),
+                glm::vec3(worldMatrix * glm::vec4(positions[i1], 1.0f)),
+                glm::vec3(worldMatrix * glm::vec4(positions[i2], 1.0f)),
+            };
+
+            glm::vec2 screenVertices[3];
+            bool projectedVertices[3] = {false, false, false};
+            for (int vertexIndex = 0; vertexIndex < 3; ++vertexIndex)
+            {
+                if (!TryWorldToScreenPointRelaxed(
+                        worldVertices[vertexIndex],
+                        viewMatrix,
+                        projectionMatrix,
+                        viewportSize,
+                        screenVertices[vertexIndex]))
+                {
+                    continue;
+                }
+
+                projectedVertices[vertexIndex] = true;
+            }
+
+            const int projectedVertexCount = static_cast<int>(projectedVertices[0])
+                + static_cast<int>(projectedVertices[1])
+                + static_cast<int>(projectedVertices[2]);
+
+            if (projectedVertexCount == 3
+                && TriangleOverlapsScreenRect(
+                    screenVertices[0],
+                    screenVertices[1],
+                    screenVertices[2],
+                    projectedVertexCount,
                     rectMinX,
                     rectMinY,
                     rectMaxX,
-                    rectMaxY,
-                    viewMatrix,
-                    projectionMatrix,
-                    viewportSize))
+                    rectMaxY))
             {
                 return true;
+            }
+
+            if (projectedVertexCount == 1)
+            {
+                for (int vertexIndex = 0; vertexIndex < 3; ++vertexIndex)
+                {
+                    if (!projectedVertices[vertexIndex])
+                    {
+                        continue;
+                    }
+
+                    if (IsPointInScreenRect(
+                            screenVertices[vertexIndex].x,
+                            screenVertices[vertexIndex].y,
+                            rectMinX,
+                            rectMinY,
+                            rectMaxX,
+                            rectMaxY))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            const std::array<std::pair<int, int>, 3> triangleEdges = {{
+                {0, 1},
+                {1, 2},
+                {2, 0},
+            }};
+
+            for (const auto& edge : triangleEdges)
+            {
+                if (!projectedVertices[edge.first] || !projectedVertices[edge.second])
+                {
+                    continue;
+                }
+
+                if (SegmentOverlapsScreenRect(
+                        screenVertices[edge.first],
+                        screenVertices[edge.second],
+                        rectMinX,
+                        rectMinY,
+                        rectMaxX,
+                        rectMaxY))
+                {
+                    return true;
+                }
             }
         }
 
@@ -324,7 +550,7 @@ namespace
 
         const auto considerWorldPoint = [&](const glm::vec3& worldPoint) {
             glm::vec2 screenPoint;
-            if (!TryWorldToScreenPoint(
+            if (!TryWorldToScreenPointRelaxed(
                     worldPoint,
                     viewMatrix,
                     projectionMatrix,
