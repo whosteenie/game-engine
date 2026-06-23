@@ -3,6 +3,7 @@
 #include "app/EditorPanelLayout.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
 #include "engine/FileDialog.h"
 #include "engine/Light.h"
 #include "engine/SceneObject.h"
@@ -581,6 +582,7 @@ namespace
     void DrawHierarchyNode(
         Scene& scene,
         ProjectSession& project,
+        UndoStack& undoStack,
         int objectIndex,
         int primaryIndex,
         std::unordered_map<int, bool>& openStates,
@@ -648,8 +650,13 @@ namespace
             {
                 if (renameBuffer[0] != '\0')
                 {
-                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetName(renameBuffer);
-                    scene.MarkDirty();
+                    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+                    PushSetObjectName(
+                        undoStack,
+                        scene,
+                        objectIndex,
+                        object.GetName(),
+                        renameBuffer);
                 }
 
                 pendingRenameIndex = -1;
@@ -708,6 +715,7 @@ namespace
                 DrawHierarchyNode(
                     scene,
                     project,
+                    undoStack,
                     childIndex,
                     primaryIndex,
                     openStates,
@@ -738,7 +746,7 @@ namespace
     }
 }
 
-void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project) const
+void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const
 {
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
 
@@ -791,6 +799,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project) const
         DrawHierarchyNode(
             scene,
             project,
+            undoStack,
             objectIndex,
             primaryIndex,
             m_nodeOpenStates,

@@ -15,6 +15,8 @@
 #include "app/SceneHierarchyPanel.h"
 #include "app/SceneInspectorPanel.h"
 #include "app/SceneToolbarPanel.h"
+#include "app/UndoContext.h"
+#include "app/UndoStack.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/FileDialog.h"
@@ -151,7 +153,8 @@ void Application::Update(double deltaTime)
         *m_editorSettings,
         m_projectEditorState,
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
-        [this]() { RequestClose(); });
+        [this]() { RequestClose(); },
+        m_undoStack);
 
     if (editorActive)
     {
@@ -172,10 +175,11 @@ void Application::Update(double deltaTime)
             [this](ProjectEditorState& editorState) { CaptureProjectEditorState(editorState); },
             [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
             [this]() { RequestClose(); },
-            [this]() { RequestNewProject(); });
+            [this]() { RequestNewProject(); },
+            m_undoStack);
 
         m_sceneToolbarPanel->Draw(*m_scene);
-        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession);
+        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
         m_sceneInspectorPanel->Draw(*m_scene);
         m_projectFilesPanel->Draw(*m_projectSession);
         m_lightingPanel->Draw(*m_scene, *m_camera);
@@ -396,6 +400,7 @@ void Application::DrawUnsavedChangesDialog()
             {
                 m_pendingNewProject = false;
                 ImGui::CloseCurrentPopup();
+                m_undoStack.Clear();
                 m_projectSession->CloseProject();
                 m_projectChooser->OpenNewProjectForm(*m_editorSettings);
             }
@@ -415,6 +420,7 @@ void Application::DrawUnsavedChangesDialog()
         {
             m_pendingNewProject = false;
             ImGui::CloseCurrentPopup();
+            m_undoStack.Clear();
             m_projectSession->CloseProject();
             m_projectChooser->OpenNewProjectForm(*m_editorSettings);
         }

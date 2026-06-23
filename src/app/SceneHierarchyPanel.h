@@ -4,11 +4,12 @@
 
 class ProjectSession;
 class Scene;
+class UndoStack;
 
 class SceneHierarchyPanel
 {
 public:
-    void Draw(Scene& scene, ProjectSession& project) const;
+    void Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 

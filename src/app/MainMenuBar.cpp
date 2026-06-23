@@ -6,6 +6,8 @@
 #include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/UndoContext.h"
+#include "app/UndoStack.h"
 #include "engine/FileDialog.h"
 
 #include <imgui.h>
@@ -81,7 +83,8 @@ namespace
         ProjectSession& project,
         EditorSettings& settings,
         ProjectEditorState& editorState,
-        const ApplyEditorStateFn& applyEditorState)
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack)
     {
         settings.ValidateLastNewProjectParentDirectory();
         std::string projectPath;
@@ -92,6 +95,7 @@ namespace
 
         if (project.OpenProject(scene, projectPath, editorState))
         {
+            undoStack.Clear();
             RecordRecentProject(settings, project.GetProjectFilePath());
             if (applyEditorState)
             {
@@ -164,7 +168,8 @@ namespace
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState,
-        const ApplyEditorStateFn& applyEditorState)
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack)
     {
         if (!AllowFileMenuShortcuts())
         {
@@ -174,7 +179,7 @@ namespace
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
         }
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
@@ -185,6 +190,43 @@ namespace
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             SaveProjectAs(scene, project, settings, editorState, captureEditorState);
+        }
+    }
+
+    void HandleEditMenuShortcuts(Scene& scene, UndoStack& undoStack)
+    {
+        if (!AllowFileMenuShortcuts())
+        {
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.KeyCtrl)
+        {
+            return;
+        }
+
+        UndoContext context{scene};
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+        {
+            if (undoStack.CanRedo())
+            {
+                undoStack.Redo(context);
+            }
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+        {
+            if (undoStack.CanRedo())
+            {
+                undoStack.Redo(context);
+            }
+        }
+        else if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+        {
+            if (undoStack.CanUndo())
+            {
+                undoStack.Undo(context);
+            }
         }
     }
 }
@@ -199,9 +241,18 @@ void MainMenuBar::Draw(
     const CaptureEditorStateFn& captureEditorState,
     const ApplyEditorStateFn& applyEditorState,
     const std::function<void()>& requestClose,
-    const std::function<void()>& requestNewProject)
+    const std::function<void()>& requestNewProject,
+    UndoStack& undoStack)
 {
-    HandleFileMenuShortcuts(scene, project, settings, editorState, captureEditorState, applyEditorState);
+    HandleFileMenuShortcuts(
+        scene,
+        project,
+        settings,
+        editorState,
+        captureEditorState,
+        applyEditorState,
+        undoStack);
+    HandleEditMenuShortcuts(scene, undoStack);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -220,7 +271,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
         }
 
         ImGui::Separator();
@@ -262,10 +313,16 @@ void MainMenuBar::Draw(
 
     if (ImGui::BeginMenu("Edit"))
     {
-        ImGui::BeginDisabled();
-        ImGui::MenuItem("Undo", "Ctrl+Z");
-        ImGui::MenuItem("Redo", "Ctrl+Y");
-        ImGui::EndDisabled();
+        UndoContext context{scene};
+        if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undoStack.CanUndo()))
+        {
+            undoStack.Undo(context);
+        }
+
+        if (ImGui::MenuItem("Redo", "Ctrl+Y", false, undoStack.CanRedo()))
+        {
+            undoStack.Redo(context);
+        }
 
         ImGui::Separator();
 

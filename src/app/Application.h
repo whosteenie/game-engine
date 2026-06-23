@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ProjectEditorState.h"
+#include "app/UndoStack.h"
 
 #include <memory>
 
@@ -69,5 +70,6 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
+    UndoStack m_undoStack;
     ProjectEditorState m_projectEditorState;
 };
