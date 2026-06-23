@@ -445,6 +445,14 @@ void SceneEditor::Update(
     }
 }
 
+void SceneEditor::ResetInteractionState()
+{
+    CancelMarqueeDrag();
+    m_gizmoWasUsing = false;
+    m_gizmoTransformBefore.clear();
+    m_hasLastPickScreenPosition = false;
+}
+
 void SceneEditor::HandleEscapeKey(Scene& scene)
 {
     const ImGuiIO& io = ImGui::GetIO();

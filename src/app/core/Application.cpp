@@ -240,6 +240,7 @@ Application::Application(int width, int height, const char* title)
         m_scene = std::make_unique<Scene>();
         m_sceneEditingController = std::make_unique<SceneEditingController>();
         m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
+        m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
         m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
 
         glfwSetCursorPosCallback(m_window, MouseCallback);
@@ -565,7 +566,7 @@ void Application::Update(double deltaTime)
             windowHeight,
             allowSceneMouse,
             allowGameKeyboard,
-            m_playModeController.IsActive() ? nullptr : &m_undoStack,
+            GetEditorUndoStack(),
             m_projectSession->GetProjectRootDirectory(),
             viewportPtr};
 
@@ -609,8 +610,15 @@ bool Application::IsEditorUndoRedoBlocked() const
 
 Scene* Application::GetEditorTargetScene()
 {
-    // Editor panels (Scene View, hierarchy, inspector, toolbar) always target the authored
-    // edit scene. Game View uses the runtime clone separately while play mode is active.
+    if (m_playModeController.IsActive())
+    {
+        Scene* runtimeScene = m_playModeController.GetRuntimeScene();
+        if (runtimeScene != nullptr)
+        {
+            return runtimeScene;
+        }
+    }
+
     return m_scene.get();
 }
 

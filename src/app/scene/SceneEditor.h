@@ -52,6 +52,7 @@ public:
         const EditorViewportRect* viewport);
 
     void HandleEscapeKey(Scene& scene);
+    void ResetInteractionState();
 
     void RenderSelectionOverlay(const Scene& scene, const Camera& camera, bool useScreenSpace) const;
 

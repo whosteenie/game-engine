@@ -2,6 +2,7 @@
 
 #include "app/core/PhysicsWorld.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneEditor.h"
 #include "engine/scene/Transform.h"
 
 #include <exception>
@@ -63,6 +64,11 @@ Scene* PlayModeController::GetRuntimeScene()
 const Scene* PlayModeController::GetRuntimeScene() const
 {
     return m_runtimeScene.get();
+}
+
+void PlayModeController::SetSceneEditor(SceneEditor& sceneEditor)
+{
+    m_sceneEditor = &sceneEditor;
 }
 
 void PlayModeController::NotifyRuntimeSceneMutated()
@@ -147,6 +153,12 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
         return false;
     }
 
+    if (m_sceneEditor == nullptr)
+    {
+        m_lastError = "Play mode failed: scene editor is not configured.";
+        return false;
+    }
+
     try
     {
         m_runtimeScene = Scene::CloneForPlayMode(editScene);
@@ -156,6 +168,7 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
             return false;
         }
 
+        m_runtimeScene->BindSceneEditor(*m_sceneEditor);
         m_physicsWorld = std::make_unique<PhysicsWorld>();
         m_runtimeScene->SetDirtyCallback([this]() { NotifyRuntimeSceneMutated(); });
         m_physicsWorld->BuildFromScene(*m_runtimeScene);
@@ -185,6 +198,11 @@ bool PlayModeController::Stop(Scene& /*editScene*/, const std::string& /*project
     if (m_state == PlayModeState::Edit)
     {
         return false;
+    }
+
+    if (m_sceneEditor != nullptr)
+    {
+        m_sceneEditor->ResetInteractionState();
     }
 
     if (m_physicsWorld != nullptr)

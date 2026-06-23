@@ -5,6 +5,7 @@
 
 class Scene;
 class PhysicsWorld;
+class SceneEditor;
 
 enum class PlayModeState
 {
@@ -29,6 +30,8 @@ public:
     Scene* GetRuntimeScene();
     const Scene* GetRuntimeScene() const;
 
+    void SetSceneEditor(SceneEditor& sceneEditor);
+
     bool TogglePlayStop(Scene& editScene, const std::string& projectRoot);
     bool TogglePause();
 
@@ -52,4 +55,5 @@ private:
     bool m_requestFocusGameView = false;
     bool m_physicsRebuildPending = false;
     bool m_startPaused = false;
+    SceneEditor* m_sceneEditor = nullptr;
 };
