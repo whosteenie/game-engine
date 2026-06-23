@@ -42,6 +42,35 @@ Mesh* SceneMeshLibrary::GetPrimitive(ScenePrimitive primitive) const
     return m_cubeMesh.get();
 }
 
+bool SceneMeshLibrary::IsImportedMesh(const Mesh* mesh) const
+{
+    if (mesh == nullptr)
+    {
+        return false;
+    }
+
+    for (const std::unique_ptr<Mesh>& importedMesh : m_importedMeshes)
+    {
+        if (importedMesh != nullptr && importedMesh.get() == mesh)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+Mesh* SceneMeshLibrary::AdoptClonedImportedMesh(const Mesh& source)
+{
+    std::unique_ptr<Mesh> clonedMesh = source.Clone();
+    if (clonedMesh == nullptr)
+    {
+        return nullptr;
+    }
+
+    return AdoptImportedMesh(std::move(clonedMesh));
+}
+
 Mesh* SceneMeshLibrary::AdoptImportedMesh(std::unique_ptr<Mesh> mesh)
 {
     m_importedMeshes.push_back(std::move(mesh));

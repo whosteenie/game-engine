@@ -4,6 +4,8 @@
 
 #include <cmath>
 #include <limits>
+#include <memory>
+#include <vector>
 
 namespace
 {
@@ -58,6 +60,7 @@ Mesh::Mesh(
     unsigned int floatsPerVertex,
     const unsigned int* indices,
     unsigned int indexCount)
+    : m_floatsPerVertex(floatsPerVertex)
 {
     m_positions.reserve(vertexCount);
     for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
@@ -186,6 +189,50 @@ void Mesh::DestroyGlResources()
 Mesh::~Mesh()
 {
     DestroyGlResources();
+}
+
+std::unique_ptr<Mesh> Mesh::Clone() const
+{
+    if (m_vao == 0 || m_vbo == 0 || m_ebo == 0 || m_floatsPerVertex == 0 || m_indexCount == 0)
+    {
+        return nullptr;
+    }
+
+    GLint vertexBufferSize = 0;
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &vertexBufferSize);
+
+    GLint indexBufferSize = 0;
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
+    glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &indexBufferSize);
+
+    if (vertexBufferSize <= 0 || indexBufferSize <= 0)
+    {
+        glBindVertexArray(0);
+        return nullptr;
+    }
+
+    const unsigned int vertexFloatCount =
+        static_cast<unsigned int>(vertexBufferSize) / static_cast<unsigned int>(sizeof(float));
+    const unsigned int vertexCount = vertexFloatCount / m_floatsPerVertex;
+    const unsigned int indexCount = static_cast<unsigned int>(indexBufferSize) / sizeof(unsigned int);
+
+    std::vector<float> vertices(vertexFloatCount);
+    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, vertexBufferSize, vertices.data());
+
+    std::vector<unsigned int> indices(indexCount);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
+    glGetBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, indexBufferSize, indices.data());
+
+    glBindVertexArray(0);
+
+    return std::make_unique<Mesh>(
+        vertices.data(),
+        vertexCount,
+        m_floatsPerVertex,
+        indices.data(),
+        indexCount);
 }
 
 void Mesh::Draw() const

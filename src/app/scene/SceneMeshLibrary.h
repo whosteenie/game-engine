@@ -19,7 +19,9 @@ public:
     SceneMeshLibrary& operator=(const SceneMeshLibrary&) = delete;
 
     Mesh* GetPrimitive(ScenePrimitive primitive) const;
+    bool IsImportedMesh(const Mesh* mesh) const;
     Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
+    Mesh* AdoptClonedImportedMesh(const Mesh& source);
     std::unique_ptr<Mesh> ExtractImportedMesh(Mesh* mesh);
 
     void PruneUnusedImportedMeshes(const std::vector<SceneObject>& objects);

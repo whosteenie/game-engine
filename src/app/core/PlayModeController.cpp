@@ -59,11 +59,22 @@ const Scene* PlayModeController::GetRuntimeScene() const
     return m_runtimeScene.get();
 }
 
+void PlayModeController::NotifyRuntimeSceneMutated()
+{
+    m_physicsRebuildPending = true;
+}
+
 void PlayModeController::Simulate(double deltaTime)
 {
     if (!IsSimulating() || m_runtimeScene == nullptr || m_physicsWorld == nullptr)
     {
         return;
+    }
+
+    if (m_physicsRebuildPending)
+    {
+        m_physicsWorld->BuildFromScene(*m_runtimeScene);
+        m_physicsRebuildPending = false;
     }
 
     m_physicsWorld->Step(*m_runtimeScene, static_cast<float>(deltaTime));
@@ -103,6 +114,7 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
         }
 
         m_physicsWorld = std::make_unique<PhysicsWorld>();
+        m_runtimeScene->SetDirtyCallback([this]() { NotifyRuntimeSceneMutated(); });
         m_physicsWorld->BuildFromScene(*m_runtimeScene);
     }
     catch (const std::exception& exception)
@@ -139,6 +151,7 @@ bool PlayModeController::Stop(Scene& /*editScene*/, const std::string& /*project
     }
 
     m_runtimeScene.reset();
+    m_physicsRebuildPending = false;
     m_state = PlayModeState::Edit;
     return true;
 }

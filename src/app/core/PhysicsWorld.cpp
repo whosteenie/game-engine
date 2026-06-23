@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -249,14 +250,10 @@ struct PhysicsWorld::Impl
 PhysicsWorld::PhysicsWorld()
 {
     EnsureJoltInitialized();
-    m_impl = new Impl();
+    m_impl = std::make_unique<Impl>();
 }
 
-PhysicsWorld::~PhysicsWorld()
-{
-    delete m_impl;
-    m_impl = nullptr;
-}
+PhysicsWorld::~PhysicsWorld() = default;
 
 void PhysicsWorld::Shutdown()
 {

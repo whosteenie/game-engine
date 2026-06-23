@@ -161,7 +161,12 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
             }
         }
 
-        return sourceMesh;
+        if (source.GetMeshLibrary().IsImportedMesh(sourceMesh))
+        {
+            return destination.GetMeshLibrary().AdoptClonedImportedMesh(*sourceMesh);
+        }
+
+        return nullptr;
     };
 
     for (const SceneObject& sourceObject : source.m_objectStore->Objects())
@@ -203,11 +208,6 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
     clone->SetShowGrid(source.GetShowGrid());
     clone->GetRenderer().GetLighting() = source.GetRenderer().GetLighting();
     CopyRendererSettings(source, *clone);
-
-    if (const SceneEditor* editor = source.TryGetSceneEditor())
-    {
-        clone->BindSceneEditor(const_cast<SceneEditor&>(*editor));
-    }
 
     return clone;
 }

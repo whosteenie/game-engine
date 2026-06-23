@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 class Scene;
 
 class PhysicsWorld
@@ -17,5 +19,5 @@ public:
 
 private:
     struct Impl;
-    struct Impl* m_impl = nullptr;
+    std::unique_ptr<Impl> m_impl;
 };

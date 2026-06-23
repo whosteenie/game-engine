@@ -85,13 +85,22 @@ namespace
 IBL::IBL(const char* hdrPath)
 {
     CreateCaptureResources();
-    LoadHdrEquirectangular(hdrPath);
-    CreateEnvironmentCubemap();
-    CreateIrradianceMap();
-    CreatePrefilterMap();
-    CreateBrdfLut();
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    try
+    {
+        LoadHdrEquirectangular(hdrPath);
+        CreateEnvironmentCubemap();
+        CreateIrradianceMap();
+        CreatePrefilterMap();
+        CreateBrdfLut();
+
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    }
+    catch (...)
+    {
+        DestroyResources();
+        throw;
+    }
 }
 
 IBL::~IBL()

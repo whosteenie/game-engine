@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <memory>
 #include <vector>
 
 class Mesh
@@ -22,6 +23,8 @@ public:
     Mesh(Mesh&& other) noexcept;
     Mesh& operator=(Mesh&& other) noexcept;
 
+    std::unique_ptr<Mesh> Clone() const;
+
     void Draw() const;
 
     bool IntersectRay(
@@ -39,6 +42,7 @@ private:
     unsigned int m_vbo = 0;
     unsigned int m_ebo = 0;
     unsigned int m_indexCount = 0;
+    unsigned int m_floatsPerVertex = BasicVertexFloatCount;
     std::vector<glm::vec3> m_positions;
     std::vector<unsigned int> m_indices;
 };

@@ -34,6 +34,7 @@ public:
     bool ConsumeFocusGameViewRequest();
 
     void Simulate(double deltaTime);
+    void NotifyRuntimeSceneMutated();
 
     // Phase 1 debug helper — nudges the runtime selection so isolation can be verified without Game View.
     void DebugNudgeRuntimeSelection(float deltaY);
@@ -47,4 +48,5 @@ private:
     std::unique_ptr<PhysicsWorld> m_physicsWorld;
     std::string m_lastError;
     bool m_requestFocusGameView = false;
+    bool m_physicsRebuildPending = false;
 };

@@ -201,46 +201,61 @@ Application::Application(int width, int height, const char* title)
     : m_width(width), m_height(height), m_title(title)
 {
     InitGLFW();
-    InitGLAD();
 
-    glfwSwapInterval(1);
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_MULTISAMPLE);
+    try
+    {
+        InitGLAD();
 
-    m_renderer = std::make_unique<Renderer>();
-    EditorSettings::EnsureAppDataDirectoryExists();
-    m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
-    m_editorSettings = std::make_unique<EditorSettings>();
-    m_editorSettings->Load();
-    m_projectSession = std::make_unique<ProjectSession>();
-    m_projectChooser = std::make_unique<ProjectChooser>();
-    m_mainMenuBar = std::make_unique<MainMenuBar>();
-    m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
-    m_lightingPanel = std::make_unique<LightingPanel>();
-    m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
-    m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
-    m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
-    m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
-    m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
-    m_gameViewportPanel = std::make_unique<GameViewportPanel>();
-    m_editorDockSpace = std::make_unique<EditorDockSpace>();
-    m_camera = std::make_unique<Camera>(
-        glm::vec3(6.0f, 5.0f, 6.0f),
-        -135.0f,
-        -35.0f);
+        glfwSwapInterval(1);
+        glEnable(GL_DEPTH_TEST);
+        glEnable(GL_MULTISAMPLE);
 
-    int framebufferWidth, framebufferHeight;
-    glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
-    OnFramebufferResize(framebufferWidth, framebufferHeight);
+        m_renderer = std::make_unique<Renderer>();
+        EditorSettings::EnsureAppDataDirectoryExists();
+        m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
+        m_editorSettings = std::make_unique<EditorSettings>();
+        m_editorSettings->Load();
+        m_projectSession = std::make_unique<ProjectSession>();
+        m_projectChooser = std::make_unique<ProjectChooser>();
+        m_mainMenuBar = std::make_unique<MainMenuBar>();
+        m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
+        m_lightingPanel = std::make_unique<LightingPanel>();
+        m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
+        m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
+        m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
+        m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
+        m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
+        m_gameViewportPanel = std::make_unique<GameViewportPanel>();
+        m_editorDockSpace = std::make_unique<EditorDockSpace>();
+        m_camera = std::make_unique<Camera>(
+            glm::vec3(6.0f, 5.0f, 6.0f),
+            -135.0f,
+            -35.0f);
 
-    m_input = std::make_unique<Input>(m_window);
-    m_scene = std::make_unique<Scene>();
-    m_sceneEditingController = std::make_unique<SceneEditingController>();
-    m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
-    m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
+        int framebufferWidth, framebufferHeight;
+        glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
+        OnFramebufferResize(framebufferWidth, framebufferHeight);
 
-    glfwSetCursorPosCallback(m_window, MouseCallback);
-    glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
+        m_input = std::make_unique<Input>(m_window);
+        m_scene = std::make_unique<Scene>();
+        m_sceneEditingController = std::make_unique<SceneEditingController>();
+        m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
+        m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
+
+        glfwSetCursorPosCallback(m_window, MouseCallback);
+        glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
+    }
+    catch (...)
+    {
+        if (m_window != nullptr)
+        {
+            glfwDestroyWindow(m_window);
+            m_window = nullptr;
+        }
+
+        glfwTerminate();
+        throw;
+    }
 }
 
 Application::~Application()
