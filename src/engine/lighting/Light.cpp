@@ -204,3 +204,41 @@ void Light::SetSpotCutoffDegrees(float innerCutoffDegrees, float outerCutoffDegr
     m_innerCutoffCos = std::cos(glm::radians(innerCutoffDegrees));
     m_outerCutoffCos = std::cos(glm::radians(outerCutoffDegrees));
 }
+
+const char* LightTypeToString(const LightType type)
+{
+    switch (type)
+    {
+    case LightType::Directional:
+        return "Directional";
+    case LightType::Point:
+        return "Point";
+    case LightType::Spot:
+        return "Spot";
+    }
+
+    return "Point";
+}
+
+bool LightTypeFromString(const std::string& value, LightType& outType)
+{
+    if (value == "Directional")
+    {
+        outType = LightType::Directional;
+        return true;
+    }
+
+    if (value == "Point")
+    {
+        outType = LightType::Point;
+        return true;
+    }
+
+    if (value == "Spot")
+    {
+        outType = LightType::Spot;
+        return true;
+    }
+
+    return false;
+}

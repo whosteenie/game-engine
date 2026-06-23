@@ -3,6 +3,7 @@
 #include "app/scene/Scene.h"
 #include "engine/camera/Camera.h"
 #include "engine/components/CameraComponent.h"
+#include "engine/scene/RotationUtils.h"
 #include "engine/scene/SceneObject.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -11,17 +12,6 @@
 
 namespace
 {
-    glm::vec3 NormalizeOrFallback(const glm::vec3& vector, const glm::vec3& fallback)
-    {
-        const float length = glm::length(vector);
-        if (length < 0.0001f)
-        {
-            return fallback;
-        }
-
-        return vector / length;
-    }
-
     int FindActiveCameraObjectIndex(const Scene& scene)
     {
         int bestIndex = -1;
@@ -74,13 +64,13 @@ std::optional<SceneCamera> SceneCamera::TryFromScene(const Scene& scene, float a
     const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
     const CameraComponent& component = object.GetCamera();
     const glm::mat4 worldMatrix = scene.GetWorldMatrix(objectIndex);
-    const glm::mat3 rotationMatrix = glm::mat3(worldMatrix);
 
     SceneCamera sceneCamera;
-    sceneCamera.m_position = glm::vec3(worldMatrix[3]);
-    sceneCamera.m_forward =
-        NormalizeOrFallback(-glm::vec3(rotationMatrix[2]), glm::vec3(0.0f, 0.0f, -1.0f));
-    sceneCamera.m_up = NormalizeOrFallback(glm::vec3(rotationMatrix[1]), glm::vec3(0.0f, 1.0f, 0.0f));
+    RotationUtils::ExtractCameraBasis(
+        worldMatrix,
+        sceneCamera.m_position,
+        sceneCamera.m_forward,
+        sceneCamera.m_up);
     sceneCamera.m_fovDegrees = component.fovDegrees;
     sceneCamera.m_nearPlane = component.nearPlane;
     sceneCamera.m_farPlane = component.farPlane;

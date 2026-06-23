@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include <vector>
 
 class SceneObject;
@@ -14,7 +15,21 @@ enum class InspectorComponentType
     Collider,
 };
 
+enum class SceneSystemComponentType
+{
+    Light = 0,
+    Camera,
+    RigidBody,
+    Collider,
+};
+
 const char* GetInspectorComponentLabel(InspectorComponentType type);
+const char* GetInspectorComponentJsonKey(InspectorComponentType type);
+bool InspectorComponentTypeFromJsonKey(const std::string& value, InspectorComponentType& outType);
+
+const char* GetSceneSystemComponentLabel(SceneSystemComponentType type);
+InspectorComponentType InspectorComponentTypeFromSystem(SceneSystemComponentType type);
+bool TryInspectorComponentTypeToSystemType(InspectorComponentType type, SceneSystemComponentType& outType);
 
 bool SceneObjectHasInspectorComponent(const SceneObject& object, InspectorComponentType type);
 

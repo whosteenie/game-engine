@@ -1,11 +1,14 @@
 #include "engine/rendering/Material.h"
 
+#include "engine/assets/TextureCache.h"
+#include "engine/components/ComponentSerialization.h"
 #include "engine/components/ComponentCompare.h"
 #include "engine/camera/Camera.h"
 #include "engine/rendering/Constants.h"
 #include "engine/lighting/IBL.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/lighting/SceneLighting.h"
+#include "engine/scene/JsonMath.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rendering/ShaderCache.h"
 #include "engine/lighting/CascadedShadowMap.h"
@@ -14,6 +17,7 @@
 
 #include <array>
 #include <glm/glm.hpp>
+#include <nlohmann/json.hpp>
 
 namespace
 {
@@ -490,4 +494,174 @@ std::unique_ptr<Material> Material::Clone() const
     }
 
     return copy;
+}
+
+nlohmann::json MaterialToJson(const Material& material, const MaterialStoredPathFn& toStoredPath)
+{
+    using json = nlohmann::json;
+
+    json maps = json::object();
+    if (material.HasAlbedoMap())
+    {
+        const std::string mapPath = toStoredPath(material.GetAlbedoMapPath());
+        if (!mapPath.empty())
+        {
+            maps["albedo"] = mapPath;
+        }
+    }
+
+    if (material.HasNormalMap())
+    {
+        const std::string mapPath = toStoredPath(material.GetNormalMapPath());
+        if (!mapPath.empty())
+        {
+            maps["normal"] = mapPath;
+        }
+    }
+
+    if (material.HasAoMap())
+    {
+        const std::string mapPath = toStoredPath(material.GetAoMapPath());
+        if (!mapPath.empty())
+        {
+            maps["ao"] = mapPath;
+        }
+    }
+
+    if (material.HasRoughnessMap())
+    {
+        const std::string mapPath = toStoredPath(material.GetRoughnessMapPath());
+        if (!mapPath.empty())
+        {
+            maps["roughness"] = mapPath;
+            maps["metallicRoughness"] = material.HasMetallicRoughnessMap();
+        }
+    }
+
+    return json{
+        {"albedo", Vec3ToJson(material.GetAlbedo())},
+        {"roughness", material.GetRoughness()},
+        {"metallic", material.GetMetallic()},
+        {"doubleSided", material.IsDoubleSided()},
+        {"maps", maps},
+        {"texCoordSets",
+         json{
+             {"albedo", material.GetAlbedoTexCoordSet()},
+             {"normal", material.GetNormalTexCoordSet()},
+             {"ao", material.GetAoTexCoordSet()},
+             {"roughness", material.GetRoughnessTexCoordSet()},
+         }},
+    };
+}
+
+std::unique_ptr<Material> MaterialFromJson(
+    const nlohmann::json& value,
+    const MaterialResolvePathFn& resolvePath,
+    const MaterialStoredPathFn& toStoredPath)
+{
+    using json = nlohmann::json;
+
+    const glm::vec3 albedo = Vec3FromJson(value.at("albedo"));
+    const float roughness = value.at("roughness").get<float>();
+    const float metallic = value.at("metallic").get<float>();
+
+    auto material = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        albedo,
+        roughness,
+        metallic);
+
+    material->SetDoubleSided(value.value("doubleSided", false));
+
+    if (value.contains("texCoordSets"))
+    {
+        const json& texCoordSets = value.at("texCoordSets");
+        material->SetAlbedoTexCoordSet(texCoordSets.value("albedo", 0));
+        material->SetNormalTexCoordSet(texCoordSets.value("normal", 0));
+        material->SetAoTexCoordSet(texCoordSets.value("ao", 0));
+        material->SetRoughnessTexCoordSet(texCoordSets.value("roughness", 0));
+    }
+
+    if (!value.contains("maps"))
+    {
+        return material;
+    }
+
+    const json& maps = value.at("maps");
+    TextureCache& cache = TextureCache::Get();
+
+    auto tryLoadMap =
+        [&](const char* key, TextureColorSpace colorSpace, auto setter) {
+            if (!maps.contains(key))
+            {
+                return;
+            }
+
+            const std::string storedPath = maps.at(key).get<std::string>();
+            if (storedPath.empty())
+            {
+                return;
+            }
+
+            const std::string resolvedPath = resolvePath(storedPath);
+            try
+            {
+                std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), colorSpace);
+                setter(std::move(texture), toStoredPath(resolvedPath));
+            }
+            catch (const std::exception&)
+            {
+            }
+        };
+
+    tryLoadMap(
+        "albedo",
+        TextureColorSpace::SRGB,
+        [&](std::shared_ptr<Texture> texture, const std::string& path) {
+            material->SetAlbedoMap(std::move(texture), path);
+        });
+    tryLoadMap(
+        "normal",
+        TextureColorSpace::Linear,
+        [&](std::shared_ptr<Texture> texture, const std::string& path) {
+            material->SetNormalMap(std::move(texture), path);
+        });
+    tryLoadMap(
+        "ao",
+        TextureColorSpace::Linear,
+        [&](std::shared_ptr<Texture> texture, const std::string& path) {
+            material->SetAoMap(std::move(texture), path);
+        });
+
+    if (maps.contains("roughness"))
+    {
+        const std::string storedPath = maps.at("roughness").get<std::string>();
+        if (!storedPath.empty())
+        {
+            const std::string resolvedPath = resolvePath(storedPath);
+            const bool metallicRoughness = maps.value("metallicRoughness", false);
+            try
+            {
+                std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), TextureColorSpace::Linear);
+                const std::string relativePath = toStoredPath(resolvedPath);
+                if (metallicRoughness)
+                {
+                    material->SetMetallicRoughnessMap(
+                        std::move(texture),
+                        material->GetRoughnessTexCoordSet(),
+                        relativePath);
+                }
+                else
+                {
+                    material->SetRoughnessMap(std::move(texture), relativePath);
+                }
+            }
+            catch (const std::exception&)
+            {
+            }
+        }
+    }
+
+    return material;
 }

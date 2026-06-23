@@ -3,9 +3,67 @@
 #include "engine/scene/SceneObject.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace
 {
+    struct InspectorComponentTypeEntry
+    {
+        InspectorComponentType type;
+        const char* label;
+        const char* jsonKey;
+        std::optional<SceneSystemComponentType> systemType;
+    };
+
+    constexpr InspectorComponentTypeEntry kInspectorComponentRegistry[] = {
+        {InspectorComponentType::Material, "Material", "material", std::nullopt},
+        {InspectorComponentType::ObjectFlags, "Object", "objectFlags", std::nullopt},
+        {InspectorComponentType::Light, "Light", "light", SceneSystemComponentType::Light},
+        {InspectorComponentType::Camera, "Camera", "camera", SceneSystemComponentType::Camera},
+        {InspectorComponentType::RigidBody, "Rigid Body", "rigidBody", SceneSystemComponentType::RigidBody},
+        {InspectorComponentType::Collider, "Collider", "collider", SceneSystemComponentType::Collider},
+    };
+
+    const InspectorComponentTypeEntry* FindInspectorComponentEntry(const InspectorComponentType type)
+    {
+        for (const InspectorComponentTypeEntry& entry : kInspectorComponentRegistry)
+        {
+            if (entry.type == type)
+            {
+                return &entry;
+            }
+        }
+
+        return nullptr;
+    }
+
+    const InspectorComponentTypeEntry* FindInspectorComponentEntryByJsonKey(const std::string& jsonKey)
+    {
+        for (const InspectorComponentTypeEntry& entry : kInspectorComponentRegistry)
+        {
+            if (jsonKey == entry.jsonKey)
+            {
+                return &entry;
+            }
+        }
+
+        return nullptr;
+    }
+
+    const InspectorComponentTypeEntry* FindInspectorComponentEntryBySystemType(
+        const SceneSystemComponentType systemType)
+    {
+        for (const InspectorComponentTypeEntry& entry : kInspectorComponentRegistry)
+        {
+            if (entry.systemType == systemType)
+            {
+                return &entry;
+            }
+        }
+
+        return nullptr;
+    }
+
     bool ContainsInspectorComponentType(
         const std::vector<InspectorComponentType>& order,
         const InspectorComponentType type)
@@ -16,23 +74,52 @@ namespace
 
 const char* GetInspectorComponentLabel(const InspectorComponentType type)
 {
-    switch (type)
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntry(type);
+    return entry != nullptr ? entry->label : "Unknown";
+}
+
+const char* GetInspectorComponentJsonKey(const InspectorComponentType type)
+{
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntry(type);
+    return entry != nullptr ? entry->jsonKey : "unknown";
+}
+
+bool InspectorComponentTypeFromJsonKey(const std::string& value, InspectorComponentType& outType)
+{
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntryByJsonKey(value);
+    if (entry == nullptr)
     {
-    case InspectorComponentType::Material:
-        return "Material";
-    case InspectorComponentType::ObjectFlags:
-        return "Object";
-    case InspectorComponentType::Light:
-        return "Light";
-    case InspectorComponentType::Camera:
-        return "Camera";
-    case InspectorComponentType::RigidBody:
-        return "Rigid Body";
-    case InspectorComponentType::Collider:
-        return "Collider";
+        return false;
     }
 
-    return "Unknown";
+    outType = entry->type;
+    return true;
+}
+
+const char* GetSceneSystemComponentLabel(const SceneSystemComponentType type)
+{
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntryBySystemType(type);
+    return entry != nullptr ? entry->label : "Unknown";
+}
+
+InspectorComponentType InspectorComponentTypeFromSystem(const SceneSystemComponentType type)
+{
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntryBySystemType(type);
+    return entry != nullptr ? entry->type : InspectorComponentType::Light;
+}
+
+bool TryInspectorComponentTypeToSystemType(
+    const InspectorComponentType type,
+    SceneSystemComponentType& outType)
+{
+    const InspectorComponentTypeEntry* entry = FindInspectorComponentEntry(type);
+    if (entry == nullptr || !entry->systemType.has_value())
+    {
+        return false;
+    }
+
+    outType = *entry->systemType;
+    return true;
 }
 
 bool SceneObjectHasAnySystemComponent(const SceneObject& object)

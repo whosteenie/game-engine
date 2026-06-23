@@ -1,37 +1,18 @@
 #include "engine/components/CameraComponent.h"
 
 #include "engine/components/ComponentCompare.h"
+#include "engine/scene/JsonMath.h"
+#include "engine/scene/RotationUtils.h"
 
 #include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 
+using json = nlohmann::json;
+
 namespace
 {
-    glm::vec3 NormalizeOrFallback(const glm::vec3& vector, const glm::vec3& fallback)
-    {
-        const float length = glm::length(vector);
-        if (length < 0.0001f)
-        {
-            return fallback;
-        }
-
-        return vector / length;
-    }
-
-    glm::quat QuatFromLocalNegativeZAxis(const glm::vec3& negativeZWorldDirection)
-    {
-        const glm::vec3 zAxis =
-            NormalizeOrFallback(negativeZWorldDirection, glm::vec3(0.0f, 0.0f, -1.0f));
-        const glm::vec3 reference =
-            glm::abs(zAxis.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-        const glm::vec3 xAxis =
-            NormalizeOrFallback(glm::cross(reference, zAxis), glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 yAxis = glm::cross(zAxis, xAxis);
-        const glm::mat3 rotationMatrix(xAxis, yAxis, zAxis);
-        return glm::quat_cast(rotationMatrix);
-    }
-
     glm::vec3 DirectionFromYawPitch(float yawDegrees, float pitchDegrees)
     {
         glm::vec3 direction;
@@ -54,6 +35,30 @@ bool operator==(const CameraComponent& left, const CameraComponent& right)
         && left.isMain == right.isMain;
 }
 
+json CameraComponentToJson(const CameraComponent& camera)
+{
+    return json{
+        {"fovDegrees", camera.fovDegrees},
+        {"nearPlane", camera.nearPlane},
+        {"farPlane", camera.farPlane},
+        {"enabled", camera.enabled},
+        {"depth", camera.depth},
+        {"isMain", camera.isMain},
+    };
+}
+
+CameraComponent CameraComponentFromJson(const json& value)
+{
+    CameraComponent camera = MakeDefaultCameraComponent();
+    camera.fovDegrees = value.value("fovDegrees", camera.fovDegrees);
+    camera.nearPlane = value.value("nearPlane", camera.nearPlane);
+    camera.farPlane = value.value("farPlane", camera.farPlane);
+    camera.enabled = value.value("enabled", camera.enabled);
+    camera.depth = value.value("depth", camera.depth);
+    camera.isMain = value.value("isMain", camera.isMain);
+    return camera;
+}
+
 CameraComponent MakeDefaultCameraComponent()
 {
     return CameraComponent{};
@@ -63,6 +68,6 @@ Transform MakeDefaultCameraTransform()
 {
     Transform transform;
     transform.position = glm::vec3(6.0f, 5.0f, 6.0f);
-    transform.rotation = QuatFromLocalNegativeZAxis(DirectionFromYawPitch(-135.0f, -35.0f));
+    transform.rotation = RotationUtils::QuatFromLocalNegativeZAxis(DirectionFromYawPitch(-135.0f, -35.0f));
     return transform;
 }

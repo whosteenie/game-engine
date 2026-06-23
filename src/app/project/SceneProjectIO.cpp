@@ -14,6 +14,9 @@
 #include "engine/components/CameraComponent.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/scene/InspectorComponentOrder.h"
+#include "engine/components/ComponentSerialization.h"
+#include "engine/scene/InspectorComponentOrderJson.h"
+#include "engine/scene/JsonMath.h"
 #include "engine/components/LightComponent.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/rendering/Material.h"
@@ -43,30 +46,6 @@ using json = nlohmann::json;
 namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
-
-    json Vec3ToJson(const glm::vec3& value)
-    {
-        return json::array({value.x, value.y, value.z});
-    }
-
-    glm::vec3 Vec3FromJson(const json& value)
-    {
-        return glm::vec3(value.at(0).get<float>(), value.at(1).get<float>(), value.at(2).get<float>());
-    }
-
-    json QuatToJson(const glm::quat& value)
-    {
-        return json::array({value.w, value.x, value.y, value.z});
-    }
-
-    glm::quat QuatFromJson(const json& value)
-    {
-        return glm::quat(
-            value.at(0).get<float>(),
-            value.at(1).get<float>(),
-            value.at(2).get<float>(),
-            value.at(3).get<float>());
-    }
 
     std::string NormalizeSlashes(std::string path)
     {
@@ -153,449 +132,6 @@ namespace SceneProjectIODetail
         }
 
         return (fs::path(projectRoot) / stored).generic_string();
-    }
-
-    const char* LightTypeToString(LightType type)
-    {
-        switch (type)
-        {
-        case LightType::Directional:
-            return "Directional";
-        case LightType::Point:
-            return "Point";
-        case LightType::Spot:
-            return "Spot";
-        }
-
-        return "Point";
-    }
-
-    bool LightTypeFromString(const std::string& value, LightType& outType)
-    {
-        if (value == "Directional")
-        {
-            outType = LightType::Directional;
-            return true;
-        }
-
-        if (value == "Point")
-        {
-            outType = LightType::Point;
-            return true;
-        }
-
-        if (value == "Spot")
-        {
-            outType = LightType::Spot;
-            return true;
-        }
-
-        return false;
-    }
-
-    json SerializeLight(const LightComponent& light)
-    {
-        return json{
-            {"type", LightTypeToString(light.type)},
-            {"color", Vec3ToJson(light.color)},
-            {"intensity", light.intensity},
-            {"constantAttenuation", light.constantAttenuation},
-            {"linearAttenuation", light.linearAttenuation},
-            {"quadraticAttenuation", light.quadraticAttenuation},
-            {"range", light.range},
-            {"innerCutoffDegrees", light.innerCutoffDegrees},
-            {"outerCutoffDegrees", light.outerCutoffDegrees},
-            {"castsShadow", light.castsShadow},
-        };
-    }
-
-    LightComponent DeserializeLight(const json& value)
-    {
-        LightComponent light;
-        LightType type = LightType::Point;
-        if (value.contains("type"))
-        {
-            LightTypeFromString(value.at("type").get<std::string>(), type);
-        }
-
-        light = MakeDefaultLightComponent(type);
-        light.color = Vec3FromJson(value.at("color"));
-        light.intensity = value.at("intensity").get<float>();
-        light.constantAttenuation = value.value("constantAttenuation", light.constantAttenuation);
-        light.linearAttenuation = value.value("linearAttenuation", light.linearAttenuation);
-        light.quadraticAttenuation = value.value("quadraticAttenuation", light.quadraticAttenuation);
-        light.range = value.value("range", light.range);
-        light.innerCutoffDegrees = value.value("innerCutoffDegrees", light.innerCutoffDegrees);
-        light.outerCutoffDegrees = value.value("outerCutoffDegrees", light.outerCutoffDegrees);
-        light.castsShadow = value.value("castsShadow", light.castsShadow);
-        return light;
-    }
-
-    json SerializeCamera(const CameraComponent& camera)
-    {
-        return json{
-            {"fovDegrees", camera.fovDegrees},
-            {"nearPlane", camera.nearPlane},
-            {"farPlane", camera.farPlane},
-            {"enabled", camera.enabled},
-            {"depth", camera.depth},
-            {"isMain", camera.isMain},
-        };
-    }
-
-    CameraComponent DeserializeCamera(const json& value)
-    {
-        CameraComponent camera = MakeDefaultCameraComponent();
-        camera.fovDegrees = value.value("fovDegrees", camera.fovDegrees);
-        camera.nearPlane = value.value("nearPlane", camera.nearPlane);
-        camera.farPlane = value.value("farPlane", camera.farPlane);
-        camera.enabled = value.value("enabled", camera.enabled);
-        camera.depth = value.value("depth", camera.depth);
-        camera.isMain = value.value("isMain", camera.isMain);
-        return camera;
-    }
-
-    const char* ColliderShapeToString(ColliderShape shape)
-    {
-        switch (shape)
-        {
-        case ColliderShape::Box:
-            return "box";
-        case ColliderShape::Sphere:
-            return "sphere";
-        }
-
-        return "box";
-    }
-
-    bool ColliderShapeFromString(const std::string& value, ColliderShape& outShape)
-    {
-        if (value == "box")
-        {
-            outShape = ColliderShape::Box;
-            return true;
-        }
-
-        if (value == "sphere")
-        {
-            outShape = ColliderShape::Sphere;
-            return true;
-        }
-
-        return false;
-    }
-
-    json SerializeCollider(const ColliderComponent& collider)
-    {
-        return json{
-            {"shape", ColliderShapeToString(collider.shape)},
-            {"offset", Vec3ToJson(collider.offset)},
-            {"halfExtents", Vec3ToJson(collider.halfExtents)},
-            {"radius", collider.radius},
-            {"isTrigger", collider.isTrigger},
-        };
-    }
-
-    ColliderComponent DeserializeCollider(const json& value)
-    {
-        ColliderComponent collider = MakeDefaultColliderComponent();
-        ColliderShape shape = ColliderShape::Box;
-        if (value.contains("shape"))
-        {
-            ColliderShapeFromString(value.at("shape").get<std::string>(), shape);
-        }
-
-        collider.shape = shape;
-        if (value.contains("offset"))
-        {
-            collider.offset = Vec3FromJson(value.at("offset"));
-        }
-        if (value.contains("halfExtents"))
-        {
-            collider.halfExtents = Vec3FromJson(value.at("halfExtents"));
-        }
-        collider.radius = value.value("radius", collider.radius);
-        collider.isTrigger = value.value("isTrigger", collider.isTrigger);
-        return collider;
-    }
-
-    const char* InspectorComponentTypeToString(const InspectorComponentType type)
-    {
-        switch (type)
-        {
-        case InspectorComponentType::Material:
-            return "material";
-        case InspectorComponentType::ObjectFlags:
-            return "objectFlags";
-        case InspectorComponentType::Light:
-            return "light";
-        case InspectorComponentType::Camera:
-            return "camera";
-        case InspectorComponentType::RigidBody:
-            return "rigidBody";
-        case InspectorComponentType::Collider:
-            return "collider";
-        }
-
-        return "unknown";
-    }
-
-    bool InspectorComponentTypeFromString(const std::string& value, InspectorComponentType& outType)
-    {
-        if (value == "material")
-        {
-            outType = InspectorComponentType::Material;
-            return true;
-        }
-
-        if (value == "objectFlags")
-        {
-            outType = InspectorComponentType::ObjectFlags;
-            return true;
-        }
-
-        if (value == "light")
-        {
-            outType = InspectorComponentType::Light;
-            return true;
-        }
-
-        if (value == "camera")
-        {
-            outType = InspectorComponentType::Camera;
-            return true;
-        }
-
-        if (value == "rigidBody")
-        {
-            outType = InspectorComponentType::RigidBody;
-            return true;
-        }
-
-        if (value == "collider")
-        {
-            outType = InspectorComponentType::Collider;
-            return true;
-        }
-
-        return false;
-    }
-
-    json SerializeInspectorComponentOrder(const SceneObject& object)
-    {
-        json order = json::array();
-        for (const InspectorComponentType type : object.GetInspectorComponentOrder())
-        {
-            order.push_back(InspectorComponentTypeToString(type));
-        }
-
-        return order;
-    }
-
-    std::vector<InspectorComponentType> DeserializeInspectorComponentOrder(const json& value)
-    {
-        std::vector<InspectorComponentType> order;
-        if (!value.is_array())
-        {
-            return order;
-        }
-
-        for (const json& entry : value)
-        {
-            if (!entry.is_string())
-            {
-                continue;
-            }
-
-            InspectorComponentType type = InspectorComponentType::Material;
-            if (InspectorComponentTypeFromString(entry.get<std::string>(), type))
-            {
-                order.push_back(type);
-            }
-        }
-
-        return order;
-    }
-
-    json SerializeRigidBody(const RigidBodyComponent& rigidBody)
-    {
-        return json{
-            {"mass", rigidBody.mass},
-            {"useGravity", rigidBody.useGravity},
-            {"isKinematic", rigidBody.isKinematic},
-        };
-    }
-
-    RigidBodyComponent DeserializeRigidBody(const json& value)
-    {
-        RigidBodyComponent rigidBody = MakeDefaultRigidBodyComponent();
-        rigidBody.mass = value.value("mass", rigidBody.mass);
-        rigidBody.useGravity = value.value("useGravity", rigidBody.useGravity);
-        rigidBody.isKinematic = value.value("isKinematic", rigidBody.isKinematic);
-        return rigidBody;
-    }
-
-    json SerializeMaterial(const Material& material, const std::string& projectRoot)
-    {
-        json maps = json::object();
-        if (material.HasAlbedoMap())
-        {
-            const std::string mapPath = ToProjectRelativePath(projectRoot, material.GetAlbedoMapPath());
-            if (!mapPath.empty())
-            {
-                maps["albedo"] = mapPath;
-            }
-        }
-
-        if (material.HasNormalMap())
-        {
-            const std::string mapPath = ToProjectRelativePath(projectRoot, material.GetNormalMapPath());
-            if (!mapPath.empty())
-            {
-                maps["normal"] = mapPath;
-            }
-        }
-
-        if (material.HasAoMap())
-        {
-            const std::string mapPath = ToProjectRelativePath(projectRoot, material.GetAoMapPath());
-            if (!mapPath.empty())
-            {
-                maps["ao"] = mapPath;
-            }
-        }
-
-        if (material.HasRoughnessMap())
-        {
-            const std::string mapPath = ToProjectRelativePath(projectRoot, material.GetRoughnessMapPath());
-            if (!mapPath.empty())
-            {
-                maps["roughness"] = mapPath;
-                maps["metallicRoughness"] = material.HasMetallicRoughnessMap();
-            }
-        }
-
-        return json{
-            {"albedo", Vec3ToJson(material.GetAlbedo())},
-            {"roughness", material.GetRoughness()},
-            {"metallic", material.GetMetallic()},
-            {"doubleSided", material.IsDoubleSided()},
-            {"maps", maps},
-            {"texCoordSets",
-             json{
-                 {"albedo", material.GetAlbedoTexCoordSet()},
-                 {"normal", material.GetNormalTexCoordSet()},
-                 {"ao", material.GetAoTexCoordSet()},
-                 {"roughness", material.GetRoughnessTexCoordSet()},
-             }},
-        };
-    }
-
-    std::unique_ptr<Material> DeserializeMaterial(const json& value, const std::string& projectRoot)
-    {
-        const glm::vec3 albedo = Vec3FromJson(value.at("albedo"));
-        const float roughness = value.at("roughness").get<float>();
-        const float metallic = value.at("metallic").get<float>();
-
-        auto material = std::make_unique<Material>(
-            EngineConstants::LitVertexShader,
-            EngineConstants::PbrFragmentShader,
-            albedo,
-            roughness,
-            metallic);
-
-        material->SetDoubleSided(value.value("doubleSided", false));
-
-        if (value.contains("texCoordSets"))
-        {
-            const json& texCoordSets = value.at("texCoordSets");
-            material->SetAlbedoTexCoordSet(texCoordSets.value("albedo", 0));
-            material->SetNormalTexCoordSet(texCoordSets.value("normal", 0));
-            material->SetAoTexCoordSet(texCoordSets.value("ao", 0));
-            material->SetRoughnessTexCoordSet(texCoordSets.value("roughness", 0));
-        }
-
-        if (!value.contains("maps"))
-        {
-            return material;
-        }
-
-        const json& maps = value.at("maps");
-        TextureCache& cache = TextureCache::Get();
-
-        auto tryLoadMap =
-            [&](const char* key, TextureColorSpace colorSpace, auto setter) {
-                if (!maps.contains(key))
-                {
-                    return;
-                }
-
-                const std::string storedPath = maps.at(key).get<std::string>();
-                if (storedPath.empty())
-                {
-                    return;
-                }
-
-                const std::string resolvedPath = ResolveProjectPath(projectRoot, storedPath);
-                try
-                {
-                    std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), colorSpace);
-                    setter(std::move(texture), ToProjectRelativePath(projectRoot, resolvedPath));
-                }
-                catch (const std::exception&)
-                {
-                }
-            };
-
-        tryLoadMap(
-            "albedo",
-            TextureColorSpace::SRGB,
-            [&](std::shared_ptr<Texture> texture, const std::string& path) {
-                material->SetAlbedoMap(std::move(texture), path);
-            });
-        tryLoadMap(
-            "normal",
-            TextureColorSpace::Linear,
-            [&](std::shared_ptr<Texture> texture, const std::string& path) {
-                material->SetNormalMap(std::move(texture), path);
-            });
-        tryLoadMap(
-            "ao",
-            TextureColorSpace::Linear,
-            [&](std::shared_ptr<Texture> texture, const std::string& path) {
-                material->SetAoMap(std::move(texture), path);
-            });
-
-        if (maps.contains("roughness"))
-        {
-            const std::string storedPath = maps.at("roughness").get<std::string>();
-            if (!storedPath.empty())
-            {
-                const std::string resolvedPath = ResolveProjectPath(projectRoot, storedPath);
-                const bool metallicRoughness = maps.value("metallicRoughness", false);
-                try
-                {
-                    std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), TextureColorSpace::Linear);
-                    const std::string relativePath = ToProjectRelativePath(projectRoot, resolvedPath);
-                    if (metallicRoughness)
-                    {
-                        material->SetMetallicRoughnessMap(
-                            std::move(texture),
-                            material->GetRoughnessTexCoordSet(),
-                            relativePath);
-                    }
-                    else
-                    {
-                        material->SetRoughnessMap(std::move(texture), relativePath);
-                    }
-                }
-                catch (const std::exception&)
-                {
-                }
-            }
-        }
-
-        return material;
     }
 
     std::optional<ScenePrimitive> DetectPrimitiveMesh(const Scene& scene, Mesh* mesh)
@@ -1232,32 +768,34 @@ namespace SceneProjectIODetail
 
             if (object.HasMaterial())
             {
-                entry["material"] = SerializeMaterial(object.GetMaterial(), projectRoot);
+                entry["material"] = MaterialToJson(
+                    object.GetMaterial(),
+                    [&](const std::string& path) { return ToProjectRelativePath(projectRoot, path); });
             }
 
             if (object.HasLight())
             {
-                entry["light"] = SerializeLight(object.GetLight());
+                entry["light"] = LightComponentToJson(object.GetLight());
             }
 
             if (object.HasCamera())
             {
-                entry["camera"] = SerializeCamera(object.GetCamera());
+                entry["camera"] = CameraComponentToJson(object.GetCamera());
             }
 
             if (object.HasRigidBody())
             {
-                entry["rigidBody"] = SerializeRigidBody(object.GetRigidBody());
+                entry["rigidBody"] = RigidBodyComponentToJson(object.GetRigidBody());
             }
 
             if (object.HasCollider())
             {
-                entry["collider"] = SerializeCollider(object.GetCollider());
+                entry["collider"] = ColliderComponentToJson(object.GetCollider());
             }
 
             if (!object.GetInspectorComponentOrder().empty())
             {
-                entry["inspectorComponentOrder"] = SerializeInspectorComponentOrder(object);
+                entry["inspectorComponentOrder"] = InspectorComponentOrderToJson(object);
             }
 
             objects.push_back(std::move(entry));
@@ -1385,31 +923,34 @@ namespace SceneProjectIODetail
             std::unique_ptr<Material> material;
             if (objectValue.contains("material"))
             {
-                material = DeserializeMaterial(objectValue.at("material"), projectRoot);
+                material = MaterialFromJson(
+                    objectValue.at("material"),
+                    [&](const std::string& storedPath) { return ResolveProjectPath(projectRoot, storedPath); },
+                    [&](const std::string& path) { return ToProjectRelativePath(projectRoot, path); });
             }
 
             std::optional<LightComponent> light;
             if (objectValue.contains("light"))
             {
-                light = DeserializeLight(objectValue.at("light"));
+                light = LightComponentFromJson(objectValue.at("light"));
             }
 
             std::optional<CameraComponent> camera;
             if (objectValue.contains("camera"))
             {
-                camera = DeserializeCamera(objectValue.at("camera"));
+                camera = CameraComponentFromJson(objectValue.at("camera"));
             }
 
             std::optional<RigidBodyComponent> rigidBody;
             if (objectValue.contains("rigidBody"))
             {
-                rigidBody = DeserializeRigidBody(objectValue.at("rigidBody"));
+                rigidBody = RigidBodyComponentFromJson(objectValue.at("rigidBody"));
             }
 
             std::optional<ColliderComponent> collider;
             if (objectValue.contains("collider"))
             {
-                collider = DeserializeCollider(objectValue.at("collider"));
+                collider = ColliderComponentFromJson(objectValue.at("collider"));
             }
 
             Transform transform;
@@ -1454,7 +995,7 @@ namespace SceneProjectIODetail
             if (objectValue.contains("inspectorComponentOrder"))
             {
                 createdObject.SetInspectorComponentOrder(
-                    DeserializeInspectorComponentOrder(objectValue.at("inspectorComponentOrder")));
+                    InspectorComponentOrderFromJson(objectValue.at("inspectorComponentOrder")));
             }
 
             if (formatVersion >= 3 && objectId != kInvalidSceneObjectId)

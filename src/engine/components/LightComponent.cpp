@@ -1,26 +1,16 @@
 #include "engine/components/LightComponent.h"
 
 #include "engine/components/ComponentCompare.h"
+#include "engine/scene/JsonMath.h"
+#include "engine/scene/RotationUtils.h"
 #include "engine/scene/SceneObject.h"
 
 #include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
 #include <cmath>
 
-namespace
-{
-    glm::vec3 NormalizeOrFallback(const glm::vec3& vector, const glm::vec3& fallback)
-    {
-        const float length = glm::length(vector);
-        if (length < 0.0001f)
-        {
-            return fallback;
-        }
-
-        return vector / length;
-    }
-}
+using json = nlohmann::json;
 
 bool operator==(const LightComponent& left, const LightComponent& right)
 {
@@ -38,14 +28,41 @@ bool operator==(const LightComponent& left, const LightComponent& right)
         && left.castsShadow == right.castsShadow;
 }
 
-glm::quat QuatFromLocalYAxis(const glm::vec3& localYWorldDirection)
+json LightComponentToJson(const LightComponent& light)
 {
-    const glm::vec3 yAxis = NormalizeOrFallback(localYWorldDirection, glm::vec3(0.0f, 1.0f, 0.0f));
-    const glm::vec3 reference = glm::abs(yAxis.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
-    const glm::vec3 zAxis = NormalizeOrFallback(glm::cross(reference, yAxis), glm::vec3(0.0f, 0.0f, 1.0f));
-    const glm::vec3 xAxis = glm::cross(yAxis, zAxis);
-    const glm::mat3 rotationMatrix(xAxis, yAxis, zAxis);
-    return glm::quat_cast(rotationMatrix);
+    return json{
+        {"type", LightTypeToString(light.type)},
+        {"color", Vec3ToJson(light.color)},
+        {"intensity", light.intensity},
+        {"constantAttenuation", light.constantAttenuation},
+        {"linearAttenuation", light.linearAttenuation},
+        {"quadraticAttenuation", light.quadraticAttenuation},
+        {"range", light.range},
+        {"innerCutoffDegrees", light.innerCutoffDegrees},
+        {"outerCutoffDegrees", light.outerCutoffDegrees},
+        {"castsShadow", light.castsShadow},
+    };
+}
+
+LightComponent LightComponentFromJson(const json& value)
+{
+    LightType type = LightType::Point;
+    if (value.contains("type"))
+    {
+        LightTypeFromString(value.at("type").get<std::string>(), type);
+    }
+
+    LightComponent light = MakeDefaultLightComponent(type);
+    light.color = Vec3FromJson(value.at("color"));
+    light.intensity = value.at("intensity").get<float>();
+    light.constantAttenuation = value.value("constantAttenuation", light.constantAttenuation);
+    light.linearAttenuation = value.value("linearAttenuation", light.linearAttenuation);
+    light.quadraticAttenuation = value.value("quadraticAttenuation", light.quadraticAttenuation);
+    light.range = value.value("range", light.range);
+    light.innerCutoffDegrees = value.value("innerCutoffDegrees", light.innerCutoffDegrees);
+    light.outerCutoffDegrees = value.value("outerCutoffDegrees", light.outerCutoffDegrees);
+    light.castsShadow = value.value("castsShadow", light.castsShadow);
+    return light;
 }
 
 LightComponent MakeDefaultLightComponent(LightType type)
@@ -85,14 +102,14 @@ Transform MakeDefaultLightTransform(LightType type)
     {
     case LightType::Directional:
         transform.position = glm::vec3(0.0f, 6.0f, 0.0f);
-        transform.rotation = QuatFromLocalYAxis(glm::normalize(glm::vec3(0.45f, 0.7f, 0.55f)));
+        transform.rotation = RotationUtils::QuatFromLocalYAxis(glm::normalize(glm::vec3(0.45f, 0.7f, 0.55f)));
         break;
     case LightType::Point:
         transform.position = glm::vec3(2.0f, 3.0f, 1.0f);
         break;
     case LightType::Spot:
         transform.position = glm::vec3(-2.5f, 4.0f, 0.5f);
-        transform.rotation = QuatFromLocalYAxis(glm::normalize(glm::vec3(0.2f, -1.0f, -0.1f)));
+        transform.rotation = RotationUtils::QuatFromLocalYAxis(glm::normalize(glm::vec3(0.2f, -1.0f, -0.1f)));
         break;
     }
 
@@ -103,10 +120,7 @@ Light BuildLightFromSceneObject(const SceneObject& object, const glm::mat4& worl
 {
     const LightComponent& component = object.GetLight();
     const glm::vec3 worldPosition = glm::vec3(worldMatrix[3]);
-    const glm::mat3 rotationMatrix = glm::mat3(worldMatrix);
-    const glm::vec3 towardLight = NormalizeOrFallback(
-        rotationMatrix * glm::vec3(0.0f, 1.0f, 0.0f),
-        glm::vec3(0.0f, 1.0f, 0.0f));
+    const glm::vec3 towardLight = RotationUtils::ExtractLocalYWorldDirection(worldMatrix);
 
     Light light = Light::MakePoint(worldPosition, component.color, component.intensity);
 

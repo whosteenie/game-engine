@@ -24,8 +24,6 @@ struct LightComponent
 
 bool operator==(const LightComponent& left, const LightComponent& right);
 
-glm::quat QuatFromLocalYAxis(const glm::vec3& localYWorldDirection);
-
 LightComponent MakeDefaultLightComponent(LightType type);
 Transform MakeDefaultLightTransform(LightType type);
 

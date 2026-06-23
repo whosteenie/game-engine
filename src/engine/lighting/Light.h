@@ -2,12 +2,17 @@
 
 #include <glm/glm.hpp>
 
+#include <string>
+
 enum class LightType
 {
     Directional = 0,
     Point = 1,
     Spot = 2
 };
+
+const char* LightTypeToString(LightType type);
+bool LightTypeFromString(const std::string& value, LightType& outType);
 
 class Light
 {

@@ -44,40 +44,6 @@ namespace
     }
 }
 
-const char* GetSceneSystemComponentLabel(SceneSystemComponentType type)
-{
-    switch (type)
-    {
-    case SceneSystemComponentType::Light:
-        return "Light";
-    case SceneSystemComponentType::Camera:
-        return "Camera";
-    case SceneSystemComponentType::RigidBody:
-        return "Rigid Body";
-    case SceneSystemComponentType::Collider:
-        return "Collider";
-    }
-
-    return "Unknown";
-}
-
-InspectorComponentType InspectorComponentTypeFromSystem(const SceneSystemComponentType type)
-{
-    switch (type)
-    {
-    case SceneSystemComponentType::Light:
-        return InspectorComponentType::Light;
-    case SceneSystemComponentType::Camera:
-        return InspectorComponentType::Camera;
-    case SceneSystemComponentType::RigidBody:
-        return InspectorComponentType::RigidBody;
-    case SceneSystemComponentType::Collider:
-        return InspectorComponentType::Collider;
-    }
-
-    return InspectorComponentType::Light;
-}
-
 bool SceneObjectHasSystemComponent(const SceneObject& object, SceneSystemComponentType type)
 {
     switch (type)

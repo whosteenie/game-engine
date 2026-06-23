@@ -995,29 +995,6 @@ namespace
         HandleColliderFieldEditEvents(editContext);
     }
 
-    bool InspectorComponentTypeToSystemType(
-        const InspectorComponentType type,
-        SceneSystemComponentType& outType)
-    {
-        switch (type)
-        {
-        case InspectorComponentType::Light:
-            outType = SceneSystemComponentType::Light;
-            return true;
-        case InspectorComponentType::Camera:
-            outType = SceneSystemComponentType::Camera;
-            return true;
-        case InspectorComponentType::RigidBody:
-            outType = SceneSystemComponentType::RigidBody;
-            return true;
-        case InspectorComponentType::Collider:
-            outType = SceneSystemComponentType::Collider;
-            return true;
-        default:
-            return false;
-        }
-    }
-
     void ReorderInspectorComponents(
         Scene& scene,
         const int objectIndex,
@@ -1163,7 +1140,7 @@ namespace
             }
 
             SceneSystemComponentType systemType = SceneSystemComponentType::Light;
-            if (InspectorComponentTypeToSystemType(type, systemType)
+            if (TryInspectorComponentTypeToSystemType(type, systemType)
                 && ImGui::MenuItem("Remove Component"))
             {
                 const std::string commandName =

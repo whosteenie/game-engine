@@ -2,11 +2,16 @@
 
 #include <glm/glm.hpp>
 
+#include <string>
+
 enum class ColliderShape
 {
     Box = 0,
     Sphere
 };
+
+const char* ColliderShapeToString(ColliderShape shape);
+bool ColliderShapeFromString(const std::string& value, ColliderShape& outShape);
 
 struct ColliderComponent
 {

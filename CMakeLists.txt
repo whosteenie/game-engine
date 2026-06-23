@@ -292,6 +292,8 @@ add_executable(game-engine
     src/engine/lighting/SceneLighting.cpp
 
     src/engine/scene/InspectorComponentOrder.cpp
+    src/engine/scene/InspectorComponentOrderJson.cpp
+    src/engine/scene/RotationUtils.cpp
     src/engine/scene/SceneObject.cpp
 
     src/engine/scene/SceneObjectComponents.cpp
