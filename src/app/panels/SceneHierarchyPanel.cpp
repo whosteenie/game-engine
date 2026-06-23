@@ -588,6 +588,12 @@ namespace
         }
     }
 
+    bool IsHierarchyDragActive()
+    {
+        const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+        return payload != nullptr && payload->IsDataType(kHierarchyDragDropPayload);
+    }
+
     void DrawHierarchyInsertGapLine()
     {
         const ImVec2 gapMin = ImGui::GetItemRectMin();
@@ -677,7 +683,13 @@ namespace
                 && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
             {
                 DrawHierarchyReparentIndicator();
-                openStates[GetObjectId(scene, referenceIndex)] = true;
+                const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
+                const bool hasChildren = !scene.GetChildren(referenceIndex).empty();
+                panel.TryExpandNodeOnDragHover(
+                    referenceId,
+                    hasChildren,
+                    IsNodeExpanded(scene, referenceIndex, openStates),
+                    openStates);
 
                 const ImGuiDragDropFlags acceptFlags =
                     ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
@@ -941,6 +953,34 @@ void SceneHierarchyPanel::PushReparentMutation(
     }
 }
 
+void SceneHierarchyPanel::TryExpandNodeOnDragHover(
+    SceneObjectId referenceId,
+    bool hasChildren,
+    bool isAlreadyExpanded,
+    std::unordered_map<SceneObjectId, bool>& openStates) const
+{
+    m_dragExpandHoverSeenThisFrame = true;
+
+    if (!hasChildren || isAlreadyExpanded)
+    {
+        return;
+    }
+
+    const double now = ImGui::GetTime();
+    if (m_dragExpandHoverNodeId != referenceId)
+    {
+        m_dragExpandHoverNodeId = referenceId;
+        m_dragExpandHoverStartTime = now;
+        return;
+    }
+
+    if (now - m_dragExpandHoverStartTime
+        >= static_cast<double>(EditorReorderDragDrop::kDragExpandDelaySeconds))
+    {
+        openStates[referenceId] = true;
+    }
+}
+
 void SceneHierarchyPanel::Draw(
     Scene& scene,
     ProjectSession& project,
@@ -1017,6 +1057,15 @@ void SceneHierarchyPanel::Draw(
             m_scrollSelectionIntoView);
     }
 
+    if (!IsHierarchyDragActive())
+    {
+        m_dragExpandHoverNodeId = kInvalidSceneObjectId;
+    }
+    else
+    {
+        m_dragExpandHoverSeenThisFrame = false;
+    }
+
     for (int objectIndex : scene.GetRootObjectIndices())
     {
         DrawHierarchyNode(
@@ -1036,6 +1085,11 @@ void SceneHierarchyPanel::Draw(
             sizeof(m_renameBuffer),
             m_focusRenameInput,
             m_renameInputEngaged);
+    }
+
+    if (IsHierarchyDragActive() && !m_dragExpandHoverSeenThisFrame)
+    {
+        m_dragExpandHoverNodeId = kInvalidSceneObjectId;
     }
 
     std::vector<int> visibleObjectIndices;

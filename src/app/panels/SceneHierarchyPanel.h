@@ -37,6 +37,12 @@ public:
         SceneObjectId referenceId,
         HierarchyInsertMode mode) const;
 
+    void TryExpandNodeOnDragHover(
+        SceneObjectId referenceId,
+        bool hasChildren,
+        bool isAlreadyExpanded,
+        std::unordered_map<SceneObjectId, bool>& openStates) const;
+
 private:
     mutable bool m_showPanel = true;
     mutable int m_pendingRenameIndex = -1;
@@ -46,6 +52,9 @@ private:
     mutable bool m_focusRenameInput = false;
     mutable bool m_renameInputEngaged = false;
     mutable std::unordered_map<SceneObjectId, bool> m_nodeOpenStates;
+    mutable SceneObjectId m_dragExpandHoverNodeId = kInvalidSceneObjectId;
+    mutable double m_dragExpandHoverStartTime = 0.0;
+    mutable bool m_dragExpandHoverSeenThisFrame = false;
     mutable bool m_scrollSelectionIntoView = false;
     mutable UndoStack* m_drawUndoStack = nullptr;
     mutable EditorClipboard* m_drawClipboard = nullptr;
