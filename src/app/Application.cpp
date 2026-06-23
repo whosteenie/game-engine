@@ -15,6 +15,8 @@
 #include "app/SceneHierarchyPanel.h"
 #include "app/SceneInspectorPanel.h"
 #include "app/SceneToolbarPanel.h"
+#include "app/UndoContext.h"
+#include "app/UndoStack.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/FileDialog.h"
@@ -151,7 +153,8 @@ void Application::Update(double deltaTime)
         *m_editorSettings,
         m_projectEditorState,
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
-        [this]() { RequestClose(); });
+        [this]() { RequestClose(); },
+        m_undoStack);
 
     if (editorActive)
     {
@@ -172,13 +175,15 @@ void Application::Update(double deltaTime)
             [this](ProjectEditorState& editorState) { CaptureProjectEditorState(editorState); },
             [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
             [this]() { RequestClose(); },
-            [this]() { RequestNewProject(); });
+            [this]() { RequestNewProject(); },
+            m_undoStack,
+            !IsEditorUndoRedoBlocked());
 
         m_sceneToolbarPanel->Draw(*m_scene);
-        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession);
-        m_sceneInspectorPanel->Draw(*m_scene);
+        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
+        m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
-        m_lightingPanel->Draw(*m_scene, *m_camera);
+        m_lightingPanel->Draw(*m_scene, *m_camera, &m_undoStack);
     }
 
     DrawUnsavedChangesDialog();
@@ -245,7 +250,9 @@ void Application::Update(double deltaTime)
             windowWidth,
             windowHeight,
             allowSceneMouse,
-            allowGameKeyboard);
+            allowGameKeyboard,
+            &m_undoStack,
+            m_projectSession->GetProjectRootDirectory());
     }
 
     m_input->EndFrame();
@@ -271,6 +278,11 @@ void Application::RequestNewProject()
     }
 
     m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+}
+
+bool Application::IsEditorUndoRedoBlocked() const
+{
+    return m_pendingClose || m_pendingNewProject;
 }
 
 void Application::CaptureProjectEditorState(ProjectEditorState& editorState) const
@@ -301,13 +313,26 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_lightingPanel->ShowPanel() = editorState.showLighting;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
 
-    std::unordered_map<int, bool> hierarchyOpenStates;
+    std::unordered_map<SceneObjectId, bool> hierarchyOpenStates;
     const int objectCount = static_cast<int>(m_scene->GetObjects().size());
-    for (const auto& [nodeIndex, isOpen] : editorState.hierarchyNodeOpenStates)
+    for (const auto& [storedKey, isOpen] : editorState.hierarchyNodeOpenStates)
     {
-        if (isOpen && nodeIndex >= 0 && nodeIndex < objectCount)
+        if (!isOpen)
         {
-            hierarchyOpenStates[nodeIndex] = true;
+            continue;
+        }
+
+        const int indexById = m_scene->FindObjectIndex(storedKey);
+        if (indexById >= 0)
+        {
+            hierarchyOpenStates[storedKey] = true;
+            continue;
+        }
+
+        const int legacyIndex = static_cast<int>(storedKey);
+        if (legacyIndex >= 0 && legacyIndex < objectCount)
+        {
+            hierarchyOpenStates[m_scene->GetObject(static_cast<std::size_t>(legacyIndex)).GetId()] = true;
         }
     }
     m_sceneHierarchyPanel->SetNodeOpenStates(hierarchyOpenStates);
@@ -396,6 +421,7 @@ void Application::DrawUnsavedChangesDialog()
             {
                 m_pendingNewProject = false;
                 ImGui::CloseCurrentPopup();
+                m_undoStack.Clear();
                 m_projectSession->CloseProject();
                 m_projectChooser->OpenNewProjectForm(*m_editorSettings);
             }
@@ -415,6 +441,7 @@ void Application::DrawUnsavedChangesDialog()
         {
             m_pendingNewProject = false;
             ImGui::CloseCurrentPopup();
+            m_undoStack.Clear();
             m_projectSession->CloseProject();
             m_projectChooser->OpenNewProjectForm(*m_editorSettings);
         }

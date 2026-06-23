@@ -1,4 +1,5 @@
 #include "app/InspectorMultiEdit.h"
+#include "app/UndoCommand.h"
 
 #include <imgui.h>
 
@@ -21,7 +22,10 @@ namespace
         return std::fabs(left - right) <= epsilon;
     }
 
-    bool DrawMultiTransformRowLabel(const char* label, MultiVec3& field, const glm::vec3& resetValue)
+    bool DrawMultiTransformRowLabel(
+        const char* label,
+        MultiVec3& field,
+        const glm::vec3& resetValue)
     {
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -54,7 +58,8 @@ namespace
         MultiVec3& field,
         const glm::vec3& resetValue,
         float dragSpeed,
-        const char* format)
+        const char* format,
+        TransformEditContext* editContext)
     {
         ImGui::PushID(axis);
         ImGui::AlignTextToFramePadding();
@@ -78,10 +83,19 @@ namespace
             {
                 field.mixed[axis] = false;
             }
+
+            if (editContext != nullptr)
+            {
+                HandleTransformFieldEditEvents(*editContext);
+            }
         }
         else
         {
             changed = ImGui::DragFloat("##value", &field.value[axis], dragSpeed, 0.0f, 0.0f, format);
+            if (editContext != nullptr)
+            {
+                HandleTransformFieldEditEvents(*editContext);
+            }
 
             if (ImGui::BeginPopupContextItem())
             {
@@ -226,7 +240,8 @@ bool DrawMultiVec3Row(
     MultiVec3& field,
     const glm::vec3& resetValue,
     float dragSpeed,
-    const char* format)
+    const char* format,
+    TransformEditContext* editContext)
 {
     ImGui::PushID(label);
     ImGui::TableNextRow();
@@ -237,7 +252,14 @@ bool DrawMultiVec3Row(
     for (int axis = 0; axis < 3; ++axis)
     {
         ImGui::TableSetColumnIndex(axis + 1);
-        changed |= DrawMultiTransformAxisField(axis, label, field, resetValue, dragSpeed, format);
+        changed |= DrawMultiTransformAxisField(
+            axis,
+            label,
+            field,
+            resetValue,
+            dragSpeed,
+            format,
+            editContext);
     }
 
     ImGui::PopID();

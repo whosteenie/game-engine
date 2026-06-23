@@ -13,8 +13,10 @@
 #include "engine/ShadowMap.h"
 #include "engine/IBL.h"
 #include "engine/SceneObject.h"
+#include "engine/SceneObjectId.h"
 
 #include "app/SceneSelection.h"
+#include "app/SceneImportedMeshPool.h"
 
 class Camera;
 class Input;
@@ -23,7 +25,11 @@ class GridRenderer;
 class LightGizmoRenderer;
 class SceneEditor;
 class ScreenSpaceEffects;
+class UndoStack;
 struct SceneProjectIO;
+class SceneDocument;
+struct SceneSubtreeArchive;
+struct ArchivedSelectionState;
 
 enum class HierarchyInsertMode
 {
@@ -48,7 +54,9 @@ public:
         int windowWidth,
         int windowHeight,
         bool allowMouseInput,
-        bool allowKeyboardInput);
+        bool allowKeyboardInput,
+        UndoStack* undoStack,
+        const std::string& projectRoot);
 
     void Render(const Camera& camera, int viewportWidth, int viewportHeight) const;
 
@@ -61,6 +69,13 @@ public:
     std::vector<SceneObject>& GetObjects();
     SceneObject& GetObject(std::size_t index);
     const SceneObject& GetObject(std::size_t index) const;
+
+    SceneObjectId AllocateObjectId();
+    int FindObjectIndex(SceneObjectId id) const;
+    void RegisterObjectId(SceneObjectId id);
+    void FinalizeNewObject(SceneObject& object);
+    std::vector<SceneObjectId> GetSelectionIds() const;
+    void SetSelectionByIds(const std::vector<SceneObjectId>& ids, SceneObjectId primary);
 
     int GetSelectedObjectIndex() const;
     void SetSelectedObjectIndex(int selectedObjectIndex);
@@ -126,11 +141,38 @@ public:
 
     void ResetToDefault();
 
+    void ClearSceneObjectsAndImports();
+    void HarvestImportedMeshes(ImportedMeshReusePool& outPool);
+    SceneObjectId GetNextObjectIdValue() const;
+    void SetNextObjectIdValue(SceneObjectId nextObjectId);
+
+    struct SpawnCounters
+    {
+        int directionalLight = 2;
+        int pointLight = 1;
+        int spotLight = 1;
+        int cube = 2;
+        int sphere = 1;
+        int cylinder = 1;
+        int capsule = 1;
+        int plane = 1;
+        int empty = 1;
+        int import = 1;
+    };
+
+    SpawnCounters GetSpawnCounters() const;
+    void SetSpawnCounters(const SpawnCounters& counters);
+
     Mesh* GetMeshForPrimitive(ScenePrimitive primitive) const;
     Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
 
+    bool CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtreeArchive& archive);
+    bool DeleteUsingArchive(const SceneSubtreeArchive& archive);
+    bool RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSelectionState& selection);
+
 private:
     friend struct SceneProjectIO;
+    friend class SceneDocument;
 
     void SetupDefaultSunLight();
     void SyncLighting() const;
@@ -164,6 +206,7 @@ private:
     std::unique_ptr<Shader> m_shadowDepthShader;
     mutable SceneLighting m_lighting;
     SceneSelection m_selection;
+    SceneObjectId m_nextObjectId = 1;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
     int m_nextDirectionalLightNumber = 2;

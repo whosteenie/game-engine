@@ -5,6 +5,8 @@
 #include <cstddef>
 #include <vector>
 
+struct TransformEditContext;
+
 struct MultiBool
 {
     bool value = false;
@@ -32,4 +34,5 @@ bool DrawMultiVec3Row(
     MultiVec3& field,
     const glm::vec3& resetValue,
     float dragSpeed,
-    const char* format = "%.2f");
+    const char* format = "%.2f",
+    TransformEditContext* editContext = nullptr);

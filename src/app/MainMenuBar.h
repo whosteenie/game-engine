@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ProjectEditorState.h"
+#include "app/UndoStack.h"
 
 #include <functional>
 
@@ -35,5 +36,7 @@ public:
         const CaptureEditorStateFn& captureEditorState,
         const ApplyEditorStateFn& applyEditorState,
         const std::function<void()>& requestClose,
-        const std::function<void()>& requestNewProject);
+        const std::function<void()>& requestNewProject,
+        UndoStack& undoStack,
+        bool allowUndoRedo = true);
 };

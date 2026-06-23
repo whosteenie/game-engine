@@ -10,7 +10,7 @@ class Scene;
 
 struct SceneProjectIO
 {
-    static constexpr int CurrentFormatVersion = 2;
+    static constexpr int CurrentFormatVersion = 3;
 
     static bool Save(
         const Scene& scene,

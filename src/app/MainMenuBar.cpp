@@ -6,11 +6,15 @@
 #include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
+#include "app/UndoContext.h"
+#include "app/UndoStack.h"
 #include "engine/FileDialog.h"
 
 #include <imgui.h>
 
 #include <filesystem>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -41,7 +45,11 @@ namespace
         ImGui::MenuItem(label, nullptr, visible);
     }
 
-    void ImportModelIntoScene(Scene& scene, ProjectSession& project, int parentIndex)
+    void ImportModelIntoScene(
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        int parentIndex)
     {
         std::string modelPath;
         if (!FileDialog::OpenModelFile(modelPath))
@@ -49,21 +57,23 @@ namespace
             return;
         }
 
-        const std::vector<int> importedIndices = scene.ImportModel(
-            modelPath,
-            parentIndex,
-            project.GetProjectRootDirectory());
-        if (importedIndices.empty())
-        {
-            if (!scene.GetLastImportError().empty())
+        const std::string& projectRoot = project.GetProjectRootDirectory();
+        PushInsertSubtree(undoStack, scene, "Import Model", [&](Scene& target) {
+            const std::vector<int> importedIndices =
+                target.ImportModel(modelPath, parentIndex, projectRoot);
+            if (!importedIndices.empty())
             {
-                project.SetStatusMessage(scene.GetLastImportError());
+                target.SetSelectedObjectIndex(importedIndices.front());
             }
-            return;
-        }
 
-        scene.SetSelectedObjectIndex(importedIndices.front());
-        if (!scene.GetLastImportWarning().empty())
+            return importedIndices;
+        });
+
+        if (!scene.GetLastImportError().empty())
+        {
+            project.SetStatusMessage(scene.GetLastImportError());
+        }
+        else if (!scene.GetLastImportWarning().empty())
         {
             project.SetStatusMessage(scene.GetLastImportWarning());
         }
@@ -81,7 +91,8 @@ namespace
         ProjectSession& project,
         EditorSettings& settings,
         ProjectEditorState& editorState,
-        const ApplyEditorStateFn& applyEditorState)
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack)
     {
         settings.ValidateLastNewProjectParentDirectory();
         std::string projectPath;
@@ -92,6 +103,7 @@ namespace
 
         if (project.OpenProject(scene, projectPath, editorState))
         {
+            undoStack.Clear();
             RecordRecentProject(settings, project.GetProjectFilePath());
             if (applyEditorState)
             {
@@ -164,7 +176,8 @@ namespace
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState,
-        const ApplyEditorStateFn& applyEditorState)
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack)
     {
         if (!AllowFileMenuShortcuts())
         {
@@ -174,7 +187,7 @@ namespace
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
         }
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
@@ -185,6 +198,47 @@ namespace
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
             SaveProjectAs(scene, project, settings, editorState, captureEditorState);
+        }
+    }
+
+    void HandleEditMenuShortcuts(
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        bool allowUndoRedo)
+    {
+        if (!AllowFileMenuShortcuts() || !allowUndoRedo)
+        {
+            return;
+        }
+
+        const ImGuiIO& io = ImGui::GetIO();
+        if (!io.KeyCtrl)
+        {
+            return;
+        }
+
+        UndoContext context{scene, project.GetProjectRootDirectory()};
+        if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+        {
+            if (undoStack.CanRedo())
+            {
+                undoStack.Redo(context);
+            }
+        }
+        else if (ImGui::IsKeyPressed(ImGuiKey_Y, false))
+        {
+            if (undoStack.CanRedo())
+            {
+                undoStack.Redo(context);
+            }
+        }
+        else if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+        {
+            if (undoStack.CanUndo())
+            {
+                undoStack.Undo(context);
+            }
         }
     }
 }
@@ -199,9 +253,19 @@ void MainMenuBar::Draw(
     const CaptureEditorStateFn& captureEditorState,
     const ApplyEditorStateFn& applyEditorState,
     const std::function<void()>& requestClose,
-    const std::function<void()>& requestNewProject)
+    const std::function<void()>& requestNewProject,
+    UndoStack& undoStack,
+    bool allowUndoRedo)
 {
-    HandleFileMenuShortcuts(scene, project, settings, editorState, captureEditorState, applyEditorState);
+    HandleFileMenuShortcuts(
+        scene,
+        project,
+        settings,
+        editorState,
+        captureEditorState,
+        applyEditorState,
+        undoStack);
+    HandleEditMenuShortcuts(scene, project, undoStack, allowUndoRedo);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -220,7 +284,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
         }
 
         ImGui::Separator();
@@ -240,7 +304,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Import Model..."))
         {
-            ImportModelIntoScene(scene, project, -1);
+            ImportModelIntoScene(scene, project, undoStack, -1);
         }
 
         ImGui::Separator();
@@ -262,10 +326,40 @@ void MainMenuBar::Draw(
 
     if (ImGui::BeginMenu("Edit"))
     {
-        ImGui::BeginDisabled();
-        ImGui::MenuItem("Undo", "Ctrl+Z");
-        ImGui::MenuItem("Redo", "Ctrl+Y");
-        ImGui::EndDisabled();
+        UndoContext context{scene, project.GetProjectRootDirectory()};
+
+        char undoLabel[256];
+        if (undoStack.CanUndo())
+        {
+            std::snprintf(undoLabel, sizeof(undoLabel), "Undo %s", undoStack.GetUndoName());
+        }
+        else
+        {
+            std::snprintf(undoLabel, sizeof(undoLabel), "Undo");
+        }
+
+        char redoLabel[256];
+        if (undoStack.CanRedo())
+        {
+            std::snprintf(redoLabel, sizeof(redoLabel), "Redo %s", undoStack.GetRedoName());
+        }
+        else
+        {
+            std::snprintf(redoLabel, sizeof(redoLabel), "Redo");
+        }
+
+        const bool canUndo = allowUndoRedo && undoStack.CanUndo();
+        const bool canRedo = allowUndoRedo && undoStack.CanRedo();
+
+        if (ImGui::MenuItem(undoLabel, "Ctrl+Z", false, canUndo))
+        {
+            undoStack.Undo(context);
+        }
+
+        if (ImGui::MenuItem(redoLabel, "Ctrl+Y, Ctrl+Shift+Z", false, canRedo))
+        {
+            undoStack.Redo(context);
+        }
 
         ImGui::Separator();
 

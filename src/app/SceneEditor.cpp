@@ -3,6 +3,8 @@
 #include <memory>
 
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
+#include "app/UndoStack.h"
 #include "engine/Camera.h"
 #include "engine/Input.h"
 #include "engine/SceneObject.h"
@@ -117,14 +119,21 @@ namespace
         return ImGuizmo::LOCAL;
     }
 
+    const char* GetGizmoCommandName(TransformTool tool);
+
     void UpdateTransformGizmo(
         Scene& scene,
         const Camera& camera,
         TransformTool tool,
-        TransformSpace space)
+        TransformSpace space,
+        UndoStack* undoStack,
+        bool& gizmoWasUsing,
+        ObjectTransformMap& gizmoTransformBefore)
     {
         if (!scene.HasSelection())
         {
+            gizmoWasUsing = false;
+            gizmoTransformBefore.clear();
             return;
         }
 
@@ -138,6 +147,14 @@ namespace
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
+        const bool wasUsing = gizmoWasUsing;
+        ObjectTransformMap frameStartTransforms;
+        if (!wasUsing && undoStack != nullptr)
+        {
+            frameStartTransforms =
+                CaptureLocalTransforms(scene, scene.GetSelection().indices);
+        }
+
         if (ImGuizmo::Manipulate(
                 glm::value_ptr(viewMatrix),
                 glm::value_ptr(projectionMatrix),
@@ -147,6 +164,41 @@ namespace
         {
             scene.ApplySelectionGizmoWorldMatrix(gizmoWorldMatrixBefore, gizmoWorldMatrix);
         }
+
+        const bool isUsing = ImGuizmo::IsUsing();
+        if (isUsing && !wasUsing && undoStack != nullptr)
+        {
+            gizmoTransformBefore = std::move(frameStartTransforms);
+        }
+
+        if (!isUsing && wasUsing && undoStack != nullptr && !gizmoTransformBefore.empty())
+        {
+            const ObjectTransformMap after =
+                CaptureLocalTransforms(scene, scene.GetSelection().indices);
+            PushTransformObjects(
+                *undoStack,
+                std::move(gizmoTransformBefore),
+                std::move(after),
+                GetGizmoCommandName(tool));
+            gizmoTransformBefore.clear();
+        }
+
+        gizmoWasUsing = isUsing;
+    }
+
+    const char* GetGizmoCommandName(TransformTool tool)
+    {
+        switch (tool)
+        {
+        case TransformTool::Translate:
+            return "Move";
+        case TransformTool::Rotate:
+            return "Rotate";
+        case TransformTool::Scale:
+            return "Scale";
+        }
+
+        return "Transform";
     }
 }
 
@@ -186,13 +238,22 @@ void SceneEditor::Update(
     int windowWidth,
     int windowHeight,
     bool allowMouseInput,
-    bool allowKeyboardInput)
+    bool allowKeyboardInput,
+    UndoStack* undoStack,
+    const std::string& projectRoot)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
-        scene.RemoveSelectedObjects();
+        if (undoStack != nullptr)
+        {
+            PushDeleteSelection(*undoStack, scene, "Delete");
+        }
+        else
+        {
+            scene.RemoveSelectedObjects();
+        }
     }
 
     const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
@@ -204,7 +265,16 @@ void SceneEditor::Update(
         && !io.WantTextInput
         && !ImGui::IsAnyItemActive())
     {
-        scene.DuplicateSelectedObjects();
+        if (undoStack != nullptr)
+        {
+            PushInsertSubtree(*undoStack, scene, "Duplicate", [](Scene& target) {
+                return target.DuplicateSelectedObjects();
+            });
+        }
+        else
+        {
+            scene.DuplicateSelectedObjects();
+        }
     }
 
     const bool allowTransformShortcuts = allowKeyboardInput && !input.IsCapturingMouse();
@@ -229,7 +299,14 @@ void SceneEditor::Update(
         SetTransformSpace(TransformSpace::World);
     }
 
-    UpdateTransformGizmo(scene, camera, m_tool, m_transformSpace);
+    UpdateTransformGizmo(
+        scene,
+        camera,
+        m_tool,
+        m_transformSpace,
+        undoStack,
+        m_gizmoWasUsing,
+        m_gizmoTransformBefore);
 
     const bool gizmoCapturingMouse = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
     if (!m_trackingLeftDrag && (!allowMouseInput || gizmoCapturingMouse))

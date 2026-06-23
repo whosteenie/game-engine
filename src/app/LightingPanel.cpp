@@ -2,6 +2,7 @@
 
 #include "app/EditorPanelLayout.h"
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
 #include "engine/Camera.h"
 #include "engine/IBL.h"
 #include "engine/ScreenSpaceEffects.h"
@@ -10,9 +11,30 @@
 
 #include <glm/glm.hpp>
 
+#include <functional>
+
+namespace
+{
+    void ApplyRendererChange(
+        RendererEditContext& editContext,
+        Scene& scene,
+        const char* commandName,
+        const std::function<void(Scene&)>& mutate)
+    {
+        if (editContext.undoStack != nullptr)
+        {
+            PushRendererMutation(*editContext.undoStack, scene, commandName, mutate);
+            return;
+        }
+
+        mutate(scene);
+    }
+}
+
 void LightingPanel::Draw(
     Scene& scene,
-    const Camera& camera) const
+    const Camera& camera,
+    UndoStack* undoStack) const
 {
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::RendererTuning);
 
@@ -22,10 +44,15 @@ void LightingPanel::Draw(
         return;
     }
 
+    m_rendererEditContext.undoStack = undoStack;
+    m_rendererEditContext.scene = &scene;
+    RendererEditContext& editContext = m_rendererEditContext;
+
     const glm::vec3 cameraPosition = camera.GetPosition();
     ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cameraPosition.x, cameraPosition.y, cameraPosition.z);
 
     IBL& ibl = scene.GetIBL();
+    ScreenSpaceEffects& screenSpaceEffects = scene.GetScreenSpaceEffects();
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -46,9 +73,8 @@ void LightingPanel::Draw(
             ibl.SetEnvironmentIntensity(environmentIntensity);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
     }
-
-    ScreenSpaceEffects& screenSpaceEffects = scene.GetScreenSpaceEffects();
 
     if (ImGui::CollapsingHeader("HDR", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -58,20 +84,33 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetExposure(exposure);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
 
         int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
         const char* tonemapModes[] = {"Gamma", "Reinhard", "ACES"};
         if (ImGui::Combo("Tonemap", &tonemapMode, tonemapModes, IM_ARRAYSIZE(tonemapModes)))
         {
-            screenSpaceEffects.SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
-            scene.MarkDirty();
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Tonemap",
+                [tonemapMode](Scene& target) {
+                    target.GetScreenSpaceEffects().SetTonemapMode(static_cast<TonemapMode>(tonemapMode));
+                    target.MarkDirty();
+                });
         }
 
         bool bloomEnabled = screenSpaceEffects.IsBloomEnabled();
         if (ImGui::Checkbox("Bloom", &bloomEnabled))
         {
-            screenSpaceEffects.SetBloomEnabled(bloomEnabled);
-            scene.MarkDirty();
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Bloom",
+                [bloomEnabled](Scene& target) {
+                    target.GetScreenSpaceEffects().SetBloomEnabled(bloomEnabled);
+                    target.MarkDirty();
+                });
         }
 
         if (bloomEnabled)
@@ -82,6 +121,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetBloomThreshold(bloomThreshold);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
 
             float bloomSoftKnee = screenSpaceEffects.GetBloomSoftKnee();
             if (ImGui::SliderFloat("Bloom soft knee", &bloomSoftKnee, 0.0f, 1.0f))
@@ -89,6 +129,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetBloomSoftKnee(bloomSoftKnee);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
 
             float bloomIntensity = screenSpaceEffects.GetBloomIntensity();
             if (ImGui::SliderFloat("Bloom intensity", &bloomIntensity, 0.0f, 2.0f))
@@ -96,6 +137,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetBloomIntensity(bloomIntensity);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
 
             float bloomBlurRadius = screenSpaceEffects.GetBloomBlurRadius();
             if (ImGui::SliderFloat("Bloom blur radius", &bloomBlurRadius, 0.25f, 4.0f))
@@ -103,6 +145,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetBloomBlurRadius(bloomBlurRadius);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
         }
     }
 
@@ -111,15 +154,27 @@ void LightingPanel::Draw(
         bool enabled = screenSpaceEffects.IsEnabled();
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
-            screenSpaceEffects.SetEnabled(enabled);
-            scene.MarkDirty();
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "HDR post-processing",
+                [enabled](Scene& target) {
+                    target.GetScreenSpaceEffects().SetEnabled(enabled);
+                    target.MarkDirty();
+                });
         }
 
         bool ssaoEnabled = screenSpaceEffects.IsSsaoEnabled();
         if (ImGui::Checkbox("SSAO", &ssaoEnabled))
         {
-            screenSpaceEffects.SetSsaoEnabled(ssaoEnabled);
-            scene.MarkDirty();
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "SSAO",
+                [ssaoEnabled](Scene& target) {
+                    target.GetScreenSpaceEffects().SetSsaoEnabled(ssaoEnabled);
+                    target.MarkDirty();
+                });
         }
 
         float ssaoRadius = screenSpaceEffects.GetSsaoRadius();
@@ -128,6 +183,7 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetSsaoRadius(ssaoRadius);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
 
         float ssaoBias = screenSpaceEffects.GetSsaoBias();
         if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
@@ -135,6 +191,7 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetSsaoBias(ssaoBias);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
 
         float ssaoPower = screenSpaceEffects.GetSsaoPower();
         if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
@@ -142,6 +199,7 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetSsaoPower(ssaoPower);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
 
         float aoStrength = screenSpaceEffects.GetAoStrength();
         if (ImGui::SliderFloat("SSAO blend strength", &aoStrength, 0.0f, 1.0f))
@@ -149,12 +207,19 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetAoStrength(aoStrength);
             scene.MarkDirty();
         }
+        HandleRendererFieldEditEvents(editContext);
 
         bool contactShadowsEnabled = screenSpaceEffects.IsContactShadowsEnabled();
         if (ImGui::Checkbox("Contact shadows", &contactShadowsEnabled))
         {
-            screenSpaceEffects.SetContactShadowsEnabled(contactShadowsEnabled);
-            scene.MarkDirty();
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Contact shadows",
+                [contactShadowsEnabled](Scene& target) {
+                    target.GetScreenSpaceEffects().SetContactShadowsEnabled(contactShadowsEnabled);
+                    target.MarkDirty();
+                });
         }
 
         if (contactShadowsEnabled)
@@ -165,6 +230,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetContactStrength(contactStrength);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
 
             float contactDistance = screenSpaceEffects.GetContactShadowDistance();
             if (ImGui::SliderFloat("Contact shadow distance", &contactDistance, 0.02f, 0.5f))
@@ -172,6 +238,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetContactShadowDistance(contactDistance);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
 
             int contactSteps = screenSpaceEffects.GetContactShadowSteps();
             if (ImGui::SliderInt("Contact shadow steps", &contactSteps, 4, 32))
@@ -179,6 +246,7 @@ void LightingPanel::Draw(
                 screenSpaceEffects.SetContactShadowSteps(contactSteps);
                 scene.MarkDirty();
             }
+            HandleRendererFieldEditEvents(editContext);
         }
     }
 

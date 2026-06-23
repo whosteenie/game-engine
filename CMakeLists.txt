@@ -184,6 +184,14 @@ add_executable(game-engine
 
     src/app/MainMenuBar.cpp
 
+    src/app/UndoCommand.cpp
+
+    src/app/UndoStack.cpp
+
+    src/app/SceneDocument.cpp
+
+    src/app/SceneSubtreeArchive.cpp
+
     src/app/ProjectChooser.cpp
 
     src/app/ProjectEditorState.cpp

@@ -1,12 +1,16 @@
 #pragma once
 
+#include "app/UndoCommand.h"
+
 #include <glm/glm.hpp>
 #include <memory>
+#include <string>
 
 class Camera;
 class Input;
 class Scene;
 class SelectionRenderer;
+class UndoStack;
 
 enum class TransformTool
 {
@@ -41,7 +45,9 @@ public:
         int windowWidth,
         int windowHeight,
         bool allowMouseInput,
-        bool allowKeyboardInput);
+        bool allowKeyboardInput,
+        UndoStack* undoStack,
+        const std::string& projectRoot);
 
     void HandleEscapeKey(Scene& scene);
 
@@ -64,4 +70,6 @@ private:
     bool m_marqueeActive = false;
     glm::vec2 m_dragStartFramebuffer = glm::vec2(0.0f);
     glm::vec2 m_dragCurrentFramebuffer = glm::vec2(0.0f);
+    bool m_gizmoWasUsing = false;
+    ObjectTransformMap m_gizmoTransformBefore;
 };

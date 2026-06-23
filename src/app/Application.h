@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ProjectEditorState.h"
+#include "app/UndoStack.h"
 
 #include <memory>
 
@@ -41,6 +42,7 @@ private:
     void CaptureProjectEditorState(ProjectEditorState& editorState) const;
     void ApplyProjectEditorState(const ProjectEditorState& editorState);
     bool TrySaveProject();
+    bool IsEditorUndoRedoBlocked() const;
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
@@ -69,5 +71,6 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
+    UndoStack m_undoStack;
     ProjectEditorState m_projectEditorState;
 };

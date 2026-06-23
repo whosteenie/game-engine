@@ -1,6 +1,7 @@
 #include <glad/glad.h>
 
 #include "app/Scene.h"
+#include "app/UndoStack.h"
 
 #include "app/SceneEditor.h"
 #include "engine/Camera.h"
@@ -74,6 +75,7 @@ void Scene::SetupDefaultSunLight()
         -1,
         0,
         std::move(sunLight));
+    FinalizeNewObject(m_objects.back());
 }
 
 void Scene::SyncLighting() const
@@ -127,6 +129,7 @@ void Scene::SetupObjects()
         true,
         -1,
         1);
+    FinalizeNewObject(m_objects.back());
 
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -150,6 +153,8 @@ void Scene::SetupObjects()
         true,
         -1,
         2);
+
+    FinalizeNewObject(m_objects.back());
 
     m_selection.indices = {2};
     m_selection.primary = 2;
@@ -296,6 +301,7 @@ int Scene::AddObject(ScenePrimitive primitive, int parentIndex)
         parentIndex,
         AllocateSiblingOrder(parentIndex));
 
+    FinalizeNewObject(m_objects.back());
     MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -316,6 +322,7 @@ int Scene::AddEmptyObject(int parentIndex)
         parentIndex,
         AllocateSiblingOrder(parentIndex));
 
+    FinalizeNewObject(m_objects.back());
     MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -364,6 +371,7 @@ int Scene::AddLightObject(LightType type, int parentIndex)
         AllocateSiblingOrder(parentIndex),
         std::move(lightComponent));
 
+    FinalizeNewObject(m_objects.back());
     MarkDirty();
     return static_cast<int>(m_objects.size()) - 1;
 }
@@ -657,6 +665,7 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, co
 
         SceneObject& createdObject = m_objects.back();
         createdObject.SetImportSource(importPath, static_cast<int>(importedNodeIndex));
+        FinalizeNewObject(createdObject);
     }
 
     MarkDirty();
@@ -806,6 +815,7 @@ int Scene::DuplicateObject(int objectIndex)
             source.GetSiblingOrder(),
             std::move(lightClone));
 
+        FinalizeNewObject(m_objects.back());
         const int newIndex = static_cast<int>(m_objects.size()) - 1;
         indexMap[sourceIndex] = newIndex;
         if (sourceIndex == objectIndex)
@@ -1175,6 +1185,7 @@ void Scene::ResetToDefault()
     m_objects.clear();
     m_importedMeshes.clear();
     m_selection = {};
+    m_nextObjectId = 1;
     m_showLightGizmos = true;
     m_showGrid = true;
     m_nextDirectionalLightNumber = 2;
@@ -1192,6 +1203,91 @@ void Scene::ResetToDefault()
 
     SetupDefaultSunLight();
     SetupObjects();
+}
+
+void Scene::ClearSceneObjectsAndImports()
+{
+    m_objects.clear();
+    m_importedMeshes.clear();
+}
+
+void Scene::HarvestImportedMeshes(ImportedMeshReusePool& outPool)
+{
+    std::unordered_map<Mesh*, ImportMeshKey> meshKeys;
+    meshKeys.reserve(m_importedMeshes.size());
+
+    for (const SceneObject& object : m_objects)
+    {
+        if (!object.HasMesh() || object.GetImportAssetPath().empty() || object.GetImportNodeIndex() < 0)
+        {
+            continue;
+        }
+
+        meshKeys[object.GetMesh()] = ImportMeshKey{object.GetImportAssetPath(), object.GetImportNodeIndex()};
+    }
+
+    for (std::unique_ptr<Mesh>& mesh : m_importedMeshes)
+    {
+        if (mesh == nullptr)
+        {
+            continue;
+        }
+
+        const auto iterator = meshKeys.find(mesh.get());
+        if (iterator == meshKeys.end())
+        {
+            continue;
+        }
+
+        outPool.try_emplace(iterator->second, std::move(mesh));
+    }
+
+    m_importedMeshes.erase(
+        std::remove_if(
+            m_importedMeshes.begin(),
+            m_importedMeshes.end(),
+            [](const std::unique_ptr<Mesh>& mesh) { return mesh == nullptr; }),
+        m_importedMeshes.end());
+}
+
+SceneObjectId Scene::GetNextObjectIdValue() const
+{
+    return m_nextObjectId;
+}
+
+void Scene::SetNextObjectIdValue(SceneObjectId nextObjectId)
+{
+    m_nextObjectId = nextObjectId;
+}
+
+Scene::SpawnCounters Scene::GetSpawnCounters() const
+{
+    return SpawnCounters{
+        m_nextDirectionalLightNumber,
+        m_nextPointLightNumber,
+        m_nextSpotLightNumber,
+        m_nextCubeNumber,
+        m_nextSphereNumber,
+        m_nextCylinderNumber,
+        m_nextCapsuleNumber,
+        m_nextPlaneNumber,
+        m_nextEmptyNumber,
+        m_nextImportNumber,
+    };
+}
+
+void Scene::SetSpawnCounters(const SpawnCounters& counters)
+{
+    m_nextDirectionalLightNumber = counters.directionalLight;
+    m_nextPointLightNumber = counters.pointLight;
+    m_nextSpotLightNumber = counters.spotLight;
+    m_nextCubeNumber = counters.cube;
+    m_nextSphereNumber = counters.sphere;
+    m_nextCylinderNumber = counters.cylinder;
+    m_nextCapsuleNumber = counters.capsule;
+    m_nextPlaneNumber = counters.plane;
+    m_nextEmptyNumber = counters.empty;
+    m_nextImportNumber = counters.import;
 }
 
 const SceneLighting& Scene::GetLighting() const
@@ -1232,6 +1328,93 @@ SceneObject& Scene::GetObject(std::size_t index)
 const SceneObject& Scene::GetObject(std::size_t index) const
 {
     return m_objects.at(index);
+}
+
+SceneObjectId Scene::AllocateObjectId()
+{
+    return m_nextObjectId++;
+}
+
+void Scene::RegisterObjectId(SceneObjectId id)
+{
+    if (id >= m_nextObjectId)
+    {
+        m_nextObjectId = id + 1;
+    }
+}
+
+void Scene::FinalizeNewObject(SceneObject& object)
+{
+    if (object.GetId() == kInvalidSceneObjectId)
+    {
+        object.SetId(AllocateObjectId());
+    }
+    else
+    {
+        RegisterObjectId(object.GetId());
+    }
+}
+
+int Scene::FindObjectIndex(SceneObjectId id) const
+{
+    if (id == kInvalidSceneObjectId)
+    {
+        return -1;
+    }
+
+    for (std::size_t index = 0; index < m_objects.size(); ++index)
+    {
+        if (m_objects[index].GetId() == id)
+        {
+            return static_cast<int>(index);
+        }
+    }
+
+    return -1;
+}
+
+std::vector<SceneObjectId> Scene::GetSelectionIds() const
+{
+    std::vector<SceneObjectId> ids;
+    ids.reserve(m_selection.indices.size());
+    for (int index : m_selection.indices)
+    {
+        if (index >= 0 && index < static_cast<int>(m_objects.size()))
+        {
+            ids.push_back(m_objects[static_cast<std::size_t>(index)].GetId());
+        }
+    }
+
+    return ids;
+}
+
+void Scene::SetSelectionByIds(const std::vector<SceneObjectId>& ids, SceneObjectId primary)
+{
+    std::vector<int> indices;
+    indices.reserve(ids.size());
+    for (SceneObjectId id : ids)
+    {
+        const int index = FindObjectIndex(id);
+        if (index < 0)
+        {
+            continue;
+        }
+
+        if (std::find(indices.begin(), indices.end(), index) == indices.end())
+        {
+            indices.push_back(index);
+        }
+    }
+
+    int primaryIndex = FindObjectIndex(primary);
+    if (primaryIndex < 0
+        || std::find(indices.begin(), indices.end(), primaryIndex) == indices.end())
+    {
+        primaryIndex = indices.empty() ? -1 : indices.back();
+    }
+
+    m_selection.indices = std::move(indices);
+    m_selection.primary = primaryIndex;
 }
 
 int Scene::GetSelectedObjectIndex() const
@@ -1468,7 +1651,9 @@ void Scene::Update(
     int windowWidth,
     int windowHeight,
     bool allowMouseInput,
-    bool allowKeyboardInput)
+    bool allowKeyboardInput,
+    UndoStack* undoStack,
+    const std::string& projectRoot)
 {
     m_sceneEditor->Update(
         *this,
@@ -1479,7 +1664,9 @@ void Scene::Update(
         windowWidth,
         windowHeight,
         allowMouseInput,
-        allowKeyboardInput);
+        allowKeyboardInput,
+        undoStack,
+        projectRoot);
 }
 
 void Scene::RenderShadowPass() const

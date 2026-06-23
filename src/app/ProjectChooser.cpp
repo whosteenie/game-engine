@@ -3,6 +3,7 @@
 #include "app/EditorSettings.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/UndoStack.h"
 #include "engine/FileDialog.h"
 
 #include <imgui.h>
@@ -46,6 +47,7 @@ bool ProjectChooser::TryOpenProject(
     ProjectEditorState& editorState,
     const std::string& projectFilePath,
     const ApplyEditorStateFn& applyEditorState,
+    UndoStack& undoStack,
     std::string& outError)
 {
     if (!project.OpenProject(scene, projectFilePath, editorState))
@@ -54,6 +56,7 @@ bool ProjectChooser::TryOpenProject(
         return false;
     }
 
+    undoStack.Clear();
     settings.AddRecentProject(project.GetProjectFilePath());
     settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
     settings.Save();
@@ -71,7 +74,8 @@ bool ProjectChooser::DrawNewProjectForm(
     ProjectSession& project,
     Scene& scene,
     EditorSettings& settings,
-    const ApplyEditorStateFn& applyEditorState)
+    const ApplyEditorStateFn& applyEditorState,
+    UndoStack& undoStack)
 {
     const bool startup = m_startupMode;
     const char* popupId = startup ? "Create Project###ProjectChooserCreate" : "New Project###ProjectChooserCreate";
@@ -136,6 +140,7 @@ bool ProjectChooser::DrawNewProjectForm(
             m_startupMode = false;
             m_showNewProjectForm = false;
             m_errorMessage.clear();
+            undoStack.Clear();
             if (applyEditorState)
             {
                 applyEditorState(ProjectEditorState::CreateDefault());
@@ -175,7 +180,8 @@ bool ProjectChooser::DrawStartupScreen(
     EditorSettings& settings,
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
-    const RequestCloseCallback& requestClose)
+    const RequestCloseCallback& requestClose,
+    UndoStack& undoStack)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -215,7 +221,15 @@ bool ProjectChooser::DrawStartupScreen(
         if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
         {
             std::string error;
-            if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))
+            if (!TryOpenProject(
+                    project,
+                    scene,
+                    settings,
+                    editorState,
+                    projectPath,
+                    applyEditorState,
+                    undoStack,
+                    error))
             {
                 m_errorMessage = error;
             }
@@ -242,7 +256,15 @@ bool ProjectChooser::DrawStartupScreen(
             if (ImGui::Selectable(label.c_str()))
             {
                 std::string error;
-                if (!TryOpenProject(project, scene, settings, editorState, projectPath, applyEditorState, error))
+                if (!TryOpenProject(
+                    project,
+                    scene,
+                    settings,
+                    editorState,
+                    projectPath,
+                    applyEditorState,
+                    undoStack,
+                    error))
                 {
                     m_errorMessage = error;
                     settings.RemoveRecentProject(projectPath);
@@ -282,7 +304,7 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (m_showNewProjectForm)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack);
     }
 
     return false;
@@ -294,7 +316,8 @@ bool ProjectChooser::Draw(
     EditorSettings& settings,
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
-    const RequestCloseCallback& requestClose)
+    const RequestCloseCallback& requestClose,
+    UndoStack& undoStack)
 {
     if (project.HasActiveProject() && !m_showNewProjectForm)
     {
@@ -304,8 +327,15 @@ bool ProjectChooser::Draw(
 
     if (m_showNewProjectForm && !m_startupMode)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack);
     }
 
-    return DrawStartupScreen(project, scene, settings, editorState, applyEditorState, requestClose);
+    return DrawStartupScreen(
+        project,
+        scene,
+        settings,
+        editorState,
+        applyEditorState,
+        requestClose,
+        undoStack);
 }

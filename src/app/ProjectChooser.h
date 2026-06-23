@@ -8,6 +8,7 @@
 class EditorSettings;
 class ProjectSession;
 class Scene;
+class UndoStack;
 
 class ProjectChooser
 {
@@ -21,7 +22,8 @@ public:
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
-        const RequestCloseCallback& requestClose);
+        const RequestCloseCallback& requestClose,
+        UndoStack& undoStack);
 
     void OpenNewProjectForm(EditorSettings& settings);
     bool IsBlockingEditor() const;
@@ -33,13 +35,15 @@ private:
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
-        const RequestCloseCallback& requestClose);
+        const RequestCloseCallback& requestClose,
+        UndoStack& undoStack);
 
     bool DrawNewProjectForm(
         ProjectSession& project,
         Scene& scene,
         EditorSettings& settings,
-        const ApplyEditorStateFn& applyEditorState);
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack);
 
     bool TryOpenProject(
         ProjectSession& project,
@@ -48,6 +52,7 @@ private:
         ProjectEditorState& editorState,
         const std::string& projectFilePath,
         const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack,
         std::string& outError);
 
     bool m_showNewProjectForm = false;

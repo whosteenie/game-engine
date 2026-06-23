@@ -1,6 +1,7 @@
 #include "app/SceneProjectIO.h"
 
 #include "app/ProjectEditorState.h"
+#include "app/SceneImportedMeshPool.h"
 #include "engine/NativeProgressWindow.h"
 
 #include "app/Scene.h"
@@ -11,6 +12,7 @@
 #include "engine/Mesh.h"
 #include "engine/ModelImporter.h"
 #include "engine/SceneObject.h"
+#include "engine/SceneObjectId.h"
 #include "engine/ScenePrimitive.h"
 #include "engine/ScreenSpaceEffects.h"
 #include "engine/Texture.h"
@@ -19,6 +21,7 @@
 #include <imgui.h>
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -28,7 +31,7 @@
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
-namespace
+namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
 
@@ -448,9 +451,22 @@ namespace
         const std::string& storedAssetPath,
         int nodeIndex,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        ImportedMeshReusePool* meshReusePool,
         std::string& outError)
     {
         const std::string resolvedPath = ResolveProjectPath(projectRoot, storedAssetPath);
+        if (meshReusePool != nullptr)
+        {
+            const ImportMeshKey reuseKey{resolvedPath, nodeIndex};
+            const auto reuseIterator = meshReusePool->find(reuseKey);
+            if (reuseIterator != meshReusePool->end())
+            {
+                Mesh* reusedMesh = scene.AdoptImportedMesh(std::move(reuseIterator->second));
+                meshReusePool->erase(reuseIterator);
+                return reusedMesh;
+            }
+        }
+
         ImportedAssetCacheEntry& cacheEntry = importCache[resolvedPath];
         if (!cacheEntry.loaded)
         {
@@ -490,6 +506,7 @@ namespace
         const json& meshValue,
         const std::string& projectRoot,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        ImportedMeshReusePool* meshReusePool,
         Mesh*& outMesh,
         std::string& outImportAssetPath,
         int& outImportNodeIndex,
@@ -522,7 +539,14 @@ namespace
         {
             const std::string assetPath = meshValue.at("assetPath").get<std::string>();
             const int nodeIndex = meshValue.at("nodeIndex").get<int>();
-            outMesh = AcquireImportedMesh(scene, projectRoot, assetPath, nodeIndex, importCache, outError);
+            outMesh = AcquireImportedMesh(
+                scene,
+                projectRoot,
+                assetPath,
+                nodeIndex,
+                importCache,
+                meshReusePool,
+                outError);
             if (outMesh == nullptr)
             {
                 return false;
@@ -566,22 +590,22 @@ namespace
         return result;
     }
 
-    json SerializeHierarchyOpenStates(const std::unordered_map<int, bool>& openStates)
+    json SerializeHierarchyOpenStates(const std::unordered_map<SceneObjectId, bool>& openStates)
     {
         json result = json::object();
-        for (const auto& [nodeIndex, isOpen] : openStates)
+        for (const auto& [objectId, isOpen] : openStates)
         {
             if (isOpen)
             {
-                result[std::to_string(nodeIndex)] = true;
+                result[std::to_string(objectId)] = true;
             }
         }
         return result;
     }
 
-    std::unordered_map<int, bool> DeserializeHierarchyOpenStates(const json& value)
+    std::unordered_map<SceneObjectId, bool> DeserializeHierarchyOpenStates(const json& value)
     {
-        std::unordered_map<int, bool> result;
+        std::unordered_map<SceneObjectId, bool> result;
         if (!value.is_object())
         {
             return result;
@@ -596,7 +620,7 @@ namespace
 
             try
             {
-                result[std::stoi(key)] = true;
+                result[std::stoull(key)] = true;
             }
             catch (const std::exception&)
             {
@@ -875,17 +899,14 @@ namespace
         ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
         return true;
     }
-}
 
-json SceneProjectIO::SerializeScene(
-    const Scene& scene,
-    const ProjectEditorState& editorState,
-    const std::string& projectRoot)
+    json SerializeObjects(const Scene& scene, const std::string& projectRoot)
     {
         json objects = json::array();
-        for (const SceneObject& object : scene.m_objects)
+        for (const SceneObject& object : scene.GetObjects())
         {
             json entry = json{
+                {"id", object.GetId()},
                 {"name", object.GetName()},
                 {"parentIndex", object.GetParentIndex()},
                 {"siblingOrder", object.GetSiblingOrder()},
@@ -918,81 +939,105 @@ json SceneProjectIO::SerializeScene(
             objects.push_back(std::move(entry));
         }
 
-        return json{
-            {"format", kFormatId},
-            {"version", SceneProjectIO::CurrentFormatVersion},
-            {"scene",
-             json{
-                 {"objects", objects},
-                 {"editor", SerializeEditorState(scene, editorState, projectRoot)},
-                 {"renderer", SerializeRenderer(scene)},
-                 {"spawnCounters",
-                  json{
-                      {"directionalLight", scene.m_nextDirectionalLightNumber},
-                      {"pointLight", scene.m_nextPointLightNumber},
-                      {"spotLight", scene.m_nextSpotLightNumber},
-                      {"cube", scene.m_nextCubeNumber},
-                      {"sphere", scene.m_nextSphereNumber},
-                      {"cylinder", scene.m_nextCylinderNumber},
-                      {"capsule", scene.m_nextCapsuleNumber},
-                      {"plane", scene.m_nextPlaneNumber},
-                      {"empty", scene.m_nextEmptyNumber},
-                      {"import", scene.m_nextImportNumber},
-                  }},
-             }},
-        };
-}
+        return objects;
+    }
 
-bool SceneProjectIO::DeserializeScene(
-    Scene& scene,
-    ProjectEditorState& editorState,
-    const json& root,
-    const std::string& projectRoot,
-    std::string& outError)
+    json SerializeSpawnCounters(const Scene& scene)
     {
-        if (root.value("format", "") != kFormatId)
+        const Scene::SpawnCounters counters = scene.GetSpawnCounters();
+        return json{
+            {"directionalLight", counters.directionalLight},
+            {"pointLight", counters.pointLight},
+            {"spotLight", counters.spotLight},
+            {"cube", counters.cube},
+            {"sphere", counters.sphere},
+            {"cylinder", counters.cylinder},
+            {"capsule", counters.capsule},
+            {"plane", counters.plane},
+            {"empty", counters.empty},
+            {"import", counters.import},
+        };
+    }
+
+    void DeserializeSpawnCounters(Scene& scene, const json& counters)
+    {
+        Scene::SpawnCounters values = scene.GetSpawnCounters();
+        values.directionalLight = counters.value("directionalLight", values.directionalLight);
+        values.pointLight = counters.value("pointLight", values.pointLight);
+        values.spotLight = counters.value("spotLight", values.spotLight);
+        values.cube = counters.value("cube", values.cube);
+        values.sphere = counters.value("sphere", values.sphere);
+        values.cylinder = counters.value("cylinder", values.cylinder);
+        values.capsule = counters.value("capsule", values.capsule);
+        values.plane = counters.value("plane", values.plane);
+        values.empty = counters.value("empty", values.empty);
+        values.import = counters.value("import", values.import);
+        scene.SetSpawnCounters(values);
+    }
+
+    json SerializeSelection(const Scene& scene)
+    {
+        json ids = json::array();
+        for (SceneObjectId id : scene.GetSelectionIds())
         {
-            outError = "Unrecognized project file format.";
-            return false;
+            ids.push_back(id);
         }
 
-        const int version = root.value("version", 0);
-        if (version != SceneProjectIO::CurrentFormatVersion)
+        SceneObjectId primaryId = kInvalidSceneObjectId;
+        const int primaryIndex = scene.GetPrimarySelection();
+        if (primaryIndex >= 0 && primaryIndex < static_cast<int>(scene.GetObjects().size()))
         {
-            outError = "Unsupported project file version.";
-            return false;
+            primaryId = scene.GetObjects()[static_cast<std::size_t>(primaryIndex)].GetId();
         }
 
-        if (!root.contains("scene"))
+        return json{
+            {"ids", std::move(ids)},
+            {"primary", primaryId},
+        };
+    }
+
+    void DeserializeSelection(Scene& scene, const json& selection)
+    {
+        std::vector<SceneObjectId> ids;
+        if (selection.contains("ids") && selection.at("ids").is_array())
         {
-            outError = "Project file is missing scene data.";
-            return false;
+            for (const json& idValue : selection.at("ids"))
+            {
+                ids.push_back(idValue.get<SceneObjectId>());
+            }
         }
 
-        const json& sceneValue = root.at("scene");
-        if (!sceneValue.contains("objects") || !sceneValue.at("objects").is_array())
-        {
-            outError = "Project file is missing scene objects.";
-            return false;
-        }
+        const SceneObjectId primary = selection.value("primary", kInvalidSceneObjectId);
+        scene.SetSelectionByIds(ids, primary);
+    }
 
-        scene.m_objects.clear();
-        scene.m_importedMeshes.clear();
-
+    bool DeserializeObjects(
+        Scene& scene,
+        const json& objectValues,
+        int formatVersion,
+        const std::string& projectRoot,
+        std::string& outError,
+        ImportedMeshReusePool* meshReusePool,
+        bool showProgress)
+    {
         std::unordered_map<std::string, ImportedAssetCacheEntry> importCache;
-        const json& objects = sceneValue.at("objects");
-        scene.m_objects.reserve(objects.size());
+        std::vector<SceneObject>& sceneObjects = scene.GetObjects();
+        sceneObjects.reserve(objectValues.size());
 
-        const std::size_t objectCount = objects.size();
+        const std::size_t objectCount = objectValues.size();
         std::size_t objectIndex = 0;
-        for (const json& objectValue : objects)
+        for (const json& objectValue : objectValues)
         {
             ++objectIndex;
-            const float loadProgress =
-                objectCount > 0 ? static_cast<float>(objectIndex) / static_cast<float>(objectCount) : 1.0f;
-            NativeProgressWindow::Instance().SetMessage(
-                "Loading scene objects (" + std::to_string(objectIndex) + "/" + std::to_string(objectCount) + ")...");
-            NativeProgressWindow::Instance().SetProgress(0.05f + (loadProgress * 0.95f));
+            if (showProgress)
+            {
+                const float loadProgress =
+                    objectCount > 0 ? static_cast<float>(objectIndex) / static_cast<float>(objectCount) : 1.0f;
+                NativeProgressWindow::Instance().SetMessage(
+                    "Loading scene objects (" + std::to_string(objectIndex) + "/"
+                    + std::to_string(objectCount) + ")...");
+                NativeProgressWindow::Instance().SetProgress(0.05f + (loadProgress * 0.95f));
+            }
 
             Mesh* mesh = nullptr;
             std::string importAssetPath;
@@ -1002,6 +1047,7 @@ bool SceneProjectIO::DeserializeScene(
                     objectValue.at("mesh"),
                     projectRoot,
                     importCache,
+                    meshReusePool,
                     mesh,
                     importAssetPath,
                     importNodeIndex,
@@ -1032,7 +1078,13 @@ bool SceneProjectIO::DeserializeScene(
             const glm::vec3 boundsMin = Vec3FromJson(boundsValue.at("min"));
             const glm::vec3 boundsMax = Vec3FromJson(boundsValue.at("max"));
 
-            scene.m_objects.emplace_back(
+            SceneObjectId objectId = kInvalidSceneObjectId;
+            if (formatVersion >= 3 && objectValue.contains("id"))
+            {
+                objectId = objectValue.at("id").get<SceneObjectId>();
+            }
+
+            sceneObjects.emplace_back(
                 objectValue.at("name").get<std::string>(),
                 mesh,
                 std::move(material),
@@ -1043,22 +1095,188 @@ bool SceneProjectIO::DeserializeScene(
                 objectValue.value("receiveShadow", true),
                 objectValue.at("parentIndex").get<int>(),
                 objectValue.at("siblingOrder").get<int>(),
-                std::move(light));
+                std::move(light),
+                objectId);
 
-            SceneObject& createdObject = scene.m_objects.back();
+            SceneObject& createdObject = sceneObjects.back();
             if (!importAssetPath.empty())
             {
                 createdObject.SetImportSource(importAssetPath, importNodeIndex);
             }
+
+            if (formatVersion >= 3 && objectId != kInvalidSceneObjectId)
+            {
+                scene.RegisterObjectId(objectId);
+            }
+            else
+            {
+                scene.FinalizeNewObject(createdObject);
+            }
+        }
+
+        return true;
+    }
+
+    void EnsureNextObjectId(Scene& scene)
+    {
+        SceneObjectId maxId = 0;
+        for (const SceneObject& object : scene.GetObjects())
+        {
+            maxId = std::max(maxId, object.GetId());
+        }
+
+        if (scene.GetNextObjectIdValue() <= maxId)
+        {
+            scene.SetNextObjectIdValue(maxId + 1);
+        }
+    }
+
+    json SerializeSceneContent(const Scene& scene, const std::string& projectRoot)
+    {
+        return json{
+            {"objects", SerializeObjects(scene, projectRoot)},
+            {"spawnCounters", SerializeSpawnCounters(scene)},
+            {"nextObjectId", scene.GetNextObjectIdValue()},
+            {"selection", SerializeSelection(scene)},
+        };
+    }
+
+    bool DeserializeSceneContent(
+        Scene& scene,
+        const json& content,
+        int formatVersion,
+        const std::string& projectRoot,
+        std::string& outError,
+        ImportedMeshReusePool* meshReusePool,
+        bool showProgress)
+    {
+        if (!content.contains("objects") || !content.at("objects").is_array())
+        {
+            outError = "Scene content is missing objects.";
+            return false;
+        }
+
+        ImportedMeshReusePool harvestedMeshes;
+        if (meshReusePool == nullptr)
+        {
+            scene.HarvestImportedMeshes(harvestedMeshes);
+            meshReusePool = &harvestedMeshes;
+        }
+
+        scene.ClearSceneObjectsAndImports();
+
+        if (!DeserializeObjects(
+                scene,
+                content.at("objects"),
+                formatVersion,
+                projectRoot,
+                outError,
+                meshReusePool,
+                showProgress))
+        {
+            return false;
+        }
+
+        if (content.contains("spawnCounters"))
+        {
+            DeserializeSpawnCounters(scene, content.at("spawnCounters"));
+        }
+
+        if (content.contains("nextObjectId"))
+        {
+            scene.SetNextObjectIdValue(content.at("nextObjectId").get<SceneObjectId>());
+        }
+        else
+        {
+            EnsureNextObjectId(scene);
+        }
+
+        if (content.contains("selection"))
+        {
+            DeserializeSelection(scene, content.at("selection"));
+        }
+        else
+        {
+            scene.ClearSelection();
+        }
+
+        return true;
+    }
+}
+
+json SceneProjectIO::SerializeScene(
+    const Scene& scene,
+    const ProjectEditorState& editorState,
+    const std::string& projectRoot)
+    {
+        return json{
+            {"format", SceneProjectIODetail::kFormatId},
+            {"version", SceneProjectIO::CurrentFormatVersion},
+            {"scene",
+             json{
+                 {"objects", SceneProjectIODetail::SerializeObjects(scene, projectRoot)},
+                 {"editor", SceneProjectIODetail::SerializeEditorState(scene, editorState, projectRoot)},
+                 {"renderer", SceneProjectIODetail::SerializeRenderer(scene)},
+                 {"spawnCounters", SceneProjectIODetail::SerializeSpawnCounters(scene)},
+                 {"nextObjectId", scene.GetNextObjectIdValue()},
+             }},
+        };
+}
+
+bool SceneProjectIO::DeserializeScene(
+    Scene& scene,
+    ProjectEditorState& editorState,
+    const json& root,
+    const std::string& projectRoot,
+    std::string& outError)
+    {
+        if (root.value("format", "") != SceneProjectIODetail::kFormatId)
+        {
+            outError = "Unrecognized project file format.";
+            return false;
+        }
+
+        const int version = root.value("version", 0);
+        if (version < 2 || version > SceneProjectIO::CurrentFormatVersion)
+        {
+            outError = "Unsupported project file version.";
+            return false;
+        }
+
+        if (!root.contains("scene"))
+        {
+            outError = "Project file is missing scene data.";
+            return false;
+        }
+
+        const json& sceneValue = root.at("scene");
+        if (!sceneValue.contains("objects") || !sceneValue.at("objects").is_array())
+        {
+            outError = "Project file is missing scene objects.";
+            return false;
+        }
+
+        scene.ClearSceneObjectsAndImports();
+
+        if (!SceneProjectIODetail::DeserializeObjects(
+                scene,
+                sceneValue.at("objects"),
+                version,
+                projectRoot,
+                outError,
+                nullptr,
+                true))
+        {
+            return false;
         }
 
         if (sceneValue.contains("editor"))
         {
             const json& editor = sceneValue.at("editor");
             scene.ClearSelection();
-            scene.m_showGrid = editor.value("showGrid", true);
-            scene.m_showLightGizmos = editor.value("showLightGizmos", true);
-            DeserializeEditorState(editor, editorState, projectRoot);
+            scene.SetShowGrid(editor.value("showGrid", true));
+            scene.SetShowLightGizmos(editor.value("showLightGizmos", true));
+            SceneProjectIODetail::DeserializeEditorState(editor, editorState, projectRoot);
         }
         else
         {
@@ -1068,25 +1286,24 @@ bool SceneProjectIO::DeserializeScene(
 
         if (sceneValue.contains("renderer"))
         {
-            DeserializeRenderer(scene, sceneValue.at("renderer"));
+            SceneProjectIODetail::DeserializeRenderer(scene, sceneValue.at("renderer"));
         }
 
         if (sceneValue.contains("spawnCounters"))
         {
-            const json& counters = sceneValue.at("spawnCounters");
-            scene.m_nextDirectionalLightNumber = counters.value("directionalLight", scene.m_nextDirectionalLightNumber);
-            scene.m_nextPointLightNumber = counters.value("pointLight", scene.m_nextPointLightNumber);
-            scene.m_nextSpotLightNumber = counters.value("spotLight", scene.m_nextSpotLightNumber);
-            scene.m_nextCubeNumber = counters.value("cube", scene.m_nextCubeNumber);
-            scene.m_nextSphereNumber = counters.value("sphere", scene.m_nextSphereNumber);
-            scene.m_nextCylinderNumber = counters.value("cylinder", scene.m_nextCylinderNumber);
-            scene.m_nextCapsuleNumber = counters.value("capsule", scene.m_nextCapsuleNumber);
-            scene.m_nextPlaneNumber = counters.value("plane", scene.m_nextPlaneNumber);
-            scene.m_nextEmptyNumber = counters.value("empty", scene.m_nextEmptyNumber);
-            scene.m_nextImportNumber = counters.value("import", scene.m_nextImportNumber);
+            SceneProjectIODetail::DeserializeSpawnCounters(scene, sceneValue.at("spawnCounters"));
         }
 
-        if (!LoadEditorLayout(projectRoot))
+        if (sceneValue.contains("nextObjectId"))
+        {
+            scene.SetNextObjectIdValue(sceneValue.at("nextObjectId").get<SceneObjectId>());
+        }
+        else
+        {
+            SceneProjectIODetail::EnsureNextObjectId(scene);
+        }
+
+        if (!SceneProjectIODetail::LoadEditorLayout(projectRoot))
         {
             outError = "Failed to load editor layout.";
             return false;
@@ -1124,7 +1341,7 @@ bool SceneProjectIO::Save(
 
         output << root.dump(2);
 
-        if (!SaveEditorLayout(projectRoot))
+        if (!SceneProjectIODetail::SaveEditorLayout(projectRoot))
         {
             outError = "Failed to save editor layout.";
             return false;
