@@ -25,6 +25,7 @@ namespace EngineConstants
     inline constexpr const char* BloomExtractFragmentShader = "assets/shaders/bloom_extract.frag";
     inline constexpr const char* BloomBlurFragmentShader = "assets/shaders/bloom_blur.frag";
     inline constexpr const char* TonemapFragmentShader = "assets/shaders/tonemap.frag";
+    inline constexpr const char* DebugChannelFragmentShader = "assets/shaders/debug_channel.frag";
 
     inline constexpr const char* IblCubemapVertexShader = "assets/shaders/ibl_cubemap.vert";
     inline constexpr const char* IblEquirectToCubemapFragmentShader = "assets/shaders/ibl_equirect_to_cubemap.frag";

@@ -32,6 +32,12 @@ vec3 Reinhard(vec3 color)
     return numerator / (1.0 + color);
 }
 
+float InterleavedGradientNoise(vec2 fragCoord)
+{
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(fragCoord, magic.xy)));
+}
+
 void main()
 {
     vec3 hdr = texture(uHdrColor, vTexCoord).rgb * exp2(uExposure);
@@ -55,6 +61,10 @@ void main()
     {
         mapped = ACESFilm(hdr);
     }
+
+    vec2 fragCoord = vTexCoord * vec2(textureSize(uHdrColor, 0));
+    float dither = InterleavedGradientNoise(fragCoord) - 0.5;
+    mapped += dither / 255.0;
 
     FragColor = vec4(clamp(mapped, 0.0, 1.0), 1.0);
 }

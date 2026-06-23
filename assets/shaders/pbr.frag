@@ -54,6 +54,7 @@ uniform sampler2DShadow uShadowMap;
 uniform int uShadowLightIndex;
 uniform int uReceiveShadow;
 uniform int uOutputLinear;
+uniform int uDebugMode;
 
 uniform samplerCube uIrradianceMap;
 uniform samplerCube uPrefilterMap;
@@ -224,21 +225,29 @@ float CalcShadow(vec3 geometricNormal, vec3 lightDir)
     }
 
     vec3 normal = normalize(geometricNormal);
-    float bias = max(0.0015 * (1.0 - dot(normal, lightDir)), 0.0003);
-    float currentDepth = projCoords.z;
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float texelSpan = max(texelSize.x, texelSize.y);
+
+    float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
+    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
+    float bias = texelSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.1));
+
+    vec2 shadowUv = projCoords.xy + normal.xy * bias * 0.75;
+    float compareDepth = projCoords.z - bias;
 
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
-    for (int x = -2; x <= 2; ++x)
+    for (int x = -1; x <= 1; ++x)
     {
-        for (int y = -2; y <= 2; ++y)
+        for (int y = -1; y <= 1; ++y)
         {
             vec2 offset = vec2(x, y) * texelSize;
-            shadow += texture(uShadowMap, vec3(projCoords.xy + offset, currentDepth - bias));
+            shadow += texture(uShadowMap, vec3(shadowUv + offset, compareDepth));
         }
     }
+    shadow /= 9.0;
 
-    return shadow / 25.0;
+    // Soften penumbra transitions to reduce visible banding in soft shadows.
+    return shadow * shadow * (3.0 - 2.0 * shadow);
 }
 
 vec2 SelectTexCoord(int texCoordSet)
@@ -355,6 +364,43 @@ void main()
     }
 
     vec3 result = ambient + directLighting;
+
+    if (uDebugMode != 0)
+    {
+        vec3 debugColor = result;
+        if (uDebugMode == 1)
+        {
+            float shadow = 1.0;
+            if (uShadowLightIndex >= 0)
+            {
+                shadow = CalcShadow(vNormal, normalize(uLightDirections[uShadowLightIndex]));
+            }
+            debugColor = vec3(shadow);
+        }
+        else if (uDebugMode == 2)
+        {
+            debugColor = directLighting / (directLighting + vec3(0.25));
+        }
+        else if (uDebugMode == 3)
+        {
+            debugColor = ambient / (ambient + vec3(0.25));
+        }
+        else if (uDebugMode == 4)
+        {
+            vec3 projCoords = vFragPosLightSpace.xyz / vFragPosLightSpace.w;
+            projCoords = projCoords * 0.5 + 0.5;
+            debugColor = vec3(projCoords.xy, 0.0);
+        }
+        else if (uDebugMode == 5)
+        {
+            vec3 projCoords = vFragPosLightSpace.xyz / vFragPosLightSpace.w;
+            projCoords = projCoords * 0.5 + 0.5;
+            debugColor = vec3(projCoords.z);
+        }
+
+        FragColor = vec4(debugColor, 1.0);
+        return;
+    }
 
     if (uOutputLinear != 0)
     {

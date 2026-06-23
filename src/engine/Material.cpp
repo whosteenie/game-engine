@@ -3,6 +3,7 @@
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/IBL.h"
+#include "engine/RenderDebug.h"
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
 #include "engine/ShadowMap.h"
@@ -39,8 +40,9 @@ void Material::Apply(
     const IBL& ibl,
     const glm::mat4& model,
     const ShadowMap* shadowMap,
-    bool receiveShadow,
-    bool outputLinear) const
+    const bool receiveShadow,
+    const bool outputLinear,
+    const RenderDebugMode debugMode) const
 {
     m_shader->Use();
     m_shader->SetMat4("uModel", model);
@@ -51,6 +53,7 @@ void Material::Apply(
     m_shader->SetFloat("uRoughness", m_roughness);
     m_shader->SetFloat("uMetallic", m_metallic);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
+    m_shader->SetInt("uDebugMode", static_cast<int>(debugMode));
 
     m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
     m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);

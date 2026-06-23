@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/RenderDebug.h"
 #include <glm/glm.hpp>
 #include <memory>
 #include <vector>
@@ -35,7 +36,8 @@ public:
         const Camera& camera,
         const glm::vec3& lightDirection,
         int viewportWidth,
-        int viewportHeight) const;
+        int viewportHeight,
+        bool directionalShadowLightActive = false) const;
 
     bool IsEnabled() const;
     void SetEnabled(bool enabled);
@@ -88,6 +90,9 @@ public:
     float GetBloomBlurRadius() const;
     void SetBloomBlurRadius(float blurRadius);
 
+    RenderDebugMode GetDebugMode() const;
+    void SetDebugMode(RenderDebugMode mode);
+
     void BlitDepthToFramebuffer(unsigned int drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
 private:
@@ -111,6 +116,7 @@ private:
     std::unique_ptr<Shader> m_bloomExtractShader;
     std::unique_ptr<Shader> m_bloomBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
+    std::unique_ptr<Shader> m_debugChannelShader;
 
     unsigned int m_quadVao = 0;
     unsigned int m_quadVbo = 0;
@@ -139,7 +145,7 @@ private:
 
     bool m_enabled = true;
     bool m_ssaoEnabled = true;
-    bool m_contactShadowsEnabled = true;
+    bool m_contactShadowsEnabled = false;
     float m_ssaoRadius = 0.35f;
     float m_ssaoBias = 0.015f;
     float m_ssaoPower = 1.6f;
@@ -154,4 +160,5 @@ private:
     float m_bloomSoftKnee = 0.5f;
     float m_bloomIntensity = 0.4f;
     float m_bloomBlurRadius = 1.0f;
+    RenderDebugMode m_debugMode = RenderDebugMode::None;
 };

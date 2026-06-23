@@ -13,6 +13,7 @@ uniform int uUseContactShadows;
 uniform float uSsaoPower;
 uniform float uAoStrength;
 uniform float uContactStrength;
+uniform int uDebugOcclusionOnly;
 
 vec3 LinearToPerceptual(vec3 linear)
 {
@@ -36,15 +37,24 @@ void main()
     {
         float ssao = pow(texture(uSsaoMap, vTexCoord).r, uSsaoPower);
         float luma = dot(LinearToPerceptual(sceneColor), vec3(0.2126, 0.7152, 0.0722));
-        float indirectWeight = 1.0 - smoothstep(0.06, 0.35, luma);
-        float ssaoBlend = mix(1.0, ssao, uAoStrength * mix(0.35, 1.0, indirectWeight));
+        float indirectWeight = 1.0 - smoothstep(0.03, 0.22, luma);
+        float ssaoBlend = mix(1.0, ssao, uAoStrength * mix(0.2, 1.0, indirectWeight));
         occlusion *= ssaoBlend;
     }
 
     if (uUseContactShadows != 0)
     {
         float contact = texture(uContactShadowMap, vTexCoord).r;
-        occlusion *= mix(1.0, contact, uContactStrength);
+        float luma = dot(LinearToPerceptual(sceneColor), vec3(0.2126, 0.7152, 0.0722));
+        float directWeight = 1.0 - smoothstep(0.12, 0.45, luma);
+        float contactBlend = mix(1.0, contact, uContactStrength * mix(0.2, 1.0, directWeight));
+        occlusion *= contactBlend;
+    }
+
+    if (uDebugOcclusionOnly != 0)
+    {
+        FragColor = vec4(vec3(occlusion), 1.0);
+        return;
     }
 
     FragColor = vec4(sceneColor * occlusion, 1.0);

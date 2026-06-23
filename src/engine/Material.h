@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/RenderDebug.h"
+
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
@@ -30,7 +32,8 @@ public:
         const glm::mat4& model,
         const ShadowMap* shadowMap = nullptr,
         bool receiveShadow = true,
-        bool outputLinear = false) const;
+        bool outputLinear = false,
+        RenderDebugMode debugMode = RenderDebugMode::None) const;
 
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;

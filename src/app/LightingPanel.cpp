@@ -1,10 +1,12 @@
 #include "app/LightingPanel.h"
 
 #include "app/EditorPanelConstraints.h"
+#include "app/RenderDiagnostics.h"
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
 #include "engine/Camera.h"
 #include "engine/IBL.h"
+#include "engine/RenderDebug.h"
 #include "engine/ScreenSpaceEffects.h"
 
 #include <imgui.h>
@@ -34,6 +36,8 @@ namespace
 void LightingPanel::Draw(
     Scene& scene,
     const Camera& camera,
+    const int viewportWidth,
+    const int viewportHeight,
     UndoStack* undoStack) const
 {
     EditorPanelConstraints::ApplySideColumnPanel();
@@ -220,6 +224,13 @@ void LightingPanel::Draw(
                 });
         }
 
+        if (scene.GetLighting().GetShadowLightIndex() >= 0)
+        {
+            ImGui::TextDisabled(
+                "Suppressed while a directional shadow-casting light is active "
+                "(shadow map already covers sun shadows).");
+        }
+
         if (contactShadowsEnabled)
         {
             float contactStrength = screenSpaceEffects.GetContactStrength();
@@ -245,6 +256,53 @@ void LightingPanel::Draw(
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::TextUnformatted(
+            "Use debug views to see which render pass causes an artifact. "
+            "Write a report and share the txt file for help.");
+
+        int debugMode = static_cast<int>(screenSpaceEffects.GetDebugMode());
+        const char* debugModeLabels[] = {
+            RenderDebugModeLabel(RenderDebugMode::None),
+            RenderDebugModeLabel(RenderDebugMode::ShadowFactor),
+            RenderDebugModeLabel(RenderDebugMode::DirectLighting),
+            RenderDebugModeLabel(RenderDebugMode::AmbientIbl),
+            RenderDebugModeLabel(RenderDebugMode::LightSpaceUv),
+            RenderDebugModeLabel(RenderDebugMode::LightSpaceDepth),
+            RenderDebugModeLabel(RenderDebugMode::Ssao),
+            RenderDebugModeLabel(RenderDebugMode::ContactShadows),
+            RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),
+        };
+
+        if (ImGui::Combo(
+                "Debug view",
+                &debugMode,
+                debugModeLabels,
+                IM_ARRAYSIZE(debugModeLabels)))
+        {
+            screenSpaceEffects.SetDebugMode(static_cast<RenderDebugMode>(debugMode));
+        }
+
+        static std::string diagnosticStatus;
+        if (ImGui::Button("Write diagnostics/render_diagnostics.txt"))
+        {
+            const ImVec2 viewportSize = ImGui::GetContentRegionAvail();
+            RenderDiagnostics::WriteReport(
+                scene,
+                camera,
+                viewportWidth,
+                viewportHeight,
+                "diagnostics/render_diagnostics.txt",
+                diagnosticStatus);
+        }
+
+        if (!diagnosticStatus.empty())
+        {
+            ImGui::TextWrapped("%s", diagnosticStatus.c_str());
         }
     }
 

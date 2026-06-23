@@ -8,6 +8,8 @@ uniform sampler2D uNoiseMap;
 
 uniform mat4 uProjection;
 uniform mat4 uInvProjection;
+uniform mat4 uView;
+uniform vec3 uLightDirection;
 
 uniform vec3 uSamples[32];
 uniform float uRadius;
@@ -49,6 +51,14 @@ void main()
 
     vec3 fragPos = ReconstructViewPos(vTexCoord, depth);
     vec3 normal = ReconstructViewNormal(vTexCoord, depth);
+    vec3 worldNormal = normalize(mat3(transpose(uView)) * normal);
+
+    if (dot(worldNormal, normalize(uLightDirection)) > 0.65)
+    {
+        FragOcclusion = 1.0;
+        return;
+    }
+
     vec3 randomVec = texture(uNoiseMap, vTexCoord * vec2(uNoiseScaleX, uNoiseScaleY)).xyz;
     vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);

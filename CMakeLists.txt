@@ -235,6 +235,7 @@ add_executable(game-engine
     src/app/ProjectFilesPanel.cpp
 
     src/app/LightingPanel.cpp
+    src/app/RenderDiagnostics.cpp
 
     src/app/EditorWidgets.cpp
 
@@ -293,6 +294,8 @@ add_executable(game-engine
     src/engine/GizmoGeometry.cpp
 
     src/engine/ShadowMap.cpp
+    src/engine/ShadowMapMath.cpp
+    src/engine/RenderDebug.cpp
 
     src/engine/IBL.cpp
 
@@ -371,4 +374,15 @@ add_custom_command(TARGET game-engine POST_BUILD
         "$<TARGET_FILE_DIR:game-engine>/assets"
 
     COMMENT "Copying assets to output directory")
+
+enable_testing()
+
+add_executable(engine-tests
+    tests/shadow_map_math_test.cpp
+    src/engine/ShadowMapMath.cpp
+)
+
+target_include_directories(engine-tests PRIVATE src)
+target_link_libraries(engine-tests PRIVATE glm::glm)
+add_test(NAME engine-tests COMMAND engine-tests)
 

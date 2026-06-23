@@ -31,6 +31,13 @@ namespace
          1.0f,  1.0f, 1.0f, 1.0f,
         -1.0f,  1.0f, 0.0f, 1.0f,
     };
+
+    bool IsPostProcessDebugMode(RenderDebugMode mode)
+    {
+        return mode == RenderDebugMode::Ssao ||
+               mode == RenderDebugMode::ContactShadows ||
+               mode == RenderDebugMode::CompositeOcclusion;
+    }
 }
 
 ScreenSpaceEffects::ScreenSpaceEffects()
@@ -55,7 +62,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::BloomBlurFragmentShader)),
       m_tonemapShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::TonemapFragmentShader))
+          EngineConstants::TonemapFragmentShader)),
+      m_debugChannelShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DebugChannelFragmentShader))
 {
     CreateFullscreenQuad();
     CreateNoiseTexture();
@@ -320,16 +330,20 @@ void ScreenSpaceEffects::DrawFullscreenQuad() const
 void ScreenSpaceEffects::Apply(
     const Camera& camera,
     const glm::vec3& lightDirection,
-    int viewportWidth,
-    int viewportHeight) const
+    const int viewportWidth,
+    const int viewportHeight,
+    const bool directionalShadowLightActive) const
 {
     if (!m_enabled || !m_sceneFramebuffer->IsValid())
     {
         return;
     }
 
-    const bool runSsao = m_ssaoEnabled;
-    const bool runContactShadows = m_contactShadowsEnabled;
+    const bool runSsao = m_ssaoEnabled &&
+        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::LightSpaceDepth);
+    const bool runContactShadows = m_contactShadowsEnabled &&
+        !directionalShadowLightActive &&
+        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::LightSpaceDepth);
     const bool runScreenSpace = runSsao || runContactShadows;
 
     GLint previousFramebuffer = 0;
@@ -361,6 +375,8 @@ void ScreenSpaceEffects::Apply(
         m_ssaoShader->SetInt("uNoiseMap", 1);
         m_ssaoShader->SetMat4("uProjection", projectionMatrix);
         m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_ssaoShader->SetMat4("uView", viewMatrix);
+        m_ssaoShader->SetVec3("uLightDirection", glm::normalize(lightDirection));
         m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
         m_ssaoShader->SetFloat("uBias", m_ssaoBias);
         m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
@@ -439,6 +455,9 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
         m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
         m_compositeShader->SetFloat("uContactStrength", m_contactStrength);
+        m_compositeShader->SetInt(
+            "uDebugOcclusionOnly",
+            m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
 
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
@@ -506,6 +525,35 @@ void ScreenSpaceEffects::Apply(
 
     glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
     glViewport(0, 0, viewportWidth, viewportHeight);
+
+    if (IsPostProcessDebugMode(m_debugMode))
+    {
+        unsigned int debugTexture = 0;
+        if (m_debugMode == RenderDebugMode::Ssao && runSsao)
+        {
+            debugTexture = m_ssaoBlurTexture;
+        }
+        else if (m_debugMode == RenderDebugMode::ContactShadows && runContactShadows)
+        {
+            debugTexture = m_contactBlurTexture;
+        }
+        else if (m_debugMode == RenderDebugMode::CompositeOcclusion && runScreenSpace)
+        {
+            debugTexture = m_hdrCompositeTexture;
+        }
+
+        if (debugTexture != 0)
+        {
+            m_debugChannelShader->Use();
+            m_debugChannelShader->SetInt("uInput", 0);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, debugTexture);
+            DrawFullscreenQuad();
+            glEnable(GL_DEPTH_TEST);
+            glBindTexture(GL_TEXTURE_2D, 0);
+            return;
+        }
+    }
 
     m_tonemapShader->Use();
     m_tonemapShader->SetInt("uHdrColor", 0);
@@ -695,6 +743,16 @@ float ScreenSpaceEffects::GetBloomBlurRadius() const
 void ScreenSpaceEffects::SetBloomBlurRadius(float blurRadius)
 {
     m_bloomBlurRadius = std::clamp(blurRadius, 0.25f, 4.0f);
+}
+
+RenderDebugMode ScreenSpaceEffects::GetDebugMode() const
+{
+    return m_debugMode;
+}
+
+void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
+{
+    m_debugMode = mode;
 }
 
 void ScreenSpaceEffects::BlitDepthToFramebuffer(

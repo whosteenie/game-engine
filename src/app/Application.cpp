@@ -285,7 +285,12 @@ void Application::Update(double deltaTime)
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
-        m_lightingPanel->Draw(*editorScene, *m_camera, editorUndoStack);
+        m_lightingPanel->Draw(
+            *editorScene,
+            *m_camera,
+            m_sceneViewportPanel->GetRenderWidth(),
+            m_sceneViewportPanel->GetRenderHeight(),
+            editorUndoStack);
         m_editorDockSpace->AfterEditorPanels();
         m_editorDockSpace->End();
 

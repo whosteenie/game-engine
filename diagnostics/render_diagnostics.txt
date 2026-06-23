@@ -1,0 +1,65 @@
+=== Render Diagnostics ===
+Timestamp: 2026-06-23 03:53:45
+
+[Viewport]
+Size: 1800 x 995
+Camera position: (1.5664, 1.7278, 4.0637)
+
+[Directional shadow map]
+Resolution: 4096
+Light direction: (0.4511, 0.7018, 0.5514)
+Scene shadow bounds min: (-12.0000, -0.0100, -12.0000)
+Scene shadow bounds max: (12.0000, 2.4182, 12.0000)
+Ortho width / height (world units): 35.7727 / 27.4301
+Texel size (world units / texel): 0.00873356 / 0.0066968
+Texel span used for bias: 0.00873356
+Snap offset (NDC): (0.0000, -0.0000, 0.0000)
+Bias at nDotL=1.0: 0.013197
+Bias at nDotL=0.0: 0.318775
+
+[Screen-space effects]
+Post-processing enabled: yes
+SSAO enabled: yes
+SSAO radius: 0.5
+SSAO bias: 0.017
+AO strength: 0.844
+Contact shadows enabled: yes
+Debug view: Contact shadows buffer
+
+[Selected object shadow analysis]
+Object: Cube 2 (index 25)
+  World bounds min: (2.0000, 1.0000, 2.2480)
+  World bounds max: (3.0000, 2.0000, 3.2480)
+  Casts shadow: yes
+  Receives shadow: yes
+  Albedo: (0.7800, 0.7800, 0.7800)
+  Roughness: 0.55
+  Has AO map: no
+  Has normal map: no
+  Corner light-space NDC (xyz = uv + depth):
+    [0] (0.5035, 0.4178, 0.4280)
+    [1] (0.5251, 0.4016, 0.4118)
+    [2] (0.5035, 0.4438, 0.4027)
+    [3] (0.5251, 0.4276, 0.3865)
+    [4] (0.4858, 0.3980, 0.4082)
+    [5] (0.5074, 0.3818, 0.3919)
+    [6] (0.4858, 0.4240, 0.3829)
+    [7] (0.5074, 0.4078, 0.3666)
+  Shadow UV range: min (0.4858, 0.3818, 0.3666) max (0.5251, 0.4438, 0.4280)
+  Face sun alignment (world-space normal dot light direction):
+    face -Z: -0.55138  [shadowed side]
+    face +Z: 0.55138
+    face -X: -0.451129  [shadowed side]
+    face +X: 0.451129
+    face -Y: -0.701757  [shadowed side]
+    face +Y: 0.701757  [SSAO skipped]
+
+[How to isolate the artifact]
+1. In Renderer Tuning -> Diagnostics, switch Debug view between:
+   - Shadow factor (PBR): triangles here => shadow map / PCF / bias issue
+   - SSAO buffer: triangles here => SSAO depth-reconstruction issue
+   - Composite occlusion: final multiply applied before tonemap
+2. Toggle SSAO off. If artifact disappears on shadowed side, SSAO is the cause.
+3. Compare Light-space depth view: flat face should be a uniform value per face.
+   Visible diagonal splits => interpolation / precision issue in light-space coords.
+4. Share this file when asking for help.

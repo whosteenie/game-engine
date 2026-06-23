@@ -26,6 +26,7 @@
 #include "engine/ColliderGizmoRenderer.h"
 #include "engine/LightGizmoRenderer.h"
 #include "engine/SceneLighting.h"
+#include "engine/RenderDebug.h"
 #include "engine/ScreenSpaceEffects.h"
 #include "engine/ShadowMap.h"
 
@@ -2029,6 +2030,14 @@ void Scene::Render(
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
 
+    RenderDebugMode materialDebugMode = RenderDebugMode::None;
+    const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
+    if (activeDebugMode >= RenderDebugMode::ShadowFactor &&
+        activeDebugMode <= RenderDebugMode::LightSpaceDepth)
+    {
+        materialDebugMode = activeDebugMode;
+    }
+
     if (usePostProcess)
     {
         m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
@@ -2059,7 +2068,8 @@ void Scene::Render(
             modelMatrix,
             m_shadowMap.get(),
             object.ReceivesShadow(),
-            usePostProcess);
+            usePostProcess,
+            materialDebugMode);
         object.GetMesh()->Draw();
 
         if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
@@ -2082,7 +2092,12 @@ void Scene::Render(
             glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
         }
 
-        m_screenSpaceEffects->Apply(camera, GetSunDirection(), viewportWidth, viewportHeight);
+        m_screenSpaceEffects->Apply(
+            camera,
+            GetSunDirection(),
+            viewportWidth,
+            viewportHeight,
+            m_lighting.GetShadowLightIndex() >= 0);
         m_screenSpaceEffects->BlitDepthToFramebuffer(
             renderToTarget ? targetFramebuffer : 0,
             viewportWidth,

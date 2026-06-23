@@ -47,6 +47,7 @@ void main()
     vec3 viewPos = ReconstructViewPos(vTexCoord, depth);
     vec3 normal = ReconstructViewNormal(vTexCoord, depth);
     vec3 worldNormal = normalize(mat3(transpose(uView)) * normal);
+    vec3 lightDir = normalize(uLightDirection);
 
     if (worldNormal.y > 0.85)
     {
@@ -54,7 +55,22 @@ void main()
         return;
     }
 
-    vec3 viewLightDir = normalize((uView * vec4(uLightDirection, 0.0)).xyz);
+    float worldLightFacing = dot(worldNormal, lightDir);
+    if (worldLightFacing > 0.55)
+    {
+        FragShadow = 1.0;
+        return;
+    }
+
+    // Surfaces already in shadow from the directional light are handled by the shadow map.
+    // Ray-marching here hits the object's own depth and produces screen-space artifacts.
+    if (worldLightFacing < 0.15)
+    {
+        FragShadow = 1.0;
+        return;
+    }
+
+    vec3 viewLightDir = normalize((uView * vec4(lightDir, 0.0)).xyz);
     float facingLight = dot(normal, viewLightDir);
 
     if (facingLight < 0.15)
@@ -82,8 +98,10 @@ void main()
         vec2 sampleUv = projected.xy * 0.5 + 0.5;
         if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
         {
-            break;
+            continue;
         }
+
+        sampleUv = clamp(sampleUv, vec2(0.0005), vec2(0.9995));
 
         float sampleDepth = texture(uDepthMap, sampleUv).r;
         vec3 sceneViewPos = ReconstructViewPos(sampleUv, sampleDepth);
