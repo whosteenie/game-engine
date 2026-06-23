@@ -15,6 +15,7 @@
 #include "engine/scene/ScenePrimitive.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -22,8 +23,6 @@
 
 namespace
 {
-    constexpr const char* kHierarchyDragDropPayload = "SCENE_HIERARCHY_ITEM";
-
     SceneObjectId GetObjectId(const Scene& scene, int objectIndex)
     {
         if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= scene.GetObjects().size())
@@ -582,7 +581,10 @@ namespace
 
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
         {
-            ImGui::SetDragDropPayload(kHierarchyDragDropPayload, &objectIndex, sizeof(int));
+            ImGui::SetDragDropPayload(
+                EditorReorderDragDrop::kHierarchyDragDropPayload,
+                &objectIndex,
+                sizeof(int));
             ImGui::TextUnformatted(label.c_str());
             ImGui::EndDragDropSource();
         }
@@ -591,7 +593,8 @@ namespace
     bool IsHierarchyDragActive()
     {
         const ImGuiPayload* payload = ImGui::GetDragDropPayload();
-        return payload != nullptr && payload->IsDataType(kHierarchyDragDropPayload);
+        return payload != nullptr
+            && payload->IsDataType(EditorReorderDragDrop::kHierarchyDragDropPayload);
     }
 
     void DrawHierarchyInsertGapLine()
@@ -606,11 +609,77 @@ namespace
             2.0f);
     }
 
+    bool TryAcceptHierarchyInsertGap(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        int referenceIndex,
+        HierarchyInsertMode mode,
+        const ImGuiPayload* activePayload,
+        bool drawLine,
+        bool bottomStickyEligible,
+        bool useBottomInsertLineY = false)
+    {
+        if (activePayload == nullptr
+            || !activePayload->IsDataType(EditorReorderDragDrop::kHierarchyDragDropPayload))
+        {
+            return false;
+        }
+
+        const int draggedIndex = *static_cast<const int*>(activePayload->Data);
+        if (!scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
+            || !scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
+        {
+            return false;
+        }
+
+        if (drawLine)
+        {
+            if (bottomStickyEligible)
+            {
+                const ImVec2 itemMin = ImGui::GetItemRectMin();
+                const ImVec2 itemMax = ImGui::GetItemRectMax();
+                panel.UpdateDragInsertLatch(
+                    referenceIndex,
+                    itemMin.x,
+                    itemMin.y,
+                    itemMax.x,
+                    itemMax.y,
+                    useBottomInsertLineY);
+                panel.DrawDragInsertLatchLine();
+            }
+            else
+            {
+                panel.ClearDragInsertLatch();
+                DrawHierarchyInsertGapLine();
+            }
+        }
+
+        const ImGuiDragDropFlags acceptFlags =
+            ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+        if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload(
+                    EditorReorderDragDrop::kHierarchyDragDropPayload,
+                    acceptFlags))
+        {
+            if (payload->IsDelivery())
+            {
+                const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
+                const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
+                panel.PushReparentMutation(scene, "Reparent", draggedId, referenceId, mode);
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
     void DrawHierarchyInsertGap(
         const SceneHierarchyPanel& panel,
         Scene& scene,
         int referenceIndex,
-        HierarchyInsertMode mode)
+        HierarchyInsertMode mode,
+        bool bottomStickyEligible = false)
     {
         ImGui::PushID(referenceIndex);
         ImGui::PushID(static_cast<int>(mode));
@@ -620,40 +689,56 @@ namespace
 
         if (ImGui::BeginDragDropTarget())
         {
-            const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
-            if (activePayload != nullptr && activePayload->IsDataType(kHierarchyDragDropPayload))
-            {
-                const int draggedIndex = *static_cast<const int*>(activePayload->Data);
-                if (scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
-                    && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
-                {
-                    DrawHierarchyInsertGapLine();
-
-                    const ImGuiDragDropFlags acceptFlags =
-                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-                    if (const ImGuiPayload* payload =
-                            ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload, acceptFlags))
-                    {
-                        if (payload->IsDelivery())
-                        {
-                            const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
-                            const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
-                            panel.PushReparentMutation(
-                                scene,
-                                "Reparent",
-                                draggedId,
-                                referenceId,
-                                mode);
-                        }
-                    }
-                }
-            }
-
+            TryAcceptHierarchyInsertGap(
+                panel,
+                scene,
+                referenceIndex,
+                mode,
+                ImGui::GetDragDropPayload(),
+                true,
+                bottomStickyEligible);
             ImGui::EndDragDropTarget();
         }
 
         ImGui::PopID();
         ImGui::PopID();
+    }
+
+    void DrawHierarchyBottomDropZone(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        int referenceIndex,
+        float height)
+    {
+        ImGui::InvisibleButton("##HierarchyBottomDropZone", ImVec2(-FLT_MIN, height));
+
+        if (!ImGui::BeginDragDropTarget())
+        {
+            return;
+        }
+
+        const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
+        const bool hasActiveLatch = panel.HasDragInsertLatchFor(referenceIndex);
+        const ImVec2 zoneMin = ImGui::GetItemRectMin();
+        const ImVec2 zoneMax = ImGui::GetItemRectMax();
+
+        if (hasActiveLatch)
+        {
+            panel.UpdateDragInsertLatch(referenceIndex, zoneMin.x, zoneMin.y, zoneMax.x, zoneMax.y);
+            panel.DrawDragInsertLatchLine();
+        }
+
+        TryAcceptHierarchyInsertGap(
+            panel,
+            scene,
+            referenceIndex,
+            HierarchyInsertMode::After,
+            activePayload,
+            !hasActiveLatch,
+            true,
+            true);
+
+        ImGui::EndDragDropTarget();
     }
 
     void DrawHierarchyReparentIndicator()
@@ -675,13 +760,15 @@ namespace
         }
 
         const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
-        if (activePayload != nullptr && activePayload->IsDataType(kHierarchyDragDropPayload))
+        if (activePayload != nullptr
+            && activePayload->IsDataType(EditorReorderDragDrop::kHierarchyDragDropPayload))
         {
             const int draggedIndex = *static_cast<const int*>(activePayload->Data);
             const HierarchyInsertMode mode = HierarchyInsertMode::AsChild;
             if (scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
                 && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
             {
+                panel.ClearDragInsertLatch();
                 DrawHierarchyReparentIndicator();
                 const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
                 const bool hasChildren = !scene.GetChildren(referenceIndex).empty();
@@ -694,7 +781,9 @@ namespace
                 const ImGuiDragDropFlags acceptFlags =
                     ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
                 if (const ImGuiPayload* payload =
-                        ImGui::AcceptDragDropPayload(kHierarchyDragDropPayload, acceptFlags))
+                        ImGui::AcceptDragDropPayload(
+                            EditorReorderDragDrop::kHierarchyDragDropPayload,
+                            acceptFlags))
                 {
                     if (payload->IsDelivery())
                     {
@@ -953,6 +1042,50 @@ void SceneHierarchyPanel::PushReparentMutation(
     }
 }
 
+void SceneHierarchyPanel::ClearDragInsertLatch() const
+{
+    m_dragInsertLatchReferenceIndex = -1;
+}
+
+void SceneHierarchyPanel::UpdateDragInsertLatch(
+    int referenceIndex,
+    float itemMinX,
+    float itemMinY,
+    float itemMaxX,
+    float itemMaxY,
+    bool useBottomInsertLineY) const
+{
+    const bool isNewLatch = m_dragInsertLatchReferenceIndex != referenceIndex;
+    m_dragInsertLatchReferenceIndex = referenceIndex;
+    m_dragInsertLatchLineMinX = itemMinX;
+    m_dragInsertLatchLineMaxX = itemMaxX;
+    if (isNewLatch)
+    {
+        m_dragInsertLatchLineY = useBottomInsertLineY
+            ? itemMinY - EditorReorderDragDrop::kInsertGapHitHeight * 0.5f
+            : (itemMinY + itemMaxY) * 0.5f;
+    }
+}
+
+bool SceneHierarchyPanel::HasDragInsertLatchFor(int referenceIndex) const
+{
+    return m_dragInsertLatchReferenceIndex == referenceIndex;
+}
+
+void SceneHierarchyPanel::DrawDragInsertLatchLine() const
+{
+    if (m_dragInsertLatchReferenceIndex < 0)
+    {
+        return;
+    }
+
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(m_dragInsertLatchLineMinX, m_dragInsertLatchLineY),
+        ImVec2(m_dragInsertLatchLineMaxX, m_dragInsertLatchLineY),
+        IM_COL32(90, 150, 255, 255),
+        2.0f);
+}
+
 void SceneHierarchyPanel::TryExpandNodeOnDragHover(
     SceneObjectId referenceId,
     bool hasChildren,
@@ -1060,6 +1193,7 @@ void SceneHierarchyPanel::Draw(
     if (!IsHierarchyDragActive())
     {
         m_dragExpandHoverNodeId = kInvalidSceneObjectId;
+        ClearDragInsertLatch();
     }
     else
     {
@@ -1100,14 +1234,35 @@ void SceneHierarchyPanel::Draw(
             *this,
             scene,
             visibleObjectIndices.back(),
-            HierarchyInsertMode::After);
+            HierarchyInsertMode::After,
+            true);
     }
 
     const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
     if (backgroundSpace.y > 0.0f)
     {
-        ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
-        DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
+        if (IsHierarchyDragActive() && !visibleObjectIndices.empty())
+        {
+            DrawHierarchyBottomDropZone(*this, scene, visibleObjectIndices.back(), backgroundSpace.y);
+        }
+        else
+        {
+            ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
+            DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
+        }
+    }
+
+    if (IsHierarchyDragActive())
+    {
+        const ImGuiWindow* listWindow = ImGui::GetCurrentWindow();
+        const ImVec2 mousePos = ImGui::GetIO().MousePos;
+        const bool mouseInsideList =
+            mousePos.x >= listWindow->InnerRect.Min.x && mousePos.x <= listWindow->InnerRect.Max.x
+            && mousePos.y >= listWindow->InnerRect.Min.y && mousePos.y <= listWindow->InnerRect.Max.y;
+        if (!mouseInsideList)
+        {
+            ClearDragInsertLatch();
+        }
     }
 
     m_scrollSelectionIntoView = false;

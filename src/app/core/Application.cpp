@@ -11,7 +11,7 @@
 #include "app/panels/GameViewportPanel.h"
 #include "app/panels/LightingPanel.h"
 #include "app/editor/MainMenuBar.h"
-#include "app/core/PlayModeController.h"
+#include "app/editor/EditorReorderDragDrop.h"
 #include "app/project/ProjectChooser.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/panels/ProjectFilesPanel.h"
@@ -330,6 +330,10 @@ void Application::Update(double deltaTime)
 {
     glfwPollEvents();
 
+    const bool escapePressed = m_input->WasKeyPressed(GLFW_KEY_ESCAPE);
+    const bool cancelReorderDragOnly =
+        escapePressed && EditorReorderDragDrop::IsReorderDragActive();
+
     m_imguiLayer->BeginFrame();
 
     const bool editorActive =
@@ -511,7 +515,7 @@ void Application::Update(double deltaTime)
     const bool allowSceneMouse =
         editorActive && !flyCameraActive && sceneViewHovered && !blockSceneInput;
 
-    if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_ESCAPE))
+    if (allowGameKeyboard && escapePressed)
     {
         if (m_pendingClose || m_pendingNewProject)
         {
@@ -523,7 +527,7 @@ void Application::Update(double deltaTime)
         {
             m_input->ReleaseMouseCapture();
         }
-        else if (editorActive)
+        else if (editorActive && !cancelReorderDragOnly)
         {
             m_sceneEditingController->HandleEscapeKey(*GetEditorTargetScene());
         }
@@ -759,12 +763,12 @@ void Application::DrawUnsavedChangesDialog()
     ImGui::OpenPopup("Unsaved Changes");
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
     if (!ImGui::BeginPopupModal(
             "Unsaved Changes",
             nullptr,
-            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings))
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings))
     {
         return;
     }

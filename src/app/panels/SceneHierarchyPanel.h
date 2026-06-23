@@ -43,6 +43,17 @@ public:
         bool isAlreadyExpanded,
         std::unordered_map<SceneObjectId, bool>& openStates) const;
 
+    void ClearDragInsertLatch() const;
+    void UpdateDragInsertLatch(
+        int referenceIndex,
+        float itemMinX,
+        float itemMinY,
+        float itemMaxX,
+        float itemMaxY,
+        bool useBottomInsertLineY = false) const;
+    bool HasDragInsertLatchFor(int referenceIndex) const;
+    void DrawDragInsertLatchLine() const;
+
 private:
     mutable bool m_showPanel = true;
     mutable int m_pendingRenameIndex = -1;
@@ -55,6 +66,10 @@ private:
     mutable SceneObjectId m_dragExpandHoverNodeId = kInvalidSceneObjectId;
     mutable double m_dragExpandHoverStartTime = 0.0;
     mutable bool m_dragExpandHoverSeenThisFrame = false;
+    mutable int m_dragInsertLatchReferenceIndex = -1;
+    mutable float m_dragInsertLatchLineY = 0.0f;
+    mutable float m_dragInsertLatchLineMinX = 0.0f;
+    mutable float m_dragInsertLatchLineMaxX = 0.0f;
     mutable bool m_scrollSelectionIntoView = false;
     mutable UndoStack* m_drawUndoStack = nullptr;
     mutable EditorClipboard* m_drawClipboard = nullptr;

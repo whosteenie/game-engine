@@ -23,6 +23,7 @@
 #include "engine/scene/Transform.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <glm/glm.hpp>
 #include <cmath>
@@ -1030,12 +1031,17 @@ namespace
         }
     }
 
-    constexpr const char* kInspectorComponentDragPayload = "INSP_COMP_REORDER";
-
     struct InspectorComponentDragPayload
     {
         int slotIndex = -1;
     };
+
+    bool IsInspectorComponentDragActive()
+    {
+        const ImGuiPayload* payload = ImGui::GetDragDropPayload();
+        return payload != nullptr
+            && payload->IsDataType(EditorReorderDragDrop::kInspectorComponentDragPayload);
+    }
 
     void DrawInspectorInsertGapLine()
     {
@@ -1049,11 +1055,80 @@ namespace
             2.0f);
     }
 
-    void DrawInspectorComponentInsertGap(
+    bool TryAcceptInspectorInsertGap(
+        const SceneInspectorPanel& panel,
         Scene& scene,
-        const int objectIndex,
-        const int beforeIndex,
-        UndoStack* undoStack)
+        int objectIndex,
+        int beforeIndex,
+        UndoStack* undoStack,
+        const ImGuiPayload* activePayload,
+        bool drawLine,
+        bool bottomStickyEligible,
+        bool useBottomInsertLineY = false)
+    {
+        if (activePayload == nullptr
+            || !activePayload->IsDataType(EditorReorderDragDrop::kInspectorComponentDragPayload))
+        {
+            return false;
+        }
+
+        const auto* dragPayload = static_cast<const InspectorComponentDragPayload*>(activePayload->Data);
+        const int fromIndex = dragPayload->slotIndex;
+        const int slotCount = static_cast<int>(
+            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetEffectiveInspectorComponentOrder().size());
+        if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
+        {
+            return false;
+        }
+
+        if (drawLine)
+        {
+            if (bottomStickyEligible)
+            {
+                const ImVec2 itemMin = ImGui::GetItemRectMin();
+                const ImVec2 itemMax = ImGui::GetItemRectMax();
+                panel.UpdateDragInsertLatch(
+                    objectIndex,
+                    beforeIndex,
+                    itemMin.x,
+                    itemMin.y,
+                    itemMax.x,
+                    itemMax.y,
+                    useBottomInsertLineY);
+                panel.DrawDragInsertLatchLine();
+            }
+            else
+            {
+                panel.ClearDragInsertLatch();
+                DrawInspectorInsertGapLine();
+            }
+        }
+
+        const ImGuiDragDropFlags acceptFlags =
+            ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+        if (const ImGuiPayload* payload =
+                ImGui::AcceptDragDropPayload(
+                    EditorReorderDragDrop::kInspectorComponentDragPayload,
+                    acceptFlags))
+        {
+            if (payload->IsDelivery())
+            {
+                ReorderInspectorComponents(scene, objectIndex, undoStack, fromIndex, beforeIndex);
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    void DrawInspectorComponentInsertGap(
+        const SceneInspectorPanel& panel,
+        Scene& scene,
+        int objectIndex,
+        int beforeIndex,
+        UndoStack* undoStack,
+        bool bottomStickyEligible = false)
     {
         ImGui::PushID(beforeIndex);
         ImGui::PushID("InspectorInsertGap");
@@ -1063,43 +1138,76 @@ namespace
 
         if (ImGui::BeginDragDropTarget())
         {
-            const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
-            if (activePayload != nullptr && activePayload->IsDataType(kInspectorComponentDragPayload))
-            {
-                const auto* dragPayload =
-                    static_cast<const InspectorComponentDragPayload*>(activePayload->Data);
-                const int fromIndex = dragPayload->slotIndex;
-                const int slotCount = static_cast<int>(
-                    scene.GetObject(static_cast<std::size_t>(objectIndex))
-                        .GetEffectiveInspectorComponentOrder()
-                        .size());
-                if (WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
-                {
-                    DrawInspectorInsertGapLine();
-
-                    const ImGuiDragDropFlags acceptFlags =
-                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
-                    if (const ImGuiPayload* payload =
-                            ImGui::AcceptDragDropPayload(kInspectorComponentDragPayload, acceptFlags))
-                    {
-                        if (payload->IsDelivery())
-                        {
-                            ReorderInspectorComponents(
-                                scene,
-                                objectIndex,
-                                undoStack,
-                                fromIndex,
-                                beforeIndex);
-                        }
-                    }
-                }
-            }
-
+            TryAcceptInspectorInsertGap(
+                panel,
+                scene,
+                objectIndex,
+                beforeIndex,
+                undoStack,
+                ImGui::GetDragDropPayload(),
+                true,
+                bottomStickyEligible);
             ImGui::EndDragDropTarget();
         }
 
         ImGui::PopID();
         ImGui::PopID();
+    }
+
+    void DrawInspectorComponentBottomDropOverlay(
+        const SceneInspectorPanel& panel,
+        Scene& scene,
+        int objectIndex,
+        int beforeIndex,
+        UndoStack* undoStack,
+        float height)
+    {
+        if (height <= 0.0f)
+        {
+            return;
+        }
+
+        const ImVec2 savedCursor = ImGui::GetCursorPos();
+        const ImVec2 overlayScreenPos = ImGui::GetCursorScreenPos();
+        const float width = ImGui::GetContentRegionAvail().x;
+
+        ImGui::SetCursorScreenPos(overlayScreenPos);
+        ImGui::InvisibleButton(
+            "##InspectorComponentBottomDropOverlay",
+            ImVec2(width > 0.0f ? width : -FLT_MIN, height));
+
+        if (ImGui::BeginDragDropTarget())
+        {
+            const bool hasActiveLatch = panel.HasDragInsertLatchFor(objectIndex, beforeIndex);
+            if (hasActiveLatch)
+            {
+                const ImVec2 zoneMin = ImGui::GetItemRectMin();
+                const ImVec2 zoneMax = ImGui::GetItemRectMax();
+                panel.UpdateDragInsertLatch(
+                    objectIndex,
+                    beforeIndex,
+                    zoneMin.x,
+                    zoneMin.y,
+                    zoneMax.x,
+                    zoneMax.y);
+                panel.DrawDragInsertLatchLine();
+            }
+
+            TryAcceptInspectorInsertGap(
+                panel,
+                scene,
+                objectIndex,
+                beforeIndex,
+                undoStack,
+                ImGui::GetDragDropPayload(),
+                !hasActiveLatch,
+                true,
+                true);
+
+            ImGui::EndDragDropTarget();
+        }
+
+        ImGui::SetCursorPos(savedCursor);
     }
 
     bool BeginReorderableInspectorSection(
@@ -1120,7 +1228,7 @@ namespace
         {
             InspectorComponentDragPayload dragPayload{slotIndex};
             ImGui::SetDragDropPayload(
-                kInspectorComponentDragPayload,
+                EditorReorderDragDrop::kInspectorComponentDragPayload,
                 &dragPayload,
                 sizeof(dragPayload));
             ImGui::TextUnformatted(label);
@@ -1229,6 +1337,7 @@ namespace
     }
 
     void DrawOrderedInspectorComponents(
+        const SceneInspectorPanel& panel,
         Scene& scene,
         const int selectedIndex,
         TransformEditContext& editContext,
@@ -1243,6 +1352,15 @@ namespace
             selectedObject.GetEffectiveInspectorComponentOrder();
         const int slotCount = static_cast<int>(componentOrder.size());
 
+        if (!IsInspectorComponentDragActive())
+        {
+            panel.ClearDragInsertLatch();
+        }
+        else
+        {
+            panel.ClearDragInsertLatchUnlessObject(selectedIndex);
+        }
+
         for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex)
         {
             const InspectorComponentType componentType = componentOrder[static_cast<std::size_t>(slotIndex)];
@@ -1252,6 +1370,7 @@ namespace
             }
 
             DrawInspectorComponentInsertGap(
+                panel,
                 scene,
                 selectedIndex,
                 slotIndex,
@@ -1308,10 +1427,39 @@ namespace
         }
 
         DrawInspectorComponentInsertGap(
+            panel,
             scene,
             selectedIndex,
             slotCount,
-            editContext.undoStack);
+            editContext.undoStack,
+            true);
+
+        const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
+        if (backgroundSpace.y > 0.0f && IsInspectorComponentDragActive())
+        {
+            DrawInspectorComponentBottomDropOverlay(
+                panel,
+                scene,
+                selectedIndex,
+                slotCount,
+                editContext.undoStack,
+                backgroundSpace.y);
+        }
+
+        if (IsInspectorComponentDragActive())
+        {
+            const ImGuiWindow* inspectorWindow = ImGui::GetCurrentWindow();
+            const ImVec2 mousePos = ImGui::GetIO().MousePos;
+            const bool mouseInsideInspector =
+                mousePos.x >= inspectorWindow->InnerRect.Min.x
+                && mousePos.x <= inspectorWindow->InnerRect.Max.x
+                && mousePos.y >= inspectorWindow->InnerRect.Min.y
+                && mousePos.y <= inspectorWindow->InnerRect.Max.y;
+            if (!mouseInsideInspector)
+            {
+                panel.ClearDragInsertLatch();
+            }
+        }
     }
 
     void DrawAddComponentFooter(Scene& scene, int objectIndex, UndoStack* undoStack)
@@ -1474,6 +1622,7 @@ namespace
     }
 
     void DrawSingleObjectInspector(
+        const SceneInspectorPanel& panel,
         Scene& scene,
         int selectedIndex,
         TransformEditContext& editContext,
@@ -1555,6 +1704,7 @@ namespace
         }
 
         DrawOrderedInspectorComponents(
+            panel,
             scene,
             selectedIndex,
             editContext,
@@ -1621,6 +1771,62 @@ namespace
             DrawMultiObjectSection(scene, selectedIndices, undoStack);
         }
     }
+}
+
+void SceneInspectorPanel::ClearDragInsertLatch() const
+{
+    m_dragInsertLatchObjectIndex = -1;
+    m_dragInsertLatchBeforeIndex = -1;
+}
+
+void SceneInspectorPanel::ClearDragInsertLatchUnlessObject(int objectIndex) const
+{
+    if (m_dragInsertLatchObjectIndex >= 0 && m_dragInsertLatchObjectIndex != objectIndex)
+    {
+        ClearDragInsertLatch();
+    }
+}
+
+void SceneInspectorPanel::UpdateDragInsertLatch(
+    int objectIndex,
+    int beforeIndex,
+    float itemMinX,
+    float itemMinY,
+    float itemMaxX,
+    float itemMaxY,
+    bool useBottomInsertLineY) const
+{
+    const bool isNewLatch =
+        m_dragInsertLatchObjectIndex != objectIndex || m_dragInsertLatchBeforeIndex != beforeIndex;
+    m_dragInsertLatchObjectIndex = objectIndex;
+    m_dragInsertLatchBeforeIndex = beforeIndex;
+    m_dragInsertLatchLineMinX = itemMinX;
+    m_dragInsertLatchLineMaxX = itemMaxX;
+    if (isNewLatch)
+    {
+        m_dragInsertLatchLineY = useBottomInsertLineY
+            ? itemMinY - EditorReorderDragDrop::kInsertGapHitHeight * 0.5f
+            : (itemMinY + itemMaxY) * 0.5f;
+    }
+}
+
+bool SceneInspectorPanel::HasDragInsertLatchFor(int objectIndex, int beforeIndex) const
+{
+    return m_dragInsertLatchObjectIndex == objectIndex && m_dragInsertLatchBeforeIndex == beforeIndex;
+}
+
+void SceneInspectorPanel::DrawDragInsertLatchLine() const
+{
+    if (m_dragInsertLatchObjectIndex < 0)
+    {
+        return;
+    }
+
+    ImGui::GetWindowDrawList()->AddLine(
+        ImVec2(m_dragInsertLatchLineMinX, m_dragInsertLatchLineY),
+        ImVec2(m_dragInsertLatchLineMaxX, m_dragInsertLatchLineY),
+        IM_COL32(90, 150, 255, 255),
+        2.0f);
 }
 
 void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
@@ -1747,6 +1953,7 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
     if (selectedIndices.size() == 1)
     {
         DrawSingleObjectInspector(
+            *this,
             scene,
             selectedIndices.front(),
             editContext,
