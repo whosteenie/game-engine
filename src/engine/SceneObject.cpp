@@ -14,7 +14,6 @@ SceneObject::SceneObject(
     const glm::vec3& localBoundsMin,
     const glm::vec3& localBoundsMax,
     Transform transform,
-    bool movable,
     bool castShadow,
     bool receiveShadow,
     int parentIndex,
@@ -28,7 +27,6 @@ SceneObject::SceneObject(
       m_localBoundsMax(localBoundsMax),
       m_parentIndex(parentIndex),
       m_siblingOrder(siblingOrder),
-      m_movable(movable),
       m_castShadow(castShadow),
       m_receiveShadow(receiveShadow),
       m_light(std::move(light))
@@ -148,16 +146,6 @@ int SceneObject::GetSiblingOrder() const
 void SceneObject::SetSiblingOrder(int siblingOrder)
 {
     m_siblingOrder = siblingOrder;
-}
-
-bool SceneObject::IsMovable() const
-{
-    return m_movable;
-}
-
-void SceneObject::SetMovable(bool movable)
-{
-    m_movable = movable;
 }
 
 bool SceneObject::CastsShadow() const

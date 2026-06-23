@@ -9,6 +9,7 @@
 
 #include <array>
 #include <limits>
+#include <unordered_set>
 
 namespace
 {
@@ -186,11 +187,6 @@ glm::mat4 GetGroupSelectionGizmoWorldMatrix(
             continue;
         }
 
-        if (!objects[static_cast<std::size_t>(objectIndex)].IsMovable())
-        {
-            continue;
-        }
-
         glm::vec3 objectBoundsMin;
         glm::vec3 objectBoundsMax;
         GetObjectWorldBounds(objects, objectIndex, objectBoundsMin, objectBoundsMax);
@@ -247,10 +243,6 @@ void ApplyGroupSelectionGizmoWorldMatrix(
         }
 
         SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        if (!object.IsMovable())
-        {
-            continue;
-        }
 
         const glm::mat4 oldWorldMatrix = GetObjectWorldMatrix(objects, objectIndex);
         const glm::mat4 newWorldMatrix = deltaMatrix * oldWorldMatrix;
@@ -349,6 +341,8 @@ std::vector<int> FilterToTopmostSelectedIndices(
     std::vector<int> topmostIndices;
     topmostIndices.reserve(selectedIndices.size());
 
+    const std::unordered_set<int> selectedSet(selectedIndices.begin(), selectedIndices.end());
+
     for (int objectIndex : selectedIndices)
     {
         if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
@@ -360,7 +354,7 @@ std::vector<int> FilterToTopmostSelectedIndices(
         int parentIndex = objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
         while (parentIndex >= 0)
         {
-            if (std::find(selectedIndices.begin(), selectedIndices.end(), parentIndex) != selectedIndices.end())
+            if (selectedSet.find(parentIndex) != selectedSet.end())
             {
                 hasSelectedAncestor = true;
                 break;

@@ -69,7 +69,6 @@ void Scene::SetupDefaultSunLight()
         glm::vec3(-0.15f),
         glm::vec3(0.15f),
         sunTransform,
-        true,
         false,
         false,
         -1,
@@ -126,7 +125,6 @@ void Scene::SetupObjects()
         Transform{},
         true,
         true,
-        true,
         -1,
         1);
 
@@ -150,7 +148,6 @@ void Scene::SetupObjects()
         cubeTransform,
         true,
         true,
-        true,
         -1,
         2);
 
@@ -165,7 +162,6 @@ namespace
         glm::vec3 boundsMin;
         glm::vec3 boundsMax;
         glm::vec3 position;
-        bool movable = true;
         bool castShadow = true;
         bool receiveShadow = true;
     };
@@ -295,7 +291,6 @@ int Scene::AddObject(ScenePrimitive primitive, int parentIndex)
         spawnInfo.boundsMin,
         spawnInfo.boundsMax,
         transform,
-        spawnInfo.movable,
         spawnInfo.castShadow,
         spawnInfo.receiveShadow,
         parentIndex,
@@ -316,7 +311,6 @@ int Scene::AddEmptyObject(int parentIndex)
         glm::vec3(0.0f),
         glm::vec3(0.0f),
         Transform{},
-        true,
         false,
         false,
         parentIndex,
@@ -364,7 +358,6 @@ int Scene::AddLightObject(LightType type, int parentIndex)
         glm::vec3(-0.15f),
         glm::vec3(0.15f),
         transform,
-        true,
         false,
         false,
         parentIndex,
@@ -396,43 +389,22 @@ void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMa
     MarkDirty();
 }
 
-std::vector<int> Scene::GetMovableSelectedIndices() const
-{
-    std::vector<int> movableIndices;
-    movableIndices.reserve(m_selection.indices.size());
-
-    for (int objectIndex : m_selection.indices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= m_objects.size())
-        {
-            continue;
-        }
-
-        if (m_objects[static_cast<std::size_t>(objectIndex)].IsMovable())
-        {
-            movableIndices.push_back(objectIndex);
-        }
-    }
-
-    return movableIndices;
-}
-
 glm::mat4 Scene::GetSelectionGizmoWorldMatrix(bool worldSpace) const
 {
-    const std::vector<int> movableIndices = GetMovableSelectedIndices();
-    if (movableIndices.empty())
+    const std::vector<int>& selectedIndices = m_selection.indices;
+    if (selectedIndices.empty())
     {
         return glm::mat4(1.0f);
     }
 
-    if (movableIndices.size() == 1)
+    if (selectedIndices.size() == 1)
     {
-        return GetGizmoWorldMatrix(movableIndices.front());
+        return GetGizmoWorldMatrix(selectedIndices.front());
     }
 
     return GetGroupSelectionGizmoWorldMatrix(
         m_objects,
-        movableIndices,
+        selectedIndices,
         m_selection.primary,
         worldSpace);
 }
@@ -441,21 +413,21 @@ void Scene::ApplySelectionGizmoWorldMatrix(
     const glm::mat4& oldGizmoWorldMatrix,
     const glm::mat4& newGizmoWorldMatrix)
 {
-    const std::vector<int> movableIndices = GetMovableSelectedIndices();
-    if (movableIndices.empty())
+    const std::vector<int>& selectedIndices = m_selection.indices;
+    if (selectedIndices.empty())
     {
         return;
     }
 
-    if (movableIndices.size() == 1)
+    if (selectedIndices.size() == 1)
     {
-        ApplyGizmoWorldMatrix(movableIndices.front(), newGizmoWorldMatrix);
+        ApplyGizmoWorldMatrix(selectedIndices.front(), newGizmoWorldMatrix);
         return;
     }
 
     ApplyGroupSelectionGizmoWorldMatrix(
         m_objects,
-        movableIndices,
+        selectedIndices,
         oldGizmoWorldMatrix,
         newGizmoWorldMatrix);
     MarkDirty();
@@ -676,7 +648,6 @@ std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, co
             node.hasMesh ? node.boundsMin : glm::vec3(0.0f),
             node.hasMesh ? node.boundsMax : glm::vec3(0.0f),
             node.transform,
-            true,
             node.hasMesh,
             node.hasMesh,
             parentSceneIndex,
@@ -829,7 +800,6 @@ int Scene::DuplicateObject(int objectIndex)
             source.GetLocalBoundsMin(),
             source.GetLocalBoundsMax(),
             source.GetTransform(),
-            source.IsMovable(),
             source.CastsShadow(),
             source.ReceivesShadow(),
             newParentIndex,

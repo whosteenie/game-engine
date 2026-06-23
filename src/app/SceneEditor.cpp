@@ -123,8 +123,7 @@ namespace
         TransformTool tool,
         TransformSpace space)
     {
-        const std::vector<int> movableIndices = scene.GetMovableSelectedIndices();
-        if (movableIndices.empty())
+        if (!scene.HasSelection())
         {
             return;
         }

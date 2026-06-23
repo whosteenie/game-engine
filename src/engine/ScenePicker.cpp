@@ -10,6 +10,7 @@
 #include <array>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 
 Ray ScreenPointToRay(
     const glm::vec2& screenPoint,
@@ -161,34 +162,6 @@ namespace
         const glm::vec3 localHit = localOrigin + localDirection * hitDistance;
         const glm::vec3 worldHit = glm::vec3(worldMatrix * glm::vec4(localHit, 1.0f));
         hitDistance = glm::length(worldHit - ray.origin);
-        return true;
-    }
-
-    bool TryWorldToScreenPoint(
-        const glm::vec3& worldPoint,
-        const glm::mat4& viewMatrix,
-        const glm::mat4& projectionMatrix,
-        const glm::vec2& viewportSize,
-        glm::vec2& outScreenPoint)
-    {
-        const glm::vec4 clipSpace = projectionMatrix * viewMatrix * glm::vec4(worldPoint, 1.0f);
-        if (clipSpace.w <= 1e-5f)
-        {
-            return false;
-        }
-
-        const glm::vec3 normalizedDeviceCoordinates = glm::vec3(clipSpace) / clipSpace.w;
-        constexpr float kFrustumMargin = 1.001f;
-        if (std::abs(normalizedDeviceCoordinates.x) > kFrustumMargin
-            || std::abs(normalizedDeviceCoordinates.y) > kFrustumMargin
-            || normalizedDeviceCoordinates.z < -1.0f || normalizedDeviceCoordinates.z > 1.0f)
-        {
-            return false;
-        }
-
-        outScreenPoint = glm::vec2(
-            (normalizedDeviceCoordinates.x * 0.5f + 0.5f) * viewportSize.x,
-            (1.0f - (normalizedDeviceCoordinates.y * 0.5f + 0.5f)) * viewportSize.y);
         return true;
     }
 

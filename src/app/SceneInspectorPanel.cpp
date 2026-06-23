@@ -496,16 +496,16 @@ namespace
         }
     }
 
-    void DrawMultiTransformSection(Scene& scene, const std::vector<int>& movableIndices)
+    void DrawMultiTransformSection(Scene& scene, const std::vector<int>& selectedIndices)
     {
         std::vector<glm::vec3> worldPositions;
         std::vector<glm::vec3> worldRotations;
         std::vector<glm::vec3> worldScales;
-        worldPositions.reserve(movableIndices.size());
-        worldRotations.reserve(movableIndices.size());
-        worldScales.reserve(movableIndices.size());
+        worldPositions.reserve(selectedIndices.size());
+        worldRotations.reserve(selectedIndices.size());
+        worldScales.reserve(selectedIndices.size());
 
-        for (int objectIndex : movableIndices)
+        for (int objectIndex : selectedIndices)
         {
             const WorldTransformState worldState = GetObjectWorldTransformState(scene, objectIndex);
             worldPositions.push_back(worldState.position);
@@ -517,7 +517,7 @@ namespace
         MultiVec3 rotationField = MultiVec3::Collect(worldRotations.data(), worldRotations.size());
         MultiVec3 scaleField = MultiVec3::Collect(worldScales.data(), worldScales.size());
 
-        ImGui::TextDisabled("World space. Edited values apply to all selected movables.");
+        ImGui::TextDisabled("World space. Edited values apply to all selected objects.");
         ImGui::PushID("MultiTransformTable");
         if (ImGui::BeginTable(
                 "##fields",
@@ -531,17 +531,17 @@ namespace
 
             if (DrawMultiVec3Row("Position", positionField, glm::vec3(0.0f), 0.1f))
             {
-                ApplyWorldPositionFieldToObjects(scene, movableIndices, positionField);
+                ApplyWorldPositionFieldToObjects(scene, selectedIndices, positionField);
             }
 
             if (DrawMultiVec3Row("Rotation", rotationField, glm::vec3(0.0f), 0.5f))
             {
-                ApplyWorldRotationFieldToObjects(scene, movableIndices, rotationField);
+                ApplyWorldRotationFieldToObjects(scene, selectedIndices, rotationField);
             }
 
             if (DrawMultiVec3Row("Scale", scaleField, glm::vec3(1.0f), 0.01f))
             {
-                ApplyWorldScaleFieldToObjects(scene, movableIndices, scaleField);
+                ApplyWorldScaleFieldToObjects(scene, selectedIndices, scaleField);
             }
 
             ImGui::EndTable();
@@ -555,10 +555,8 @@ namespace
 
         bool allRenderable = true;
         bool allEmpty = true;
-        std::vector<bool> movableValues;
         std::vector<bool> castShadowValues;
         std::vector<bool> receiveShadowValues;
-        movableValues.reserve(selectedIndices.size());
         castShadowValues.reserve(selectedIndices.size());
         receiveShadowValues.reserve(selectedIndices.size());
 
@@ -580,19 +578,6 @@ namespace
                 allRenderable = false;
                 allEmpty = false;
             }
-
-            movableValues.push_back(object.IsMovable());
-        }
-
-        MultiBool movableField = MultiBool::Collect(movableValues);
-        if (DrawMultiCheckbox("Movable", movableField))
-        {
-            for (int objectIndex : selectedIndices)
-            {
-                scene.GetObject(static_cast<std::size_t>(objectIndex)).SetMovable(movableField.value);
-            }
-
-            scene.MarkDirty();
         }
 
         if (allEmpty && !allRenderable)
@@ -662,13 +647,9 @@ namespace
             ImGui::EndPopup();
         }
 
-        if (transformOpen && selectedObject.IsMovable())
+        if (transformOpen)
         {
             DrawTransformSection(selectedObject, scene);
-        }
-        else if (transformOpen && !selectedObject.IsMovable())
-        {
-            ImGui::TextDisabled("Transform is read-only for non-movable objects.");
         }
 
         if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
@@ -682,13 +663,6 @@ namespace
         {
             if (selectedObject.IsRenderable())
             {
-                bool movable = selectedObject.IsMovable();
-                if (ImGui::Checkbox("Movable", &movable))
-                {
-                    selectedObject.SetMovable(movable);
-                    scene.MarkDirty();
-                }
-
                 bool castShadow = selectedObject.CastsShadow();
                 if (ImGui::Checkbox("Cast shadow", &castShadow))
                 {
@@ -706,12 +680,6 @@ namespace
             else
             {
                 ImGui::TextUnformatted("Empty object (transform container only).");
-                bool movable = selectedObject.IsMovable();
-                if (ImGui::Checkbox("Movable", &movable))
-                {
-                    selectedObject.SetMovable(movable);
-                    scene.MarkDirty();
-                }
             }
         }
 
@@ -734,15 +702,6 @@ namespace
             ImGui::TextDisabled("Primary: %s", scene.GetObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
         }
 
-        const std::vector<int> movableIndices = scene.GetMovableSelectedIndices();
-        if (!movableIndices.empty()
-            && movableIndices.size() < selectedIndices.size())
-        {
-            ImGui::TextDisabled(
-                "Transform edits apply to %zu movable object(s).",
-                movableIndices.size());
-        }
-
         if (ShouldShowInspectorSection(InspectorSectionKind::Transform, scene, selectedIndices))
         {
             const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
@@ -750,7 +709,7 @@ namespace
             {
                 if (ImGui::MenuItem("Reset Transform"))
                 {
-                    ResetTransformsOnObjects(scene, movableIndices);
+                    ResetTransformsOnObjects(scene, selectedIndices);
                 }
 
                 ImGui::EndPopup();
@@ -758,7 +717,7 @@ namespace
 
             if (transformOpen)
             {
-                DrawMultiTransformSection(scene, movableIndices);
+                DrawMultiTransformSection(scene, selectedIndices);
             }
         }
 

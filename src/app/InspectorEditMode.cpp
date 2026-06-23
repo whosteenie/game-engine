@@ -49,7 +49,7 @@ bool ShouldShowInspectorSection(
     case InspectorSectionKind::Name:
         return selectedIndices.size() == 1;
     case InspectorSectionKind::Transform:
-        return !scene.GetMovableSelectedIndices().empty();
+        return !selectedIndices.empty();
     case InspectorSectionKind::Object:
         return true;
     case InspectorSectionKind::Light:

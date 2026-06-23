@@ -111,7 +111,6 @@ public:
     void ApplySelectionGizmoWorldMatrix(
         const glm::mat4& oldGizmoWorldMatrix,
         const glm::mat4& newGizmoWorldMatrix);
-    std::vector<int> GetMovableSelectedIndices() const;
     void GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
     std::vector<int> GetChildren(int objectIndex) const;
     std::vector<int> GetRootObjectIndices() const;
