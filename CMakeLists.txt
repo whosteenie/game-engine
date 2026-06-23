@@ -294,6 +294,7 @@ add_executable(game-engine
     src/engine/GizmoGeometry.cpp
 
     src/engine/ShadowMap.cpp
+    src/engine/CascadedShadowMap.cpp
     src/engine/ShadowMapMath.cpp
     src/engine/RenderDebug.cpp
 
@@ -322,6 +323,8 @@ add_executable(game-engine
     src/engine/ScreenSpaceEffects.cpp
 
     src/engine/Shader.cpp
+
+    src/engine/ShaderCache.cpp
 
     src/engine/GridRenderer.cpp
 

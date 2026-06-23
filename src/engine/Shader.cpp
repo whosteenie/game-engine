@@ -5,6 +5,8 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
+#include <string>
 
 #include <glm/gtc/type_ptr.hpp>
 
@@ -16,6 +18,7 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath)
     unsigned int vertex = Compile(GL_VERTEX_SHADER, vertexSource.c_str());
     unsigned int fragment = Compile(GL_FRAGMENT_SHADER, fragmentSource.c_str());
     m_programID = Link(vertex, fragment);
+    m_isLinked = m_programID != 0;
 
     glDeleteShader(vertex);
     glDeleteShader(fragment);
@@ -23,12 +26,30 @@ Shader::Shader(const char* vertexPath, const char* fragmentPath)
 
 Shader::~Shader()
 {
-    glDeleteProgram(m_programID);
+    if (m_programID != 0)
+    {
+        glDeleteProgram(m_programID);
+    }
 }
 
 void Shader::Use() const
 {
+    if (!m_isLinked)
+    {
+        throw std::runtime_error("Attempted to use an unlinked shader program.");
+    }
+
     glUseProgram(m_programID);
+}
+
+unsigned int Shader::GetProgramId() const
+{
+    return m_programID;
+}
+
+bool Shader::IsLinked() const
+{
+    return m_isLinked;
 }
 
 void Shader::SetFloat(const char* name, float value) const
@@ -48,7 +69,19 @@ void Shader::SetIntArray(const char* name, const int* values, int count) const
 
 void Shader::SetFloatArray(const char* name, const float* values, int count) const
 {
-    glUniform1fv(glGetUniformLocation(m_programID, name), count, values);
+    GLint location = glGetUniformLocation(m_programID, name);
+    if (location < 0)
+    {
+        const std::string arrayName = std::string(name) + "[0]";
+        location = glGetUniformLocation(m_programID, arrayName.c_str());
+    }
+
+    if (location < 0)
+    {
+        return;
+    }
+
+    glUniform1fv(location, count, values);
 }
 
 void Shader::SetMat4(const char* name, const glm::mat4& value) const
@@ -58,6 +91,23 @@ void Shader::SetMat4(const char* name, const glm::mat4& value) const
         1,
         GL_FALSE,
         glm::value_ptr(value));
+}
+
+void Shader::SetMat4Array(const char* name, const glm::mat4* values, const int count) const
+{
+    GLint location = glGetUniformLocation(m_programID, name);
+    if (location < 0)
+    {
+        const std::string arrayName = std::string(name) + "[0]";
+        location = glGetUniformLocation(m_programID, arrayName.c_str());
+    }
+
+    if (location < 0)
+    {
+        return;
+    }
+
+    glUniformMatrix4fv(location, count, GL_FALSE, glm::value_ptr(values[0]));
 }
 
 void Shader::SetVec2(const char* name, const glm::vec2& value) const
@@ -95,13 +145,14 @@ unsigned int Shader::Compile(unsigned int type, const char* source) const
     glShaderSource(shader, 1, &source, nullptr);
     glCompileShader(shader);
 
-    int success;
+    int success = GL_FALSE;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &success);
     if (!success)
     {
-        char log[512];
-        glGetShaderInfoLog(shader, 512, nullptr, log);
-        std::cerr << "Shader compile error:\n" << log << "\n";
+        char log[1024];
+        glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+        glDeleteShader(shader);
+        throw std::runtime_error(std::string("Shader compile error:\n") + log);
     }
 
     return shader;
@@ -114,13 +165,14 @@ unsigned int Shader::Link(unsigned int vertex, unsigned int fragment) const
     glAttachShader(program, fragment);
     glLinkProgram(program);
 
-    int success;
+    int success = GL_FALSE;
     glGetProgramiv(program, GL_LINK_STATUS, &success);
     if (!success)
     {
-        char log[512];
-        glGetProgramInfoLog(program, 512, nullptr, log);
-        std::cerr << "Shader link error:\n" << log << "\n";
+        char log[1024];
+        glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+        glDeleteProgram(program);
+        throw std::runtime_error(std::string("Shader link error:\n") + log);
     }
 
     return program;

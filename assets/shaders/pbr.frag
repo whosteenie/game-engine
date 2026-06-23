@@ -1,5 +1,7 @@
 #version 330 core
-out vec4 FragColor;
+layout (location = 0) out vec4 oDirect;
+layout (location = 1) out vec4 oIndirect;
+layout (location = 2) out vec4 oNormal;
 
 in vec3 vFragPos;
 in vec3 vNormal;
@@ -7,8 +9,10 @@ in vec2 vTexCoord0;
 in vec2 vTexCoord1;
 in vec4 vTangent;
 in vec4 vFragPosLightSpace;
+in float vViewDepth;
 
 #define MAX_LIGHTS 8
+#define MAX_CASCADES 4
 
 const float PI = 3.14159265359;
 
@@ -50,10 +54,17 @@ uniform float uLightRange[MAX_LIGHTS];
 uniform float uLightInnerCutoffCos[MAX_LIGHTS];
 uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 
-uniform sampler2DShadow uShadowMap;
+uniform sampler2DArrayShadow uShadowMap;
+uniform mat4 uLightSpaceMatrices[MAX_CASCADES];
+uniform float uCascadeEndSplits[MAX_CASCADES];
+uniform float uCascadeBlendRatio;
+uniform int uCascadeCount;
+uniform mat4 uLightSpaceMatrix;
+uniform mat4 uView;
 uniform int uShadowLightIndex;
 uniform int uReceiveShadow;
 uniform int uOutputLinear;
+uniform int uSplitLightingOutput;
 uniform int uDebugMode;
 
 uniform samplerCube uIrradianceMap;
@@ -207,14 +218,10 @@ vec3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
-float CalcShadow(vec3 geometricNormal, vec3 lightDir)
+float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 normal, vec3 lightDir)
 {
-    if (uReceiveShadow == 0)
-    {
-        return 1.0;
-    }
-
-    vec3 projCoords = vFragPosLightSpace.xyz / vFragPosLightSpace.w;
+    vec4 lightSpace = uLightSpaceMatrices[cascadeIndex] * vec4(worldPos, 1.0);
+    vec3 projCoords = lightSpace.xyz / lightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
 
     if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
@@ -224,8 +231,7 @@ float CalcShadow(vec3 geometricNormal, vec3 lightDir)
         return 1.0;
     }
 
-    vec3 normal = normalize(geometricNormal);
-    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0));
+    vec2 texelSize = 1.0 / vec2(textureSize(uShadowMap, 0).xy);
     float texelSpan = max(texelSize.x, texelSize.y);
 
     float nDotL = clamp(dot(normal, lightDir), 0.0, 1.0);
@@ -236,18 +242,58 @@ float CalcShadow(vec3 geometricNormal, vec3 lightDir)
     float compareDepth = projCoords.z - bias;
 
     float shadow = 0.0;
-    for (int x = -1; x <= 1; ++x)
+    for (int x = -2; x <= 2; ++x)
     {
-        for (int y = -1; y <= 1; ++y)
+        for (int y = -2; y <= 2; ++y)
         {
             vec2 offset = vec2(x, y) * texelSize;
-            shadow += texture(uShadowMap, vec3(shadowUv + offset, compareDepth));
+            shadow += texture(
+                uShadowMap,
+                vec4(shadowUv + offset, float(cascadeIndex), compareDepth));
         }
     }
-    shadow /= 9.0;
 
-    // Soften penumbra transitions to reduce visible banding in soft shadows.
+    shadow /= 25.0;
     return shadow * shadow * (3.0 - 2.0 * shadow);
+}
+
+int SelectCascadeIndex(float viewDepth)
+{
+    int cascadeIndex = 0;
+    for (int i = 0; i < uCascadeCount - 1; ++i)
+    {
+        if (viewDepth > uCascadeEndSplits[i])
+        {
+            cascadeIndex = i + 1;
+        }
+    }
+    return cascadeIndex;
+}
+
+float CalcShadow(vec3 geometricNormal, vec3 lightDir)
+{
+    if (uReceiveShadow == 0)
+    {
+        return 1.0;
+    }
+
+    vec3 normal = normalize(geometricNormal);
+    int cascadeIndex = SelectCascadeIndex(vViewDepth);
+
+    if (uCascadeCount > 1 && cascadeIndex > 0)
+    {
+        float blendEnd = uCascadeEndSplits[cascadeIndex - 1];
+        float blendStart = blendEnd * (1.0 - uCascadeBlendRatio);
+        if (vViewDepth > blendStart)
+        {
+            float blendFactor = clamp((vViewDepth - blendStart) / max(blendEnd - blendStart, 1e-5), 0.0, 1.0);
+            float nearShadow = SampleCascadeShadow(cascadeIndex - 1, vFragPos, normal, lightDir);
+            float farShadow = SampleCascadeShadow(cascadeIndex, vFragPos, normal, lightDir);
+            return mix(nearShadow, farShadow, blendFactor);
+        }
+    }
+
+    return SampleCascadeShadow(cascadeIndex, vFragPos, normal, lightDir);
 }
 
 vec2 SelectTexCoord(int texCoordSet)
@@ -265,6 +311,16 @@ vec3 CalcNormalFromMap(vec3 normal, vec4 tangent, vec2 texCoord)
     mat3 tbn = mat3(tangentVector, bitangent, normal);
 
     return normalize(tbn * tangentNormal);
+}
+
+vec3 ToViewNormal(vec3 worldNormal)
+{
+    return normalize(mat3(uView) * worldNormal);
+}
+
+void WriteViewNormal(vec3 worldNormal)
+{
+    oNormal = vec4(ToViewNormal(worldNormal), 1.0);
 }
 
 void main()
@@ -397,17 +453,46 @@ void main()
             projCoords = projCoords * 0.5 + 0.5;
             debugColor = vec3(projCoords.z);
         }
+        else if (uDebugMode == 6)
+        {
+            int cascadeIndex = SelectCascadeIndex(vViewDepth);
+            if (cascadeIndex == 0)
+            {
+                debugColor = vec3(1.0, 0.2, 0.2);
+            }
+            else if (cascadeIndex == 1)
+            {
+                debugColor = vec3(0.2, 1.0, 0.2);
+            }
+            else
+            {
+                debugColor = vec3(0.2, 0.35, 1.0);
+            }
+        }
 
-        FragColor = vec4(debugColor, 1.0);
+        oDirect = vec4(debugColor, 1.0);
+        oIndirect = vec4(0.0);
+        WriteViewNormal(normal);
+        return;
+    }
+
+    if (uSplitLightingOutput != 0)
+    {
+        oDirect = vec4(directLighting, 1.0);
+        oIndirect = vec4(ambient, 1.0);
+        WriteViewNormal(normal);
         return;
     }
 
     if (uOutputLinear != 0)
     {
-        FragColor = vec4(result, 1.0);
+        oDirect = vec4(result, 1.0);
+        oIndirect = vec4(0.0);
     }
     else
     {
-        FragColor = vec4(LinearToSrgb(result), 1.0);
+        oDirect = vec4(LinearToSrgb(result), 1.0);
+        oIndirect = vec4(0.0);
     }
+    WriteViewNormal(normal);
 }

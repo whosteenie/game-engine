@@ -1,7 +1,9 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <array>
 #include <cmath>
+#include <vector>
 #include <cstdlib>
 #include <iostream>
 
@@ -64,6 +66,46 @@ int main()
     ExpectTrue(
         snapMagnitude < (2.0f / 4096.0f),
         "Texel snap offset should be smaller than one shadow texel in NDC");
+
+    const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(3, 0.1f, 100.0f);
+    ExpectTrue(cascadeSplits.size() == 4U, "Three cascades should produce four split boundaries");
+    ExpectNear(cascadeSplits.front(), 0.1f, 1e-4f, "First cascade split should start at the near plane");
+    ExpectNear(cascadeSplits.back(), 100.0f, 1e-4f, "Last cascade split should end at the far plane");
+    ExpectTrue(
+        cascadeSplits[1] > cascadeSplits[0] && cascadeSplits[2] > cascadeSplits[1],
+        "Cascade split distances should be monotonically increasing");
+
+    const glm::mat4 inverseView = glm::inverse(glm::lookAt(
+        glm::vec3(0.0f, 2.0f, 6.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f)));
+    const std::array<glm::vec3, 8> nearFrustumCorners = ComputeCascadeFrustumCorners(
+        inverseView,
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[0],
+        cascadeSplits[1]);
+    const std::array<glm::vec3, 8> farFrustumCorners = ComputeCascadeFrustumCorners(
+        inverseView,
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[2],
+        cascadeSplits[3]);
+
+    const ShadowLightSpaceSetup nearCascadeSetup = BuildShadowLightSpace(
+        lightDirection,
+        ComputeBoundsMin(nearFrustumCorners),
+        ComputeBoundsMax(nearFrustumCorners),
+        4096);
+    const ShadowLightSpaceSetup farCascadeSetup = BuildShadowLightSpace(
+        lightDirection,
+        ComputeBoundsMin(farFrustumCorners),
+        ComputeBoundsMax(farFrustumCorners),
+        4096);
+
+    ExpectTrue(
+        nearCascadeSetup.texelWorldSizeX < farCascadeSetup.texelWorldSizeX,
+        "Near cascade texels should be smaller than the farthest cascade");
 
     if (gFailures == 0)
     {

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <glm/glm.hpp>
+#include <vector>
 
 struct ShadowLightSpaceSetup
 {
@@ -25,3 +27,26 @@ ShadowLightSpaceSetup BuildShadowLightSpace(
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition);
 
 float ComputeShadowBias(float nDotL, float texelSpan);
+
+std::vector<float> ComputeCascadeSplitDistances(
+    int cascadeCount,
+    float nearPlane,
+    float farPlane,
+    float splitLambda = 0.5f);
+
+std::array<glm::vec3, 8> ComputeCascadeFrustumCorners(
+    const glm::mat4& inverseViewMatrix,
+    float aspect,
+    float fovDegrees,
+    float nearPlane,
+    float farPlane);
+
+glm::vec3 ComputeBoundsMin(const std::array<glm::vec3, 8>& points);
+
+glm::vec3 ComputeBoundsMax(const std::array<glm::vec3, 8>& points);
+
+float ComputeShadowDrawDistance(
+    const glm::vec3& cameraPosition,
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    float margin = 4.0f);

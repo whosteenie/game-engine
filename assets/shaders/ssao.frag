@@ -4,12 +4,11 @@ out float FragOcclusion;
 in vec2 vTexCoord;
 
 uniform sampler2D uDepthMap;
+uniform sampler2D uNormalMap;
 uniform sampler2D uNoiseMap;
 
 uniform mat4 uProjection;
 uniform mat4 uInvProjection;
-uniform mat4 uView;
-uniform vec3 uLightDirection;
 
 uniform vec3 uSamples[32];
 uniform float uRadius;
@@ -17,6 +16,7 @@ uniform float uBias;
 uniform int uKernelSize;
 uniform float uNoiseScaleX;
 uniform float uNoiseScaleY;
+uniform int uUseGeometryNormals;
 
 vec3 ReconstructViewPos(vec2 texCoord, float depth)
 {
@@ -40,6 +40,20 @@ vec3 ReconstructViewNormal(vec2 texCoord, float depth)
     return faceforward(normal, viewDir, normal);
 }
 
+vec3 SampleViewNormal(vec2 texCoord, float depth)
+{
+    if (uUseGeometryNormals != 0)
+    {
+        vec3 storedNormal = texture(uNormalMap, texCoord).xyz;
+        if (dot(storedNormal, storedNormal) > 1e-4)
+        {
+            return normalize(storedNormal);
+        }
+    }
+
+    return ReconstructViewNormal(texCoord, depth);
+}
+
 void main()
 {
     float depth = texture(uDepthMap, vTexCoord).r;
@@ -50,15 +64,7 @@ void main()
     }
 
     vec3 fragPos = ReconstructViewPos(vTexCoord, depth);
-    vec3 normal = ReconstructViewNormal(vTexCoord, depth);
-    vec3 worldNormal = normalize(mat3(transpose(uView)) * normal);
-
-    if (dot(worldNormal, normalize(uLightDirection)) > 0.65)
-    {
-        FragOcclusion = 1.0;
-        return;
-    }
-
+    vec3 normal = SampleViewNormal(vTexCoord, depth);
     vec3 randomVec = texture(uNoiseMap, vTexCoord * vec2(uNoiseScaleX, uNoiseScaleY)).xyz;
     vec3 tangent = normalize(randomVec - normal * dot(randomVec, normal));
     vec3 bitangent = cross(normal, tangent);

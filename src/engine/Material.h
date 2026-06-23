@@ -6,11 +6,11 @@
 #include <memory>
 #include <string>
 
+class Shader;
 class Camera;
 class IBL;
 class SceneLighting;
-class Shader;
-class ShadowMap;
+class CascadedShadowMap;
 class Texture;
 
 class Material
@@ -30,7 +30,7 @@ public:
         const SceneLighting& lighting,
         const IBL& ibl,
         const glm::mat4& model,
-        const ShadowMap* shadowMap = nullptr,
+        const CascadedShadowMap* shadowMap = nullptr,
         bool receiveShadow = true,
         bool outputLinear = false,
         RenderDebugMode debugMode = RenderDebugMode::None) const;
@@ -85,7 +85,7 @@ public:
 private:
     void BindMaps() const;
 
-    std::unique_ptr<Shader> m_shader;
+    std::shared_ptr<Shader> m_shader;
     glm::vec3 m_albedo;
     float m_roughness;
     float m_metallic;

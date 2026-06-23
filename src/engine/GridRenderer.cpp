@@ -58,7 +58,7 @@ void GridRenderer::BuildGridGeometry(float halfExtent)
     glBindVertexArray(0);
 }
 
-void GridRenderer::Draw(const Camera& camera, bool outputLinear) const
+void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
 {
     m_shader->Use();
     m_shader->SetMat4("uView", camera.GetViewMatrix());
@@ -68,6 +68,7 @@ void GridRenderer::Draw(const Camera& camera, bool outputLinear) const
     m_shader->SetFloat("uCellSize", m_cellSize);
     m_shader->SetFloat("uMajorInterval", m_majorInterval);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
+    m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
 
     GLboolean blendEnabled = glIsEnabled(GL_BLEND);
     GLboolean depthMaskEnabled = GL_TRUE;
@@ -84,6 +85,13 @@ void GridRenderer::Draw(const Camera& camera, bool outputLinear) const
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    if (outputLinear)
+    {
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(1, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glColorMaski(2, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LEQUAL);
     glDepthMask(GL_FALSE);
@@ -92,6 +100,14 @@ void GridRenderer::Draw(const Camera& camera, bool outputLinear) const
     glBindVertexArray(m_vao);
     glDrawElements(GL_TRIANGLES, m_indexCount, GL_UNSIGNED_INT, nullptr);
     glBindVertexArray(0);
+
+    if (outputLinear)
+    {
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(2, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
 
     glDepthMask(depthMaskEnabled);
 

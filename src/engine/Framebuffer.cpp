@@ -15,6 +15,18 @@ void Framebuffer::Destroy()
         m_depthTexture = 0;
     }
 
+    if (m_indirectColorTexture != 0)
+    {
+        glDeleteTextures(1, &m_indirectColorTexture);
+        m_indirectColorTexture = 0;
+    }
+
+    if (m_normalColorTexture != 0)
+    {
+        glDeleteTextures(1, &m_normalColorTexture);
+        m_normalColorTexture = 0;
+    }
+
     if (m_colorTexture != 0)
     {
         glDeleteTextures(1, &m_colorTexture);
@@ -29,9 +41,10 @@ void Framebuffer::Destroy()
 
     m_width = 0;
     m_height = 0;
+    m_colorMode = FramebufferColorMode::Single;
 }
 
-void Framebuffer::Create(int width, int height)
+void Framebuffer::Create(const int width, const int height)
 {
     glGenFramebuffers(1, &m_fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
@@ -44,6 +57,38 @@ void Framebuffer::Create(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_colorTexture, 0);
+
+    if (m_colorMode == FramebufferColorMode::SplitDirectIndirect)
+    {
+        glGenTextures(1, &m_indirectColorTexture);
+        glBindTexture(GL_TEXTURE_2D, m_indirectColorTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, m_indirectColorTexture, 0);
+
+        glGenTextures(1, &m_normalColorTexture);
+        glBindTexture(GL_TEXTURE_2D, m_normalColorTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, m_normalColorTexture, 0);
+
+        const unsigned int attachments[] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1,
+            GL_COLOR_ATTACHMENT2};
+        glDrawBuffers(3, attachments);
+    }
+    else
+    {
+        const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
+        glDrawBuffers(1, attachments);
+    }
 
     glGenTextures(1, &m_depthTexture);
     glBindTexture(GL_TEXTURE_2D, m_depthTexture);
@@ -63,8 +108,12 @@ void Framebuffer::Create(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_depthTexture, 0);
 
-    const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
-    glDrawBuffers(1, attachments);
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        Destroy();
+        return;
+    }
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -73,25 +122,51 @@ void Framebuffer::Create(int width, int height)
     m_height = height;
 }
 
-void Framebuffer::Resize(int width, int height)
+void Framebuffer::Resize(const int width, const int height, const FramebufferColorMode colorMode)
 {
     if (width <= 0 || height <= 0)
     {
         return;
     }
 
-    if (m_width == width && m_height == height && IsValid())
+    if (m_width == width && m_height == height && IsValid() && m_colorMode == colorMode)
     {
         return;
     }
 
+    m_colorMode = colorMode;
     Destroy();
+    m_colorMode = colorMode;
     Create(width, height);
 }
 
 void Framebuffer::Bind() const
 {
     glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
+
+    if (!IsValid())
+    {
+        return;
+    }
+
+    if (m_colorMode == FramebufferColorMode::SplitDirectIndirect)
+    {
+        const unsigned int attachments[] = {
+            GL_COLOR_ATTACHMENT0,
+            GL_COLOR_ATTACHMENT1,
+            GL_COLOR_ATTACHMENT2};
+        glDrawBuffers(3, attachments);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(0, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(1, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glColorMaski(2, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
+    else
+    {
+        const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
+        glDrawBuffers(1, attachments);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    }
 }
 
 void Framebuffer::Unbind() const
@@ -107,6 +182,16 @@ unsigned int Framebuffer::GetFramebuffer() const
 unsigned int Framebuffer::GetColorTexture() const
 {
     return m_colorTexture;
+}
+
+unsigned int Framebuffer::GetIndirectColorTexture() const
+{
+    return m_indirectColorTexture;
+}
+
+unsigned int Framebuffer::GetNormalColorTexture() const
+{
+    return m_normalColorTexture;
 }
 
 unsigned int Framebuffer::GetDepthTexture() const
@@ -127,4 +212,14 @@ int Framebuffer::GetHeight() const
 bool Framebuffer::IsValid() const
 {
     return m_fbo != 0;
+}
+
+bool Framebuffer::HasSplitLighting() const
+{
+    return m_colorMode == FramebufferColorMode::SplitDirectIndirect && m_indirectColorTexture != 0;
+}
+
+bool Framebuffer::HasGeometryNormals() const
+{
+    return HasSplitLighting() && m_normalColorTexture != 0;
 }

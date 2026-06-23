@@ -179,6 +179,26 @@ void Camera::FrameTarget(const glm::vec3& target, float boundsRadius)
     SetOrientationFromDirection(target - m_position);
 }
 
+float Camera::GetNearPlane() const
+{
+    return m_near;
+}
+
+float Camera::GetFarPlane() const
+{
+    return m_far;
+}
+
+float Camera::GetFov() const
+{
+    return m_fov;
+}
+
+float Camera::GetAspect() const
+{
+    return m_aspect;
+}
+
 float Camera::ComputeFitDistance(float boundsRadius, float padding) const
 {
     const float halfFovY = glm::radians(m_fov * 0.5f);

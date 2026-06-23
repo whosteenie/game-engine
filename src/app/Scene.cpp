@@ -28,7 +28,7 @@
 #include "engine/SceneLighting.h"
 #include "engine/RenderDebug.h"
 #include "engine/ScreenSpaceEffects.h"
-#include "engine/ShadowMap.h"
+#include "engine/CascadedShadowMap.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -80,7 +80,7 @@ Scene::Scene()
       m_colliderGizmos(std::make_unique<ColliderGizmoRenderer>()),
       m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
       m_sceneEditor(std::make_unique<SceneEditor>()),
-      m_shadowMap(std::make_unique<ShadowMap>()),
+      m_shadowMap(std::make_unique<CascadedShadowMap>()),
       m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
       m_screenSpaceEffects(std::make_unique<ScreenSpaceEffects>()),
       m_shadowDepthShader(std::make_unique<Shader>(
@@ -1956,7 +1956,7 @@ void Scene::Update(
         viewport);
 }
 
-void Scene::RenderShadowPass() const
+void Scene::RenderShadowPass(const Camera& camera) const
 {
     glm::vec3 boundsMin(std::numeric_limits<float>::max());
     glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
@@ -1976,31 +1976,38 @@ void Scene::RenderShadowPass() const
         boundsMax = glm::max(boundsMax, objectBoundsMax);
     }
 
-    m_shadowMap->BeginPass(GetSunDirection(), boundsMin, boundsMax);
+    m_shadowMap->BeginFrame(camera, GetSunDirection(), boundsMin, boundsMax);
 
-    m_shadowDepthShader->Use();
-    m_shadowDepthShader->SetMat4("uLightSpaceMatrix", m_shadowMap->GetLightSpaceMatrix());
-
-    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
+    for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::CascadeCount; ++cascadeIndex)
     {
-        const SceneObject& object = m_objects[objectIndex];
-        if (!object.IsRenderable() || !object.CastsShadow())
-        {
-            continue;
-        }
+        m_shadowMap->BeginCascade(cascadeIndex);
 
-        const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-        if (object.GetMaterial().IsDoubleSided())
-        {
-            glDisable(GL_CULL_FACE);
-        }
+        m_shadowDepthShader->Use();
+        m_shadowDepthShader->SetMat4(
+            "uLightSpaceMatrix",
+            m_shadowMap->GetLightSpaceMatrix(cascadeIndex));
 
-        m_shadowDepthShader->SetMat4("uModel", GetWorldMatrix(static_cast<int>(objectIndex)));
-        object.GetMesh()->Draw();
-
-        if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
+        for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
         {
-            glEnable(GL_CULL_FACE);
+            const SceneObject& object = m_objects[objectIndex];
+            if (!object.IsRenderable() || !object.CastsShadow())
+            {
+                continue;
+            }
+
+            const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
+            if (object.GetMaterial().IsDoubleSided())
+            {
+                glDisable(GL_CULL_FACE);
+            }
+
+            m_shadowDepthShader->SetMat4("uModel", GetWorldMatrix(static_cast<int>(objectIndex)));
+            object.GetMesh()->Draw();
+
+            if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
+            {
+                glEnable(GL_CULL_FACE);
+            }
         }
     }
 }
@@ -2025,15 +2032,18 @@ void Scene::Render(
 
     SyncLighting();
 
-    RenderShadowPass();
-    m_shadowMap->EndPass();
+    RenderShadowPass(camera);
+    m_shadowMap->EndFrame();
+
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glViewport(0, 0, viewportWidth, viewportHeight);
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
 
     RenderDebugMode materialDebugMode = RenderDebugMode::None;
     const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
     if (activeDebugMode >= RenderDebugMode::ShadowFactor &&
-        activeDebugMode <= RenderDebugMode::LightSpaceDepth)
+        activeDebugMode <= RenderDebugMode::CascadeIndex)
     {
         materialDebugMode = activeDebugMode;
     }
@@ -2043,8 +2053,15 @@ void Scene::Render(
         m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
         m_screenSpaceEffects->BeginScenePass();
     }
+    else if (renderToTarget)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        glViewport(0, 0, viewportWidth, viewportHeight);
+    }
 
-    glViewport(0, 0, viewportWidth, viewportHeight);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LEQUAL);
 
     for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
     {

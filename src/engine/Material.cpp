@@ -6,17 +6,67 @@
 #include "engine/RenderDebug.h"
 #include "engine/SceneLighting.h"
 #include "engine/Shader.h"
-#include "engine/ShadowMap.h"
+#include "engine/ShaderCache.h"
+#include "engine/CascadedShadowMap.h"
 #include "engine/Texture.h"
 
+#include <array>
 #include <glm/glm.hpp>
 
 namespace
 {
+    constexpr unsigned int ShadowMapUnit = 8;
     constexpr unsigned int AlbedoMapUnit = 4;
     constexpr unsigned int NormalMapUnit = 5;
     constexpr unsigned int AoMapUnit = 6;
     constexpr unsigned int RoughnessMapUnit = 7;
+
+    struct DefaultMaterialTextures
+    {
+        std::shared_ptr<Texture> white;
+        std::shared_ptr<Texture> normal;
+        std::shared_ptr<Texture> ao;
+        std::shared_ptr<Texture> roughness;
+    };
+
+    const DefaultMaterialTextures& GetDefaultMaterialTextures()
+    {
+        static const DefaultMaterialTextures defaults = []() {
+            DefaultMaterialTextures textures;
+            const unsigned char whitePixel[] = {255, 255, 255, 255};
+            const unsigned char normalPixel[] = {128, 128, 255, 255};
+            const unsigned char aoPixel[] = {255, 255, 255, 255};
+            const unsigned char roughnessPixel[] = {128, 128, 128, 255};
+
+            textures.white = Texture::CreateFromPixels(
+                whitePixel,
+                1,
+                1,
+                4,
+                TextureColorSpace::SRGB);
+            textures.normal = Texture::CreateFromPixels(
+                normalPixel,
+                1,
+                1,
+                4,
+                TextureColorSpace::Linear);
+            textures.ao = Texture::CreateFromPixels(
+                aoPixel,
+                1,
+                1,
+                4,
+                TextureColorSpace::Linear);
+            textures.roughness = Texture::CreateFromPixels(
+                roughnessPixel,
+                1,
+                1,
+                4,
+                TextureColorSpace::Linear);
+            return textures;
+        }();
+
+        return defaults;
+    }
 }
 
 Material::Material(
@@ -25,7 +75,7 @@ Material::Material(
     const glm::vec3& albedo,
     float roughness,
     float metallic)
-    : m_shader(std::make_unique<Shader>(vertexShaderPath, fragmentShaderPath)),
+    : m_shader(ShaderCache::Load(vertexShaderPath, fragmentShaderPath)),
       m_albedo(albedo),
       m_roughness(roughness),
       m_metallic(metallic)
@@ -39,7 +89,7 @@ void Material::Apply(
     const SceneLighting& lighting,
     const IBL& ibl,
     const glm::mat4& model,
-    const ShadowMap* shadowMap,
+    const CascadedShadowMap* shadowMap,
     const bool receiveShadow,
     const bool outputLinear,
     const RenderDebugMode debugMode) const
@@ -53,6 +103,7 @@ void Material::Apply(
     m_shader->SetFloat("uRoughness", m_roughness);
     m_shader->SetFloat("uMetallic", m_metallic);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
+    m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
     m_shader->SetInt("uDebugMode", static_cast<int>(debugMode));
 
     m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
@@ -68,9 +119,25 @@ void Material::Apply(
 
     if (shadowMap != nullptr)
     {
-        m_shader->SetMat4("uLightSpaceMatrix", shadowMap->GetLightSpaceMatrix());
-        shadowMap->BindDepthTexture(0);
-        m_shader->SetInt("uShadowMap", 0);
+        const std::array<glm::mat4, CascadedShadowMap::CascadeCount>& lightSpaceMatrices =
+            shadowMap->GetLightSpaceMatrices();
+        m_shader->SetMat4("uLightSpaceMatrix", lightSpaceMatrices[0]);
+        m_shader->SetMat4Array(
+            "uLightSpaceMatrices",
+            lightSpaceMatrices.data(),
+            CascadedShadowMap::CascadeCount);
+
+        const std::array<float, CascadedShadowMap::CascadeCount>& cascadeEndSplits =
+            shadowMap->GetCascadeEndSplits();
+        m_shader->SetFloatArray(
+            "uCascadeEndSplits",
+            cascadeEndSplits.data(),
+            CascadedShadowMap::CascadeCount);
+        m_shader->SetFloat("uCascadeBlendRatio", CascadedShadowMap::CascadeBlendRatio);
+        m_shader->SetInt("uCascadeCount", CascadedShadowMap::CascadeCount);
+
+        shadowMap->BindDepthTexture(ShadowMapUnit);
+        m_shader->SetInt("uShadowMap", static_cast<int>(ShadowMapUnit));
         m_shader->SetInt("uReceiveShadow", receiveShadow ? 1 : 0);
     }
     else
@@ -85,29 +152,23 @@ void Material::Apply(
 
 void Material::BindMaps() const
 {
-    if (HasAlbedoMap())
-    {
-        m_albedoMap->Bind(AlbedoMapUnit);
-        m_shader->SetInt("uAlbedoMap", static_cast<int>(AlbedoMapUnit));
-    }
+    const DefaultMaterialTextures& defaults = GetDefaultMaterialTextures();
 
-    if (HasNormalMap())
-    {
-        m_normalMap->Bind(NormalMapUnit);
-        m_shader->SetInt("uNormalMap", static_cast<int>(NormalMapUnit));
-    }
+    const Texture& albedoTexture = HasAlbedoMap() ? *m_albedoMap : *defaults.white;
+    albedoTexture.Bind(AlbedoMapUnit);
+    m_shader->SetInt("uAlbedoMap", static_cast<int>(AlbedoMapUnit));
 
-    if (HasAoMap())
-    {
-        m_aoMap->Bind(AoMapUnit);
-        m_shader->SetInt("uAoMap", static_cast<int>(AoMapUnit));
-    }
+    const Texture& normalTexture = HasNormalMap() ? *m_normalMap : *defaults.normal;
+    normalTexture.Bind(NormalMapUnit);
+    m_shader->SetInt("uNormalMap", static_cast<int>(NormalMapUnit));
 
-    if (HasRoughnessMap())
-    {
-        m_roughnessMap->Bind(RoughnessMapUnit);
-        m_shader->SetInt("uRoughnessMap", static_cast<int>(RoughnessMapUnit));
-    }
+    const Texture& aoTexture = HasAoMap() ? *m_aoMap : *defaults.ao;
+    aoTexture.Bind(AoMapUnit);
+    m_shader->SetInt("uAoMap", static_cast<int>(AoMapUnit));
+
+    const Texture& roughnessTexture = HasRoughnessMap() ? *m_roughnessMap : *defaults.roughness;
+    roughnessTexture.Bind(RoughnessMapUnit);
+    m_shader->SetInt("uRoughnessMap", static_cast<int>(RoughnessMapUnit));
 }
 
 void Material::SetRoughnessMap(std::shared_ptr<Texture> texture, std::string path)

@@ -273,6 +273,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::AmbientIbl),
             RenderDebugModeLabel(RenderDebugMode::LightSpaceUv),
             RenderDebugModeLabel(RenderDebugMode::LightSpaceDepth),
+            RenderDebugModeLabel(RenderDebugMode::CascadeIndex),
             RenderDebugModeLabel(RenderDebugMode::Ssao),
             RenderDebugModeLabel(RenderDebugMode::ContactShadows),
             RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),

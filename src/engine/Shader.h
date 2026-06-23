@@ -15,12 +15,17 @@ public:
     void SetIntArray(const char* name, const int* values, int count) const;
     void SetFloatArray(const char* name, const float* values, int count) const;
     void SetMat4(const char* name, const glm::mat4& value) const;
+    void SetMat4Array(const char* name, const glm::mat4* values, int count) const;
     void SetVec2(const char* name, const glm::vec2& value) const;
     void SetVec3(const char* name, const glm::vec3& value) const;
     void SetVec3Array(const char* name, const glm::vec3* values, int count) const;
 
+    unsigned int GetProgramId() const;
+    bool IsLinked() const;
+
 private:
-    unsigned int m_programID;
+    unsigned int m_programID = 0;
+    bool m_isLinked = false;
 
     std::string ReadFile(const char* filepath) const;
     unsigned int Compile(unsigned int type, const char* source) const;

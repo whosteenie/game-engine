@@ -10,7 +10,7 @@
 #include "engine/SceneLighting.h"
 #include "engine/ScenePrimitive.h"
 #include "engine/Shader.h"
-#include "engine/ShadowMap.h"
+#include "engine/CascadedShadowMap.h"
 #include "engine/IBL.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
@@ -209,7 +209,7 @@ private:
     void SyncLighting() const;
     void SetupObjects();
     glm::vec3 GetSunDirection() const;
-    void RenderShadowPass() const;
+    void RenderShadowPass(const Camera& camera) const;
 
     int GetNextObjectNumber(ScenePrimitive primitive);
     void RemapParentIndicesAfterRemoval(int removedIndex);
@@ -233,7 +233,7 @@ private:
     std::unique_ptr<ColliderGizmoRenderer> m_colliderGizmos;
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
     std::unique_ptr<SceneEditor> m_sceneEditor;
-    std::unique_ptr<ShadowMap> m_shadowMap;
+    std::unique_ptr<CascadedShadowMap> m_shadowMap;
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;

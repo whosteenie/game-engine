@@ -20,21 +20,6 @@ vec3 ReconstructViewPos(vec2 texCoord, float depth)
     return viewSpace.xyz / viewSpace.w;
 }
 
-vec3 ReconstructViewNormal(vec2 texCoord, float depth)
-{
-    vec2 texelSize = 1.0 / vec2(textureSize(uDepthMap, 0));
-    vec3 posCenter = ReconstructViewPos(texCoord, depth);
-    vec3 posX = ReconstructViewPos(
-        texCoord + vec2(texelSize.x, 0.0),
-        texture(uDepthMap, texCoord + vec2(texelSize.x, 0.0)).r);
-    vec3 posY = ReconstructViewPos(
-        texCoord + vec2(0.0, texelSize.y),
-        texture(uDepthMap, texCoord + vec2(0.0, texelSize.y)).r);
-    vec3 normal = normalize(cross(posX - posCenter, posY - posCenter));
-    vec3 viewDir = normalize(-posCenter);
-    return faceforward(normal, viewDir, normal);
-}
-
 void main()
 {
     float depth = texture(uDepthMap, vTexCoord).r;
@@ -45,39 +30,7 @@ void main()
     }
 
     vec3 viewPos = ReconstructViewPos(vTexCoord, depth);
-    vec3 normal = ReconstructViewNormal(vTexCoord, depth);
-    vec3 worldNormal = normalize(mat3(transpose(uView)) * normal);
-    vec3 lightDir = normalize(uLightDirection);
-
-    if (worldNormal.y > 0.85)
-    {
-        FragShadow = 1.0;
-        return;
-    }
-
-    float worldLightFacing = dot(worldNormal, lightDir);
-    if (worldLightFacing > 0.55)
-    {
-        FragShadow = 1.0;
-        return;
-    }
-
-    // Surfaces already in shadow from the directional light are handled by the shadow map.
-    // Ray-marching here hits the object's own depth and produces screen-space artifacts.
-    if (worldLightFacing < 0.15)
-    {
-        FragShadow = 1.0;
-        return;
-    }
-
-    vec3 viewLightDir = normalize((uView * vec4(lightDir, 0.0)).xyz);
-    float facingLight = dot(normal, viewLightDir);
-
-    if (facingLight < 0.15)
-    {
-        FragShadow = 1.0;
-        return;
-    }
+    vec3 viewLightDir = normalize((uView * vec4(normalize(uLightDirection), 0.0)).xyz);
 
     float stepSize = uMaxDistance / float(uStepCount);
     float shadow = 1.0;
@@ -122,7 +75,7 @@ void main()
         if (sceneViewPos.z > rayViewPos.z - kThickness)
         {
             float fade = 1.0 - (float(step) / float(uStepCount));
-            shadow = mix(1.0, 0.0, fade * facingLight);
+            shadow = mix(1.0, 0.0, fade);
             break;
         }
     }

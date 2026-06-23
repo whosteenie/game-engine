@@ -296,7 +296,7 @@ void ScreenSpaceEffects::Resize(int width, int height)
         return;
     }
 
-    m_sceneFramebuffer->Resize(width, height);
+    m_sceneFramebuffer->Resize(width, height, FramebufferColorMode::SplitDirectIndirect);
     ResizeSingleChannelTargets(width, height);
     ResizeHdrColorTarget(width, height);
     ResizeBloomTargets(width, height);
@@ -307,12 +307,30 @@ void ScreenSpaceEffects::Resize(int width, int height)
 void ScreenSpaceEffects::BeginScenePass() const
 {
     m_sceneFramebuffer->Bind();
-    glClearColor(
+
+    const float directClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+  const float indirectClear[] = {
         SrgbChannelToLinear(kBackgroundSrgb[0]),
         SrgbChannelToLinear(kBackgroundSrgb[1]),
         SrgbChannelToLinear(kBackgroundSrgb[2]),
-        1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        1.0f};
+
+    if (m_sceneFramebuffer->HasSplitLighting())
+    {
+        const float normalClear[] = {0.0f, 0.0f, 1.0f, 1.0f};
+        glClearBufferfv(GL_COLOR, 0, directClear);
+        glClearBufferfv(GL_COLOR, 1, indirectClear);
+        if (m_sceneFramebuffer->HasGeometryNormals())
+        {
+            glClearBufferfv(GL_COLOR, 2, normalClear);
+        }
+        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
+    else
+    {
+        glClearColor(indirectClear[0], indirectClear[1], indirectClear[2], indirectClear[3]);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
 }
 
 void ScreenSpaceEffects::EndScenePass() const
@@ -340,10 +358,10 @@ void ScreenSpaceEffects::Apply(
     }
 
     const bool runSsao = m_ssaoEnabled &&
-        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::LightSpaceDepth);
+        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::CascadeIndex);
     const bool runContactShadows = m_contactShadowsEnabled &&
         !directionalShadowLightActive &&
-        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::LightSpaceDepth);
+        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::CascadeIndex);
     const bool runScreenSpace = runSsao || runContactShadows;
 
     GLint previousFramebuffer = 0;
@@ -372,11 +390,13 @@ void ScreenSpaceEffects::Apply(
 
         m_ssaoShader->Use();
         m_ssaoShader->SetInt("uDepthMap", 0);
+        m_ssaoShader->SetInt("uNormalMap", 2);
         m_ssaoShader->SetInt("uNoiseMap", 1);
+        m_ssaoShader->SetInt(
+            "uUseGeometryNormals",
+            m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
         m_ssaoShader->SetMat4("uProjection", projectionMatrix);
         m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssaoShader->SetMat4("uView", viewMatrix);
-        m_ssaoShader->SetVec3("uLightDirection", glm::normalize(lightDirection));
         m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
         m_ssaoShader->SetFloat("uBias", m_ssaoBias);
         m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
@@ -388,6 +408,8 @@ void ScreenSpaceEffects::Apply(
         glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetNormalColorTexture());
         DrawFullscreenQuad();
 
         glBindFramebuffer(GL_FRAMEBUFFER, m_ssaoBlurFbo);
@@ -438,7 +460,7 @@ void ScreenSpaceEffects::Apply(
 
     unsigned int hdrColorTexture = m_sceneFramebuffer->GetColorTexture();
 
-    if (runScreenSpace)
+    if (m_sceneFramebuffer->HasSplitLighting())
     {
         glBindFramebuffer(GL_FRAMEBUFFER, m_hdrCompositeFbo);
         glViewport(0, 0, m_width, m_height);
@@ -446,10 +468,49 @@ void ScreenSpaceEffects::Apply(
         glClear(GL_COLOR_BUFFER_BIT);
 
         m_compositeShader->Use();
-        m_compositeShader->SetInt("uSceneColor", 0);
+        m_compositeShader->SetInt("uDirectLighting", 0);
+        m_compositeShader->SetInt("uIndirectLighting", 1);
+        m_compositeShader->SetInt("uDepthMap", 4);
+        m_compositeShader->SetInt("uSsaoMap", 2);
+        m_compositeShader->SetInt("uContactShadowMap", 3);
+        m_compositeShader->SetInt("uUseSplitLighting", 1);
+        m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
+        m_compositeShader->SetInt("uUseContactShadows", runContactShadows ? 1 : 0);
+        m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
+        m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
+        m_compositeShader->SetFloat("uContactStrength", m_contactStrength);
+        m_compositeShader->SetInt(
+            "uDebugOcclusionOnly",
+            m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetIndirectColorTexture());
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
+        glActiveTexture(GL_TEXTURE3);
+        glBindTexture(GL_TEXTURE_2D, m_contactBlurTexture);
+        glActiveTexture(GL_TEXTURE4);
+        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
+        DrawFullscreenQuad();
+
+        hdrColorTexture = m_hdrCompositeTexture;
+    }
+    else if (runScreenSpace)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, m_hdrCompositeFbo);
+        glViewport(0, 0, m_width, m_height);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        m_compositeShader->Use();
+        m_compositeShader->SetInt("uDirectLighting", 0);
+        m_compositeShader->SetInt("uIndirectLighting", 0);
         m_compositeShader->SetInt("uDepthMap", 3);
         m_compositeShader->SetInt("uSsaoMap", 1);
         m_compositeShader->SetInt("uContactShadowMap", 2);
+        m_compositeShader->SetInt("uUseSplitLighting", 0);
         m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
         m_compositeShader->SetInt("uUseContactShadows", runContactShadows ? 1 : 0);
         m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
