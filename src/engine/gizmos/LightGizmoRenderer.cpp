@@ -2,6 +2,7 @@
 
 #include "engine/gizmos/LightGizmoRenderer.h"
 #include "engine/camera/Camera.h"
+#include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/lighting/Light.h"
 #include "engine/components/LightComponent.h"
@@ -17,15 +18,6 @@ namespace
 {
     constexpr int CircleSegments = 32;
     constexpr int SphereSegments = 24;
-    void AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
-    {
-        vertices.push_back(a.x);
-        vertices.push_back(a.y);
-        vertices.push_back(a.z);
-        vertices.push_back(b.x);
-        vertices.push_back(b.y);
-        vertices.push_back(b.z);
-    }
 
     glm::vec3 BuildPerpendicular(const glm::vec3& normal)
     {
@@ -48,7 +40,7 @@ namespace
         {
             const float angle = glm::two_pi<float>() * static_cast<float>(segment) / static_cast<float>(segments);
             const glm::vec3 point = center + (tangent * std::cos(angle) + bitangent * std::sin(angle)) * radius;
-            AppendLine(vertices, previousPoint, point);
+            GizmoGeometry::AppendLine(vertices, previousPoint, point);
             previousPoint = point;
         }
     }
@@ -72,10 +64,10 @@ namespace
         {
             const float angle = glm::half_pi<float>() * static_cast<float>(ray);
             const glm::vec3 offset = (tangent * std::cos(angle) + bitangent * std::sin(angle)) * discRadius * 0.65f;
-            AppendLine(vertices, anchor + offset, anchor + offset + shineDirection * rayLength);
+            GizmoGeometry::AppendLine(vertices, anchor + offset, anchor + offset + shineDirection * rayLength);
         }
 
-        AppendLine(vertices, anchor, anchor + shineDirection * (rayLength * 0.55f));
+        GizmoGeometry::AppendLine(vertices, anchor, anchor + shineDirection * (rayLength * 0.55f));
     }
 
     void AppendSphere(std::vector<float>& vertices, const glm::vec3& center, float radius, int segments)
@@ -107,10 +99,10 @@ namespace
         {
             const float angle = glm::two_pi<float>() * static_cast<float>(spoke) / static_cast<float>(spokeCount);
             const glm::vec3 rimPoint = baseCenter + (tangent * std::cos(angle) + bitangent * std::sin(angle)) * baseRadius;
-            AppendLine(vertices, position, rimPoint);
+            GizmoGeometry::AppendLine(vertices, position, rimPoint);
         }
 
-        AppendLine(vertices, position, baseCenter);
+        GizmoGeometry::AppendLine(vertices, position, baseCenter);
     }
 
     glm::vec3 GizmoColor(const Light& light, bool selected)

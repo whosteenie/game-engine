@@ -3,6 +3,7 @@
 #include "engine/gizmos/CameraGizmoRenderer.h"
 #include "engine/camera/Camera.h"
 #include "engine/components/CameraComponent.h"
+#include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/Transform.h"
@@ -20,16 +21,6 @@ namespace
     constexpr float kDefaultAspect = 16.0f / 9.0f;
     constexpr glm::vec3 kCameraGizmoColor(0.38f, 0.72f, 1.0f);
 
-    void AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
-    {
-        vertices.push_back(a.x);
-        vertices.push_back(a.y);
-        vertices.push_back(a.z);
-        vertices.push_back(b.x);
-        vertices.push_back(b.y);
-        vertices.push_back(b.z);
-    }
-
     glm::vec3 GizmoColor(bool selected)
     {
         if (selected)
@@ -42,10 +33,10 @@ namespace
 
     void AppendPlaneRect(std::vector<float>& vertices, const glm::vec3 corners[4])
     {
-        AppendLine(vertices, corners[0], corners[1]);
-        AppendLine(vertices, corners[1], corners[2]);
-        AppendLine(vertices, corners[2], corners[3]);
-        AppendLine(vertices, corners[3], corners[0]);
+        GizmoGeometry::AppendLine(vertices, corners[0], corners[1]);
+        GizmoGeometry::AppendLine(vertices, corners[1], corners[2]);
+        GizmoGeometry::AppendLine(vertices, corners[2], corners[3]);
+        GizmoGeometry::AppendLine(vertices, corners[3], corners[0]);
     }
 
     void AppendFrustumGizmo(
@@ -88,12 +79,12 @@ namespace
 
         for (int i = 0; i < 4; ++i)
         {
-            AppendLine(vertices, nearCorners[i], farCorners[i]);
-            AppendLine(vertices, position, nearCorners[i]);
+            GizmoGeometry::AppendLine(vertices, nearCorners[i], farCorners[i]);
+            GizmoGeometry::AppendLine(vertices, position, nearCorners[i]);
         }
 
         // Forward axis cue so it's clear which way the camera is facing.
-        AppendLine(vertices, position, nearCenter);
+        GizmoGeometry::AppendLine(vertices, position, nearCenter);
     }
 }
 

@@ -5,6 +5,8 @@
 
 namespace GizmoGeometry
 {
+    void AppendLine(std::vector<float>& lineVertices, const glm::vec3& a, const glm::vec3& b);
+
     void AppendOrientedBoxOutline(
         std::vector<float>& lineVertices,
         const glm::mat4& modelMatrix,

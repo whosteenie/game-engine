@@ -1,16 +1,13 @@
 #include "engine/gizmos/GizmoGeometry.h"
 
-namespace
+void GizmoGeometry::AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
 {
-    void AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
-    {
-        vertices.push_back(a.x);
-        vertices.push_back(a.y);
-        vertices.push_back(a.z);
-        vertices.push_back(b.x);
-        vertices.push_back(b.y);
-        vertices.push_back(b.z);
-    }
+    vertices.push_back(a.x);
+    vertices.push_back(a.y);
+    vertices.push_back(a.z);
+    vertices.push_back(b.x);
+    vertices.push_back(b.y);
+    vertices.push_back(b.z);
 }
 
 void GizmoGeometry::AppendOrientedBoxOutline(
@@ -48,6 +45,6 @@ void GizmoGeometry::AppendOrientedBoxOutline(
 
     for (const auto& edge : edges)
     {
-        AppendLine(lineVertices, worldCorners[edge[0]], worldCorners[edge[1]]);
+        GizmoGeometry::AppendLine(lineVertices, worldCorners[edge[0]], worldCorners[edge[1]]);
     }
 }

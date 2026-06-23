@@ -3,6 +3,7 @@
 #include "engine/gizmos/ColliderGizmoRenderer.h"
 #include "engine/camera/Camera.h"
 #include "engine/components/ColliderComponent.h"
+#include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/Transform.h"
@@ -21,16 +22,6 @@ namespace
 {
     constexpr int kCircleSegments = 32;
     constexpr glm::vec3 kColliderGizmoColor(0.28f, 0.92f, 0.38f);
-
-    void AppendLine(std::vector<float>& vertices, const glm::vec3& a, const glm::vec3& b)
-    {
-        vertices.push_back(a.x);
-        vertices.push_back(a.y);
-        vertices.push_back(a.z);
-        vertices.push_back(b.x);
-        vertices.push_back(b.y);
-        vertices.push_back(b.z);
-    }
 
     glm::vec3 GizmoColor(bool selected)
     {
@@ -56,7 +47,7 @@ namespace
             const float angle = glm::two_pi<float>() * static_cast<float>(segment) / static_cast<float>(segments);
             const glm::vec3 point =
                 center + (axis0 * std::cos(angle) + axis1 * std::sin(angle)) * radius;
-            AppendLine(vertices, previousPoint, point);
+            GizmoGeometry::AppendLine(vertices, previousPoint, point);
             previousPoint = point;
         }
     }
@@ -99,7 +90,7 @@ namespace
 
         for (const auto& edge : edges)
         {
-            AppendLine(vertices, corners[edge[0]], corners[edge[1]]);
+            GizmoGeometry::AppendLine(vertices, corners[edge[0]], corners[edge[1]]);
         }
     }
 

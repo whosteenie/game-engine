@@ -20,6 +20,8 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include "engine/physics/JoltConversion.h"
+
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -136,43 +138,15 @@ namespace
         initialized = true;
     }
 
-    glm::mat4 BuildWorldMatrix(const glm::vec3& position, const glm::quat& rotation, const glm::vec3& scale)
-    {
-        glm::mat4 matrix(1.0f);
-        matrix = glm::translate(matrix, position);
-        matrix *= glm::mat4_cast(rotation);
-        matrix = glm::scale(matrix, scale);
-        return matrix;
-    }
-
     void ApplyWorldTransformToObject(Scene& scene, int objectIndex, const glm::vec3& worldPosition, const glm::quat& worldRotation)
     {
         const glm::vec3 preservedScale =
             scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
-        const glm::mat4 worldMatrix =
-            BuildWorldMatrix(worldPosition, worldRotation, preservedScale);
-        SetObjectWorldMatrix(scene.GetObjects(), objectIndex, worldMatrix);
-    }
-
-    JPH::Quat ToJoltQuat(const glm::quat& rotation)
-    {
-        // Jolt stores quaternions as (x, y, z, w); GLM's constructor is (w, x, y, z).
-        return JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w);
-    }
-
-    JPH::Vec3 ToJoltVec3(const glm::vec3& value)
-    {
-        return JPH::Vec3(value.x, value.y, value.z);
-    }
-
-    glm::vec3 FromJoltVec3(const JPH::Vec3& value)
-    {
-        return glm::vec3(value.GetX(), value.GetY(), value.GetZ());
-    }
-
-    glm::quat FromJoltQuat(const JPH::Quat& rotation)
-    {
-        return glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ());
+        Transform worldTransform;
+        worldTransform.position = worldPosition;
+        worldTransform.rotation = worldRotation;
+        worldTransform.scale = preservedScale;
+        SetObjectWorldMatrix(scene.GetObjects(), objectIndex, worldTransform.ToMatrix());
     }
 
     bool IsFiniteVec3(const glm::vec3& value)
@@ -310,7 +284,7 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
         {
             const glm::vec3 scaledHalfExtents = collider.halfExtents * glm::abs(worldScale);
             const JPH::Vec3 halfExtents =
-                ToJoltVec3(glm::max(scaledHalfExtents, glm::vec3(kMinShapeHalfExtent)));
+                JoltConversion::ToVec3(glm::max(scaledHalfExtents, glm::vec3(kMinShapeHalfExtent)));
             shape = new BoxShape(halfExtents);
         }
 
@@ -337,7 +311,7 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
         BodyCreationSettings bodySettings(
             shape,
             RVec3(colliderWorldCenter.x, colliderWorldCenter.y, colliderWorldCenter.z),
-            ToJoltQuat(worldRotation),
+            JoltConversion::ToQuat(worldRotation),
             motionType,
             objectLayer);
 
@@ -406,9 +380,9 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
 
         const RVec3 position = bodyInterface.GetCenterOfMassPosition(trackedBody.bodyId);
         const Quat rotation = bodyInterface.GetRotation(trackedBody.bodyId);
-        const glm::quat worldRotation = FromJoltQuat(rotation);
-        const glm::vec3 colliderWorldCenter =
-            FromJoltVec3(Vec3(position.GetX(), position.GetY(), position.GetZ()));
+        const glm::quat worldRotation = JoltConversion::FromQuat(rotation);
+        const glm::vec3 colliderWorldCenter = JoltConversion::FromVec3(
+            Vec3(position.GetX(), position.GetY(), position.GetZ()));
 
         const SceneObject& object =
             scene.GetObject(static_cast<std::size_t>(trackedBody.objectIndex));

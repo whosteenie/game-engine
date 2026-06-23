@@ -268,6 +268,7 @@ add_executable(game-engine
     src/app/scene/SceneRenderer.cpp
     src/app/scene/SceneSelectionController.cpp
     src/app/scene/SceneSpawnService.cpp
+    src/app/scene/SceneSpawnBuilders.cpp
     src/app/scene/SceneCamera.cpp
 
     src/engine/camera/Camera.cpp

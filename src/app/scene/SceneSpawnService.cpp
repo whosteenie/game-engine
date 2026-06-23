@@ -6,6 +6,7 @@
 #include "app/scene/SceneMeshLibrary.h"
 #include "app/scene/SceneObjectStore.h"
 #include "app/scene/SceneSelectionController.h"
+#include "app/scene/SceneSpawnBuilders.h"
 
 #include "engine/components/CameraComponent.h"
 #include "engine/rendering/Constants.h"
@@ -88,22 +89,14 @@ namespace
 
 void SceneSpawnService::SetupDefaultSunLight(Scene& scene)
 {
-    LightComponent sunLight = MakeDefaultLightComponent(LightType::Directional);
-    Transform sunTransform = MakeDefaultLightTransform(LightType::Directional);
-
-    scene.GetObjectStore().Objects().emplace_back(
-        "Sun",
-        nullptr,
-        nullptr,
-        glm::vec3(-0.15f),
-        glm::vec3(0.15f),
-        sunTransform,
-        false,
-        false,
-        -1,
-        0,
-        std::move(sunLight));
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
+    SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeLightObject(
+            "Sun",
+            MakeDefaultLightComponent(LightType::Directional),
+            MakeDefaultLightTransform(LightType::Directional),
+            -1,
+            0));
 }
 
 void SceneSpawnService::SetupObjects(Scene& scene)
@@ -116,18 +109,19 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         0.0f);
     ApplyConcreteFloorMaterialMaps(*floorMaterial);
 
-    scene.GetObjectStore().Objects().emplace_back(
-        "Floor",
-        scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane),
-        std::move(floorMaterial),
-        glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent),
-        glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent),
-        Transform{},
-        true,
-        true,
-        -1,
-        1);
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
+    SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeRenderableObject(
+            "Floor",
+            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane),
+            std::move(floorMaterial),
+            glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent),
+            glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent),
+            Transform{},
+            true,
+            true,
+            -1,
+            1));
 
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -140,19 +134,20 @@ void SceneSpawnService::SetupObjects(Scene& scene)
     Transform cubeTransform;
     cubeTransform.position = glm::vec3(0.0f, 1.5f, 0.0f);
 
-    scene.GetObjectStore().Objects().emplace_back(
-        "Cube",
-        scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube),
-        std::move(cubeMaterial),
-        glm::vec3(-0.5f),
-        glm::vec3(0.5f),
-        cubeTransform,
-        true,
-        true,
-        -1,
-        2);
+    SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeRenderableObject(
+            "Cube",
+            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube),
+            std::move(cubeMaterial),
+            glm::vec3(-0.5f),
+            glm::vec3(0.5f),
+            cubeTransform,
+            true,
+            true,
+            -1,
+            2));
 
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
     scene.GetSelectionController().SelectSingle(scene.GetObjectStore().Objects(), 2);
 }
 
@@ -217,42 +212,31 @@ int SceneSpawnService::AddObject(Scene& scene, ScenePrimitive primitive, int par
         transform.position = spawnInfo.position;
     }
 
-    scene.GetObjectStore().Objects().emplace_back(
-        objectName,
-        scene.GetMeshLibrary().GetPrimitive(primitive),
-        CreateDefaultObjectMaterial(),
-        spawnInfo.boundsMin,
-        spawnInfo.boundsMax,
-        transform,
-        spawnInfo.castShadow,
-        spawnInfo.receiveShadow,
-        parentIndex,
-        SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(),parentIndex));
-
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
-    scene.MarkDirty();
-    return static_cast<int>(scene.GetObjectStore().Objects().size()) - 1;
+    return SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeRenderableObject(
+            objectName,
+            scene.GetMeshLibrary().GetPrimitive(primitive),
+            CreateDefaultObjectMaterial(),
+            spawnInfo.boundsMin,
+            spawnInfo.boundsMax,
+            transform,
+            spawnInfo.castShadow,
+            spawnInfo.receiveShadow,
+            parentIndex,
+            SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(), parentIndex)));
 }
 
 int SceneSpawnService::AddEmptyObject(Scene& scene, int parentIndex)
 {
     const std::string objectName = "Empty " + std::to_string(m_nextEmptyNumber++);
 
-    scene.GetObjectStore().Objects().emplace_back(
-        objectName,
-        nullptr,
-        nullptr,
-        glm::vec3(0.0f),
-        glm::vec3(0.0f),
-        Transform{},
-        false,
-        false,
-        parentIndex,
-        SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(),parentIndex));
-
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
-    scene.MarkDirty();
-    return static_cast<int>(scene.GetObjectStore().Objects().size()) - 1;
+    return SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeEmptyObject(
+            objectName,
+            parentIndex,
+            SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(), parentIndex)));
 }
 
 int SceneSpawnService::AddLightObject(Scene& scene, LightType type, int parentIndex)
@@ -286,22 +270,14 @@ int SceneSpawnService::AddLightObject(Scene& scene, LightType type, int parentIn
         break;
     }
 
-    scene.GetObjectStore().Objects().emplace_back(
-        objectName,
-        nullptr,
-        nullptr,
-        glm::vec3(-0.15f),
-        glm::vec3(0.15f),
-        transform,
-        false,
-        false,
-        parentIndex,
-        SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(),parentIndex),
-        std::move(lightComponent));
-
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
-    scene.MarkDirty();
-    return static_cast<int>(scene.GetObjectStore().Objects().size()) - 1;
+    return SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeLightObject(
+            objectName,
+            std::move(lightComponent),
+            transform,
+            parentIndex,
+            SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(), parentIndex)));
 }
 
 int SceneSpawnService::AddCameraObject(Scene& scene, int parentIndex)
@@ -326,23 +302,14 @@ int SceneSpawnService::AddCameraObject(Scene& scene, int parentIndex)
 
     const std::string objectName = "Camera " + std::to_string(m_nextCameraNumber++);
 
-    scene.GetObjectStore().Objects().emplace_back(
-        objectName,
-        nullptr,
-        nullptr,
-        glm::vec3(-0.15f),
-        glm::vec3(0.15f),
-        transform,
-        false,
-        false,
-        parentIndex,
-        SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(),parentIndex),
-        std::nullopt,
-        std::move(cameraComponent));
-
-    scene.GetObjectStore().FinalizeNewObject(scene.GetObjectStore().Objects().back());
-    scene.MarkDirty();
-    return static_cast<int>(scene.GetObjectStore().Objects().size()) - 1;
+    return SceneSpawnBuilders::AppendObject(
+        scene,
+        SceneSpawnBuilders::MakeCameraObject(
+            objectName,
+            std::move(cameraComponent),
+            transform,
+            parentIndex,
+            SceneHierarchyOps::AllocateSiblingOrder(scene.GetObjectStore().Objects(), parentIndex)));
 }
 
 void SceneSpawnService::EnsureUniqueMainCamera(Scene& scene, int objectIndex)
