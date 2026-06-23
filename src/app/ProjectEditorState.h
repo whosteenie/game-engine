@@ -18,6 +18,7 @@ struct ProjectEditorState
     bool showToolbar = true;
     bool showLighting = true;
     bool showProjectFiles = true;
+    bool showSceneView = true;
 
     std::unordered_map<SceneObjectId, bool> hierarchyNodeOpenStates;
 

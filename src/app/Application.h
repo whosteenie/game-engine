@@ -9,6 +9,7 @@
 
 struct GLFWwindow;
 class Camera;
+class EditorDockSpace;
 class EditorSettings;
 class LightingPanel;
 class MainMenuBar;
@@ -22,6 +23,7 @@ class Renderer;
 class SceneHierarchyPanel;
 class SceneInspectorPanel;
 class SceneToolbarPanel;
+class SceneViewportPanel;
 
 class Application
 {
@@ -45,6 +47,7 @@ private:
     void ApplyProjectEditorState(const ProjectEditorState& editorState);
     bool TrySaveProject();
     bool IsEditorUndoRedoBlocked() const;
+    void ResetEditorLayout();
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
@@ -70,6 +73,8 @@ private:
     std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<SceneInspectorPanel> m_sceneInspectorPanel;
     std::unique_ptr<ProjectFilesPanel> m_projectFilesPanel;
+    std::unique_ptr<SceneViewportPanel> m_sceneViewportPanel;
+    std::unique_ptr<EditorDockSpace> m_editorDockSpace;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;

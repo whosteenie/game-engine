@@ -1,6 +1,5 @@
 #include "app/SceneToolbarPanel.h"
 
-#include "app/EditorPanelLayout.h"
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
 
@@ -53,13 +52,26 @@ namespace
     }
 }
 
-void SceneToolbarPanel::Draw(Scene& scene) const
+void SceneToolbarPanel::Draw(
+    Scene& scene,
+    bool sceneViewVisible,
+    const EditorViewportRect& sceneViewRect) const
 {
-    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Toolbar);
-
-    if (!ImGui::Begin("Toolbar", &m_showPanel, ImGuiWindowFlags_AlwaysAutoResize))
+    if (!m_showPanel || !sceneViewVisible || !sceneViewRect.valid)
     {
-        ImGui::End();
+        return;
+    }
+
+    constexpr float kAnchorMargin = 8.0f;
+    ImGui::SetNextWindowPos(
+        ImVec2(sceneViewRect.screenX + kAnchorMargin, sceneViewRect.screenY + kAnchorMargin),
+        ImGuiCond_Always);
+
+    if (!ImGui::Begin(
+            "Toolbar",
+            &m_showPanel,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking))
+    {
         return;
     }
 

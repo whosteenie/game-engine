@@ -296,6 +296,7 @@ void MainMenuBar::Draw(
     const ApplyEditorStateFn& applyEditorState,
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
+    const std::function<void()>& requestResetLayout,
     UndoStack& undoStack,
     EditorClipboard& clipboard,
     bool allowUndoRedo)
@@ -439,9 +440,19 @@ void MainMenuBar::Draw(
     {
         DrawPanelToggle("Hierarchy", panels.hierarchy);
         DrawPanelToggle("Inspector", panels.inspector);
+        DrawPanelToggle("Scene View", panels.sceneView);
         DrawPanelToggle("Toolbar", panels.toolbar);
         DrawPanelToggle("Renderer Tuning", panels.lighting);
         DrawPanelToggle("Project", panels.project);
+
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Layout"))
+        {
+            if (requestResetLayout)
+            {
+                requestResetLayout();
+            }
+        }
 
         ImGui::EndMenu();
     }

@@ -1,6 +1,6 @@
 #include "app/ProjectFilesPanel.h"
 
-#include "app/EditorPanelLayout.h"
+#include "app/EditorPanelConstraints.h"
 #include "app/ProjectSession.h"
 
 #include <imgui.h>
@@ -455,11 +455,9 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
 
 void ProjectFilesPanel::Draw(ProjectSession& project)
 {
-    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::ProjectFiles);
-
-    if (!ImGui::Begin("Project", &m_showPanel))
+    EditorPanelConstraints::ApplyProjectPanel();
+    if (!EditorPanelConstraints::BeginDockedPanel("Project", m_showPanel))
     {
-        ImGui::End();
         return;
     }
 

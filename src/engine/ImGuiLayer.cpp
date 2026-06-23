@@ -13,15 +13,26 @@
 
 #include <stdexcept>
 
-ImGuiLayer::ImGuiLayer(GLFWwindow* window)
-    : m_window(window)
+ImGuiLayer::ImGuiLayer(GLFWwindow* window, const std::string& iniPath)
+    : m_window(window), m_iniPath(iniPath)
 {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
     ImGui::StyleColorsDark();
 
-    ImGui::GetIO().IniFilename = nullptr;
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    io.ConfigDockingNoSplit = false;
+    io.ConfigDockingNoDockingOver = false;
+    if (!m_iniPath.empty())
+    {
+        io.IniFilename = m_iniPath.c_str();
+    }
+    else
+    {
+        io.IniFilename = nullptr;
+    }
 
     if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
     {

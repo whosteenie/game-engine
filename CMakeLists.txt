@@ -58,7 +58,7 @@ FetchContent_Declare(
 
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
 
-    GIT_TAG v1.91.6
+    GIT_TAG docking # Docking branch required for editor layout (Phase 1+)
 
 )
 
@@ -180,7 +180,10 @@ add_executable(game-engine
 
     src/app/EditorSettings.cpp
 
-    src/app/EditorPanelLayout.cpp
+
+    src/app/EditorDockSpace.cpp
+
+    src/app/EditorDockLayout.cpp
 
     src/app/MainMenuBar.cpp
 
@@ -219,6 +222,8 @@ add_executable(game-engine
     src/app/InspectorTransform.cpp
 
     src/app/SceneToolbarPanel.cpp
+
+    src/app/SceneViewportPanel.cpp
 
     src/app/SceneEditor.cpp
 

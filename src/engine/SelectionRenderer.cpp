@@ -222,6 +222,9 @@ void SelectionRenderer::DrawScreenSpace(
     GLint previousViewport[4] = {0, 0, 0, 0};
     glGetIntegerv(GL_VIEWPORT, previousViewport);
 
+    GLint previousDrawFramebuffer = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDrawFramebuffer);
+
     GLboolean multisampleEnabled = glIsEnabled(GL_MULTISAMPLE);
     GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
     GLint depthFunc = GL_LEQUAL;
@@ -309,7 +312,7 @@ void SelectionRenderer::DrawScreenSpace(
     DrawFullscreenQuad();
 
     // 4) Additive glow, then crisp outline on top.
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, previousDrawFramebuffer);
     glViewport(0, 0, width, height);
     glEnable(GL_BLEND);
 

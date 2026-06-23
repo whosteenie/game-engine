@@ -1653,7 +1653,8 @@ void Scene::Update(
     bool allowMouseInput,
     bool allowKeyboardInput,
     UndoStack* undoStack,
-    const std::string& projectRoot)
+    const std::string& projectRoot,
+    const EditorViewportRect* viewport)
 {
     m_sceneEditor->Update(
         *this,
@@ -1666,7 +1667,8 @@ void Scene::Update(
         allowMouseInput,
         allowKeyboardInput,
         undoStack,
-        projectRoot);
+        projectRoot,
+        viewport);
 }
 
 void Scene::RenderShadowPass() const
@@ -1721,8 +1723,20 @@ void Scene::RenderShadowPass() const
 void Scene::Render(
     const Camera& camera,
     int viewportWidth,
-    int viewportHeight) const
+    int viewportHeight,
+    unsigned int targetFramebuffer) const
 {
+    GLint previousFramebuffer = 0;
+    const bool renderToTarget = targetFramebuffer != 0;
+    if (renderToTarget)
+    {
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        glViewport(0, 0, viewportWidth, viewportHeight);
+        glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    }
+
     SyncLighting();
 
     RenderShadowPass();
@@ -1777,8 +1791,24 @@ void Scene::Render(
         }
 
         m_screenSpaceEffects->EndScenePass();
+
+        if (renderToTarget)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        }
+
         m_screenSpaceEffects->Apply(camera, GetSunDirection(), viewportWidth, viewportHeight);
-        m_screenSpaceEffects->BlitDepthToDefaultFramebuffer(viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitDepthToFramebuffer(
+            renderToTarget ? targetFramebuffer : 0,
+            viewportWidth,
+            viewportHeight);
+
+        if (renderToTarget)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+            glViewport(0, 0, viewportWidth, viewportHeight);
+        }
+
         m_sceneEditor->RenderSelectionOverlay(*this, camera, true);
     }
     else if (m_showGrid)
@@ -1798,5 +1828,10 @@ void Scene::Render(
     if (!usePostProcess)
     {
         m_sceneEditor->RenderSelectionOverlay(*this, camera, false);
+    }
+
+    if (renderToTarget)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
     }
 }

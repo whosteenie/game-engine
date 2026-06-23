@@ -4,6 +4,9 @@
 
 #include "app/Application.h"
 #include "app/EditorSettings.h"
+#include "app/SceneProjectIO.h"
+#include "app/EditorDockSpace.h"
+#include "app/EditorViewportRect.h"
 #include "app/LightingPanel.h"
 #include "app/MainMenuBar.h"
 #include "app/ProjectChooser.h"
@@ -15,12 +18,15 @@
 #include "app/SceneHierarchyPanel.h"
 #include "app/SceneInspectorPanel.h"
 #include "app/SceneToolbarPanel.h"
+#include "app/SceneViewportPanel.h"
 #include "app/UndoContext.h"
 #include "app/UndoStack.h"
 #include "engine/Camera.h"
 #include "engine/Constants.h"
 #include "engine/FileDialog.h"
 #include "engine/ImGuiLayer.h"
+
+#include <ImGuizmo.h>
 #include "engine/NativeProgressWindow.h"
 #include "engine/Input.h"
 #include "engine/Renderer.h"
@@ -48,7 +54,8 @@ Application::Application(int width, int height, const char* title)
     glEnable(GL_MULTISAMPLE);
 
     m_renderer = std::make_unique<Renderer>();
-    m_imguiLayer = std::make_unique<ImGuiLayer>(m_window);
+    EditorSettings::EnsureAppDataDirectoryExists();
+    m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
     m_editorSettings = std::make_unique<EditorSettings>();
     m_editorSettings->Load();
     m_projectSession = std::make_unique<ProjectSession>();
@@ -59,6 +66,8 @@ Application::Application(int width, int height, const char* title)
     m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
     m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
     m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
+    m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
+    m_editorDockSpace = std::make_unique<EditorDockSpace>();
     m_camera = std::make_unique<Camera>(
         glm::vec3(6.0f, 5.0f, 6.0f),
         -135.0f,
@@ -78,6 +87,11 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
+    if (m_projectSession && m_projectSession->HasActiveProject())
+    {
+        SceneProjectIO::SaveEditorLayout(m_projectSession->GetProjectRootDirectory());
+    }
+
     if (m_editorSettings)
     {
         m_editorSettings->Save();
@@ -165,6 +179,7 @@ void Application::Update(double deltaTime)
         panelVisibility.toolbar = &m_sceneToolbarPanel->ShowPanel();
         panelVisibility.lighting = &m_lightingPanel->ShowPanel();
         panelVisibility.project = &m_projectFilesPanel->ShowPanel();
+        panelVisibility.sceneView = &m_sceneViewportPanel->ShowPanel();
 
         m_mainMenuBar->Draw(
             *m_scene,
@@ -177,32 +192,53 @@ void Application::Update(double deltaTime)
             [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
+            [this]() { ResetEditorLayout(); },
             m_undoStack,
             m_editorClipboard,
             !IsEditorUndoRedoBlocked());
 
-        m_sceneToolbarPanel->Draw(*m_scene);
+        m_editorDockSpace->Begin();
+        m_sceneViewportPanel->Draw();
         m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
         m_lightingPanel->Draw(*m_scene, *m_camera, &m_undoStack);
+        m_editorDockSpace->End();
+
+        m_sceneToolbarPanel->Draw(
+            *m_scene,
+            m_sceneViewportPanel->ShowPanel(),
+            m_sceneViewportPanel->GetInteractionRect());
+
+        if (m_sceneViewportPanel->HasValidRenderTarget())
+        {
+            m_camera->SetAspectFromFramebuffer(
+                m_sceneViewportPanel->GetRenderWidth(),
+                m_sceneViewportPanel->GetRenderHeight());
+        }
     }
 
     DrawUnsavedChangesDialog();
 
     const ImGuiIO& io = ImGui::GetIO();
 
-    m_input->UpdateMouseCapture(!io.WantCaptureMouse);
+    const bool sceneViewHovered =
+        editorActive
+        && m_sceneViewportPanel->HasValidRenderTarget()
+        && (m_sceneViewportPanel->IsHovered() || ImGuizmo::IsOver() || ImGuizmo::IsUsing());
+    const bool blockSceneInput = io.WantTextInput || m_pendingClose || m_pendingNewProject;
+
+    m_input->UpdateMouseCapture(sceneViewHovered && !blockSceneInput);
 
     const bool flyCameraActive = m_input->IsCapturingMouse();
-    if (io.WantCaptureMouse && !flyCameraActive)
+    if (io.WantCaptureMouse && !flyCameraActive && !sceneViewHovered)
     {
         m_input->ReleaseMouseCapture();
     }
 
     const bool allowGameKeyboard = !io.WantCaptureKeyboard || flyCameraActive;
-    const bool allowGameMouse = flyCameraActive || !io.WantCaptureMouse;
-    const bool allowSceneMouse = editorActive && !flyCameraActive && allowGameMouse;
+    const bool allowSceneMouse =
+        editorActive && !flyCameraActive && sceneViewHovered && !blockSceneInput;
 
     if (allowGameKeyboard && m_input->WasKeyPressed(GLFW_KEY_ESCAPE))
     {
@@ -222,7 +258,7 @@ void Application::Update(double deltaTime)
         }
     }
 
-    if (editorActive && allowGameMouse && flyCameraActive)
+    if (editorActive && flyCameraActive)
     {
         m_camera->ProcessKeyboard(*m_input, static_cast<float>(deltaTime));
         m_camera->ProcessMouseMovement(
@@ -244,6 +280,10 @@ void Application::Update(double deltaTime)
         glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
         glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 
+        const EditorViewportRect& viewportRect = m_sceneViewportPanel->GetInteractionRect();
+        const EditorViewportRect* viewportPtr =
+            viewportRect.valid ? &viewportRect : nullptr;
+
         m_scene->Update(
             *m_input,
             *m_camera,
@@ -254,7 +294,8 @@ void Application::Update(double deltaTime)
             allowSceneMouse,
             allowGameKeyboard,
             &m_undoStack,
-            m_projectSession->GetProjectRootDirectory());
+            m_projectSession->GetProjectRootDirectory(),
+            viewportPtr);
     }
 
     m_input->EndFrame();
@@ -297,6 +338,7 @@ void Application::CaptureProjectEditorState(ProjectEditorState& editorState) con
     editorState.showToolbar = m_sceneToolbarPanel->ShowPanel();
     editorState.showLighting = m_lightingPanel->ShowPanel();
     editorState.showProjectFiles = m_projectFilesPanel->ShowPanel();
+    editorState.showSceneView = m_sceneViewportPanel->ShowPanel();
     editorState.hierarchyNodeOpenStates = m_sceneHierarchyPanel->GetNodeOpenStates();
     m_projectFilesPanel->GetBrowseState(
         editorState.projectFilesBrowsedDirectory,
@@ -314,6 +356,7 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_sceneToolbarPanel->ShowPanel() = editorState.showToolbar;
     m_lightingPanel->ShowPanel() = editorState.showLighting;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
+    m_sceneViewportPanel->ShowPanel() = editorState.showSceneView;
 
     std::unordered_map<SceneObjectId, bool> hierarchyOpenStates;
     const int objectCount = static_cast<int>(m_scene->GetObjects().size());
@@ -375,6 +418,18 @@ bool Application::TrySaveProject()
     m_editorSettings->SetLastNewProjectParentDirectoryFromProjectFile(m_projectSession->GetProjectFilePath());
     m_editorSettings->Save();
     return true;
+}
+
+void Application::ResetEditorLayout()
+{
+    EditorSettings::DeleteGlobalImGuiIni();
+
+    if (m_projectSession->HasActiveProject())
+    {
+        SceneProjectIO::DeleteEditorLayout(m_projectSession->GetProjectRootDirectory());
+    }
+
+    m_editorDockSpace->ResetLayout();
 }
 
 void Application::DrawUnsavedChangesDialog()
@@ -472,7 +527,6 @@ void Application::WindowCloseCallback(GLFWwindow* window)
 void Application::OnFramebufferResize(int width, int height)
 {
     m_renderer->SetViewport(width, height);
-    m_camera->SetAspectFromFramebuffer(width, height);
 }
 
 void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int height)
@@ -483,17 +537,18 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 
 void Application::Render()
 {
-    int viewportWidth = 0;
-    int viewportHeight = 0;
-    glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
-
     m_renderer->BeginFrame();
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
-    if (editorActive)
+    if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
-        m_scene->Render(*m_camera, viewportWidth, viewportHeight);
+        m_sceneViewportPanel->EnsureFramebufferSized();
+        m_scene->Render(
+            *m_camera,
+            m_sceneViewportPanel->GetRenderWidth(),
+            m_sceneViewportPanel->GetRenderHeight(),
+            m_sceneViewportPanel->GetFramebuffer());
     }
 
     m_imguiLayer->EndFrame();

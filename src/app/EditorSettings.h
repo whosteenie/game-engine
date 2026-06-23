@@ -22,6 +22,9 @@ public:
     void ValidateLastNewProjectParentDirectory();
 
     static std::string GetSettingsFilePath();
+    static std::string GetGlobalImGuiIniPath();
+    static void EnsureAppDataDirectoryExists();
+    static bool DeleteGlobalImGuiIni();
     static std::string NormalizeProjectFilePath(const std::string& projectFilePath);
 
 private:

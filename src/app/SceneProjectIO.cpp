@@ -787,6 +787,7 @@ namespace SceneProjectIODetail
                  {"toolbar", editorState.showToolbar},
                  {"lighting", editorState.showLighting},
                  {"projectFiles", editorState.showProjectFiles},
+                 {"sceneView", editorState.showSceneView},
              }},
             {"hierarchyOpenNodes", SerializeHierarchyOpenStates(editorState.hierarchyNodeOpenStates)},
             {"projectFiles",
@@ -823,6 +824,7 @@ namespace SceneProjectIODetail
             editorState.showToolbar = panelsValue.value("toolbar", editorState.showToolbar);
             editorState.showLighting = panelsValue.value("lighting", editorState.showLighting);
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
+            editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
         }
 
         if (editorValue.contains("hierarchyOpenNodes"))
@@ -897,6 +899,14 @@ namespace SceneProjectIODetail
         }
 
         ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
+        return true;
+    }
+
+    bool DeleteEditorLayout(const std::string& projectRoot)
+    {
+        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
+        std::error_code error;
+        fs::remove(layoutPath, error);
         return true;
     }
 
@@ -1388,4 +1398,19 @@ bool SceneProjectIO::Load(
         outError = exception.what();
         return false;
     }
+}
+
+bool SceneProjectIO::SaveEditorLayout(const std::string& projectRoot)
+{
+    return SceneProjectIODetail::SaveEditorLayout(projectRoot);
+}
+
+bool SceneProjectIO::LoadEditorLayout(const std::string& projectRoot)
+{
+    return SceneProjectIODetail::LoadEditorLayout(projectRoot);
+}
+
+bool SceneProjectIO::DeleteEditorLayout(const std::string& projectRoot)
+{
+    return SceneProjectIODetail::DeleteEditorLayout(projectRoot);
 }

@@ -17,6 +17,7 @@
 
 #include "app/SceneSelection.h"
 #include "app/SceneImportedMeshPool.h"
+#include "app/EditorViewportRect.h"
 
 class Camera;
 class Input;
@@ -56,9 +57,10 @@ public:
         bool allowMouseInput,
         bool allowKeyboardInput,
         UndoStack* undoStack,
-        const std::string& projectRoot);
+        const std::string& projectRoot,
+        const EditorViewportRect* viewport);
 
-    void Render(const Camera& camera, int viewportWidth, int viewportHeight) const;
+    void Render(const Camera& camera, int viewportWidth, int viewportHeight, unsigned int targetFramebuffer = 0) const;
 
     const SceneLighting& GetLighting() const;
     SceneLighting& GetLighting();

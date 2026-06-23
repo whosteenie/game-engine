@@ -697,7 +697,10 @@ void ScreenSpaceEffects::SetBloomBlurRadius(float blurRadius)
     m_bloomBlurRadius = std::clamp(blurRadius, 0.25f, 4.0f);
 }
 
-void ScreenSpaceEffects::BlitDepthToDefaultFramebuffer(int viewportWidth, int viewportHeight) const
+void ScreenSpaceEffects::BlitDepthToFramebuffer(
+    unsigned int drawFramebuffer,
+    int viewportWidth,
+    int viewportHeight) const
 {
     if (!m_sceneFramebuffer->IsValid())
     {
@@ -705,7 +708,7 @@ void ScreenSpaceEffects::BlitDepthToDefaultFramebuffer(int viewportWidth, int vi
     }
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneFramebuffer->GetFramebuffer());
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFramebuffer);
     glBlitFramebuffer(
         0,
         0,
@@ -717,5 +720,6 @@ void ScreenSpaceEffects::BlitDepthToDefaultFramebuffer(int viewportWidth, int vi
         viewportHeight,
         GL_DEPTH_BUFFER_BIT,
         GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, drawFramebuffer);
+    glViewport(0, 0, viewportWidth, viewportHeight);
 }

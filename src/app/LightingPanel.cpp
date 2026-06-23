@@ -1,6 +1,6 @@
 #include "app/LightingPanel.h"
 
-#include "app/EditorPanelLayout.h"
+#include "app/EditorPanelConstraints.h"
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
 #include "engine/Camera.h"
@@ -36,11 +36,9 @@ void LightingPanel::Draw(
     const Camera& camera,
     UndoStack* undoStack) const
 {
-    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::RendererTuning);
-
-    if (!ImGui::Begin("Renderer Tuning", &m_showPanel, ImGuiWindowFlags_None))
+    EditorPanelConstraints::ApplySideColumnPanel();
+    if (!EditorPanelConstraints::BeginDockedPanel("Renderer Tuning", m_showPanel))
     {
-        ImGui::End();
         return;
     }
 

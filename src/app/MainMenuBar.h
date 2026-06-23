@@ -19,6 +19,7 @@ struct EditorPanelVisibility
     bool* toolbar = nullptr;
     bool* lighting = nullptr;
     bool* project = nullptr;
+    bool* sceneView = nullptr;
 };
 
 using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;
@@ -38,6 +39,7 @@ public:
         const ApplyEditorStateFn& applyEditorState,
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
+        const std::function<void()>& requestResetLayout,
         UndoStack& undoStack,
         EditorClipboard& clipboard,
         bool allowUndoRedo = true);

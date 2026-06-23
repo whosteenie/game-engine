@@ -2,6 +2,7 @@
 
 #include <memory>
 
+#include "app/EditorViewportRect.h"
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
 #include "app/UndoStack.h"
@@ -75,20 +76,42 @@ namespace
         scene.SetSelection(pickedIndices, pickedIndices.back());
     }
 
-    glm::vec2 FramebufferToImGuiPoint(
-        const glm::vec2& framebufferPoint,
-        int framebufferWidth,
-        int framebufferHeight,
-        int windowWidth,
-        int windowHeight)
+    glm::vec2 ViewportPickPixelsToImGui(const glm::vec2& localPixels, const EditorViewportRect& viewport)
     {
-        const float scaleX = framebufferWidth > 0
-            ? static_cast<float>(windowWidth) / static_cast<float>(framebufferWidth)
-            : 1.0f;
-        const float scaleY = framebufferHeight > 0
-            ? static_cast<float>(windowHeight) / static_cast<float>(framebufferHeight)
-            : 1.0f;
-        return glm::vec2(framebufferPoint.x * scaleX, framebufferPoint.y * scaleY);
+        const float scaleX =
+            viewport.width > 0 ? viewport.screenWidth / static_cast<float>(viewport.width) : 1.0f;
+        const float scaleY =
+            viewport.height > 0 ? viewport.screenHeight / static_cast<float>(viewport.height) : 1.0f;
+        return glm::vec2(
+            viewport.screenX + localPixels.x * scaleX,
+            viewport.screenY + localPixels.y * scaleY);
+    }
+
+    glm::vec2 GetViewportLocalMouseScreen(const EditorViewportRect& viewport)
+    {
+        const ImVec2 mousePos = ImGui::GetIO().MousePos;
+        return glm::vec2(mousePos.x - viewport.screenX, mousePos.y - viewport.screenY);
+    }
+
+    glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const EditorViewportRect& viewport)
+    {
+        const float scaleX =
+            viewport.screenWidth > 0.0f
+                ? static_cast<float>(viewport.width) / viewport.screenWidth
+                : 1.0f;
+        const float scaleY =
+            viewport.screenHeight > 0.0f
+                ? static_cast<float>(viewport.height) / viewport.screenHeight
+                : 1.0f;
+        return glm::vec2(localScreen.x * scaleX, localScreen.y * scaleY);
+    }
+
+    bool IsInsideViewportScreen(const glm::vec2& localScreen, const EditorViewportRect& viewport)
+    {
+        return localScreen.x >= 0.0f
+            && localScreen.y >= 0.0f
+            && localScreen.x <= viewport.screenWidth
+            && localScreen.y <= viewport.screenHeight;
     }
 
     ImGuizmo::OPERATION ToImGuizmoOperation(TransformTool tool)
@@ -128,8 +151,16 @@ namespace
         TransformSpace space,
         UndoStack* undoStack,
         bool& gizmoWasUsing,
-        ObjectTransformMap& gizmoTransformBefore)
+        ObjectTransformMap& gizmoTransformBefore,
+        const EditorViewportRect* viewport)
     {
+        if (viewport == nullptr || !viewport->valid)
+        {
+            gizmoWasUsing = false;
+            gizmoTransformBefore.clear();
+            return;
+        }
+
         if (!scene.HasSelection())
         {
             gizmoWasUsing = false;
@@ -137,9 +168,13 @@ namespace
             return;
         }
 
-        const ImGuiIO& io = ImGui::GetIO();
         ImGuizmo::SetOrthographic(false);
-        ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
+        ImGuizmo::SetAlternativeWindow(viewport->imguiWindow);
+        ImGuizmo::SetRect(
+            viewport->screenX,
+            viewport->screenY,
+            viewport->screenWidth,
+            viewport->screenHeight);
 
         const bool worldSpace = space == TransformSpace::World;
         glm::mat4 gizmoWorldMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
@@ -240,7 +275,8 @@ void SceneEditor::Update(
     bool allowMouseInput,
     bool allowKeyboardInput,
     UndoStack* undoStack,
-    const std::string& projectRoot)
+    const std::string& projectRoot,
+    const EditorViewportRect* viewport)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -308,34 +344,46 @@ void SceneEditor::Update(
         m_transformSpace,
         undoStack,
         m_gizmoWasUsing,
-        m_gizmoTransformBefore);
+        m_gizmoTransformBefore,
+        viewport);
 
     const bool gizmoCapturingMouse = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
-    if (!m_trackingLeftDrag && (!allowMouseInput || gizmoCapturingMouse))
+    if (viewport == nullptr || !viewport->valid)
+    {
+        if (m_trackingLeftDrag)
+        {
+            CancelMarqueeDrag();
+        }
+
+        return;
+    }
+
+    const glm::vec2 localMouseScreen = GetViewportLocalMouseScreen(*viewport);
+    const glm::vec2 localMouse = ScreenLocalToPickPixels(localMouseScreen, *viewport);
+    const glm::vec2 viewportSize(
+        static_cast<float>(viewport->width),
+        static_cast<float>(viewport->height));
+    const bool insideViewport = IsInsideViewportScreen(localMouseScreen, *viewport);
+
+    if (!m_trackingLeftDrag && (!allowMouseInput || gizmoCapturingMouse || !insideViewport))
     {
         return;
     }
 
-    const glm::vec2 mousePosition = input.GetCursorPositionFramebufferScaled(
-        framebufferWidth,
-        framebufferHeight,
-        windowWidth,
-        windowHeight);
-    const glm::vec2 viewportSize(static_cast<float>(framebufferWidth), static_cast<float>(framebufferHeight));
     const glm::mat4 viewMatrix = camera.GetViewMatrix();
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
-    if (input.WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT))
+    if (input.WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT) && insideViewport)
     {
         m_trackingLeftDrag = true;
         m_marqueeActive = false;
-        m_dragStartFramebuffer = mousePosition;
-        m_dragCurrentFramebuffer = mousePosition;
+        m_dragStartFramebuffer = localMouse;
+        m_dragCurrentFramebuffer = localMouse;
     }
 
     if (m_trackingLeftDrag && input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT))
     {
-        m_dragCurrentFramebuffer = mousePosition;
+        m_dragCurrentFramebuffer = localMouse;
         if (!m_marqueeActive
             && glm::length(m_dragCurrentFramebuffer - m_dragStartFramebuffer) >= MarqueeDragThresholdPixels)
         {
@@ -344,7 +392,7 @@ void SceneEditor::Update(
 
         if (m_marqueeActive)
         {
-            DrawMarqueeOverlay(framebufferWidth, framebufferHeight, windowWidth, windowHeight);
+            DrawMarqueeOverlay(*viewport);
         }
     }
 
@@ -361,12 +409,12 @@ void SceneEditor::Update(
                 projectionMatrix);
             ApplyMarqueeSelection(scene, pickedIndices, ctrlHeld);
         }
-        else
+        else if (insideViewport)
         {
-            const Ray ray = ScreenPointToRay(mousePosition, viewportSize, viewMatrix, projectionMatrix);
+            const Ray ray = ScreenPointToRay(localMouse, viewportSize, viewMatrix, projectionMatrix);
             const bool repeatClickAtSameSpot = m_hasLastPickScreenPosition
-                && glm::length(mousePosition - m_lastPickScreenPosition) <= PickRepeatThresholdPixels;
-            m_lastPickScreenPosition = mousePosition;
+                && glm::length(localMouse - m_lastPickScreenPosition) <= PickRepeatThresholdPixels;
+            m_lastPickScreenPosition = localMouse;
             m_hasLastPickScreenPosition = true;
 
             const int pickedIndex = PickSceneObjectCycling(
@@ -407,29 +455,15 @@ void SceneEditor::CancelMarqueeDrag()
     m_marqueeActive = false;
 }
 
-void SceneEditor::DrawMarqueeOverlay(
-    int framebufferWidth,
-    int framebufferHeight,
-    int windowWidth,
-    int windowHeight) const
+void SceneEditor::DrawMarqueeOverlay(const EditorViewportRect& viewport) const
 {
     if (!m_marqueeActive)
     {
         return;
     }
 
-    const glm::vec2 startImGui = FramebufferToImGuiPoint(
-        m_dragStartFramebuffer,
-        framebufferWidth,
-        framebufferHeight,
-        windowWidth,
-        windowHeight);
-    const glm::vec2 endImGui = FramebufferToImGuiPoint(
-        m_dragCurrentFramebuffer,
-        framebufferWidth,
-        framebufferHeight,
-        windowWidth,
-        windowHeight);
+    const glm::vec2 startImGui = ViewportPickPixelsToImGui(m_dragStartFramebuffer, viewport);
+    const glm::vec2 endImGui = ViewportPickPixelsToImGui(m_dragCurrentFramebuffer, viewport);
 
     const ImVec2 rectMin(
         std::min(startImGui.x, endImGui.x),
@@ -437,19 +471,25 @@ void SceneEditor::DrawMarqueeOverlay(
     const ImVec2 rectMax(
         std::max(startImGui.x, endImGui.x),
         std::max(startImGui.y, endImGui.y));
+    const ImVec2 clipMin(viewport.screenX, viewport.screenY);
+    const ImVec2 clipMax(
+        viewport.screenX + viewport.screenWidth,
+        viewport.screenY + viewport.screenHeight);
 
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    drawList->PushClipRect(clipMin, clipMax, true);
     drawList->AddRectFilled(
-        rectMin,
-        rectMax,
+        ImVec2(rectMin.x, rectMin.y),
+        ImVec2(rectMax.x, rectMax.y),
         IM_COL32(90, 150, 255, 40));
     drawList->AddRect(
-        rectMin,
-        rectMax,
+        ImVec2(rectMin.x, rectMin.y),
+        ImVec2(rectMax.x, rectMax.y),
         IM_COL32(90, 150, 255, 220),
         0.0f,
         0,
         1.5f);
+    drawList->PopClipRect();
 }
 
 void SceneEditor::RenderSelectionOverlay(

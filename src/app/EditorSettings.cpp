@@ -24,31 +24,46 @@ namespace
     }
 }
 
+namespace
+{
+    fs::path GetSettingsDirectory()
+    {
+#ifdef _WIN32
+        if (const char* appData = std::getenv("APPDATA"))
+        {
+            return fs::path(appData) / "game-engine";
+        }
+#else
+        if (const char* home = std::getenv("HOME"))
+        {
+            return fs::path(home) / ".config" / "game-engine";
+        }
+#endif
+        return fs::path(".");
+    }
+}
+
 std::string EditorSettings::GetSettingsFilePath()
 {
-    fs::path settingsDirectory;
+    return (GetSettingsDirectory() / "editor_settings.json").string();
+}
 
-#ifdef _WIN32
-    if (const char* appData = std::getenv("APPDATA"))
-    {
-        settingsDirectory = fs::path(appData) / "game-engine";
-    }
-    else
-    {
-        settingsDirectory = fs::path(".");
-    }
-#else
-    if (const char* home = std::getenv("HOME"))
-    {
-        settingsDirectory = fs::path(home) / ".config" / "game-engine";
-    }
-    else
-    {
-        settingsDirectory = fs::path(".");
-    }
-#endif
+std::string EditorSettings::GetGlobalImGuiIniPath()
+{
+    return (GetSettingsDirectory() / "imgui.ini").string();
+}
 
-    return (settingsDirectory / "editor_settings.json").string();
+void EditorSettings::EnsureAppDataDirectoryExists()
+{
+    std::error_code error;
+    fs::create_directories(GetSettingsDirectory(), error);
+}
+
+bool EditorSettings::DeleteGlobalImGuiIni()
+{
+    std::error_code error;
+    fs::remove(GetGlobalImGuiIniPath(), error);
+    return true;
 }
 
 std::string EditorSettings::NormalizeProjectFilePath(const std::string& projectFilePath)

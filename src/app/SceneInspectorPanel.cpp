@@ -1,6 +1,6 @@
 #include "app/SceneInspectorPanel.h"
 
-#include "app/EditorPanelLayout.h"
+#include "app/EditorPanelConstraints.h"
 #include "app/EditorWidgets.h"
 #include "app/InspectorEditMode.h"
 #include "app/InspectorMultiEdit.h"
@@ -1135,11 +1135,9 @@ namespace
 
 void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
 {
-    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Inspector);
-
-    if (!ImGui::Begin("Inspector", &m_showPanel, ImGuiWindowFlags_None))
+    EditorPanelConstraints::ApplySideColumnPanel();
+    if (!EditorPanelConstraints::BeginDockedPanel("Inspector", m_showPanel))
     {
-        ImGui::End();
         return;
     }
 

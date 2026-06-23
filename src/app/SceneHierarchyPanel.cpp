@@ -1,7 +1,7 @@
 #include "app/SceneHierarchyPanel.h"
 
 #include "app/EditorClipboard.h"
-#include "app/EditorPanelLayout.h"
+#include "app/EditorPanelConstraints.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
@@ -763,7 +763,7 @@ namespace
             {
                 ImGui::SetNextItemOpen(true, ImGuiCond_Always);
                 const ImGuiTreeNodeFlags arrowFlags =
-                    flags | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanTextWidth;
+                    flags | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanLabelWidth;
                 opened = ImGui::TreeNodeEx("##RenameAnchor", arrowFlags);
             }
 
@@ -926,11 +926,9 @@ void SceneHierarchyPanel::Draw(
     m_drawUndoStack = &undoStack;
     m_drawClipboard = &clipboard;
 
-    EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
-
-    if (!ImGui::Begin("Hierarchy", &m_showPanel, ImGuiWindowFlags_None))
+    EditorPanelConstraints::ApplySideColumnPanel();
+    if (!EditorPanelConstraints::BeginDockedPanel("Hierarchy", m_showPanel))
     {
-        ImGui::End();
         return;
     }
 

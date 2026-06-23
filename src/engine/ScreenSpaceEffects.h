@@ -88,7 +88,7 @@ public:
     float GetBloomBlurRadius() const;
     void SetBloomBlurRadius(float blurRadius);
 
-    void BlitDepthToDefaultFramebuffer(int viewportWidth, int viewportHeight) const;
+    void BlitDepthToFramebuffer(unsigned int drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
 private:
     void CreateFullscreenQuad();
