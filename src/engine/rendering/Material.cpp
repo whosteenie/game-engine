@@ -1,5 +1,6 @@
 #include "engine/rendering/Material.h"
 
+#include "engine/components/ComponentCompare.h"
 #include "engine/camera/Camera.h"
 #include "engine/rendering/Constants.h"
 #include "engine/lighting/IBL.h"
@@ -421,6 +422,29 @@ void Material::ApplyMissingTextureMapsFrom(const Material& source)
             SetRoughnessTexCoordSet(source.m_roughnessTexCoordSet);
         }
     }
+}
+
+bool Material::ContentEquals(const Material& other) const
+{
+    using ComponentCompare::FloatsEqual;
+
+    return m_albedo == other.m_albedo
+        && FloatsEqual(m_roughness, other.m_roughness)
+        && FloatsEqual(m_metallic, other.m_metallic)
+        && m_doubleSided == other.m_doubleSided
+        && HasAlbedoMap() == other.HasAlbedoMap()
+        && HasNormalMap() == other.HasNormalMap()
+        && HasAoMap() == other.HasAoMap()
+        && HasRoughnessMap() == other.HasRoughnessMap()
+        && HasMetallicRoughnessMap() == other.HasMetallicRoughnessMap()
+        && m_albedoMapPath == other.m_albedoMapPath
+        && m_normalMapPath == other.m_normalMapPath
+        && m_aoMapPath == other.m_aoMapPath
+        && m_roughnessMapPath == other.m_roughnessMapPath
+        && m_albedoTexCoordSet == other.m_albedoTexCoordSet
+        && m_normalTexCoordSet == other.m_normalTexCoordSet
+        && m_aoTexCoordSet == other.m_aoTexCoordSet
+        && m_roughnessTexCoordSet == other.m_roughnessTexCoordSet;
 }
 
 std::unique_ptr<Material> Material::Clone() const

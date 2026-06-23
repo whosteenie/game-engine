@@ -6,10 +6,7 @@
 #include "app/scene/SceneObjectStore.h"
 #include "app/scene/SceneSelectionController.h"
 #include "engine/components/CameraComponent.h"
-#include "engine/components/ColliderComponent.h"
-#include "engine/components/LightComponent.h"
-#include "engine/rendering/Material.h"
-#include "engine/components/RigidBodyComponent.h"
+#include "engine/scene/SceneObjectComponents.h"
 #include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
 
@@ -125,11 +122,7 @@ int SceneObjectOperations::DuplicateObject(Scene& scene, int objectIndex)
             newParentIndex = indexMap.at(sourceParentIndex);
         }
 
-        std::unique_ptr<Material> materialClone;
-        if (source.HasMaterial())
-        {
-            materialClone = source.GetMaterial().Clone();
-        }
+        SceneObjectComponentSnapshot components = CaptureSceneObjectComponents(source);
 
         std::string objectName = source.GetName();
         if (sourceIndex == objectIndex)
@@ -137,38 +130,15 @@ int SceneObjectOperations::DuplicateObject(Scene& scene, int objectIndex)
             objectName = MakeDuplicateObjectName(scene, source.GetName());
         }
 
-        std::optional<LightComponent> lightClone;
-        if (source.HasLight())
+        if (sourceIndex == objectIndex && components.camera.has_value() && components.camera->isMain)
         {
-            lightClone = source.GetLight();
-        }
-
-        std::optional<CameraComponent> cameraClone;
-        if (source.HasCamera())
-        {
-            cameraClone = source.GetCamera();
-            if (sourceIndex == objectIndex && cameraClone->isMain)
-            {
-                cameraClone->isMain = false;
-            }
-        }
-
-        std::optional<RigidBodyComponent> rigidBodyClone;
-        if (source.HasRigidBody())
-        {
-            rigidBodyClone = source.GetRigidBody();
-        }
-
-        std::optional<ColliderComponent> colliderClone;
-        if (source.HasCollider())
-        {
-            colliderClone = source.GetCollider();
+            components.camera->isMain = false;
         }
 
         objects.emplace_back(
             objectName,
             source.GetMesh(),
-            std::move(materialClone),
+            std::move(components.material),
             source.GetLocalBoundsMin(),
             source.GetLocalBoundsMax(),
             source.GetTransform(),
@@ -176,10 +146,10 @@ int SceneObjectOperations::DuplicateObject(Scene& scene, int objectIndex)
             source.ReceivesShadow(),
             newParentIndex,
             source.GetSiblingOrder(),
-            std::move(lightClone),
-            std::move(cameraClone),
-            std::move(rigidBodyClone),
-            std::move(colliderClone));
+            std::move(components.light),
+            std::move(components.camera),
+            std::move(components.rigidBody),
+            std::move(components.collider));
 
         scene.GetObjectStore().FinalizeNewObject(objects.back());
         const int newIndex = static_cast<int>(objects.size()) - 1;

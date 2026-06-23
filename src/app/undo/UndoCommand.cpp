@@ -74,6 +74,80 @@ namespace
         return true;
     }
 
+    template<typename T, typename HasProperty, typename GetProperty>
+    std::unordered_map<SceneObjectId, T> CaptureObjectProperties(
+        const Scene& scene,
+        const std::vector<int>& objectIndices,
+        HasProperty hasProperty,
+        GetProperty getProperty)
+    {
+        std::unordered_map<SceneObjectId, T> values;
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+
+        for (int objectIndex : objectIndices)
+        {
+            if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+            {
+                continue;
+            }
+
+            const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+            if (!hasProperty(object))
+            {
+                continue;
+            }
+
+            values.emplace(object.GetId(), getProperty(object));
+        }
+
+        return values;
+    }
+
+    template<typename T, typename HasProperty, typename GetProperty>
+    std::unordered_map<SceneObjectId, T> CaptureAllObjectProperties(
+        const Scene& scene,
+        HasProperty hasProperty,
+        GetProperty getProperty)
+    {
+        std::unordered_map<SceneObjectId, T> values;
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+        values.reserve(objects.size());
+
+        for (const SceneObject& object : objects)
+        {
+            if (!hasProperty(object))
+            {
+                continue;
+            }
+
+            values.emplace(object.GetId(), getProperty(object));
+        }
+
+        return values;
+    }
+
+    template<typename T>
+    bool AreObjectPropertyMapsEqual(
+        const std::unordered_map<SceneObjectId, T>& left,
+        const std::unordered_map<SceneObjectId, T>& right)
+    {
+        if (left.size() != right.size())
+        {
+            return false;
+        }
+
+        for (const auto& [objectId, value] : left)
+        {
+            const auto iterator = right.find(objectId);
+            if (iterator == right.end() || !(value == iterator->second))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     void ApplyLocalTransforms(Scene& scene, const ObjectTransformMap& transforms)
     {
         for (const auto& [objectId, transform] : transforms)
@@ -650,154 +724,65 @@ ObjectMaterialMap CaptureObjectMaterials(const Scene& scene, const std::vector<i
 
 ObjectLightMap CaptureObjectLights(const Scene& scene, const std::vector<int>& objectIndices)
 {
-    ObjectLightMap lights;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-
-    for (int objectIndex : objectIndices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
-        {
-            continue;
-        }
-
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        if (!object.HasLight())
-        {
-            continue;
-        }
-
-        lights.emplace(object.GetId(), object.GetLight());
-    }
-
-    return lights;
+    return CaptureObjectProperties<LightComponent>(
+        scene,
+        objectIndices,
+        [](const SceneObject& object) { return object.HasLight(); },
+        [](const SceneObject& object) { return object.GetLight(); });
 }
 
 ObjectLightMap CaptureAllObjectLights(const Scene& scene)
 {
-    ObjectLightMap lights;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-    lights.reserve(objects.size());
-
-    for (const SceneObject& object : objects)
-    {
-        if (!object.HasLight())
-        {
-            continue;
-        }
-
-        lights.emplace(object.GetId(), object.GetLight());
-    }
-
-    return lights;
+    return CaptureAllObjectProperties<LightComponent>(
+        scene,
+        [](const SceneObject& object) { return object.HasLight(); },
+        [](const SceneObject& object) { return object.GetLight(); });
 }
 
 ObjectCameraMap CaptureObjectCameras(const Scene& scene, const std::vector<int>& objectIndices)
 {
-    ObjectCameraMap cameras;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-
-    for (int objectIndex : objectIndices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
-        {
-            continue;
-        }
-
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        if (!object.HasCamera())
-        {
-            continue;
-        }
-
-        cameras.emplace(object.GetId(), object.GetCamera());
-    }
-
-    return cameras;
+    return CaptureObjectProperties<CameraComponent>(
+        scene,
+        objectIndices,
+        [](const SceneObject& object) { return object.HasCamera(); },
+        [](const SceneObject& object) { return object.GetCamera(); });
 }
 
 ObjectCameraMap CaptureAllObjectCameras(const Scene& scene)
 {
-    ObjectCameraMap cameras;
-    for (const SceneObject& object : scene.GetObjects())
-    {
-        if (!object.HasCamera())
-        {
-            continue;
-        }
-
-        cameras.emplace(object.GetId(), object.GetCamera());
-    }
-
-    return cameras;
+    return CaptureAllObjectProperties<CameraComponent>(
+        scene,
+        [](const SceneObject& object) { return object.HasCamera(); },
+        [](const SceneObject& object) { return object.GetCamera(); });
 }
 
 ObjectRigidBodyMap CaptureObjectRigidBodies(const Scene& scene, const std::vector<int>& objectIndices)
 {
-    ObjectRigidBodyMap rigidBodies;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-
-    for (int objectIndex : objectIndices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
-        {
-            continue;
-        }
-
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        if (!object.HasRigidBody())
-        {
-            continue;
-        }
-
-        rigidBodies.emplace(object.GetId(), object.GetRigidBody());
-    }
-
-    return rigidBodies;
+    return CaptureObjectProperties<RigidBodyComponent>(
+        scene,
+        objectIndices,
+        [](const SceneObject& object) { return object.HasRigidBody(); },
+        [](const SceneObject& object) { return object.GetRigidBody(); });
 }
 
 ObjectColliderMap CaptureObjectColliders(const Scene& scene, const std::vector<int>& objectIndices)
 {
-    ObjectColliderMap colliders;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-
-    for (int objectIndex : objectIndices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
-        {
-            continue;
-        }
-
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        if (!object.HasCollider())
-        {
-            continue;
-        }
-
-        colliders.emplace(object.GetId(), object.GetCollider());
-    }
-
-    return colliders;
+    return CaptureObjectProperties<ColliderComponent>(
+        scene,
+        objectIndices,
+        [](const SceneObject& object) { return object.HasCollider(); },
+        [](const SceneObject& object) { return object.GetCollider(); });
 }
 
 ObjectShadowFlagsMap CaptureObjectShadowFlags(const Scene& scene, const std::vector<int>& objectIndices)
 {
-    ObjectShadowFlagsMap flags;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-
-    for (int objectIndex : objectIndices)
-    {
-        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
-        {
-            continue;
-        }
-
-        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
-        flags.emplace(
-            object.GetId(),
-            ObjectShadowFlags{object.CastsShadow(), object.ReceivesShadow()});
-    }
-
-    return flags;
+    return CaptureObjectProperties<ObjectShadowFlags>(
+        scene,
+        objectIndices,
+        [](const SceneObject& /*object*/) { return true; },
+        [](const SceneObject& object) {
+            return ObjectShadowFlags{object.CastsShadow(), object.ReceivesShadow()};
+        });
 }
 
 bool AreObjectMaterialMapsEqual(const ObjectMaterialMap& left, const ObjectMaterialMap& right)
@@ -817,23 +802,7 @@ bool AreObjectMaterialMapsEqual(const ObjectMaterialMap& left, const ObjectMater
 
         const Material& leftMaterial = *material;
         const Material& rightMaterial = *iterator->second;
-        if (leftMaterial.GetAlbedo() != rightMaterial.GetAlbedo()
-            || std::fabs(leftMaterial.GetRoughness() - rightMaterial.GetRoughness()) > 1e-4f
-            || std::fabs(leftMaterial.GetMetallic() - rightMaterial.GetMetallic()) > 1e-4f
-            || leftMaterial.IsDoubleSided() != rightMaterial.IsDoubleSided()
-            || leftMaterial.HasAlbedoMap() != rightMaterial.HasAlbedoMap()
-            || leftMaterial.HasNormalMap() != rightMaterial.HasNormalMap()
-            || leftMaterial.HasAoMap() != rightMaterial.HasAoMap()
-            || leftMaterial.HasRoughnessMap() != rightMaterial.HasRoughnessMap()
-            || leftMaterial.HasMetallicRoughnessMap() != rightMaterial.HasMetallicRoughnessMap()
-            || leftMaterial.GetAlbedoMapPath() != rightMaterial.GetAlbedoMapPath()
-            || leftMaterial.GetNormalMapPath() != rightMaterial.GetNormalMapPath()
-            || leftMaterial.GetAoMapPath() != rightMaterial.GetAoMapPath()
-            || leftMaterial.GetRoughnessMapPath() != rightMaterial.GetRoughnessMapPath()
-            || leftMaterial.GetAlbedoTexCoordSet() != rightMaterial.GetAlbedoTexCoordSet()
-            || leftMaterial.GetNormalTexCoordSet() != rightMaterial.GetNormalTexCoordSet()
-            || leftMaterial.GetAoTexCoordSet() != rightMaterial.GetAoTexCoordSet()
-            || leftMaterial.GetRoughnessTexCoordSet() != rightMaterial.GetRoughnessTexCoordSet())
+        if (!leftMaterial.ContentEquals(rightMaterial))
         {
             return false;
         }
@@ -844,143 +813,27 @@ bool AreObjectMaterialMapsEqual(const ObjectMaterialMap& left, const ObjectMater
 
 bool AreObjectLightMapsEqual(const ObjectLightMap& left, const ObjectLightMap& right)
 {
-    if (left.size() != right.size())
-    {
-        return false;
-    }
-
-    for (const auto& [objectId, light] : left)
-    {
-        const auto iterator = right.find(objectId);
-        if (iterator == right.end())
-        {
-            return false;
-        }
-
-        const LightComponent& other = iterator->second;
-        if (light.type != other.type
-            || light.color != other.color
-            || std::fabs(light.intensity - other.intensity) > 1e-4f
-            || std::fabs(light.constantAttenuation - other.constantAttenuation) > 1e-4f
-            || std::fabs(light.linearAttenuation - other.linearAttenuation) > 1e-4f
-            || std::fabs(light.quadraticAttenuation - other.quadraticAttenuation) > 1e-4f
-            || std::fabs(light.range - other.range) > 1e-4f
-            || std::fabs(light.innerCutoffDegrees - other.innerCutoffDegrees) > 1e-4f
-            || std::fabs(light.outerCutoffDegrees - other.outerCutoffDegrees) > 1e-4f
-            || light.castsShadow != other.castsShadow)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return AreObjectPropertyMapsEqual(left, right);
 }
 
 bool AreObjectCameraMapsEqual(const ObjectCameraMap& left, const ObjectCameraMap& right)
 {
-    if (left.size() != right.size())
-    {
-        return false;
-    }
-
-    for (const auto& [objectId, camera] : left)
-    {
-        const auto iterator = right.find(objectId);
-        if (iterator == right.end())
-        {
-            return false;
-        }
-
-        const CameraComponent& other = iterator->second;
-        if (std::fabs(camera.fovDegrees - other.fovDegrees) > 1e-4f
-            || std::fabs(camera.nearPlane - other.nearPlane) > 1e-4f
-            || std::fabs(camera.farPlane - other.farPlane) > 1e-4f
-            || camera.enabled != other.enabled
-            || camera.depth != other.depth
-            || camera.isMain != other.isMain)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return AreObjectPropertyMapsEqual(left, right);
 }
 
 bool AreObjectRigidBodyMapsEqual(const ObjectRigidBodyMap& left, const ObjectRigidBodyMap& right)
 {
-    if (left.size() != right.size())
-    {
-        return false;
-    }
-
-    for (const auto& [objectId, rigidBody] : left)
-    {
-        const auto iterator = right.find(objectId);
-        if (iterator == right.end())
-        {
-            return false;
-        }
-
-        const RigidBodyComponent& other = iterator->second;
-        if (std::fabs(rigidBody.mass - other.mass) > 1e-4f
-            || rigidBody.useGravity != other.useGravity
-            || rigidBody.isKinematic != other.isKinematic)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return AreObjectPropertyMapsEqual(left, right);
 }
 
 bool AreObjectColliderMapsEqual(const ObjectColliderMap& left, const ObjectColliderMap& right)
 {
-    if (left.size() != right.size())
-    {
-        return false;
-    }
-
-    for (const auto& [objectId, collider] : left)
-    {
-        const auto iterator = right.find(objectId);
-        if (iterator == right.end())
-        {
-            return false;
-        }
-
-        const ColliderComponent& other = iterator->second;
-        if (collider.shape != other.shape
-            || collider.offset != other.offset
-            || collider.halfExtents != other.halfExtents
-            || std::fabs(collider.radius - other.radius) > 1e-4f
-            || collider.isTrigger != other.isTrigger)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return AreObjectPropertyMapsEqual(left, right);
 }
 
 bool AreObjectShadowFlagsMapsEqual(const ObjectShadowFlagsMap& left, const ObjectShadowFlagsMap& right)
 {
-    if (left.size() != right.size())
-    {
-        return false;
-    }
-
-    for (const auto& [objectId, flags] : left)
-    {
-        const auto iterator = right.find(objectId);
-        if (iterator == right.end()
-            || flags.castShadow != iterator->second.castShadow
-            || flags.receiveShadow != iterator->second.receiveShadow)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return AreObjectPropertyMapsEqual(left, right);
 }
 
 void ApplyObjectMaterial(Scene& scene, SceneObjectId objectId, const std::unique_ptr<Material>& material)
@@ -1328,87 +1181,11 @@ bool AreObjectSystemComponentStatesEqual(
     const ObjectSystemComponentState& left,
     const ObjectSystemComponentState& right)
 {
-    if (left.light.has_value() != right.light.has_value())
-    {
-        return false;
-    }
-
-    if (left.light.has_value() && right.light.has_value())
-    {
-        const LightComponent& a = *left.light;
-        const LightComponent& b = *right.light;
-        if (a.type != b.type
-            || a.color != b.color
-            || std::fabs(a.intensity - b.intensity) > 1e-4f
-            || std::fabs(a.constantAttenuation - b.constantAttenuation) > 1e-4f
-            || std::fabs(a.linearAttenuation - b.linearAttenuation) > 1e-4f
-            || std::fabs(a.quadraticAttenuation - b.quadraticAttenuation) > 1e-4f
-            || std::fabs(a.range - b.range) > 1e-4f
-            || std::fabs(a.innerCutoffDegrees - b.innerCutoffDegrees) > 1e-4f
-            || std::fabs(a.outerCutoffDegrees - b.outerCutoffDegrees) > 1e-4f
-            || a.castsShadow != b.castsShadow)
-        {
-            return false;
-        }
-    }
-
-    if (left.camera.has_value() != right.camera.has_value())
-    {
-        return false;
-    }
-
-    if (left.camera.has_value() && right.camera.has_value())
-    {
-        const CameraComponent& a = *left.camera;
-        const CameraComponent& b = *right.camera;
-        if (std::fabs(a.fovDegrees - b.fovDegrees) > 1e-4f
-            || std::fabs(a.nearPlane - b.nearPlane) > 1e-4f
-            || std::fabs(a.farPlane - b.farPlane) > 1e-4f
-            || a.enabled != b.enabled
-            || a.depth != b.depth
-            || a.isMain != b.isMain)
-        {
-            return false;
-        }
-    }
-
-    if (left.rigidBody.has_value() != right.rigidBody.has_value())
-    {
-        return false;
-    }
-
-    if (left.rigidBody.has_value() && right.rigidBody.has_value())
-    {
-        const RigidBodyComponent& a = *left.rigidBody;
-        const RigidBodyComponent& b = *right.rigidBody;
-        if (std::fabs(a.mass - b.mass) > 1e-4f
-            || a.useGravity != b.useGravity
-            || a.isKinematic != b.isKinematic)
-        {
-            return false;
-        }
-    }
-
-    if (left.collider.has_value() != right.collider.has_value())
-    {
-        return false;
-    }
-
-    if (left.collider.has_value() && right.collider.has_value())
-    {
-        const ColliderComponent& a = *left.collider;
-        const ColliderComponent& b = *right.collider;
-        if (a.shape != b.shape
-            || a.offset != b.offset
-            || a.halfExtents != b.halfExtents
-            || std::fabs(a.radius - b.radius) > 1e-4f
-            || a.isTrigger != b.isTrigger)
-        {
-            return false;
-        }
-    }
-
-    return AreInspectorComponentOrdersEqual(left.inspectorOrder, right.inspectorOrder);
+    return left.light == right.light
+        && left.camera == right.camera
+        && left.rigidBody == right.rigidBody
+        && left.collider == right.collider
+        && AreInspectorComponentOrdersEqual(left.inspectorOrder, right.inspectorOrder);
 }
 
 ObjectSystemComponentState CaptureObjectSystemComponentState(const SceneObject& object)

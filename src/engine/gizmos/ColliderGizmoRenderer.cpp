@@ -5,6 +5,7 @@
 #include "engine/components/ColliderComponent.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
+#include "engine/scene/Transform.h"
 #include "engine/rendering/Shader.h"
 
 #include <glm/glm.hpp>
@@ -29,42 +30,6 @@ namespace
         vertices.push_back(b.x);
         vertices.push_back(b.y);
         vertices.push_back(b.z);
-    }
-
-    void DecomposeWorldMatrix(
-        const glm::mat4& worldMatrix,
-        glm::vec3& position,
-        glm::quat& rotation,
-        glm::vec3& scale)
-    {
-        position = glm::vec3(worldMatrix[3]);
-
-        const glm::vec3 column0 = glm::vec3(worldMatrix[0]);
-        const glm::vec3 column1 = glm::vec3(worldMatrix[1]);
-        const glm::vec3 column2 = glm::vec3(worldMatrix[2]);
-
-        scale.x = glm::length(column0);
-        scale.y = glm::length(column1);
-        scale.z = glm::length(column2);
-
-        glm::mat3 rotationMatrix(1.0f);
-        const float epsilon = 1e-6f;
-        if (scale.x > epsilon)
-        {
-            rotationMatrix[0] = column0 / scale.x;
-        }
-
-        if (scale.y > epsilon)
-        {
-            rotationMatrix[1] = column1 / scale.y;
-        }
-
-        if (scale.z > epsilon)
-        {
-            rotationMatrix[2] = column2 / scale.z;
-        }
-
-        rotation = glm::normalize(glm::quat_cast(rotationMatrix));
     }
 
     glm::vec3 GizmoColor(bool selected)
@@ -143,13 +108,10 @@ namespace
         const ColliderComponent& collider,
         const glm::mat4& worldMatrix)
     {
-        glm::vec3 worldPosition;
-        glm::quat worldRotation;
-        glm::vec3 worldScale;
-        DecomposeWorldMatrix(worldMatrix, worldPosition, worldRotation, worldScale);
+        const Transform worldTransform = Transform::FromMatrix(worldMatrix);
         const glm::vec3 colliderCenter = glm::vec3(worldMatrix * glm::vec4(collider.offset, 1.0f));
 
-        const glm::vec3 absScale = glm::abs(worldScale);
+        const glm::vec3 absScale = glm::abs(worldTransform.scale);
         if (collider.shape == ColliderShape::Sphere)
         {
             const float radius =
@@ -159,7 +121,7 @@ namespace
         }
 
         const glm::vec3 scaledHalfExtents = glm::max(collider.halfExtents * absScale, glm::vec3(0.01f));
-        AppendOrientedBoxWireframe(vertices, colliderCenter, worldRotation, scaledHalfExtents);
+        AppendOrientedBoxWireframe(vertices, colliderCenter, worldTransform.rotation, scaledHalfExtents);
     }
 }
 

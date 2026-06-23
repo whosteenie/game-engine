@@ -7,4 +7,6 @@ struct RigidBodyComponent
     bool isKinematic = false;
 };
 
+bool operator==(const RigidBodyComponent& left, const RigidBodyComponent& right);
+
 RigidBodyComponent MakeDefaultRigidBodyComponent();

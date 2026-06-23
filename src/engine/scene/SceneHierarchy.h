@@ -21,6 +21,10 @@ void CollectSelectionMeshes(
     const std::vector<int>& objectIndices,
     std::vector<SelectionMeshDraw>& outMeshes);
 glm::mat4 GetObjectWorldMatrix(const std::vector<SceneObject>& objects, int objectIndex);
+void SetObjectWorldMatrix(
+    std::vector<SceneObject>& objects,
+    int objectIndex,
+    const glm::mat4& worldMatrix);
 void GetObjectWorldBounds(
     const std::vector<SceneObject>& objects,
     int objectIndex,

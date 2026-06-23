@@ -5,6 +5,7 @@
 #include "engine/components/CameraComponent.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
+#include "engine/scene/Transform.h"
 #include "engine/rendering/Shader.h"
 
 #include <glm/glm.hpp>
@@ -27,42 +28,6 @@ namespace
         vertices.push_back(b.x);
         vertices.push_back(b.y);
         vertices.push_back(b.z);
-    }
-
-    void DecomposeWorldMatrix(
-        const glm::mat4& worldMatrix,
-        glm::vec3& position,
-        glm::quat& rotation,
-        glm::vec3& scale)
-    {
-        position = glm::vec3(worldMatrix[3]);
-
-        const glm::vec3 column0 = glm::vec3(worldMatrix[0]);
-        const glm::vec3 column1 = glm::vec3(worldMatrix[1]);
-        const glm::vec3 column2 = glm::vec3(worldMatrix[2]);
-
-        scale.x = glm::length(column0);
-        scale.y = glm::length(column1);
-        scale.z = glm::length(column2);
-
-        glm::mat3 rotationMatrix(1.0f);
-        const float epsilon = 1e-6f;
-        if (scale.x > epsilon)
-        {
-            rotationMatrix[0] = column0 / scale.x;
-        }
-
-        if (scale.y > epsilon)
-        {
-            rotationMatrix[1] = column1 / scale.y;
-        }
-
-        if (scale.z > epsilon)
-        {
-            rotationMatrix[2] = column2 / scale.z;
-        }
-
-        rotation = glm::normalize(glm::quat_cast(rotationMatrix));
     }
 
     glm::vec3 GizmoColor(bool selected)
@@ -182,10 +147,9 @@ void CameraGizmoRenderer::Draw(
             continue;
         }
 
-        glm::vec3 worldPosition;
-        glm::quat worldRotation;
-        glm::vec3 worldScale;
-        DecomposeWorldMatrix(getWorldMatrix(objectIndex), worldPosition, worldRotation, worldScale);
+        const Transform worldTransform = Transform::FromMatrix(getWorldMatrix(objectIndex));
+        const glm::vec3& worldPosition = worldTransform.position;
+        const glm::quat& worldRotation = worldTransform.rotation;
 
         const glm::vec3 right = glm::normalize(worldRotation * glm::vec3(1.0f, 0.0f, 0.0f));
         const glm::vec3 up = glm::normalize(worldRotation * glm::vec3(0.0f, 1.0f, 0.0f));

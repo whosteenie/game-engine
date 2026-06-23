@@ -14,5 +14,7 @@ struct CameraComponent
     bool isMain = false;
 };
 
+bool operator==(const CameraComponent& left, const CameraComponent& right);
+
 CameraComponent MakeDefaultCameraComponent();
 Transform MakeDefaultCameraTransform();

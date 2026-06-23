@@ -68,6 +68,27 @@ glm::mat4 GetObjectWorldMatrix(const std::vector<SceneObject>& objects, int obje
     return GetObjectWorldMatrix(objects, parentIndex) * localMatrix;
 }
 
+void SetObjectWorldMatrix(
+    std::vector<SceneObject>& objects,
+    int objectIndex,
+    const glm::mat4& worldMatrix)
+{
+    if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+    {
+        return;
+    }
+
+    glm::mat4 parentWorldMatrix(1.0f);
+    const int parentIndex = objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
+    if (parentIndex >= 0)
+    {
+        parentWorldMatrix = GetObjectWorldMatrix(objects, parentIndex);
+    }
+
+    objects[static_cast<std::size_t>(objectIndex)].GetTransform().SetFromMatrix(
+        glm::inverse(parentWorldMatrix) * worldMatrix);
+}
+
 void GetObjectLocalSelectionBounds(
     const std::vector<SceneObject>& objects,
     int objectIndex,
@@ -159,15 +180,7 @@ void ApplyObjectGizmoWorldMatrix(
     const glm::mat4 newWorldMatrix =
         gizmoWorldMatrix * glm::translate(glm::mat4(1.0f), -localCenter);
 
-    glm::mat4 parentWorldMatrix(1.0f);
-    const int parentIndex = objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
-    if (parentIndex >= 0)
-    {
-        parentWorldMatrix = GetObjectWorldMatrix(objects, parentIndex);
-    }
-
-    objects[static_cast<std::size_t>(objectIndex)].GetTransform().SetFromMatrix(
-        glm::inverse(parentWorldMatrix) * newWorldMatrix);
+    SetObjectWorldMatrix(objects, objectIndex, newWorldMatrix);
 }
 
 glm::mat4 GetGroupSelectionGizmoWorldMatrix(
@@ -246,15 +259,7 @@ void ApplyGroupSelectionGizmoWorldMatrix(
 
         const glm::mat4 oldWorldMatrix = GetObjectWorldMatrix(objects, objectIndex);
         const glm::mat4 newWorldMatrix = deltaMatrix * oldWorldMatrix;
-
-        glm::mat4 parentWorldMatrix(1.0f);
-        const int parentIndex = object.GetParentIndex();
-        if (parentIndex >= 0)
-        {
-            parentWorldMatrix = GetObjectWorldMatrix(objects, parentIndex);
-        }
-
-        object.GetTransform().SetFromMatrix(glm::inverse(parentWorldMatrix) * newWorldMatrix);
+        SetObjectWorldMatrix(objects, objectIndex, newWorldMatrix);
     }
 }
 

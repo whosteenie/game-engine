@@ -11,6 +11,7 @@ struct Transform
 
     glm::mat4 ToMatrix() const;
     void SetFromMatrix(const glm::mat4& matrix);
+    static Transform FromMatrix(const glm::mat4& matrix);
 
     glm::vec3 GetRotationDegrees() const;
     void SetRotationDegrees(const glm::vec3& eulerDegrees);

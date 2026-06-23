@@ -83,6 +83,7 @@ public:
     bool HasMetallicRoughnessMap() const;
 
     std::unique_ptr<Material> Clone() const;
+    bool ContentEquals(const Material& other) const;
 
 private:
     void BindMaps() const;

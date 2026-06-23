@@ -20,21 +20,6 @@ namespace
 
         return merged;
     }
-
-    void SetObjectWorldMatrix(Scene& scene, int objectIndex, const glm::mat4& worldMatrix)
-    {
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
-        glm::mat4 parentWorldMatrix(1.0f);
-        const int parentIndex = object.GetParentIndex();
-        if (parentIndex >= 0)
-        {
-            parentWorldMatrix = scene.GetWorldMatrix(parentIndex);
-        }
-
-        scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().SetFromMatrix(
-            glm::inverse(parentWorldMatrix) * worldMatrix);
-        scene.MarkDirty();
-    }
 }
 
 WorldTransformState GetObjectWorldTransformState(const Scene& scene, int objectIndex)
@@ -55,7 +40,7 @@ void SetObjectWorldPosition(Scene& scene, int objectIndex, const glm::vec3& worl
     const glm::vec3 currentPosition = glm::vec3(worldMatrix[3]);
     const glm::mat4 translationDelta =
         glm::translate(glm::mat4(1.0f), worldPosition - currentPosition);
-    SetObjectWorldMatrix(scene, objectIndex, translationDelta * worldMatrix);
+    scene.SetObjectWorldMatrix(objectIndex, translationDelta * worldMatrix);
 }
 
 void SetObjectWorldRotationDegrees(Scene& scene, int objectIndex, const glm::vec3& rotationDegrees)
@@ -66,7 +51,7 @@ void SetObjectWorldRotationDegrees(Scene& scene, int objectIndex, const glm::vec
     worldTransform.position = state.position;
     worldTransform.SetRotationDegrees(rotationDegrees);
     worldTransform.scale = state.scale;
-    SetObjectWorldMatrix(scene, objectIndex, worldTransform.ToMatrix());
+    scene.SetObjectWorldMatrix(objectIndex, worldTransform.ToMatrix());
 }
 
 void SetObjectWorldScale(Scene& scene, int objectIndex, const glm::vec3& worldScale)
@@ -77,7 +62,7 @@ void SetObjectWorldScale(Scene& scene, int objectIndex, const glm::vec3& worldSc
     worldTransform.position = state.position;
     worldTransform.rotation = glm::quat(glm::radians(state.rotationDegrees));
     worldTransform.scale = worldScale;
-    SetObjectWorldMatrix(scene, objectIndex, worldTransform.ToMatrix());
+    scene.SetObjectWorldMatrix(objectIndex, worldTransform.ToMatrix());
 }
 
 void ApplyWorldPositionFieldToObjects(

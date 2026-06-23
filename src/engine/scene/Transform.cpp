@@ -36,6 +36,13 @@ glm::mat4 Transform::ToMatrix() const
     return matrix;
 }
 
+Transform Transform::FromMatrix(const glm::mat4& matrix)
+{
+    Transform transform;
+    transform.SetFromMatrix(matrix);
+    return transform;
+}
+
 void Transform::SetFromMatrix(const glm::mat4& matrix)
 {
     position = glm::vec3(matrix[3]);

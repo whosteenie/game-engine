@@ -1,5 +1,7 @@
 #include "engine/components/CameraComponent.h"
 
+#include "engine/components/ComponentCompare.h"
+
 #include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
@@ -38,6 +40,18 @@ namespace
         direction.z = sin(glm::radians(yawDegrees)) * cos(glm::radians(pitchDegrees));
         return glm::normalize(direction);
     }
+}
+
+bool operator==(const CameraComponent& left, const CameraComponent& right)
+{
+    using ComponentCompare::FloatsEqual;
+
+    return FloatsEqual(left.fovDegrees, right.fovDegrees)
+        && FloatsEqual(left.nearPlane, right.nearPlane)
+        && FloatsEqual(left.farPlane, right.farPlane)
+        && left.enabled == right.enabled
+        && left.depth == right.depth
+        && left.isMain == right.isMain;
 }
 
 CameraComponent MakeDefaultCameraComponent()

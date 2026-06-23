@@ -124,14 +124,8 @@ bool SceneHierarchyOps::ReparentObject(
 
     const glm::mat4 worldMatrix = getWorldMatrix(objectIndex);
 
-    glm::mat4 newParentWorldMatrix(1.0f);
-    if (newParentIndex >= 0)
-    {
-        newParentWorldMatrix = getWorldMatrix(newParentIndex);
-    }
-
     object.SetParentIndex(newParentIndex);
-    object.GetTransform().SetFromMatrix(glm::inverse(newParentWorldMatrix) * worldMatrix);
+    SetObjectWorldMatrix(objects, objectIndex, worldMatrix);
     return true;
 }
 

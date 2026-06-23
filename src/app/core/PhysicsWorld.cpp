@@ -3,6 +3,7 @@
 #include "app/scene/Scene.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/components/RigidBodyComponent.h"
+#include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/Transform.h"
 
@@ -146,23 +147,11 @@ namespace
 
     void ApplyWorldTransformToObject(Scene& scene, int objectIndex, const glm::vec3& worldPosition, const glm::quat& worldRotation)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
-        const glm::vec3 preservedScale = object.GetTransform().scale;
-
+        const glm::vec3 preservedScale =
+            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
         const glm::mat4 worldMatrix =
             BuildWorldMatrix(worldPosition, worldRotation, preservedScale);
-
-        const int parentIndex = object.GetParentIndex();
-        if (parentIndex >= 0)
-        {
-            const glm::mat4 parentWorld = scene.GetWorldMatrix(parentIndex);
-            const glm::mat4 localMatrix = glm::inverse(parentWorld) * worldMatrix;
-            object.GetTransform().SetFromMatrix(localMatrix);
-        }
-        else
-        {
-            object.GetTransform().SetFromMatrix(worldMatrix);
-        }
+        SetObjectWorldMatrix(scene.GetObjects(), objectIndex, worldMatrix);
     }
 
     JPH::Quat ToJoltQuat(const glm::quat& rotation)

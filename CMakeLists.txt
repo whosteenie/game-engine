@@ -294,6 +294,8 @@ add_executable(game-engine
     src/engine/scene/InspectorComponentOrder.cpp
     src/engine/scene/SceneObject.cpp
 
+    src/engine/scene/SceneObjectComponents.cpp
+
     src/engine/scene/Transform.cpp
 
     src/engine/scene/ScenePicker.cpp

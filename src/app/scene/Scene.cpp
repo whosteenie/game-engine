@@ -17,6 +17,7 @@
 #include "engine/rendering/Mesh.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneHierarchy.h"
+#include "engine/scene/SceneObjectComponents.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/lighting/IBL.h"
@@ -165,40 +166,12 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
 
     for (const SceneObject& sourceObject : source.m_objectStore->Objects())
     {
-        std::unique_ptr<Material> materialClone;
-        if (sourceObject.HasMaterial())
-        {
-            materialClone = sourceObject.GetMaterial().Clone();
-        }
-
-        std::optional<LightComponent> lightClone;
-        if (sourceObject.HasLight())
-        {
-            lightClone = sourceObject.GetLight();
-        }
-
-        std::optional<CameraComponent> cameraClone;
-        if (sourceObject.HasCamera())
-        {
-            cameraClone = sourceObject.GetCamera();
-        }
-
-        std::optional<RigidBodyComponent> rigidBodyClone;
-        if (sourceObject.HasRigidBody())
-        {
-            rigidBodyClone = sourceObject.GetRigidBody();
-        }
-
-        std::optional<ColliderComponent> colliderClone;
-        if (sourceObject.HasCollider())
-        {
-            colliderClone = sourceObject.GetCollider();
-        }
+        SceneObjectComponentSnapshot components = CaptureSceneObjectComponents(sourceObject);
 
         clone->m_objectStore->Objects().emplace_back(
             sourceObject.GetName(),
             remapMesh(sourceObject.GetMesh(), *clone),
-            std::move(materialClone),
+            std::move(components.material),
             sourceObject.GetLocalBoundsMin(),
             sourceObject.GetLocalBoundsMax(),
             sourceObject.GetTransform(),
@@ -206,10 +179,10 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
             sourceObject.ReceivesShadow(),
             sourceObject.GetParentIndex(),
             sourceObject.GetSiblingOrder(),
-            std::move(lightClone),
-            std::move(cameraClone),
-            std::move(rigidBodyClone),
-            std::move(colliderClone),
+            std::move(components.light),
+            std::move(components.camera),
+            std::move(components.rigidBody),
+            std::move(components.collider),
             sourceObject.GetId());
 
         SceneObject& clonedObject = clone->m_objectStore->Objects().back();
@@ -220,7 +193,7 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
                 sourceObject.GetImportNodeIndex());
         }
 
-        clonedObject.SetInspectorComponentOrder(sourceObject.GetInspectorComponentOrder());
+        ApplySceneObjectInspectorOrder(clonedObject, components.inspectorComponentOrder);
     }
 
     clone->m_selectionController->SetState(source.GetSelection());
@@ -267,6 +240,12 @@ void Scene::EnsureUniqueMainCamera(int objectIndex)
 glm::mat4 Scene::GetWorldMatrix(int objectIndex) const
 {
     return GetObjectWorldMatrix(m_objectStore->Objects(), objectIndex);
+}
+
+void Scene::SetObjectWorldMatrix(int objectIndex, const glm::mat4& worldMatrix)
+{
+    ::SetObjectWorldMatrix(m_objectStore->Objects(), objectIndex, worldMatrix);
+    MarkDirty();
 }
 
 glm::mat4 Scene::GetGizmoWorldMatrix(int objectIndex) const

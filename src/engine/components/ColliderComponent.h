@@ -17,4 +17,6 @@ struct ColliderComponent
     bool isTrigger = false;
 };
 
+bool operator==(const ColliderComponent& left, const ColliderComponent& right);
+
 ColliderComponent MakeDefaultColliderComponent();

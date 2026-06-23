@@ -229,6 +229,11 @@ struct ObjectShadowFlags
     bool receiveShadow = true;
 };
 
+inline bool operator==(const ObjectShadowFlags& left, const ObjectShadowFlags& right)
+{
+    return left.castShadow == right.castShadow && left.receiveShadow == right.receiveShadow;
+}
+
 using ObjectMaterialMap = std::unordered_map<SceneObjectId, std::unique_ptr<Material>>;
 using ObjectLightMap = std::unordered_map<SceneObjectId, LightComponent>;
 using ObjectCameraMap = std::unordered_map<SceneObjectId, CameraComponent>;

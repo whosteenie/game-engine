@@ -124,6 +124,7 @@ public:
     bool PlaceObjectAtRootBeginning(int objectIndex);
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
+    void SetObjectWorldMatrix(int objectIndex, const glm::mat4& worldMatrix);
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
     glm::mat4 GetSelectionGizmoWorldMatrix(bool worldSpace) const;
     void GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;

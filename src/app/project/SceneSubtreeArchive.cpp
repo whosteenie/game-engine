@@ -6,6 +6,7 @@
 
 #include "engine/rendering/Mesh.h"
 #include "engine/scene/SceneObject.h"
+#include "engine/scene/SceneObjectComponents.h"
 
 #include <algorithm>
 #include <unordered_map>
@@ -127,6 +128,8 @@ namespace
     ArchivedSceneObject ArchiveObject(const Scene& scene, int objectIndex)
     {
         const SceneObject& source = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObjectComponentSnapshot components = CaptureSceneObjectComponents(source);
+
         ArchivedSceneObject archived;
         archived.flatIndex = objectIndex;
         archived.id = source.GetId();
@@ -138,33 +141,12 @@ namespace
         archived.castShadow = source.CastsShadow();
         archived.receiveShadow = source.ReceivesShadow();
         archived.siblingOrder = source.GetSiblingOrder();
-
-        if (source.HasMaterial())
-        {
-            archived.material = source.GetMaterial().Clone();
-        }
-
-        if (source.HasLight())
-        {
-            archived.light = source.GetLight();
-        }
-
-        if (source.HasCamera())
-        {
-            archived.camera = source.GetCamera();
-        }
-
-        if (source.HasRigidBody())
-        {
-            archived.rigidBody = source.GetRigidBody();
-        }
-
-        if (source.HasCollider())
-        {
-            archived.collider = source.GetCollider();
-        }
-
-        archived.inspectorComponentOrder = source.GetInspectorComponentOrder();
+        archived.material = std::move(components.material);
+        archived.light = std::move(components.light);
+        archived.camera = std::move(components.camera);
+        archived.rigidBody = std::move(components.rigidBody);
+        archived.collider = std::move(components.collider);
+        archived.inspectorComponentOrder = std::move(components.inspectorComponentOrder);
 
         if (!source.GetImportAssetPath().empty() && source.GetImportNodeIndex() >= 0)
         {
@@ -201,40 +183,17 @@ namespace
             }
         }
 
-        std::optional<LightComponent> lightClone;
-        if (archived.light.has_value())
-        {
-            lightClone = archived.light;
-        }
-
-        std::optional<CameraComponent> cameraClone;
-        if (archived.camera.has_value())
-        {
-            cameraClone = archived.camera;
-        }
-
-        std::optional<RigidBodyComponent> rigidBodyClone;
-        if (archived.rigidBody.has_value())
-        {
-            rigidBodyClone = archived.rigidBody;
-        }
-
-        std::optional<ColliderComponent> colliderClone;
-        if (archived.collider.has_value())
-        {
-            colliderClone = archived.collider;
-        }
-
-        std::unique_ptr<Material> materialClone;
-        if (archived.material)
-        {
-            materialClone = archived.material->Clone();
-        }
+        SceneObjectComponentSnapshot components;
+        components.light = std::move(archived.light);
+        components.camera = std::move(archived.camera);
+        components.rigidBody = std::move(archived.rigidBody);
+        components.collider = std::move(archived.collider);
+        components.material = std::move(archived.material);
 
         SceneObject restored(
             archived.name,
             mesh,
-            std::move(materialClone),
+            std::move(components.material),
             archived.localBoundsMin,
             archived.localBoundsMax,
             archived.transform,
@@ -242,10 +201,10 @@ namespace
             archived.receiveShadow,
             -1,
             archived.siblingOrder,
-            std::move(lightClone),
-            std::move(cameraClone),
-            std::move(rigidBodyClone),
-            std::move(colliderClone),
+            std::move(components.light),
+            std::move(components.camera),
+            std::move(components.rigidBody),
+            std::move(components.collider),
             archived.id);
 
         if (!archived.isImportedMesh)

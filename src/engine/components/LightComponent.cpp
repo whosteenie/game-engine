@@ -1,5 +1,6 @@
 #include "engine/components/LightComponent.h"
 
+#include "engine/components/ComponentCompare.h"
 #include "engine/scene/SceneObject.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -19,6 +20,22 @@ namespace
 
         return vector / length;
     }
+}
+
+bool operator==(const LightComponent& left, const LightComponent& right)
+{
+    using ComponentCompare::FloatsEqual;
+
+    return left.type == right.type
+        && left.color == right.color
+        && FloatsEqual(left.intensity, right.intensity)
+        && FloatsEqual(left.constantAttenuation, right.constantAttenuation)
+        && FloatsEqual(left.linearAttenuation, right.linearAttenuation)
+        && FloatsEqual(left.quadraticAttenuation, right.quadraticAttenuation)
+        && FloatsEqual(left.range, right.range)
+        && FloatsEqual(left.innerCutoffDegrees, right.innerCutoffDegrees)
+        && FloatsEqual(left.outerCutoffDegrees, right.outerCutoffDegrees)
+        && left.castsShadow == right.castsShadow;
 }
 
 glm::quat QuatFromLocalYAxis(const glm::vec3& localYWorldDirection)
