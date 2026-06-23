@@ -3,6 +3,8 @@
 #include <memory>
 
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
+#include "app/UndoStack.h"
 #include "engine/Camera.h"
 #include "engine/Input.h"
 #include "engine/SceneObject.h"
@@ -186,13 +188,24 @@ void SceneEditor::Update(
     int windowWidth,
     int windowHeight,
     bool allowMouseInput,
-    bool allowKeyboardInput)
+    bool allowKeyboardInput,
+    UndoStack* undoStack,
+    const std::string& projectRoot)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
-        scene.RemoveSelectedObjects();
+        if (undoStack != nullptr)
+        {
+            PushSceneEdit(*undoStack, scene, projectRoot, "Delete", [](Scene& target) {
+                target.RemoveSelectedObjects();
+            });
+        }
+        else
+        {
+            scene.RemoveSelectedObjects();
+        }
     }
 
     const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
@@ -204,7 +217,16 @@ void SceneEditor::Update(
         && !io.WantTextInput
         && !ImGui::IsAnyItemActive())
     {
-        scene.DuplicateSelectedObjects();
+        if (undoStack != nullptr)
+        {
+            PushSceneEdit(*undoStack, scene, projectRoot, "Duplicate", [](Scene& target) {
+                target.DuplicateSelectedObjects();
+            });
+        }
+        else
+        {
+            scene.DuplicateSelectedObjects();
+        }
     }
 
     const bool allowTransformShortcuts = allowKeyboardInput && !input.IsCapturingMouse();

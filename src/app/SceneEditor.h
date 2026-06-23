@@ -2,11 +2,13 @@
 
 #include <glm/glm.hpp>
 #include <memory>
+#include <string>
 
 class Camera;
 class Input;
 class Scene;
 class SelectionRenderer;
+class UndoStack;
 
 enum class TransformTool
 {
@@ -41,7 +43,9 @@ public:
         int windowWidth,
         int windowHeight,
         bool allowMouseInput,
-        bool allowKeyboardInput);
+        bool allowKeyboardInput,
+        UndoStack* undoStack,
+        const std::string& projectRoot);
 
     void HandleEscapeKey(Scene& scene);
 

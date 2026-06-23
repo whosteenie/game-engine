@@ -2,6 +2,7 @@
 
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
+#include "engine/SceneObjectId.h"
 #include "engine/Transform.h"
 
 #include <glm/glm.hpp>
@@ -25,7 +26,11 @@ public:
         bool receiveShadow = true,
         int parentIndex = -1,
         int siblingOrder = 0,
-        std::optional<LightComponent> light = std::nullopt);
+        std::optional<LightComponent> light = std::nullopt,
+        SceneObjectId id = kInvalidSceneObjectId);
+
+    SceneObjectId GetId() const;
+    void SetId(SceneObjectId id);
 
     const std::string& GetName() const;
     void SetName(const std::string& name);
@@ -71,6 +76,7 @@ public:
     void ClearImportSource();
 
 private:
+    SceneObjectId m_id = kInvalidSceneObjectId;
     std::string m_name;
     Mesh* m_mesh = nullptr;
     std::unique_ptr<Material> m_material;

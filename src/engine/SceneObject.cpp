@@ -18,8 +18,10 @@ SceneObject::SceneObject(
     bool receiveShadow,
     int parentIndex,
     int siblingOrder,
-    std::optional<LightComponent> light)
-    : m_name(std::move(name)),
+    std::optional<LightComponent> light,
+    SceneObjectId id)
+    : m_id(id),
+      m_name(std::move(name)),
       m_mesh(mesh),
       m_material(std::move(material)),
       m_transform(transform),
@@ -31,6 +33,16 @@ SceneObject::SceneObject(
       m_receiveShadow(receiveShadow),
       m_light(std::move(light))
 {
+}
+
+SceneObjectId SceneObject::GetId() const
+{
+    return m_id;
+}
+
+void SceneObject::SetId(SceneObjectId id)
+{
+    m_id = id;
 }
 
 const std::string& SceneObject::GetName() const

@@ -2,6 +2,8 @@
 
 #include <glm/glm.hpp>
 
+#include "engine/SceneObjectId.h"
+
 #include <string>
 #include <unordered_map>
 
@@ -17,7 +19,7 @@ struct ProjectEditorState
     bool showLighting = true;
     bool showProjectFiles = true;
 
-    std::unordered_map<int, bool> hierarchyNodeOpenStates;
+    std::unordered_map<SceneObjectId, bool> hierarchyNodeOpenStates;
 
     std::string projectFilesBrowsedDirectory;
     std::string projectFilesSelectedPath;

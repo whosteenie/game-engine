@@ -6,7 +6,9 @@
 #include "app/ProjectEditorState.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
 #include "app/UndoContext.h"
+#include "app/SceneDocument.h"
 #include "app/UndoStack.h"
 #include "engine/FileDialog.h"
 
@@ -43,7 +45,11 @@ namespace
         ImGui::MenuItem(label, nullptr, visible);
     }
 
-    void ImportModelIntoScene(Scene& scene, ProjectSession& project, int parentIndex)
+    void ImportModelIntoScene(
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        int parentIndex)
     {
         std::string modelPath;
         if (!FileDialog::OpenModelFile(modelPath))
@@ -51,10 +57,10 @@ namespace
             return;
         }
 
-        const std::vector<int> importedIndices = scene.ImportModel(
-            modelPath,
-            parentIndex,
-            project.GetProjectRootDirectory());
+        const std::string& projectRoot = project.GetProjectRootDirectory();
+        SceneDocument before = SceneDocument::Capture(scene, projectRoot);
+        const std::vector<int> importedIndices =
+            scene.ImportModel(modelPath, parentIndex, projectRoot);
         if (importedIndices.empty())
         {
             if (!scene.GetLastImportError().empty())
@@ -65,6 +71,13 @@ namespace
         }
 
         scene.SetSelectedObjectIndex(importedIndices.front());
+        SceneDocument after = SceneDocument::Capture(scene, projectRoot);
+        undoStack.Push(std::make_unique<ApplySceneDocumentCommand>(
+            std::move(before),
+            std::move(after),
+            "Import Model",
+            projectRoot));
+
         if (!scene.GetLastImportWarning().empty())
         {
             project.SetStatusMessage(scene.GetLastImportWarning());
@@ -193,7 +206,7 @@ namespace
         }
     }
 
-    void HandleEditMenuShortcuts(Scene& scene, UndoStack& undoStack)
+    void HandleEditMenuShortcuts(Scene& scene, ProjectSession& project, UndoStack& undoStack)
     {
         if (!AllowFileMenuShortcuts())
         {
@@ -206,7 +219,7 @@ namespace
             return;
         }
 
-        UndoContext context{scene};
+        UndoContext context{scene, project.GetProjectRootDirectory()};
         if (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
         {
             if (undoStack.CanRedo())
@@ -252,7 +265,7 @@ void MainMenuBar::Draw(
         captureEditorState,
         applyEditorState,
         undoStack);
-    HandleEditMenuShortcuts(scene, undoStack);
+    HandleEditMenuShortcuts(scene, project, undoStack);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -291,7 +304,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Import Model..."))
         {
-            ImportModelIntoScene(scene, project, -1);
+            ImportModelIntoScene(scene, project, undoStack, -1);
         }
 
         ImGui::Separator();
@@ -313,7 +326,7 @@ void MainMenuBar::Draw(
 
     if (ImGui::BeginMenu("Edit"))
     {
-        UndoContext context{scene};
+        UndoContext context{scene, project.GetProjectRootDirectory()};
         if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undoStack.CanUndo()))
         {
             undoStack.Undo(context);

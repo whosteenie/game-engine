@@ -8,6 +8,7 @@
 #include "engine/Light.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneHierarchy.h"
+#include "engine/SceneObjectId.h"
 #include "engine/ScenePrimitive.h"
 
 #include <imgui.h>
@@ -21,21 +22,34 @@ namespace
     constexpr const char* kHierarchyDragDropPayload = "SCENE_HIERARCHY_ITEM";
     constexpr float kHierarchyInsertGapHeight = 4.0f;
 
-    bool IsNodeExpanded(int objectIndex, const std::unordered_map<int, bool>& openStates)
+    SceneObjectId GetObjectId(const Scene& scene, int objectIndex)
     {
-        const auto iterator = openStates.find(objectIndex);
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= scene.GetObjects().size())
+        {
+            return kInvalidSceneObjectId;
+        }
+
+        return scene.GetObject(static_cast<std::size_t>(objectIndex)).GetId();
+    }
+
+    bool IsNodeExpanded(
+        const Scene& scene,
+        int objectIndex,
+        const std::unordered_map<SceneObjectId, bool>& openStates)
+    {
+        const auto iterator = openStates.find(GetObjectId(scene, objectIndex));
         return iterator != openStates.end() && iterator->second;
     }
 
     void BuildVisibleObjectOrder(
         const Scene& scene,
         int objectIndex,
-        const std::unordered_map<int, bool>& openStates,
+        const std::unordered_map<SceneObjectId, bool>& openStates,
         std::vector<int>& outVisibleIndices)
     {
         outVisibleIndices.push_back(objectIndex);
 
-        if (!IsNodeExpanded(objectIndex, openStates))
+        if (!IsNodeExpanded(scene, objectIndex, openStates))
         {
             return;
         }
@@ -48,7 +62,7 @@ namespace
 
     void BuildVisibleObjectOrder(
         const Scene& scene,
-        const std::unordered_map<int, bool>& openStates,
+        const std::unordered_map<SceneObjectId, bool>& openStates,
         std::vector<int>& outVisibleIndices)
     {
         outVisibleIndices.clear();
@@ -83,7 +97,7 @@ namespace
     void HandleHierarchyRowSelection(
         Scene& scene,
         int objectIndex,
-        const std::unordered_map<int, bool>& openStates)
+        const std::unordered_map<SceneObjectId, bool>& openStates)
     {
         std::vector<int> visibleIndices;
         BuildVisibleObjectOrder(scene, openStates, visibleIndices);
@@ -114,7 +128,7 @@ namespace
     void HandleHierarchyKeyboardNavigation(
         Scene& scene,
         int& primaryIndex,
-        std::unordered_map<int, bool>& openStates,
+        std::unordered_map<SceneObjectId, bool>& openStates,
         bool& scrollSelectionIntoView)
     {
         if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
@@ -228,76 +242,98 @@ namespace
                 return;
             }
 
-            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && !IsNodeExpanded(primaryIndex, openStates))
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)
+                && !IsNodeExpanded(scene, primaryIndex, openStates))
             {
-                openStates[primaryIndex] = true;
+                openStates[GetObjectId(scene, primaryIndex)] = true;
                 scrollSelectionIntoView = true;
             }
-            else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && IsNodeExpanded(primaryIndex, openStates))
+            else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)
+                     && IsNodeExpanded(scene, primaryIndex, openStates))
             {
-                openStates[primaryIndex] = false;
+                openStates[GetObjectId(scene, primaryIndex)] = false;
                 scrollSelectionIntoView = true;
             }
         }
     }
 
-    bool AddPrimitiveFromMenu(Scene& scene, ScenePrimitive primitive, int parentIndex)
+    bool AddPrimitiveFromMenu(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        ScenePrimitive primitive,
+        int parentIndex)
     {
         if (ImGui::MenuItem(GetScenePrimitiveDisplayName(primitive)))
         {
-            const int newIndex = scene.AddObject(primitive, parentIndex);
-            scene.SetSelectedObjectIndex(newIndex);
+            const std::string commandName =
+                std::string("Create ") + GetScenePrimitiveDisplayName(primitive);
+            panel.PushSceneMutation(scene, commandName, [&](Scene& target) {
+                const int newIndex = target.AddObject(primitive, parentIndex);
+                target.SetSelectedObjectIndex(newIndex);
+            });
             return true;
         }
 
         return false;
     }
 
-    bool AddEmptyFromMenu(Scene& scene, int parentIndex)
+    bool AddEmptyFromMenu(const SceneHierarchyPanel& panel, Scene& scene, int parentIndex)
     {
         if (ImGui::MenuItem("Empty"))
         {
-            const int newIndex = scene.AddEmptyObject(parentIndex);
-            scene.SetSelectedObjectIndex(newIndex);
+            panel.PushSceneMutation(scene, "Create Empty", [&](Scene& target) {
+                const int newIndex = target.AddEmptyObject(parentIndex);
+                target.SetSelectedObjectIndex(newIndex);
+            });
             return true;
         }
 
         return false;
     }
 
-    bool AddLightFromMenu(Scene& scene, LightType type, int parentIndex)
+    bool AddLightFromMenu(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        LightType type,
+        int parentIndex)
     {
         const char* label = "Light";
+        const char* commandName = "Create Light";
         switch (type)
         {
         case LightType::Directional:
             label = "Directional Light";
+            commandName = "Create Directional Light";
             break;
         case LightType::Point:
             label = "Point Light";
+            commandName = "Create Point Light";
             break;
         case LightType::Spot:
             label = "Spot Light";
+            commandName = "Create Spot Light";
             break;
         }
 
         if (ImGui::MenuItem(label))
         {
-            const int newIndex = scene.AddLightObject(type, parentIndex);
-            scene.SetSelectedObjectIndex(newIndex);
+            panel.PushSceneMutation(scene, commandName, [&](Scene& target) {
+                const int newIndex = target.AddLightObject(type, parentIndex);
+                target.SetSelectedObjectIndex(newIndex);
+            });
             return true;
         }
 
         return false;
     }
 
-    void DrawLightMenu(Scene& scene, int parentIndex)
+    void DrawLightMenu(const SceneHierarchyPanel& panel, Scene& scene, int parentIndex)
     {
         if (ImGui::BeginMenu("Light"))
         {
-            AddLightFromMenu(scene, LightType::Directional, parentIndex);
-            AddLightFromMenu(scene, LightType::Point, parentIndex);
-            AddLightFromMenu(scene, LightType::Spot, parentIndex);
+            AddLightFromMenu(panel, scene, LightType::Directional, parentIndex);
+            AddLightFromMenu(panel, scene, LightType::Point, parentIndex);
+            AddLightFromMenu(panel, scene, LightType::Spot, parentIndex);
             ImGui::EndMenu();
         }
     }
@@ -317,20 +353,24 @@ namespace
         return "[Empty] " + object.GetName();
     }
 
-    void Draw3DObjectMenu(Scene& scene, int parentIndex)
+    void Draw3DObjectMenu(const SceneHierarchyPanel& panel, Scene& scene, int parentIndex)
     {
         if (ImGui::BeginMenu("3D Object"))
         {
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Cube, parentIndex);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Sphere, parentIndex);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Cylinder, parentIndex);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Capsule, parentIndex);
-            AddPrimitiveFromMenu(scene, ScenePrimitive::Plane, parentIndex);
+            AddPrimitiveFromMenu(panel, scene, ScenePrimitive::Cube, parentIndex);
+            AddPrimitiveFromMenu(panel, scene, ScenePrimitive::Sphere, parentIndex);
+            AddPrimitiveFromMenu(panel, scene, ScenePrimitive::Cylinder, parentIndex);
+            AddPrimitiveFromMenu(panel, scene, ScenePrimitive::Capsule, parentIndex);
+            AddPrimitiveFromMenu(panel, scene, ScenePrimitive::Plane, parentIndex);
             ImGui::EndMenu();
         }
     }
 
-    void ImportModelFromDialog(Scene& scene, ProjectSession& project, int parentIndex)
+    void ImportModelFromDialog(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        ProjectSession& project,
+        int parentIndex)
     {
         std::string modelPath;
         if (!FileDialog::OpenModelFile(modelPath))
@@ -338,42 +378,49 @@ namespace
             return;
         }
 
-        const std::vector<int> importedIndices = scene.ImportModel(
-            modelPath,
-            parentIndex,
-            project.GetProjectRootDirectory());
-        if (importedIndices.empty())
-        {
-            if (!scene.GetLastImportError().empty())
+        const std::string& projectRoot = project.GetProjectRootDirectory();
+        panel.PushSceneMutation(scene, "Import Model", [&](Scene& target) {
+            const std::vector<int> importedIndices =
+                target.ImportModel(modelPath, parentIndex, projectRoot);
+            if (importedIndices.empty())
             {
-                project.SetStatusMessage(scene.GetLastImportError());
+                return;
             }
-            return;
-        }
 
-        scene.SetSelectedObjectIndex(importedIndices.front());
-        if (!scene.GetLastImportWarning().empty())
+            target.SetSelectedObjectIndex(importedIndices.front());
+        });
+
+        if (!scene.GetLastImportError().empty())
+        {
+            project.SetStatusMessage(scene.GetLastImportError());
+        }
+        else if (!scene.GetLastImportWarning().empty())
         {
             project.SetStatusMessage(scene.GetLastImportWarning());
         }
     }
 
-    void DrawCreateObjectMenu(Scene& scene, ProjectSession& project, int parentIndex)
+    void DrawCreateObjectMenu(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        ProjectSession& project,
+        int parentIndex)
     {
-        AddEmptyFromMenu(scene, parentIndex);
-        DrawLightMenu(scene, parentIndex);
-        Draw3DObjectMenu(scene, parentIndex);
+        AddEmptyFromMenu(panel, scene, parentIndex);
+        DrawLightMenu(panel, scene, parentIndex);
+        Draw3DObjectMenu(panel, scene, parentIndex);
         if (ImGui::MenuItem("Import Model..."))
         {
-            ImportModelFromDialog(scene, project, parentIndex);
+            ImportModelFromDialog(panel, scene, project, parentIndex);
         }
     }
 
     void DrawObjectContextMenu(
+        const SceneHierarchyPanel& panel,
         Scene& scene,
         ProjectSession& project,
         int objectIndex,
-        int& pendingDeleteIndex,
+        std::unordered_map<SceneObjectId, bool>& openStates,
         int& pendingRenameIndex,
         int& renameTargetIndex,
         bool& beginRenameNextFrame,
@@ -387,7 +434,7 @@ namespace
         }
 
         scene.SetSelectedObjectIndex(objectIndex);
-        DrawCreateObjectMenu(scene, project, objectIndex);
+        DrawCreateObjectMenu(panel, scene, project, objectIndex);
 
         ImGui::Separator();
         if (ImGui::MenuItem("Rename"))
@@ -405,12 +452,25 @@ namespace
 
         if (ImGui::MenuItem("Duplicate", "Ctrl+D"))
         {
-            scene.DuplicateObject(objectIndex);
+            panel.PushSceneMutation(scene, "Duplicate", [objectIndex](Scene& target) {
+                const int duplicatedIndex = target.DuplicateObject(objectIndex);
+                if (duplicatedIndex >= 0)
+                {
+                    target.SetSelectedObjectIndex(duplicatedIndex);
+                }
+            });
         }
 
         if (ImGui::MenuItem("Delete"))
         {
-            pendingDeleteIndex = objectIndex;
+            const std::string objectName =
+                scene.GetObject(static_cast<std::size_t>(objectIndex)).GetName();
+            panel.PushSceneMutation(
+                scene,
+                "Delete \"" + objectName + "\"",
+                [objectIndex](Scene& target) {
+                    target.RemoveObject(static_cast<std::size_t>(objectIndex));
+                });
         }
 
         ImGui::EndPopup();
@@ -487,7 +547,11 @@ namespace
             2.0f);
     }
 
-    void DrawHierarchyInsertGap(Scene& scene, int referenceIndex, HierarchyInsertMode mode)
+    void DrawHierarchyInsertGap(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        int referenceIndex,
+        HierarchyInsertMode mode)
     {
         ImGui::PushID(referenceIndex);
         ImGui::PushID(static_cast<int>(mode));
@@ -511,8 +575,10 @@ namespace
                     {
                         if (payload->IsDelivery())
                         {
-                            scene.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
-                            scene.SetSelectedObjectIndex(draggedIndex);
+                            panel.PushSceneMutation(scene, "Reparent", [=](Scene& target) {
+                                target.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
+                                target.SetSelectedObjectIndex(draggedIndex);
+                            });
                         }
                     }
                 }
@@ -533,9 +599,10 @@ namespace
     }
 
     void DrawHierarchyRowDropTarget(
+        const SceneHierarchyPanel& panel,
         Scene& scene,
         int referenceIndex,
-        std::unordered_map<int, bool>& openStates)
+        std::unordered_map<SceneObjectId, bool>& openStates)
     {
         if (!ImGui::BeginDragDropTarget())
         {
@@ -551,7 +618,7 @@ namespace
                 && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
             {
                 DrawHierarchyReparentIndicator();
-                openStates[referenceIndex] = true;
+                openStates[GetObjectId(scene, referenceIndex)] = true;
 
                 const ImGuiDragDropFlags acceptFlags =
                     ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
@@ -560,8 +627,10 @@ namespace
                 {
                     if (payload->IsDelivery())
                     {
-                        scene.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
-                        scene.SetSelectedObjectIndex(draggedIndex);
+                        panel.PushSceneMutation(scene, "Reparent", [=](Scene& target) {
+                            target.PlaceObjectInHierarchy(draggedIndex, referenceIndex, mode);
+                            target.SetSelectedObjectIndex(draggedIndex);
+                        });
                     }
                 }
             }
@@ -570,24 +639,27 @@ namespace
         ImGui::EndDragDropTarget();
     }
 
-    void DrawHierarchyBackgroundContextMenu(Scene& scene, ProjectSession& project)
+    void DrawHierarchyBackgroundContextMenu(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        ProjectSession& project)
     {
         if (ImGui::BeginPopupContextItem())
         {
-            DrawCreateObjectMenu(scene, project, -1);
+            DrawCreateObjectMenu(panel, scene, project, -1);
             ImGui::EndPopup();
         }
     }
 
     void DrawHierarchyNode(
+        const SceneHierarchyPanel& panel,
         Scene& scene,
         ProjectSession& project,
         UndoStack& undoStack,
         int objectIndex,
         int primaryIndex,
-        std::unordered_map<int, bool>& openStates,
+        std::unordered_map<SceneObjectId, bool>& openStates,
         bool& scrollSelectionIntoView,
-        int& pendingDeleteIndex,
         int& pendingRenameIndex,
         int& renameTargetIndex,
         bool& beginRenameNextFrame,
@@ -596,7 +668,7 @@ namespace
         bool& focusRenameInput,
         bool& renameInputEngaged)
     {
-        DrawHierarchyInsertGap(scene, objectIndex, HierarchyInsertMode::Before);
+        DrawHierarchyInsertGap(panel, scene, objectIndex, HierarchyInsertMode::Before);
 
         const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
@@ -616,7 +688,7 @@ namespace
         }
         else
         {
-            ImGui::SetNextItemOpen(IsNodeExpanded(objectIndex, openStates), ImGuiCond_Always);
+            ImGui::SetNextItemOpen(IsNodeExpanded(scene, objectIndex, openStates), ImGuiCond_Always);
         }
 
         const std::string label = BuildHierarchyLabel(object);
@@ -654,7 +726,7 @@ namespace
                     PushSetObjectName(
                         undoStack,
                         scene,
-                        objectIndex,
+                        object.GetId(),
                         object.GetName(),
                         renameBuffer);
                 }
@@ -675,7 +747,7 @@ namespace
             opened = ImGui::TreeNodeEx(label.c_str(), flags);
             if (!children.empty())
             {
-                openStates[objectIndex] = opened;
+                openStates[object.GetId()] = opened;
             }
 
             if (objectIndex == primaryIndex && scrollSelectionIntoView)
@@ -690,16 +762,17 @@ namespace
 
             const bool allowDragDrop = true;
             DrawHierarchyDragDropSource(objectIndex, label, allowDragDrop);
-            DrawHierarchyRowDropTarget(scene, objectIndex, openStates);
+            DrawHierarchyRowDropTarget(panel, scene, objectIndex, openStates);
         }
 
         if (!isRenaming)
         {
             DrawObjectContextMenu(
+                panel,
                 scene,
                 project,
                 objectIndex,
-                pendingDeleteIndex,
+                openStates,
                 pendingRenameIndex,
                 renameTargetIndex,
                 beginRenameNextFrame,
@@ -713,6 +786,7 @@ namespace
             for (int childIndex : children)
             {
                 DrawHierarchyNode(
+                    panel,
                     scene,
                     project,
                     undoStack,
@@ -720,7 +794,6 @@ namespace
                     primaryIndex,
                     openStates,
                     scrollSelectionIntoView,
-                    pendingDeleteIndex,
                     pendingRenameIndex,
                     renameTargetIndex,
                     beginRenameNextFrame,
@@ -736,18 +809,38 @@ namespace
         ImGui::PopID();
     }
 
-    void DrawAddObjectPopup(Scene& scene, ProjectSession& project)
+    void DrawAddObjectPopup(const SceneHierarchyPanel& panel, Scene& scene, ProjectSession& project)
     {
         if (ImGui::BeginPopup("AddObjectPopup"))
         {
-            DrawCreateObjectMenu(scene, project, -1);
+            DrawCreateObjectMenu(panel, scene, project, -1);
             ImGui::EndPopup();
         }
     }
 }
 
+void SceneHierarchyPanel::PushSceneMutation(
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate) const
+{
+    if (m_drawUndoStack != nullptr && m_drawProjectRoot != nullptr)
+    {
+        PushSceneEdit(*m_drawUndoStack, scene, *m_drawProjectRoot, commandName, mutate);
+        return;
+    }
+
+    if (mutate)
+    {
+        mutate(scene);
+    }
+}
+
 void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const
 {
+    m_drawUndoStack = &undoStack;
+    m_drawProjectRoot = &project.GetProjectRootDirectory();
+
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
 
     if (!ImGui::Begin("Hierarchy", &m_showPanel, ImGuiWindowFlags_None))
@@ -776,7 +869,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     {
         ImGui::OpenPopup("AddObjectPopup");
     }
-    DrawAddObjectPopup(scene, project);
+    DrawAddObjectPopup(*this, scene, project);
     primaryIndex = scene.GetPrimarySelection();
 
     const float footerHeight = ImGui::GetFrameHeightWithSpacing() * 2.0f;
@@ -797,6 +890,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     for (int objectIndex : scene.GetRootObjectIndices())
     {
         DrawHierarchyNode(
+            *this,
             scene,
             project,
             undoStack,
@@ -804,7 +898,6 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
             primaryIndex,
             m_nodeOpenStates,
             m_scrollSelectionIntoView,
-            m_pendingDeleteIndex,
             m_pendingRenameIndex,
             m_renameTargetIndex,
             m_beginRenameNextFrame,
@@ -819,6 +912,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     if (!visibleObjectIndices.empty())
     {
         DrawHierarchyInsertGap(
+            *this,
             scene,
             visibleObjectIndices.back(),
             HierarchyInsertMode::After);
@@ -828,23 +922,10 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     if (backgroundSpace.y > 0.0f)
     {
         ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
-        DrawHierarchyBackgroundContextMenu(scene, project);
+        DrawHierarchyBackgroundContextMenu(*this, scene, project);
     }
 
     m_scrollSelectionIntoView = false;
-
-    if (m_pendingDeleteIndex >= 0)
-    {
-        scene.RemoveObject(static_cast<std::size_t>(m_pendingDeleteIndex));
-        m_nodeOpenStates.clear();
-        m_pendingDeleteIndex = -1;
-        m_pendingRenameIndex = -1;
-        m_renameTargetIndex = -1;
-        m_beginRenameNextFrame = false;
-        m_focusRenameInput = false;
-        m_renameInputEngaged = false;
-        primaryIndex = scene.GetPrimarySelection();
-    }
 
     ImGui::EndChild();
 
@@ -863,10 +944,14 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     ImGui::BeginDisabled(!scene.HasSelection());
     if (ImGui::Button("Delete"))
     {
-        scene.RemoveSelectedObjects();
-        m_nodeOpenStates.clear();
+        PushSceneMutation(scene, "Delete", [](Scene& target) {
+            target.RemoveSelectedObjects();
+        });
     }
     ImGui::EndDisabled();
+
+    m_drawUndoStack = nullptr;
+    m_drawProjectRoot = nullptr;
 
     ImGui::End();
 }

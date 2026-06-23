@@ -249,7 +249,9 @@ void Application::Update(double deltaTime)
             windowWidth,
             windowHeight,
             allowSceneMouse,
-            allowGameKeyboard);
+            allowGameKeyboard,
+            &m_undoStack,
+            m_projectSession->GetProjectRootDirectory());
     }
 
     m_input->EndFrame();
@@ -305,13 +307,26 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_lightingPanel->ShowPanel() = editorState.showLighting;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
 
-    std::unordered_map<int, bool> hierarchyOpenStates;
+    std::unordered_map<SceneObjectId, bool> hierarchyOpenStates;
     const int objectCount = static_cast<int>(m_scene->GetObjects().size());
-    for (const auto& [nodeIndex, isOpen] : editorState.hierarchyNodeOpenStates)
+    for (const auto& [storedKey, isOpen] : editorState.hierarchyNodeOpenStates)
     {
-        if (isOpen && nodeIndex >= 0 && nodeIndex < objectCount)
+        if (!isOpen)
         {
-            hierarchyOpenStates[nodeIndex] = true;
+            continue;
+        }
+
+        const int indexById = m_scene->FindObjectIndex(storedKey);
+        if (indexById >= 0)
+        {
+            hierarchyOpenStates[storedKey] = true;
+            continue;
+        }
+
+        const int legacyIndex = static_cast<int>(storedKey);
+        if (legacyIndex >= 0 && legacyIndex < objectCount)
+        {
+            hierarchyOpenStates[m_scene->GetObject(static_cast<std::size_t>(legacyIndex)).GetId()] = true;
         }
     }
     m_sceneHierarchyPanel->SetNodeOpenStates(hierarchyOpenStates);

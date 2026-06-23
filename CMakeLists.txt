@@ -188,6 +188,8 @@ add_executable(game-engine
 
     src/app/UndoStack.cpp
 
+    src/app/SceneDocument.cpp
+
     src/app/ProjectChooser.cpp
 
     src/app/ProjectEditorState.cpp
