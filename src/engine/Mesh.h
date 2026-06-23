@@ -24,6 +24,9 @@ public:
         const glm::vec3& localDirection,
         float& hitDistance) const;
 
+    const std::vector<glm::vec3>& GetPositions() const;
+    const std::vector<unsigned int>& GetIndices() const;
+
 private:
     unsigned int m_vao = 0;
     unsigned int m_vbo = 0;

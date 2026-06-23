@@ -43,3 +43,11 @@ int PickSceneObjectCycling(
     const Ray& ray,
     int currentSelection,
     bool repeatClickAtSameSpot);
+
+std::vector<int> PickObjectsInScreenRect(
+    const std::vector<SceneObject>& objects,
+    const glm::vec2& rectMin,
+    const glm::vec2& rectMax,
+    const glm::vec2& viewportSize,
+    const glm::mat4& viewMatrix,
+    const glm::mat4& projectionMatrix);

@@ -2,6 +2,9 @@
 
 #include "app/EditorPanelLayout.h"
 #include "app/EditorWidgets.h"
+#include "app/InspectorEditMode.h"
+#include "app/InspectorMultiEdit.h"
+#include "app/InspectorTransform.h"
 #include "app/Scene.h"
 #include "engine/FileDialog.h"
 #include "engine/Light.h"
@@ -20,6 +23,8 @@
 #include <filesystem>
 #include <functional>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -490,6 +495,238 @@ namespace
             ImGui::TextUnformatted("Position sets the light source. Rotation aims local +Y toward the source.");
         }
     }
+
+    void DrawMultiTransformSection(Scene& scene, const std::vector<int>& selectedIndices)
+    {
+        std::vector<glm::vec3> worldPositions;
+        std::vector<glm::vec3> worldRotations;
+        std::vector<glm::vec3> worldScales;
+        worldPositions.reserve(selectedIndices.size());
+        worldRotations.reserve(selectedIndices.size());
+        worldScales.reserve(selectedIndices.size());
+
+        for (int objectIndex : selectedIndices)
+        {
+            const WorldTransformState worldState = GetObjectWorldTransformState(scene, objectIndex);
+            worldPositions.push_back(worldState.position);
+            worldRotations.push_back(worldState.rotationDegrees);
+            worldScales.push_back(worldState.scale);
+        }
+
+        MultiVec3 positionField = MultiVec3::Collect(worldPositions.data(), worldPositions.size());
+        MultiVec3 rotationField = MultiVec3::Collect(worldRotations.data(), worldRotations.size());
+        MultiVec3 scaleField = MultiVec3::Collect(worldScales.data(), worldScales.size());
+
+        ImGui::TextDisabled("World space. Edited values apply to all selected objects.");
+        ImGui::PushID("MultiTransformTable");
+        if (ImGui::BeginTable(
+                "##fields",
+                4,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoBordersInBody))
+        {
+            ImGui::TableSetupColumn("##row", ImGuiTableColumnFlags_WidthFixed, kTransformRowLabelWidth);
+            ImGui::TableSetupColumn("##x", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##y", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+            ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+
+            if (DrawMultiVec3Row("Position", positionField, glm::vec3(0.0f), 0.1f))
+            {
+                ApplyWorldPositionFieldToObjects(scene, selectedIndices, positionField);
+            }
+
+            if (DrawMultiVec3Row("Rotation", rotationField, glm::vec3(0.0f), 0.5f))
+            {
+                ApplyWorldRotationFieldToObjects(scene, selectedIndices, rotationField);
+            }
+
+            if (DrawMultiVec3Row("Scale", scaleField, glm::vec3(1.0f), 0.01f))
+            {
+                ApplyWorldScaleFieldToObjects(scene, selectedIndices, scaleField);
+            }
+
+            ImGui::EndTable();
+        }
+        ImGui::PopID();
+    }
+
+    void DrawMultiObjectSection(Scene& scene, const std::vector<int>& selectedIndices)
+    {
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+
+        bool allRenderable = true;
+        bool allEmpty = true;
+        std::vector<bool> castShadowValues;
+        std::vector<bool> receiveShadowValues;
+        castShadowValues.reserve(selectedIndices.size());
+        receiveShadowValues.reserve(selectedIndices.size());
+
+        for (int objectIndex : selectedIndices)
+        {
+            const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+            if (object.IsRenderable())
+            {
+                allEmpty = false;
+                castShadowValues.push_back(object.CastsShadow());
+                receiveShadowValues.push_back(object.ReceivesShadow());
+            }
+            else if (!object.HasLight())
+            {
+                allRenderable = false;
+            }
+            else
+            {
+                allRenderable = false;
+                allEmpty = false;
+            }
+        }
+
+        if (allEmpty && !allRenderable)
+        {
+            ImGui::TextUnformatted("Selection includes empty objects and/or lights.");
+        }
+        else if (allEmpty)
+        {
+            ImGui::TextUnformatted("Empty objects (transform containers only).");
+        }
+        else if (!allRenderable)
+        {
+            ImGui::TextDisabled("Shadow flags apply only when every selected object is renderable.");
+        }
+
+        if (allRenderable)
+        {
+            MultiBool castShadowField = MultiBool::Collect(castShadowValues);
+            if (DrawMultiCheckbox("Cast shadow", castShadowField))
+            {
+                for (int objectIndex : selectedIndices)
+                {
+                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadowField.value);
+                }
+
+                scene.MarkDirty();
+            }
+
+            MultiBool receiveShadowField = MultiBool::Collect(receiveShadowValues);
+            if (DrawMultiCheckbox("Receive shadow", receiveShadowField))
+            {
+                for (int objectIndex : selectedIndices)
+                {
+                    scene.GetObject(static_cast<std::size_t>(objectIndex)).SetReceiveShadow(
+                        receiveShadowField.value);
+                }
+
+                scene.MarkDirty();
+            }
+        }
+    }
+
+    void DrawSingleObjectInspector(Scene& scene, int selectedIndex)
+    {
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+
+        ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());
+
+        char nameBuffer[64];
+        std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selectedObject.GetName().c_str());
+        if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+        {
+            selectedObject.SetName(nameBuffer);
+            scene.MarkDirty();
+        }
+
+        const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem("Reset Transform"))
+            {
+                selectedObject.GetTransform().Reset();
+                scene.MarkDirty();
+            }
+
+            ImGui::EndPopup();
+        }
+
+        if (transformOpen)
+        {
+            DrawTransformSection(selectedObject, scene);
+        }
+
+        if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::PushID("LightSection");
+            DrawLightSection(selectedObject, scene);
+            ImGui::PopID();
+        }
+
+        if (!selectedObject.HasLight() && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            if (selectedObject.IsRenderable())
+            {
+                bool castShadow = selectedObject.CastsShadow();
+                if (ImGui::Checkbox("Cast shadow", &castShadow))
+                {
+                    selectedObject.SetCastShadow(castShadow);
+                    scene.MarkDirty();
+                }
+
+                bool receiveShadow = selectedObject.ReceivesShadow();
+                if (ImGui::Checkbox("Receive shadow", &receiveShadow))
+                {
+                    selectedObject.SetReceiveShadow(receiveShadow);
+                    scene.MarkDirty();
+                }
+            }
+            else
+            {
+                ImGui::TextUnformatted("Empty object (transform container only).");
+            }
+        }
+
+        if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::PushID(selectedIndex);
+            DrawMaterialSection(selectedObject.GetMaterial(), scene);
+            ImGui::PopID();
+        }
+    }
+
+    void DrawMultiObjectInspector(Scene& scene, const std::vector<int>& selectedIndices)
+    {
+        const std::size_t selectionCount = selectedIndices.size();
+        ImGui::Text("%zu objects selected", selectionCount);
+
+        const int primaryIndex = scene.GetPrimarySelection();
+        if (primaryIndex >= 0 && static_cast<std::size_t>(primaryIndex) < scene.GetObjects().size())
+        {
+            ImGui::TextDisabled("Primary: %s", scene.GetObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
+        }
+
+        if (ShouldShowInspectorSection(InspectorSectionKind::Transform, scene, selectedIndices))
+        {
+            const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
+            if (ImGui::BeginPopupContextItem())
+            {
+                if (ImGui::MenuItem("Reset Transform"))
+                {
+                    ResetTransformsOnObjects(scene, selectedIndices);
+                }
+
+                ImGui::EndPopup();
+            }
+
+            if (transformOpen)
+            {
+                DrawMultiTransformSection(scene, selectedIndices);
+            }
+        }
+
+        if (ShouldShowInspectorSection(InspectorSectionKind::Object, scene, selectedIndices)
+            && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            DrawMultiObjectSection(scene, selectedIndices);
+        }
+    }
 }
 
 void SceneInspectorPanel::Draw(Scene& scene) const
@@ -509,92 +746,32 @@ void SceneInspectorPanel::Draw(Scene& scene) const
         return;
     }
 
-    const int selectedIndex = scene.GetSelectedObjectIndex();
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-    if (selectedIndex < 0 || selectedIndex >= static_cast<int>(objects.size()))
+    const std::vector<int>& selectedIndices = scene.GetSelection().indices;
+    if (selectedIndices.empty())
     {
         ImGui::TextUnformatted("No object selected.");
         ImGui::End();
         return;
     }
 
-    SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
-    ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());
-
-    char nameBuffer[64];
-    std::snprintf(nameBuffer, sizeof(nameBuffer), "%s", selectedObject.GetName().c_str());
-    if (ImGui::InputText("Name", nameBuffer, sizeof(nameBuffer)))
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+    for (int selectedIndex : selectedIndices)
     {
-        selectedObject.SetName(nameBuffer);
-        scene.MarkDirty();
-    }
-
-    const bool transformOpen = ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen);
-    if (ImGui::BeginPopupContextItem())
-    {
-        if (ImGui::MenuItem("Reset Transform"))
+        if (selectedIndex < 0 || selectedIndex >= static_cast<int>(objects.size()))
         {
-            selectedObject.GetTransform().Reset();
-            scene.MarkDirty();
-        }
-
-        ImGui::EndPopup();
-    }
-
-    if (transformOpen)
-    {
-        DrawTransformSection(selectedObject, scene);
-    }
-
-    if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        ImGui::PushID("LightSection");
-        DrawLightSection(selectedObject, scene);
-        ImGui::PopID();
-    }
-
-    if (!selectedObject.HasLight() && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        if (selectedObject.IsRenderable())
-        {
-            bool movable = selectedObject.IsMovable();
-            if (ImGui::Checkbox("Movable", &movable))
-            {
-                selectedObject.SetMovable(movable);
-                scene.MarkDirty();
-            }
-
-            bool castShadow = selectedObject.CastsShadow();
-            if (ImGui::Checkbox("Cast shadow", &castShadow))
-            {
-                selectedObject.SetCastShadow(castShadow);
-                scene.MarkDirty();
-            }
-
-            bool receiveShadow = selectedObject.ReceivesShadow();
-            if (ImGui::Checkbox("Receive shadow", &receiveShadow))
-            {
-                selectedObject.SetReceiveShadow(receiveShadow);
-                scene.MarkDirty();
-            }
-        }
-        else
-        {
-            ImGui::TextUnformatted("Empty object (transform container only).");
-            bool movable = selectedObject.IsMovable();
-            if (ImGui::Checkbox("Movable", &movable))
-            {
-                selectedObject.SetMovable(movable);
-                scene.MarkDirty();
-            }
+            ImGui::TextUnformatted("No object selected.");
+            ImGui::End();
+            return;
         }
     }
 
-    if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
+    if (selectedIndices.size() == 1)
     {
-        ImGui::PushID(selectedIndex);
-        DrawMaterialSection(selectedObject.GetMaterial(), scene);
-        ImGui::PopID();
+        DrawSingleObjectInspector(scene, selectedIndices.front());
+    }
+    else
+    {
+        DrawMultiObjectInspector(scene, selectedIndices);
     }
 
     ImGui::End();

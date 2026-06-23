@@ -158,6 +158,13 @@ bool ProjectChooser::DrawNewProjectForm(
         ImGui::CloseCurrentPopup();
     }
 
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+    {
+        m_showNewProjectForm = false;
+        m_errorMessage.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
     ImGui::EndPopup();
     return false;
 }

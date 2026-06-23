@@ -14,6 +14,8 @@
 #include "engine/IBL.h"
 #include "engine/SceneObject.h"
 
+#include "app/SceneSelection.h"
+
 class Camera;
 class Input;
 class Mesh;
@@ -62,8 +64,17 @@ public:
 
     int GetSelectedObjectIndex() const;
     void SetSelectedObjectIndex(int selectedObjectIndex);
+    const SceneSelection& GetSelection() const;
+    int GetPrimarySelection() const;
+    bool IsSelected(int objectIndex) const;
+    void SetSelection(const std::vector<int>& indices, int primary);
+    void SelectSingle(int objectIndex);
+    void ToggleSelected(int objectIndex);
+    void AddToSelection(const std::vector<int>& indices);
     void ClearSelection();
     bool HasSelection() const;
+
+    void HandleEscapeKey();
 
     SceneEditor& GetSceneEditor();
     const SceneEditor& GetSceneEditor() const;
@@ -81,7 +92,9 @@ public:
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;
     bool RemoveObject(std::size_t index);
+    bool RemoveSelectedObjects();
     int DuplicateObject(int objectIndex);
+    std::vector<int> DuplicateSelectedObjects();
     bool ReparentObject(int objectIndex, int newParentIndex);
     bool CanReparentObject(int objectIndex, int newParentIndex) const;
     bool PlaceObjectInHierarchy(int objectIndex, int referenceIndex, HierarchyInsertMode mode);
@@ -92,8 +105,12 @@ public:
 
     glm::mat4 GetWorldMatrix(int objectIndex) const;
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
+    glm::mat4 GetSelectionGizmoWorldMatrix(bool worldSpace) const;
     void GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
     void ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix);
+    void ApplySelectionGizmoWorldMatrix(
+        const glm::mat4& oldGizmoWorldMatrix,
+        const glm::mat4& newGizmoWorldMatrix);
     void GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
     std::vector<int> GetChildren(int objectIndex) const;
     std::vector<int> GetRootObjectIndices() const;
@@ -128,6 +145,8 @@ private:
     int AllocateSiblingOrder(int parentIndex) const;
     void SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex);
     std::string MakeDuplicateObjectName(const std::string& sourceName) const;
+    void RemapSelectionAfterRemoval(int removedIndex);
+    void SanitizeSelection();
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
@@ -144,7 +163,7 @@ private:
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;
     mutable SceneLighting m_lighting;
-    int m_selectedObjectIndex = 1;
+    SceneSelection m_selection;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
     int m_nextDirectionalLightNumber = 2;

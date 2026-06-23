@@ -21,7 +21,6 @@ public:
         const glm::vec3& localBoundsMin,
         const glm::vec3& localBoundsMax,
         Transform transform = Transform{},
-        bool movable = true,
         bool castShadow = true,
         bool receiveShadow = true,
         int parentIndex = -1,
@@ -55,9 +54,6 @@ public:
     int GetSiblingOrder() const;
     void SetSiblingOrder(int siblingOrder);
 
-    bool IsMovable() const;
-    void SetMovable(bool movable);
-
     bool CastsShadow() const;
     void SetCastShadow(bool castShadow);
 
@@ -83,7 +79,6 @@ private:
     glm::vec3 m_localBoundsMax;
     int m_parentIndex = -1;
     int m_siblingOrder = 0;
-    bool m_movable = true;
     bool m_castShadow = true;
     bool m_receiveShadow = true;
     std::optional<LightComponent> m_light;

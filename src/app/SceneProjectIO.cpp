@@ -748,7 +748,6 @@ namespace
     json SerializeEditorState(const Scene& scene, const ProjectEditorState& editorState, const std::string& projectRoot)
     {
         return json{
-            {"selectedObjectIndex", scene.GetSelectedObjectIndex()},
             {"showGrid", scene.GetShowGrid()},
             {"showLightGizmos", scene.GetShowLightGizmos()},
             {"camera",
@@ -901,7 +900,6 @@ json SceneProjectIO::SerializeScene(
                      {"min", Vec3ToJson(object.GetLocalBoundsMin())},
                      {"max", Vec3ToJson(object.GetLocalBoundsMax())},
                  }},
-                {"movable", object.IsMovable()},
                 {"castShadow", object.CastsShadow()},
                 {"receiveShadow", object.ReceivesShadow()},
                 {"mesh", SerializeMesh(scene, object, projectRoot)},
@@ -1041,7 +1039,6 @@ bool SceneProjectIO::DeserializeScene(
                 boundsMin,
                 boundsMax,
                 transform,
-                objectValue.value("movable", true),
                 objectValue.value("castShadow", true),
                 objectValue.value("receiveShadow", true),
                 objectValue.at("parentIndex").get<int>(),
@@ -1058,21 +1055,15 @@ bool SceneProjectIO::DeserializeScene(
         if (sceneValue.contains("editor"))
         {
             const json& editor = sceneValue.at("editor");
-            scene.m_selectedObjectIndex = editor.value("selectedObjectIndex", -1);
+            scene.ClearSelection();
             scene.m_showGrid = editor.value("showGrid", true);
             scene.m_showLightGizmos = editor.value("showLightGizmos", true);
             DeserializeEditorState(editor, editorState, projectRoot);
         }
         else
         {
-            scene.m_selectedObjectIndex = -1;
+            scene.ClearSelection();
             editorState = ProjectEditorState::CreateDefault();
-        }
-
-        if (scene.m_selectedObjectIndex < 0
-            || scene.m_selectedObjectIndex >= static_cast<int>(scene.m_objects.size()))
-        {
-            scene.m_selectedObjectIndex = scene.m_objects.empty() ? -1 : 0;
         }
 
         if (sceneValue.contains("renderer"))

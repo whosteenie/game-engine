@@ -202,6 +202,12 @@ add_executable(game-engine
 
     src/app/SceneInspectorPanel.cpp
 
+    src/app/InspectorEditMode.cpp
+
+    src/app/InspectorMultiEdit.cpp
+
+    src/app/InspectorTransform.cpp
+
     src/app/SceneToolbarPanel.cpp
 
     src/app/SceneEditor.cpp

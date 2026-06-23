@@ -10,6 +10,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+#include <algorithm>
 #include <vector>
 
 namespace
@@ -171,7 +172,7 @@ void LightGizmoRenderer::Draw(
     const Camera& camera,
     const std::vector<SceneObject>& objects,
     const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
-    int selectedObjectIndex) const
+    const std::vector<int>& selectedObjectIndices) const
 {
     if (objects.empty())
     {
@@ -204,7 +205,11 @@ void LightGizmoRenderer::Draw(
         glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
 
-        const bool selected = selectedObjectIndex >= 0 && objectIndex == selectedObjectIndex;
+        const bool selected = std::find(
+                                  selectedObjectIndices.begin(),
+                                  selectedObjectIndices.end(),
+                                  objectIndex)
+            != selectedObjectIndices.end();
         m_shader->SetVec3("uColor", GizmoColor(light, selected));
         glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
     }

@@ -21,6 +21,73 @@
 namespace
 {
     constexpr float PickRepeatThresholdPixels = 8.0f;
+    constexpr float MarqueeDragThresholdPixels = 5.0f;
+
+    // Depth cycling always walks the full hit list at the click pixel (see PickSceneObjectCycling).
+    // Without Ctrl the cycled object replaces the selection; with Ctrl it is toggled in/out.
+    void ApplyViewportPickSelection(Scene& scene, int pickedIndex, bool ctrlHeld)
+    {
+        if (pickedIndex < 0)
+        {
+            scene.ClearSelection();
+            return;
+        }
+
+        if (ctrlHeld)
+        {
+            scene.ToggleSelected(pickedIndex);
+        }
+        else
+        {
+            scene.SelectSingle(pickedIndex);
+        }
+    }
+
+    void ApplyMarqueeSelection(Scene& scene, const std::vector<int>& pickedIndices, bool ctrlHeld)
+    {
+        if (pickedIndices.empty())
+        {
+            if (!ctrlHeld)
+            {
+                scene.ClearSelection();
+            }
+
+            return;
+        }
+
+        if (ctrlHeld)
+        {
+            std::vector<int> mergedSelection = scene.GetSelection().indices;
+            for (int objectIndex : pickedIndices)
+            {
+                if (!scene.IsSelected(objectIndex))
+                {
+                    mergedSelection.push_back(objectIndex);
+                }
+            }
+
+            scene.SetSelection(mergedSelection, pickedIndices.back());
+            return;
+        }
+
+        scene.SetSelection(pickedIndices, pickedIndices.back());
+    }
+
+    glm::vec2 FramebufferToImGuiPoint(
+        const glm::vec2& framebufferPoint,
+        int framebufferWidth,
+        int framebufferHeight,
+        int windowWidth,
+        int windowHeight)
+    {
+        const float scaleX = framebufferWidth > 0
+            ? static_cast<float>(windowWidth) / static_cast<float>(framebufferWidth)
+            : 1.0f;
+        const float scaleY = framebufferHeight > 0
+            ? static_cast<float>(windowHeight) / static_cast<float>(framebufferHeight)
+            : 1.0f;
+        return glm::vec2(framebufferPoint.x * scaleX, framebufferPoint.y * scaleY);
+    }
 
     ImGuizmo::OPERATION ToImGuizmoOperation(TransformTool tool)
     {
@@ -56,14 +123,7 @@ namespace
         TransformTool tool,
         TransformSpace space)
     {
-        const int selectedIndex = scene.GetSelectedObjectIndex();
-        if (selectedIndex < 0)
-        {
-            return;
-        }
-
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
-        if (!selectedObject.IsMovable())
+        if (!scene.HasSelection())
         {
             return;
         }
@@ -72,7 +132,9 @@ namespace
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
 
-        glm::mat4 gizmoWorldMatrix = scene.GetGizmoWorldMatrix(selectedIndex);
+        const bool worldSpace = space == TransformSpace::World;
+        glm::mat4 gizmoWorldMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
+        const glm::mat4 gizmoWorldMatrixBefore = gizmoWorldMatrix;
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
@@ -83,7 +145,7 @@ namespace
                 ToImGuizmoMode(space),
                 glm::value_ptr(gizmoWorldMatrix)))
         {
-            scene.ApplyGizmoWorldMatrix(selectedIndex, gizmoWorldMatrix);
+            scene.ApplySelectionGizmoWorldMatrix(gizmoWorldMatrixBefore, gizmoWorldMatrix);
         }
     }
 }
@@ -126,20 +188,23 @@ void SceneEditor::Update(
     bool allowMouseInput,
     bool allowKeyboardInput)
 {
+    const ImGuiIO& io = ImGui::GetIO();
+
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
-        scene.RemoveObject(static_cast<std::size_t>(scene.GetSelectedObjectIndex()));
+        scene.RemoveSelectedObjects();
     }
 
-    const ImGuiIO& io = ImGui::GetIO();
-    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL) || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL);
+    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
+        || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
+        || io.KeyCtrl;
     if (ctrlHeld
         && input.WasKeyPressed(GLFW_KEY_D)
         && scene.HasSelection()
         && !io.WantTextInput
         && !ImGui::IsAnyItemActive())
     {
-        scene.DuplicateObject(scene.GetSelectedObjectIndex());
+        scene.DuplicateSelectedObjects();
     }
 
     const bool allowTransformShortcuts = allowKeyboardInput && !input.IsCapturingMouse();
@@ -167,7 +232,7 @@ void SceneEditor::Update(
     UpdateTransformGizmo(scene, camera, m_tool, m_transformSpace);
 
     const bool gizmoCapturingMouse = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
-    if (!allowMouseInput || gizmoCapturingMouse)
+    if (!m_trackingLeftDrag && (!allowMouseInput || gizmoCapturingMouse))
     {
         return;
     }
@@ -178,35 +243,134 @@ void SceneEditor::Update(
         windowWidth,
         windowHeight);
     const glm::vec2 viewportSize(static_cast<float>(framebufferWidth), static_cast<float>(framebufferHeight));
-    const Ray ray = ScreenPointToRay(
-        mousePosition,
-        viewportSize,
-        camera.GetViewMatrix(),
-        camera.GetProjectionMatrix());
+    const glm::mat4 viewMatrix = camera.GetViewMatrix();
+    const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
-    if (!input.WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT))
+    if (input.WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT))
+    {
+        m_trackingLeftDrag = true;
+        m_marqueeActive = false;
+        m_dragStartFramebuffer = mousePosition;
+        m_dragCurrentFramebuffer = mousePosition;
+    }
+
+    if (m_trackingLeftDrag && input.IsMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT))
+    {
+        m_dragCurrentFramebuffer = mousePosition;
+        if (!m_marqueeActive
+            && glm::length(m_dragCurrentFramebuffer - m_dragStartFramebuffer) >= MarqueeDragThresholdPixels)
+        {
+            m_marqueeActive = true;
+        }
+
+        if (m_marqueeActive)
+        {
+            DrawMarqueeOverlay(framebufferWidth, framebufferHeight, windowWidth, windowHeight);
+        }
+    }
+
+    if (input.WasMouseButtonReleased(GLFW_MOUSE_BUTTON_LEFT) && m_trackingLeftDrag)
+    {
+        if (m_marqueeActive)
+        {
+            const std::vector<int> pickedIndices = PickObjectsInScreenRect(
+                scene.GetObjects(),
+                m_dragStartFramebuffer,
+                m_dragCurrentFramebuffer,
+                viewportSize,
+                viewMatrix,
+                projectionMatrix);
+            ApplyMarqueeSelection(scene, pickedIndices, ctrlHeld);
+        }
+        else
+        {
+            const Ray ray = ScreenPointToRay(mousePosition, viewportSize, viewMatrix, projectionMatrix);
+            const bool repeatClickAtSameSpot = m_hasLastPickScreenPosition
+                && glm::length(mousePosition - m_lastPickScreenPosition) <= PickRepeatThresholdPixels;
+            m_lastPickScreenPosition = mousePosition;
+            m_hasLastPickScreenPosition = true;
+
+            const int pickedIndex = PickSceneObjectCycling(
+                scene.GetObjects(),
+                ray,
+                scene.GetPrimarySelection(),
+                repeatClickAtSameSpot);
+            ApplyViewportPickSelection(scene, pickedIndex, ctrlHeld);
+        }
+
+        CancelMarqueeDrag();
+    }
+}
+
+void SceneEditor::HandleEscapeKey(Scene& scene)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    if (io.WantTextInput
+        || ImGui::IsAnyItemActive()
+        || ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId))
     {
         return;
     }
 
-    const bool repeatClickAtSameSpot = m_hasLastPickScreenPosition &&
-        glm::length(mousePosition - m_lastPickScreenPosition) <= PickRepeatThresholdPixels;
-    m_lastPickScreenPosition = mousePosition;
-    m_hasLastPickScreenPosition = true;
-
-    const int pickedIndex = PickSceneObjectCycling(
-        scene.GetObjects(),
-        ray,
-        scene.GetSelectedObjectIndex(),
-        repeatClickAtSameSpot);
-    if (pickedIndex >= 0)
+    if (m_trackingLeftDrag || m_marqueeActive)
     {
-        scene.SetSelectedObjectIndex(pickedIndex);
+        CancelMarqueeDrag();
     }
-    else
+    else if (scene.HasSelection())
     {
         scene.ClearSelection();
     }
+}
+
+void SceneEditor::CancelMarqueeDrag()
+{
+    m_trackingLeftDrag = false;
+    m_marqueeActive = false;
+}
+
+void SceneEditor::DrawMarqueeOverlay(
+    int framebufferWidth,
+    int framebufferHeight,
+    int windowWidth,
+    int windowHeight) const
+{
+    if (!m_marqueeActive)
+    {
+        return;
+    }
+
+    const glm::vec2 startImGui = FramebufferToImGuiPoint(
+        m_dragStartFramebuffer,
+        framebufferWidth,
+        framebufferHeight,
+        windowWidth,
+        windowHeight);
+    const glm::vec2 endImGui = FramebufferToImGuiPoint(
+        m_dragCurrentFramebuffer,
+        framebufferWidth,
+        framebufferHeight,
+        windowWidth,
+        windowHeight);
+
+    const ImVec2 rectMin(
+        std::min(startImGui.x, endImGui.x),
+        std::min(startImGui.y, endImGui.y));
+    const ImVec2 rectMax(
+        std::max(startImGui.x, endImGui.x),
+        std::max(startImGui.y, endImGui.y));
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    drawList->AddRectFilled(
+        rectMin,
+        rectMax,
+        IM_COL32(90, 150, 255, 40));
+    drawList->AddRect(
+        rectMin,
+        rectMax,
+        IM_COL32(90, 150, 255, 220),
+        0.0f,
+        0,
+        1.5f);
 }
 
 void SceneEditor::RenderSelectionOverlay(
@@ -214,14 +378,13 @@ void SceneEditor::RenderSelectionOverlay(
     const Camera& camera,
     bool useScreenSpace) const
 {
-    const int selectedIndex = scene.GetSelectedObjectIndex();
-    if (selectedIndex < 0)
+    if (!scene.HasSelection())
     {
         return;
     }
 
     std::vector<SelectionMeshDraw> meshes;
-    CollectRenderableSelectionMeshes(scene.GetObjects(), selectedIndex, meshes);
+    CollectSelectionMeshes(scene.GetObjects(), scene.GetSelection().indices, meshes);
     if (meshes.empty())
     {
         return;
