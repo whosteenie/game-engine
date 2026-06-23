@@ -62,6 +62,8 @@ namespace
         destinationEffects.SetBloomSoftKnee(sourceEffects.GetBloomSoftKnee());
         destinationEffects.SetBloomIntensity(sourceEffects.GetBloomIntensity());
         destinationEffects.SetBloomBlurRadius(sourceEffects.GetBloomBlurRadius());
+
+        destination.GetDirectionalShadowSettings() = source.GetDirectionalShadowSettings();
     }
 }
 
@@ -1903,6 +1905,46 @@ const ScreenSpaceEffects& Scene::GetScreenSpaceEffects() const
     return *m_screenSpaceEffects;
 }
 
+bool Scene::ComputeShadowCasterBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const
+{
+    boundsMin = glm::vec3(std::numeric_limits<float>::max());
+    boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+
+    bool hasCasterBounds = false;
+    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
+    {
+        const SceneObject& object = m_objects[objectIndex];
+        if (!object.IsRenderable() || !object.CastsShadow())
+        {
+            continue;
+        }
+
+        glm::vec3 objectBoundsMin;
+        glm::vec3 objectBoundsMax;
+        GetWorldBounds(static_cast<int>(objectIndex), objectBoundsMin, objectBoundsMax);
+        boundsMin = glm::min(boundsMin, objectBoundsMin);
+        boundsMax = glm::max(boundsMax, objectBoundsMax);
+        hasCasterBounds = true;
+    }
+
+    return hasCasterBounds;
+}
+
+const DirectionalShadowSettings& Scene::GetDirectionalShadowSettings() const
+{
+    return m_directionalShadowSettings;
+}
+
+DirectionalShadowSettings& Scene::GetDirectionalShadowSettings()
+{
+    return m_directionalShadowSettings;
+}
+
+const CascadedShadowMap& Scene::GetShadowMap() const
+{
+    return *m_shadowMap;
+}
+
 glm::vec3 Scene::GetSunDirection() const
 {
     const int shadowLightIndex = m_lighting.GetShadowLightIndex();
@@ -1954,27 +1996,24 @@ void Scene::Update(
 
 void Scene::RenderShadowPass(const Camera& camera) const
 {
-    glm::vec3 boundsMin(std::numeric_limits<float>::max());
-    glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
-
-    for (std::size_t objectIndex = 0; objectIndex < m_objects.size(); ++objectIndex)
+    glm::vec3 casterBoundsMin;
+    glm::vec3 casterBoundsMax;
+    const bool hasCasterBounds = ComputeShadowCasterBounds(casterBoundsMin, casterBoundsMax);
+    if (!hasCasterBounds)
     {
-        const SceneObject& object = m_objects[objectIndex];
-        if (!object.CastsShadow() && !object.ReceivesShadow())
-        {
-            continue;
-        }
-
-        glm::vec3 objectBoundsMin;
-        glm::vec3 objectBoundsMax;
-        GetWorldBounds(static_cast<int>(objectIndex), objectBoundsMin, objectBoundsMax);
-        boundsMin = glm::min(boundsMin, objectBoundsMin);
-        boundsMax = glm::max(boundsMax, objectBoundsMax);
+        return;
     }
 
-    m_shadowMap->BeginFrame(camera, GetSunDirection(), boundsMin, boundsMax);
+    m_shadowMap->SetResolution(m_directionalShadowSettings.GetShadowMapResolution());
+    m_shadowMap->BeginFrame(
+        camera,
+        GetSunDirection(),
+        casterBoundsMin,
+        casterBoundsMax,
+        true,
+        m_directionalShadowSettings);
 
-    for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::CascadeCount; ++cascadeIndex)
+    for (int cascadeIndex = 0; cascadeIndex < m_shadowMap->GetActiveCascadeCount(); ++cascadeIndex)
     {
         m_shadowMap->BeginCascade(cascadeIndex);
 
@@ -2082,7 +2121,8 @@ void Scene::Render(
             m_shadowMap.get(),
             object.ReceivesShadow(),
             usePostProcess,
-            materialDebugMode);
+            materialDebugMode,
+            m_directionalShadowSettings);
         object.GetMesh()->Draw();
 
         if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)

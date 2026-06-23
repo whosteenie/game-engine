@@ -11,6 +11,7 @@
 #include "engine/ScenePrimitive.h"
 #include "engine/Shader.h"
 #include "engine/CascadedShadowMap.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/IBL.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
@@ -162,6 +163,11 @@ public:
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
 
+    bool ComputeShadowCasterBounds(glm::vec3& boundsMin, glm::vec3& boundsMax) const;
+    const DirectionalShadowSettings& GetDirectionalShadowSettings() const;
+    DirectionalShadowSettings& GetDirectionalShadowSettings();
+    const CascadedShadowMap& GetShadowMap() const;
+
     void ResetToDefault();
 
     void ClearSceneObjectsAndImports();
@@ -237,6 +243,7 @@ private:
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;
+    mutable DirectionalShadowSettings m_directionalShadowSettings;
     mutable SceneLighting m_lighting;
     SceneSelection m_selection;
     SceneObjectId m_nextObjectId = 1;

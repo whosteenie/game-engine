@@ -8,6 +8,7 @@
 #include "engine/Shader.h"
 #include "engine/ShaderCache.h"
 #include "engine/CascadedShadowMap.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/Texture.h"
 
 #include <array>
@@ -92,7 +93,8 @@ void Material::Apply(
     const CascadedShadowMap* shadowMap,
     const bool receiveShadow,
     const bool outputLinear,
-    const RenderDebugMode debugMode) const
+    const RenderDebugMode debugMode,
+    const DirectionalShadowSettings& shadowSettings) const
 {
     m_shader->Use();
     m_shader->SetMat4("uModel", model);
@@ -119,25 +121,26 @@ void Material::Apply(
 
     if (shadowMap != nullptr)
     {
-        const std::array<glm::mat4, CascadedShadowMap::CascadeCount>& lightSpaceMatrices =
+        const int activeCascadeCount = shadowMap->GetActiveCascadeCount();
+        const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& lightSpaceMatrices =
             shadowMap->GetLightSpaceMatrices();
         m_shader->SetMat4("uLightSpaceMatrix", lightSpaceMatrices[0]);
         m_shader->SetMat4Array(
             "uLightSpaceMatrices",
             lightSpaceMatrices.data(),
-            CascadedShadowMap::CascadeCount);
+            CascadedShadowMap::MaxCascades);
 
-        const std::array<float, CascadedShadowMap::CascadeCount>& cascadeEndSplits =
+        const std::array<float, CascadedShadowMap::MaxCascades>& cascadeEndSplits =
             shadowMap->GetCascadeEndSplits();
         m_shader->SetFloatArray(
             "uCascadeEndSplits",
             cascadeEndSplits.data(),
-            CascadedShadowMap::CascadeCount);
+            CascadedShadowMap::MaxCascades);
 
-        const std::array<ShadowLightSpaceSetup, CascadedShadowMap::CascadeCount>& cascadeSetups =
+        const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& cascadeSetups =
             shadowMap->GetCascadeSetups();
-        std::array<float, CascadedShadowMap::CascadeCount> cascadeTexelWorldSizes{};
-        for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::CascadeCount; ++cascadeIndex)
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeTexelWorldSizes{};
+        for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
         {
             const ShadowLightSpaceSetup& setup = cascadeSetups[static_cast<std::size_t>(cascadeIndex)];
             cascadeTexelWorldSizes[static_cast<std::size_t>(cascadeIndex)] =
@@ -146,15 +149,28 @@ void Material::Apply(
         m_shader->SetFloatArray(
             "uCascadeTexelWorldSizes",
             cascadeTexelWorldSizes.data(),
-            CascadedShadowMap::CascadeCount);
+            CascadedShadowMap::MaxCascades);
 
-        m_shader->SetFloat("uCascadeBlendRatio", CascadedShadowMap::CascadeBlendRatio);
-        m_shader->SetInt("uCascadeCount", CascadedShadowMap::CascadeCount);
+        m_shader->SetFloat("uCascadeBlendRatio", shadowSettings.GetCascadeBlendRatio());
+        m_shader->SetInt("uCascadeCount", activeCascadeCount);
         m_shader->SetFloat("uCascadeNearPlane", camera.GetNearPlane());
 
         shadowMap->BindDepthTexture(ShadowMapUnit);
         m_shader->SetInt("uShadowMap", static_cast<int>(ShadowMapUnit));
         m_shader->SetInt("uReceiveShadow", receiveShadow ? 1 : 0);
+        m_shader->SetInt("uShadowFilterMode", static_cast<int>(shadowSettings.GetFilterMode()));
+        m_shader->SetInt("uPcfKernelRadius", shadowSettings.GetPcfKernelRadius());
+        m_shader->SetInt("uUsePoissonPcf", shadowSettings.GetUsePoissonPcf() ? 1 : 0);
+        m_shader->SetFloat("uMinPenumbraTexels", shadowSettings.GetMinPenumbraTexels());
+        m_shader->SetInt("uPcssBlockerRadius", shadowSettings.GetPcssBlockerRadius());
+        m_shader->SetFloat("uPcssLightAngularSize", shadowSettings.GetPcssLightAngularSize());
+        m_shader->SetFloat("uPcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels());
+        m_shader->SetFloat("uPcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels());
+        m_shader->SetFloat("uWorldBiasScale", shadowSettings.GetWorldBiasScale());
+        m_shader->SetFloat("uDepthBiasScale", shadowSettings.GetDepthBiasScale());
+        m_shader->SetFloat(
+            "uShadowMapResolution",
+            static_cast<float>(shadowMap->GetResolution()));
     }
     else
     {

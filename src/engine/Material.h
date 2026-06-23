@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/RenderDebug.h"
 
 #include <glm/glm.hpp>
@@ -33,7 +34,8 @@ public:
         const CascadedShadowMap* shadowMap = nullptr,
         bool receiveShadow = true,
         bool outputLinear = false,
-        RenderDebugMode debugMode = RenderDebugMode::None) const;
+        RenderDebugMode debugMode = RenderDebugMode::None,
+        const DirectionalShadowSettings& shadowSettings = DirectionalShadowSettings{}) const;
 
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;

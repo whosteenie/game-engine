@@ -6,6 +6,175 @@
 #include <array>
 #include <cmath>
 #include <limits>
+#include <vector>
+
+namespace
+{
+    std::array<glm::vec3, 8> BuildAxisAlignedBoxCorners(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
+    {
+        return {
+            glm::vec3(boundsMin.x, boundsMin.y, boundsMin.z),
+            glm::vec3(boundsMax.x, boundsMin.y, boundsMin.z),
+            glm::vec3(boundsMin.x, boundsMax.y, boundsMin.z),
+            glm::vec3(boundsMax.x, boundsMax.y, boundsMin.z),
+            glm::vec3(boundsMin.x, boundsMin.y, boundsMax.z),
+            glm::vec3(boundsMax.x, boundsMin.y, boundsMax.z),
+            glm::vec3(boundsMin.x, boundsMax.y, boundsMax.z),
+            glm::vec3(boundsMax.x, boundsMax.y, boundsMax.z),
+        };
+    }
+
+    ShadowLightSpaceSetup BuildShadowLightSpaceFromWorldPoints(
+        const glm::vec3& lightDirectionTowardSource,
+        const std::vector<glm::vec3>& xyWorldPoints,
+        const std::vector<glm::vec3>& zWorldPoints,
+        const int shadowMapResolution,
+        const float xyMarginFraction,
+        const float zMarginFraction,
+        const glm::vec3* lightViewAnchor,
+        float* stableOrthoHalfExtentInOut,
+        const bool allowOrthoShrink)
+    {
+        ShadowLightSpaceSetup setup;
+        if (zWorldPoints.empty())
+        {
+            return setup;
+        }
+
+        const std::vector<glm::vec3>& centerPoints =
+            xyWorldPoints.empty() ? zWorldPoints : xyWorldPoints;
+
+        setup.sceneCenter = glm::vec3(0.0f);
+        for (const glm::vec3& point : centerPoints)
+        {
+            setup.sceneCenter += point;
+        }
+        setup.sceneCenter /= static_cast<float>(centerPoints.size());
+
+        const glm::vec3 normalizedLightDirection = glm::normalize(lightDirectionTowardSource);
+        const glm::vec3 viewTarget =
+            lightViewAnchor != nullptr ? *lightViewAnchor : setup.sceneCenter;
+        const glm::vec3 lightEye = viewTarget + normalizedLightDirection * 50.0f;
+        setup.lightView = glm::lookAt(lightEye, viewTarget, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        float minX = std::numeric_limits<float>::max();
+        float maxX = std::numeric_limits<float>::lowest();
+        float minY = std::numeric_limits<float>::max();
+        float maxY = std::numeric_limits<float>::lowest();
+        float minZ = std::numeric_limits<float>::max();
+        float maxZ = std::numeric_limits<float>::lowest();
+
+        const auto expandXy = [&](const glm::vec3& point) {
+            const glm::vec4 lightSpaceCorner = setup.lightView * glm::vec4(point, 1.0f);
+            minX = std::min(minX, lightSpaceCorner.x);
+            maxX = std::max(maxX, lightSpaceCorner.x);
+            minY = std::min(minY, lightSpaceCorner.y);
+            maxY = std::max(maxY, lightSpaceCorner.y);
+        };
+
+        const auto expandZ = [&](const glm::vec3& point) {
+            const glm::vec4 lightSpaceCorner = setup.lightView * glm::vec4(point, 1.0f);
+            minZ = std::min(minZ, lightSpaceCorner.z);
+            maxZ = std::max(maxZ, lightSpaceCorner.z);
+        };
+
+        if (xyWorldPoints.empty())
+        {
+            for (const glm::vec3& point : zWorldPoints)
+            {
+                expandXy(point);
+            }
+        }
+        else
+        {
+            for (const glm::vec3& point : xyWorldPoints)
+            {
+                expandXy(point);
+            }
+        }
+
+        for (const glm::vec3& point : zWorldPoints)
+        {
+            expandZ(point);
+        }
+
+        const float spanX = std::max(maxX - minX, 1e-3f);
+        const float spanY = std::max(maxY - minY, 1e-3f);
+        const float spanZ = std::max(maxZ - minZ, 1e-3f);
+        const float marginX = std::max(0.25f, spanX * xyMarginFraction);
+        const float marginY = std::max(0.25f, spanY * xyMarginFraction);
+        const float marginZ = std::max(1.0f, spanZ * zMarginFraction);
+
+        float centerX = (minX + maxX) * 0.5f;
+        float centerY = (minY + maxY) * 0.5f;
+        float halfExtent = std::max(spanX * 0.5f + marginX, spanY * 0.5f + marginY);
+
+        if (lightViewAnchor != nullptr)
+        {
+            const glm::vec3 anchorLight =
+                glm::vec3(setup.lightView * glm::vec4(*lightViewAnchor, 1.0f));
+            centerX = anchorLight.x;
+            centerY = anchorLight.y;
+            halfExtent = 0.0f;
+
+            const std::vector<glm::vec3>& extentPoints =
+                xyWorldPoints.empty() ? zWorldPoints : xyWorldPoints;
+            for (const glm::vec3& point : extentPoints)
+            {
+                const glm::vec3 lightSpacePoint =
+                    glm::vec3(setup.lightView * glm::vec4(point, 1.0f));
+                const float extentX = std::abs(lightSpacePoint.x - centerX);
+                const float extentY = std::abs(lightSpacePoint.y - centerY);
+                halfExtent = std::max(halfExtent, std::max(extentX, extentY));
+            }
+
+            const float extentMargin = std::max(0.25f, halfExtent * xyMarginFraction);
+            halfExtent += extentMargin;
+        }
+
+        float texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
+        halfExtent = std::ceil(halfExtent / texelWorldSize) * texelWorldSize;
+        texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
+
+        if (stableOrthoHalfExtentInOut != nullptr)
+        {
+            if (allowOrthoShrink || *stableOrthoHalfExtentInOut <= 0.0f || halfExtent > *stableOrthoHalfExtentInOut)
+            {
+                *stableOrthoHalfExtentInOut = halfExtent;
+            }
+            else if (halfExtent < *stableOrthoHalfExtentInOut * 0.92f)
+            {
+                *stableOrthoHalfExtentInOut = halfExtent;
+            }
+
+            halfExtent = *stableOrthoHalfExtentInOut;
+            texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
+        }
+
+        const float snappedCenterX =
+            std::floor(centerX / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
+        const float snappedCenterY =
+            std::floor(centerY / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
+
+        setup.orthoWidth = halfExtent * 2.0f;
+        setup.orthoHeight = halfExtent * 2.0f;
+        setup.texelWorldSizeX = texelWorldSize;
+        setup.texelWorldSizeY = texelWorldSize;
+
+        setup.lightProjection = glm::ortho(
+            snappedCenterX - halfExtent,
+            snappedCenterX + halfExtent,
+            snappedCenterY - halfExtent,
+            snappedCenterY + halfExtent,
+            -maxZ - marginZ,
+            -minZ + marginZ);
+
+        setup.lightSpaceMatrix = setup.lightProjection * setup.lightView;
+        setup.snapOffsetNdc = glm::vec2(0.0f);
+
+        return setup;
+    }
+}
 
 ShadowLightSpaceSetup BuildShadowLightSpace(
     const glm::vec3& lightDirectionTowardSource,
@@ -14,74 +183,58 @@ ShadowLightSpaceSetup BuildShadowLightSpace(
     const int shadowMapResolution,
     const float margin)
 {
-    ShadowLightSpaceSetup setup;
-    setup.sceneCenter = (boundsMin + boundsMax) * 0.5f;
+    const std::array<glm::vec3, 8> corners = BuildAxisAlignedBoxCorners(boundsMin, boundsMax);
+    const float marginFraction = margin / std::max(glm::length(boundsMax - boundsMin), 1.0f);
+    const std::vector<glm::vec3> cornersVector(corners.begin(), corners.end());
+    return BuildShadowLightSpaceFromWorldPoints(
+        lightDirectionTowardSource,
+        cornersVector,
+        cornersVector,
+        shadowMapResolution,
+        std::max(marginFraction, 0.02f),
+        std::max(marginFraction * 2.0f, 0.08f),
+        nullptr,
+        nullptr,
+        true);
+}
 
-    const glm::vec3 normalizedLightDirection = glm::normalize(lightDirectionTowardSource);
-    const float boundsDepth = glm::length(boundsMax - boundsMin);
-    const float lightDistance = boundsDepth * 0.5f + 12.0f;
-    const glm::vec3 lightEye = setup.sceneCenter + normalizedLightDirection * lightDistance;
-    setup.lightView = glm::lookAt(lightEye, setup.sceneCenter, glm::vec3(0.0f, 1.0f, 0.0f));
+ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
+    const glm::vec3& lightDirectionTowardSource,
+    const std::array<glm::vec3, 8>& frustumCorners,
+    const int shadowMapResolution,
+    const float xyMarginFraction,
+    const float zMarginFraction,
+    const glm::vec3* casterBoundsMin,
+    const glm::vec3* casterBoundsMax,
+    const bool tightNearPlaneXyFit,
+    const glm::vec3* lightViewAnchor,
+    float* stableOrthoHalfExtentInOut,
+    const bool allowOrthoShrink)
+{
+    std::vector<glm::vec3> zPoints(frustumCorners.begin(), frustumCorners.end());
+    std::vector<glm::vec3> xyPoints(frustumCorners.begin(), frustumCorners.end());
 
-    const std::array<glm::vec3, 8> corners = {
-        glm::vec3(boundsMin.x, boundsMin.y, boundsMin.z),
-        glm::vec3(boundsMax.x, boundsMin.y, boundsMin.z),
-        glm::vec3(boundsMin.x, boundsMax.y, boundsMin.z),
-        glm::vec3(boundsMax.x, boundsMax.y, boundsMin.z),
-        glm::vec3(boundsMin.x, boundsMin.y, boundsMax.z),
-        glm::vec3(boundsMax.x, boundsMin.y, boundsMax.z),
-        glm::vec3(boundsMin.x, boundsMax.y, boundsMax.z),
-        glm::vec3(boundsMax.x, boundsMax.y, boundsMax.z),
-    };
-
-    float minX = std::numeric_limits<float>::max();
-    float maxX = std::numeric_limits<float>::lowest();
-    float minY = std::numeric_limits<float>::max();
-    float maxY = std::numeric_limits<float>::lowest();
-    float minZ = std::numeric_limits<float>::max();
-    float maxZ = std::numeric_limits<float>::lowest();
-
-    for (const glm::vec3& corner : corners)
+    if (casterBoundsMin != nullptr && casterBoundsMax != nullptr)
     {
-        const glm::vec4 lightSpaceCorner = setup.lightView * glm::vec4(corner, 1.0f);
-        minX = std::min(minX, lightSpaceCorner.x);
-        maxX = std::max(maxX, lightSpaceCorner.x);
-        minY = std::min(minY, lightSpaceCorner.y);
-        maxY = std::max(maxY, lightSpaceCorner.y);
-        minZ = std::min(minZ, lightSpaceCorner.z);
-        maxZ = std::max(maxZ, lightSpaceCorner.z);
+        const std::array<glm::vec3, 8> casterCorners =
+            BuildAxisAlignedBoxCorners(*casterBoundsMin, *casterBoundsMax);
+        zPoints.insert(zPoints.end(), casterCorners.begin(), casterCorners.end());
+        if (!tightNearPlaneXyFit)
+        {
+            xyPoints.insert(xyPoints.end(), casterCorners.begin(), casterCorners.end());
+        }
     }
 
-    setup.orthoWidth = (maxX - minX) + margin * 2.0f;
-    setup.orthoHeight = (maxY - minY) + margin * 2.0f;
-    setup.texelWorldSizeX = setup.orthoWidth / static_cast<float>(shadowMapResolution);
-    setup.texelWorldSizeY = setup.orthoHeight / static_cast<float>(shadowMapResolution);
-
-    setup.lightProjection = glm::ortho(
-        minX - margin,
-        maxX + margin,
-        minY - margin,
-        maxY + margin,
-        -maxZ - margin,
-        -minZ + margin);
-
-    setup.lightSpaceMatrix = setup.lightProjection * setup.lightView;
-
-    glm::vec4 shadowOrigin = setup.lightSpaceMatrix * glm::vec4(setup.sceneCenter, 1.0f);
-    const float resolutionScale = static_cast<float>(shadowMapResolution) * 0.5f;
-    shadowOrigin *= resolutionScale;
-    const glm::vec4 roundedOrigin = glm::round(shadowOrigin);
-    const glm::vec4 roundOffset =
-        (roundedOrigin - shadowOrigin) * (2.0f / static_cast<float>(shadowMapResolution));
-
-    setup.snapOffsetNdc = glm::vec2(roundOffset.x, roundOffset.y);
-
-    glm::mat4 snapMatrix(1.0f);
-    snapMatrix[3][0] = roundOffset.x;
-    snapMatrix[3][1] = roundOffset.y;
-    setup.lightSpaceMatrix = snapMatrix * setup.lightSpaceMatrix;
-
-    return setup;
+    return BuildShadowLightSpaceFromWorldPoints(
+        lightDirectionTowardSource,
+        xyPoints,
+        zPoints,
+        shadowMapResolution,
+        xyMarginFraction,
+        zMarginFraction,
+        lightViewAnchor,
+        stableOrthoHalfExtentInOut,
+        allowOrthoShrink);
 }
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition)
@@ -174,6 +327,22 @@ glm::vec3 ComputeBoundsMax(const std::array<glm::vec3, 8>& points)
         boundsMax = glm::max(boundsMax, point);
     }
     return boundsMax;
+}
+
+bool ComputeBoundsIntersection(
+    const glm::vec3& boundsAMin,
+    const glm::vec3& boundsAMax,
+    const glm::vec3& boundsBMin,
+    const glm::vec3& boundsBMax,
+    glm::vec3& intersectionMin,
+    glm::vec3& intersectionMax)
+{
+    intersectionMin = glm::max(boundsAMin, boundsBMin);
+    intersectionMax = glm::min(boundsAMax, boundsBMax);
+
+    return intersectionMin.x <= intersectionMax.x &&
+        intersectionMin.y <= intersectionMax.y &&
+        intersectionMin.z <= intersectionMax.z;
 }
 
 float ComputeShadowDrawDistance(

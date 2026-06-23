@@ -7,6 +7,8 @@
 
 #include <glm/gtc/matrix_inverse.hpp>
 
+#include <algorithm>
+#include <limits>
 #include <stdexcept>
 
 CascadedShadowMap::CascadedShadowMap(const int resolutionPerCascade)
@@ -17,12 +19,28 @@ CascadedShadowMap::CascadedShadowMap(const int resolutionPerCascade)
 
 CascadedShadowMap::~CascadedShadowMap()
 {
-    glDeleteFramebuffers(1, &m_fbo);
-    glDeleteTextures(1, &m_depthTexture);
+    DestroyResources();
+}
+
+void CascadedShadowMap::DestroyResources()
+{
+    if (m_depthTexture != 0)
+    {
+        glDeleteTextures(1, &m_depthTexture);
+        m_depthTexture = 0;
+    }
+
+    if (m_fbo != 0)
+    {
+        glDeleteFramebuffers(1, &m_fbo);
+        m_fbo = 0;
+    }
 }
 
 void CascadedShadowMap::CreateResources()
 {
+    DestroyResources();
+
     glGenFramebuffers(1, &m_fbo);
     glGenTextures(1, &m_depthTexture);
 
@@ -30,18 +48,16 @@ void CascadedShadowMap::CreateResources()
     glTexImage3D(
         GL_TEXTURE_2D_ARRAY,
         0,
-        GL_DEPTH_COMPONENT,
+        GL_DEPTH_COMPONENT32F,
         m_resolution,
         m_resolution,
-        CascadeCount,
+        MaxCascades,
         0,
         GL_DEPTH_COMPONENT,
         GL_FLOAT,
         nullptr);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_MODE, GL_COMPARE_REF_TO_TEXTURE);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_COMPARE_FUNC, GL_LEQUAL);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
 
@@ -67,29 +83,53 @@ void CascadedShadowMap::CreateResources()
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+void CascadedShadowMap::SetResolution(const int resolutionPerCascade)
+{
+    const int clampedResolution = std::clamp(resolutionPerCascade, 512, 8192);
+    if (clampedResolution == m_resolution)
+    {
+        return;
+    }
+
+    m_resolution = clampedResolution;
+    CreateResources();
+}
+
 void CascadedShadowMap::BeginFrame(
     const Camera& camera,
     const glm::vec3& lightDirectionTowardSource,
-    const glm::vec3& sceneBoundsMin,
-    const glm::vec3& sceneBoundsMax)
+    const glm::vec3& casterBoundsMin,
+    const glm::vec3& casterBoundsMax,
+    const bool hasCasterBounds,
+    const DirectionalShadowSettings& settings)
 {
+    m_activeCascadeCount = settings.GetCascadeCount();
     glGetIntegerv(GL_VIEWPORT, m_savedViewport);
 
-    const float shadowDrawDistance = ComputeShadowDrawDistance(
-        camera.GetPosition(),
-        sceneBoundsMin,
-        sceneBoundsMax);
+    const float shadowDrawDistance = hasCasterBounds
+        ? ComputeShadowDrawDistance(camera.GetPosition(), casterBoundsMin, casterBoundsMax)
+        : camera.GetFarPlane();
     const float cascadeFarPlane = std::min(camera.GetFarPlane(), shadowDrawDistance);
 
     const std::vector<float> splitDistances = ComputeCascadeSplitDistances(
-        CascadeCount,
+        m_activeCascadeCount,
         camera.GetNearPlane(),
         cascadeFarPlane,
-        0.82f);
+        settings.GetCascadeSplitLambda());
 
     const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
+    const glm::vec3 cameraPosition = camera.GetPosition();
+    const float cameraMoveDistance = m_hasStableOrthoHalfExtents
+        ? glm::length(cameraPosition - m_lastCameraPosition)
+        : std::numeric_limits<float>::max();
+    const bool allowOrthoShrink = cameraMoveDistance > 0.75f;
+    if (allowOrthoShrink)
+    {
+        m_stableOrthoHalfExtents.fill(0.0f);
+        m_hasStableOrthoHalfExtents = false;
+    }
 
-    for (int cascadeIndex = 0; cascadeIndex < CascadeCount; ++cascadeIndex)
+    for (int cascadeIndex = 0; cascadeIndex < m_activeCascadeCount; ++cascadeIndex)
     {
         const float cascadeNear = splitDistances[static_cast<std::size_t>(cascadeIndex)];
         const float cascadeFar = splitDistances[static_cast<std::size_t>(cascadeIndex + 1)];
@@ -102,18 +142,24 @@ void CascadedShadowMap::BeginFrame(
             cascadeNear,
             cascadeFar);
 
-        const glm::vec3 frustumMin = ComputeBoundsMin(frustumCorners);
-        const glm::vec3 frustumMax = ComputeBoundsMax(frustumCorners);
-
-        m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)] = BuildShadowLightSpace(
+        m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)] = BuildShadowLightSpaceForFrustumCorners(
             lightDirectionTowardSource,
-            frustumMin,
-            frustumMax,
+            frustumCorners,
             m_resolution,
-            0.25f);
+            settings.GetXyMarginFraction(),
+            settings.GetZMarginFraction(),
+            hasCasterBounds ? &casterBoundsMin : nullptr,
+            hasCasterBounds ? &casterBoundsMax : nullptr,
+            settings.GetTightNearPlaneXyFit(),
+            &cameraPosition,
+            &m_stableOrthoHalfExtents[static_cast<std::size_t>(cascadeIndex)],
+            allowOrthoShrink);
         m_lightSpaceMatrices[static_cast<std::size_t>(cascadeIndex)] =
             m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)].lightSpaceMatrix;
     }
+
+    m_lastCameraPosition = cameraPosition;
+    m_hasStableOrthoHalfExtents = true;
 }
 
 void CascadedShadowMap::BeginCascade(const int cascadeIndex)
@@ -156,17 +202,17 @@ const glm::mat4& CascadedShadowMap::GetLightSpaceMatrix(const int cascadeIndex) 
     return m_lightSpaceMatrices[static_cast<std::size_t>(cascadeIndex)];
 }
 
-const std::array<glm::mat4, CascadedShadowMap::CascadeCount>& CascadedShadowMap::GetLightSpaceMatrices() const
+const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& CascadedShadowMap::GetLightSpaceMatrices() const
 {
     return m_lightSpaceMatrices;
 }
 
-const std::array<ShadowLightSpaceSetup, CascadedShadowMap::CascadeCount>& CascadedShadowMap::GetCascadeSetups() const
+const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& CascadedShadowMap::GetCascadeSetups() const
 {
     return m_cascadeSetups;
 }
 
-const std::array<float, CascadedShadowMap::CascadeCount>& CascadedShadowMap::GetCascadeEndSplits() const
+const std::array<float, CascadedShadowMap::MaxCascades>& CascadedShadowMap::GetCascadeEndSplits() const
 {
     return m_cascadeEndSplits;
 }
@@ -174,6 +220,11 @@ const std::array<float, CascadedShadowMap::CascadeCount>& CascadedShadowMap::Get
 int CascadedShadowMap::GetResolution() const
 {
     return m_resolution;
+}
+
+int CascadedShadowMap::GetActiveCascadeCount() const
+{
+    return m_activeCascadeCount;
 }
 
 void CascadedShadowMap::BindDepthTexture(const unsigned int textureUnit) const

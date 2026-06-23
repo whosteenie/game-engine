@@ -54,13 +54,24 @@ uniform float uLightRange[MAX_LIGHTS];
 uniform float uLightInnerCutoffCos[MAX_LIGHTS];
 uniform float uLightOuterCutoffCos[MAX_LIGHTS];
 
-uniform sampler2DArrayShadow uShadowMap;
+uniform sampler2DArray uShadowMap;
 uniform mat4 uLightSpaceMatrices[MAX_CASCADES];
 uniform float uCascadeEndSplits[MAX_CASCADES];
 uniform float uCascadeTexelWorldSizes[MAX_CASCADES];
 uniform float uCascadeBlendRatio;
 uniform int uCascadeCount;
 uniform float uCascadeNearPlane;
+uniform int uShadowFilterMode;
+uniform int uPcfKernelRadius;
+uniform int uUsePoissonPcf;
+uniform float uMinPenumbraTexels;
+uniform int uPcssBlockerRadius;
+uniform float uPcssLightAngularSize;
+uniform float uPcssMinPenumbraTexels;
+uniform float uPcssMaxPenumbraTexels;
+uniform float uWorldBiasScale;
+uniform float uDepthBiasScale;
+uniform float uShadowMapResolution;
 uniform mat4 uLightSpaceMatrix;
 uniform mat4 uView;
 uniform int uShadowLightIndex;
@@ -220,6 +231,149 @@ vec3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
+float FetchShadowDepth(int cascadeIndex, vec2 shadowUv)
+{
+    return texture(uShadowMap, vec3(shadowUv, float(cascadeIndex))).r;
+}
+
+bool IsShadowBlocked(int cascadeIndex, vec2 shadowUv, float compareDepth)
+{
+    return FetchShadowDepth(cascadeIndex, shadowUv) < compareDepth;
+}
+
+float ShadowFilterRotation(int cascadeIndex)
+{
+    // Fixed angle per cascade: stable when the camera rotates (no screen/texel hash popping).
+    return float(cascadeIndex) * 0.78539816339 + 0.39269908169;
+}
+
+const int kMaxRotatedGridRadius = 4;
+
+float EffectiveMinPenumbraTexels()
+{
+    return clamp(uMinPenumbraTexels, 0.0, 8.0);
+}
+
+float ClampFilterRadiusTexels(float filterRadiusTexels)
+{
+    return clamp(filterRadiusTexels, 0.5, 12.0);
+}
+
+// Rotated regular grid with Gaussian weights: stable rotation, smooth penumbra.
+float FilterShadowRotatedGrid(
+    int cascadeIndex,
+    vec2 shadowUv,
+    float compareDepth,
+    vec2 texelSize,
+    float filterRadiusTexels,
+    int kernelRadius)
+{
+    int radius = min(kernelRadius, kMaxRotatedGridRadius);
+    float phi = ShadowFilterRotation(cascadeIndex);
+    float cosine = cos(phi);
+    float sine = sin(phi);
+    mat2 rotation = mat2(cosine, -sine, sine, cosine);
+    vec2 texelStep = texelSize * (filterRadiusTexels / max(float(radius), 1.0));
+    float radiusSquared = max(float(radius * radius), 1.0);
+
+    float shadow = 0.0;
+    float weightSum = 0.0;
+    for (int x = -kMaxRotatedGridRadius; x <= kMaxRotatedGridRadius; ++x)
+    {
+        for (int y = -kMaxRotatedGridRadius; y <= kMaxRotatedGridRadius; ++y)
+        {
+            if (abs(x) > radius || abs(y) > radius)
+            {
+                continue;
+            }
+
+            float distSquared = float(x * x + y * y);
+            float weight = exp(-distSquared / (radiusSquared * 0.45));
+            vec2 offset = rotation * vec2(float(x), float(y)) * texelStep;
+            shadow += (IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0) * weight;
+            weightSum += weight;
+        }
+    }
+
+    return shadow / max(weightSum, 1e-5);
+}
+
+float FilterShadowGridPcf(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize, int kernelRadius)
+{
+    float shadow = 0.0;
+    float sampleCount = 0.0;
+    for (int x = -kernelRadius; x <= kernelRadius; ++x)
+    {
+        for (int y = -kernelRadius; y <= kernelRadius; ++y)
+        {
+            vec2 offset = vec2(x, y) * texelSize;
+            shadow += IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0;
+            sampleCount += 1.0;
+        }
+    }
+
+    return shadow / max(sampleCount, 1.0);
+}
+
+float FilterShadowPcf(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize, int kernelRadius)
+{
+    if (uUsePoissonPcf != 0)
+    {
+        float filterRadiusTexels = ClampFilterRadiusTexels(
+            max(float(kernelRadius), EffectiveMinPenumbraTexels()));
+        return FilterShadowRotatedGrid(
+            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadiusTexels, kernelRadius);
+    }
+
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+}
+
+float FilterShadowPcss(int cascadeIndex, vec2 shadowUv, float compareDepth, vec2 texelSize)
+{
+    float blockerDepthSum = 0.0;
+    int blockerCount = 0;
+
+    for (int x = -uPcssBlockerRadius; x <= uPcssBlockerRadius; ++x)
+    {
+        for (int y = -uPcssBlockerRadius; y <= uPcssBlockerRadius; ++y)
+        {
+            vec2 offset = vec2(x, y) * texelSize;
+            float blockerDepth = FetchShadowDepth(cascadeIndex, shadowUv + offset);
+            if (blockerDepth < compareDepth)
+            {
+                blockerDepthSum += blockerDepth;
+                blockerCount++;
+            }
+        }
+    }
+
+    if (blockerCount == 0)
+    {
+        return FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
+    }
+
+    float avgBlockerDepth = blockerDepthSum / float(blockerCount);
+    float penumbraRatio = (compareDepth - avgBlockerDepth) / max(avgBlockerDepth, 1e-5);
+    float filterRadius = penumbraRatio * uPcssLightAngularSize;
+    filterRadius = clamp(
+        filterRadius,
+        max(uPcssMinPenumbraTexels, EffectiveMinPenumbraTexels()),
+        uPcssMaxPenumbraTexels);
+    filterRadius = ClampFilterRadiusTexels(filterRadius);
+    filterRadius = ceil(filterRadius * 2.0) * 0.5;
+
+    if (uUsePoissonPcf != 0)
+    {
+        int kernelRadius = min(int(ceil(filterRadius)), kMaxRotatedGridRadius);
+        return FilterShadowRotatedGrid(
+            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadius, kernelRadius);
+    }
+
+    int kernelRadius = int(ceil(filterRadius));
+    kernelRadius = min(kernelRadius, kMaxRotatedGridRadius);
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+}
+
 float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 geomNormal, vec3 lightDir)
 {
     vec3 normal = normalize(geomNormal);
@@ -230,38 +384,27 @@ float SampleCascadeShadow(int cascadeIndex, vec3 worldPos, vec3 geomNormal, vec3
     float texelUvSpan = max(texelSize.x, texelSize.y);
     float texelWorldSpan = uCascadeTexelWorldSizes[cascadeIndex];
 
-    float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15));
-    float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15));
+    float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15)) * uWorldBiasScale;
+    float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
 
     vec3 biasedWorldPos = worldPos + normal * worldBias;
     vec4 lightSpace = uLightSpaceMatrices[cascadeIndex] * vec4(biasedWorldPos, 1.0);
     vec3 projCoords = lightSpace.xyz / lightSpace.w;
     projCoords = projCoords * 0.5 + 0.5;
 
-    if (projCoords.x < 0.0 || projCoords.x > 1.0 ||
-        projCoords.y < 0.0 || projCoords.y > 1.0 ||
-        projCoords.z > 1.0)
+    if (projCoords.z < 0.0 || projCoords.z > 1.0)
     {
         return 1.0;
     }
 
-    vec2 shadowUv = projCoords.xy;
-    float compareDepth = projCoords.z - depthBias;
+    vec2 shadowUv = clamp(projCoords.xy, vec2(0.0), vec2(1.0));
+    float compareDepth = clamp(projCoords.z - depthBias, 0.0, 1.0);
 
-    float shadow = 0.0;
-    for (int x = -2; x <= 2; ++x)
-    {
-        for (int y = -2; y <= 2; ++y)
-        {
-            vec2 offset = vec2(x, y) * texelSize;
-            shadow += texture(
-                uShadowMap,
-                vec4(shadowUv + offset, float(cascadeIndex), compareDepth));
-        }
-    }
+    float shadow = uShadowFilterMode == 1
+        ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, texelSize)
+        : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
 
-    shadow /= 25.0;
-    return shadow * shadow * (3.0 - 2.0 * shadow);
+    return shadow;
 }
 
 int SelectCascadeIndex(float viewDepth)

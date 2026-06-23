@@ -17,6 +17,7 @@
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
 #include "engine/ScenePrimitive.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/ScreenSpaceEffects.h"
 #include "engine/Texture.h"
 #include "engine/TextureCache.h"
@@ -768,11 +769,49 @@ namespace SceneProjectIODetail
         return TonemapMode::Gamma;
     }
 
+    const char* ShadowFilterModeToString(DirectionalShadowFilterMode mode)
+    {
+        return mode == DirectionalShadowFilterMode::PCSS ? "PCSS" : "PCF";
+    }
+
+    DirectionalShadowFilterMode ShadowFilterModeFromString(const std::string& value)
+    {
+        if (value == "PCSS")
+        {
+            return DirectionalShadowFilterMode::PCSS;
+        }
+
+        return DirectionalShadowFilterMode::PCF;
+    }
+
     json SerializeRenderer(const Scene& scene)
     {
         const ScreenSpaceEffects& effects = scene.GetScreenSpaceEffects();
+        const DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
         return json{
             {"environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()},
+            {"directionalShadow",
+             json{
+                 {"filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode())},
+                 {"shadowMapResolution", shadowSettings.GetShadowMapResolution()},
+                 {"cascadeCount", shadowSettings.GetCascadeCount()},
+                 {"cascadeSplitLambda", shadowSettings.GetCascadeSplitLambda()},
+                 {"cascadeBlendRatio", shadowSettings.GetCascadeBlendRatio()},
+                 {"tightNearPlaneXyFit", shadowSettings.GetTightNearPlaneXyFit()},
+                 {"xyMarginFraction", shadowSettings.GetXyMarginFraction()},
+                 {"zMarginFraction", shadowSettings.GetZMarginFraction()},
+                 {"usePoissonPcf", shadowSettings.GetUsePoissonPcf()},
+                 {"pcfKernelRadius", shadowSettings.GetPcfKernelRadius()},
+                 {"pcfSampleCount", shadowSettings.GetPcfSampleCount()},
+                 {"minPenumbraTexels", shadowSettings.GetMinPenumbraTexels()},
+                 {"sunAngularDiameterDegrees", shadowSettings.GetSunAngularDiameterDegrees()},
+                 {"pcssLightAngularSize", shadowSettings.GetPcssLightAngularSize()},
+                 {"pcssBlockerRadius", shadowSettings.GetPcssBlockerRadius()},
+                 {"pcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels()},
+                 {"pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()},
+                 {"worldBiasScale", shadowSettings.GetWorldBiasScale()},
+                 {"depthBiasScale", shadowSettings.GetDepthBiasScale()},
+             }},
             {"screenSpaceEffects",
              json{
                  {"enabled", effects.IsEnabled()},
@@ -796,6 +835,50 @@ namespace SceneProjectIODetail
     {
         scene.GetIBL().SetEnvironmentIntensity(
             rendererValue.value("environmentIntensity", scene.GetIBL().GetEnvironmentIntensity()));
+
+        if (rendererValue.contains("directionalShadow"))
+        {
+            const json& shadowValue = rendererValue.at("directionalShadow");
+            DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+            shadowSettings.SetFilterMode(ShadowFilterModeFromString(
+                shadowValue.value("filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode()))));
+            shadowSettings.SetShadowMapResolution(
+                shadowValue.value("shadowMapResolution", shadowSettings.GetShadowMapResolution()));
+            shadowSettings.SetCascadeCount(shadowValue.value("cascadeCount", shadowSettings.GetCascadeCount()));
+            shadowSettings.SetCascadeSplitLambda(
+                shadowValue.value("cascadeSplitLambda", shadowSettings.GetCascadeSplitLambda()));
+            shadowSettings.SetCascadeBlendRatio(
+                shadowValue.value("cascadeBlendRatio", shadowSettings.GetCascadeBlendRatio()));
+            shadowSettings.SetTightNearPlaneXyFit(
+                shadowValue.value("tightNearPlaneXyFit", shadowSettings.GetTightNearPlaneXyFit()));
+            shadowSettings.SetXyMarginFraction(
+                shadowValue.value("xyMarginFraction", shadowSettings.GetXyMarginFraction()));
+            shadowSettings.SetZMarginFraction(
+                shadowValue.value("zMarginFraction", shadowSettings.GetZMarginFraction()));
+            shadowSettings.SetUsePoissonPcf(
+                shadowValue.value("usePoissonPcf", shadowSettings.GetUsePoissonPcf()));
+            shadowSettings.SetPcfKernelRadius(
+                shadowValue.value("pcfKernelRadius", shadowSettings.GetPcfKernelRadius()));
+            shadowSettings.SetPcfSampleCount(
+                shadowValue.value("pcfSampleCount", shadowSettings.GetPcfSampleCount()));
+            shadowSettings.SetMinPenumbraTexels(
+                shadowValue.value("minPenumbraTexels", shadowSettings.GetMinPenumbraTexels()));
+            shadowSettings.SetSunAngularDiameterDegrees(shadowValue.value(
+                "sunAngularDiameterDegrees",
+                shadowSettings.GetSunAngularDiameterDegrees()));
+            shadowSettings.SetPcssLightAngularSize(
+                shadowValue.value("pcssLightAngularSize", shadowSettings.GetPcssLightAngularSize()));
+            shadowSettings.SetPcssBlockerRadius(
+                shadowValue.value("pcssBlockerRadius", shadowSettings.GetPcssBlockerRadius()));
+            shadowSettings.SetPcssMinPenumbraTexels(
+                shadowValue.value("pcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels()));
+            shadowSettings.SetPcssMaxPenumbraTexels(
+                shadowValue.value("pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()));
+            shadowSettings.SetWorldBiasScale(
+                shadowValue.value("worldBiasScale", shadowSettings.GetWorldBiasScale()));
+            shadowSettings.SetDepthBiasScale(
+                shadowValue.value("depthBiasScale", shadowSettings.GetDepthBiasScale()));
+        }
 
         if (!rendererValue.contains("screenSpaceEffects"))
         {

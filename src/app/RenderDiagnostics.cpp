@@ -8,6 +8,7 @@
 #include "engine/SceneObject.h"
 #include "engine/ScreenSpaceEffects.h"
 #include "engine/CascadedShadowMap.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/ShadowMapMath.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
@@ -52,22 +53,10 @@ namespace
 
     void ComputeShadowSceneBounds(const Scene& scene, glm::vec3& boundsMin, glm::vec3& boundsMax)
     {
-        boundsMin = glm::vec3(std::numeric_limits<float>::max());
-        boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
-
-        for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
+        if (!scene.ComputeShadowCasterBounds(boundsMin, boundsMax))
         {
-            const SceneObject& object = scene.GetObjects()[objectIndex];
-            if (!object.CastsShadow() && !object.ReceivesShadow())
-            {
-                continue;
-            }
-
-            glm::vec3 objectBoundsMin;
-            glm::vec3 objectBoundsMax;
-            scene.GetWorldBounds(static_cast<int>(objectIndex), objectBoundsMin, objectBoundsMax);
-            boundsMin = glm::min(boundsMin, objectBoundsMin);
-            boundsMax = glm::max(boundsMax, objectBoundsMax);
+            boundsMin = glm::vec3(0.0f);
+            boundsMax = glm::vec3(0.0f);
         }
     }
 
@@ -185,17 +174,24 @@ namespace RenderDiagnostics
             ComputeShadowSceneBounds(scene, shadowBoundsMin, shadowBoundsMax);
 
             const glm::vec3 lightDirection = GetPrimaryLightDirection(scene);
+            const DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+            const CascadedShadowMap& shadowMap = scene.GetShadowMap();
             const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(
-                CascadedShadowMap::CascadeCount,
+                shadowSettings.GetCascadeCount(),
                 camera.GetNearPlane(),
-                ComputeShadowDrawDistance(camera.GetPosition(), shadowBoundsMin, shadowBoundsMax));
+                ComputeShadowDrawDistance(camera.GetPosition(), shadowBoundsMin, shadowBoundsMax),
+                shadowSettings.GetCascadeSplitLambda());
 
             out << "[Directional shadow cascades]\n";
-            out << "Cascade count: " << CascadedShadowMap::CascadeCount << "\n";
-            out << "Resolution per cascade: " << CascadedShadowMap::DefaultResolution << "\n";
+            out << "Cascade count: " << shadowSettings.GetCascadeCount() << "\n";
+            out << "Resolution per cascade: " << shadowMap.GetResolution() << "\n";
+            out << "Split lambda: " << shadowSettings.GetCascadeSplitLambda() << "\n";
+            out << "Filter mode: "
+                << (shadowSettings.GetFilterMode() == DirectionalShadowFilterMode::PCSS ? "PCSS" : "PCF")
+                << "\n";
             out << "Light direction: " << FormatVec3(lightDirection) << "\n";
-            out << "Scene shadow bounds min: " << FormatVec3(shadowBoundsMin) << "\n";
-            out << "Scene shadow bounds max: " << FormatVec3(shadowBoundsMax) << "\n";
+            out << "Caster bounds min: " << FormatVec3(shadowBoundsMin) << "\n";
+            out << "Caster bounds max: " << FormatVec3(shadowBoundsMax) << "\n";
             out << "Shadow draw distance: "
                 << ComputeShadowDrawDistance(camera.GetPosition(), shadowBoundsMin, shadowBoundsMax)
                 << "\n";
@@ -219,7 +215,7 @@ namespace RenderDiagnostics
                 << legacySetup.texelWorldSizeX << " / " << legacySetup.texelWorldSizeY << "\n\n";
 
             const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
-            for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::CascadeCount; ++cascadeIndex)
+            for (int cascadeIndex = 0; cascadeIndex < shadowSettings.GetCascadeCount(); ++cascadeIndex)
             {
                 const float cascadeNear = cascadeSplits[static_cast<std::size_t>(cascadeIndex)];
                 const float cascadeFar = cascadeSplits[static_cast<std::size_t>(cascadeIndex + 1)];

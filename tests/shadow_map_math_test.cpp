@@ -108,6 +108,48 @@ int main()
         nearCascadeSetup.texelWorldSizeX < farCascadeSetup.texelWorldSizeX,
         "Near cascade texels should be smaller than the farthest cascade");
 
+    const glm::vec3 casterBoundsMin(-20.0f, 0.0f, -20.0f);
+    const glm::vec3 casterBoundsMax(20.0f, 10.0f, 20.0f);
+    const ShadowLightSpaceSetup frustumOnlyXySetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true);
+    const ShadowLightSpaceSetup frustumPlusCasterXySetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        false);
+
+    ExpectTrue(
+        frustumOnlyXySetup.orthoWidth <= frustumPlusCasterXySetup.orthoWidth + 1e-3f,
+        "Frustum-only XY fit should not enlarge ortho width versus frustum + caster fit");
+    ExpectTrue(
+        frustumOnlyXySetup.texelWorldSizeX <= frustumPlusCasterXySetup.texelWorldSizeX + 1e-6f,
+        "Frustum-only XY fit should produce equal or smaller texels");
+
+    glm::vec3 intersectionMin;
+    glm::vec3 intersectionMax;
+    ExpectTrue(
+        ComputeBoundsIntersection(
+            glm::vec3(-2.0f, 0.0f, -2.0f),
+            glm::vec3(2.0f, 4.0f, 2.0f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(6.0f, 2.0f, 6.0f),
+            intersectionMin,
+            intersectionMax),
+        "Overlapping bounds should intersect");
+    ExpectNear(intersectionMin.x, 0.0f, 1e-4f, "Intersection min X");
+    ExpectNear(intersectionMax.y, 2.0f, 1e-4f, "Intersection max Y");
+
     if (gFailures == 0)
     {
         std::cout << "All shadow map math tests passed.\n";

@@ -5,6 +5,8 @@
 #include "app/Scene.h"
 #include "app/UndoCommand.h"
 #include "engine/Camera.h"
+#include "engine/CascadedShadowMap.h"
+#include "engine/DirectionalShadowSettings.h"
 #include "engine/IBL.h"
 #include "engine/RenderDebug.h"
 #include "engine/ScreenSpaceEffects.h"
@@ -76,6 +78,232 @@ void LightingPanel::Draw(
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+    }
+
+    if (ImGui::CollapsingHeader("Directional Shadows", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        DirectionalShadowSettings& shadowSettings = scene.GetDirectionalShadowSettings();
+        const CascadedShadowMap& shadowMap = scene.GetShadowMap();
+
+        if (ImGui::TreeNodeEx("Quality & filtering", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            int shadowFilterMode = static_cast<int>(shadowSettings.GetFilterMode());
+            const char* shadowFilterLabels[] = {"PCF (fixed kernel)", "PCSS (soft penumbra)"};
+            if (ImGui::Combo(
+                    "Shadow filter",
+                    &shadowFilterMode,
+                    shadowFilterLabels,
+                    IM_ARRAYSIZE(shadowFilterLabels)))
+            {
+                shadowSettings.SetFilterMode(static_cast<DirectionalShadowFilterMode>(shadowFilterMode));
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            int shadowResolution = shadowSettings.GetShadowMapResolution();
+            const char* resolutionLabels[] = {"512", "1024", "2048", "4096", "8192"};
+            const int resolutionValues[] = {512, 1024, 2048, 4096, 8192};
+            int resolutionIndex = 3;
+            for (int index = 0; index < IM_ARRAYSIZE(resolutionValues); ++index)
+            {
+                if (shadowResolution == resolutionValues[index])
+                {
+                    resolutionIndex = index;
+                    break;
+                }
+            }
+            if (ImGui::Combo("Shadow map resolution", &resolutionIndex, resolutionLabels, IM_ARRAYSIZE(resolutionLabels)))
+            {
+                shadowSettings.SetShadowMapResolution(resolutionValues[resolutionIndex]);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            int pcfRadius = shadowSettings.GetPcfKernelRadius();
+            if (ImGui::SliderInt("PCF kernel radius", &pcfRadius, 1, 8))
+            {
+                shadowSettings.SetPcfKernelRadius(pcfRadius);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Rotated PCF: 7x7 at radius 3, 9x9 at radius 4.");
+
+            bool useRotatedPcf = shadowSettings.GetUsePoissonPcf();
+            if (ImGui::Checkbox("Rotated PCF", &useRotatedPcf))
+            {
+                shadowSettings.SetUsePoissonPcf(useRotatedPcf);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Per-pixel rotated grid; smoother than axis-aligned, no stochastic grain.");
+
+            float minPenumbraTexels = shadowSettings.GetMinPenumbraTexels();
+            if (ImGui::SliderFloat("Min penumbra (texels)", &minPenumbraTexels, 0.0f, 16.0f))
+            {
+                shadowSettings.SetMinPenumbraTexels(minPenumbraTexels);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            if (shadowFilterMode == static_cast<int>(DirectionalShadowFilterMode::PCSS))
+            {
+                float lightAngularSize = shadowSettings.GetPcssLightAngularSize();
+                if (ImGui::SliderFloat("PCSS light size", &lightAngularSize, 0.25f, 24.0f))
+                {
+                    shadowSettings.SetPcssLightAngularSize(lightAngularSize);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+
+                int blockerRadius = shadowSettings.GetPcssBlockerRadius();
+                if (ImGui::SliderInt("PCSS blocker radius", &blockerRadius, 1, 6))
+                {
+                    shadowSettings.SetPcssBlockerRadius(blockerRadius);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+
+                float minPenumbra = shadowSettings.GetPcssMinPenumbraTexels();
+                if (ImGui::SliderFloat("PCSS min penumbra", &minPenumbra, 0.5f, 16.0f))
+                {
+                    shadowSettings.SetPcssMinPenumbraTexels(minPenumbra);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+
+                float maxPenumbra = shadowSettings.GetPcssMaxPenumbraTexels();
+                if (ImGui::SliderFloat("PCSS max penumbra", &maxPenumbra, minPenumbra, 64.0f))
+                {
+                    shadowSettings.SetPcssMaxPenumbraTexels(maxPenumbra);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+            }
+
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("Cascade splits (CSM)", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            int cascadeCount = shadowSettings.GetCascadeCount();
+            if (ImGui::SliderInt("Cascade count", &cascadeCount, 1, DirectionalShadowSettings::MaxCascades))
+            {
+                shadowSettings.SetCascadeCount(cascadeCount);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float splitLambda = shadowSettings.GetCascadeSplitLambda();
+            if (ImGui::SliderFloat("Split lambda", &splitLambda, 0.0f, 1.0f))
+            {
+                shadowSettings.SetCascadeSplitLambda(splitLambda);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("0 = uniform splits, 1 = logarithmic (more near detail)");
+
+            float blendRatio = shadowSettings.GetCascadeBlendRatio();
+            if (ImGui::SliderFloat("Cascade blend ratio", &blendRatio, 0.0f, 0.5f))
+            {
+                shadowSettings.SetCascadeBlendRatio(blendRatio);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            bool tightNearPlaneXyFit = shadowSettings.GetTightNearPlaneXyFit();
+            if (ImGui::Checkbox("Frustum-only XY fit", &tightNearPlaneXyFit))
+            {
+                shadowSettings.SetTightNearPlaneXyFit(tightNearPlaneXyFit);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled(
+                "Exclude caster bounds from ortho XY (smaller texels). Casters still set Z depth range.");
+
+            float xyMargin = shadowSettings.GetXyMarginFraction();
+            if (ImGui::SliderFloat("Ortho XY margin", &xyMargin, 0.005f, 0.2f, "%.3f"))
+            {
+                shadowSettings.SetXyMarginFraction(xyMargin);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float zMargin = shadowSettings.GetZMarginFraction();
+            if (ImGui::SliderFloat("Ortho Z margin", &zMargin, 0.02f, 0.5f, "%.3f"))
+            {
+                shadowSettings.SetZMarginFraction(zMargin);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("Bias (acne vs peter-panning)", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            float worldBiasScale = shadowSettings.GetWorldBiasScale();
+            if (ImGui::SliderFloat("World bias scale", &worldBiasScale, 0.0f, 4.0f))
+            {
+                shadowSettings.SetWorldBiasScale(worldBiasScale);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float depthBiasScale = shadowSettings.GetDepthBiasScale();
+            if (ImGui::SliderFloat("Depth bias scale", &depthBiasScale, 0.0f, 4.0f))
+            {
+                shadowSettings.SetDepthBiasScale(depthBiasScale);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Raise if you see acne; lower if shadows detach from surfaces.");
+
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNodeEx("Live cascade stats", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::Text("Active resolution: %d x %d per cascade", shadowMap.GetResolution(), shadowMap.GetResolution());
+            ImGui::Text("Active cascades: %d", shadowMap.GetActiveCascadeCount());
+
+            const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
+            const glm::vec4 viewFocus = camera.GetViewMatrix() * glm::vec4(focusPoint, 1.0f);
+            const float focusViewDepth = -viewFocus.z;
+            int focusCascade = 0;
+            const std::array<float, CascadedShadowMap::MaxCascades>& splits = shadowMap.GetCascadeEndSplits();
+            for (int cascadeIndex = 0; cascadeIndex < shadowMap.GetActiveCascadeCount() - 1; ++cascadeIndex)
+            {
+                if (focusViewDepth > splits[static_cast<std::size_t>(cascadeIndex)])
+                {
+                    focusCascade = cascadeIndex + 1;
+                }
+            }
+            ImGui::Text("Focus view depth (3m ahead): %.2f -> cascade %d", focusViewDepth, focusCascade);
+
+            const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& setups =
+                shadowMap.GetCascadeSetups();
+            for (int cascadeIndex = 0; cascadeIndex < shadowMap.GetActiveCascadeCount(); ++cascadeIndex)
+            {
+                const ShadowLightSpaceSetup& setup = setups[static_cast<std::size_t>(cascadeIndex)];
+                const float texelSpan =
+                    std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
+                const float splitEnd = splits[static_cast<std::size_t>(cascadeIndex)];
+                ImGui::BulletText(
+                    "C%d: texel %.4f m | split end %.2f | ortho %.1f x %.1f m",
+                    cascadeIndex,
+                    texelSpan,
+                    splitEnd,
+                    setup.orthoWidth,
+                    setup.orthoHeight);
+            }
+
+            ImGui::Separator();
+            ImGui::TextWrapped(
+                "Blockiness usually means texel size is too large for the view. "
+                "Enable tight near-plane XY fit, Poisson PCF, and check focus cascade texel size. "
+                "Use debug views: Shadow factor (raw map), Cascade index.");
+            ImGui::TreePop();
+        }
     }
 
     if (ImGui::CollapsingHeader("HDR", ImGuiTreeNodeFlags_DefaultOpen))
