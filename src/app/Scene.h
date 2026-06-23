@@ -166,9 +166,16 @@ public:
     Mesh* GetMeshForPrimitive(ScenePrimitive primitive) const;
     Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
 
-    bool CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtreeArchive& archive);
+    bool CreateDeleteArchive(
+        const std::vector<int>& rootIndices,
+        SceneSubtreeArchive& archive,
+        bool transferImportedMeshOwnership = true);
     bool DeleteUsingArchive(const SceneSubtreeArchive& archive);
     bool RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSelectionState& selection);
+    std::vector<int> InsertSubtreeArchive(
+        SceneSubtreeArchive& archive,
+        int referenceIndex,
+        HierarchyInsertMode rootPlacement);
 
 private:
     friend struct SceneProjectIO;

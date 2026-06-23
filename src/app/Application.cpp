@@ -147,14 +147,15 @@ void Application::Update(double deltaTime)
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
 
-    m_projectChooser->Draw(
+        m_projectChooser->Draw(
         *m_projectSession,
         *m_scene,
         *m_editorSettings,
         m_projectEditorState,
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
         [this]() { RequestClose(); },
-        m_undoStack);
+        m_undoStack,
+        m_editorClipboard);
 
     if (editorActive)
     {
@@ -177,10 +178,11 @@ void Application::Update(double deltaTime)
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
             m_undoStack,
+            m_editorClipboard,
             !IsEditorUndoRedoBlocked());
 
         m_sceneToolbarPanel->Draw(*m_scene);
-        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
+        m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
         m_lightingPanel->Draw(*m_scene, *m_camera, &m_undoStack);
@@ -422,6 +424,7 @@ void Application::DrawUnsavedChangesDialog()
                 m_pendingNewProject = false;
                 ImGui::CloseCurrentPopup();
                 m_undoStack.Clear();
+                m_editorClipboard.Clear();
                 m_projectSession->CloseProject();
                 m_projectChooser->OpenNewProjectForm(*m_editorSettings);
             }
@@ -442,6 +445,7 @@ void Application::DrawUnsavedChangesDialog()
             m_pendingNewProject = false;
             ImGui::CloseCurrentPopup();
             m_undoStack.Clear();
+            m_editorClipboard.Clear();
             m_projectSession->CloseProject();
             m_projectChooser->OpenNewProjectForm(*m_editorSettings);
         }

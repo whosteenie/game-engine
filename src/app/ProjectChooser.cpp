@@ -1,5 +1,6 @@
 #include "app/ProjectChooser.h"
 
+#include "app/EditorClipboard.h"
 #include "app/EditorSettings.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
@@ -48,6 +49,7 @@ bool ProjectChooser::TryOpenProject(
     const std::string& projectFilePath,
     const ApplyEditorStateFn& applyEditorState,
     UndoStack& undoStack,
+    EditorClipboard& clipboard,
     std::string& outError)
 {
     if (!project.OpenProject(scene, projectFilePath, editorState))
@@ -57,6 +59,7 @@ bool ProjectChooser::TryOpenProject(
     }
 
     undoStack.Clear();
+    clipboard.Clear();
     settings.AddRecentProject(project.GetProjectFilePath());
     settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
     settings.Save();
@@ -75,7 +78,8 @@ bool ProjectChooser::DrawNewProjectForm(
     Scene& scene,
     EditorSettings& settings,
     const ApplyEditorStateFn& applyEditorState,
-    UndoStack& undoStack)
+    UndoStack& undoStack,
+    EditorClipboard& clipboard)
 {
     const bool startup = m_startupMode;
     const char* popupId = startup ? "Create Project###ProjectChooserCreate" : "New Project###ProjectChooserCreate";
@@ -141,6 +145,7 @@ bool ProjectChooser::DrawNewProjectForm(
             m_showNewProjectForm = false;
             m_errorMessage.clear();
             undoStack.Clear();
+            clipboard.Clear();
             if (applyEditorState)
             {
                 applyEditorState(ProjectEditorState::CreateDefault());
@@ -181,7 +186,8 @@ bool ProjectChooser::DrawStartupScreen(
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose,
-    UndoStack& undoStack)
+    UndoStack& undoStack,
+    EditorClipboard& clipboard)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -229,6 +235,7 @@ bool ProjectChooser::DrawStartupScreen(
                     projectPath,
                     applyEditorState,
                     undoStack,
+                    clipboard,
                     error))
             {
                 m_errorMessage = error;
@@ -264,6 +271,7 @@ bool ProjectChooser::DrawStartupScreen(
                     projectPath,
                     applyEditorState,
                     undoStack,
+                    clipboard,
                     error))
                 {
                     m_errorMessage = error;
@@ -304,7 +312,7 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (m_showNewProjectForm)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack, clipboard);
     }
 
     return false;
@@ -317,7 +325,8 @@ bool ProjectChooser::Draw(
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose,
-    UndoStack& undoStack)
+    UndoStack& undoStack,
+    EditorClipboard& clipboard)
 {
     if (project.HasActiveProject() && !m_showNewProjectForm)
     {
@@ -327,7 +336,7 @@ bool ProjectChooser::Draw(
 
     if (m_showNewProjectForm && !m_startupMode)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack);
+        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack, clipboard);
     }
 
     return DrawStartupScreen(
@@ -337,5 +346,6 @@ bool ProjectChooser::Draw(
         editorState,
         applyEditorState,
         requestClose,
-        undoStack);
+        undoStack,
+        clipboard);
 }

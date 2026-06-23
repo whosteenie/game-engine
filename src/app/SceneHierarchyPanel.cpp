@@ -1,5 +1,6 @@
 #include "app/SceneHierarchyPanel.h"
 
+#include "app/EditorClipboard.h"
 #include "app/EditorPanelLayout.h"
 #include "app/ProjectSession.h"
 #include "app/Scene.h"
@@ -424,6 +425,7 @@ namespace
         Scene& scene,
         ProjectSession& project,
         UndoStack& undoStack,
+        EditorClipboard& clipboard,
         int objectIndex,
         std::unordered_map<SceneObjectId, bool>& openStates,
         int& pendingRenameIndex,
@@ -467,6 +469,28 @@ namespace
 
                 return std::vector<int>{};
             });
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::MenuItem("Cut", "Ctrl+X"))
+        {
+            CutSelection(undoStack, clipboard, scene);
+        }
+
+        if (ImGui::MenuItem("Copy", "Ctrl+C"))
+        {
+            CopySelection(clipboard, scene);
+        }
+
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, clipboard.HasContent()))
+        {
+            PushPasteFromClipboard(
+                undoStack,
+                scene,
+                clipboard,
+                objectIndex,
+                HierarchyInsertMode::AsChild);
         }
 
             if (ImGui::MenuItem("Delete"))
@@ -657,11 +681,27 @@ namespace
     void DrawHierarchyBackgroundContextMenu(
         const SceneHierarchyPanel& panel,
         Scene& scene,
-        ProjectSession& project)
+        ProjectSession& project,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard)
     {
         if (ImGui::BeginPopupContextItem())
         {
             DrawCreateObjectMenu(panel, scene, project, -1);
+            if (clipboard.HasContent())
+            {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Paste", "Ctrl+V"))
+                {
+                    PushPasteFromClipboard(
+                        undoStack,
+                        scene,
+                        clipboard,
+                        -1,
+                        HierarchyInsertMode::After);
+                }
+            }
+
             ImGui::EndPopup();
         }
     }
@@ -671,6 +711,7 @@ namespace
         Scene& scene,
         ProjectSession& project,
         UndoStack& undoStack,
+        EditorClipboard& clipboard,
         int objectIndex,
         int primaryIndex,
         std::unordered_map<SceneObjectId, bool>& openStates,
@@ -787,6 +828,7 @@ namespace
                 scene,
                 project,
                 undoStack,
+                clipboard,
                 objectIndex,
                 openStates,
                 pendingRenameIndex,
@@ -806,6 +848,7 @@ namespace
                     scene,
                     project,
                     undoStack,
+                    clipboard,
                     childIndex,
                     primaryIndex,
                     openStates,
@@ -874,9 +917,14 @@ void SceneHierarchyPanel::PushReparentMutation(
     }
 }
 
-void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const
+void SceneHierarchyPanel::Draw(
+    Scene& scene,
+    ProjectSession& project,
+    UndoStack& undoStack,
+    EditorClipboard& clipboard) const
 {
     m_drawUndoStack = &undoStack;
+    m_drawClipboard = &clipboard;
 
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Hierarchy);
 
@@ -892,6 +940,26 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     if (objects.empty())
     {
         ImGui::TextUnformatted("No scene objects.");
+        if (ImGui::SmallButton("+ Create"))
+        {
+            ImGui::OpenPopup("AddObjectPopup");
+        }
+        DrawAddObjectPopup(*this, scene, project);
+
+        if (clipboard.HasContent() && ImGui::BeginPopupContextWindow())
+        {
+            if (ImGui::MenuItem("Paste", "Ctrl+V"))
+            {
+                PushPasteFromClipboard(
+                    undoStack,
+                    scene,
+                    clipboard,
+                    -1,
+                    HierarchyInsertMode::After);
+            }
+            ImGui::EndPopup();
+        }
+
         ImGui::End();
         return;
     }
@@ -935,6 +1003,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
             scene,
             project,
             undoStack,
+            clipboard,
             objectIndex,
             primaryIndex,
             m_nodeOpenStates,
@@ -963,7 +1032,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     if (backgroundSpace.y > 0.0f)
     {
         ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
-        DrawHierarchyBackgroundContextMenu(*this, scene, project);
+        DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
     }
 
     m_scrollSelectionIntoView = false;
@@ -997,6 +1066,7 @@ void SceneHierarchyPanel::Draw(Scene& scene, ProjectSession& project, UndoStack&
     ImGui::EndDisabled();
 
     m_drawUndoStack = nullptr;
+    m_drawClipboard = nullptr;
 
     ImGui::End();
 }

@@ -13,11 +13,12 @@ enum class HierarchyInsertMode;
 class ProjectSession;
 class Scene;
 class UndoStack;
+class EditorClipboard;
 
 class SceneHierarchyPanel
 {
 public:
-    void Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack) const;
+    void Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack, EditorClipboard& clipboard) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 
@@ -47,4 +48,5 @@ private:
     mutable std::unordered_map<SceneObjectId, bool> m_nodeOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
     mutable UndoStack* m_drawUndoStack = nullptr;
+    mutable EditorClipboard* m_drawClipboard = nullptr;
 };

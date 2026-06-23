@@ -80,3 +80,6 @@ void ApplyArchivedSelection(Scene& scene, const ArchivedSelectionState& selectio
 SceneHierarchyArchive CaptureHierarchyArchive(const Scene& scene);
 bool AreHierarchyArchivesEqual(const SceneHierarchyArchive& left, const SceneHierarchyArchive& right);
 void ApplyHierarchyArchive(Scene& scene, const SceneHierarchyArchive& archive);
+
+SceneSubtreeArchive CloneSubtreeArchive(const SceneSubtreeArchive& source);
+void RemapSubtreeArchiveIds(Scene& scene, SceneSubtreeArchive& archive);

@@ -1,5 +1,6 @@
 #include "app/UndoCommand.h"
 
+#include "app/EditorClipboard.h"
 #include "app/Scene.h"
 #include "app/SceneDocument.h"
 #include "app/SceneProjectIODetail.h"
@@ -367,6 +368,67 @@ void PushInsertSubtree(
     archive.selectionBefore = selectionBefore;
     archive.selectionAfter = CaptureArchivedSelection(scene);
     undoStack.Push(std::make_unique<InsertSubtreeCommand>(std::move(archive), commandName));
+}
+
+bool CopySelection(EditorClipboard& clipboard, Scene& scene)
+{
+    if (!scene.HasSelection())
+    {
+        return false;
+    }
+
+    const std::vector<int> roots =
+        FilterToTopmostSelectedIndices(scene.GetObjects(), scene.GetSelection().indices);
+    if (roots.empty())
+    {
+        return false;
+    }
+
+    SceneSubtreeArchive archive;
+    if (!scene.CreateDeleteArchive(roots, archive, false))
+    {
+        return false;
+    }
+
+    clipboard.SetSubtreeArchive(std::move(archive));
+    return true;
+}
+
+void CutSelection(UndoStack& undoStack, EditorClipboard& clipboard, Scene& scene)
+{
+    if (!CopySelection(clipboard, scene))
+    {
+        return;
+    }
+
+    PushDeleteSelection(undoStack, scene, "Cut");
+}
+
+void PushPasteFromClipboard(
+    UndoStack& undoStack,
+    Scene& scene,
+    const EditorClipboard& clipboard,
+    int referenceIndex,
+    HierarchyInsertMode rootPlacement)
+{
+    const SceneSubtreeArchive* sourceArchive = clipboard.GetSubtreeArchive();
+    if (sourceArchive == nullptr)
+    {
+        return;
+    }
+
+    PushInsertSubtree(undoStack, scene, "Paste", [&](Scene& target) {
+        SceneSubtreeArchive workingCopy = CloneSubtreeArchive(*sourceArchive);
+        RemapSubtreeArchiveIds(target, workingCopy);
+        std::vector<int> insertedRoots =
+            target.InsertSubtreeArchive(workingCopy, referenceIndex, rootPlacement);
+        if (!insertedRoots.empty())
+        {
+            target.SetSelection(insertedRoots, insertedRoots.back());
+        }
+
+        return insertedRoots;
+    });
 }
 
 void PushReparentObjects(

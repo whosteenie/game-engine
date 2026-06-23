@@ -147,6 +147,17 @@ void PushInsertSubtree(
     const std::string& commandName,
     const std::function<std::vector<int>(Scene&)>& mutate);
 
+class EditorClipboard;
+
+bool CopySelection(EditorClipboard& clipboard, Scene& scene);
+void CutSelection(UndoStack& undoStack, EditorClipboard& clipboard, Scene& scene);
+void PushPasteFromClipboard(
+    UndoStack& undoStack,
+    Scene& scene,
+    const EditorClipboard& clipboard,
+    int referenceIndex,
+    HierarchyInsertMode rootPlacement);
+
 void PushReparentObjects(
     UndoStack& undoStack,
     Scene& scene,

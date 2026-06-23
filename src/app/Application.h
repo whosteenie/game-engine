@@ -3,6 +3,8 @@
 #include "app/ProjectEditorState.h"
 #include "app/UndoStack.h"
 
+#include "app/EditorClipboard.h"
+
 #include <memory>
 
 struct GLFWwindow;
@@ -72,5 +74,6 @@ private:
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
     UndoStack m_undoStack;
+    EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;
 };

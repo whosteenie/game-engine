@@ -8,6 +8,7 @@
 struct GLFWwindow;
 
 class EditorSettings;
+class EditorClipboard;
 class ProjectSession;
 class Scene;
 
@@ -38,5 +39,6 @@ public:
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
         UndoStack& undoStack,
+        EditorClipboard& clipboard,
         bool allowUndoRedo = true);
 };

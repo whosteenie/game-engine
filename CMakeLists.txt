@@ -184,6 +184,8 @@ add_executable(game-engine
 
     src/app/MainMenuBar.cpp
 
+    src/app/EditorClipboard.cpp
+
     src/app/UndoCommand.cpp
 
     src/app/UndoStack.cpp

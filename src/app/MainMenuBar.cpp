@@ -1,6 +1,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include "app/EditorClipboard.h"
 #include "app/EditorSettings.h"
 #include "app/MainMenuBar.h"
 #include "app/ProjectEditorState.h"
@@ -92,7 +93,8 @@ namespace
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
-        UndoStack& undoStack)
+        UndoStack& undoStack,
+        EditorClipboard& clipboard)
     {
         settings.ValidateLastNewProjectParentDirectory();
         std::string projectPath;
@@ -104,6 +106,7 @@ namespace
         if (project.OpenProject(scene, projectPath, editorState))
         {
             undoStack.Clear();
+            clipboard.Clear();
             RecordRecentProject(settings, project.GetProjectFilePath());
             if (applyEditorState)
             {
@@ -177,7 +180,8 @@ namespace
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState,
         const ApplyEditorStateFn& applyEditorState,
-        UndoStack& undoStack)
+        UndoStack& undoStack,
+        EditorClipboard& clipboard)
     {
         if (!AllowFileMenuShortcuts())
         {
@@ -187,7 +191,7 @@ namespace
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack, clipboard);
         }
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
@@ -201,18 +205,56 @@ namespace
         }
     }
 
+    void PasteClipboardDefault(
+        UndoStack& undoStack,
+        Scene& scene,
+        const EditorClipboard& clipboard)
+    {
+        const int referenceIndex = scene.HasSelection() ? scene.GetPrimarySelection() : -1;
+        PushPasteFromClipboard(
+            undoStack,
+            scene,
+            clipboard,
+            referenceIndex,
+            HierarchyInsertMode::After);
+    }
+
     void HandleEditMenuShortcuts(
         Scene& scene,
         ProjectSession& project,
         UndoStack& undoStack,
+        EditorClipboard& clipboard,
         bool allowUndoRedo)
     {
-        if (!AllowFileMenuShortcuts() || !allowUndoRedo)
+        if (!AllowFileMenuShortcuts())
         {
             return;
         }
 
         const ImGuiIO& io = ImGui::GetIO();
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C, false) && scene.HasSelection())
+        {
+            CopySelection(clipboard, scene);
+            return;
+        }
+
+        if (!allowUndoRedo)
+        {
+            return;
+        }
+
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_X, false) && scene.HasSelection())
+        {
+            CutSelection(undoStack, clipboard, scene);
+            return;
+        }
+
+        if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V, false) && clipboard.HasContent())
+        {
+            PasteClipboardDefault(undoStack, scene, clipboard);
+            return;
+        }
+
         if (!io.KeyCtrl)
         {
             return;
@@ -255,6 +297,7 @@ void MainMenuBar::Draw(
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
     UndoStack& undoStack,
+    EditorClipboard& clipboard,
     bool allowUndoRedo)
 {
     HandleFileMenuShortcuts(
@@ -264,8 +307,9 @@ void MainMenuBar::Draw(
         editorState,
         captureEditorState,
         applyEditorState,
-        undoStack);
-    HandleEditMenuShortcuts(scene, project, undoStack, allowUndoRedo);
+        undoStack,
+        clipboard);
+    HandleEditMenuShortcuts(scene, project, undoStack, clipboard, allowUndoRedo);
 
     if (!ImGui::BeginMainMenuBar())
     {
@@ -284,7 +328,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack);
+            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack, clipboard);
         }
 
         ImGui::Separator();
@@ -359,6 +403,27 @@ void MainMenuBar::Draw(
         if (ImGui::MenuItem(redoLabel, "Ctrl+Y, Ctrl+Shift+Z", false, canRedo))
         {
             undoStack.Redo(context);
+        }
+
+        ImGui::Separator();
+
+        const bool canCopy = scene.HasSelection();
+        const bool canCut = allowUndoRedo && canCopy;
+        const bool canPaste = allowUndoRedo && clipboard.HasContent();
+
+        if (ImGui::MenuItem("Cut", "Ctrl+X", false, canCut))
+        {
+            CutSelection(undoStack, clipboard, scene);
+        }
+
+        if (ImGui::MenuItem("Copy", "Ctrl+C", false, canCopy))
+        {
+            CopySelection(clipboard, scene);
+        }
+
+        if (ImGui::MenuItem("Paste", "Ctrl+V", false, canPaste))
+        {
+            PasteClipboardDefault(undoStack, scene, clipboard);
         }
 
         ImGui::Separator();

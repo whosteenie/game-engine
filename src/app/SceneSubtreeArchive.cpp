@@ -6,6 +6,7 @@
 #include "engine/SceneObject.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <unordered_set>
 
 ArchivedSelectionState CaptureArchivedSelection(const Scene& scene)
@@ -222,7 +223,10 @@ namespace
     }
 }
 
-bool Scene::CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtreeArchive& archive)
+bool Scene::CreateDeleteArchive(
+    const std::vector<int>& rootIndices,
+    SceneSubtreeArchive& archive,
+    bool transferImportedMeshOwnership)
 {
     if (rootIndices.empty())
     {
@@ -287,7 +291,7 @@ bool Scene::CreateDeleteArchive(const std::vector<int>& rootIndices, SceneSubtre
     for (int objectIndex : removalIndices)
     {
         ArchivedSceneObject archived = ArchiveObject(*this, objectIndex);
-        if (archived.isImportedMesh && archived.mesh != nullptr
+        if (transferImportedMeshOwnership && archived.isImportedMesh && archived.mesh != nullptr
             && externalMeshRefs.find(archived.mesh) == externalMeshRefs.end()
             && harvestedMeshes.find(archived.mesh) == harvestedMeshes.end())
         {
@@ -409,4 +413,191 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
     ApplyArchivedSelection(*this, selection);
     MarkDirty();
     return true;
+}
+
+SceneSubtreeArchive CloneSubtreeArchive(const SceneSubtreeArchive& source)
+{
+    SceneSubtreeArchive clone;
+    clone.removedObjects.reserve(source.removedObjects.size());
+    for (const ArchivedSceneObject& archivedObject : source.removedObjects)
+    {
+        ArchivedSceneObject copy;
+        copy.flatIndex = archivedObject.flatIndex;
+        copy.id = archivedObject.id;
+        copy.name = archivedObject.name;
+        copy.mesh = archivedObject.mesh;
+        copy.importedMeshKey = archivedObject.importedMeshKey;
+        copy.isImportedMesh = archivedObject.isImportedMesh;
+        copy.ownsImportedMesh = false;
+        copy.localBoundsMin = archivedObject.localBoundsMin;
+        copy.localBoundsMax = archivedObject.localBoundsMax;
+        copy.transform = archivedObject.transform;
+        copy.castShadow = archivedObject.castShadow;
+        copy.receiveShadow = archivedObject.receiveShadow;
+        copy.siblingOrder = archivedObject.siblingOrder;
+        if (archivedObject.material)
+        {
+            copy.material = archivedObject.material->Clone();
+        }
+
+        if (archivedObject.light.has_value())
+        {
+            copy.light = archivedObject.light;
+        }
+
+        clone.removedObjects.push_back(std::move(copy));
+    }
+
+    clone.parentIdByObjectId = source.parentIdByObjectId;
+    clone.removedRootIds = source.removedRootIds;
+    return clone;
+}
+
+void RemapSubtreeArchiveIds(Scene& scene, SceneSubtreeArchive& archive)
+{
+    std::unordered_map<SceneObjectId, SceneObjectId> idMap;
+    idMap.reserve(archive.removedObjects.size());
+
+    for (ArchivedSceneObject& archivedObject : archive.removedObjects)
+    {
+        const SceneObjectId oldId = archivedObject.id;
+        const SceneObjectId newId = scene.AllocateObjectId();
+        archivedObject.id = newId;
+        idMap.emplace(oldId, newId);
+    }
+
+    for (SceneObjectId& rootId : archive.removedRootIds)
+    {
+        const auto iterator = idMap.find(rootId);
+        if (iterator != idMap.end())
+        {
+            rootId = iterator->second;
+        }
+    }
+
+    std::unordered_map<SceneObjectId, SceneObjectId> remappedParents;
+    remappedParents.reserve(archive.parentIdByObjectId.size());
+    for (const auto& [objectId, parentId] : archive.parentIdByObjectId)
+    {
+        const auto objectIterator = idMap.find(objectId);
+        if (objectIterator == idMap.end())
+        {
+            continue;
+        }
+
+        SceneObjectId remappedParentId = kInvalidSceneObjectId;
+        if (parentId != kInvalidSceneObjectId)
+        {
+            const auto parentIterator = idMap.find(parentId);
+            if (parentIterator != idMap.end())
+            {
+                remappedParentId = parentIterator->second;
+            }
+        }
+
+        remappedParents.emplace(objectIterator->second, remappedParentId);
+    }
+
+    archive.parentIdByObjectId = std::move(remappedParents);
+}
+
+std::vector<int> Scene::InsertSubtreeArchive(
+    SceneSubtreeArchive& archive,
+    int referenceIndex,
+    HierarchyInsertMode rootPlacement)
+{
+    if (archive.removedObjects.empty() || archive.removedRootIds.empty())
+    {
+        return {};
+    }
+
+    std::unordered_set<SceneObjectId> archivedIds;
+    archivedIds.reserve(archive.removedObjects.size());
+    for (const ArchivedSceneObject& archivedObject : archive.removedObjects)
+    {
+        archivedIds.insert(archivedObject.id);
+    }
+
+    std::unordered_map<SceneObjectId, int> newIndexById;
+    newIndexById.reserve(archive.removedObjects.size());
+    std::unordered_map<ImportMeshKey, Mesh*, ImportMeshKeyHash> restoredImportedMeshes;
+
+    for (ArchivedSceneObject& archivedObject : archive.removedObjects)
+    {
+        m_objects.push_back(BuildRestoredObject(*this, archivedObject, archive, restoredImportedMeshes));
+        SceneObject& object = m_objects.back();
+        FinalizeNewObject(object);
+        newIndexById.emplace(object.GetId(), static_cast<int>(m_objects.size()) - 1);
+    }
+
+    for (const ArchivedSceneObject& archivedObject : archive.removedObjects)
+    {
+        const auto objectIterator = newIndexById.find(archivedObject.id);
+        if (objectIterator == newIndexById.end())
+        {
+            continue;
+        }
+
+        SceneObject& object = m_objects[static_cast<std::size_t>(objectIterator->second)];
+        const auto parentIterator = archive.parentIdByObjectId.find(archivedObject.id);
+        if (parentIterator == archive.parentIdByObjectId.end())
+        {
+            continue;
+        }
+
+        const SceneObjectId parentId = parentIterator->second;
+        if (archivedIds.find(parentId) != archivedIds.end())
+        {
+            const auto parentIndexIterator = newIndexById.find(parentId);
+            if (parentIndexIterator != newIndexById.end())
+            {
+                object.SetParentIndex(parentIndexIterator->second);
+            }
+        }
+        else
+        {
+            object.SetParentIndex(-1);
+        }
+    }
+
+    std::vector<int> insertedRootIndices;
+    insertedRootIndices.reserve(archive.removedRootIds.size());
+
+    int chainReference = referenceIndex;
+    bool placedFirstRoot = false;
+    for (SceneObjectId rootId : archive.removedRootIds)
+    {
+        const auto rootIterator = newIndexById.find(rootId);
+        if (rootIterator == newIndexById.end())
+        {
+            continue;
+        }
+
+        const int rootIndex = rootIterator->second;
+        insertedRootIndices.push_back(rootIndex);
+
+        if (referenceIndex < 0)
+        {
+            PlaceObjectAtRootEnd(rootIndex);
+            continue;
+        }
+
+        if (!placedFirstRoot)
+        {
+            PlaceObjectInHierarchy(rootIndex, referenceIndex, rootPlacement);
+            chainReference = rootIndex;
+            placedFirstRoot = true;
+            continue;
+        }
+
+        PlaceObjectInHierarchy(rootIndex, chainReference, HierarchyInsertMode::After);
+        chainReference = rootIndex;
+    }
+
+    if (!insertedRootIndices.empty())
+    {
+        MarkDirty();
+    }
+
+    return insertedRootIndices;
 }

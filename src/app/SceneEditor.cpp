@@ -244,6 +244,12 @@ void SceneEditor::Update(
 {
     const ImGuiIO& io = ImGui::GetIO();
 
+    const bool editShortcutsAllowed =
+        allowKeyboardInput && !io.WantTextInput && !ImGui::IsAnyItemActive();
+    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
+        || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
+        || io.KeyCtrl;
+
     if (allowKeyboardInput && input.WasKeyPressed(GLFW_KEY_DELETE) && scene.HasSelection())
     {
         if (undoStack != nullptr)
@@ -256,14 +262,10 @@ void SceneEditor::Update(
         }
     }
 
-    const bool ctrlHeld = input.IsKeyDown(GLFW_KEY_LEFT_CONTROL)
-        || input.IsKeyDown(GLFW_KEY_RIGHT_CONTROL)
-        || io.KeyCtrl;
-    if (ctrlHeld
+    if (editShortcutsAllowed
+        && ctrlHeld
         && input.WasKeyPressed(GLFW_KEY_D)
-        && scene.HasSelection()
-        && !io.WantTextInput
-        && !ImGui::IsAnyItemActive())
+        && scene.HasSelection())
     {
         if (undoStack != nullptr)
         {
