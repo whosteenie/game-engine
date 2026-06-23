@@ -6,6 +6,7 @@
 #include "app/InspectorMultiEdit.h"
 #include "app/InspectorTransform.h"
 #include "app/Scene.h"
+#include "app/UndoCommand.h"
 #include "engine/FileDialog.h"
 #include "engine/Light.h"
 #include "engine/LightComponent.h"
@@ -37,7 +38,11 @@ namespace
         ImVec4(0.42f, 0.58f, 0.92f, 1.0f),
     };
 
-    bool DrawTransformRowLabel(const char* label, glm::vec3& value, const glm::vec3& resetValue)
+    bool DrawTransformRowLabel(
+        const char* label,
+        glm::vec3& value,
+        const glm::vec3& resetValue,
+        TransformEditContext* editContext)
     {
         ImGui::AlignTextToFramePadding();
         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -52,7 +57,25 @@ namespace
             std::snprintf(menuLabel, sizeof(menuLabel), "Reset %s", label);
             if (ImGui::MenuItem(menuLabel))
             {
-                value = resetValue;
+                if (editContext != nullptr
+                    && editContext->undoStack != nullptr
+                    && editContext->scene != nullptr)
+                {
+                    PushTransformMutation(
+                        *editContext->undoStack,
+                        *editContext->scene,
+                        editContext->objectIndices,
+                        editContext->commandName,
+                        [&](Scene& scene) {
+                            (void)scene;
+                            value = resetValue;
+                        });
+                }
+                else
+                {
+                    value = resetValue;
+                }
+
                 changed = true;
             }
 
@@ -69,7 +92,8 @@ namespace
         glm::vec3& value,
         const glm::vec3& resetValue,
         float dragSpeed,
-        const char* format)
+        const char* format,
+        TransformEditContext* editContext)
     {
         ImGui::PushID(axis);
         ImGui::AlignTextToFramePadding();
@@ -81,6 +105,10 @@ namespace
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
         const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        if (editContext != nullptr)
+        {
+            HandleTransformFieldEditEvents(*editContext);
+        }
 
         bool changed = dragged;
         if (ImGui::BeginPopupContextItem())
@@ -89,7 +117,25 @@ namespace
             std::snprintf(menuLabel, sizeof(menuLabel), "Reset %s %s", kAxisLabels[axis], label);
             if (ImGui::MenuItem(menuLabel))
             {
-                value[axis] = resetValue[axis];
+                if (editContext != nullptr
+                    && editContext->undoStack != nullptr
+                    && editContext->scene != nullptr)
+                {
+                    PushTransformMutation(
+                        *editContext->undoStack,
+                        *editContext->scene,
+                        editContext->objectIndices,
+                        editContext->commandName,
+                        [&](Scene& scene) {
+                            (void)scene;
+                            value[axis] = resetValue[axis];
+                        });
+                }
+                else
+                {
+                    value[axis] = resetValue[axis];
+                }
+
                 changed = true;
             }
 
@@ -105,22 +151,56 @@ namespace
         glm::vec3& value,
         const glm::vec3& resetValue,
         float dragSpeed,
+        TransformEditContext* editContext,
         const char* format = "%.2f")
     {
         ImGui::PushID(label);
         ImGui::TableNextRow();
 
         ImGui::TableSetColumnIndex(0);
-        bool changed = DrawTransformRowLabel(label, value, resetValue);
+        bool changed = DrawTransformRowLabel(label, value, resetValue, editContext);
 
         for (int axis = 0; axis < 3; ++axis)
         {
             ImGui::TableSetColumnIndex(axis + 1);
-            changed |= DrawTransformAxisField(axis, label, value, resetValue, dragSpeed, format);
+            changed |= DrawTransformAxisField(
+                axis,
+                label,
+                value,
+                resetValue,
+                dragSpeed,
+                format,
+                editContext);
         }
 
         ImGui::PopID();
         return changed;
+    }
+
+    void ApplyMultiTransformChange(
+        Scene& scene,
+        const std::vector<int>& selectedIndices,
+        TransformEditContext& editContext,
+        const std::function<void(Scene&)>& apply)
+    {
+        if (editContext.sessionOpen)
+        {
+            apply(scene);
+            return;
+        }
+
+        if (editContext.undoStack != nullptr)
+        {
+            PushTransformMutation(
+                *editContext.undoStack,
+                scene,
+                selectedIndices,
+                editContext.commandName,
+                apply);
+            return;
+        }
+
+        apply(scene);
     }
 
     void DrawMaterialTextureSlot(
@@ -376,7 +456,7 @@ namespace
         }
     }
 
-    void DrawTransformSection(SceneObject& object, Scene& scene)
+    void DrawTransformSection(SceneObject& object, Scene& scene, TransformEditContext& editContext)
     {
         Transform& transform = object.GetTransform();
 
@@ -391,19 +471,34 @@ namespace
             ImGui::TableSetupColumn("##y", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
-            if (DrawTransformRow("Position", transform.position, glm::vec3(0.0f), 0.1f))
+            if (DrawTransformRow(
+                    "Position",
+                    transform.position,
+                    glm::vec3(0.0f),
+                    0.1f,
+                    &editContext))
             {
                 scene.MarkDirty();
             }
 
             glm::vec3 rotationDegrees = transform.GetRotationDegrees();
-            if (DrawTransformRow("Rotation", rotationDegrees, glm::vec3(0.0f), 0.5f))
+            if (DrawTransformRow(
+                    "Rotation",
+                    rotationDegrees,
+                    glm::vec3(0.0f),
+                    0.5f,
+                    &editContext))
             {
                 transform.SetRotationDegrees(rotationDegrees);
                 scene.MarkDirty();
             }
 
-            if (DrawTransformRow("Scale", transform.scale, glm::vec3(1.0f), 0.01f))
+            if (DrawTransformRow(
+                    "Scale",
+                    transform.scale,
+                    glm::vec3(1.0f),
+                    0.01f,
+                    &editContext))
             {
                 scene.MarkDirty();
             }
@@ -496,7 +591,10 @@ namespace
         }
     }
 
-    void DrawMultiTransformSection(Scene& scene, const std::vector<int>& selectedIndices)
+    void DrawMultiTransformSection(
+        Scene& scene,
+        const std::vector<int>& selectedIndices,
+        TransformEditContext& editContext)
     {
         std::vector<glm::vec3> worldPositions;
         std::vector<glm::vec3> worldRotations;
@@ -529,19 +627,37 @@ namespace
             ImGui::TableSetupColumn("##y", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableSetupColumn("##z", ImGuiTableColumnFlags_WidthStretch, 1.0f);
 
-            if (DrawMultiVec3Row("Position", positionField, glm::vec3(0.0f), 0.1f))
+            if (DrawMultiVec3Row("Position", positionField, glm::vec3(0.0f), 0.1f, "%.2f", &editContext))
             {
-                ApplyWorldPositionFieldToObjects(scene, selectedIndices, positionField);
+                ApplyMultiTransformChange(
+                    scene,
+                    selectedIndices,
+                    editContext,
+                    [&](Scene& target) {
+                        ApplyWorldPositionFieldToObjects(target, selectedIndices, positionField);
+                    });
             }
 
-            if (DrawMultiVec3Row("Rotation", rotationField, glm::vec3(0.0f), 0.5f))
+            if (DrawMultiVec3Row("Rotation", rotationField, glm::vec3(0.0f), 0.5f, "%.2f", &editContext))
             {
-                ApplyWorldRotationFieldToObjects(scene, selectedIndices, rotationField);
+                ApplyMultiTransformChange(
+                    scene,
+                    selectedIndices,
+                    editContext,
+                    [&](Scene& target) {
+                        ApplyWorldRotationFieldToObjects(target, selectedIndices, rotationField);
+                    });
             }
 
-            if (DrawMultiVec3Row("Scale", scaleField, glm::vec3(1.0f), 0.01f))
+            if (DrawMultiVec3Row("Scale", scaleField, glm::vec3(1.0f), 0.01f, "%.2f", &editContext))
             {
-                ApplyWorldScaleFieldToObjects(scene, selectedIndices, scaleField);
+                ApplyMultiTransformChange(
+                    scene,
+                    selectedIndices,
+                    editContext,
+                    [&](Scene& target) {
+                        ApplyWorldScaleFieldToObjects(target, selectedIndices, scaleField);
+                    });
             }
 
             ImGui::EndTable();
@@ -620,7 +736,7 @@ namespace
         }
     }
 
-    void DrawSingleObjectInspector(Scene& scene, int selectedIndex)
+    void DrawSingleObjectInspector(Scene& scene, int selectedIndex, TransformEditContext& editContext)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
         SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
@@ -640,8 +756,22 @@ namespace
         {
             if (ImGui::MenuItem("Reset Transform"))
             {
-                selectedObject.GetTransform().Reset();
-                scene.MarkDirty();
+                if (editContext.undoStack != nullptr)
+                {
+                    PushTransformMutation(
+                        *editContext.undoStack,
+                        scene,
+                        {selectedIndex},
+                        "Reset Transform",
+                        [&](Scene& target) {
+                            target.GetObject(static_cast<std::size_t>(selectedIndex)).GetTransform().Reset();
+                        });
+                }
+                else
+                {
+                    selectedObject.GetTransform().Reset();
+                    scene.MarkDirty();
+                }
             }
 
             ImGui::EndPopup();
@@ -649,7 +779,7 @@ namespace
 
         if (transformOpen)
         {
-            DrawTransformSection(selectedObject, scene);
+            DrawTransformSection(selectedObject, scene, editContext);
         }
 
         if (selectedObject.HasLight() && ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen))
@@ -691,7 +821,10 @@ namespace
         }
     }
 
-    void DrawMultiObjectInspector(Scene& scene, const std::vector<int>& selectedIndices)
+    void DrawMultiObjectInspector(
+        Scene& scene,
+        const std::vector<int>& selectedIndices,
+        TransformEditContext& editContext)
     {
         const std::size_t selectionCount = selectedIndices.size();
         ImGui::Text("%zu objects selected", selectionCount);
@@ -709,7 +842,21 @@ namespace
             {
                 if (ImGui::MenuItem("Reset Transform"))
                 {
-                    ResetTransformsOnObjects(scene, selectedIndices);
+                    if (editContext.undoStack != nullptr)
+                    {
+                        PushTransformMutation(
+                            *editContext.undoStack,
+                            scene,
+                            selectedIndices,
+                            "Reset Transform",
+                            [&](Scene& target) {
+                                ResetTransformsOnObjects(target, selectedIndices);
+                            });
+                    }
+                    else
+                    {
+                        ResetTransformsOnObjects(scene, selectedIndices);
+                    }
                 }
 
                 ImGui::EndPopup();
@@ -717,7 +864,7 @@ namespace
 
             if (transformOpen)
             {
-                DrawMultiTransformSection(scene, selectedIndices);
+                DrawMultiTransformSection(scene, selectedIndices, editContext);
             }
         }
 
@@ -729,7 +876,7 @@ namespace
     }
 }
 
-void SceneInspectorPanel::Draw(Scene& scene) const
+void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
 {
     EditorPanelLayout::ApplyFirstUseLayout(EditorPanelLayout::Panel::Inspector);
 
@@ -765,14 +912,29 @@ void SceneInspectorPanel::Draw(Scene& scene) const
         }
     }
 
+    if (selectedIndices != m_transformEditSelection)
+    {
+        m_transformEditContext.sessionOpen = false;
+        m_transformEditContext.pendingBefore.clear();
+        m_transformEditSelection = selectedIndices;
+    }
+
+    TransformEditContext editContext = m_transformEditContext;
+    editContext.undoStack = undoStack;
+    editContext.scene = &scene;
+    editContext.objectIndices = selectedIndices;
+    editContext.commandName = "Transform";
+
     if (selectedIndices.size() == 1)
     {
-        DrawSingleObjectInspector(scene, selectedIndices.front());
+        DrawSingleObjectInspector(scene, selectedIndices.front(), editContext);
     }
     else
     {
-        DrawMultiObjectInspector(scene, selectedIndices);
+        DrawMultiObjectInspector(scene, selectedIndices, editContext);
     }
+
+    m_transformEditContext = editContext;
 
     ImGui::End();
 }

@@ -180,7 +180,7 @@ void Application::Update(double deltaTime)
 
         m_sceneToolbarPanel->Draw(*m_scene);
         m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
-        m_sceneInspectorPanel->Draw(*m_scene);
+        m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
         m_lightingPanel->Draw(*m_scene, *m_camera);
     }

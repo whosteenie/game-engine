@@ -5,10 +5,13 @@
 #include "app/SceneDocument.h"
 
 #include "engine/SceneObjectId.h"
+#include "engine/Transform.h"
 
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 class IUndoCommand
 {
@@ -79,3 +82,55 @@ void PushSceneEdit(
     const std::string& projectRoot,
     const std::string& commandName,
     const std::function<void(Scene&)>& mutate);
+
+using ObjectTransformMap = std::unordered_map<SceneObjectId, Transform>;
+
+ObjectTransformMap CaptureLocalTransforms(const Scene& scene, const std::vector<int>& objectIndices);
+bool AreLocalTransformsEqual(const ObjectTransformMap& left, const ObjectTransformMap& right);
+
+class TransformObjectsCommand final : public IUndoCommand
+{
+public:
+    TransformObjectsCommand(
+        ObjectTransformMap before,
+        ObjectTransformMap after,
+        std::string name);
+
+    void Undo(UndoContext& context) override;
+    void Redo(UndoContext& context) override;
+    const char* GetName() const override;
+    bool TryMerge(const IUndoCommand& next) override;
+
+private:
+    void ApplyTransforms(UndoContext& context, const ObjectTransformMap& transforms) const;
+
+    ObjectTransformMap m_before;
+    ObjectTransformMap m_after;
+    std::string m_name;
+};
+
+void PushTransformObjects(
+    UndoStack& undoStack,
+    ObjectTransformMap before,
+    ObjectTransformMap after,
+    const std::string& commandName);
+
+void PushTransformMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate);
+
+struct TransformEditContext
+{
+    UndoStack* undoStack = nullptr;
+    Scene* scene = nullptr;
+    std::vector<int> objectIndices;
+    std::string commandName = "Transform";
+
+    ObjectTransformMap pendingBefore;
+    bool sessionOpen = false;
+};
+
+void HandleTransformFieldEditEvents(TransformEditContext& context);

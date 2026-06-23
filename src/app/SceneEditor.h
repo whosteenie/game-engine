@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/UndoCommand.h"
+
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
@@ -68,4 +70,6 @@ private:
     bool m_marqueeActive = false;
     glm::vec2 m_dragStartFramebuffer = glm::vec2(0.0f);
     glm::vec2 m_dragCurrentFramebuffer = glm::vec2(0.0f);
+    bool m_gizmoWasUsing = false;
+    ObjectTransformMap m_gizmoTransformBefore;
 };

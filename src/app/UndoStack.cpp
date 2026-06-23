@@ -9,7 +9,7 @@ void UndoStack::Push(std::unique_ptr<IUndoCommand> command)
 
     m_redo.clear();
 
-    if (!m_undo.empty() && command->TryMerge(*m_undo.back()))
+    if (!m_undo.empty() && m_undo.back()->TryMerge(*command))
     {
         return;
     }
