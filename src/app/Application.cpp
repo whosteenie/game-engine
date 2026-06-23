@@ -182,7 +182,7 @@ void Application::Update(double deltaTime)
         m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack);
         m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
-        m_lightingPanel->Draw(*m_scene, *m_camera);
+        m_lightingPanel->Draw(*m_scene, *m_camera, &m_undoStack);
     }
 
     DrawUnsavedChangesDialog();

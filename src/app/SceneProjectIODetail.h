@@ -37,4 +37,7 @@ namespace SceneProjectIODetail
         std::string& outError,
         ImportedMeshReusePool* meshReusePool = nullptr,
         bool showProgress = true);
+
+    nlohmann::json SerializeRenderer(const Scene& scene);
+    void DeserializeRenderer(Scene& scene, const nlohmann::json& rendererValue);
 }

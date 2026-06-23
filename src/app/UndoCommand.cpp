@@ -2,6 +2,7 @@
 
 #include "app/Scene.h"
 #include "app/SceneDocument.h"
+#include "app/SceneProjectIODetail.h"
 #include "app/UndoStack.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
@@ -729,4 +730,116 @@ void HandleLightFieldEditEvents(LightEditContext& context)
         },
         AreObjectLightMapsEqual,
         ApplyObjectLight);
+}
+
+nlohmann::json CaptureRendererSettings(const Scene& scene)
+{
+    return SceneProjectIODetail::SerializeRenderer(scene);
+}
+
+bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& right)
+{
+    return left == right;
+}
+
+void ApplyRendererSettings(Scene& scene, const nlohmann::json& settings)
+{
+    SceneProjectIODetail::DeserializeRenderer(scene, settings);
+    scene.MarkDirty();
+}
+
+RendererSettingsCommand::RendererSettingsCommand(
+    nlohmann::json before,
+    nlohmann::json after,
+    std::string name)
+    : m_before(std::move(before)),
+      m_after(std::move(after)),
+      m_name(std::move(name))
+{
+}
+
+void RendererSettingsCommand::Undo(UndoContext& context)
+{
+    ApplyRendererSettings(context.scene, m_before);
+}
+
+void RendererSettingsCommand::Redo(UndoContext& context)
+{
+    ApplyRendererSettings(context.scene, m_after);
+}
+
+const char* RendererSettingsCommand::GetName() const
+{
+    return m_name.c_str();
+}
+
+bool RendererSettingsCommand::TryMerge(const IUndoCommand& next)
+{
+    const auto* other = dynamic_cast<const RendererSettingsCommand*>(&next);
+    if (other == nullptr)
+    {
+        return false;
+    }
+
+    m_after = other->m_after;
+    return true;
+}
+
+void PushRendererSettings(
+    UndoStack& undoStack,
+    nlohmann::json before,
+    nlohmann::json after,
+    const std::string& commandName)
+{
+    if (AreRendererSettingsEqual(before, after))
+    {
+        return;
+    }
+
+    undoStack.Push(std::make_unique<RendererSettingsCommand>(
+        std::move(before),
+        std::move(after),
+        commandName));
+}
+
+void PushRendererMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate)
+{
+    if (!mutate)
+    {
+        return;
+    }
+
+    nlohmann::json before = CaptureRendererSettings(scene);
+    mutate(scene);
+    nlohmann::json after = CaptureRendererSettings(scene);
+    PushRendererSettings(undoStack, std::move(before), std::move(after), commandName);
+}
+
+void HandleRendererFieldEditEvents(RendererEditContext& context)
+{
+    if (context.undoStack == nullptr || context.scene == nullptr)
+    {
+        return;
+    }
+
+    if (ImGui::IsItemActivated() && !context.sessionOpen)
+    {
+        context.pendingBefore = CaptureRendererSettings(*context.scene);
+        context.sessionOpen = true;
+    }
+
+    if (ImGui::IsItemDeactivatedAfterEdit() && context.sessionOpen)
+    {
+        nlohmann::json after = CaptureRendererSettings(*context.scene);
+        PushRendererSettings(
+            *context.undoStack,
+            std::move(context.pendingBefore),
+            std::move(after),
+            context.commandName);
+        context.sessionOpen = false;
+    }
 }

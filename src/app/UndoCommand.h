@@ -10,6 +10,7 @@
 #include "engine/Transform.h"
 
 #include <imgui.h>
+#include <nlohmann/json.hpp>
 
 #include <functional>
 #include <memory>
@@ -400,3 +401,47 @@ void PushShadowFlagsMutation(
 
 void HandleMaterialFieldEditEvents(MaterialEditContext& context);
 void HandleLightFieldEditEvents(LightEditContext& context);
+
+nlohmann::json CaptureRendererSettings(const Scene& scene);
+bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& right);
+void ApplyRendererSettings(Scene& scene, const nlohmann::json& settings);
+
+class RendererSettingsCommand final : public IUndoCommand
+{
+public:
+    RendererSettingsCommand(nlohmann::json before, nlohmann::json after, std::string name);
+
+    void Undo(UndoContext& context) override;
+    void Redo(UndoContext& context) override;
+    const char* GetName() const override;
+    bool TryMerge(const IUndoCommand& next) override;
+
+private:
+    nlohmann::json m_before;
+    nlohmann::json m_after;
+    std::string m_name;
+};
+
+void PushRendererSettings(
+    UndoStack& undoStack,
+    nlohmann::json before,
+    nlohmann::json after,
+    const std::string& commandName);
+
+void PushRendererMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate);
+
+struct RendererEditContext
+{
+    UndoStack* undoStack = nullptr;
+    Scene* scene = nullptr;
+    std::string commandName = "Renderer";
+
+    nlohmann::json pendingBefore;
+    bool sessionOpen = false;
+};
+
+void HandleRendererFieldEditEvents(RendererEditContext& context);
