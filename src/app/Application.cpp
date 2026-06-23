@@ -40,6 +40,9 @@
 
 #include <stdexcept>
 
+#include <cfloat>
+#include <cstring>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_inverse.hpp>
 #include <unordered_map>
@@ -83,6 +86,29 @@ namespace
         }
 
         return true;
+    }
+
+    bool IsPointInEditorViewportRect(const EditorViewportRect& rect, const double x, const double y)
+    {
+        if (!rect.valid || rect.screenWidth <= 0.0f || rect.screenHeight <= 0.0f)
+        {
+            return false;
+        }
+
+        return x >= static_cast<double>(rect.screenX)
+            && x < static_cast<double>(rect.screenX + rect.screenWidth)
+            && y >= static_cast<double>(rect.screenY)
+            && y < static_cast<double>(rect.screenY + rect.screenHeight);
+    }
+
+    void SuppressImGuiMouseInput()
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        io.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+        io.MouseWheel = 0.0f;
+        io.MouseWheelH = 0.0f;
+        std::memset(io.MouseDown, 0, sizeof(io.MouseDown));
+        io.WantCaptureMouse = false;
     }
 }
 
@@ -205,6 +231,29 @@ void Application::Update(double deltaTime)
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
+
+    const bool blockSceneInputEarly = m_pendingClose || m_pendingNewProject;
+    if (editorActive)
+    {
+        const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        m_input->GetCursorPosition(cursorX, cursorY);
+        const bool mouseOverSceneView = IsPointInEditorViewportRect(sceneViewRect, cursorX, cursorY);
+        const bool gameViewBlocksSceneInput =
+            m_playModeController.IsActive() && m_gameViewportPanel->GetInteractionRect().hovered;
+        const bool allowFlyCameraCapture =
+            m_sceneViewportPanel->HasValidRenderTarget()
+            && mouseOverSceneView
+            && !gameViewBlocksSceneInput
+            && !blockSceneInputEarly;
+
+        m_input->UpdateMouseCapture(allowFlyCameraCapture);
+        if (m_input->IsCapturingMouse())
+        {
+            SuppressImGuiMouseInput();
+        }
+    }
 
         m_projectChooser->Draw(
         *m_projectSession,
@@ -334,10 +383,12 @@ void Application::Update(double deltaTime)
         && !gameViewBlocksSceneInput;
     const bool blockSceneInput = io.WantTextInput || m_pendingClose || m_pendingNewProject;
 
-    m_input->UpdateMouseCapture(sceneViewHovered && !blockSceneInput);
-
     const bool flyCameraActive = m_input->IsCapturingMouse();
-    if (io.WantCaptureMouse && !flyCameraActive && !sceneViewHovered)
+    if (flyCameraActive && blockSceneInput)
+    {
+        m_input->ReleaseMouseCapture();
+    }
+    else if (io.WantCaptureMouse && !flyCameraActive && !sceneViewHovered)
     {
         m_input->ReleaseMouseCapture();
     }
@@ -757,8 +808,11 @@ void Application::Render()
 
 void Application::MouseCallback(GLFWwindow* window, double xPos, double yPos)
 {
-    ImGui_ImplGlfw_CursorPosCallback(window, xPos, yPos);
-
     auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
+    if (!app->m_input->IsCapturingMouse())
+    {
+        ImGui_ImplGlfw_CursorPosCallback(window, xPos, yPos);
+    }
+
     app->m_input->OnMouseMove(xPos, yPos);
 }
