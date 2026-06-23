@@ -110,6 +110,90 @@ namespace
         std::memset(io.MouseDown, 0, sizeof(io.MouseDown));
         io.WantCaptureMouse = false;
     }
+
+    void WrapImGuiMouseCursorAtWindowEdges(GLFWwindow* window)
+    {
+        ImGuiIO& io = ImGui::GetIO();
+        if (!ImGui::IsAnyItemActive())
+        {
+            return;
+        }
+
+        if (ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate())
+        {
+            return;
+        }
+
+        const bool anyMouseDown =
+            ImGui::IsMouseDown(ImGuiMouseButton_Left)
+            || ImGui::IsMouseDown(ImGuiMouseButton_Right)
+            || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
+        if (!anyMouseDown)
+        {
+            return;
+        }
+
+        const ImVec2 displaySize = io.DisplaySize;
+        if (displaySize.x <= 1.0f || displaySize.y <= 1.0f)
+        {
+            return;
+        }
+
+        double cursorX = 0.0;
+        double cursorY = 0.0;
+        glfwGetCursorPos(window, &cursorX, &cursorY);
+
+        constexpr double margin = 1.0;
+        double newCursorX = cursorX;
+        double newCursorY = cursorY;
+        bool wrapped = false;
+
+        if (cursorX <= margin)
+        {
+            newCursorX = static_cast<double>(displaySize.x) - margin - 1.0;
+            wrapped = true;
+        }
+        else if (cursorX >= static_cast<double>(displaySize.x) - margin - 1.0)
+        {
+            newCursorX = margin + 1.0;
+            wrapped = true;
+        }
+
+        if (cursorY <= margin)
+        {
+            newCursorY = static_cast<double>(displaySize.y) - margin - 1.0;
+            wrapped = true;
+        }
+        else if (cursorY >= static_cast<double>(displaySize.y) - margin - 1.0)
+        {
+            newCursorY = margin + 1.0;
+            wrapped = true;
+        }
+
+        if (!wrapped)
+        {
+            return;
+        }
+
+        const ImVec2 wrapOffset(
+            static_cast<float>(newCursorX - cursorX),
+            static_cast<float>(newCursorY - cursorY));
+
+        glfwSetCursorPos(window, newCursorX, newCursorY);
+        io.MousePos.x += wrapOffset.x;
+        io.MousePos.y += wrapOffset.y;
+
+        for (int button = 0; button < IM_ARRAYSIZE(io.MouseClickedPos); ++button)
+        {
+            if (!ImGui::IsMouseDown(button))
+            {
+                continue;
+            }
+
+            io.MouseClickedPos[button].x += wrapOffset.x;
+            io.MouseClickedPos[button].y += wrapOffset.y;
+        }
+    }
 }
 
 Application::Application(int width, int height, const char* title)
@@ -255,6 +339,11 @@ void Application::Update(double deltaTime)
         }
     }
 
+    if (!m_input->IsCapturingMouse())
+    {
+        WrapImGuiMouseCursorAtWindowEdges(m_window);
+    }
+
         m_projectChooser->Draw(
         *m_projectSession,
         *m_scene,
@@ -364,6 +453,11 @@ void Application::Update(double deltaTime)
     }
 
     DrawUnsavedChangesDialog();
+
+    if (!m_input->IsCapturingMouse())
+    {
+        WrapImGuiMouseCursorAtWindowEdges(m_window);
+    }
 
     const ImGuiIO& io = ImGui::GetIO();
 
