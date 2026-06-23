@@ -1,6 +1,6 @@
 #include "primitives/PrimitiveMeshUtils.h"
 
-#include "engine/Mesh.h"
+#include "engine/rendering/Mesh.h"
 
 #include <memory>
 

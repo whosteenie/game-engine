@@ -7,7 +7,7 @@
 #include <cstdlib>
 #include <iostream>
 
-#include "engine/ShadowMapMath.h"
+#include "engine/lighting/ShadowMapMath.h"
 
 namespace
 {

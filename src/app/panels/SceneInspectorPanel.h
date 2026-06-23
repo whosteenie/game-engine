@@ -1,0 +1,36 @@
+#pragma once
+
+#include "app/undo/UndoCommand.h"
+
+#include "engine/scene/SceneObjectId.h"
+
+#include <string>
+#include <vector>
+
+class Scene;
+class UndoStack;
+
+class SceneInspectorPanel
+{
+public:
+    void Draw(Scene& scene, UndoStack* undoStack = nullptr) const;
+
+    bool& ShowPanel() const { return m_showPanel; }
+
+private:
+    mutable bool m_showPanel = true;
+    mutable TransformEditContext m_transformEditContext;
+    mutable std::vector<int> m_transformEditSelection;
+    mutable MaterialEditContext m_materialEditContext;
+    mutable std::vector<int> m_materialEditSelection;
+    mutable LightEditContext m_lightEditContext;
+    mutable std::vector<int> m_lightEditSelection;
+    mutable CameraEditContext m_cameraEditContext;
+    mutable std::vector<int> m_cameraEditSelection;
+    mutable RigidBodyEditContext m_rigidBodyEditContext;
+    mutable std::vector<int> m_rigidBodyEditSelection;
+    mutable ColliderEditContext m_colliderEditContext;
+    mutable std::vector<int> m_colliderEditSelection;
+    mutable SceneObjectId m_nameEditObjectId = kInvalidSceneObjectId;
+    mutable std::string m_nameEditOldName;
+};

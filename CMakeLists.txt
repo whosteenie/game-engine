@@ -196,156 +196,156 @@ add_executable(game-engine
 
     src/main.cpp
 
-    src/app/Application.cpp
+    src/app/core/Application.cpp
 
-    src/app/EditorSettings.cpp
+    src/app/editor/EditorSettings.cpp
 
 
-    src/app/EditorDockSpace.cpp
+    src/app/editor/EditorDockSpace.cpp
 
-    src/app/EditorDockLayout.cpp
+    src/app/editor/EditorDockLayout.cpp
 
-    src/app/MainMenuBar.cpp
-    src/app/EditorTopToolbar.cpp
+    src/app/editor/MainMenuBar.cpp
+    src/app/editor/EditorTopToolbar.cpp
 
-    src/app/EditorClipboard.cpp
+    src/app/editor/EditorClipboard.cpp
 
-    src/app/UndoCommand.cpp
+    src/app/undo/UndoCommand.cpp
 
-    src/app/UndoStack.cpp
+    src/app/undo/UndoStack.cpp
 
-    src/app/SceneDocument.cpp
+    src/app/project/SceneDocument.cpp
 
-    src/app/SceneSubtreeArchive.cpp
+    src/app/project/SceneSubtreeArchive.cpp
 
-    src/app/ProjectChooser.cpp
+    src/app/project/ProjectChooser.cpp
 
-    src/app/ProjectEditorState.cpp
+    src/app/project/ProjectEditorState.cpp
 
-    src/app/ProjectSession.cpp
+    src/app/project/ProjectSession.cpp
 
-    src/app/PlayModeController.cpp
+    src/app/core/PlayModeController.cpp
 
-    src/app/PhysicsWorld.cpp
+    src/app/core/PhysicsWorld.cpp
 
-    src/app/SceneComponentCatalog.cpp
+    src/app/scene/SceneComponentCatalog.cpp
 
-    src/app/SceneProjectIO.cpp
+    src/app/project/SceneProjectIO.cpp
 
-    src/app/ProjectFilesPanel.cpp
+    src/app/panels/ProjectFilesPanel.cpp
 
-    src/app/LightingPanel.cpp
-    src/app/RenderDiagnostics.cpp
+    src/app/panels/LightingPanel.cpp
+    src/app/scene/RenderDiagnostics.cpp
 
-    src/app/EditorWidgets.cpp
+    src/app/editor/EditorWidgets.cpp
 
-    src/app/SceneHierarchyPanel.cpp
+    src/app/panels/SceneHierarchyPanel.cpp
 
-    src/app/SceneInspectorPanel.cpp
+    src/app/panels/SceneInspectorPanel.cpp
 
-    src/app/InspectorEditMode.cpp
+    src/app/inspector/InspectorEditMode.cpp
 
-    src/app/InspectorMultiEdit.cpp
+    src/app/inspector/InspectorMultiEdit.cpp
 
-    src/app/InspectorTransform.cpp
+    src/app/inspector/InspectorTransform.cpp
 
-    src/app/SceneToolbarPanel.cpp
+    src/app/panels/SceneToolbarPanel.cpp
 
-    src/app/SceneViewportPanel.cpp
+    src/app/panels/SceneViewportPanel.cpp
 
-    src/app/GameViewportPanel.cpp
+    src/app/panels/GameViewportPanel.cpp
 
-    src/app/SceneEditor.cpp
+    src/app/scene/SceneEditor.cpp
 
-    src/app/SceneEditingController.cpp
+    src/app/scene/SceneEditingController.cpp
 
-    src/app/Scene.cpp
-    src/app/SceneHierarchyOps.cpp
-    src/app/SceneImportService.cpp
-    src/app/SceneMeshLibrary.cpp
-    src/app/SceneObjectOperations.cpp
-    src/app/SceneObjectStore.cpp
-    src/app/SceneRenderer.cpp
-    src/app/SceneSelectionController.cpp
-    src/app/SceneSpawnService.cpp
-    src/app/SceneCamera.cpp
+    src/app/scene/Scene.cpp
+    src/app/scene/SceneHierarchyOps.cpp
+    src/app/scene/SceneImportService.cpp
+    src/app/scene/SceneMeshLibrary.cpp
+    src/app/scene/SceneObjectOperations.cpp
+    src/app/scene/SceneObjectStore.cpp
+    src/app/scene/SceneRenderer.cpp
+    src/app/scene/SceneSelectionController.cpp
+    src/app/scene/SceneSpawnService.cpp
+    src/app/scene/SceneCamera.cpp
 
-    src/engine/Camera.cpp
+    src/engine/camera/Camera.cpp
 
-    src/engine/ImGuiLayer.cpp
+    src/engine/platform/ImGuiLayer.cpp
 
-    src/engine/ImGuiFonts.cpp
+    src/engine/platform/ImGuiFonts.cpp
 
-    src/engine/NativeProgressWindow.cpp
+    src/engine/platform/NativeProgressWindow.cpp
 
-    src/engine/Input.cpp
+    src/engine/platform/Input.cpp
 
-    src/engine/Light.cpp
+    src/engine/lighting/Light.cpp
 
-    src/engine/LightComponent.cpp
-    src/engine/CameraComponent.cpp
+    src/engine/components/LightComponent.cpp
+    src/engine/components/CameraComponent.cpp
 
-    src/engine/ColliderComponent.cpp
+    src/engine/components/ColliderComponent.cpp
 
-    src/engine/RigidBodyComponent.cpp
+    src/engine/components/RigidBodyComponent.cpp
 
-    src/engine/SceneLighting.cpp
+    src/engine/lighting/SceneLighting.cpp
 
-    src/engine/InspectorComponentOrder.cpp
-    src/engine/SceneObject.cpp
+    src/engine/scene/InspectorComponentOrder.cpp
+    src/engine/scene/SceneObject.cpp
 
-    src/engine/Transform.cpp
+    src/engine/scene/Transform.cpp
 
-    src/engine/ScenePicker.cpp
+    src/engine/scene/ScenePicker.cpp
 
-    src/engine/SceneHierarchy.cpp
+    src/engine/scene/SceneHierarchy.cpp
 
-    src/engine/ScenePrimitive.cpp
+    src/engine/scene/ScenePrimitive.cpp
 
-    src/engine/SelectionRenderer.cpp
+    src/engine/gizmos/SelectionRenderer.cpp
 
-    src/engine/GizmoGeometry.cpp
+    src/engine/gizmos/GizmoGeometry.cpp
 
-    src/engine/ShadowMap.cpp
-    src/engine/CascadedShadowMap.cpp
-    src/engine/ShadowMapMath.cpp
-    src/engine/RenderDebug.cpp
+    src/engine/lighting/ShadowMap.cpp
+    src/engine/lighting/CascadedShadowMap.cpp
+    src/engine/lighting/ShadowMapMath.cpp
+    src/engine/rendering/RenderDebug.cpp
 
-    src/engine/IBL.cpp
+    src/engine/lighting/IBL.cpp
 
-    src/engine/Material.cpp
+    src/engine/rendering/Material.cpp
 
-    src/engine/Texture.cpp
+    src/engine/rendering/Texture.cpp
 
-    src/engine/TextureCache.cpp
+    src/engine/assets/TextureCache.cpp
 
-    src/engine/MaterialTextures.cpp
+    src/engine/rendering/MaterialTextures.cpp
 
-    src/engine/Mesh.cpp
+    src/engine/rendering/Mesh.cpp
 
-    src/engine/ModelImporter.cpp
+    src/engine/assets/ModelImporter.cpp
 
-    src/engine/ProjectAssets.cpp
+    src/engine/assets/ProjectAssets.cpp
 
-    src/engine/FileDialog.cpp
+    src/engine/assets/FileDialog.cpp
 
-    src/engine/Renderer.cpp
+    src/engine/rendering/Renderer.cpp
 
-    src/engine/Framebuffer.cpp
+    src/engine/rendering/Framebuffer.cpp
 
-    src/engine/ScreenSpaceEffects.cpp
+    src/engine/rendering/ScreenSpaceEffects.cpp
 
-    src/engine/Shader.cpp
+    src/engine/rendering/Shader.cpp
 
-    src/engine/ShaderCache.cpp
+    src/engine/rendering/ShaderCache.cpp
 
-    src/engine/GridRenderer.cpp
+    src/engine/rendering/GridRenderer.cpp
 
-    src/engine/CameraGizmoRenderer.cpp
+    src/engine/gizmos/CameraGizmoRenderer.cpp
 
-    src/engine/ColliderGizmoRenderer.cpp
+    src/engine/gizmos/ColliderGizmoRenderer.cpp
 
-    src/engine/LightGizmoRenderer.cpp
+    src/engine/gizmos/LightGizmoRenderer.cpp
 
     src/primitives/Cube.cpp
 
@@ -395,7 +395,7 @@ enable_testing()
 
 add_executable(engine-tests
     tests/shadow_map_math_test.cpp
-    src/engine/ShadowMapMath.cpp
+    src/engine/lighting/ShadowMapMath.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src)

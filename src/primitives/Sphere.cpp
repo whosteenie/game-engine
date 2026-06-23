@@ -1,6 +1,6 @@
 #include "primitives/Sphere.h"
 
-#include "engine/Mesh.h"
+#include "engine/rendering/Mesh.h"
 #include "primitives/PrimitiveMeshUtils.h"
 
 #include <glm/gtc/constants.hpp>

@@ -1,0 +1,93 @@
+#pragma once
+
+#include "app/project/SceneImportedMeshPool.h"
+
+#include "engine/components/CameraComponent.h"
+#include "engine/components/ColliderComponent.h"
+#include "engine/scene/InspectorComponentOrder.h"
+#include "engine/components/LightComponent.h"
+#include "engine/components/RigidBodyComponent.h"
+#include "engine/rendering/Material.h"
+#include "engine/scene/SceneObjectId.h"
+#include "engine/scene/Transform.h"
+
+#include <glm/glm.hpp>
+
+#include <memory>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+class Mesh;
+
+struct ArchivedSelectionState
+{
+    std::vector<SceneObjectId> ids;
+    SceneObjectId primary = kInvalidSceneObjectId;
+};
+
+struct ArchivedSceneObject
+{
+    int flatIndex = -1;
+    SceneObjectId id = kInvalidSceneObjectId;
+    std::string name;
+    Mesh* mesh = nullptr;
+    ImportMeshKey importedMeshKey;
+    bool isImportedMesh = false;
+    bool ownsImportedMesh = false;
+    std::unique_ptr<Material> material;
+    glm::vec3 localBoundsMin = glm::vec3(0.0f);
+    glm::vec3 localBoundsMax = glm::vec3(0.0f);
+    Transform transform;
+    bool castShadow = true;
+    bool receiveShadow = true;
+    int siblingOrder = 0;
+    std::optional<LightComponent> light;
+    std::optional<CameraComponent> camera;
+    std::optional<RigidBodyComponent> rigidBody;
+    std::optional<ColliderComponent> collider;
+    std::vector<InspectorComponentType> inspectorComponentOrder;
+};
+
+struct SceneSubtreeArchive
+{
+    std::vector<ArchivedSceneObject> removedObjects;
+    std::unordered_map<SceneObjectId, SceneObjectId> parentIdByObjectId;
+    ImportedMeshReusePool importedMeshes;
+    ArchivedSelectionState selectionBefore;
+    ArchivedSelectionState selectionAfter;
+    std::vector<SceneObjectId> removedRootIds;
+};
+
+struct ArchivedObjectHierarchy
+{
+    SceneObjectId parentId = kInvalidSceneObjectId;
+    int siblingOrder = 0;
+    Transform transform;
+};
+
+struct SceneHierarchyArchive
+{
+    std::unordered_map<SceneObjectId, ArchivedObjectHierarchy> states;
+};
+
+struct ReparentArchive
+{
+    SceneHierarchyArchive before;
+    SceneHierarchyArchive after;
+    ArchivedSelectionState selectionBefore;
+    ArchivedSelectionState selectionAfter;
+};
+
+class Scene;
+
+ArchivedSelectionState CaptureArchivedSelection(const Scene& scene);
+void ApplyArchivedSelection(Scene& scene, const ArchivedSelectionState& selection);
+
+SceneHierarchyArchive CaptureHierarchyArchive(const Scene& scene);
+bool AreHierarchyArchivesEqual(const SceneHierarchyArchive& left, const SceneHierarchyArchive& right);
+void ApplyHierarchyArchive(Scene& scene, const SceneHierarchyArchive& archive);
+
+SceneSubtreeArchive CloneSubtreeArchive(const SceneSubtreeArchive& source);
+void RemapSubtreeArchiveIds(Scene& scene, SceneSubtreeArchive& archive);

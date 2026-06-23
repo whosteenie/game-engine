@@ -1,0 +1,21 @@
+#pragma once
+
+#include "app/editor/EditorViewportRect.h"
+
+class Scene;
+class UndoStack;
+
+class SceneToolbarPanel
+{
+public:
+    void Draw(
+        Scene& scene,
+        bool sceneViewVisible,
+        const EditorViewportRect& sceneViewRect,
+        UndoStack* undoStack = nullptr) const;
+
+    bool& ShowPanel() const { return m_showPanel; }
+
+private:
+    mutable bool m_showPanel = true;
+};
