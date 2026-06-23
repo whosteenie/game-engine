@@ -76,14 +76,8 @@ namespace
         TransformTool tool,
         TransformSpace space)
     {
-        const int selectedIndex = scene.GetSelectedObjectIndex();
-        if (selectedIndex < 0)
-        {
-            return;
-        }
-
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
-        if (!selectedObject.IsMovable())
+        const std::vector<int> movableIndices = scene.GetMovableSelectedIndices();
+        if (movableIndices.empty())
         {
             return;
         }
@@ -92,7 +86,9 @@ namespace
         ImGuizmo::SetOrthographic(false);
         ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
 
-        glm::mat4 gizmoWorldMatrix = scene.GetGizmoWorldMatrix(selectedIndex);
+        const bool worldSpace = space == TransformSpace::World;
+        glm::mat4 gizmoWorldMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
+        const glm::mat4 gizmoWorldMatrixBefore = gizmoWorldMatrix;
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
 
@@ -103,7 +99,7 @@ namespace
                 ToImGuizmoMode(space),
                 glm::value_ptr(gizmoWorldMatrix)))
         {
-            scene.ApplyGizmoWorldMatrix(selectedIndex, gizmoWorldMatrix);
+            scene.ApplySelectionGizmoWorldMatrix(gizmoWorldMatrixBefore, gizmoWorldMatrix);
         }
     }
 }
@@ -229,14 +225,13 @@ void SceneEditor::RenderSelectionOverlay(
     const Camera& camera,
     bool useScreenSpace) const
 {
-    const int selectedIndex = scene.GetSelectedObjectIndex();
-    if (selectedIndex < 0)
+    if (!scene.HasSelection())
     {
         return;
     }
 
     std::vector<SelectionMeshDraw> meshes;
-    CollectRenderableSelectionMeshes(scene.GetObjects(), selectedIndex, meshes);
+    CollectSelectionMeshes(scene.GetObjects(), scene.GetSelection().indices, meshes);
     if (meshes.empty())
     {
         return;

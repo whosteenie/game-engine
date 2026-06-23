@@ -396,6 +396,71 @@ void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMa
     MarkDirty();
 }
 
+std::vector<int> Scene::GetMovableSelectedIndices() const
+{
+    std::vector<int> movableIndices;
+    movableIndices.reserve(m_selection.indices.size());
+
+    for (int objectIndex : m_selection.indices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= m_objects.size())
+        {
+            continue;
+        }
+
+        if (m_objects[static_cast<std::size_t>(objectIndex)].IsMovable())
+        {
+            movableIndices.push_back(objectIndex);
+        }
+    }
+
+    return movableIndices;
+}
+
+glm::mat4 Scene::GetSelectionGizmoWorldMatrix(bool worldSpace) const
+{
+    const std::vector<int> movableIndices = GetMovableSelectedIndices();
+    if (movableIndices.empty())
+    {
+        return glm::mat4(1.0f);
+    }
+
+    if (movableIndices.size() == 1)
+    {
+        return GetGizmoWorldMatrix(movableIndices.front());
+    }
+
+    return GetGroupSelectionGizmoWorldMatrix(
+        m_objects,
+        movableIndices,
+        m_selection.primary,
+        worldSpace);
+}
+
+void Scene::ApplySelectionGizmoWorldMatrix(
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix)
+{
+    const std::vector<int> movableIndices = GetMovableSelectedIndices();
+    if (movableIndices.empty())
+    {
+        return;
+    }
+
+    if (movableIndices.size() == 1)
+    {
+        ApplyGizmoWorldMatrix(movableIndices.front(), newGizmoWorldMatrix);
+        return;
+    }
+
+    ApplyGroupSelectionGizmoWorldMatrix(
+        m_objects,
+        movableIndices,
+        oldGizmoWorldMatrix,
+        newGizmoWorldMatrix);
+    MarkDirty();
+}
+
 void Scene::GetWorldBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const
 {
     GetObjectWorldBounds(m_objects, objectIndex, boundsMin, boundsMax);
@@ -1507,7 +1572,7 @@ void Scene::Render(
             camera,
             m_objects,
             [this](int objectIndex) { return GetWorldMatrix(objectIndex); },
-            GetPrimarySelection());
+            m_selection.indices);
     }
 
     if (!usePostProcess)

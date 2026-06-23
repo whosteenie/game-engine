@@ -169,6 +169,103 @@ void ApplyObjectGizmoWorldMatrix(
         glm::inverse(parentWorldMatrix) * newWorldMatrix);
 }
 
+glm::mat4 GetGroupSelectionGizmoWorldMatrix(
+    const std::vector<SceneObject>& objects,
+    const std::vector<int>& objectIndices,
+    int primaryIndex,
+    bool worldSpace)
+{
+    glm::vec3 boundsMin = glm::vec3(std::numeric_limits<float>::max());
+    glm::vec3 boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+    bool hasBounds = false;
+
+    for (int objectIndex : objectIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        if (!objects[static_cast<std::size_t>(objectIndex)].IsMovable())
+        {
+            continue;
+        }
+
+        glm::vec3 objectBoundsMin;
+        glm::vec3 objectBoundsMax;
+        GetObjectWorldBounds(objects, objectIndex, objectBoundsMin, objectBoundsMax);
+
+        if (!hasBounds)
+        {
+            boundsMin = objectBoundsMin;
+            boundsMax = objectBoundsMax;
+            hasBounds = true;
+        }
+        else
+        {
+            boundsMin = glm::min(boundsMin, objectBoundsMin);
+            boundsMax = glm::max(boundsMax, objectBoundsMax);
+        }
+    }
+
+    if (!hasBounds)
+    {
+        return glm::mat4(1.0f);
+    }
+
+    const glm::vec3 center = (boundsMin + boundsMax) * 0.5f;
+    if (worldSpace)
+    {
+        return glm::translate(glm::mat4(1.0f), center);
+    }
+
+    int orientationIndex = primaryIndex;
+    if (orientationIndex < 0
+        || std::find(objectIndices.begin(), objectIndices.end(), orientationIndex) == objectIndices.end())
+    {
+        orientationIndex = objectIndices.front();
+    }
+
+    glm::mat4 gizmoWorldMatrix = GetObjectWorldMatrix(objects, orientationIndex);
+    gizmoWorldMatrix[3] = glm::vec4(center, 1.0f);
+    return gizmoWorldMatrix;
+}
+
+void ApplyGroupSelectionGizmoWorldMatrix(
+    std::vector<SceneObject>& objects,
+    const std::vector<int>& objectIndices,
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix)
+{
+    const glm::mat4 deltaMatrix = newGizmoWorldMatrix * glm::inverse(oldGizmoWorldMatrix);
+
+    for (int objectIndex : objectIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.IsMovable())
+        {
+            continue;
+        }
+
+        const glm::mat4 oldWorldMatrix = GetObjectWorldMatrix(objects, objectIndex);
+        const glm::mat4 newWorldMatrix = deltaMatrix * oldWorldMatrix;
+
+        glm::mat4 parentWorldMatrix(1.0f);
+        const int parentIndex = object.GetParentIndex();
+        if (parentIndex >= 0)
+        {
+            parentWorldMatrix = GetObjectWorldMatrix(objects, parentIndex);
+        }
+
+        object.GetTransform().SetFromMatrix(glm::inverse(parentWorldMatrix) * newWorldMatrix);
+    }
+}
+
 std::vector<int> GetObjectChildren(const std::vector<SceneObject>& objects, int parentIndex)
 {
     std::vector<int> children;
@@ -210,6 +307,17 @@ void CollectRenderableSelectionMeshes(
     for (int childIndex : GetObjectChildren(objects, objectIndex))
     {
         CollectRenderableSelectionMeshes(objects, childIndex, outMeshes);
+    }
+}
+
+void CollectSelectionMeshes(
+    const std::vector<SceneObject>& objects,
+    const std::vector<int>& objectIndices,
+    std::vector<SelectionMeshDraw>& outMeshes)
+{
+    for (int objectIndex : objectIndices)
+    {
+        CollectRenderableSelectionMeshes(objects, objectIndex, outMeshes);
     }
 }
 
