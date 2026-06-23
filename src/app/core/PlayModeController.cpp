@@ -4,22 +4,12 @@
 #include "app/scene/Scene.h"
 #include "engine/scene/Transform.h"
 
-#include <cstdio>
 #include <exception>
 #include <utility>
 
 PlayModeController::PlayModeController() = default;
 
 PlayModeController::~PlayModeController() = default;
-
-namespace
-{
-    void LogPlayMode(const char* message)
-    {
-        std::fprintf(stderr, "[PlayMode] %s\n", message);
-        std::fflush(stderr);
-    }
-}
 
 bool PlayModeController::TogglePlayStop(Scene& editScene, const std::string& projectRoot)
 {
@@ -105,7 +95,6 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
 
     try
     {
-        LogPlayMode("EnterPlay: cloning runtime scene");
         m_runtimeScene = Scene::CloneForPlayMode(editScene);
         if (m_runtimeScene == nullptr)
         {
@@ -113,17 +102,12 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
             return false;
         }
 
-        LogPlayMode("EnterPlay: creating physics world");
         m_physicsWorld = std::make_unique<PhysicsWorld>();
-        LogPlayMode("EnterPlay: building physics world from runtime scene");
         m_physicsWorld->BuildFromScene(*m_runtimeScene);
-        LogPlayMode("EnterPlay: physics world build complete");
     }
     catch (const std::exception& exception)
     {
         m_lastError = std::string("Play mode failed: ") + exception.what();
-        std::fprintf(stderr, "[PlayMode] EnterPlay exception: %s\n", exception.what());
-        std::fflush(stderr);
         m_physicsWorld.reset();
         m_runtimeScene.reset();
         return false;
@@ -131,7 +115,6 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
     catch (...)
     {
         m_lastError = "Play mode failed with unknown exception.";
-        LogPlayMode("EnterPlay exception: unknown");
         m_physicsWorld.reset();
         m_runtimeScene.reset();
         return false;

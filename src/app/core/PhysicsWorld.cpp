@@ -23,7 +23,6 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
-#include <cstdio>
 #include <cmath>
 #include <cstdint>
 #include <thread>
@@ -37,12 +36,6 @@ namespace
 {
     constexpr float kMinShapeHalfExtent = 0.05f;
     constexpr float kMinSphereRadius = 0.05f;
-
-    void LogPhysics(const char* message)
-    {
-        std::fprintf(stderr, "[Physics] %s\n", message);
-        std::fflush(stderr);
-    }
 
     namespace Layers
     {
@@ -291,7 +284,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
         return;
     }
 
-    LogPhysics("BuildFromScene: begin");
     m_impl->ShutdownBodies();
 
     BodyInterface& bodyInterface = m_impl->physicsSystem.GetBodyInterface();
@@ -305,20 +297,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             continue;
         }
 
-        {
-            const ColliderComponent& collider = object.GetCollider();
-            const char* shape = collider.shape == ColliderShape::Sphere ? "Sphere" : "Box";
-            std::fprintf(
-                stderr,
-                "[Physics] BuildFromScene: object=%d name=\"%s\" shape=%s rb=%d trigger=%d\n",
-                objectIndex,
-                object.GetName().c_str(),
-                shape,
-                object.HasRigidBody() ? 1 : 0,
-                collider.isTrigger ? 1 : 0);
-            std::fflush(stderr);
-        }
-
         const ColliderComponent& collider = object.GetCollider();
         const glm::mat4 worldMatrix = scene.GetWorldMatrix(objectIndex);
         const glm::vec3 colliderWorldCenter = glm::vec3(worldMatrix * glm::vec4(collider.offset, 1.0f));
@@ -328,12 +306,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
         const glm::quat& worldRotation = worldTransform.rotation;
         if (!IsFiniteVec3(colliderWorldCenter) || !IsFiniteVec3(worldScale) || !IsFiniteQuat(worldRotation))
         {
-            std::fprintf(
-                stderr,
-                "[Physics] BuildFromScene: invalid transform for object=%d name=\"%s\" (skipped)\n",
-                objectIndex,
-                object.GetName().c_str());
-            std::fflush(stderr);
             continue;
         }
 
@@ -343,11 +315,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             const glm::vec3 absScale = glm::abs(worldScale);
             const float scaledRadius =
                 collider.radius * std::max(absScale.x, std::max(absScale.y, absScale.z));
-            std::fprintf(
-                stderr,
-                "[Physics] BuildFromScene: creating sphere shape radius=%.4f\n",
-                std::max(scaledRadius, kMinSphereRadius));
-            std::fflush(stderr);
             shape = new SphereShape(std::max(scaledRadius, kMinSphereRadius));
         }
         else
@@ -355,13 +322,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             const glm::vec3 scaledHalfExtents = collider.halfExtents * glm::abs(worldScale);
             const JPH::Vec3 halfExtents =
                 ToJoltVec3(glm::max(scaledHalfExtents, glm::vec3(kMinShapeHalfExtent)));
-            std::fprintf(
-                stderr,
-                "[Physics] BuildFromScene: creating box shape halfExtents=(%.4f, %.4f, %.4f)\n",
-                halfExtents.GetX(),
-                halfExtents.GetY(),
-                halfExtents.GetZ());
-            std::fflush(stderr);
             shape = new BoxShape(halfExtents);
         }
 
@@ -405,36 +365,16 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             bodySettings.mIsSensor = collider.isTrigger;
         }
 
-        std::fprintf(
-            stderr,
-            "[Physics] BuildFromScene: CreateBody object=%d motionType=%d\n",
-            objectIndex,
-            static_cast<int>(motionType));
-        std::fflush(stderr);
         Body* body = bodyInterface.CreateBody(bodySettings);
         if (body == nullptr)
         {
-            std::fprintf(
-                stderr,
-                "[Physics] BuildFromScene: CreateBody failed for object=%d name=\"%s\"\n",
-                objectIndex,
-                object.GetName().c_str());
-            std::fflush(stderr);
             continue;
         }
 
         body->SetUserData(static_cast<uint64_t>(objectIndex));
         const EActivation activation =
             motionType == EMotionType::Static ? EActivation::DontActivate : EActivation::Activate;
-        std::fprintf(
-            stderr,
-            "[Physics] BuildFromScene: AddBody object=%d activation=%d\n",
-            objectIndex,
-            static_cast<int>(activation));
-        std::fflush(stderr);
         bodyInterface.AddBody(body->GetID(), activation);
-        std::fprintf(stderr, "[Physics] BuildFromScene: AddBody complete object=%d\n", objectIndex);
-        std::fflush(stderr);
 
         m_impl->trackedBodies.push_back(Impl::TrackedBody{
             body->GetID(),
@@ -444,11 +384,6 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
     }
 
     m_impl->physicsSystem.OptimizeBroadPhase();
-    std::fprintf(
-        stderr,
-        "[Physics] BuildFromScene: complete trackedBodies=%zu\n",
-        m_impl->trackedBodies.size());
-    std::fflush(stderr);
 }
 
 void PhysicsWorld::Step(Scene& scene, float deltaTime)
