@@ -748,7 +748,9 @@ namespace
     json SerializeEditorState(const Scene& scene, const ProjectEditorState& editorState, const std::string& projectRoot)
     {
         return json{
-            {"selectedObjectIndex", scene.GetSelectedObjectIndex()},
+            {"selectedObjectIndex", scene.GetPrimarySelection()},
+            {"selectedObjectIndices", scene.GetSelection().indices},
+            {"primarySelection", scene.GetPrimarySelection()},
             {"showGrid", scene.GetShowGrid()},
             {"showLightGizmos", scene.GetShowLightGizmos()},
             {"camera",
@@ -1058,21 +1060,49 @@ bool SceneProjectIO::DeserializeScene(
         if (sceneValue.contains("editor"))
         {
             const json& editor = sceneValue.at("editor");
-            scene.m_selectedObjectIndex = editor.value("selectedObjectIndex", -1);
+            if (editor.contains("selectedObjectIndices") && editor.at("selectedObjectIndices").is_array())
+            {
+                std::vector<int> selectedIndices;
+                for (const json& indexValue : editor.at("selectedObjectIndices"))
+                {
+                    selectedIndices.push_back(indexValue.get<int>());
+                }
+
+                const int primarySelection = editor.value("primarySelection", -1);
+                scene.SetSelection(selectedIndices, primarySelection);
+            }
+            else
+            {
+                const int selectedObjectIndex = editor.value("selectedObjectIndex", -1);
+                if (selectedObjectIndex >= 0
+                    && selectedObjectIndex < static_cast<int>(scene.m_objects.size()))
+                {
+                    scene.SelectSingle(selectedObjectIndex);
+                }
+                else if (scene.m_objects.empty())
+                {
+                    scene.ClearSelection();
+                }
+                else
+                {
+                    scene.SelectSingle(0);
+                }
+            }
+
             scene.m_showGrid = editor.value("showGrid", true);
             scene.m_showLightGizmos = editor.value("showLightGizmos", true);
             DeserializeEditorState(editor, editorState, projectRoot);
         }
         else
         {
-            scene.m_selectedObjectIndex = -1;
+            scene.ClearSelection();
             editorState = ProjectEditorState::CreateDefault();
         }
 
-        if (scene.m_selectedObjectIndex < 0
-            || scene.m_selectedObjectIndex >= static_cast<int>(scene.m_objects.size()))
+        scene.SanitizeSelection();
+        if (!scene.HasSelection() && !scene.m_objects.empty())
         {
-            scene.m_selectedObjectIndex = scene.m_objects.empty() ? -1 : 0;
+            scene.SelectSingle(0);
         }
 
         if (sceneValue.contains("renderer"))

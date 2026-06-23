@@ -154,7 +154,8 @@ void Scene::SetupObjects()
         -1,
         2);
 
-    m_selectedObjectIndex = 2;
+    m_selection.indices = {2};
+    m_selection.primary = 2;
 }
 
 namespace
@@ -430,13 +431,68 @@ void Scene::RemapParentIndicesAfterRemoval(int removedIndex)
         }
     }
 
-    if (m_selectedObjectIndex > removedIndex)
+    RemapSelectionAfterRemoval(removedIndex);
+}
+
+void Scene::RemapSelectionAfterRemoval(int removedIndex)
+{
+    std::vector<int> remappedIndices;
+    remappedIndices.reserve(m_selection.indices.size());
+
+    for (int index : m_selection.indices)
     {
-        --m_selectedObjectIndex;
+        if (index == removedIndex)
+        {
+            continue;
+        }
+
+        remappedIndices.push_back(index > removedIndex ? index - 1 : index);
     }
-    else if (m_selectedObjectIndex == removedIndex)
+
+    m_selection.indices = std::move(remappedIndices);
+
+    if (m_selection.primary == removedIndex)
     {
-        m_selectedObjectIndex = -1;
+        m_selection.primary = m_selection.indices.empty() ? -1 : m_selection.indices.back();
+    }
+    else if (m_selection.primary > removedIndex)
+    {
+        --m_selection.primary;
+    }
+}
+
+void Scene::SanitizeSelection()
+{
+    if (m_objects.empty())
+    {
+        m_selection = {};
+        return;
+    }
+
+    const int objectCount = static_cast<int>(m_objects.size());
+    std::vector<int> validIndices;
+    validIndices.reserve(m_selection.indices.size());
+
+    for (int index : m_selection.indices)
+    {
+        if (index < 0 || index >= objectCount)
+        {
+            continue;
+        }
+
+        if (std::find(validIndices.begin(), validIndices.end(), index) == validIndices.end())
+        {
+            validIndices.push_back(index);
+        }
+    }
+
+    m_selection.indices = std::move(validIndices);
+
+    if (m_selection.primary < 0
+        || m_selection.primary >= objectCount
+        || !IsSelected(m_selection.primary))
+    {
+        m_selection.primary = m_selection.indices.empty() ? -1 : m_selection.indices.back();
     }
 }
 
@@ -592,24 +648,13 @@ bool Scene::RemoveObject(std::size_t index)
     CollectDescendantIndices(static_cast<int>(index), indicesToRemove);
     std::sort(indicesToRemove.begin(), indicesToRemove.end(), std::greater<int>());
 
-    const bool selectionRemoved = m_selectedObjectIndex >= 0
-        && std::find(indicesToRemove.begin(), indicesToRemove.end(), m_selectedObjectIndex)
-            != indicesToRemove.end();
-
     for (int removeIndex : indicesToRemove)
     {
         m_objects.erase(m_objects.begin() + removeIndex);
         RemapParentIndicesAfterRemoval(removeIndex);
     }
 
-    if (m_objects.empty() || selectionRemoved)
-    {
-        m_selectedObjectIndex = -1;
-    }
-    else if (m_selectedObjectIndex >= static_cast<int>(m_objects.size()))
-    {
-        m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
-    }
+    SanitizeSelection();
 
     PruneUnusedImportedMeshes();
 
@@ -1036,7 +1081,7 @@ void Scene::ResetToDefault()
 {
     m_objects.clear();
     m_importedMeshes.clear();
-    m_selectedObjectIndex = -1;
+    m_selection = {};
     m_showLightGizmos = true;
     m_showGrid = true;
     m_nextDirectionalLightNumber = 2;
@@ -1098,40 +1143,154 @@ const SceneObject& Scene::GetObject(std::size_t index) const
 
 int Scene::GetSelectedObjectIndex() const
 {
-    return m_selectedObjectIndex;
+    return GetPrimarySelection();
+}
+
+const SceneSelection& Scene::GetSelection() const
+{
+    return m_selection;
+}
+
+int Scene::GetPrimarySelection() const
+{
+    return m_selection.primary;
+}
+
+bool Scene::IsSelected(int objectIndex) const
+{
+    if (objectIndex < 0)
+    {
+        return false;
+    }
+
+    return std::find(m_selection.indices.begin(), m_selection.indices.end(), objectIndex)
+        != m_selection.indices.end();
+}
+
+void Scene::SetSelection(const std::vector<int>& indices, int primary)
+{
+    if (m_objects.empty())
+    {
+        ClearSelection();
+        return;
+    }
+
+    m_selection.indices.clear();
+    for (int index : indices)
+    {
+        if (index < 0 || static_cast<std::size_t>(index) >= m_objects.size())
+        {
+            continue;
+        }
+
+        if (std::find(m_selection.indices.begin(), m_selection.indices.end(), index)
+            != m_selection.indices.end())
+        {
+            continue;
+        }
+
+        m_selection.indices.push_back(index);
+    }
+
+    if (primary >= 0
+        && static_cast<std::size_t>(primary) < m_objects.size()
+        && std::find(m_selection.indices.begin(), m_selection.indices.end(), primary)
+            != m_selection.indices.end())
+    {
+        m_selection.primary = primary;
+    }
+    else
+    {
+        m_selection.primary = m_selection.indices.empty() ? -1 : m_selection.indices.back();
+    }
+}
+
+void Scene::SelectSingle(int objectIndex)
+{
+    if (m_objects.empty())
+    {
+        ClearSelection();
+        return;
+    }
+
+    if (objectIndex < 0)
+    {
+        ClearSelection();
+        return;
+    }
+
+    if (static_cast<std::size_t>(objectIndex) >= m_objects.size())
+    {
+        objectIndex = static_cast<int>(m_objects.size()) - 1;
+    }
+
+    m_selection.indices = {objectIndex};
+    m_selection.primary = objectIndex;
+}
+
+void Scene::ToggleSelected(int objectIndex)
+{
+    if (m_objects.empty() || objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= m_objects.size())
+    {
+        return;
+    }
+
+    const auto iterator = std::find(m_selection.indices.begin(), m_selection.indices.end(), objectIndex);
+    if (iterator != m_selection.indices.end())
+    {
+        m_selection.indices.erase(iterator);
+        if (m_selection.primary == objectIndex)
+        {
+            m_selection.primary = m_selection.indices.empty() ? -1 : m_selection.indices.back();
+        }
+        return;
+    }
+
+    m_selection.indices.push_back(objectIndex);
+    m_selection.primary = objectIndex;
+}
+
+void Scene::AddToSelection(const std::vector<int>& indices)
+{
+    if (m_objects.empty())
+    {
+        ClearSelection();
+        return;
+    }
+
+    for (int index : indices)
+    {
+        if (index < 0 || static_cast<std::size_t>(index) >= m_objects.size())
+        {
+            continue;
+        }
+
+        if (IsSelected(index))
+        {
+            continue;
+        }
+
+        m_selection.indices.push_back(index);
+        if (m_selection.primary < 0)
+        {
+            m_selection.primary = index;
+        }
+    }
 }
 
 void Scene::SetSelectedObjectIndex(int selectedObjectIndex)
 {
-    if (m_objects.empty())
-    {
-        m_selectedObjectIndex = -1;
-        return;
-    }
-
-    if (selectedObjectIndex < 0)
-    {
-        m_selectedObjectIndex = -1;
-        return;
-    }
-
-    if (static_cast<std::size_t>(selectedObjectIndex) >= m_objects.size())
-    {
-        m_selectedObjectIndex = static_cast<int>(m_objects.size()) - 1;
-        return;
-    }
-
-    m_selectedObjectIndex = selectedObjectIndex;
+    SelectSingle(selectedObjectIndex);
 }
 
 void Scene::ClearSelection()
 {
-    m_selectedObjectIndex = -1;
+    m_selection = {};
 }
 
 bool Scene::HasSelection() const
 {
-    return m_selectedObjectIndex >= 0 && static_cast<std::size_t>(m_selectedObjectIndex) < m_objects.size();
+    return !m_selection.indices.empty();
 }
 
 SceneEditor& Scene::GetSceneEditor()
@@ -1348,7 +1507,7 @@ void Scene::Render(
             camera,
             m_objects,
             [this](int objectIndex) { return GetWorldMatrix(objectIndex); },
-            m_selectedObjectIndex);
+            GetPrimarySelection());
     }
 
     if (!usePostProcess)

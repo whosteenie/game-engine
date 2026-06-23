@@ -14,6 +14,8 @@
 #include "engine/IBL.h"
 #include "engine/SceneObject.h"
 
+#include "app/SceneSelection.h"
+
 class Camera;
 class Input;
 class Mesh;
@@ -62,6 +64,13 @@ public:
 
     int GetSelectedObjectIndex() const;
     void SetSelectedObjectIndex(int selectedObjectIndex);
+    const SceneSelection& GetSelection() const;
+    int GetPrimarySelection() const;
+    bool IsSelected(int objectIndex) const;
+    void SetSelection(const std::vector<int>& indices, int primary);
+    void SelectSingle(int objectIndex);
+    void ToggleSelected(int objectIndex);
+    void AddToSelection(const std::vector<int>& indices);
     void ClearSelection();
     bool HasSelection() const;
 
@@ -128,6 +137,8 @@ private:
     int AllocateSiblingOrder(int parentIndex) const;
     void SetSiblingIndexAmongParent(int objectIndex, int parentIndex, int siblingIndex);
     std::string MakeDuplicateObjectName(const std::string& sourceName) const;
+    void RemapSelectionAfterRemoval(int removedIndex);
+    void SanitizeSelection();
 
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
@@ -144,7 +155,7 @@ private:
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<Shader> m_shadowDepthShader;
     mutable SceneLighting m_lighting;
-    int m_selectedObjectIndex = 1;
+    SceneSelection m_selection;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
     int m_nextDirectionalLightNumber = 2;
