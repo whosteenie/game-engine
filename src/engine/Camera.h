@@ -17,13 +17,20 @@ public:
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
     glm::vec3 GetPosition() const;
+    glm::vec3 GetFront() const;
     float GetYaw() const;
     float GetPitch() const;
     void SetPosition(const glm::vec3& position);
     void SetOrientation(float yaw, float pitch);
+    void SetOrientationFromDirection(const glm::vec3& direction);
+
+    glm::mat4 BuildViewMatrixLookingAt(const glm::vec3& target, float distance) const;
+    void ApplyViewManipulateResult(const glm::mat4& view, const glm::vec3& target, float distance);
+    void FrameTarget(const glm::vec3& target, float boundsRadius);
 
 private:
     void UpdateCameraVectors();
+    float ComputeFitDistance(float boundsRadius, float padding = 1.2f) const;
 
     glm::vec3 m_position;
     glm::vec3 m_front;

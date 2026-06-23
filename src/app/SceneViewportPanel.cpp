@@ -1,9 +1,14 @@
 #include "app/SceneViewportPanel.h"
 
 #include "app/EditorPanelConstraints.h"
+#include "app/Scene.h"
+#include "engine/Camera.h"
 
+#include <ImGuizmo.h>
 #include <imgui.h>
 #include <imgui_internal.h>
+
+#include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 
@@ -54,7 +59,71 @@ void SceneViewportPanel::EnsureFramebufferSized() const
     m_framebuffer.Resize(m_renderWidth, m_renderHeight);
 }
 
-void SceneViewportPanel::Draw()
+void SceneViewportPanel::DrawViewGizmo(
+    Camera& camera,
+    const Scene& scene,
+    const ImVec2& imageMin,
+    const ImVec2& imageMax)
+{
+    if (!m_interactionRect.valid || m_interactionRect.imguiWindow == nullptr)
+    {
+        return;
+    }
+
+    constexpr float kGizmoSize = 128.0f;
+    constexpr float kMargin = 8.0f;
+    const ImVec2 gizmoPos(
+        imageMax.x - kGizmoSize - kMargin,
+        imageMin.y + kMargin);
+    const ImVec2 gizmoSize(kGizmoSize, kGizmoSize);
+
+    ImGuizmo::SetAlternativeWindow(m_interactionRect.imguiWindow);
+    ImGuizmo::SetRect(
+        m_interactionRect.screenX,
+        m_interactionRect.screenY,
+        m_interactionRect.screenWidth,
+        m_interactionRect.screenHeight);
+
+    glm::vec3 focus(0.0f);
+    float focusRadius = 0.5f;
+    if (!scene.TryGetViewFocusPoint(focus, focusRadius))
+    {
+        focus = glm::vec3(0.0f);
+    }
+
+    const bool wasUsingViewManipulate = m_wasUsingViewManipulate;
+
+    glm::mat4 view = camera.GetViewMatrix();
+    float orbitLength = std::max(glm::length(camera.GetPosition() - focus), 1.0f);
+    if (wasUsingViewManipulate)
+    {
+        view = camera.BuildViewMatrixLookingAt(m_viewManipulateFocus, m_viewManipulateDistance);
+        orbitLength = m_viewManipulateDistance;
+    }
+
+    ImGuizmo::ViewManipulate(
+        glm::value_ptr(view),
+        orbitLength,
+        gizmoPos,
+        gizmoSize,
+        IM_COL32(0, 0, 0, 0));
+
+    const bool usingViewManipulate = ImGuizmo::IsUsingViewManipulate();
+    if (usingViewManipulate && !wasUsingViewManipulate)
+    {
+        m_viewManipulateFocus = focus;
+        m_viewManipulateDistance = std::max(glm::length(camera.GetPosition() - focus), 1.0f);
+    }
+
+    if (usingViewManipulate)
+    {
+        camera.ApplyViewManipulateResult(view, m_viewManipulateFocus, m_viewManipulateDistance);
+    }
+
+    m_wasUsingViewManipulate = usingViewManipulate;
+}
+
+void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
 {
     m_interactionRect = {};
 
@@ -63,6 +132,7 @@ void SceneViewportPanel::Draw()
     {
         m_renderWidth = 0;
         m_renderHeight = 0;
+        m_wasUsingViewManipulate = false;
         return;
     }
 
@@ -101,6 +171,7 @@ void SceneViewportPanel::Draw()
         && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_RootWindow);
     m_interactionRect.imguiWindow = ImGui::GetCurrentWindow();
     UpdateInteractionRect(m_interactionRect, imageMin, imageSize, m_renderWidth, m_renderHeight);
+    DrawViewGizmo(camera, scene, imageMin, imageMax);
 
     ImGui::End();
 }

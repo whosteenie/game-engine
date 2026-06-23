@@ -266,7 +266,7 @@ void SceneEditor::SetTransformSpace(TransformSpace space)
 
 void SceneEditor::Update(
     Scene& scene,
-    const Camera& camera,
+    Camera& camera,
     Input& input,
     int framebufferWidth,
     int framebufferHeight,
@@ -336,6 +336,15 @@ void SceneEditor::Update(
     {
         SetTransformSpace(TransformSpace::World);
     }
+    if (allowTransformShortcuts && input.WasKeyPressed(GLFW_KEY_F))
+    {
+        glm::vec3 focus;
+        float radius = 0.5f;
+        if (scene.TryGetViewFocusPoint(focus, radius))
+        {
+            camera.FrameTarget(focus, radius);
+        }
+    }
 
     UpdateTransformGizmo(
         scene,
@@ -347,7 +356,11 @@ void SceneEditor::Update(
         m_gizmoTransformBefore,
         viewport);
 
-    const bool gizmoCapturingMouse = ImGuizmo::IsOver() || ImGuizmo::IsUsing();
+    const bool gizmoCapturingMouse =
+        ImGuizmo::IsOver()
+        || ImGuizmo::IsUsing()
+        || ImGuizmo::IsViewManipulateHovered()
+        || ImGuizmo::IsUsingViewManipulate();
     if (viewport == nullptr || !viewport->valid)
     {
         if (m_trackingLeftDrag)

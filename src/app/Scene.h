@@ -49,7 +49,7 @@ public:
 
     void Update(
         Input& input,
-        const Camera& camera,
+        Camera& camera,
         int framebufferWidth,
         int framebufferHeight,
         int windowWidth,
@@ -90,6 +90,7 @@ public:
     void AddToSelection(const std::vector<int>& indices);
     void ClearSelection();
     bool HasSelection() const;
+    bool TryGetViewFocusPoint(glm::vec3& center, float& radius) const;
 
     void HandleEscapeKey();
 

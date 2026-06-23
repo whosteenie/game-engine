@@ -1569,6 +1569,52 @@ bool Scene::HasSelection() const
     return !m_selection.indices.empty();
 }
 
+bool Scene::TryGetViewFocusPoint(glm::vec3& center, float& radius) const
+{
+    const std::vector<int>& selectedIndices = m_selection.indices;
+    if (selectedIndices.empty())
+    {
+        return false;
+    }
+
+    glm::vec3 boundsMin = glm::vec3(std::numeric_limits<float>::max());
+    glm::vec3 boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+    bool hasBounds = false;
+
+    for (int objectIndex : selectedIndices)
+    {
+        glm::vec3 objectBoundsMin;
+        glm::vec3 objectBoundsMax;
+        GetWorldBounds(objectIndex, objectBoundsMin, objectBoundsMax);
+
+        if (!hasBounds)
+        {
+            boundsMin = objectBoundsMin;
+            boundsMax = objectBoundsMax;
+            hasBounds = true;
+        }
+        else
+        {
+            boundsMin = glm::min(boundsMin, objectBoundsMin);
+            boundsMax = glm::max(boundsMax, objectBoundsMax);
+        }
+    }
+
+    if (!hasBounds)
+    {
+        return false;
+    }
+
+    center = (boundsMin + boundsMax) * 0.5f;
+    radius = glm::length((boundsMax - boundsMin) * 0.5f);
+    if (radius < 0.05f)
+    {
+        radius = 0.5f;
+    }
+
+    return true;
+}
+
 void Scene::HandleEscapeKey()
 {
     m_sceneEditor->HandleEscapeKey(*this);
@@ -1645,7 +1691,7 @@ glm::vec3 Scene::GetSunDirection() const
 
 void Scene::Update(
     Input& input,
-    const Camera& camera,
+    Camera& camera,
     int framebufferWidth,
     int framebufferHeight,
     int windowWidth,

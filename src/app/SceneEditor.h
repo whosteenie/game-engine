@@ -39,7 +39,7 @@ public:
 
     void Update(
         Scene& scene,
-        const Camera& camera,
+        Camera& camera,
         Input& input,
         int framebufferWidth,
         int framebufferHeight,

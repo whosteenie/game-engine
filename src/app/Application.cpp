@@ -198,7 +198,7 @@ void Application::Update(double deltaTime)
             !IsEditorUndoRedoBlocked());
 
         m_editorDockSpace->Begin();
-        m_sceneViewportPanel->Draw();
+        m_sceneViewportPanel->Draw(*m_camera, *m_scene);
         m_sceneHierarchyPanel->Draw(*m_scene, *m_projectSession, m_undoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*m_scene, &m_undoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
@@ -225,7 +225,11 @@ void Application::Update(double deltaTime)
     const bool sceneViewHovered =
         editorActive
         && m_sceneViewportPanel->HasValidRenderTarget()
-        && (m_sceneViewportPanel->IsHovered() || ImGuizmo::IsOver() || ImGuizmo::IsUsing());
+        && (m_sceneViewportPanel->IsHovered()
+            || ImGuizmo::IsOver()
+            || ImGuizmo::IsUsing()
+            || ImGuizmo::IsViewManipulateHovered()
+            || ImGuizmo::IsUsingViewManipulate());
     const bool blockSceneInput = io.WantTextInput || m_pendingClose || m_pendingNewProject;
 
     m_input->UpdateMouseCapture(sceneViewHovered && !blockSceneInput);
