@@ -9,6 +9,7 @@
 #include "engine/IBL.h"
 #include "engine/CameraComponent.h"
 #include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
@@ -312,6 +313,104 @@ namespace SceneProjectIODetail
         collider.radius = value.value("radius", collider.radius);
         collider.isTrigger = value.value("isTrigger", collider.isTrigger);
         return collider;
+    }
+
+    const char* InspectorComponentTypeToString(const InspectorComponentType type)
+    {
+        switch (type)
+        {
+        case InspectorComponentType::Material:
+            return "material";
+        case InspectorComponentType::ObjectFlags:
+            return "objectFlags";
+        case InspectorComponentType::Light:
+            return "light";
+        case InspectorComponentType::Camera:
+            return "camera";
+        case InspectorComponentType::RigidBody:
+            return "rigidBody";
+        case InspectorComponentType::Collider:
+            return "collider";
+        }
+
+        return "unknown";
+    }
+
+    bool InspectorComponentTypeFromString(const std::string& value, InspectorComponentType& outType)
+    {
+        if (value == "material")
+        {
+            outType = InspectorComponentType::Material;
+            return true;
+        }
+
+        if (value == "objectFlags")
+        {
+            outType = InspectorComponentType::ObjectFlags;
+            return true;
+        }
+
+        if (value == "light")
+        {
+            outType = InspectorComponentType::Light;
+            return true;
+        }
+
+        if (value == "camera")
+        {
+            outType = InspectorComponentType::Camera;
+            return true;
+        }
+
+        if (value == "rigidBody")
+        {
+            outType = InspectorComponentType::RigidBody;
+            return true;
+        }
+
+        if (value == "collider")
+        {
+            outType = InspectorComponentType::Collider;
+            return true;
+        }
+
+        return false;
+    }
+
+    json SerializeInspectorComponentOrder(const SceneObject& object)
+    {
+        json order = json::array();
+        for (const InspectorComponentType type : object.GetInspectorComponentOrder())
+        {
+            order.push_back(InspectorComponentTypeToString(type));
+        }
+
+        return order;
+    }
+
+    std::vector<InspectorComponentType> DeserializeInspectorComponentOrder(const json& value)
+    {
+        std::vector<InspectorComponentType> order;
+        if (!value.is_array())
+        {
+            return order;
+        }
+
+        for (const json& entry : value)
+        {
+            if (!entry.is_string())
+            {
+                continue;
+            }
+
+            InspectorComponentType type = InspectorComponentType::Material;
+            if (InspectorComponentTypeFromString(entry.get<std::string>(), type))
+            {
+                order.push_back(type);
+            }
+        }
+
+        return order;
     }
 
     json SerializeRigidBody(const RigidBodyComponent& rigidBody)
@@ -1151,6 +1250,11 @@ namespace SceneProjectIODetail
                 entry["collider"] = SerializeCollider(object.GetCollider());
             }
 
+            if (!object.GetInspectorComponentOrder().empty())
+            {
+                entry["inspectorComponentOrder"] = SerializeInspectorComponentOrder(object);
+            }
+
             objects.push_back(std::move(entry));
         }
 
@@ -1340,6 +1444,12 @@ namespace SceneProjectIODetail
             if (!importAssetPath.empty())
             {
                 createdObject.SetImportSource(importAssetPath, importNodeIndex);
+            }
+
+            if (objectValue.contains("inspectorComponentOrder"))
+            {
+                createdObject.SetInspectorComponentOrder(
+                    DeserializeInspectorComponentOrder(objectValue.at("inspectorComponentOrder")));
             }
 
             if (formatVersion >= 3 && objectId != kInvalidSceneObjectId)

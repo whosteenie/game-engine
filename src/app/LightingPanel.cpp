@@ -63,7 +63,20 @@ void LightingPanel::Draw(
         bool showGizmos = scene.GetShowLightGizmos();
         if (ImGui::Checkbox("Show light gizmos", &showGizmos))
         {
-            scene.SetShowLightGizmos(showGizmos);
+            if (editContext.undoStack != nullptr)
+            {
+                PushSceneEditorViewMutation(
+                    *editContext.undoStack,
+                    scene,
+                    "Light gizmos",
+                    [&](Scene& target) {
+                        target.SetShowLightGizmos(showGizmos);
+                    });
+            }
+            else
+            {
+                scene.SetShowLightGizmos(showGizmos);
+            }
         }
 
         ImGui::TextUnformatted("Create and edit lights from the Hierarchy and Inspector.");

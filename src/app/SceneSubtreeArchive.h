@@ -4,6 +4,7 @@
 
 #include "engine/CameraComponent.h"
 #include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
@@ -46,6 +47,7 @@ struct ArchivedSceneObject
     std::optional<CameraComponent> camera;
     std::optional<RigidBodyComponent> rigidBody;
     std::optional<ColliderComponent> collider;
+    std::vector<InspectorComponentType> inspectorComponentOrder;
 };
 
 struct SceneSubtreeArchive

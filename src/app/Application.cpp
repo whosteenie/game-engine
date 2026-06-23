@@ -442,7 +442,8 @@ void Application::Update(double deltaTime)
         m_sceneToolbarPanel->Draw(
             *editorScene,
             m_sceneViewportPanel->ShowPanel(),
-            sceneViewRect);
+            sceneViewRect,
+            editorUndoStack);
 
         if (m_sceneViewportPanel->HasValidRenderTarget())
         {

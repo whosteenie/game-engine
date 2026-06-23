@@ -25,6 +25,12 @@ private:
     mutable std::vector<int> m_materialEditSelection;
     mutable LightEditContext m_lightEditContext;
     mutable std::vector<int> m_lightEditSelection;
+    mutable CameraEditContext m_cameraEditContext;
+    mutable std::vector<int> m_cameraEditSelection;
+    mutable RigidBodyEditContext m_rigidBodyEditContext;
+    mutable std::vector<int> m_rigidBodyEditSelection;
+    mutable ColliderEditContext m_colliderEditContext;
+    mutable std::vector<int> m_colliderEditSelection;
     mutable SceneObjectId m_nameEditObjectId = kInvalidSceneObjectId;
     mutable std::string m_nameEditOldName;
 };

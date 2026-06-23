@@ -11,6 +11,7 @@
 #include "engine/ColliderComponent.h"
 #include "engine/FileDialog.h"
 #include "engine/CameraComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/Light.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
@@ -821,7 +822,7 @@ namespace
         ImGui::PopID();
     }
 
-    void DrawCameraSection(Scene& scene, int objectIndex)
+    void DrawCameraSection(Scene& scene, int objectIndex, CameraEditContext& editContext)
     {
         SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         CameraComponent& camera = object.GetCamera();
@@ -830,44 +831,75 @@ namespace
         {
             scene.MarkDirty();
         }
+        HandleCameraFieldEditEvents(editContext);
 
         if (ImGui::DragFloat("Near", &camera.nearPlane, 0.01f, 0.01f, camera.farPlane - 0.01f))
         {
             scene.MarkDirty();
         }
+        HandleCameraFieldEditEvents(editContext);
 
         if (ImGui::DragFloat("Far", &camera.farPlane, 1.0f, camera.nearPlane + 0.01f, 10000.0f))
         {
             scene.MarkDirty();
         }
+        HandleCameraFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Enabled", &camera.enabled))
         {
             scene.MarkDirty();
         }
+        HandleCameraFieldEditEvents(editContext);
 
         if (ImGui::DragInt("Depth", &camera.depth, 1.0f, -100, 100))
         {
             scene.MarkDirty();
         }
+        HandleCameraFieldEditEvents(editContext);
 
         bool isMain = camera.isMain;
         if (ImGui::Checkbox("Main Camera", &isMain))
         {
             if (isMain != camera.isMain)
             {
-                camera.isMain = isMain;
-                if (camera.isMain)
+                if (editContext.undoStack != nullptr)
                 {
-                    scene.EnsureUniqueMainCamera(objectIndex);
-                }
+                    PushCameraMutation(
+                        *editContext.undoStack,
+                        scene,
+                        editContext.objectIndices,
+                        "Camera",
+                        [](const Scene& targetScene, const std::vector<int>&) {
+                            return CaptureAllObjectCameras(targetScene);
+                        },
+                        [&](Scene& target) {
+                            SceneObject& targetObject =
+                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                            CameraComponent& targetCamera = targetObject.GetCamera();
+                            targetCamera.isMain = isMain;
+                            if (targetCamera.isMain)
+                            {
+                                target.EnsureUniqueMainCamera(objectIndex);
+                            }
 
-                scene.MarkDirty();
+                            target.MarkDirty();
+                        });
+                }
+                else
+                {
+                    camera.isMain = isMain;
+                    if (camera.isMain)
+                    {
+                        scene.EnsureUniqueMainCamera(objectIndex);
+                    }
+
+                    scene.MarkDirty();
+                }
             }
         }
     }
 
-    void DrawRigidBodySection(Scene& scene, int objectIndex)
+    void DrawRigidBodySection(Scene& scene, int objectIndex, RigidBodyEditContext& editContext)
     {
         SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         RigidBodyComponent& rigidBody = object.GetRigidBody();
@@ -877,19 +909,22 @@ namespace
             rigidBody.mass = std::max(rigidBody.mass, 0.001f);
             scene.MarkDirty();
         }
+        HandleRigidBodyFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Use Gravity", &rigidBody.useGravity))
         {
             scene.MarkDirty();
         }
+        HandleRigidBodyFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Is Kinematic", &rigidBody.isKinematic))
         {
             scene.MarkDirty();
         }
+        HandleRigidBodyFieldEditEvents(editContext);
     }
 
-    void DrawColliderSection(Scene& scene, int objectIndex)
+    void DrawColliderSection(Scene& scene, int objectIndex, ColliderEditContext& editContext)
     {
         SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
         ColliderComponent& collider = object.GetCollider();
@@ -897,8 +932,29 @@ namespace
         int shapeIndex = static_cast<int>(collider.shape);
         if (ImGui::Combo("Shape", &shapeIndex, "Box\0Sphere\0", 2))
         {
-            collider.shape = static_cast<ColliderShape>(shapeIndex);
-            scene.MarkDirty();
+            const ColliderShape newShape = static_cast<ColliderShape>(shapeIndex);
+            if (newShape != collider.shape)
+            {
+                if (editContext.undoStack != nullptr)
+                {
+                    PushColliderMutation(
+                        *editContext.undoStack,
+                        scene,
+                        editContext.objectIndices,
+                        "Collider",
+                        [&](Scene& target) {
+                            target.GetObject(static_cast<std::size_t>(objectIndex))
+                                .GetCollider()
+                                .shape = newShape;
+                            target.MarkDirty();
+                        });
+                }
+                else
+                {
+                    collider.shape = newShape;
+                    scene.MarkDirty();
+                }
+            }
         }
 
         if (collider.shape == ColliderShape::Box)
@@ -913,6 +969,7 @@ namespace
                 collider.halfExtents = glm::max(collider.halfExtents, glm::vec3(kMinColliderDimension));
                 scene.MarkDirty();
             }
+            HandleColliderFieldEditEvents(editContext);
         }
         else
         {
@@ -921,33 +978,364 @@ namespace
                 collider.radius = std::max(collider.radius, kMinColliderDimension);
                 scene.MarkDirty();
             }
+            HandleColliderFieldEditEvents(editContext);
         }
 
         if (ImGui::DragFloat3("Offset", &collider.offset.x, 0.01f))
         {
             scene.MarkDirty();
         }
+        HandleColliderFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Is Trigger", &collider.isTrigger))
         {
             scene.MarkDirty();
         }
+        HandleColliderFieldEditEvents(editContext);
     }
 
-    void DrawComponentRemoveContext(Scene& scene, int objectIndex, SceneSystemComponentType type)
+    bool InspectorComponentTypeToSystemType(
+        const InspectorComponentType type,
+        SceneSystemComponentType& outType)
     {
+        switch (type)
+        {
+        case InspectorComponentType::Light:
+            outType = SceneSystemComponentType::Light;
+            return true;
+        case InspectorComponentType::Camera:
+            outType = SceneSystemComponentType::Camera;
+            return true;
+        case InspectorComponentType::RigidBody:
+            outType = SceneSystemComponentType::RigidBody;
+            return true;
+        case InspectorComponentType::Collider:
+            outType = SceneSystemComponentType::Collider;
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void ReorderInspectorComponents(
+        Scene& scene,
+        const int objectIndex,
+        UndoStack* undoStack,
+        const int fromIndex,
+        const int beforeIndex)
+    {
+        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const int slotCount = static_cast<int>(object.GetEffectiveInspectorComponentOrder().size());
+        if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
+        {
+            return;
+        }
+
+        if (undoStack != nullptr)
+        {
+            PushInspectorComponentOrderMutation(
+                *undoStack,
+                scene,
+                objectIndex,
+                "Reorder components",
+                [&](std::vector<InspectorComponentType>& order) {
+                    MoveInspectorComponentBefore(order, fromIndex, beforeIndex);
+                });
+            return;
+        }
+
+        std::vector<InspectorComponentType> order = object.GetEffectiveInspectorComponentOrder();
+        if (MoveInspectorComponentBefore(order, fromIndex, beforeIndex))
+        {
+            object.SetInspectorComponentOrder(std::move(order));
+            scene.MarkDirty();
+        }
+    }
+
+    constexpr const char* kInspectorComponentDragPayload = "INSP_COMP_REORDER";
+    constexpr float kInspectorInsertGapHeight = 4.0f;
+
+    struct InspectorComponentDragPayload
+    {
+        int slotIndex = -1;
+    };
+
+    void DrawInspectorInsertGapLine()
+    {
+        const ImVec2 gapMin = ImGui::GetItemRectMin();
+        const ImVec2 gapMax = ImGui::GetItemRectMax();
+        const float lineY = (gapMin.y + gapMax.y) * 0.5f;
+        ImGui::GetWindowDrawList()->AddLine(
+            ImVec2(gapMin.x, lineY),
+            ImVec2(gapMax.x, lineY),
+            IM_COL32(90, 150, 255, 255),
+            2.0f);
+    }
+
+    void DrawInspectorComponentInsertGap(
+        Scene& scene,
+        const int objectIndex,
+        const int beforeIndex,
+        UndoStack* undoStack)
+    {
+        ImGui::PushID(beforeIndex);
+        ImGui::PushID("InspectorInsertGap");
+        ImGui::InvisibleButton("##InspectorInsertGap", ImVec2(-FLT_MIN, kInspectorInsertGapHeight));
+
+        if (ImGui::BeginDragDropTarget())
+        {
+            const ImGuiPayload* activePayload = ImGui::GetDragDropPayload();
+            if (activePayload != nullptr && activePayload->IsDataType(kInspectorComponentDragPayload))
+            {
+                const auto* dragPayload =
+                    static_cast<const InspectorComponentDragPayload*>(activePayload->Data);
+                const int fromIndex = dragPayload->slotIndex;
+                const int slotCount = static_cast<int>(
+                    scene.GetObject(static_cast<std::size_t>(objectIndex))
+                        .GetEffectiveInspectorComponentOrder()
+                        .size());
+                if (WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
+                {
+                    DrawInspectorInsertGapLine();
+
+                    const ImGuiDragDropFlags acceptFlags =
+                        ImGuiDragDropFlags_AcceptBeforeDelivery | ImGuiDragDropFlags_AcceptNoDrawDefaultRect;
+                    if (const ImGuiPayload* payload =
+                            ImGui::AcceptDragDropPayload(kInspectorComponentDragPayload, acceptFlags))
+                    {
+                        if (payload->IsDelivery())
+                        {
+                            ReorderInspectorComponents(
+                                scene,
+                                objectIndex,
+                                undoStack,
+                                fromIndex,
+                                beforeIndex);
+                        }
+                    }
+                }
+            }
+
+            ImGui::EndDragDropTarget();
+        }
+
+        ImGui::PopID();
+        ImGui::PopID();
+    }
+
+    bool BeginReorderableInspectorSection(
+        const char* label,
+        const InspectorComponentType type,
+        const int slotIndex,
+        const int slotCount,
+        Scene& scene,
+        const int objectIndex,
+        UndoStack* undoStack)
+    {
+        ImGui::PushID(slotIndex);
+        ImGui::PushID(static_cast<int>(type));
+
+        const bool open = ImGui::CollapsingHeader(label, ImGuiTreeNodeFlags_DefaultOpen);
+
+        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
+        {
+            InspectorComponentDragPayload dragPayload{slotIndex};
+            ImGui::SetDragDropPayload(
+                kInspectorComponentDragPayload,
+                &dragPayload,
+                sizeof(dragPayload));
+            ImGui::TextUnformatted(label);
+            ImGui::EndDragDropSource();
+        }
+
         if (ImGui::BeginPopupContextItem())
         {
-            if (ImGui::MenuItem("Remove Component"))
+            if (slotIndex > 0 && ImGui::MenuItem("Move Up"))
             {
-                RemoveSceneSystemComponent(scene, objectIndex, type);
+                ReorderInspectorComponents(scene, objectIndex, undoStack, slotIndex, slotIndex - 1);
+            }
+
+            if (slotIndex + 1 < slotCount && ImGui::MenuItem("Move Down"))
+            {
+                ReorderInspectorComponents(scene, objectIndex, undoStack, slotIndex, slotIndex + 2);
+            }
+
+            SceneSystemComponentType systemType = SceneSystemComponentType::Light;
+            if (InspectorComponentTypeToSystemType(type, systemType)
+                && ImGui::MenuItem("Remove Component"))
+            {
+                const std::string commandName =
+                    std::string("Remove ") + GetSceneSystemComponentLabel(systemType);
+                if (undoStack != nullptr)
+                {
+                    PushSystemComponentMutation(
+                        *undoStack,
+                        scene,
+                        objectIndex,
+                        commandName,
+                        [&](Scene& target) {
+                            RemoveSceneSystemComponent(target, objectIndex, systemType);
+                        });
+                }
+                else
+                {
+                    RemoveSceneSystemComponent(scene, objectIndex, systemType);
+                }
             }
 
             ImGui::EndPopup();
         }
+
+        ImGui::PopID();
+        ImGui::PopID();
+        return open;
     }
 
-    void DrawAddComponentFooter(Scene& scene, int objectIndex)
+    void DrawObjectFlagsSection(
+        Scene& scene,
+        const int objectIndex,
+        TransformEditContext& editContext)
+    {
+        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        if (!selectedObject.IsRenderable())
+        {
+            ImGui::TextUnformatted("Empty object (transform container only).");
+            return;
+        }
+
+        bool castShadow = selectedObject.CastsShadow();
+        if (ImGui::Checkbox("Cast shadow", &castShadow))
+        {
+            if (editContext.undoStack != nullptr)
+            {
+                PushShadowFlagsMutation(
+                    *editContext.undoStack,
+                    scene,
+                    {objectIndex},
+                    "Cast shadow",
+                    [&](Scene& target) {
+                        target.GetObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadow);
+                        target.MarkDirty();
+                    });
+            }
+            else
+            {
+                selectedObject.SetCastShadow(castShadow);
+                scene.MarkDirty();
+            }
+        }
+
+        bool receiveShadow = selectedObject.ReceivesShadow();
+        if (ImGui::Checkbox("Receive shadow", &receiveShadow))
+        {
+            if (editContext.undoStack != nullptr)
+            {
+                PushShadowFlagsMutation(
+                    *editContext.undoStack,
+                    scene,
+                    {objectIndex},
+                    "Receive shadow",
+                    [&](Scene& target) {
+                        target.GetObject(static_cast<std::size_t>(objectIndex))
+                            .SetReceiveShadow(receiveShadow);
+                        target.MarkDirty();
+                    });
+            }
+            else
+            {
+                selectedObject.SetReceiveShadow(receiveShadow);
+                scene.MarkDirty();
+            }
+        }
+    }
+
+    void DrawOrderedInspectorComponents(
+        Scene& scene,
+        const int selectedIndex,
+        TransformEditContext& editContext,
+        MaterialEditContext& materialEditContext,
+        LightEditContext& lightEditContext,
+        CameraEditContext& cameraEditContext,
+        RigidBodyEditContext& rigidBodyEditContext,
+        ColliderEditContext& colliderEditContext)
+    {
+        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        const std::vector<InspectorComponentType> componentOrder =
+            selectedObject.GetEffectiveInspectorComponentOrder();
+        const int slotCount = static_cast<int>(componentOrder.size());
+
+        for (int slotIndex = 0; slotIndex < slotCount; ++slotIndex)
+        {
+            const InspectorComponentType componentType = componentOrder[static_cast<std::size_t>(slotIndex)];
+            if (!SceneObjectHasInspectorComponent(selectedObject, componentType))
+            {
+                continue;
+            }
+
+            DrawInspectorComponentInsertGap(
+                scene,
+                selectedIndex,
+                slotIndex,
+                editContext.undoStack);
+
+            const char* const label = GetInspectorComponentLabel(componentType);
+            const bool sectionOpen = BeginReorderableInspectorSection(
+                label,
+                componentType,
+                slotIndex,
+                slotCount,
+                scene,
+                selectedIndex,
+                editContext.undoStack);
+
+            if (!sectionOpen)
+            {
+                continue;
+            }
+
+            switch (componentType)
+            {
+            case InspectorComponentType::Material:
+                ImGui::PushID("MaterialSection");
+                DrawMaterialSection(selectedObject.GetMaterial(), scene, materialEditContext);
+                ImGui::PopID();
+                break;
+            case InspectorComponentType::ObjectFlags:
+                ImGui::PushID("ObjectFlagsSection");
+                DrawObjectFlagsSection(scene, selectedIndex, editContext);
+                ImGui::PopID();
+                break;
+            case InspectorComponentType::Light:
+                ImGui::PushID("LightSection");
+                DrawLightSection(scene, selectedIndex, lightEditContext);
+                ImGui::PopID();
+                break;
+            case InspectorComponentType::Camera:
+                ImGui::PushID("CameraSection");
+                DrawCameraSection(scene, selectedIndex, cameraEditContext);
+                ImGui::PopID();
+                break;
+            case InspectorComponentType::RigidBody:
+                ImGui::PushID("RigidBodySection");
+                DrawRigidBodySection(scene, selectedIndex, rigidBodyEditContext);
+                ImGui::PopID();
+                break;
+            case InspectorComponentType::Collider:
+                ImGui::PushID("ColliderSection");
+                DrawColliderSection(scene, selectedIndex, colliderEditContext);
+                ImGui::PopID();
+                break;
+            }
+        }
+
+        DrawInspectorComponentInsertGap(
+            scene,
+            selectedIndex,
+            slotCount,
+            editContext.undoStack);
+    }
+
+    void DrawAddComponentFooter(Scene& scene, int objectIndex, UndoStack* undoStack)
     {
         std::vector<SceneSystemComponentType> addableComponents;
         GetAddableSceneSystemComponents(scene.GetObject(static_cast<std::size_t>(objectIndex)), addableComponents);
@@ -968,7 +1356,23 @@ namespace
             {
                 if (ImGui::MenuItem(GetSceneSystemComponentLabel(type)))
                 {
-                    AddSceneSystemComponent(scene, objectIndex, type);
+                    const std::string commandName =
+                        std::string("Add ") + GetSceneSystemComponentLabel(type);
+                    if (undoStack != nullptr)
+                    {
+                        PushSystemComponentMutation(
+                            *undoStack,
+                            scene,
+                            objectIndex,
+                            commandName,
+                            [&](Scene& target) {
+                                AddSceneSystemComponent(target, objectIndex, type);
+                            });
+                    }
+                    else
+                    {
+                        AddSceneSystemComponent(scene, objectIndex, type);
+                    }
                 }
             }
 
@@ -1096,6 +1500,9 @@ namespace
         TransformEditContext& editContext,
         MaterialEditContext& materialEditContext,
         LightEditContext& lightEditContext,
+        CameraEditContext& cameraEditContext,
+        RigidBodyEditContext& rigidBodyEditContext,
+        ColliderEditContext& colliderEditContext,
         SceneObjectId& nameEditObjectId,
         std::string& nameEditOldName)
     {
@@ -1168,120 +1575,17 @@ namespace
             DrawTransformSection(selectedObject, scene, editContext);
         }
 
-        if (selectedObject.HasLight())
-        {
-            const bool lightOpen = ImGui::CollapsingHeader("Light", ImGuiTreeNodeFlags_DefaultOpen);
-            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Light);
-            if (lightOpen)
-            {
-                ImGui::PushID("LightSection");
-                DrawLightSection(scene, selectedIndex, lightEditContext);
-                ImGui::PopID();
-            }
-        }
+        DrawOrderedInspectorComponents(
+            scene,
+            selectedIndex,
+            editContext,
+            materialEditContext,
+            lightEditContext,
+            cameraEditContext,
+            rigidBodyEditContext,
+            colliderEditContext);
 
-        if (!selectedObject.HasLight() && !selectedObject.HasCamera()
-            && !selectedObject.HasRigidBody() && !selectedObject.HasCollider()
-            && ImGui::CollapsingHeader("Object", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            if (selectedObject.IsRenderable())
-            {
-                bool castShadow = selectedObject.CastsShadow();
-                if (ImGui::Checkbox("Cast shadow", &castShadow))
-                {
-                    if (editContext.undoStack != nullptr)
-                    {
-                        PushShadowFlagsMutation(
-                            *editContext.undoStack,
-                            scene,
-                            {selectedIndex},
-                            "Cast shadow",
-                            [&](Scene& target) {
-                                target.GetObject(static_cast<std::size_t>(selectedIndex))
-                                    .SetCastShadow(castShadow);
-                                target.MarkDirty();
-                            });
-                    }
-                    else
-                    {
-                        selectedObject.SetCastShadow(castShadow);
-                        scene.MarkDirty();
-                    }
-                }
-
-                bool receiveShadow = selectedObject.ReceivesShadow();
-                if (ImGui::Checkbox("Receive shadow", &receiveShadow))
-                {
-                    if (editContext.undoStack != nullptr)
-                    {
-                        PushShadowFlagsMutation(
-                            *editContext.undoStack,
-                            scene,
-                            {selectedIndex},
-                            "Receive shadow",
-                            [&](Scene& target) {
-                                target.GetObject(static_cast<std::size_t>(selectedIndex))
-                                    .SetReceiveShadow(receiveShadow);
-                                target.MarkDirty();
-                            });
-                    }
-                    else
-                    {
-                        selectedObject.SetReceiveShadow(receiveShadow);
-                        scene.MarkDirty();
-                    }
-                }
-            }
-            else
-            {
-                ImGui::TextUnformatted("Empty object (transform container only).");
-            }
-        }
-
-        if (selectedObject.HasMaterial() && ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen))
-        {
-            ImGui::PushID(selectedIndex);
-            DrawMaterialSection(selectedObject.GetMaterial(), scene, materialEditContext);
-            ImGui::PopID();
-        }
-
-        if (selectedObject.HasCamera())
-        {
-            const bool cameraOpen = ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen);
-            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Camera);
-            if (cameraOpen)
-            {
-                ImGui::PushID("CameraSection");
-                DrawCameraSection(scene, selectedIndex);
-                ImGui::PopID();
-            }
-        }
-
-        if (selectedObject.HasRigidBody())
-        {
-            const bool rigidBodyOpen = ImGui::CollapsingHeader("Rigid Body", ImGuiTreeNodeFlags_DefaultOpen);
-            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::RigidBody);
-            if (rigidBodyOpen)
-            {
-                ImGui::PushID("RigidBodySection");
-                DrawRigidBodySection(scene, selectedIndex);
-                ImGui::PopID();
-            }
-        }
-
-        if (selectedObject.HasCollider())
-        {
-            const bool colliderOpen = ImGui::CollapsingHeader("Collider", ImGuiTreeNodeFlags_DefaultOpen);
-            DrawComponentRemoveContext(scene, selectedIndex, SceneSystemComponentType::Collider);
-            if (colliderOpen)
-            {
-                ImGui::PushID("ColliderSection");
-                DrawColliderSection(scene, selectedIndex);
-                ImGui::PopID();
-            }
-        }
-
-        DrawAddComponentFooter(scene, selectedIndex);
+        DrawAddComponentFooter(scene, selectedIndex, editContext.undoStack);
     }
 
     void DrawMultiObjectInspector(
@@ -1395,6 +1699,27 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
         m_lightEditSelection = selectedIndices;
     }
 
+    if (selectedIndices != m_cameraEditSelection)
+    {
+        m_cameraEditContext.sessionOpen = false;
+        m_cameraEditContext.pendingBefore.clear();
+        m_cameraEditSelection = selectedIndices;
+    }
+
+    if (selectedIndices != m_rigidBodyEditSelection)
+    {
+        m_rigidBodyEditContext.sessionOpen = false;
+        m_rigidBodyEditContext.pendingBefore.clear();
+        m_rigidBodyEditSelection = selectedIndices;
+    }
+
+    if (selectedIndices != m_colliderEditSelection)
+    {
+        m_colliderEditContext.sessionOpen = false;
+        m_colliderEditContext.pendingBefore.clear();
+        m_colliderEditSelection = selectedIndices;
+    }
+
     if (selectedIndices.size() == 1
         && selectedIndices.front() >= 0
         && selectedIndices.front() < static_cast<int>(objects.size())
@@ -1425,6 +1750,21 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
     m_lightEditContext.objectIndices = selectedIndices;
     m_lightEditContext.commandName = "Light";
 
+    m_cameraEditContext.undoStack = undoStack;
+    m_cameraEditContext.scene = &scene;
+    m_cameraEditContext.objectIndices = selectedIndices;
+    m_cameraEditContext.commandName = "Camera";
+
+    m_rigidBodyEditContext.undoStack = undoStack;
+    m_rigidBodyEditContext.scene = &scene;
+    m_rigidBodyEditContext.objectIndices = selectedIndices;
+    m_rigidBodyEditContext.commandName = "Rigid Body";
+
+    m_colliderEditContext.undoStack = undoStack;
+    m_colliderEditContext.scene = &scene;
+    m_colliderEditContext.objectIndices = selectedIndices;
+    m_colliderEditContext.commandName = "Collider";
+
     if (selectedIndices.size() == 1)
     {
         DrawSingleObjectInspector(
@@ -1433,6 +1773,9 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
             editContext,
             m_materialEditContext,
             m_lightEditContext,
+            m_cameraEditContext,
+            m_rigidBodyEditContext,
+            m_colliderEditContext,
             m_nameEditObjectId,
             m_nameEditOldName);
     }

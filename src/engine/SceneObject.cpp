@@ -1,5 +1,6 @@
 #include "engine/SceneObject.h"
 
+#include "engine/InspectorComponentOrder.h"
 #include "engine/Mesh.h"
 
 #include <array>
@@ -354,4 +355,27 @@ void SceneObject::ClearImportSource()
 {
     m_importAssetPath.clear();
     m_importNodeIndex = -1;
+}
+
+const std::vector<InspectorComponentType>& SceneObject::GetInspectorComponentOrder() const
+{
+    return m_inspectorComponentOrder;
+}
+
+std::vector<InspectorComponentType> SceneObject::GetEffectiveInspectorComponentOrder() const
+{
+    std::vector<InspectorComponentType> order = m_inspectorComponentOrder;
+    if (order.empty())
+    {
+        order = BuildDefaultInspectorComponentOrder(*this);
+    }
+
+    NormalizeInspectorComponentOrder(order, *this);
+    return order;
+}
+
+void SceneObject::SetInspectorComponentOrder(std::vector<InspectorComponentType> order)
+{
+    NormalizeInspectorComponentOrder(order, *this);
+    m_inspectorComponentOrder = std::move(order);
 }

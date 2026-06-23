@@ -279,6 +279,7 @@ add_executable(game-engine
 
     src/engine/SceneLighting.cpp
 
+    src/engine/InspectorComponentOrder.cpp
     src/engine/SceneObject.cpp
 
     src/engine/Transform.cpp

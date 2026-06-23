@@ -7,8 +7,12 @@
 #include "app/SceneSubtreeArchive.h"
 #include "engine/Mesh.h"
 #include "app/UndoStack.h"
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/SceneObject.h"
 #include "engine/SceneObjectId.h"
 
@@ -687,6 +691,94 @@ ObjectLightMap CaptureAllObjectLights(const Scene& scene)
     return lights;
 }
 
+ObjectCameraMap CaptureObjectCameras(const Scene& scene, const std::vector<int>& objectIndices)
+{
+    ObjectCameraMap cameras;
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+
+    for (int objectIndex : objectIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.HasCamera())
+        {
+            continue;
+        }
+
+        cameras.emplace(object.GetId(), object.GetCamera());
+    }
+
+    return cameras;
+}
+
+ObjectCameraMap CaptureAllObjectCameras(const Scene& scene)
+{
+    ObjectCameraMap cameras;
+    for (const SceneObject& object : scene.GetObjects())
+    {
+        if (!object.HasCamera())
+        {
+            continue;
+        }
+
+        cameras.emplace(object.GetId(), object.GetCamera());
+    }
+
+    return cameras;
+}
+
+ObjectRigidBodyMap CaptureObjectRigidBodies(const Scene& scene, const std::vector<int>& objectIndices)
+{
+    ObjectRigidBodyMap rigidBodies;
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+
+    for (int objectIndex : objectIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.HasRigidBody())
+        {
+            continue;
+        }
+
+        rigidBodies.emplace(object.GetId(), object.GetRigidBody());
+    }
+
+    return rigidBodies;
+}
+
+ObjectColliderMap CaptureObjectColliders(const Scene& scene, const std::vector<int>& objectIndices)
+{
+    ObjectColliderMap colliders;
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+
+    for (int objectIndex : objectIndices)
+    {
+        if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+        {
+            continue;
+        }
+
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.HasCollider())
+        {
+            continue;
+        }
+
+        colliders.emplace(object.GetId(), object.GetCollider());
+    }
+
+    return colliders;
+}
+
 ObjectShadowFlagsMap CaptureObjectShadowFlags(const Scene& scene, const std::vector<int>& objectIndices)
 {
     ObjectShadowFlagsMap flags;
@@ -784,6 +876,92 @@ bool AreObjectLightMapsEqual(const ObjectLightMap& left, const ObjectLightMap& r
     return true;
 }
 
+bool AreObjectCameraMapsEqual(const ObjectCameraMap& left, const ObjectCameraMap& right)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+
+    for (const auto& [objectId, camera] : left)
+    {
+        const auto iterator = right.find(objectId);
+        if (iterator == right.end())
+        {
+            return false;
+        }
+
+        const CameraComponent& other = iterator->second;
+        if (std::fabs(camera.fovDegrees - other.fovDegrees) > 1e-4f
+            || std::fabs(camera.nearPlane - other.nearPlane) > 1e-4f
+            || std::fabs(camera.farPlane - other.farPlane) > 1e-4f
+            || camera.enabled != other.enabled
+            || camera.depth != other.depth
+            || camera.isMain != other.isMain)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AreObjectRigidBodyMapsEqual(const ObjectRigidBodyMap& left, const ObjectRigidBodyMap& right)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+
+    for (const auto& [objectId, rigidBody] : left)
+    {
+        const auto iterator = right.find(objectId);
+        if (iterator == right.end())
+        {
+            return false;
+        }
+
+        const RigidBodyComponent& other = iterator->second;
+        if (std::fabs(rigidBody.mass - other.mass) > 1e-4f
+            || rigidBody.useGravity != other.useGravity
+            || rigidBody.isKinematic != other.isKinematic)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AreObjectColliderMapsEqual(const ObjectColliderMap& left, const ObjectColliderMap& right)
+{
+    if (left.size() != right.size())
+    {
+        return false;
+    }
+
+    for (const auto& [objectId, collider] : left)
+    {
+        const auto iterator = right.find(objectId);
+        if (iterator == right.end())
+        {
+            return false;
+        }
+
+        const ColliderComponent& other = iterator->second;
+        if (collider.shape != other.shape
+            || collider.offset != other.offset
+            || collider.halfExtents != other.halfExtents
+            || std::fabs(collider.radius - other.radius) > 1e-4f
+            || collider.isTrigger != other.isTrigger)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool AreObjectShadowFlagsMapsEqual(const ObjectShadowFlagsMap& left, const ObjectShadowFlagsMap& right)
 {
     if (left.size() != right.size())
@@ -843,6 +1021,65 @@ void ApplyObjectLight(Scene& scene, SceneObjectId objectId, const LightComponent
     }
 
     object.SetLight(light);
+    scene.MarkDirty();
+}
+
+void ApplyObjectCamera(Scene& scene, SceneObjectId objectId, const CameraComponent& camera)
+{
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    if (objectIndex < 0)
+    {
+        return;
+    }
+
+    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    if (!object.HasCamera())
+    {
+        return;
+    }
+
+    object.SetCamera(camera);
+    if (camera.isMain)
+    {
+        scene.EnsureUniqueMainCamera(objectIndex);
+    }
+
+    scene.MarkDirty();
+}
+
+void ApplyObjectRigidBody(Scene& scene, SceneObjectId objectId, const RigidBodyComponent& rigidBody)
+{
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    if (objectIndex < 0)
+    {
+        return;
+    }
+
+    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    if (!object.HasRigidBody())
+    {
+        return;
+    }
+
+    object.SetRigidBody(rigidBody);
+    scene.MarkDirty();
+}
+
+void ApplyObjectCollider(Scene& scene, SceneObjectId objectId, const ColliderComponent& collider)
+{
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    if (objectIndex < 0)
+    {
+        return;
+    }
+
+    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    if (!object.HasCollider())
+    {
+        return;
+    }
+
+    object.SetCollider(collider);
     scene.MarkDirty();
 }
 
@@ -1003,6 +1240,499 @@ void HandleLightFieldEditEvents(LightEditContext& context)
         },
         AreObjectLightMapsEqual,
         ApplyObjectLight);
+}
+
+void PushCameraMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<ObjectCameraMap(const Scene&, const std::vector<int>&)>& capture,
+    const std::function<void(Scene&)>& mutate)
+{
+    PushPropertyMutation<CameraComponent>(
+        undoStack,
+        scene,
+        objectIndices,
+        commandName,
+        capture,
+        AreObjectCameraMapsEqual,
+        ApplyObjectCamera,
+        mutate);
+}
+
+void PushRigidBodyMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate)
+{
+    PushPropertyMutation<RigidBodyComponent>(
+        undoStack,
+        scene,
+        objectIndices,
+        commandName,
+        CaptureObjectRigidBodies,
+        AreObjectRigidBodyMapsEqual,
+        ApplyObjectRigidBody,
+        mutate);
+}
+
+void PushColliderMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate)
+{
+    PushPropertyMutation<ColliderComponent>(
+        undoStack,
+        scene,
+        objectIndices,
+        commandName,
+        CaptureObjectColliders,
+        AreObjectColliderMapsEqual,
+        ApplyObjectCollider,
+        mutate);
+}
+
+void HandleCameraFieldEditEvents(CameraEditContext& context)
+{
+    HandlePropertyFieldEditEvents<CameraComponent>(
+        context,
+        CaptureObjectCameras,
+        AreObjectCameraMapsEqual,
+        ApplyObjectCamera);
+}
+
+void HandleRigidBodyFieldEditEvents(RigidBodyEditContext& context)
+{
+    HandlePropertyFieldEditEvents<RigidBodyComponent>(
+        context,
+        CaptureObjectRigidBodies,
+        AreObjectRigidBodyMapsEqual,
+        ApplyObjectRigidBody);
+}
+
+void HandleColliderFieldEditEvents(ColliderEditContext& context)
+{
+    HandlePropertyFieldEditEvents<ColliderComponent>(
+        context,
+        CaptureObjectColliders,
+        AreObjectColliderMapsEqual,
+        ApplyObjectCollider);
+}
+
+bool AreObjectSystemComponentStatesEqual(
+    const ObjectSystemComponentState& left,
+    const ObjectSystemComponentState& right)
+{
+    if (left.light.has_value() != right.light.has_value())
+    {
+        return false;
+    }
+
+    if (left.light.has_value() && right.light.has_value())
+    {
+        const LightComponent& a = *left.light;
+        const LightComponent& b = *right.light;
+        if (a.type != b.type
+            || a.color != b.color
+            || std::fabs(a.intensity - b.intensity) > 1e-4f
+            || std::fabs(a.constantAttenuation - b.constantAttenuation) > 1e-4f
+            || std::fabs(a.linearAttenuation - b.linearAttenuation) > 1e-4f
+            || std::fabs(a.quadraticAttenuation - b.quadraticAttenuation) > 1e-4f
+            || std::fabs(a.range - b.range) > 1e-4f
+            || std::fabs(a.innerCutoffDegrees - b.innerCutoffDegrees) > 1e-4f
+            || std::fabs(a.outerCutoffDegrees - b.outerCutoffDegrees) > 1e-4f
+            || a.castsShadow != b.castsShadow)
+        {
+            return false;
+        }
+    }
+
+    if (left.camera.has_value() != right.camera.has_value())
+    {
+        return false;
+    }
+
+    if (left.camera.has_value() && right.camera.has_value())
+    {
+        const CameraComponent& a = *left.camera;
+        const CameraComponent& b = *right.camera;
+        if (std::fabs(a.fovDegrees - b.fovDegrees) > 1e-4f
+            || std::fabs(a.nearPlane - b.nearPlane) > 1e-4f
+            || std::fabs(a.farPlane - b.farPlane) > 1e-4f
+            || a.enabled != b.enabled
+            || a.depth != b.depth
+            || a.isMain != b.isMain)
+        {
+            return false;
+        }
+    }
+
+    if (left.rigidBody.has_value() != right.rigidBody.has_value())
+    {
+        return false;
+    }
+
+    if (left.rigidBody.has_value() && right.rigidBody.has_value())
+    {
+        const RigidBodyComponent& a = *left.rigidBody;
+        const RigidBodyComponent& b = *right.rigidBody;
+        if (std::fabs(a.mass - b.mass) > 1e-4f
+            || a.useGravity != b.useGravity
+            || a.isKinematic != b.isKinematic)
+        {
+            return false;
+        }
+    }
+
+    if (left.collider.has_value() != right.collider.has_value())
+    {
+        return false;
+    }
+
+    if (left.collider.has_value() && right.collider.has_value())
+    {
+        const ColliderComponent& a = *left.collider;
+        const ColliderComponent& b = *right.collider;
+        if (a.shape != b.shape
+            || a.offset != b.offset
+            || a.halfExtents != b.halfExtents
+            || std::fabs(a.radius - b.radius) > 1e-4f
+            || a.isTrigger != b.isTrigger)
+        {
+            return false;
+        }
+    }
+
+    return AreInspectorComponentOrdersEqual(left.inspectorOrder, right.inspectorOrder);
+}
+
+ObjectSystemComponentState CaptureObjectSystemComponentState(const SceneObject& object)
+{
+    ObjectSystemComponentState state;
+    if (object.HasLight())
+    {
+        state.light = object.GetLight();
+    }
+
+    if (object.HasCamera())
+    {
+        state.camera = object.GetCamera();
+    }
+
+    if (object.HasRigidBody())
+    {
+        state.rigidBody = object.GetRigidBody();
+    }
+
+    if (object.HasCollider())
+    {
+        state.collider = object.GetCollider();
+    }
+
+    state.inspectorOrder = object.GetInspectorComponentOrder();
+    if (state.inspectorOrder.empty())
+    {
+        state.inspectorOrder = object.GetEffectiveInspectorComponentOrder();
+    }
+
+    return state;
+}
+
+void ApplyObjectSystemComponentState(
+    Scene& scene,
+    SceneObjectId objectId,
+    const ObjectSystemComponentState& state)
+{
+    const int objectIndex = scene.FindObjectIndex(objectId);
+    if (objectIndex < 0)
+    {
+        return;
+    }
+
+    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+
+    if (state.light.has_value())
+    {
+        object.SetLight(*state.light);
+    }
+    else
+    {
+        object.ClearLight();
+    }
+
+    if (state.camera.has_value())
+    {
+        object.SetCamera(*state.camera);
+        if (state.camera->isMain)
+        {
+            scene.EnsureUniqueMainCamera(objectIndex);
+        }
+    }
+    else
+    {
+        object.ClearCamera();
+    }
+
+    if (state.rigidBody.has_value())
+    {
+        object.SetRigidBody(*state.rigidBody);
+    }
+    else
+    {
+        object.ClearRigidBody();
+    }
+
+    if (state.collider.has_value())
+    {
+        object.SetCollider(*state.collider);
+    }
+    else
+    {
+        object.ClearCollider();
+    }
+
+    object.SetInspectorComponentOrder(state.inspectorOrder);
+
+    scene.MarkDirty();
+}
+
+class SetObjectSystemComponentStateCommand final : public IUndoCommand
+{
+public:
+    SetObjectSystemComponentStateCommand(
+        SceneObjectId objectId,
+        ObjectSystemComponentState before,
+        ObjectSystemComponentState after,
+        std::string name)
+        : m_objectId(objectId),
+          m_before(std::move(before)),
+          m_after(std::move(after)),
+          m_name(std::move(name))
+    {
+    }
+
+    void Undo(UndoContext& context) override
+    {
+        ApplyObjectSystemComponentState(context.scene, m_objectId, m_before);
+    }
+
+    void Redo(UndoContext& context) override
+    {
+        ApplyObjectSystemComponentState(context.scene, m_objectId, m_after);
+    }
+
+    const char* GetName() const override
+    {
+        return m_name.c_str();
+    }
+
+private:
+    SceneObjectId m_objectId = kInvalidSceneObjectId;
+    ObjectSystemComponentState m_before;
+    ObjectSystemComponentState m_after;
+    std::string m_name;
+};
+
+void PushSystemComponentMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    int objectIndex,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate)
+{
+    if (!mutate || objectIndex < 0 || objectIndex >= static_cast<int>(scene.GetObjects().size()))
+    {
+        return;
+    }
+
+    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const ObjectSystemComponentState before = CaptureObjectSystemComponentState(object);
+    mutate(scene);
+    const SceneObject& updatedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const ObjectSystemComponentState after = CaptureObjectSystemComponentState(updatedObject);
+    if (AreObjectSystemComponentStatesEqual(before, after))
+    {
+        return;
+    }
+
+    undoStack.Push(std::make_unique<SetObjectSystemComponentStateCommand>(
+        object.GetId(),
+        before,
+        after,
+        commandName));
+}
+
+class SetInspectorComponentOrderCommand final : public IUndoCommand
+{
+public:
+    SetInspectorComponentOrderCommand(
+        SceneObjectId objectId,
+        std::vector<InspectorComponentType> before,
+        std::vector<InspectorComponentType> after,
+        std::string name)
+        : m_objectId(objectId),
+          m_before(std::move(before)),
+          m_after(std::move(after)),
+          m_name(std::move(name))
+    {
+    }
+
+    void Undo(UndoContext& context) override
+    {
+        ApplyOrder(context);
+    }
+
+    void Redo(UndoContext& context) override
+    {
+        ApplyOrder(context, true);
+    }
+
+    const char* GetName() const override
+    {
+        return m_name.c_str();
+    }
+
+private:
+    void ApplyOrder(UndoContext& context, const bool useAfter = false)
+    {
+        const int objectIndex = context.scene.FindObjectIndex(m_objectId);
+        if (objectIndex < 0)
+        {
+            return;
+        }
+
+        SceneObject& object = context.scene.GetObject(static_cast<std::size_t>(objectIndex));
+        object.SetInspectorComponentOrder(useAfter ? m_after : m_before);
+        context.scene.MarkDirty();
+    }
+
+    SceneObjectId m_objectId = kInvalidSceneObjectId;
+    std::vector<InspectorComponentType> m_before;
+    std::vector<InspectorComponentType> m_after;
+    std::string m_name;
+};
+
+void PushInspectorComponentOrderMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const int objectIndex,
+    const std::string& commandName,
+    const std::function<void(std::vector<InspectorComponentType>&)>& mutateOrder)
+{
+    if (!mutateOrder || objectIndex < 0 || objectIndex >= static_cast<int>(scene.GetObjects().size()))
+    {
+        return;
+    }
+
+    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    std::vector<InspectorComponentType> before = object.GetEffectiveInspectorComponentOrder();
+    std::vector<InspectorComponentType> after = before;
+    mutateOrder(after);
+    NormalizeInspectorComponentOrder(after, object);
+    if (AreInspectorComponentOrdersEqual(before, after))
+    {
+        return;
+    }
+
+    object.SetInspectorComponentOrder(after);
+    scene.MarkDirty();
+
+    undoStack.Push(std::make_unique<SetInspectorComponentOrderCommand>(
+        object.GetId(),
+        std::move(before),
+        std::move(after),
+        commandName));
+}
+
+bool AreSceneEditorViewSettingsEqual(
+    const SceneEditorViewSettings& left,
+    const SceneEditorViewSettings& right)
+{
+    return left.showGrid == right.showGrid && left.showLightGizmos == right.showLightGizmos;
+}
+
+SceneEditorViewSettings CaptureSceneEditorViewSettings(const Scene& scene)
+{
+  return SceneEditorViewSettings{scene.GetShowGrid(), scene.GetShowLightGizmos()};
+}
+
+void ApplySceneEditorViewSettings(Scene& scene, const SceneEditorViewSettings& settings)
+{
+    scene.SetShowGrid(settings.showGrid);
+    scene.SetShowLightGizmos(settings.showLightGizmos);
+}
+
+class SceneEditorViewSettingsCommand final : public IUndoCommand
+{
+public:
+    SceneEditorViewSettingsCommand(
+        SceneEditorViewSettings before,
+        SceneEditorViewSettings after,
+        std::string name)
+        : m_before(before),
+          m_after(std::move(after)),
+          m_name(std::move(name))
+    {
+    }
+
+    void Undo(UndoContext& context) override
+    {
+        ApplySceneEditorViewSettings(context.scene, m_before);
+    }
+
+    void Redo(UndoContext& context) override
+    {
+        ApplySceneEditorViewSettings(context.scene, m_after);
+    }
+
+    const char* GetName() const override
+    {
+        return m_name.c_str();
+    }
+
+    bool TryMerge(const IUndoCommand& next) override
+    {
+        const auto* other = dynamic_cast<const SceneEditorViewSettingsCommand*>(&next);
+        if (other == nullptr)
+        {
+            return false;
+        }
+
+        m_after = other->m_after;
+        return true;
+    }
+
+private:
+    SceneEditorViewSettings m_before;
+    SceneEditorViewSettings m_after;
+    std::string m_name;
+};
+
+void PushSceneEditorViewMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate)
+{
+    if (!mutate)
+    {
+        return;
+    }
+
+    const SceneEditorViewSettings before = CaptureSceneEditorViewSettings(scene);
+    mutate(scene);
+    const SceneEditorViewSettings after = CaptureSceneEditorViewSettings(scene);
+    if (AreSceneEditorViewSettingsEqual(before, after))
+    {
+        return;
+    }
+
+    undoStack.Push(std::make_unique<SceneEditorViewSettingsCommand>(before, after, commandName));
 }
 
 nlohmann::json CaptureRendererSettings(const Scene& scene)

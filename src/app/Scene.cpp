@@ -186,6 +186,8 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
                 sourceObject.GetImportAssetPath(),
                 sourceObject.GetImportNodeIndex());
         }
+
+        clonedObject.SetInspectorComponentOrder(sourceObject.GetInspectorComponentOrder());
     }
 
     clone->m_selection = source.m_selection;

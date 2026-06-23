@@ -4,8 +4,12 @@
 #include "app/SceneSubtreeArchive.h"
 #include "app/SceneDocument.h"
 
+#include "engine/CameraComponent.h"
+#include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/Material.h"
+#include "engine/RigidBodyComponent.h"
 #include "engine/SceneObjectId.h"
 #include "engine/Transform.h"
 
@@ -14,6 +18,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -226,19 +231,82 @@ struct ObjectShadowFlags
 
 using ObjectMaterialMap = std::unordered_map<SceneObjectId, std::unique_ptr<Material>>;
 using ObjectLightMap = std::unordered_map<SceneObjectId, LightComponent>;
+using ObjectCameraMap = std::unordered_map<SceneObjectId, CameraComponent>;
+using ObjectRigidBodyMap = std::unordered_map<SceneObjectId, RigidBodyComponent>;
+using ObjectColliderMap = std::unordered_map<SceneObjectId, ColliderComponent>;
 using ObjectShadowFlagsMap = std::unordered_map<SceneObjectId, ObjectShadowFlags>;
+
+struct ObjectSystemComponentState
+{
+    std::optional<LightComponent> light;
+    std::optional<CameraComponent> camera;
+    std::optional<RigidBodyComponent> rigidBody;
+    std::optional<ColliderComponent> collider;
+    std::vector<InspectorComponentType> inspectorOrder;
+};
+
+bool AreObjectSystemComponentStatesEqual(
+    const ObjectSystemComponentState& left,
+    const ObjectSystemComponentState& right);
+ObjectSystemComponentState CaptureObjectSystemComponentState(const class SceneObject& object);
+void ApplyObjectSystemComponentState(
+    Scene& scene,
+    SceneObjectId objectId,
+    const ObjectSystemComponentState& state);
+
+void PushSystemComponentMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    int objectIndex,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate);
+
+void PushInspectorComponentOrderMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    int objectIndex,
+    const std::string& commandName,
+    const std::function<void(std::vector<InspectorComponentType>&)>& mutateOrder);
+
+struct SceneEditorViewSettings
+{
+    bool showGrid = true;
+    bool showLightGizmos = true;
+};
+
+bool AreSceneEditorViewSettingsEqual(
+    const SceneEditorViewSettings& left,
+    const SceneEditorViewSettings& right);
+SceneEditorViewSettings CaptureSceneEditorViewSettings(const Scene& scene);
+void ApplySceneEditorViewSettings(Scene& scene, const SceneEditorViewSettings& settings);
+
+void PushSceneEditorViewMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate);
 
 ObjectMaterialMap CaptureObjectMaterials(const Scene& scene, const std::vector<int>& objectIndices);
 ObjectLightMap CaptureObjectLights(const Scene& scene, const std::vector<int>& objectIndices);
 ObjectLightMap CaptureAllObjectLights(const Scene& scene);
+ObjectCameraMap CaptureObjectCameras(const Scene& scene, const std::vector<int>& objectIndices);
+ObjectCameraMap CaptureAllObjectCameras(const Scene& scene);
+ObjectRigidBodyMap CaptureObjectRigidBodies(const Scene& scene, const std::vector<int>& objectIndices);
+ObjectColliderMap CaptureObjectColliders(const Scene& scene, const std::vector<int>& objectIndices);
 ObjectShadowFlagsMap CaptureObjectShadowFlags(const Scene& scene, const std::vector<int>& objectIndices);
 
 bool AreObjectMaterialMapsEqual(const ObjectMaterialMap& left, const ObjectMaterialMap& right);
 bool AreObjectLightMapsEqual(const ObjectLightMap& left, const ObjectLightMap& right);
+bool AreObjectCameraMapsEqual(const ObjectCameraMap& left, const ObjectCameraMap& right);
+bool AreObjectRigidBodyMapsEqual(const ObjectRigidBodyMap& left, const ObjectRigidBodyMap& right);
+bool AreObjectColliderMapsEqual(const ObjectColliderMap& left, const ObjectColliderMap& right);
 bool AreObjectShadowFlagsMapsEqual(const ObjectShadowFlagsMap& left, const ObjectShadowFlagsMap& right);
 
 void ApplyObjectMaterial(Scene& scene, SceneObjectId objectId, const std::unique_ptr<Material>& material);
 void ApplyObjectLight(Scene& scene, SceneObjectId objectId, const LightComponent& light);
+void ApplyObjectCamera(Scene& scene, SceneObjectId objectId, const CameraComponent& camera);
+void ApplyObjectRigidBody(Scene& scene, SceneObjectId objectId, const RigidBodyComponent& rigidBody);
+void ApplyObjectCollider(Scene& scene, SceneObjectId objectId, const ColliderComponent& collider);
 void ApplyObjectShadowFlags(Scene& scene, SceneObjectId objectId, const ObjectShadowFlags& flags);
 
 class SetObjectMaterialsCommand final : public IUndoCommand
@@ -451,6 +519,9 @@ struct MaterialEditContext
 };
 
 using LightEditContext = PropertyEditContext<LightComponent>;
+using CameraEditContext = PropertyEditContext<CameraComponent>;
+using RigidBodyEditContext = PropertyEditContext<RigidBodyComponent>;
+using ColliderEditContext = PropertyEditContext<ColliderComponent>;
 using ShadowFlagsEditContext = PropertyEditContext<ObjectShadowFlags>;
 
 void PushMaterialMutation(
@@ -465,8 +536,29 @@ void PushLightMutation(
     Scene& scene,
     const std::vector<int>& objectIndices,
     const std::string& commandName,
-    const std::function<std::unordered_map<SceneObjectId, LightComponent>(const Scene&, const std::vector<int>&)>&
-        capture,
+    const std::function<ObjectLightMap(const Scene&, const std::vector<int>&)>& capture,
+    const std::function<void(Scene&)>& mutate);
+
+void PushCameraMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<ObjectCameraMap(const Scene&, const std::vector<int>&)>& capture,
+    const std::function<void(Scene&)>& mutate);
+
+void PushRigidBodyMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
+    const std::function<void(Scene&)>& mutate);
+
+void PushColliderMutation(
+    UndoStack& undoStack,
+    Scene& scene,
+    const std::vector<int>& objectIndices,
+    const std::string& commandName,
     const std::function<void(Scene&)>& mutate);
 
 void PushShadowFlagsMutation(
@@ -478,6 +570,9 @@ void PushShadowFlagsMutation(
 
 void HandleMaterialFieldEditEvents(MaterialEditContext& context);
 void HandleLightFieldEditEvents(LightEditContext& context);
+void HandleCameraFieldEditEvents(CameraEditContext& context);
+void HandleRigidBodyFieldEditEvents(RigidBodyEditContext& context);
+void HandleColliderFieldEditEvents(ColliderEditContext& context);
 
 nlohmann::json CaptureRendererSettings(const Scene& scene);
 bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& right);

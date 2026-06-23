@@ -2,6 +2,7 @@
 
 #include "app/Scene.h"
 #include "app/SceneEditor.h"
+#include "app/UndoCommand.h"
 
 #include <imgui.h>
 
@@ -55,7 +56,8 @@ namespace
 void SceneToolbarPanel::Draw(
     Scene& scene,
     bool sceneViewVisible,
-    const EditorViewportRect& sceneViewRect) const
+    const EditorViewportRect& sceneViewRect,
+    UndoStack* undoStack) const
 {
     if (!m_showPanel || !sceneViewVisible || !sceneViewRect.valid)
     {
@@ -103,7 +105,16 @@ void SceneToolbarPanel::Draw(
     bool showGrid = scene.GetShowGrid();
     if (ImGui::Checkbox("Grid", &showGrid))
     {
-        scene.SetShowGrid(showGrid);
+        if (undoStack != nullptr)
+        {
+            PushSceneEditorViewMutation(*undoStack, scene, "Grid visibility", [&](Scene& target) {
+                target.SetShowGrid(showGrid);
+            });
+        }
+        else
+        {
+            scene.SetShowGrid(showGrid);
+        }
     }
 
     ImGui::Separator();

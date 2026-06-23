@@ -3,11 +3,16 @@
 #include "app/EditorViewportRect.h"
 
 class Scene;
+class UndoStack;
 
 class SceneToolbarPanel
 {
 public:
-    void Draw(Scene& scene, bool sceneViewVisible, const EditorViewportRect& sceneViewRect) const;
+    void Draw(
+        Scene& scene,
+        bool sceneViewVisible,
+        const EditorViewportRect& sceneViewRect,
+        UndoStack* undoStack = nullptr) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 

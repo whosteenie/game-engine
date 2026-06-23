@@ -162,6 +162,8 @@ namespace
             archived.collider = source.GetCollider();
         }
 
+        archived.inspectorComponentOrder = source.GetInspectorComponentOrder();
+
         if (!source.GetImportAssetPath().empty() && source.GetImportNodeIndex() >= 0)
         {
             archived.isImportedMesh = true;
@@ -254,6 +256,8 @@ namespace
                 archived.importedMeshKey.assetPath,
                 archived.importedMeshKey.nodeIndex);
         }
+
+        restored.SetInspectorComponentOrder(archived.inspectorComponentOrder);
 
         return restored;
     }

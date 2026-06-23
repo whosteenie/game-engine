@@ -2,6 +2,7 @@
 
 #include "engine/CameraComponent.h"
 #include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/RigidBodyComponent.h"
 #include "engine/Material.h"
@@ -12,6 +13,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 class Mesh;
 
@@ -100,6 +102,10 @@ public:
     void SetImportSource(const std::string& assetPath, int nodeIndex);
     void ClearImportSource();
 
+    const std::vector<InspectorComponentType>& GetInspectorComponentOrder() const;
+    std::vector<InspectorComponentType> GetEffectiveInspectorComponentOrder() const;
+    void SetInspectorComponentOrder(std::vector<InspectorComponentType> order);
+
 private:
     SceneObjectId m_id = kInvalidSceneObjectId;
     std::string m_name;
@@ -116,6 +122,7 @@ private:
     std::optional<CameraComponent> m_camera;
     std::optional<RigidBodyComponent> m_rigidBody;
     std::optional<ColliderComponent> m_collider;
+    std::vector<InspectorComponentType> m_inspectorComponentOrder;
     std::string m_importAssetPath;
     int m_importNodeIndex = -1;
 };

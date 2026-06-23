@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/InspectorComponentOrder.h"
+
 #include <vector>
 
 class Scene;
@@ -14,6 +16,8 @@ enum class SceneSystemComponentType
 };
 
 const char* GetSceneSystemComponentLabel(SceneSystemComponentType type);
+
+InspectorComponentType InspectorComponentTypeFromSystem(SceneSystemComponentType type);
 
 bool SceneObjectHasSystemComponent(const SceneObject& object, SceneSystemComponentType type);
 bool CanAddSceneSystemComponent(const SceneObject& object, SceneSystemComponentType type);

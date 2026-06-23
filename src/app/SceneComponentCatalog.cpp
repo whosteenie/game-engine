@@ -3,6 +3,7 @@
 #include "app/Scene.h"
 #include "engine/CameraComponent.h"
 #include "engine/ColliderComponent.h"
+#include "engine/InspectorComponentOrder.h"
 #include "engine/LightComponent.h"
 #include "engine/RigidBodyComponent.h"
 #include "engine/SceneObject.h"
@@ -58,6 +59,23 @@ const char* GetSceneSystemComponentLabel(SceneSystemComponentType type)
     }
 
     return "Unknown";
+}
+
+InspectorComponentType InspectorComponentTypeFromSystem(const SceneSystemComponentType type)
+{
+    switch (type)
+    {
+    case SceneSystemComponentType::Light:
+        return InspectorComponentType::Light;
+    case SceneSystemComponentType::Camera:
+        return InspectorComponentType::Camera;
+    case SceneSystemComponentType::RigidBody:
+        return InspectorComponentType::RigidBody;
+    case SceneSystemComponentType::Collider:
+        return InspectorComponentType::Collider;
+    }
+
+    return InspectorComponentType::Light;
 }
 
 bool SceneObjectHasSystemComponent(const SceneObject& object, SceneSystemComponentType type)
@@ -149,6 +167,10 @@ void AddSceneSystemComponent(Scene& scene, int objectIndex, SceneSystemComponent
         break;
     }
 
+    std::vector<InspectorComponentType> order = object.GetEffectiveInspectorComponentOrder();
+    AppendInspectorComponentType(order, InspectorComponentTypeFromSystem(type));
+    object.SetInspectorComponentOrder(std::move(order));
+
     scene.MarkDirty();
 }
 
@@ -180,6 +202,21 @@ void RemoveSceneSystemComponent(Scene& scene, int objectIndex, SceneSystemCompon
         object.ClearCollider();
         break;
     }
+
+    std::vector<InspectorComponentType> order = object.GetInspectorComponentOrder();
+    if (order.empty())
+    {
+        order = object.GetEffectiveInspectorComponentOrder();
+    }
+
+    RemoveInspectorComponentType(order, InspectorComponentTypeFromSystem(type));
+    if (type != SceneSystemComponentType::Light
+        && SceneObjectHasInspectorComponent(object, InspectorComponentType::ObjectFlags))
+    {
+        AppendInspectorComponentType(order, InspectorComponentType::ObjectFlags);
+    }
+
+    object.SetInspectorComponentOrder(std::move(order));
 
     scene.MarkDirty();
 }
