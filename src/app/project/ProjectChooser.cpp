@@ -6,6 +6,7 @@
 #include "app/scene/Scene.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
 
@@ -13,6 +14,16 @@
 #include <filesystem>
 
 namespace fs = std::filesystem;
+
+namespace
+{
+    void DrawErrorText(const std::string& message)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        ImGui::TextUnformatted(message.c_str());
+        ImGui::PopStyleColor();
+    }
+}
 
 void ProjectChooser::OpenNewProjectForm(EditorSettings& settings)
 {
@@ -41,6 +52,58 @@ bool ProjectChooser::IsBlockingEditor() const
     return m_showNewProjectForm || m_startupMode;
 }
 
+bool ProjectChooser::OpenProjectAtPath(
+    ProjectSession& project,
+    Scene& scene,
+    EditorSettings& settings,
+    ProjectEditorState& editorState,
+    const std::string& projectFilePath,
+    const ApplyEditorStateFn& applyEditorState,
+    UndoStack& undoStack,
+    EditorClipboard& clipboard,
+    std::string& outError)
+{
+    try
+    {
+        if (GfxContext::Get().IsInitialized())
+        {
+            GfxContext::Get().WaitForSwapchainFrames();
+        }
+
+        if (!project.OpenProject(scene, projectFilePath, editorState))
+        {
+            outError = project.GetStatusMessage();
+            return false;
+        }
+
+        undoStack.Clear();
+        clipboard.Clear();
+        settings.AddRecentProject(project.GetProjectFilePath());
+        settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
+        settings.Save();
+        m_startupMode = false;
+        m_showNewProjectForm = false;
+        m_errorMessage.clear();
+        if (applyEditorState)
+        {
+            applyEditorState(editorState);
+        }
+        return true;
+    }
+    catch (const std::exception& exception)
+    {
+        if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
+        {
+            outError = what;
+        }
+        else
+        {
+            outError = "Failed to open project.";
+        }
+        return false;
+    }
+}
+
 bool ProjectChooser::TryOpenProject(
     ProjectSession& project,
     Scene& scene,
@@ -52,25 +115,53 @@ bool ProjectChooser::TryOpenProject(
     EditorClipboard& clipboard,
     std::string& outError)
 {
-    if (!project.OpenProject(scene, projectFilePath, editorState))
+    (void)project;
+    (void)scene;
+    (void)settings;
+    (void)editorState;
+    (void)applyEditorState;
+    (void)undoStack;
+    (void)clipboard;
+    (void)outError;
+
+    if (projectFilePath.empty())
     {
-        outError = project.GetStatusMessage();
+        m_errorMessage = "Project path is empty.";
         return false;
     }
 
-    undoStack.Clear();
-    clipboard.Clear();
-    settings.AddRecentProject(project.GetProjectFilePath());
-    settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
-    settings.Save();
-    m_startupMode = false;
-    m_showNewProjectForm = false;
+    m_pendingProjectPath = projectFilePath;
     m_errorMessage.clear();
-    if (applyEditorState)
-    {
-        applyEditorState(editorState);
-    }
     return true;
+}
+
+bool ProjectChooser::ProcessPendingProjectOpen(
+    ProjectSession& project,
+    Scene& scene,
+    EditorSettings& settings,
+    ProjectEditorState& editorState,
+    const ApplyEditorStateFn& applyEditorState,
+    UndoStack& undoStack,
+    EditorClipboard& clipboard,
+    std::string& outError)
+{
+    if (m_pendingProjectPath.empty())
+    {
+        return false;
+    }
+
+    const std::string projectFilePath = std::move(m_pendingProjectPath);
+    m_pendingProjectPath.clear();
+    return OpenProjectAtPath(
+        project,
+        scene,
+        settings,
+        editorState,
+        projectFilePath,
+        applyEditorState,
+        undoStack,
+        clipboard,
+        outError);
 }
 
 bool ProjectChooser::DrawNewProjectForm(
@@ -119,7 +210,7 @@ bool ProjectChooser::DrawNewProjectForm(
     if (!m_errorMessage.empty())
     {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", m_errorMessage.c_str());
+        DrawErrorText(m_errorMessage);
     }
 
     ImGui::Spacing();
@@ -292,7 +383,7 @@ bool ProjectChooser::DrawStartupScreen(
     if (!m_errorMessage.empty() && !m_showNewProjectForm)
     {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s", m_errorMessage.c_str());
+        DrawErrorText(m_errorMessage);
     }
 
     ImGui::Spacing();

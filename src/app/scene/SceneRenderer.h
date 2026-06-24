@@ -5,6 +5,7 @@
 #include "engine/lighting/SceneLighting.h"
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <memory>
 
 class Camera;
@@ -31,7 +32,7 @@ public:
         const Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        unsigned int targetFramebuffer,
+        std::uintptr_t targetFramebuffer,
         const SceneRenderOptions& options);
 
     const SceneLighting& GetLighting() const;
@@ -54,6 +55,7 @@ public:
     const CascadedShadowMap& GetShadowMap() const;
 
 private:
+    void EnsureGpuResources() const;
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass(const Scene& scene, const Camera& camera);
@@ -62,10 +64,11 @@ private:
     std::unique_ptr<GridRenderer> m_grid;
     std::unique_ptr<ColliderGizmoRenderer> m_colliderGizmos;
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
+    std::unique_ptr<Shader> m_shadowDepthShader;
     std::unique_ptr<CascadedShadowMap> m_shadowMap;
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
-    std::unique_ptr<Shader> m_shadowDepthShader;
     DirectionalShadowSettings m_directionalShadowSettings;
     SceneLighting m_lighting;
+    mutable bool m_gpuResourcesInitialized = false;
 };

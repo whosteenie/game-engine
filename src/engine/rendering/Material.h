@@ -26,6 +26,8 @@ public:
 
     ~Material();
 
+    static void ReleaseGlobalGpuResources();
+
     void Apply(
         const Camera& camera,
         const SceneLighting& lighting,

@@ -138,6 +138,11 @@ bool Shader::IsLinked() const
     return m_isLinked;
 }
 
+bool Shader::HasUniform(const char* name) const
+{
+    return glGetUniformLocation(m_programID, name) >= 0;
+}
+
 void Shader::SetFloat(const char* name, float value) const
 {
     glUniform1f(glGetUniformLocation(m_programID, name), value);

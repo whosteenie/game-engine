@@ -10,6 +10,8 @@ public:
     explicit ImGuiLayer(GLFWwindow* window, const std::string& iniPath = {});
     ~ImGuiLayer();
 
+    // Install the GLFW platform backend after the native window and GPU swapchain exist.
+    void InitPlatformBackend();
     void BeginFrame();
     void EndFrame();
 

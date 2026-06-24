@@ -29,6 +29,28 @@ public:
 
     void OpenNewProjectForm(EditorSettings& settings);
     bool IsBlockingEditor() const;
+    void SetErrorMessage(const std::string& message) { m_errorMessage = message; }
+
+    bool OpenProjectAtPath(
+        ProjectSession& project,
+        Scene& scene,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const std::string& projectFilePath,
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
+        std::string& outError);
+
+    bool ProcessPendingProjectOpen(
+        ProjectSession& project,
+        Scene& scene,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
+        std::string& outError);
 
 private:
     bool DrawStartupScreen(
@@ -65,4 +87,5 @@ private:
     char m_newProjectName[64] = "My Project";
     char m_newProjectDirectory[512] = {};
     std::string m_errorMessage;
+    std::string m_pendingProjectPath;
 };

@@ -13,18 +13,32 @@
 #include <unordered_set>
 
 SceneMeshLibrary::SceneMeshLibrary(float floorHalfExtent)
-    : m_cubeMesh(CreateCubeMesh()),
-      m_sphereMesh(CreateSphereMesh()),
-      m_cylinderMesh(CreateCylinderMesh()),
-      m_capsuleMesh(CreateCapsuleMesh()),
-      m_planeMesh(CreatePlaneMesh(floorHalfExtent))
+    : m_floorHalfExtent(floorHalfExtent)
 {
 }
 
 SceneMeshLibrary::~SceneMeshLibrary() = default;
 
+void SceneMeshLibrary::EnsurePrimitives() const
+{
+    if (m_primitivesReady)
+    {
+        return;
+    }
+
+    SceneMeshLibrary* self = const_cast<SceneMeshLibrary*>(this);
+    self->m_cubeMesh = CreateCubeMesh();
+    self->m_sphereMesh = CreateSphereMesh();
+    self->m_cylinderMesh = CreateCylinderMesh();
+    self->m_capsuleMesh = CreateCapsuleMesh();
+    self->m_planeMesh = CreatePlaneMesh(m_floorHalfExtent);
+    self->m_primitivesReady = true;
+}
+
 Mesh* SceneMeshLibrary::GetPrimitive(ScenePrimitive primitive) const
 {
+    EnsurePrimitives();
+
     switch (primitive)
     {
     case ScenePrimitive::Cube:

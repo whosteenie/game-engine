@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -40,7 +41,14 @@ struct SceneRenderOptions
     bool showCameraGizmos = true;
     bool showLightGizmos = true;
     bool showColliderGizmos = true;
+#if defined(GAME_ENGINE_D3D12)
+    // Staged D3D12 rollout: re-enable once selection overlay is stable on viewport FBOs.
+    bool showEditorOverlay = false;
+    bool enableShadowPass = true;
+#else
     bool showEditorOverlay = true;
+    bool enableShadowPass = true;
+#endif
 };
 
 class Scene
@@ -68,7 +76,7 @@ public:
         const Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        unsigned int targetFramebuffer = 0,
+        std::uintptr_t targetFramebuffer = 0,
         const SceneRenderOptions& options = SceneRenderOptions{}) const;
 
     const std::vector<SceneObject>& GetObjects() const;

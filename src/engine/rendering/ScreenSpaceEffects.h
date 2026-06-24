@@ -3,8 +3,13 @@
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/RenderDebug.h"
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <memory>
 #include <vector>
+
+#if defined(GAME_ENGINE_D3D12)
+#include "engine/rhi/d3d12/GpuBuffer.h"
+#endif
 
 class Camera;
 class Framebuffer;
@@ -81,9 +86,50 @@ public:
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
 
-    void BlitDepthToFramebuffer(unsigned int drawFramebuffer, int viewportWidth, int viewportHeight) const;
+    void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
 private:
+#if defined(GAME_ENGINE_D3D12)
+    struct InternalTarget
+    {
+        void* resource = nullptr;
+        void* allocation = nullptr;
+        std::uint32_t srvIndex = UINT32_MAX;
+        std::uintptr_t srvCpuHandle = 0;
+        std::uint32_t rtvIndex = UINT32_MAX;
+        int width = 0;
+        int height = 0;
+    };
+
+    void CreateFullscreenQuad();
+    void CreateNoiseTexture();
+    void CreateKernel();
+    void CreateInternalTarget(InternalTarget& target, int width, int height, int format);
+    void DestroyInternalTarget(InternalTarget& target) const;
+    void ResizeInternalTarget(InternalTarget& target, int width, int height, int format);
+    void ResizeSingleChannelTargets(int width, int height);
+    void ResizeHdrColorTarget(int width, int height);
+    void ResizeBloomTargets(int width, int height);
+    void DrawFullscreenQuad() const;
+    void DrawFullscreenToTarget(
+        Shader& shader,
+        InternalTarget& target,
+        int width,
+        int height,
+        const float clearColor[4]) const;
+    void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
+
+    GpuBuffer m_quadVb;
+    InternalTarget m_noiseTexture;
+    InternalTarget m_ssaoTarget;
+    InternalTarget m_ssaoBlurTarget;
+    InternalTarget m_shadowBlurTarget;
+    InternalTarget m_shadowBlur2Target;
+    InternalTarget m_hdrCompositeTarget;
+    InternalTarget m_bloomExtractTarget;
+    InternalTarget m_bloomBlurTarget;
+    InternalTarget m_bloomBlur2Target;
+#else
     void CreateFullscreenQuad();
     void CreateNoiseTexture();
     void CreateKernel();
@@ -95,16 +141,6 @@ private:
     void ResizeHdrColorTarget(int width, int height);
     void ResizeBloomTargets(int width, int height);
     void DrawFullscreenQuad() const;
-
-    std::unique_ptr<Framebuffer> m_sceneFramebuffer;
-    std::unique_ptr<Shader> m_ssaoShader;
-    std::unique_ptr<Shader> m_blurShader;
-    std::unique_ptr<Shader> m_compositeShader;
-    std::unique_ptr<Shader> m_bloomExtractShader;
-    std::unique_ptr<Shader> m_bloomBlurShader;
-    std::unique_ptr<Shader> m_shadowBlurShader;
-    std::unique_ptr<Shader> m_tonemapShader;
-    std::unique_ptr<Shader> m_debugChannelShader;
 
     unsigned int m_quadVao = 0;
     unsigned int m_quadVbo = 0;
@@ -126,12 +162,28 @@ private:
     unsigned int m_bloomBlurTexture = 0;
     unsigned int m_bloomBlur2Fbo = 0;
     unsigned int m_bloomBlur2Texture = 0;
+#endif
+
+    std::unique_ptr<Framebuffer> m_sceneFramebuffer;
+    std::unique_ptr<Shader> m_ssaoShader;
+    std::unique_ptr<Shader> m_blurShader;
+    std::unique_ptr<Shader> m_compositeShader;
+    std::unique_ptr<Shader> m_bloomExtractShader;
+    std::unique_ptr<Shader> m_bloomBlurShader;
+    std::unique_ptr<Shader> m_shadowBlurShader;
+    std::unique_ptr<Shader> m_tonemapShader;
+    std::unique_ptr<Shader> m_debugChannelShader;
+
+#if !defined(GAME_ENGINE_D3D12)
+    // GL-only members listed above in #else block
+#endif
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
     int m_height = 0;
 
     bool m_enabled = true;
+    mutable bool m_logHdrApplySnapshot = false;
     bool m_ssaoEnabled = true;
     float m_ssaoRadius = 0.35f;
     float m_ssaoBias = 0.015f;

@@ -1,7 +1,5 @@
 #include "engine/assets/ModelImporter.h"
 
-#include <glad/glad.h>
-
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
@@ -15,6 +13,8 @@
 #define TINYGLTF_NO_STB_IMAGE_WRITE
 #define TINYGLTF_IMPLEMENTATION
 #include <tiny_gltf.h>
+
+#include "engine/platform/RenderPathDiagnostics.h"
 
 #include <stb_image.h>
 
@@ -216,49 +216,93 @@ namespace
         boundsMax = glm::max(boundsMax, point);
     }
 
-    unsigned int ToGlWrap(int wrap)
+    unsigned int ToSamplerWrap(int wrap)
     {
         switch (wrap)
         {
         case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::WrapClampToEdge;
+#else
             return GL_CLAMP_TO_EDGE;
+#endif
         case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::WrapMirroredRepeat;
+#else
             return GL_MIRRORED_REPEAT;
+#endif
         case TINYGLTF_TEXTURE_WRAP_REPEAT:
         default:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::WrapRepeat;
+#else
             return GL_REPEAT;
+#endif
         }
     }
 
-    unsigned int ToGlMinFilter(int filter)
+    unsigned int ToSamplerMinFilter(int filter)
     {
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterNearest;
+#else
             return GL_NEAREST;
+#endif
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterNearestMipmapNearest;
+#else
             return GL_NEAREST_MIPMAP_NEAREST;
+#endif
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterNearestMipmapLinear;
+#else
             return GL_NEAREST_MIPMAP_LINEAR;
+#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterLinearMipmapNearest;
+#else
             return GL_LINEAR_MIPMAP_NEAREST;
+#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterLinearMipmapLinear;
+#else
             return GL_LINEAR_MIPMAP_LINEAR;
+#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterLinear;
+#else
             return GL_LINEAR;
+#endif
         }
     }
 
-    unsigned int ToGlMagFilter(int filter)
+    unsigned int ToSamplerMagFilter(int filter)
     {
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterNearest;
+#else
             return GL_NEAREST;
+#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
+#if defined(GAME_ENGINE_D3D12)
+            return TexSampler::FilterLinear;
+#else
             return GL_LINEAR;
+#endif
         }
     }
 
@@ -278,10 +322,10 @@ namespace
         }
 
         const tinygltf::Sampler& sampler = model.samplers[static_cast<std::size_t>(texture.sampler)];
-        settings.wrapS = ToGlWrap(sampler.wrapS);
-        settings.wrapT = ToGlWrap(sampler.wrapT);
-        settings.minFilter = ToGlMinFilter(sampler.minFilter);
-        settings.magFilter = ToGlMagFilter(sampler.magFilter);
+        settings.wrapS = ToSamplerWrap(sampler.wrapS);
+        settings.wrapT = ToSamplerWrap(sampler.wrapT);
+        settings.minFilter = ToSamplerMinFilter(sampler.minFilter);
+        settings.magFilter = ToSamplerMagFilter(sampler.magFilter);
 
         return settings;
     }
@@ -365,6 +409,9 @@ namespace
         }
     }
 
+    int g_importTextureFailures = 0;
+    int g_importTexturesCached = 0;
+
     std::shared_ptr<Texture> LoadGltfImageTexture(
         const tinygltf::Model& model,
         int imageIndex,
@@ -400,26 +447,58 @@ namespace
                     samplerSettings,
                     true);
             }
-            catch (const std::exception&)
+            catch (const std::exception& exception)
             {
+                ++g_importTextureFailures;
+                RenderPathDiagnostics::LogImportTextureFailure(
+                    imageIndex,
+                    std::string("file \"") + texturePath + "\" " + exception.what());
                 texture = nullptr;
             }
         }
         else if (!image.image.empty() && image.width > 0 && image.height > 0)
         {
-            texture = Texture::CreateFromPixels(
-                image.image.data(),
-                image.width,
-                image.height,
-                image.component,
-                colorSpace,
-                samplerSettings,
-                true);
+            try
+            {
+                texture = Texture::CreateFromPixels(
+                    image.image.data(),
+                    image.width,
+                    image.height,
+                    image.component,
+                    colorSpace,
+                    samplerSettings,
+                    true);
+            }
+            catch (const std::exception& exception)
+            {
+                ++g_importTextureFailures;
+                RenderPathDiagnostics::LogImportTextureFailure(
+                    imageIndex,
+                    std::string("embedded ") + std::to_string(image.width) + "x" +
+                        std::to_string(image.height) + " " + exception.what());
+                texture = nullptr;
+            }
+        }
+        else if (imageIndex >= 0)
+        {
+            ++g_importTextureFailures;
+            RenderPathDiagnostics::LogImportTextureFailure(
+                imageIndex,
+                "no file path and no embedded pixels");
         }
 
         if (texture != nullptr && texture->IsValid())
         {
-            textureCache.emplace(cacheKey, texture);
+            const bool inserted = textureCache.emplace(cacheKey, texture).second;
+            if (inserted)
+            {
+                ++g_importTexturesCached;
+            }
+        }
+        else if (texture != nullptr)
+        {
+            ++g_importTextureFailures;
+            RenderPathDiagnostics::LogImportTextureFailure(imageIndex, "texture object is invalid after upload");
         }
 
         return texture;
@@ -971,6 +1050,8 @@ ImportedModel LoadModelFromFile(
     ModelLoadMode loadMode)
 {
     ImportedModel importedModel;
+    g_importTextureFailures = 0;
+    g_importTexturesCached = 0;
     if (onProgress)
     {
         onProgress(0.0f, "Reading model file...");
@@ -1098,6 +1179,8 @@ ImportedModel LoadModelFromFile(
         return importedModel;
     }
 
+    importedModel.textureLoadFailures = g_importTextureFailures;
+    importedModel.texturesCached = g_importTexturesCached;
     return importedModel;
 }
 

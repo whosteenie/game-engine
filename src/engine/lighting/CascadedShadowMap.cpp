@@ -166,6 +166,7 @@ void CascadedShadowMap::BeginFrame(
 
     m_lastCameraPosition = cameraPosition;
     m_hasStableOrthoHalfExtents = true;
+    m_hasRenderedDepth = false;
 }
 
 void CascadedShadowMap::BeginCascade(const int cascadeIndex)
@@ -184,6 +185,7 @@ void CascadedShadowMap::BeginCascade(const int cascadeIndex)
     glEnable(GL_POLYGON_OFFSET_FILL);
     glPolygonOffset(1.0f, 2.0f);
     glCullFace(GL_FRONT);
+    m_hasRenderedDepth = true;
 }
 
 void CascadedShadowMap::RestoreRasterState() const
@@ -235,6 +237,16 @@ int CascadedShadowMap::GetActiveCascadeCount() const
 
 void CascadedShadowMap::BindDepthTexture(const unsigned int textureUnit) const
 {
+    if (!m_hasRenderedDepth)
+    {
+        return;
+    }
+
     glActiveTexture(GL_TEXTURE0 + textureUnit);
     glBindTexture(GL_TEXTURE_2D_ARRAY, m_depthTexture);
+}
+
+bool CascadedShadowMap::HasRenderedDepth() const
+{
+    return m_hasRenderedDepth;
 }

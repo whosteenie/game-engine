@@ -27,6 +27,21 @@ void Input::UpdateMouseCapture(bool allowStartCapture)
     {
         ReleaseMouseCapture();
     }
+
+    PollMouseMovementWhileCaptured();
+}
+
+void Input::PollMouseMovementWhileCaptured()
+{
+    if (!m_capturingMouse)
+    {
+        return;
+    }
+
+    double cursorX = 0.0;
+    double cursorY = 0.0;
+    glfwGetCursorPos(m_window, &cursorX, &cursorY);
+    OnMouseMove(cursorX, cursorY);
 }
 
 void Input::ReleaseMouseCapture()

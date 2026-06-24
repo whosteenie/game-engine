@@ -11,6 +11,7 @@ public:
     explicit Input(GLFWwindow* window);
 
     void UpdateMouseCapture(bool allowStartCapture);
+    void PollMouseMovementWhileCaptured();
     void ReleaseMouseCapture();
 
     bool IsKeyDown(int key) const;

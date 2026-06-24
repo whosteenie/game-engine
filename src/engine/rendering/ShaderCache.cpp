@@ -35,3 +35,9 @@ std::shared_ptr<Shader> ShaderCache::Load(const char* vertexPath, const char* fr
     g_shaderCache[cacheKey] = shader;
     return shader;
 }
+
+void ShaderCache::Clear()
+{
+    std::lock_guard<std::mutex> lock(g_shaderCacheMutex);
+    g_shaderCache.clear();
+}

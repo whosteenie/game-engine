@@ -52,6 +52,7 @@ private:
     bool TrySaveProject();
     bool IsEditorUndoRedoBlocked() const;
     void ResetEditorLayout();
+    void RecoverInterruptedFrame();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -60,7 +61,6 @@ private:
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
-    static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
 
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
@@ -94,6 +94,8 @@ private:
     UndoStack m_playModeDiscardUndoStack;
     bool m_wasPlayModeActive = false;
     bool m_gameViewRenderedLastFrame = false;
+    bool m_imguiFrameActive = false;
+    bool m_gfxFrameActive = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

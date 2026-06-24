@@ -4,6 +4,10 @@
 #include <memory>
 #include <vector>
 
+#if defined(GAME_ENGINE_D3D12)
+#include "engine/rhi/d3d12/GpuBuffer.h"
+#endif
+
 class Mesh
 {
 public:
@@ -45,4 +49,9 @@ private:
     unsigned int m_floatsPerVertex = BasicVertexFloatCount;
     std::vector<glm::vec3> m_positions;
     std::vector<unsigned int> m_indices;
+#if defined(GAME_ENGINE_D3D12)
+    std::vector<float> m_vertices;
+    GpuBuffer m_vertexBuffer;
+    GpuBuffer m_indexBuffer;
+#endif
 };

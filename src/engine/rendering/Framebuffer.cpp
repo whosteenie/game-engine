@@ -138,22 +138,23 @@ void Framebuffer::Create(const int width, const int height)
     m_height = height;
 }
 
-void Framebuffer::Resize(const int width, const int height, const FramebufferColorMode colorMode)
+bool Framebuffer::Resize(const int width, const int height, const FramebufferColorMode colorMode)
 {
     if (width <= 0 || height <= 0)
     {
-        return;
+        return false;
     }
 
     if (m_width == width && m_height == height && IsValid() && m_colorMode == colorMode)
     {
-        return;
+        return true;
     }
 
     m_colorMode = colorMode;
     Destroy();
     m_colorMode = colorMode;
     Create(width, height);
+    return IsValid();
 }
 
 void Framebuffer::Bind() const
@@ -192,32 +193,32 @@ void Framebuffer::Unbind() const
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-unsigned int Framebuffer::GetFramebuffer() const
+std::uintptr_t Framebuffer::GetFramebuffer() const
 {
     return m_fbo;
 }
 
-unsigned int Framebuffer::GetColorTexture() const
+std::uintptr_t Framebuffer::GetColorTexture() const
 {
     return m_colorTexture;
 }
 
-unsigned int Framebuffer::GetIndirectColorTexture() const
+std::uintptr_t Framebuffer::GetIndirectColorTexture() const
 {
     return m_indirectColorTexture;
 }
 
-unsigned int Framebuffer::GetNormalColorTexture() const
+std::uintptr_t Framebuffer::GetNormalColorTexture() const
 {
     return m_normalColorTexture;
 }
 
-unsigned int Framebuffer::GetShadowFactorTexture() const
+std::uintptr_t Framebuffer::GetShadowFactorTexture() const
 {
     return m_shadowFactorTexture;
 }
 
-unsigned int Framebuffer::GetDepthTexture() const
+std::uintptr_t Framebuffer::GetDepthTexture() const
 {
     return m_depthTexture;
 }

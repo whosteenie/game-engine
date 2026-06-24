@@ -1,6 +1,5 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
-#include <glad/glad.h>
 
 #include "app/core/Application.h"
 #include "app/editor/EditorSettings.h"
@@ -28,28 +27,91 @@
 #include "app/undo/UndoStack.h"
 #include "engine/camera/Camera.h"
 #include "engine/rendering/Constants.h"
+#include "engine/rendering/Material.h"
+#include "engine/rendering/ShaderCache.h"
 #include "engine/assets/FileDialog.h"
+#include "engine/assets/TextureCache.h"
 #include "engine/platform/ImGuiLayer.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <ImGuizmo.h>
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/Input.h"
+#include "engine/platform/InputDiagnostics.h"
+#include "engine/platform/FrameDiagnostics.h"
 #include "engine/rendering/Renderer.h"
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 
+#include <algorithm>
 #include <stdexcept>
 
 #include <cfloat>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <typeinfo>
 #include <cstring>
 
-#include <glm/glm.hpp>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#undef GetObject
+#endif
 #include <glm/gtc/matrix_inverse.hpp>
 #include <unordered_map>
 
 namespace
 {
+    [[noreturn]] void RethrowAsRuntimeError(const char* phase, const std::exception& exception)
+    {
+        std::string details;
+        try
+        {
+            if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
+            {
+                details = what;
+            }
+        }
+        catch (...)
+        {
+            details.clear();
+        }
+
+        if (details.empty())
+        {
+            details = typeid(exception).name();
+        }
+
+        throw std::runtime_error(std::string(phase) + ": " + details);
+    }
+
+    std::string DescribeException(const std::exception& exception)
+    {
+        try
+        {
+            if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
+            {
+                return std::string(what);
+            }
+        }
+        catch (...)
+        {
+        }
+
+#if defined(GAME_ENGINE_D3D12)
+        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        if (!gpuError.empty())
+        {
+            return gpuError;
+        }
+#endif
+
+        return std::string(typeid(exception).name()) + " (no message)";
+    }
+
     bool AlignPrimarySelectionToCameraView(Scene& scene, const Camera& camera, UndoStack* undoStack)
     {
         const int selectedIndex = scene.GetPrimarySelection();
@@ -204,15 +266,24 @@ Application::Application(int width, int height, const char* title)
 
     try
     {
-        InitGLAD();
+        glfwPollEvents();
 
-        glfwSwapInterval(1);
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_MULTISAMPLE);
+        int framebufferWidth = 0;
+        int framebufferHeight = 0;
+        glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
+        if (framebufferWidth <= 0 || framebufferHeight <= 0)
+        {
+            glfwGetWindowSize(m_window, &framebufferWidth, &framebufferHeight);
+        }
+        framebufferWidth = std::max(framebufferWidth, 1);
+        framebufferHeight = std::max(framebufferHeight, 1);
 
-        m_renderer = std::make_unique<Renderer>();
         EditorSettings::EnsureAppDataDirectoryExists();
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
+        GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
+        m_imguiLayer->InitPlatformBackend();
+
+        m_renderer = std::make_unique<Renderer>();
         m_editorSettings = std::make_unique<EditorSettings>();
         m_editorSettings->Load();
         m_projectSession = std::make_unique<ProjectSession>();
@@ -232,8 +303,6 @@ Application::Application(int width, int height, const char* title)
             -135.0f,
             -35.0f);
 
-        int framebufferWidth, framebufferHeight;
-        glfwGetFramebufferSize(m_window, &framebufferWidth, &framebufferHeight);
         OnFramebufferResize(framebufferWidth, framebufferHeight);
 
         m_input = std::make_unique<Input>(m_window);
@@ -243,7 +312,6 @@ Application::Application(int width, int height, const char* title)
         m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
         m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
 
-        glfwSetCursorPosCallback(m_window, MouseCallback);
         glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
     }
     catch (...)
@@ -272,14 +340,61 @@ Application::~Application()
     }
 
     NativeProgressWindow::Instance().Shutdown();
+
+    // Release all D3D12MA-backed resources before the global allocator shuts down.
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().WaitForGpuIdle();
+
+        if (m_playModeController.IsActive() && m_scene != nullptr && m_projectSession != nullptr
+            && m_projectSession->HasActiveProject())
+        {
+            m_playModeController.TogglePlayStop(*m_scene, m_projectSession->GetProjectRootDirectory());
+        }
+
+        m_undoStack.Clear();
+        m_playModeDiscardUndoStack.Clear();
+        m_editorClipboard.Clear();
+
+        m_gameViewportPanel.reset();
+        m_sceneViewportPanel.reset();
+        m_sceneEditingController.reset();
+        m_scene.reset();
+        m_renderer.reset();
+        TextureCache::Get().Clear();
+        ShaderCache::Clear();
+        Material::ReleaseGlobalGpuResources();
+    }
+
     m_imguiLayer.reset();
+    GfxContext::Get().Shutdown();
     glfwDestroyWindow(m_window);
     glfwTerminate();
 }
 
 void Application::Run()
 {
+    if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
+    {
+        std::string error;
+        if (!m_projectChooser->OpenProjectAtPath(
+                *m_projectSession,
+                *m_scene,
+                *m_editorSettings,
+                m_projectEditorState,
+                autoOpenPath,
+                [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+                m_undoStack,
+                m_editorClipboard,
+                error))
+        {
+            m_projectChooser->SetErrorMessage(error.empty() ? "Failed to open project." : error);
+        }
+    }
+
     double lastFrameTime = glfwGetTime();
+    std::string lastLoggedFrameError;
+    int suppressedRepeatedFrameErrors = 0;
 
     while (!glfwWindowShouldClose(m_window))
     {
@@ -287,8 +402,81 @@ void Application::Run()
         double deltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
 
-        Update(deltaTime);
-        Render();
+        try
+        {
+            Update(deltaTime);
+            Render();
+            suppressedRepeatedFrameErrors = 0;
+        }
+        catch (const std::exception& exception)
+        {
+            const std::string described = DescribeException(exception);
+            const std::string message = "Application frame: " + described;
+            InputDiagnostics::Log(message.c_str());
+            if (described != lastLoggedFrameError)
+            {
+                lastLoggedFrameError = described;
+                suppressedRepeatedFrameErrors = 0;
+                std::cerr << message << "\n";
+                if (m_projectSession != nullptr)
+                {
+                    m_projectSession->SetStatusMessage(message);
+                }
+            }
+            else if (suppressedRepeatedFrameErrors < 3)
+            {
+                ++suppressedRepeatedFrameErrors;
+                std::cerr << message << "\n";
+            }
+            else if (suppressedRepeatedFrameErrors == 3)
+            {
+                ++suppressedRepeatedFrameErrors;
+                std::cerr << "Application frame: (suppressing repeated errors)\n";
+                if (m_projectSession != nullptr)
+                {
+                    m_projectSession->SetStatusMessage("Application frame: " + described);
+                }
+            }
+            RecoverInterruptedFrame();
+        }
+        catch (...)
+        {
+            std::cerr << "Application frame: unknown exception\n";
+            if (m_projectSession != nullptr)
+            {
+                m_projectSession->SetStatusMessage("Application frame: unknown exception");
+            }
+            RecoverInterruptedFrame();
+        }
+    }
+}
+
+void Application::RecoverInterruptedFrame()
+{
+    if (m_gfxFrameActive)
+    {
+        try
+        {
+            m_renderer->CancelFrame();
+        }
+        catch (...)
+        {
+        }
+
+        m_gfxFrameActive = false;
+    }
+
+    if (m_imguiFrameActive)
+    {
+        try
+        {
+            m_imguiLayer->EndFrame();
+        }
+        catch (...)
+        {
+        }
+
+        m_imguiFrameActive = false;
     }
 }
 
@@ -299,11 +487,7 @@ void Application::InitGLFW()
         throw std::runtime_error("Failed to initialize GLFW");
     }
 
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_SAMPLES, 4);
-    glfwWindowHint(GLFW_STENCIL_BITS, 8);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
 
     m_window = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
@@ -313,28 +497,69 @@ void Application::InitGLFW()
         throw std::runtime_error("Failed to create GLFW window");
     }
 
-    glfwMakeContextCurrent(m_window);
     glfwSetWindowUserPointer(m_window, this);
     glfwSetFramebufferSizeCallback(m_window, FramebufferSizeCallback);
+    glfwShowWindow(m_window);
+
+#ifdef _WIN32
+    wchar_t modulePath[MAX_PATH]{};
+    if (GetModuleFileNameW(nullptr, modulePath, MAX_PATH) != 0)
+    {
+        std::error_code error;
+        std::filesystem::current_path(std::filesystem::path(modulePath).parent_path(), error);
+    }
+#endif
 }
 
 void Application::InitGLAD()
 {
-    if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
-    {
-        throw std::runtime_error("Failed to initialize GLAD");
-    }
+    // OpenGL path removed on D3D12 branch; kept for API compatibility.
 }
 
 void Application::Update(double deltaTime)
 {
     glfwPollEvents();
+    InputDiagnostics::LogFrame(m_window, "after-poll");
+
+    std::string pendingProjectError;
+    if (m_projectChooser->ProcessPendingProjectOpen(
+            *m_projectSession,
+            *m_scene,
+            *m_editorSettings,
+            m_projectEditorState,
+            [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+            m_undoStack,
+            m_editorClipboard,
+            pendingProjectError)
+        && !pendingProjectError.empty())
+    {
+        m_projectChooser->SetErrorMessage(pendingProjectError);
+    }
 
     const bool escapePressed = m_input->WasKeyPressed(GLFW_KEY_ESCAPE);
     const bool cancelReorderDragOnly =
         escapePressed && EditorReorderDragDrop::IsReorderDragActive();
 
     m_imguiLayer->BeginFrame();
+    m_imguiFrameActive = true;
+    InputDiagnostics::LogFrame(m_window, "after-imgui-newframe");
+
+    if (m_projectSession->ConsumeEditorLayoutLoadRequest())
+    {
+        SceneProjectIO::LoadEditorLayout(m_projectSession->GetProjectRootDirectory());
+    }
+
+    m_projectChooser->Draw(
+        *m_projectSession,
+        *m_scene,
+        *m_editorSettings,
+        m_projectEditorState,
+        [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+        [this]() { RequestClose(); },
+        m_undoStack,
+        m_editorClipboard);
+
+    InputDiagnostics::LogFrame(m_window, "after-ui-build");
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
@@ -366,16 +591,6 @@ void Application::Update(double deltaTime)
     {
         WrapImGuiMouseCursorAtWindowEdges(m_window);
     }
-
-        m_projectChooser->Draw(
-        *m_projectSession,
-        *m_scene,
-        *m_editorSettings,
-        m_projectEditorState,
-        [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
-        [this]() { RequestClose(); },
-        m_undoStack,
-        m_editorClipboard);
 
     if (editorActive)
     {
@@ -857,24 +1072,35 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 
 void Application::Render()
 {
+    m_gfxFrameActive = true;
+    FrameDiagnostics::LogPhase("render-begin");
     m_renderer->BeginFrame();
-
-    m_gameViewRenderedLastFrame = false;
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
+    if (editorActive)
+    {
+        GfxContext::Get().WaitForSwapchainFrames();
+    }
+
+    m_gameViewRenderedLastFrame = false;
+
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
+        FrameDiagnostics::LogPhase("scene-view-render");
         Scene* sceneViewScene = GetEditorTargetScene();
         m_sceneViewportPanel->EnsureFramebufferSized();
-        m_camera->SetAspectFromFramebuffer(
-            m_sceneViewportPanel->GetRenderWidth(),
-            m_sceneViewportPanel->GetRenderHeight());
-        sceneViewScene->Render(
-            *m_camera,
-            m_sceneViewportPanel->GetRenderWidth(),
-            m_sceneViewportPanel->GetRenderHeight(),
-            m_sceneViewportPanel->GetFramebuffer());
+        if (m_sceneViewportPanel->HasGpuFramebuffer())
+        {
+            m_camera->SetAspectFromFramebuffer(
+                m_sceneViewportPanel->GetRenderWidth(),
+                m_sceneViewportPanel->GetRenderHeight());
+            sceneViewScene->Render(
+                *m_camera,
+                m_sceneViewportPanel->GetRenderWidth(),
+                m_sceneViewportPanel->GetRenderHeight(),
+                m_sceneViewportPanel->GetFramebuffer());
+        }
     }
 
     if (editorActive && m_gameViewportPanel->HasValidRenderTarget())
@@ -903,6 +1129,8 @@ void Application::Render()
             if (sceneCamera.has_value())
             {
                 m_gameViewportPanel->EnsureFramebufferSized();
+                if (m_gameViewportPanel->HasGpuFramebuffer())
+                {
                 const Camera renderCamera = sceneCamera->ToRenderCamera();
                 const SceneRenderOptions gameViewOptions{
                     false,
@@ -918,21 +1146,15 @@ void Application::Render()
                     m_gameViewportPanel->GetFramebuffer(),
                     gameViewOptions);
                 m_gameViewRenderedLastFrame = true;
+                }
             }
         }
     }
 
+    FrameDiagnostics::LogPhase("imgui-end");
     m_imguiLayer->EndFrame();
+    FrameDiagnostics::LogPhase("present");
     m_renderer->EndFrame(m_window);
-}
-
-void Application::MouseCallback(GLFWwindow* window, double xPos, double yPos)
-{
-    auto* app = static_cast<Application*>(glfwGetWindowUserPointer(window));
-    if (!app->m_input->IsCapturingMouse())
-    {
-        ImGui_ImplGlfw_CursorPosCallback(window, xPos, yPos);
-    }
-
-    app->m_input->OnMouseMove(xPos, yPos);
+    m_imguiFrameActive = false;
+    m_gfxFrameActive = false;
 }

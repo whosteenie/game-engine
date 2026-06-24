@@ -8,6 +8,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only)" OFF)
+
 
 
 include(FetchContent)
@@ -136,7 +138,23 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(JoltPhysics)
 
+FetchContent_Declare(
+    D3D12MemoryAllocator
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git
+    GIT_TAG master
+)
+FetchContent_GetProperties(D3D12MemoryAllocator)
+if(NOT D3D12MemoryAllocator_POPULATED)
+    FetchContent_Populate(D3D12MemoryAllocator)
+endif()
 
+add_library(D3D12MemoryAllocator STATIC
+    ${d3d12memoryallocator_SOURCE_DIR}/src/D3D12MemAlloc.cpp
+)
+target_include_directories(D3D12MemoryAllocator PUBLIC
+    ${d3d12memoryallocator_SOURCE_DIR}/include
+    ${d3d12memoryallocator_SOURCE_DIR}/src
+)
 
 add_library(imgui_lib STATIC
 
@@ -150,7 +168,7 @@ add_library(imgui_lib STATIC
 
     ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
 
-    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
 
 )
 
@@ -163,8 +181,6 @@ target_include_directories(imgui_lib PUBLIC
     ${imgui_SOURCE_DIR}/backends)
 
 
-
-target_compile_definitions(imgui_lib PUBLIC IMGUI_IMPL_OPENGL_LOADER_GLAD)
 
 target_link_libraries(imgui_lib PUBLIC glfw)
 
@@ -265,7 +281,7 @@ add_executable(game-engine
     src/app/scene/SceneMeshLibrary.cpp
     src/app/scene/SceneObjectOperations.cpp
     src/app/scene/SceneObjectStore.cpp
-    src/app/scene/SceneRenderer.cpp
+    src/app/scene/SceneRendererD3d12.cpp
     src/app/scene/SceneSelectionController.cpp
     src/app/scene/SceneSpawnService.cpp
     src/app/scene/SceneSpawnBuilders.cpp
@@ -273,13 +289,25 @@ add_executable(game-engine
 
     src/engine/camera/Camera.cpp
 
-    src/engine/platform/ImGuiLayer.cpp
+    src/engine/platform/ImGuiLayerD3d12.cpp
 
     src/engine/platform/ImGuiFonts.cpp
 
     src/engine/platform/NativeProgressWindow.cpp
 
     src/engine/platform/Input.cpp
+
+    src/engine/platform/InputDiagnostics.cpp
+    src/engine/platform/FrameDiagnostics.cpp
+    src/engine/platform/RenderPathDiagnostics.cpp
+
+    src/engine/rhi/GfxContext.cpp
+
+    src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
+
+    src/engine/rhi/d3d12/GpuBuffer.cpp
+
+    src/engine/rhi/d3d12/ShaderPath.cpp
 
     src/engine/lighting/Light.cpp
 
@@ -307,50 +335,53 @@ add_executable(game-engine
 
     src/engine/scene/ScenePrimitive.cpp
 
-    src/engine/gizmos/SelectionRenderer.cpp
-
     src/engine/gizmos/GizmoGeometry.cpp
 
-    src/engine/lighting/ShadowMap.cpp
-    src/engine/lighting/CascadedShadowMap.cpp
+    src/engine/gizmos/GizmoDrawD3d12.cpp
+
+    src/engine/gizmos/CameraGizmoRendererD3d12.cpp
+
+    src/engine/gizmos/LightGizmoRendererD3d12.cpp
+
+    src/engine/gizmos/ColliderGizmoRendererD3d12.cpp
+
+    src/engine/gizmos/SelectionRendererD3d12.cpp
+
     src/engine/lighting/ShadowMapMath.cpp
+    src/engine/lighting/CascadedShadowMapD3d12.cpp
     src/engine/rendering/RenderDebug.cpp
 
-    src/engine/lighting/IBL.cpp
+    src/engine/lighting/IblD3d12.cpp
 
     src/engine/rendering/Material.cpp
 
-    src/engine/rendering/Texture.cpp
+    src/engine/rendering/TextureD3d12.cpp
 
     src/engine/assets/TextureCache.cpp
 
     src/engine/rendering/MaterialTextures.cpp
 
-    src/engine/rendering/Mesh.cpp
+    src/engine/rendering/MeshD3d12.cpp
+
+    src/engine/rendering/GridRendererD3d12.cpp
 
     src/engine/assets/ModelImporter.cpp
+
+    src/engine/assets/StbImage.cpp
 
     src/engine/assets/ProjectAssets.cpp
 
     src/engine/assets/FileDialog.cpp
 
-    src/engine/rendering/Renderer.cpp
+    src/engine/rendering/RendererD3d12.cpp
 
-    src/engine/rendering/Framebuffer.cpp
+    src/engine/rendering/FramebufferD3d12.cpp
 
-    src/engine/rendering/ScreenSpaceEffects.cpp
+    src/engine/rendering/ScreenSpaceEffectsD3d12.cpp
 
-    src/engine/rendering/Shader.cpp
+    src/engine/rendering/ShaderD3d12.cpp
 
     src/engine/rendering/ShaderCache.cpp
-
-    src/engine/rendering/GridRenderer.cpp
-
-    src/engine/gizmos/CameraGizmoRenderer.cpp
-
-    src/engine/gizmos/ColliderGizmoRenderer.cpp
-
-    src/engine/gizmos/LightGizmoRenderer.cpp
 
     src/primitives/Cube.cpp
 
@@ -364,21 +395,37 @@ add_executable(game-engine
 
     src/primitives/Plane.cpp
 
-    vendor/glad/src/glad.c
-
 )
 
 
 
-target_include_directories(game-engine PRIVATE vendor/glad/include vendor/stb vendor/IconFontCppHeaders src ${tinygltf_SOURCE_DIR})
+target_include_directories(game-engine PRIVATE vendor/stb vendor/IconFontCppHeaders src ${tinygltf_SOURCE_DIR})
 
 
 
-find_package(OpenGL REQUIRED)
+target_link_libraries(game-engine PRIVATE
+    glfw
+    glm::glm
+    imgui_lib
+    imguizmo_lib
+    nlohmann_json::nlohmann_json
+    Jolt
+    D3D12MemoryAllocator
+    d3d12
+    dxgi
+    dxguid
+    d3dcompiler
+)
 
-target_link_libraries(game-engine PRIVATE glfw OpenGL::GL glm::glm imgui_lib imguizmo_lib nlohmann_json::nlohmann_json Jolt)
+target_compile_definitions(game-engine PRIVATE NOMINMAX GAME_ENGINE_D3D12)
 
-target_compile_definitions(game-engine PRIVATE NOMINMAX)
+if(GAME_ENGINE_D3D12_DEBUG_LAYER)
+    target_compile_definitions(game-engine PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
+endif()
+
+if(MSVC)
+    target_link_options(game-engine PRIVATE "$<$<CONFIG:Debug>:/MAP:FULL>")
+endif()
 
 if(WIN32)
     target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32)
@@ -396,6 +443,10 @@ add_custom_command(TARGET game-engine POST_BUILD
 
     COMMENT "Copying assets to output directory")
 
+if(MSVC)
+    set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT game-engine)
+endif()
+
 enable_testing()
 
 add_executable(engine-tests
@@ -406,4 +457,72 @@ add_executable(engine-tests
 target_include_directories(engine-tests PRIVATE src)
 target_link_libraries(engine-tests PRIVATE glm::glm)
 add_test(NAME engine-tests COMMAND engine-tests)
+
+add_executable(descriptor-heap-tests
+    tests/descriptor_heap_test.cpp
+    src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
+)
+
+target_include_directories(descriptor-heap-tests PRIVATE src tests)
+add_test(NAME descriptor-heap-tests COMMAND descriptor-heap-tests)
+
+if(WIN32)
+    set(D3D12_RENDER_TEST_SOURCES
+        tests/d3d12_render_tests.cpp
+        tests/d3d12_test_harness.cpp
+        src/engine/rhi/GfxContext.cpp
+        src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
+        src/engine/rhi/d3d12/GpuBuffer.cpp
+        src/engine/rhi/d3d12/ShaderPath.cpp
+        src/engine/rendering/FramebufferD3d12.cpp
+        src/engine/rendering/ShaderD3d12.cpp
+        src/engine/rendering/ShaderCache.cpp
+        src/engine/rendering/MeshD3d12.cpp
+        src/engine/rendering/Material.cpp
+        src/engine/rendering/MaterialTextures.cpp
+        src/engine/rendering/TextureD3d12.cpp
+        src/engine/assets/TextureCache.cpp
+        src/engine/assets/StbImage.cpp
+        src/engine/camera/Camera.cpp
+        src/engine/platform/Input.cpp
+        src/engine/lighting/SceneLighting.cpp
+        src/engine/lighting/Light.cpp
+        src/engine/lighting/IblD3d12.cpp
+        src/engine/lighting/CascadedShadowMapD3d12.cpp
+        src/engine/lighting/ShadowMapMath.cpp
+        src/engine/rendering/GridRendererD3d12.cpp
+        src/engine/gizmos/GizmoDrawD3d12.cpp
+        src/engine/platform/FrameDiagnostics.cpp
+    src/engine/platform/RenderPathDiagnostics.cpp
+        src/engine/rendering/RenderDebug.cpp
+        src/primitives/Cube.cpp
+    )
+
+    add_executable(d3d12-render-tests ${D3D12_RENDER_TEST_SOURCES})
+
+    target_include_directories(d3d12-render-tests PRIVATE src tests vendor/stb ${json_SOURCE_DIR}/include)
+    target_link_libraries(d3d12-render-tests PRIVATE
+        glfw
+        glm::glm
+        imgui_lib
+        nlohmann_json::nlohmann_json
+        D3D12MemoryAllocator
+        d3d12
+        dxgi
+        dxguid
+        d3dcompiler
+    )
+    target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX GAME_ENGINE_D3D12)
+
+    add_custom_command(TARGET d3d12-render-tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:d3d12-render-tests>/assets"
+        COMMENT "Copying assets for d3d12-render-tests")
+
+    add_test(NAME d3d12-render-tests COMMAND d3d12-render-tests)
+    set_tests_properties(d3d12-render-tests PROPERTIES
+        LABELS "d3d12"
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/Debug")
+endif()
 

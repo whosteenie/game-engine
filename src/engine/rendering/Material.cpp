@@ -35,9 +35,15 @@ namespace
         std::shared_ptr<Texture> roughness;
     };
 
-    const DefaultMaterialTextures& GetDefaultMaterialTextures()
+    DefaultMaterialTextures& GetDefaultMaterialTextures()
     {
-        static const DefaultMaterialTextures defaults = []() {
+        static DefaultMaterialTextures defaults;
+        if (defaults.white != nullptr)
+        {
+            return defaults;
+        }
+
+        {
             DefaultMaterialTextures textures;
             const unsigned char whitePixel[] = {255, 255, 255, 255};
             const unsigned char normalPixel[] = {128, 128, 255, 255};
@@ -68,11 +74,20 @@ namespace
                 1,
                 4,
                 TextureColorSpace::Linear);
-            return textures;
-        }();
+            defaults = std::move(textures);
+        }
 
         return defaults;
     }
+}
+
+void Material::ReleaseGlobalGpuResources()
+{
+    DefaultMaterialTextures& defaults = GetDefaultMaterialTextures();
+    defaults.white.reset();
+    defaults.normal.reset();
+    defaults.ao.reset();
+    defaults.roughness.reset();
 }
 
 Material::Material(
@@ -101,7 +116,7 @@ void Material::Apply(
     const RenderDebugMode debugMode,
     const DirectionalShadowSettings& shadowSettings) const
 {
-    m_shader->Use();
+    m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
@@ -113,11 +128,17 @@ void Material::Apply(
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
     m_shader->SetInt("uDebugMode", static_cast<int>(debugMode));
 
-    m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() ? 1 : 0);
-    m_shader->SetInt("uUseNormalMap", HasNormalMap() ? 1 : 0);
-    m_shader->SetInt("uUseAoMap", HasAoMap() ? 1 : 0);
-    m_shader->SetInt("uUseRoughnessMap", HasRoughnessMap() && !m_useMetallicRoughnessMap ? 1 : 0);
-    m_shader->SetInt("uUseMetallicRoughnessMap", HasMetallicRoughnessMap() ? 1 : 0);
+    m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() && m_albedoMap != nullptr && m_albedoMap->IsValid() ? 1 : 0);
+    m_shader->SetInt("uUseNormalMap", HasNormalMap() && m_normalMap != nullptr && m_normalMap->IsValid() ? 1 : 0);
+    m_shader->SetInt("uUseAoMap", HasAoMap() && m_aoMap != nullptr && m_aoMap->IsValid() ? 1 : 0);
+    m_shader->SetInt(
+        "uUseRoughnessMap",
+        HasRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid() && !m_useMetallicRoughnessMap
+            ? 1
+            : 0);
+    m_shader->SetInt(
+        "uUseMetallicRoughnessMap",
+        HasMetallicRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid() ? 1 : 0);
     m_shader->SetInt("uAlbedoTexCoordSet", m_albedoTexCoordSet);
     m_shader->SetInt("uNormalTexCoordSet", m_normalTexCoordSet);
     m_shader->SetInt("uAoTexCoordSet", m_aoTexCoordSet);
@@ -162,7 +183,9 @@ void Material::Apply(
 
         shadowMap->BindDepthTexture(ShadowMapUnit);
         m_shader->SetInt("uShadowMap", static_cast<int>(ShadowMapUnit));
-        m_shader->SetInt("uReceiveShadow", receiveShadow ? 1 : 0);
+        m_shader->SetInt(
+            "uReceiveShadow",
+            receiveShadow && shadowMap->HasRenderedDepth() ? 1 : 0);
         m_shader->SetInt("uShadowFilterMode", static_cast<int>(shadowSettings.GetFilterMode()));
         m_shader->SetInt("uPcfKernelRadius", shadowSettings.GetPcfKernelRadius());
         m_shader->SetInt("uUsePoissonPcf", shadowSettings.GetUsePoissonPcf() ? 1 : 0);
@@ -185,27 +208,32 @@ void Material::Apply(
 
     lighting.Apply(*m_shader);
     ibl.BindTextures(*m_shader);
+
+#if defined(GAME_ENGINE_D3D12)
+    m_shader->FlushUniforms();
+#endif
 }
 
 void Material::BindMaps() const
 {
     const DefaultMaterialTextures& defaults = GetDefaultMaterialTextures();
 
-    const Texture& albedoTexture = HasAlbedoMap() ? *m_albedoMap : *defaults.white;
+    const bool useAlbedoMap = HasAlbedoMap() && m_albedoMap != nullptr && m_albedoMap->IsValid();
+    const Texture& albedoTexture = useAlbedoMap ? *m_albedoMap : *defaults.white;
     albedoTexture.Bind(AlbedoMapUnit);
-    m_shader->SetInt("uAlbedoMap", static_cast<int>(AlbedoMapUnit));
 
-    const Texture& normalTexture = HasNormalMap() ? *m_normalMap : *defaults.normal;
+    const bool useNormalMap = HasNormalMap() && m_normalMap != nullptr && m_normalMap->IsValid();
+    const Texture& normalTexture = useNormalMap ? *m_normalMap : *defaults.normal;
     normalTexture.Bind(NormalMapUnit);
-    m_shader->SetInt("uNormalMap", static_cast<int>(NormalMapUnit));
 
-    const Texture& aoTexture = HasAoMap() ? *m_aoMap : *defaults.ao;
+    const bool useAoMap = HasAoMap() && m_aoMap != nullptr && m_aoMap->IsValid();
+    const Texture& aoTexture = useAoMap ? *m_aoMap : *defaults.ao;
     aoTexture.Bind(AoMapUnit);
-    m_shader->SetInt("uAoMap", static_cast<int>(AoMapUnit));
 
-    const Texture& roughnessTexture = HasRoughnessMap() ? *m_roughnessMap : *defaults.roughness;
+    const bool useRoughnessMap =
+        HasRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid();
+    const Texture& roughnessTexture = useRoughnessMap ? *m_roughnessMap : *defaults.roughness;
     roughnessTexture.Bind(RoughnessMapUnit);
-    m_shader->SetInt("uRoughnessMap", static_cast<int>(RoughnessMapUnit));
 }
 
 void Material::SetRoughnessMap(std::shared_ptr<Texture> texture, std::string path)

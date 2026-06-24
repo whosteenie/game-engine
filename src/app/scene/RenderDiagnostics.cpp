@@ -12,6 +12,10 @@
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/ShadowMapMath.h"
 
+#if defined(GAME_ENGINE_D3D12)
+#include "engine/rhi/GfxContext.h"
+#endif
+
 #include <glm/gtc/matrix_inverse.hpp>
 #include <chrono>
 #include <ctime>
@@ -258,6 +262,33 @@ namespace RenderDiagnostics
             out << "SSAO bias: " << effects.GetSsaoBias() << "\n";
             out << "AO strength: " << effects.GetAoStrength() << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
+
+#if defined(GAME_ENGINE_D3D12)
+            std::uint32_t srvUsed = 0;
+            std::uint32_t srvCapacity = 0;
+            GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
+            out << "[GPU descriptors]\n";
+            out << "SRV heap used: " << srvUsed << " / " << srvCapacity << "\n";
+            if (!GfxContext::GetLastGpuAllocationError().empty())
+            {
+                out << "Last GPU allocation error: " << GfxContext::GetLastGpuAllocationError() << "\n";
+            }
+            out << "\n";
+#endif
+
+            out << "[Scene object transforms]\n";
+            const std::vector<SceneObject>& objects = scene.GetObjects();
+            for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+            {
+                const SceneObject& object = objects[objectIndex];
+                const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+                const glm::vec3 worldPosition = glm::vec3(worldMatrix[3]);
+                out << "  [" << objectIndex << "] \"" << object.GetName() << "\""
+                    << " pos=" << FormatVec3(worldPosition)
+                    << " mesh=" << (object.HasMesh() ? "yes" : "no")
+                    << " import=" << (object.GetImportAssetPath().empty() ? "no" : "yes") << "\n";
+            }
+            out << "\n";
 
             const int selectedIndex = scene.GetPrimarySelection();
             out << "[Selected object shadow analysis]\n";

@@ -59,3 +59,8 @@ std::shared_ptr<Texture> TextureCache::Load(
     m_textures[cacheKey] = texture;
     return texture;
 }
+
+void TextureCache::Clear()
+{
+    m_textures.clear();
+}

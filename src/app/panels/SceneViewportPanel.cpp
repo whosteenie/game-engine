@@ -39,12 +39,12 @@ bool SceneViewportPanel::HasValidRenderTarget() const
     return m_showPanel && m_renderWidth > 0 && m_renderHeight > 0;
 }
 
-unsigned int SceneViewportPanel::GetFramebuffer() const
+std::uintptr_t SceneViewportPanel::GetFramebuffer() const
 {
     return m_framebuffer.GetFramebuffer();
 }
 
-unsigned int SceneViewportPanel::GetColorTexture() const
+std::uintptr_t SceneViewportPanel::GetColorTexture() const
 {
     return m_framebuffer.GetColorTexture();
 }
@@ -56,7 +56,15 @@ void SceneViewportPanel::EnsureFramebufferSized() const
         return;
     }
 
-    m_framebuffer.Resize(m_renderWidth, m_renderHeight);
+    (void)m_framebuffer.Resize(m_renderWidth, m_renderHeight);
+}
+
+void SceneViewportPanel::ClearRenderTarget() const
+{
+    if (m_framebuffer.IsValid())
+    {
+        m_framebuffer.ClearRenderTarget();
+    }
 }
 
 void SceneViewportPanel::DrawViewGizmo(
@@ -138,14 +146,27 @@ void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
-    m_renderWidth = std::max(1, static_cast<int>(available.x * framebufferScale.x));
-    m_renderHeight = std::max(1, static_cast<int>(available.y * framebufferScale.y));
+    const int requestedWidth = std::max(1, static_cast<int>(available.x * framebufferScale.x + 0.5f));
+    const int requestedHeight = std::max(1, static_cast<int>(available.y * framebufferScale.y + 0.5f));
+
+    // Avoid recreating GPU resources when ImGui layout jitters by a pixel.
+    if (m_renderWidth <= 0
+        || m_renderHeight <= 0
+        || std::abs(requestedWidth - m_renderWidth) > 1
+        || std::abs(requestedHeight - m_renderHeight) > 1)
+    {
+        m_renderWidth = requestedWidth;
+        m_renderHeight = requestedHeight;
+    }
 
     if (m_framebuffer.IsValid() && m_framebuffer.GetColorTexture() != 0)
     {
-        const ImTextureID textureId =
-            static_cast<ImTextureID>(static_cast<intptr_t>(m_framebuffer.GetColorTexture()));
+        const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
+#if defined(GAME_ENGINE_D3D12)
+        ImGui::Image(textureId, available);
+#else
         ImGui::Image(textureId, available, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+#endif
     }
     else
     {

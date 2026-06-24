@@ -895,14 +895,11 @@ namespace SceneProjectIODetail
             ++objectIndex;
             if (showProgress)
             {
-                const float loadProgress =
-                    objectCount > 0 ? static_cast<float>(objectIndex) / static_cast<float>(objectCount) : 1.0f;
-                NativeProgressWindow::Instance().SetMessage(
-                    "Loading scene objects (" + std::to_string(objectIndex) + "/"
-                    + std::to_string(objectCount) + ")...");
-                NativeProgressWindow::Instance().SetProgress(0.05f + (loadProgress * 0.95f));
+                // Native progress disabled during project load (see SceneProjectIO::Load).
             }
 
+            try
+            {
             Mesh* mesh = nullptr;
             std::string importAssetPath;
             int importNodeIndex = -1;
@@ -1005,6 +1002,16 @@ namespace SceneProjectIODetail
             else
             {
                 scene.GetObjectStore().FinalizeNewObject(createdObject);
+            }
+            }
+            catch (const std::exception& exception)
+            {
+                const char* what = exception.what();
+                outError = (what != nullptr && what[0] != '\0')
+                    ? std::string("Failed loading object '")
+                          + objectValue.value("name", "?") + "': " + what
+                    : std::string("Failed loading object '") + objectValue.value("name", "?") + "'.";
+                return false;
             }
         }
 
@@ -1218,14 +1225,8 @@ bool SceneProjectIO::DeserializeScene(
             SceneProjectIODetail::EnsureNextObjectId(scene);
         }
 
-        if (!SceneProjectIODetail::LoadEditorLayout(projectRoot))
-        {
-            outError = "Failed to load editor layout.";
-            return false;
-        }
-
         return true;
-}
+    }
 
 bool SceneProjectIO::Save(
     const Scene& scene,
@@ -1282,8 +1283,6 @@ bool SceneProjectIO::Load(
 
     try
     {
-        ScopedNativeProgress progress("Loading Project", "Reading project file...");
-
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
         {
@@ -1294,13 +1293,12 @@ bool SceneProjectIO::Load(
         json root;
         input >> root;
 
-        progress.SetMessage("Loading scene...");
-        progress.SetProgress(0.05f);
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)
     {
-        outError = exception.what();
+        const char* what = exception.what();
+        outError = (what != nullptr && what[0] != '\0') ? what : "Failed to load project.";
         return false;
     }
 }

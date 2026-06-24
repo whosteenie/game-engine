@@ -661,7 +661,7 @@ void Scene::Render(
     const Camera& camera,
     int viewportWidth,
     int viewportHeight,
-    unsigned int targetFramebuffer,
+    std::uintptr_t targetFramebuffer,
     const SceneRenderOptions& options) const
 {
     m_renderer->Render(*this, camera, viewportWidth, viewportHeight, targetFramebuffer, options);

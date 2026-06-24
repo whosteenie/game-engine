@@ -37,6 +37,7 @@ public:
 
 private:
     void UpdateCameraVectors();
+    glm::mat4 BuildViewMatrixFromState() const;
     float ComputeFitDistance(float boundsRadius, float padding = 1.2f) const;
 
     glm::vec3 m_position;

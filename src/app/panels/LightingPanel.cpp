@@ -504,6 +504,7 @@ void LightingPanel::Draw(
         }
 
         static std::string diagnosticStatus;
+        ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/import console logs.");
         if (ImGui::Button("Write diagnostics/render_diagnostics.txt"))
         {
             const ImVec2 viewportSize = ImGui::GetContentRegionAvail();

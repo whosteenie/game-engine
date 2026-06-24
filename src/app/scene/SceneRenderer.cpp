@@ -180,7 +180,7 @@ void SceneRenderer::Render(
     const Camera& camera,
     int viewportWidth,
     int viewportHeight,
-    unsigned int targetFramebuffer,
+    std::uintptr_t targetFramebuffer,
     const SceneRenderOptions& options)
 {
     GLint previousFramebuffer = 0;
@@ -188,7 +188,7 @@ void SceneRenderer::Render(
     if (renderToTarget)
     {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-        glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
         glViewport(0, 0, viewportWidth, viewportHeight);
         glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -219,7 +219,7 @@ void SceneRenderer::Render(
     }
     else if (renderToTarget)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
         glViewport(0, 0, viewportWidth, viewportHeight);
     }
 
@@ -272,7 +272,7 @@ void SceneRenderer::Render(
 
         if (renderToTarget)
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
         }
 
         m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight, m_directionalShadowSettings);
@@ -283,7 +283,7 @@ void SceneRenderer::Render(
 
         if (renderToTarget)
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, targetFramebuffer);
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
             glViewport(0, 0, viewportWidth, viewportHeight);
         }
 

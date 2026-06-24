@@ -474,7 +474,7 @@ void ScreenSpaceEffects::Apply(
         shadowFactorTexture = m_shadowBlur2Texture;
     }
 
-    unsigned int hdrColorTexture = m_sceneFramebuffer->GetColorTexture();
+    std::uintptr_t hdrColorTexture = m_sceneFramebuffer->GetColorTexture();
 
     if (m_sceneFramebuffer->HasSplitLighting())
     {
@@ -499,7 +499,7 @@ void ScreenSpaceEffects::Apply(
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
 
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_sceneFramebuffer->GetColorTexture()));
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetIndirectColorTexture());
         glActiveTexture(GL_TEXTURE2);
@@ -533,7 +533,7 @@ void ScreenSpaceEffects::Apply(
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
 
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetColorTexture());
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_sceneFramebuffer->GetColorTexture()));
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
         glActiveTexture(GL_TEXTURE2);
@@ -783,7 +783,7 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 }
 
 void ScreenSpaceEffects::BlitDepthToFramebuffer(
-    unsigned int drawFramebuffer,
+    std::uintptr_t drawFramebuffer,
     int viewportWidth,
     int viewportHeight) const
 {
@@ -792,8 +792,8 @@ void ScreenSpaceEffects::BlitDepthToFramebuffer(
         return;
     }
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, m_sceneFramebuffer->GetFramebuffer());
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, drawFramebuffer);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(m_sceneFramebuffer->GetFramebuffer()));
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
     glBlitFramebuffer(
         0,
         0,
@@ -805,6 +805,6 @@ void ScreenSpaceEffects::BlitDepthToFramebuffer(
         viewportHeight,
         GL_DEPTH_BUFFER_BIT,
         GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, drawFramebuffer);
+    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
     glViewport(0, 0, viewportWidth, viewportHeight);
 }

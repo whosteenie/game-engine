@@ -27,14 +27,7 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window, const std::string& iniPath)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigDockingNoSplit = false;
     io.ConfigDockingNoDockingOver = false;
-    if (!m_iniPath.empty())
-    {
-        io.IniFilename = m_iniPath.c_str();
-    }
-    else
-    {
-        io.IniFilename = nullptr;
-    }
+    io.IniFilename = nullptr;
 
     ImGuiFonts::LoadEditorFonts(io);
 

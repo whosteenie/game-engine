@@ -20,6 +20,17 @@ void ProjectSession::SetStatusMessage(const std::string& message)
     m_statusMessage = message;
 }
 
+bool ProjectSession::ConsumeEditorLayoutLoadRequest()
+{
+    if (!m_pendingEditorLayoutLoad)
+    {
+        return false;
+    }
+
+    m_pendingEditorLayoutLoad = false;
+    return true;
+}
+
 void ProjectSession::MarkClean()
 {
     m_dirty = false;
@@ -33,6 +44,7 @@ void ProjectSession::CloseProject()
     m_statusMessage.clear();
     m_dirty = false;
     m_hasActiveProject = false;
+    m_pendingEditorLayoutLoad = false;
 }
 
 std::string ProjectSession::SanitizeProjectName(const std::string& projectName)
@@ -174,13 +186,25 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
     std::string error;
     if (!SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
+        try
+        {
+            scene.ResetToDefault();
+        }
+        catch (const std::exception& exception)
+        {
+            const char* what = exception.what();
+            error = (what != nullptr && what[0] != '\0') ? what : "Failed to reset scene after load error.";
+        }
+
         m_statusMessage = error.empty() ? "Failed to load project." : error;
         m_hasActiveProject = false;
+        m_pendingEditorLayoutLoad = false;
         return false;
     }
 
     MarkClean();
     m_hasActiveProject = true;
+    m_pendingEditorLayoutLoad = true;
     m_statusMessage = "Opened " + m_displayName;
     return true;
 }
