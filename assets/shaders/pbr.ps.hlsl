@@ -79,8 +79,6 @@ cbuffer PerPixel : register(b0)
     int uDebugMode;
     float uMaxReflectionLod;
     float uEnvironmentIntensity;
-    float _pad1;
-    float _pad2;
 };
 
 struct PSInput
@@ -254,9 +252,20 @@ float FetchShadowDepth(int cascadeIndex, float2 shadowUv)
     return uShadowMap.Sample(uShadowMapSampler, float3(shadowUv, (float)cascadeIndex)).r;
 }
 
-bool IsShadowBlocked(int cascadeIndex, float2 shadowUv, float compareDepth)
+float3 WorldToShadowSampleCoords(int cascadeIndex, float3 worldPos)
 {
-    return FetchShadowDepth(cascadeIndex, shadowUv) < compareDepth;
+    float4 lightSpace = mul(uLightSpaceMatrices[cascadeIndex], float4(worldPos, 1.0));
+    float3 coords = lightSpace.xyz / lightSpace.w;
+    // LH ZO NDC -> shadow-map UV (top-left origin, Y flip for D3D12 depth sampling).
+    coords.xy = coords.xy * 0.5 + 0.5;
+    coords.y = 1.0 - coords.y;
+    return coords;
+}
+
+bool IsShadowBlocked(int cascadeIndex, float2 shadowUv, float compareDepth, float minSeparation)
+{
+    float storedDepth = FetchShadowDepth(cascadeIndex, shadowUv);
+    return (compareDepth - storedDepth) > minSeparation;
 }
 
 float ShadowFilterRotation(int cascadeIndex)
@@ -280,6 +289,7 @@ float FilterShadowRotatedGrid(
     int cascadeIndex,
     float2 shadowUv,
     float compareDepth,
+    float minSeparation,
     float2 texelSize,
     float filterRadiusTexels,
     int kernelRadius)
@@ -308,7 +318,7 @@ float FilterShadowRotatedGrid(
             float distSquared = (float)(x * x + y * y);
             float weight = exp(-distSquared / (radiusSquared * 0.45));
             float2 offset = mul(rotation, float2((float)x, (float)y)) * texelStep;
-            shadow += (IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0) * weight;
+            shadow += (IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth, minSeparation) ? 0.0 : 1.0) * weight;
             weightSum += weight;
         }
     }
@@ -316,7 +326,7 @@ float FilterShadowRotatedGrid(
     return shadow / max(weightSum, 1e-5);
 }
 
-float FilterShadowGridPcf(int cascadeIndex, float2 shadowUv, float compareDepth, float2 texelSize, int kernelRadius)
+float FilterShadowGridPcf(int cascadeIndex, float2 shadowUv, float compareDepth, float minSeparation, float2 texelSize, int kernelRadius)
 {
     float shadow = 0.0;
     float sampleCount = 0.0;
@@ -327,7 +337,7 @@ float FilterShadowGridPcf(int cascadeIndex, float2 shadowUv, float compareDepth,
         for (int y = -kernelRadius; y <= kernelRadius; ++y)
         {
             float2 offset = float2((float)x, (float)y) * texelSize;
-            shadow += IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth) ? 0.0 : 1.0;
+            shadow += IsShadowBlocked(cascadeIndex, shadowUv + offset, compareDepth, minSeparation) ? 0.0 : 1.0;
             sampleCount += 1.0;
         }
     }
@@ -335,20 +345,20 @@ float FilterShadowGridPcf(int cascadeIndex, float2 shadowUv, float compareDepth,
     return shadow / max(sampleCount, 1.0);
 }
 
-float FilterShadowPcf(int cascadeIndex, float2 shadowUv, float compareDepth, float2 texelSize, int kernelRadius)
+float FilterShadowPcf(int cascadeIndex, float2 shadowUv, float compareDepth, float minSeparation, float2 texelSize, int kernelRadius)
 {
     if (uUsePoissonPcf != 0)
     {
         float filterRadiusTexels = ClampFilterRadiusTexels(
             max((float)kernelRadius, EffectiveMinPenumbraTexels()));
         return FilterShadowRotatedGrid(
-            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadiusTexels, kernelRadius);
+            cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, filterRadiusTexels, kernelRadius);
     }
 
-    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, kernelRadius);
 }
 
-float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, float2 texelSize)
+float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, float minSeparation, float2 texelSize)
 {
     float blockerDepthSum = 0.0;
     int blockerCount = 0;
@@ -361,7 +371,7 @@ float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, fl
         {
             float2 offset = float2((float)x, (float)y) * texelSize;
             float blockerDepth = FetchShadowDepth(cascadeIndex, shadowUv + offset);
-            if (blockerDepth < compareDepth)
+            if ((compareDepth - blockerDepth) > minSeparation)
             {
                 blockerDepthSum += blockerDepth;
                 blockerCount++;
@@ -371,7 +381,7 @@ float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, fl
 
     if (blockerCount == 0)
     {
-        return FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
+        return FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, uPcfKernelRadius);
     }
 
     float avgBlockerDepth = blockerDepthSum / (float)blockerCount;
@@ -388,12 +398,12 @@ float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, fl
     {
         int kernelRadius = min((int)ceil(filterRadius), kMaxRotatedGridRadius);
         return FilterShadowRotatedGrid(
-            cascadeIndex, shadowUv, compareDepth, texelSize, filterRadius, kernelRadius);
+            cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, filterRadius, kernelRadius);
     }
 
     int kernelRadius = (int)ceil(filterRadius);
     kernelRadius = min(kernelRadius, kMaxRotatedGridRadius);
-    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, texelSize, kernelRadius);
+    return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, kernelRadius);
 }
 
 float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, float3 lightDir)
@@ -408,23 +418,30 @@ float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, 
 
     float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15)) * uWorldBiasScale;
     float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
+    float minSeparation = texelUvSpan * max(0.75, 1.25 * uDepthBiasScale);
 
-    float3 biasedWorldPos = worldPos + normal * worldBias;
-    float4 lightSpace = mul(uLightSpaceMatrices[cascadeIndex], float4(biasedWorldPos, 1.0));
-    float3 projCoords = lightSpace.xyz / lightSpace.w;
-    projCoords = projCoords * 0.5 + 0.5;
+    // Offset the receiver toward the light so adjacent faces do not self-shadow in texel blocks.
+    float3 biasedWorldPos = worldPos + normal * worldBias + lightDir * (texelWorldSpan * 2.0 * uWorldBiasScale);
+    float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, biasedWorldPos);
 
-    if (projCoords.z < 0.0 || projCoords.z > 1.0)
+    if (sampleCoords.z < 0.0 || sampleCoords.z > 1.0)
     {
         return 1.0;
     }
 
-    float2 shadowUv = clamp(projCoords.xy, 0.0.xx, 1.0.xx);
-    float compareDepth = clamp(projCoords.z - depthBias, 0.0, 1.0);
+    // Do not clamp out-of-bounds UV to the map edge: that samples unrelated depths and
+    // produces view-dependent false shadows on receivers near the cascade boundary.
+    if (any(sampleCoords.xy < 0.0) || any(sampleCoords.xy > 1.0))
+    {
+        return 1.0;
+    }
+
+    float2 shadowUv = sampleCoords.xy;
+    float compareDepth = clamp(sampleCoords.z - depthBias, 0.0, 1.0);
 
     float shadow = uShadowFilterMode == 1
-        ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, texelSize)
-        : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, texelSize, uPcfKernelRadius);
+        ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize)
+        : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, uPcfKernelRadius);
 
     return shadow;
 }
@@ -441,6 +458,30 @@ int SelectCascadeIndex(float viewDepth)
         }
     }
     return cascadeIndex;
+}
+
+float ComputeCascadeBlendFactor(float viewDepth)
+{
+    [loop]
+    for (int boundaryIndex = 0; boundaryIndex < uCascadeCount - 1; ++boundaryIndex)
+    {
+        float splitDistance = uCascadeEndSplits[boundaryIndex];
+        float previousSplit = uCascadeNearPlane;
+        if (boundaryIndex > 0)
+        {
+            previousSplit = uCascadeEndSplits[boundaryIndex - 1];
+        }
+        float cascadeSpan = max(splitDistance - previousSplit, 1e-4);
+        float blendWidth = cascadeSpan * uCascadeBlendRatio;
+        float blendStart = splitDistance - blendWidth;
+
+        if (viewDepth > blendStart && viewDepth <= splitDistance)
+        {
+            return smoothstep(blendStart, splitDistance, viewDepth);
+        }
+    }
+
+    return 0.0;
 }
 
 float CalcShadow(float3 fragPos, float viewDepth, float3 geomNormal, float3 lightDir)
@@ -505,6 +546,7 @@ PSOutput main(PSInput input)
     PSOutput output;
 
     float3 normal = normalize(input.normal);
+    float3 geomNormal = normal;
     float2 albedoTexCoord = SelectTexCoord(uAlbedoTexCoordSet, input.texCoord0, input.texCoord1);
     float2 normalTexCoord = SelectTexCoord(uNormalTexCoordSet, input.texCoord0, input.texCoord1);
     float2 aoTexCoord = SelectTexCoord(uAoTexCoordSet, input.texCoord0, input.texCoord1);
@@ -514,12 +556,14 @@ PSOutput main(PSInput input)
         normal = CalcNormalFromMap(normal, input.tangent, normalTexCoord);
     }
 
+    float3 geomNormalNorm = normalize(geomNormal);
     float3 viewDir = normalize(uViewPos - input.fragPos);
 
     float3 albedo = uAlbedo;
     if (uUseAlbedoMap != 0)
     {
-        albedo *= uAlbedoMap.Sample(uAlbedoSampler, albedoTexCoord).rgb;
+        float3 albedoSample = uAlbedoMap.Sample(uAlbedoSampler, albedoTexCoord).rgb;
+        albedo *= albedoSample;
     }
 
     float roughness = uRoughness;
@@ -545,13 +589,19 @@ PSOutput main(PSInput input)
         ambientOcclusion = uAoMap.Sample(uAoSampler, aoTexCoord).r;
     }
 
-    float3 irradiance = uIrradianceMap.Sample(uIrradianceSampler, normal).rgb;
+    float3 irradiance = uIrradianceMap.Sample(uIrradianceSampler, geomNormalNorm).rgb;
     float3 diffuseIbl = irradiance * albedo;
+
+    float sunGeomFacing = 1.0;
+    if (uShadowLightIndex >= 0 && uLightTypes[uShadowLightIndex] == LIGHT_TYPE_DIRECTIONAL)
+    {
+        sunGeomFacing = max(dot(geomNormalNorm, normalize(uLightDirections[uShadowLightIndex].xyz)), 0.0);
+    }
 
     float3 reflection = reflect(-viewDir, normal);
     float3 prefilteredColor = uPrefilterMap.SampleLevel(uPrefilterSampler, reflection, roughness * uMaxReflectionLod).rgb;
     float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(max(dot(normal, viewDir), 0.0), roughness)).rg;
-    float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y);
+    float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
 
     float3 specularEnergy = FresnelSchlickRoughness(max(dot(normal, viewDir), 0.0), f0, roughness);
     float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
@@ -584,6 +634,7 @@ PSOutput main(PSInput input)
             spotIntensity);
 
         float3 radiance = SrgbToLinear(uLightColors[i].rgb) * uLightIntensities[i];
+        float geomLightVisibility = max(dot(geomNormalNorm, lightDir), 0.0);
         float3 contribution = CalcCookTorranceContribution(
             normal,
             viewDir,
@@ -596,11 +647,11 @@ PSOutput main(PSInput input)
         float lightShadow = 1.0;
         if (i == uShadowLightIndex)
         {
-            lightShadow = CalcShadow(input.fragPos, input.viewDepth, normal, lightDir);
+            lightShadow = CalcShadow(input.fragPos, input.viewDepth, geomNormal, lightDir);
             shadowFactor = lightShadow;
         }
 
-        float3 litContribution = contribution * attenuation * spotIntensity;
+        float3 litContribution = contribution * attenuation * spotIntensity * geomLightVisibility;
         directUnshadowed += litContribution;
         directShadowed += litContribution * lightShadow;
     }
@@ -620,13 +671,13 @@ PSOutput main(PSInput input)
             float shadow = 1.0;
             if (uShadowLightIndex >= 0)
             {
-                shadow = CalcShadow(input.fragPos, input.viewDepth, normal, normalize(uLightDirections[uShadowLightIndex].xyz));
+                shadow = CalcShadow(input.fragPos, input.viewDepth, geomNormal, normalize(uLightDirections[uShadowLightIndex].xyz));
             }
             debugColor = shadow.xxx;
         }
         else if (uDebugMode == 2)
         {
-            debugColor = directShadowed / (directShadowed + 0.25.xxx);
+            debugColor = directUnshadowed / (directUnshadowed + 0.25.xxx);
         }
         else if (uDebugMode == 3)
         {
@@ -634,41 +685,114 @@ PSOutput main(PSInput input)
         }
         else if (uDebugMode == 4)
         {
-            float3 projCoords = input.fragPosLightSpace.xyz / input.fragPosLightSpace.w;
-            projCoords = projCoords * 0.5 + 0.5;
-            debugColor = float3(projCoords.xy, 0.0);
+            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
+            debugColor = float3(sampleCoords.xy, 0.0);
         }
         else if (uDebugMode == 5)
         {
-            float3 projCoords = input.fragPosLightSpace.xyz / input.fragPosLightSpace.w;
-            projCoords = projCoords * 0.5 + 0.5;
-            debugColor = projCoords.z.xxx;
+            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
+            debugColor = sampleCoords.z.xxx;
         }
         else if (uDebugMode == 6)
         {
             int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            float farSplit = uCascadeEndSplits[uCascadeCount - 1];
+            float normDepth = saturate(
+                (input.viewDepth - uCascadeNearPlane) / max(farSplit - uCascadeNearPlane, 1e-4));
+            float3 cascadeColor = float3(1.0, 0.85, 0.2);
             if (cascadeIndex == 0)
             {
-                debugColor = float3(1.0, 0.2, 0.2);
+                cascadeColor = float3(1.0, 0.2, 0.2);
             }
             else if (cascadeIndex == 1)
             {
-                debugColor = float3(0.2, 1.0, 0.2);
+                cascadeColor = float3(0.2, 1.0, 0.2);
             }
             else if (cascadeIndex == 2)
             {
-                debugColor = float3(0.2, 0.35, 1.0);
+                cascadeColor = float3(0.2, 0.35, 1.0);
             }
-            else
+            debugColor = cascadeColor * (0.25 + normDepth * 0.75);
+        }
+        else if (uDebugMode == 7)
+        {
+            debugColor = geomNormal * 0.5 + 0.5;
+        }
+        else if (uDebugMode == 8)
+        {
+            float handedness = input.tangent.w < 0.0 ? 0.15 : 0.85;
+            debugColor = handedness.xxx;
+        }
+        else if (uDebugMode == 9)
+        {
+            float farSplit = uCascadeEndSplits[uCascadeCount - 1];
+            float normDepth = saturate(
+                (input.viewDepth - uCascadeNearPlane) / max(farSplit - uCascadeNearPlane, 1e-4));
+            debugColor = normDepth.xxx;
+        }
+        else if (uDebugMode == 10)
+        {
+            debugColor = ComputeCascadeBlendFactor(input.viewDepth).xxx;
+        }
+        else if (uDebugMode == 11)
+        {
+            float3 worldNormal = normalize(geomNormal);
+            float3 irradiance = uIrradianceMap.Sample(uIrradianceSampler, worldNormal).rgb;
+            float3 diffuseOnly = irradiance * albedo * (1.0 - metallic);
+            debugColor = diffuseOnly / (diffuseOnly + 0.25.xxx);
+        }
+        else if (uDebugMode == 12)
+        {
+            float3 worldNormal = normalize(normal);
+            float3 reflectionDebug = reflect(-viewDir, worldNormal);
+            float3 prefilteredColor = uPrefilterMap.SampleLevel(
+                uPrefilterSampler, reflectionDebug, roughness * uMaxReflectionLod).rgb;
+            float2 envBrdf = uBrdfLut.Sample(
+                uBrdfLutSampler, float2(max(dot(worldNormal, viewDir), 0.0), roughness)).rg;
+            float3 specularOnly = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
+            debugColor = specularOnly / (specularOnly + 0.25.xxx);
+        }
+        else if (uDebugMode == 13)
+        {
+            float3 geomDiffuse = 0.0.xxx;
+            [loop]
+            for (int lightIndex = 0; lightIndex < uLightCount; ++lightIndex)
             {
-                debugColor = float3(1.0, 0.85, 0.2);
+                float3 lightDir;
+                float attenuation;
+                float spotIntensity;
+                CalcLightDirectionAndAttenuation(
+                    uLightTypes[lightIndex],
+                    uLightPositions[lightIndex].xyz,
+                    uLightDirections[lightIndex].xyz,
+                    uLightAttenConstant[lightIndex],
+                    uLightAttenLinear[lightIndex],
+                    uLightAttenQuadratic[lightIndex],
+                    uLightRange[lightIndex],
+                    uLightInnerCutoffCos[lightIndex],
+                    uLightOuterCutoffCos[lightIndex],
+                    input.fragPos,
+                    lightDir,
+                    attenuation,
+                    spotIntensity);
+
+                float3 radiance = SrgbToLinear(uLightColors[lightIndex].rgb) * uLightIntensities[lightIndex];
+                float nDotL = max(dot(normalize(geomNormal), lightDir), 0.0);
+                geomDiffuse += albedo * radiance * nDotL * attenuation * spotIntensity;
             }
+            debugColor = geomDiffuse / (geomDiffuse + 0.25.xxx);
+        }
+        else if (uDebugMode == 14)
+        {
+            debugColor = normalize(normal) * 0.5 + 0.5;
         }
 
         output.oDirect = float4(debugColor, 1.0);
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
         output.oShadowFactor = 1.0;
-        output.oNormal = float4(ToViewNormal(normal), 1.0);
+        output.oNormal = float4(normalize(geomNormal), 1.0);
         return output;
     }
 
@@ -677,7 +801,7 @@ PSOutput main(PSInput input)
         output.oDirect = float4(directUnshadowed, 1.0);
         output.oIndirect = float4(ambient, 1.0);
         output.oShadowFactor = shadowFactor;
-        output.oNormal = float4(ToViewNormal(normal), 1.0);
+        output.oNormal = float4(normalize(geomNormal), 1.0);
         return output;
     }
 
@@ -692,6 +816,6 @@ PSOutput main(PSInput input)
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
     }
     output.oShadowFactor = 1.0;
-    output.oNormal = float4(ToViewNormal(normal), 1.0);
+    output.oNormal = float4(normalize(geomNormal), 1.0);
     return output;
 }

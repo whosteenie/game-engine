@@ -39,6 +39,7 @@
 #include "engine/platform/Input.h"
 #include "engine/platform/InputDiagnostics.h"
 #include "engine/platform/FrameDiagnostics.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Renderer.h"
 
 #include <imgui.h>
@@ -90,26 +91,20 @@ namespace
 
     std::string DescribeException(const std::exception& exception)
     {
+        return SafeExceptionMessage(exception);
+    }
+
+    template<typename Fn>
+    void RunApplicationPhase(const char* phase, Fn&& fn)
+    {
         try
         {
-            if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
-            {
-                return std::string(what);
-            }
+            fn();
         }
-        catch (...)
+        catch (const std::exception& exception)
         {
+            throw std::runtime_error(std::string(phase) + ": " + SafeExceptionMessage(exception));
         }
-
-#if defined(GAME_ENGINE_D3D12)
-        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        if (!gpuError.empty())
-        {
-            return gpuError;
-        }
-#endif
-
-        return std::string(typeid(exception).name()) + " (no message)";
     }
 
     bool AlignPrimarySelectionToCameraView(Scene& scene, const Camera& camera, UndoStack* undoStack)
@@ -404,8 +399,8 @@ void Application::Run()
 
         try
         {
-            Update(deltaTime);
-            Render();
+            RunApplicationPhase("Update", [&]() { Update(deltaTime); });
+            RunApplicationPhase("Render", [&]() { Render(); });
             suppressedRepeatedFrameErrors = 0;
         }
         catch (const std::exception& exception)
@@ -1073,8 +1068,10 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 void Application::Render()
 {
     m_gfxFrameActive = true;
-    FrameDiagnostics::LogPhase("render-begin");
-    m_renderer->BeginFrame();
+    RunApplicationPhase("render-begin", [&]() {
+        FrameDiagnostics::LogPhase("render-begin");
+        m_renderer->BeginFrame();
+    });
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
@@ -1087,74 +1084,82 @@ void Application::Render()
 
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
-        FrameDiagnostics::LogPhase("scene-view-render");
-        Scene* sceneViewScene = GetEditorTargetScene();
-        m_sceneViewportPanel->EnsureFramebufferSized();
-        if (m_sceneViewportPanel->HasGpuFramebuffer())
-        {
-            m_camera->SetAspectFromFramebuffer(
-                m_sceneViewportPanel->GetRenderWidth(),
-                m_sceneViewportPanel->GetRenderHeight());
-            sceneViewScene->Render(
-                *m_camera,
-                m_sceneViewportPanel->GetRenderWidth(),
-                m_sceneViewportPanel->GetRenderHeight(),
-                m_sceneViewportPanel->GetFramebuffer());
-        }
+        RunApplicationPhase("scene-view-render", [&]() {
+            FrameDiagnostics::LogPhase("scene-view-render");
+            Scene* sceneViewScene = GetEditorTargetScene();
+            m_sceneViewportPanel->EnsureFramebufferSized();
+            if (m_sceneViewportPanel->HasGpuFramebuffer())
+            {
+                m_camera->SetAspectFromFramebuffer(
+                    m_sceneViewportPanel->GetRenderWidth(),
+                    m_sceneViewportPanel->GetRenderHeight());
+                sceneViewScene->Render(
+                    *m_camera,
+                    m_sceneViewportPanel->GetRenderWidth(),
+                    m_sceneViewportPanel->GetRenderHeight(),
+                    m_sceneViewportPanel->GetFramebuffer());
+            }
+        });
     }
 
     if (editorActive && m_gameViewportPanel->HasValidRenderTarget())
     {
-        Scene* gameScene = m_scene.get();
-        if (m_playModeController.IsActive())
-        {
-            Scene* runtimeScene = m_playModeController.GetRuntimeScene();
-            if (runtimeScene != nullptr)
+        RunApplicationPhase("game-view-render", [&]() {
+            Scene* gameScene = m_scene.get();
+            if (m_playModeController.IsActive())
             {
-                gameScene = runtimeScene;
-            }
-        }
-
-        const int gameViewWidth = m_gameViewportPanel->GetRenderWidth();
-        const int gameViewHeight = m_gameViewportPanel->GetRenderHeight();
-        const float gameViewAspect =
-            gameViewHeight > 0
-                ? static_cast<float>(gameViewWidth) / static_cast<float>(gameViewHeight)
-                : 1.0f;
-
-        if (gameScene != nullptr)
-        {
-            const std::optional<SceneCamera> sceneCamera =
-                SceneCamera::TryFromScene(*gameScene, gameViewAspect);
-            if (sceneCamera.has_value())
-            {
-                m_gameViewportPanel->EnsureFramebufferSized();
-                if (m_gameViewportPanel->HasGpuFramebuffer())
+                Scene* runtimeScene = m_playModeController.GetRuntimeScene();
+                if (runtimeScene != nullptr)
                 {
-                const Camera renderCamera = sceneCamera->ToRenderCamera();
-                const SceneRenderOptions gameViewOptions{
-                    false,
-                    false,
-                    false,
-                    false,
-                    false,
-                };
-                gameScene->Render(
-                    renderCamera,
-                    gameViewWidth,
-                    gameViewHeight,
-                    m_gameViewportPanel->GetFramebuffer(),
-                    gameViewOptions);
-                m_gameViewRenderedLastFrame = true;
+                    gameScene = runtimeScene;
                 }
             }
-        }
+
+            const int gameViewWidth = m_gameViewportPanel->GetRenderWidth();
+            const int gameViewHeight = m_gameViewportPanel->GetRenderHeight();
+            const float gameViewAspect =
+                gameViewHeight > 0
+                    ? static_cast<float>(gameViewWidth) / static_cast<float>(gameViewHeight)
+                    : 1.0f;
+
+            if (gameScene != nullptr)
+            {
+                const std::optional<SceneCamera> sceneCamera =
+                    SceneCamera::TryFromScene(*gameScene, gameViewAspect);
+                if (sceneCamera.has_value())
+                {
+                    m_gameViewportPanel->EnsureFramebufferSized();
+                    if (m_gameViewportPanel->HasGpuFramebuffer())
+                    {
+                        const Camera renderCamera = sceneCamera->ToRenderCamera();
+                        const SceneRenderOptions gameViewOptions{
+                            false,
+                            false,
+                            false,
+                            false,
+                            false,
+                        };
+                        gameScene->Render(
+                            renderCamera,
+                            gameViewWidth,
+                            gameViewHeight,
+                            m_gameViewportPanel->GetFramebuffer(),
+                            gameViewOptions);
+                        m_gameViewRenderedLastFrame = true;
+                    }
+                }
+            }
+        });
     }
 
-    FrameDiagnostics::LogPhase("imgui-end");
-    m_imguiLayer->EndFrame();
-    FrameDiagnostics::LogPhase("present");
-    m_renderer->EndFrame(m_window);
+    RunApplicationPhase("imgui-end", [&]() {
+        FrameDiagnostics::LogPhase("imgui-end");
+        m_imguiLayer->EndFrame();
+    });
+    RunApplicationPhase("present", [&]() {
+        FrameDiagnostics::LogPhase("present");
+        m_renderer->EndFrame(m_window);
+    });
     m_imguiFrameActive = false;
     m_gfxFrameActive = false;
 }

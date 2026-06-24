@@ -11,13 +11,13 @@
 #include "engine/lighting/CascadedShadowMap.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/ShadowMapMath.h"
+#include "engine/lighting/LightingProbe.h"
 
-#if defined(GAME_ENGINE_D3D12)
 #include "engine/rhi/GfxContext.h"
-#endif
 
-#include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -263,7 +263,6 @@ namespace RenderDiagnostics
             out << "AO strength: " << effects.GetAoStrength() << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
 
-#if defined(GAME_ENGINE_D3D12)
             std::uint32_t srvUsed = 0;
             std::uint32_t srvCapacity = 0;
             GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
@@ -274,7 +273,6 @@ namespace RenderDiagnostics
                 out << "Last GPU allocation error: " << GfxContext::GetLastGpuAllocationError() << "\n";
             }
             out << "\n";
-#endif
 
             out << "[Scene object transforms]\n";
             const std::vector<SceneObject>& objects = scene.GetObjects();
@@ -307,13 +305,65 @@ namespace RenderDiagnostics
                 out << "\n";
             }
 
+            const std::array<glm::vec3, 3> probePoints = {
+                glm::vec3(0.0f, 2.0f, 0.0f),
+                glm::vec3(0.0f, 0.5f, 0.0f),
+                glm::vec3(0.0f, 0.0f, 0.0f),
+            };
+            const char* probeNames[3] = {"cube-top", "sphere-center", "floor"};
+            const std::array<glm::vec3, 3> probeNormals = {
+                glm::vec3(0.0f, 1.0f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f),
+            };
+
+            out << "[Lighting probe sweep (8 orbit cameras)]\n";
+            out << "Columns: viewDepth, cascade, blend, sunDotGeom\n";
+            for (std::size_t probeIndex = 0; probeIndex < probePoints.size(); ++probeIndex)
+            {
+                out << "Probe " << probeNames[probeIndex] << " @ " << FormatVec3(probePoints[probeIndex]) << "\n";
+                for (int step = 0; step < 8; ++step)
+                {
+                    const float angle = glm::two_pi<float>() * (static_cast<float>(step) / 8.0f);
+                    const glm::vec3 eye(
+                        std::cos(angle) * 6.0f,
+                        3.5f,
+                        std::sin(angle) * 6.0f);
+                    const glm::mat4 viewMatrix = glm::lookAtLH(
+                        eye,
+                        probePoints[probeIndex],
+                        glm::vec3(0.0f, 1.0f, 0.0f));
+
+                    const LightingProbeResult probe = EvaluateLightingProbe(
+                        viewMatrix,
+                        probePoints[probeIndex],
+                        probeNormals[probeIndex],
+                        lightDirection,
+                        cascadeSplits,
+                        camera.GetNearPlane(),
+                        shadowSettings.GetCascadeBlendRatio(),
+                        shadowSettings.GetCascadeCount());
+
+                    out << "  cam" << step
+                        << " eye=" << FormatVec3(eye)
+                        << " viewDepth=" << probe.viewDepth
+                        << " cascade=" << probe.cascadeIndex
+                        << " blend=" << probe.cascadeBlendFactor
+                        << " sunDotGeom=" << probe.sunDotGeomNormal
+                        << "\n";
+                }
+                out << "\n";
+            }
+
             out << "[How to isolate the artifact]\n";
-            out << "Lighting model: color = direct + indirect * ambientOcclusion\n";
-            out << "1. Shadow factor (PBR): shadow map / PCF issues\n";
-            out << "2. Direct lighting (PBR): sun/specular only\n";
-            out << "3. Ambient / IBL (PBR): indirect before SSAO\n";
-            out << "4. SSAO buffer: screen-space AO applied to indirect only\n";
-            out << "5. Composite occlusion: SSAO multiplier on indirect\n";
+            out << "Lighting model: color = direct * shadowFactor + indirect * SSAO\n";
+            out << "1. Shadow factor / Cascade blend factor: shadow map and cascade seams\n";
+            out << "2. Direct lighting: full Cook-Torrance (includes normal maps)\n";
+            out << "3. Direct diffuse (geom N·L): sun on geometric normals only\n";
+            out << "4. Diffuse IBL / Specular IBL: split indirect lighting\n";
+            out << "5. Shaded normal vs Geometric normal: normal-map / TBN issues\n";
+            out << "6. View depth / Cascade index: split selection diagnostics\n";
+            out << "7. SSAO buffer / Composite occlusion: screen-space AO on indirect\n";
 
             statusMessage = "Wrote " + fs::absolute(outputFilePath).string();
             return true;

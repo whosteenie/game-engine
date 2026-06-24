@@ -2,8 +2,13 @@
 
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rhi/GfxContext.h"
+#include "engine/rhi/d3d12/D3D12Throw.h"
+#include "engine/rhi/d3d12/GpuBuffer.h"
 
-#include <glad/glad.h>
+#include <D3D12MemAlloc.h>
+#include <d3d12.h>
+#include <dxgiformat.h>
 
 #include <stb_image.h>
 
@@ -11,8 +16,10 @@
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace
 {
@@ -61,46 +68,176 @@ namespace
     };
 
     const float kQuadVertices[] = {
-        -1.0f, -1.0f, 0.0f, 0.0f,
-         1.0f, -1.0f, 1.0f, 0.0f,
-         1.0f,  1.0f, 1.0f, 1.0f,
-        -1.0f, -1.0f, 0.0f, 0.0f,
-         1.0f,  1.0f, 1.0f, 1.0f,
-        -1.0f,  1.0f, 0.0f, 1.0f,
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f, -1.0f, 1.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 0.0f,
     };
 
     std::array<glm::mat4, 6> BuildCaptureViews()
     {
         return {
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
-            glm::lookAt(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
+            glm::lookAtLH(glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)),
         };
+    }
+
+    D3D12_RESOURCE_STATES TransitionResource(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* resource,
+        D3D12_RESOURCE_STATES before,
+        D3D12_RESOURCE_STATES after)
+    {
+        if (before == after)
+        {
+            return after;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        commandList->ResourceBarrier(1, &barrier);
+        return after;
+    }
+
+    void CreateCubemapSrv(ID3D12Device* device, ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, std::uint32_t mipLevels)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.TextureCube.MipLevels = mipLevels;
+        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+    }
+
+    void CreateTexture2DSrv(
+        ID3D12Device* device,
+        ID3D12Resource* resource,
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+        DXGI_FORMAT format,
+        std::uint32_t mipLevels)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = mipLevels;
+        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
     }
 }
 
-IBL::IBL(const char* hdrPath)
+IBL::GpuTexture IBL::CreateCubemapTextureResource(
+    const std::uint32_t resolution,
+    const std::uint32_t mipLevels,
+    const std::uint32_t initialState)
 {
-    CreateCaptureResources();
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
 
-    try
-    {
-        LoadHdrEquirectangular(hdrPath);
-        CreateEnvironmentCubemap();
-        CreateIrradianceMap();
-        CreatePrefilterMap();
-        CreateBrdfLut();
+    GpuTexture texture{};
+    texture.mipLevels = mipLevels;
 
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    }
-    catch (...)
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Width = resolution;
+    resourceDesc.Height = resolution;
+    resourceDesc.DepthOrArraySize = 6;
+    resourceDesc.MipLevels = mipLevels;
+    resourceDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* resource = nullptr;
+    D3D12MA::Allocation* allocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            static_cast<D3D12_RESOURCE_STATES>(initialState),
+            nullptr,
+            &allocation,
+            IID_PPV_ARGS(&resource))))
     {
-        DestroyResources();
-        throw;
+        throw std::runtime_error("Failed to create IBL cubemap texture");
     }
+
+    texture.resource = resource;
+    texture.allocation = allocation;
+    texture.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
+    texture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(texture.srvDescriptorIndex);
+    CreateCubemapSrv(
+        static_cast<ID3D12Device*>(GfxContext::Get().GetDevice()),
+        resource,
+        {texture.srvCpuHandle},
+        mipLevels);
+    return texture;
+}
+
+IBL::GpuTexture IBL::CreateRenderTargetTexture2DResource(
+    const std::uint32_t width,
+    const std::uint32_t height,
+    const std::uint32_t format,
+    const std::uint32_t initialState)
+{
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    GpuTexture texture{};
+    texture.mipLevels = 1;
+
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Width = width;
+    resourceDesc.Height = height;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = static_cast<DXGI_FORMAT>(format);
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* resource = nullptr;
+    D3D12MA::Allocation* allocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            static_cast<D3D12_RESOURCE_STATES>(initialState),
+            nullptr,
+            &allocation,
+            IID_PPV_ARGS(&resource))))
+    {
+        throw std::runtime_error("Failed to create IBL render target texture");
+    }
+
+    texture.resource = resource;
+    texture.allocation = allocation;
+    texture.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
+    texture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(texture.srvDescriptorIndex);
+    CreateTexture2DSrv(
+        static_cast<ID3D12Device*>(GfxContext::Get().GetDevice()),
+        resource,
+        {texture.srvCpuHandle},
+        static_cast<DXGI_FORMAT>(format),
+        1);
+    return texture;
+}
+
+IBL::IBL(const char* hdrPath)
+    : m_hdrPath(hdrPath != nullptr ? hdrPath : "")
+{
 }
 
 IBL::~IBL()
@@ -109,31 +246,35 @@ IBL::~IBL()
 }
 
 IBL::IBL(IBL&& other) noexcept
-    : m_hdrTexture(other.m_hdrTexture),
-      m_environmentCubemap(other.m_environmentCubemap),
-      m_irradianceMap(other.m_irradianceMap),
-      m_prefilterMap(other.m_prefilterMap),
-      m_brdfLut(other.m_brdfLut),
-      m_captureFbo(other.m_captureFbo),
-      m_captureRbo(other.m_captureRbo),
-      m_cubeVao(other.m_cubeVao),
-      m_cubeVbo(other.m_cubeVbo),
-      m_quadVao(other.m_quadVao),
-      m_quadVbo(other.m_quadVbo),
+    : m_hdrGpu(other.m_hdrGpu),
+      m_environmentCubemapGpu(other.m_environmentCubemapGpu),
+      m_irradianceMapGpu(other.m_irradianceMapGpu),
+      m_prefilterMapGpu(other.m_prefilterMapGpu),
+      m_brdfLutGpu(other.m_brdfLutGpu),
+      m_cubeVb(std::move(other.m_cubeVb)),
+      m_quadVb(std::move(other.m_quadVb)),
+      m_captureDepthResource(other.m_captureDepthResource),
+      m_captureDepthAllocation(other.m_captureDepthAllocation),
+      m_captureDepthDsvIndex(other.m_captureDepthDsvIndex),
+      m_captureRtvIndex(other.m_captureRtvIndex),
+      m_activeCaptureTarget(other.m_activeCaptureTarget),
+      m_gpuGenerated(other.m_gpuGenerated),
+      m_hdrPath(std::move(other.m_hdrPath)),
       m_maxPrefilterMipLevel(other.m_maxPrefilterMipLevel),
       m_environmentIntensity(other.m_environmentIntensity)
 {
-    other.m_hdrTexture = 0;
-    other.m_environmentCubemap = 0;
-    other.m_irradianceMap = 0;
-    other.m_prefilterMap = 0;
-    other.m_brdfLut = 0;
-    other.m_captureFbo = 0;
-    other.m_captureRbo = 0;
-    other.m_cubeVao = 0;
-    other.m_cubeVbo = 0;
-    other.m_quadVao = 0;
-    other.m_quadVbo = 0;
+    other.m_hdrGpu = {};
+    other.m_environmentCubemapGpu = {};
+    other.m_irradianceMapGpu = {};
+    other.m_prefilterMapGpu = {};
+    other.m_brdfLutGpu = {};
+    other.m_captureDepthResource = nullptr;
+    other.m_captureDepthAllocation = nullptr;
+    other.m_captureDepthDsvIndex = UINT32_MAX;
+    other.m_captureRtvIndex = UINT32_MAX;
+    other.m_activeCaptureTarget = nullptr;
+    other.m_gpuGenerated = false;
+    other.m_hdrPath.clear();
 }
 
 IBL& IBL::operator=(IBL&& other) noexcept
@@ -141,129 +282,142 @@ IBL& IBL::operator=(IBL&& other) noexcept
     if (this != &other)
     {
         DestroyResources();
-        m_hdrTexture = other.m_hdrTexture;
-        m_environmentCubemap = other.m_environmentCubemap;
-        m_irradianceMap = other.m_irradianceMap;
-        m_prefilterMap = other.m_prefilterMap;
-        m_brdfLut = other.m_brdfLut;
-        m_captureFbo = other.m_captureFbo;
-        m_captureRbo = other.m_captureRbo;
-        m_cubeVao = other.m_cubeVao;
-        m_cubeVbo = other.m_cubeVbo;
-        m_quadVao = other.m_quadVao;
-        m_quadVbo = other.m_quadVbo;
+        m_hdrGpu = other.m_hdrGpu;
+        m_environmentCubemapGpu = other.m_environmentCubemapGpu;
+        m_irradianceMapGpu = other.m_irradianceMapGpu;
+        m_prefilterMapGpu = other.m_prefilterMapGpu;
+        m_brdfLutGpu = other.m_brdfLutGpu;
+        m_cubeVb = std::move(other.m_cubeVb);
+        m_quadVb = std::move(other.m_quadVb);
+        m_captureDepthResource = other.m_captureDepthResource;
+        m_captureDepthAllocation = other.m_captureDepthAllocation;
+        m_captureDepthDsvIndex = other.m_captureDepthDsvIndex;
+        m_captureRtvIndex = other.m_captureRtvIndex;
+        m_activeCaptureTarget = other.m_activeCaptureTarget;
+        m_gpuGenerated = other.m_gpuGenerated;
+        m_hdrPath = std::move(other.m_hdrPath);
         m_maxPrefilterMipLevel = other.m_maxPrefilterMipLevel;
         m_environmentIntensity = other.m_environmentIntensity;
 
-        other.m_hdrTexture = 0;
-        other.m_environmentCubemap = 0;
-        other.m_irradianceMap = 0;
-        other.m_prefilterMap = 0;
-        other.m_brdfLut = 0;
-        other.m_captureFbo = 0;
-        other.m_captureRbo = 0;
-        other.m_cubeVao = 0;
-        other.m_cubeVbo = 0;
-        other.m_quadVao = 0;
-        other.m_quadVbo = 0;
+        other.m_hdrGpu = {};
+        other.m_environmentCubemapGpu = {};
+        other.m_irradianceMapGpu = {};
+        other.m_prefilterMapGpu = {};
+        other.m_brdfLutGpu = {};
+        other.m_captureDepthResource = nullptr;
+        other.m_captureDepthAllocation = nullptr;
+        other.m_captureDepthDsvIndex = UINT32_MAX;
+        other.m_captureRtvIndex = UINT32_MAX;
+        other.m_activeCaptureTarget = nullptr;
+        other.m_gpuGenerated = false;
+        other.m_hdrPath.clear();
     }
 
     return *this;
 }
 
+void IBL::DestroyGpuTexture(GpuTexture& texture)
+{
+    if (!GfxContext::Get().IsInitialized())
+    {
+        texture = {};
+        return;
+    }
+
+    if (texture.srvDescriptorIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(texture.srvDescriptorIndex);
+    }
+
+    if (texture.allocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(texture.allocation)->Release();
+    }
+
+    texture = {};
+}
+
 void IBL::DestroyResources()
 {
-    if (m_hdrTexture != 0)
+    DestroyGpuTexture(m_hdrGpu);
+    DestroyGpuTexture(m_environmentCubemapGpu);
+    DestroyGpuTexture(m_irradianceMapGpu);
+    DestroyGpuTexture(m_prefilterMapGpu);
+    DestroyGpuTexture(m_brdfLutGpu);
+
+    if (GfxContext::Get().IsInitialized())
     {
-        glDeleteTextures(1, &m_hdrTexture);
-        m_hdrTexture = 0;
+        if (m_captureRtvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().FreeOffscreenRtvBlock(m_captureRtvIndex, 1);
+            m_captureRtvIndex = UINT32_MAX;
+        }
+
+        if (m_captureDepthDsvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().FreeOffscreenDsv(m_captureDepthDsvIndex);
+            m_captureDepthDsvIndex = UINT32_MAX;
+        }
     }
 
-    if (m_environmentCubemap != 0)
+    if (m_captureDepthAllocation != nullptr)
     {
-        glDeleteTextures(1, &m_environmentCubemap);
-        m_environmentCubemap = 0;
+        static_cast<D3D12MA::Allocation*>(m_captureDepthAllocation)->Release();
+        m_captureDepthAllocation = nullptr;
     }
 
-    if (m_irradianceMap != 0)
-    {
-        glDeleteTextures(1, &m_irradianceMap);
-        m_irradianceMap = 0;
-    }
-
-    if (m_prefilterMap != 0)
-    {
-        glDeleteTextures(1, &m_prefilterMap);
-        m_prefilterMap = 0;
-    }
-
-    if (m_brdfLut != 0)
-    {
-        glDeleteTextures(1, &m_brdfLut);
-        m_brdfLut = 0;
-    }
-
-    if (m_captureFbo != 0)
-    {
-        glDeleteFramebuffers(1, &m_captureFbo);
-        m_captureFbo = 0;
-    }
-
-    if (m_captureRbo != 0)
-    {
-        glDeleteRenderbuffers(1, &m_captureRbo);
-        m_captureRbo = 0;
-    }
-
-    if (m_cubeVao != 0)
-    {
-        glDeleteVertexArrays(1, &m_cubeVao);
-        m_cubeVao = 0;
-    }
-
-    if (m_cubeVbo != 0)
-    {
-        glDeleteBuffers(1, &m_cubeVbo);
-        m_cubeVbo = 0;
-    }
-
-    if (m_quadVao != 0)
-    {
-        glDeleteVertexArrays(1, &m_quadVao);
-        m_quadVao = 0;
-    }
-
-    if (m_quadVbo != 0)
-    {
-        glDeleteBuffers(1, &m_quadVbo);
-        m_quadVbo = 0;
-    }
+    m_captureDepthResource = nullptr;
+    m_gpuGenerated = false;
 }
 
 void IBL::CreateCaptureResources()
 {
-    glGenFramebuffers(1, &m_captureFbo);
-    glGenRenderbuffers(1, &m_captureRbo);
+    m_cubeVb.Create(GpuBuffer::Type::Vertex, kCubeVertices, static_cast<std::uint32_t>(sizeof(kCubeVertices)));
+    m_quadVb.Create(GpuBuffer::Type::Vertex, kQuadVertices, static_cast<std::uint32_t>(sizeof(kQuadVertices)));
 
-    glGenVertexArrays(1, &m_cubeVao);
-    glGenBuffers(1, &m_cubeVbo);
-    glBindVertexArray(m_cubeVao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_cubeVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(kCubeVertices), kCubeVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), reinterpret_cast<void*>(0));
-    glBindVertexArray(0);
+    m_captureRtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
+    m_captureDepthDsvIndex = GfxContext::Get().AllocateOffscreenDsv();
 
-    glGenVertexArrays(1, &m_quadVao);
-    glGenBuffers(1, &m_quadVbo);
-    glBindVertexArray(m_quadVao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(kQuadVertices), kQuadVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(2 * sizeof(float)));
-    glBindVertexArray(0);
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC depthDesc{};
+    depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDesc.Width = 512;
+    depthDesc.Height = 512;
+    depthDesc.DepthOrArraySize = 1;
+    depthDesc.MipLevels = 1;
+    depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12MA::ALLOCATION_DESC depthAllocationDesc{};
+    depthAllocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* depthResource = nullptr;
+    D3D12MA::Allocation* depthAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &depthAllocationDesc,
+            &depthDesc,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            nullptr,
+            &depthAllocation,
+            IID_PPV_ARGS(&depthResource))))
+    {
+        throw std::runtime_error("Failed to create IBL capture depth texture");
+    }
+
+    m_captureDepthResource = depthResource;
+    m_captureDepthAllocation = depthAllocation;
+
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+    dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device->CreateDepthStencilView(
+        depthResource,
+        &dsvDesc,
+        {GfxContext::Get().GetOffscreenDsvCpuHandle(m_captureDepthDsvIndex)});
 }
 
 void IBL::LoadHdrEquirectangular(const char* hdrPath)
@@ -279,128 +433,277 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
         throw std::runtime_error(std::string("Failed to load HDR environment map: ") + hdrPath);
     }
 
-    glGenTextures(1, &m_hdrTexture);
-    glBindTexture(GL_TEXTURE_2D, m_hdrTexture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGB, GL_FLOAT, imageData);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    const std::size_t pixelCount = static_cast<std::size_t>(width) * static_cast<std::size_t>(height);
+    std::vector<float> rgba(pixelCount * 4);
+    const int sourceChannels = channels > 0 ? channels : 3;
+    for (std::size_t pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex)
+    {
+        const float* source = imageData + pixelIndex * static_cast<std::size_t>(sourceChannels);
+        float* destination = rgba.data() + pixelIndex * 4;
+        destination[0] = source[0];
+        destination[1] = sourceChannels > 1 ? source[1] : source[0];
+        destination[2] = sourceChannels > 2 ? source[2] : source[0];
+        destination[3] = 1.0f;
+    }
 
     stbi_image_free(imageData);
+
+    float maxHdrChannel = 0.0f;
+    for (const float channel : rgba)
+    {
+        maxHdrChannel = std::max(maxHdrChannel, channel);
+    }
+    if (maxHdrChannel <= 0.0f)
+    {
+        throw std::runtime_error("HDR environment map contains no positive radiance data");
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC textureDesc{};
+    textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    textureDesc.Width = static_cast<UINT64>(width);
+    textureDesc.Height = static_cast<UINT>(height);
+    textureDesc.DepthOrArraySize = 1;
+    textureDesc.MipLevels = 1;
+    textureDesc.Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12MA::ALLOCATION_DESC textureAllocationDesc{};
+    textureAllocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* textureResource = nullptr;
+    D3D12MA::Allocation* textureAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &textureAllocationDesc,
+            &textureDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            &textureAllocation,
+            IID_PPV_ARGS(&textureResource))))
+    {
+        throw std::runtime_error("Failed to create HDR texture resource");
+    }
+
+    UINT rowCount = 0;
+    UINT64 rowPitch = 0;
+    UINT64 imageSize = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT textureFootprint{};
+    device->GetCopyableFootprints(
+        &textureDesc,
+        0,
+        1,
+        0,
+        &textureFootprint,
+        &rowCount,
+        &rowPitch,
+        &imageSize);
+
+    D3D12_RESOURCE_DESC uploadDesc{};
+    uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    uploadDesc.Width = imageSize;
+    uploadDesc.Height = 1;
+    uploadDesc.DepthOrArraySize = 1;
+    uploadDesc.MipLevels = 1;
+    uploadDesc.Format = DXGI_FORMAT_UNKNOWN;
+    uploadDesc.SampleDesc.Count = 1;
+    uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};
+    uploadAllocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+
+    ID3D12Resource* uploadResource = nullptr;
+    D3D12MA::Allocation* uploadAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &uploadAllocationDesc,
+            &uploadDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            &uploadAllocation,
+            IID_PPV_ARGS(&uploadResource))))
+    {
+        textureAllocation->Release();
+        textureResource->Release();
+        throw std::runtime_error("Failed to create HDR upload buffer");
+    }
+
+    void* mapped = nullptr;
+    if (FAILED(uploadResource->Map(0, nullptr, &mapped)))
+    {
+        uploadAllocation->Release();
+        uploadResource->Release();
+        textureAllocation->Release();
+        textureResource->Release();
+        throw std::runtime_error("Failed to map HDR upload buffer");
+    }
+
+    for (int row = 0; row < height; ++row)
+    {
+        std::memcpy(
+            static_cast<unsigned char*>(mapped) + static_cast<std::size_t>(row) * rowPitch,
+            rgba.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(width) * 4,
+            static_cast<std::size_t>(width) * 4 * sizeof(float));
+    }
+    uploadResource->Unmap(0, nullptr);
+
+    ID3D12Resource* textureResourcePtr = textureResource;
+    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+
+        D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
+        sourceLocation.pResource = uploadResource;
+        sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        sourceLocation.PlacedFootprint = textureFootprint;
+
+        D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
+        destinationLocation.pResource = textureResourcePtr;
+        destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destinationLocation.SubresourceIndex = 0;
+        commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+
+        TransitionResource(
+            commandList,
+            textureResourcePtr,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    });
+
+    uploadAllocation->Release();
+    uploadResource->Release();
+
+    m_hdrGpu.resource = textureResource;
+    m_hdrGpu.allocation = textureAllocation;
+    m_hdrGpu.mipLevels = 1;
+    m_hdrGpu.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_hdrGpu.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_hdrGpu.srvDescriptorIndex);
+    CreateTexture2DSrv(
+        device,
+        textureResource,
+        {m_hdrGpu.srvCpuHandle},
+        DXGI_FORMAT_R32G32B32A32_FLOAT,
+        1);
 }
 
 void IBL::CaptureCubemapFaces(
-    unsigned int targetCubemap,
+    unsigned int /*targetCubemap*/,
     Shader& shader,
     unsigned int resolution,
     unsigned int mipLevel,
-    bool generateMipmapsAfter)
+    bool /*generateMipmapsAfter*/)
 {
-    glBindFramebuffer(GL_FRAMEBUFFER, m_captureFbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, m_captureRbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, resolution, resolution);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_captureRbo);
+    if (m_activeCaptureTarget == nullptr)
+    {
+        return;
+    }
 
-    const glm::mat4 captureProjection = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
+    GpuTexture& target = *m_activeCaptureTarget;
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    const glm::mat4 captureProjection = glm::perspectiveLH_ZO(glm::radians(90.0f), 1.0f, 0.1f, 10.0f);
     const auto captureViews = BuildCaptureViews();
 
-    shader.Use();
-    shader.SetMat4("uProjection", captureProjection);
+    const D3D12_CPU_DESCRIPTOR_HANDLE captureRtvHandle{
+        GfxContext::Get().GetOffscreenRtvCpuHandle(m_captureRtvIndex)};
+    const D3D12_CPU_DESCRIPTOR_HANDLE captureDsvHandle{
+        GfxContext::Get().GetOffscreenDsvCpuHandle(m_captureDepthDsvIndex)};
 
-    glViewport(0, 0, static_cast<GLsizei>(resolution), static_cast<GLsizei>(resolution));
-    glBindVertexArray(m_cubeVao);
+    ID3D12Resource* targetResource = static_cast<ID3D12Resource*>(target.resource);
+    ID3D12Resource* depthResource = static_cast<ID3D12Resource*>(m_captureDepthResource);
 
-    for (unsigned int face = 0; face < 6; ++face)
-    {
-        shader.SetMat4("uView", captureViews[face]);
-        glFramebufferTexture2D(
-            GL_FRAMEBUFFER,
-            GL_COLOR_ATTACHMENT0,
-            GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
-            targetCubemap,
-            static_cast<GLint>(mipLevel));
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
+    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
 
-    glBindVertexArray(0);
+        TransitionResource(
+            commandList,
+            targetResource,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET);
 
-    if (generateMipmapsAfter)
-    {
-        glBindTexture(GL_TEXTURE_CUBE_MAP, targetCubemap);
-        glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
-    }
+        TransitionResource(
+            commandList,
+            depthResource,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+        D3D12_VIEWPORT viewport{};
+        viewport.Width = static_cast<float>(resolution);
+        viewport.Height = static_cast<float>(resolution);
+        viewport.MaxDepth = 1.0f;
+        D3D12_RECT scissor{0, 0, static_cast<LONG>(resolution), static_cast<LONG>(resolution)};
+
+        shader.UseOnCommandList(commandList);
+        shader.SetMat4("uProjection", captureProjection);
+
+        const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        for (unsigned int face = 0; face < 6; ++face)
+        {
+            D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+            rtvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+            rtvDesc.Texture2DArray.ArraySize = 1;
+            rtvDesc.Texture2DArray.FirstArraySlice = face;
+            rtvDesc.Texture2DArray.MipSlice = mipLevel;
+            device->CreateRenderTargetView(targetResource, &rtvDesc, captureRtvHandle);
+
+            commandList->OMSetRenderTargets(1, &captureRtvHandle, FALSE, &captureDsvHandle);
+            commandList->RSSetViewports(1, &viewport);
+            commandList->RSSetScissorRects(1, &scissor);
+            commandList->ClearRenderTargetView(captureRtvHandle, clearColor, 0, nullptr);
+            commandList->ClearDepthStencilView(captureDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+            shader.SetMat4("uView", captureViews[face]);
+            shader.FlushUniformsOnCommandList(commandList);
+
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            m_cubeVb.BindVertexToCommandList(commandList, 0, 3 * sizeof(float));
+            commandList->DrawInstanced(36, 1, 0, 0);
+        }
+
+        TransitionResource(
+            commandList,
+            targetResource,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    });
 }
 
 void IBL::CreateEnvironmentCubemap()
 {
-    glGenTextures(1, &m_environmentCubemap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_environmentCubemap);
-    for (unsigned int i = 0; i < 6; ++i)
-    {
-        glTexImage2D(
-            GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-            0,
-            GL_RGB16F,
-            512,
-            512,
-            0,
-            GL_RGB,
-            GL_FLOAT,
-            nullptr);
-    }
-
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    m_environmentCubemapGpu = CreateCubemapTextureResource(
+        512,
+        1,
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
     Shader equirectShader(
         EngineConstants::IblCubemapVertexShader,
         EngineConstants::IblEquirectToCubemapFragmentShader);
-    equirectShader.Use();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, m_hdrTexture);
+    equirectShader.BindTextureSlot(0, m_hdrGpu.srvCpuHandle);
     equirectShader.SetInt("uEquirectangularMap", 0);
 
-    CaptureCubemapFaces(m_environmentCubemap, equirectShader, 512, 0, false);
+    m_activeCaptureTarget = &m_environmentCubemapGpu;
+    CaptureCubemapFaces(0, equirectShader, 512, 0, false);
+    m_activeCaptureTarget = nullptr;
 }
 
 void IBL::CreateIrradianceMap()
 {
-    glGenTextures(1, &m_irradianceMap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_irradianceMap);
-    for (unsigned int i = 0; i < 6; ++i)
-    {
-        glTexImage2D(
-            GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-            0,
-            GL_RGB16F,
-            32,
-            32,
-            0,
-            GL_RGB,
-            GL_FLOAT,
-            nullptr);
-    }
-
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    m_irradianceMapGpu = CreateCubemapTextureResource(
+        64,
+        1,
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
     Shader irradianceShader(
         EngineConstants::IblCubemapVertexShader,
         EngineConstants::IblIrradianceFragmentShader);
-    irradianceShader.Use();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_environmentCubemap);
+    irradianceShader.BindTextureSlot(0, m_environmentCubemapGpu.srvCpuHandle);
     irradianceShader.SetInt("uEnvironmentMap", 0);
 
-    CaptureCubemapFaces(m_irradianceMap, irradianceShader, 32, 0, false);
+    m_activeCaptureTarget = &m_irradianceMapGpu;
+    CaptureCubemapFaces(0, irradianceShader, 64, 0, false);
+    m_activeCaptureTarget = nullptr;
 }
 
 void IBL::CreatePrefilterMap()
@@ -409,89 +712,133 @@ void IBL::CreatePrefilterMap()
     const unsigned int mipLevels = 5;
     m_maxPrefilterMipLevel = static_cast<float>(mipLevels - 1);
 
-    glGenTextures(1, &m_prefilterMap);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_prefilterMap);
-    for (unsigned int mip = 0; mip < mipLevels; ++mip)
-    {
-        const unsigned int mipWidth = prefilterResolution * static_cast<unsigned int>(std::pow(0.5, mip));
-        for (unsigned int i = 0; i < 6; ++i)
-        {
-            glTexImage2D(
-                GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
-                static_cast<GLint>(mip),
-                GL_RGB16F,
-                mipWidth,
-                mipWidth,
-                0,
-                GL_RGB,
-                GL_FLOAT,
-                nullptr);
-        }
-    }
-
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    m_prefilterMapGpu = CreateCubemapTextureResource(
+        prefilterResolution,
+        mipLevels,
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
     Shader prefilterShader(
         EngineConstants::IblCubemapVertexShader,
         EngineConstants::IblPrefilterFragmentShader);
-    prefilterShader.Use();
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_environmentCubemap);
+    prefilterShader.BindTextureSlot(0, m_environmentCubemapGpu.srvCpuHandle);
     prefilterShader.SetInt("uEnvironmentMap", 0);
 
     for (unsigned int mip = 0; mip < mipLevels; ++mip)
     {
-        const unsigned int mipWidth = prefilterResolution * static_cast<unsigned int>(std::pow(0.5, mip));
+        const unsigned int mipWidth =
+            prefilterResolution * static_cast<unsigned int>(std::pow(0.5, static_cast<double>(mip)));
         const float roughness = static_cast<float>(mip) / static_cast<float>(mipLevels - 1);
         prefilterShader.SetFloat("uRoughness", roughness);
-        CaptureCubemapFaces(m_prefilterMap, prefilterShader, mipWidth, mip, false);
+        m_activeCaptureTarget = &m_prefilterMapGpu;
+        CaptureCubemapFaces(0, prefilterShader, mipWidth, mip, false);
     }
+
+    m_activeCaptureTarget = nullptr;
 }
 
 void IBL::CreateBrdfLut()
 {
     const unsigned int lutSize = 512;
 
-    glGenTextures(1, &m_brdfLut);
-    glBindTexture(GL_TEXTURE_2D, m_brdfLut);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RG16F, lutSize, lutSize, 0, GL_RG, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    m_brdfLutGpu = CreateRenderTargetTexture2DResource(
+        lutSize,
+        lutSize,
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16_FLOAT),
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
-    glBindFramebuffer(GL_FRAMEBUFFER, m_captureFbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, m_captureRbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, lutSize, lutSize);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, m_captureRbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, m_brdfLut, 0);
-
-    glViewport(0, 0, static_cast<GLsizei>(lutSize), static_cast<GLsizei>(lutSize));
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    const D3D12_CPU_DESCRIPTOR_HANDLE captureRtvHandle{
+        GfxContext::Get().GetOffscreenRtvCpuHandle(m_captureRtvIndex)};
+    ID3D12Resource* brdfResource = static_cast<ID3D12Resource*>(m_brdfLutGpu.resource);
 
     Shader brdfShader(EngineConstants::IblBrdfVertexShader, EngineConstants::IblBrdfFragmentShader);
-    brdfShader.Use();
-    glBindVertexArray(m_quadVao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
+
+    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+
+        TransitionResource(
+            commandList,
+            brdfResource,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+        D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
+        rtvDesc.Format = DXGI_FORMAT_R16G16_FLOAT;
+        rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+        device->CreateRenderTargetView(brdfResource, &rtvDesc, captureRtvHandle);
+
+        D3D12_VIEWPORT viewport{};
+        viewport.Width = static_cast<float>(lutSize);
+        viewport.Height = static_cast<float>(lutSize);
+        viewport.MaxDepth = 1.0f;
+        D3D12_RECT scissor{0, 0, static_cast<LONG>(lutSize), static_cast<LONG>(lutSize)};
+
+        commandList->OMSetRenderTargets(1, &captureRtvHandle, FALSE, nullptr);
+        commandList->RSSetViewports(1, &viewport);
+        commandList->RSSetScissorRects(1, &scissor);
+        const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        commandList->ClearRenderTargetView(captureRtvHandle, clearColor, 0, nullptr);
+
+        brdfShader.UseOnCommandList(commandList);
+        brdfShader.FlushUniformsOnCommandList(commandList);
+        commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        m_quadVb.BindVertexToCommandList(commandList, 0, 4 * sizeof(float));
+        commandList->DrawInstanced(6, 1, 0, 0);
+
+        TransitionResource(
+            commandList,
+            brdfResource,
+            D3D12_RESOURCE_STATE_RENDER_TARGET,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    });
+}
+
+void IBL::GenerateGpuResources()
+{
+    if (m_gpuGenerated)
+    {
+        return;
+    }
+
+    try
+    {
+        if (m_captureDepthResource == nullptr)
+        {
+            CreateCaptureResources();
+        }
+
+        if (m_hdrGpu.resource == nullptr)
+        {
+            LoadHdrEquirectangular(m_hdrPath.c_str());
+        }
+
+        CreateEnvironmentCubemap();
+        CreateIrradianceMap();
+        CreatePrefilterMap();
+        CreateBrdfLut();
+        m_gpuGenerated = true;
+    }
+    catch (...)
+    {
+        DestroyResources();
+        throw;
+    }
 }
 
 void IBL::BindTextures(Shader& shader) const
 {
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_irradianceMap);
+    if (!m_gpuGenerated)
+    {
+        const_cast<IBL*>(this)->GenerateGpuResources();
+    }
+
+    shader.BindTextureSlot(1, m_irradianceMapGpu.srvCpuHandle);
     shader.SetInt("uIrradianceMap", 1);
 
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, m_prefilterMap);
+    shader.BindTextureSlot(2, m_prefilterMapGpu.srvCpuHandle);
     shader.SetInt("uPrefilterMap", 2);
 
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, m_brdfLut);
+    shader.BindTextureSlot(3, m_brdfLutGpu.srvCpuHandle);
     shader.SetInt("uBrdfLut", 3);
 
     shader.SetFloat("uMaxReflectionLod", m_maxPrefilterMipLevel);

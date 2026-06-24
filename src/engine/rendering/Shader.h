@@ -5,10 +5,8 @@
 #include <unordered_map>
 #include <vector>
 
-#if defined(GAME_ENGINE_D3D12)
 struct ID3D12PipelineState;
 struct ID3D12RootSignature;
-#endif
 
 class Shader
 {
@@ -23,10 +21,8 @@ public:
 
     // viewportLdr selects the UNORM pipeline for the editor viewport framebuffer.
     void Use(bool mrtPass = false, bool viewportLdr = false) const;
-#if defined(GAME_ENGINE_D3D12)
     // Binds PSO/root signature without clearing texture slots (post-process draws).
     void BindPipeline(bool mrtPass = false, bool viewportLdr = false) const;
-#endif
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -46,14 +42,11 @@ public:
     bool IsLinked() const;
     bool HasUniform(const char* name) const;
 
-#if defined(GAME_ENGINE_D3D12)
     ID3D12RootSignature* GetRootSignature() const;
     ID3D12PipelineState* GetPipelineState() const;
     static const Shader* GetActiveShader();
-#endif
 
 private:
-#if defined(GAME_ENGINE_D3D12)
     struct ConstantBuffer
     {
         void* resource = nullptr;
@@ -84,12 +77,4 @@ private:
     void* m_pixelShader = nullptr;
     std::vector<std::uintptr_t> m_textureSlots;
     bool m_isLinked = false;
-#else
-    unsigned int m_programID = 0;
-    bool m_isLinked = false;
-
-    std::string ReadFile(const char* filepath) const;
-    unsigned int Compile(unsigned int type, const char* source) const;
-    unsigned int Link(unsigned int vertex, unsigned int fragment) const;
-#endif
 };

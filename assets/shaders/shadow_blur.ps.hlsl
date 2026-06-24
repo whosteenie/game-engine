@@ -31,7 +31,8 @@ struct PSInput
 float ViewDepth(float2 texCoord)
 {
     float depth = uDepthMap.Sample(uDepthSampler, texCoord).r;
-    float4 clipSpace = float4(texCoord * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    float clipY = 1.0 - texCoord.y * 2.0;
+    float4 clipSpace = float4(texCoord.x * 2.0 - 1.0, clipY, depth, 1.0);
     float4 viewSpace = mul(uInvProjection, clipSpace);
     return viewSpace.z / viewSpace.w;
 }

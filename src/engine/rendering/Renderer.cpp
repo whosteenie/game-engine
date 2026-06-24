@@ -1,26 +1,23 @@
-#include <glad/glad.h>
-
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
 #include "engine/rendering/Renderer.h"
+
+#include "engine/rhi/GfxContext.h"
 
 void Renderer::SetViewport(int width, int height)
 {
-    glViewport(0, 0, width, height);
+    GfxContext::Get().Resize(width, height);
 }
 
 void Renderer::BeginFrame() const
 {
-    glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    GfxContext::Get().BeginFrame();
 }
 
 void Renderer::CancelFrame() const
 {
+    GfxContext::Get().CancelFrame();
 }
 
-void Renderer::EndFrame(GLFWwindow* window) const
+void Renderer::EndFrame(GLFWwindow* /*window*/) const
 {
-    glfwSwapBuffers(window);
+    GfxContext::Get().EndFrame();
 }

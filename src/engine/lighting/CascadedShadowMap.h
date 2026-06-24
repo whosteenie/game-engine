@@ -56,10 +56,11 @@ private:
     std::array<float, MaxCascades> m_stableOrthoZNear{};
     std::array<float, MaxCascades> m_stableOrthoZFar{};
     glm::vec3 m_lastCameraPosition{0.0f};
+    glm::vec3 m_lastCameraFront{0.0f, 0.0f, 1.0f};
+    bool m_hasLastCameraOrientation = false;
     bool m_hasStableOrthoHalfExtents = false;
     bool m_hasRenderedDepth = false;
 
-#if defined(GAME_ENGINE_D3D12)
     void* m_depthResource = nullptr;
     void* m_depthAllocation = nullptr;
     std::uint32_t m_depthSrvIndex = UINT32_MAX;
@@ -69,9 +70,4 @@ private:
     float m_savedViewportHeight = 0.0f;
     bool m_inShadowPass = false;
     bool m_depthInShaderReadState = false;
-#else
-    unsigned int m_fbo = 0;
-    unsigned int m_depthTexture = 0;
-    int m_savedViewport[4]{0, 0, 0, 0};
-#endif
 };

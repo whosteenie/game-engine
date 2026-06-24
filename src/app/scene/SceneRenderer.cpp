@@ -1,43 +1,75 @@
-#include "app/scene/SceneRenderer.h"
+#include "engine/gizmos/CameraGizmoRenderer.h"
+#include "engine/gizmos/ColliderGizmoRenderer.h"
+#include "engine/gizmos/LightGizmoRenderer.h"
+#include "engine/rendering/GridRenderer.h"
 
-#include <glad/glad.h>
+#include "app/scene/SceneRenderer.h"
 
 #include "app/scene/SceneEditor.h"
 #include "engine/camera/Camera.h"
-#include "engine/gizmos/CameraGizmoRenderer.h"
+#include "engine/rhi/GfxContext.h"
+#include "engine/components/LightComponent.h"
 #include "engine/lighting/CascadedShadowMap.h"
-#include "engine/gizmos/ColliderGizmoRenderer.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/GridRenderer.h"
 #include "engine/lighting/IBL.h"
 #include "engine/lighting/Light.h"
-#include "engine/components/LightComponent.h"
-#include "engine/gizmos/LightGizmoRenderer.h"
+#include "engine/lighting/SceneLighting.h"
+#include "engine/rendering/Constants.h"
+#include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/rendering/RenderDebug.h"
-#include "engine/lighting/SceneLighting.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/Shader.h"
+#include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
 #include <limits>
 
-SceneRenderer::SceneRenderer()
-    : m_cameraGizmos(std::make_unique<CameraGizmoRenderer>()),
-      m_grid(std::make_unique<GridRenderer>()),
-      m_colliderGizmos(std::make_unique<ColliderGizmoRenderer>()),
-      m_lightGizmos(std::make_unique<LightGizmoRenderer>()),
-      m_shadowMap(std::make_unique<CascadedShadowMap>()),
-      m_ibl(std::make_unique<IBL>(EngineConstants::EnvironmentHdr)),
-      m_screenSpaceEffects(std::make_unique<ScreenSpaceEffects>()),
-      m_shadowDepthShader(std::make_unique<Shader>(
-          EngineConstants::ShadowDepthVertexShader,
-          EngineConstants::ShadowDepthFragmentShader))
-{
-}
+SceneRenderer::SceneRenderer() = default;
 
 SceneRenderer::~SceneRenderer() = default;
+
+void SceneRenderer::EnsureGpuResources() const
+{
+    if (m_gpuResourcesInitialized)
+    {
+        return;
+    }
+
+    if (m_gpuResourcesInitFailed)
+    {
+        return;
+    }
+
+    SceneRenderer* self = const_cast<SceneRenderer*>(this);
+    try
+    {
+        self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>();
+        self->m_grid = std::make_unique<GridRenderer>();
+        self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>();
+        self->m_lightGizmos = std::make_unique<LightGizmoRenderer>();
+        self->m_shadowMap = std::make_unique<CascadedShadowMap>();
+        self->m_ibl = std::make_unique<IBL>(EngineConstants::EnvironmentHdr);
+        self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
+        self->m_shadowDepthShader = std::make_unique<Shader>(
+            EngineConstants::ShadowDepthVertexShader,
+            EngineConstants::ShadowDepthFragmentShader);
+        self->m_gpuResourcesInitialized = true;
+    }
+    catch (const std::exception& exception)
+    {
+        self->m_gpuResourcesInitFailed = true;
+        self->m_gpuResourcesInitError = SafeExceptionMessage(exception);
+        throw std::runtime_error(
+            std::string("GPU init failed: ") + self->m_gpuResourcesInitError);
+    }
+    catch (...)
+    {
+        self->m_gpuResourcesInitFailed = true;
+        self->m_gpuResourcesInitError = "unknown GPU initialization error";
+        throw std::runtime_error(self->m_gpuResourcesInitError);
+    }
+}
 
 void SceneRenderer::SyncLighting(const Scene& scene)
 {
@@ -123,6 +155,12 @@ bool SceneRenderer::ComputeShadowCasterBounds(
 
 void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
 {
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized)
+    {
+        return;
+    }
+
     glm::vec3 casterBoundsMin;
     glm::vec3 casterBoundsMax;
     const bool hasCasterBounds = ComputeShadowCasterBounds(scene, casterBoundsMin, casterBoundsMax);
@@ -158,19 +196,9 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
                 continue;
             }
 
-            const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-            if (object.GetMaterial().IsDoubleSided())
-            {
-                glDisable(GL_CULL_FACE);
-            }
-
             m_shadowDepthShader->SetMat4("uModel", scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+            m_shadowDepthShader->FlushUniforms();
             object.GetMesh()->Draw();
-
-            if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
-            {
-                glEnable(GL_CULL_FACE);
-            }
         }
     }
 }
@@ -183,31 +211,36 @@ void SceneRenderer::Render(
     std::uintptr_t targetFramebuffer,
     const SceneRenderOptions& options)
 {
-    GLint previousFramebuffer = 0;
-    const bool renderToTarget = targetFramebuffer != 0;
-    if (renderToTarget)
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized)
     {
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
-        glViewport(0, 0, viewportWidth, viewportHeight);
-        glClearColor(0.08f, 0.09f, 0.15f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        return;
+    }
+
+    Framebuffer* target = nullptr;
+    if (targetFramebuffer != 0)
+    {
+        target = reinterpret_cast<Framebuffer*>(targetFramebuffer);
+    }
+
+    const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
+
+    if (target != nullptr && !usePostProcess)
+    {
+        GfxContext::Get().SetBoundOutputFramebuffer(target);
     }
 
     SyncLighting(scene);
-
-    RenderShadowPass(scene, camera);
-    m_shadowMap->EndFrame();
-
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glViewport(0, 0, viewportWidth, viewportHeight);
-
-    const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
+    if (options.enableShadowPass)
+    {
+        RenderShadowPass(scene, camera);
+        m_shadowMap->EndFrame();
+    }
 
     RenderDebugMode materialDebugMode = RenderDebugMode::None;
     const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
     if (activeDebugMode >= RenderDebugMode::ShadowFactor &&
-        activeDebugMode <= RenderDebugMode::CascadeIndex)
+        activeDebugMode <= RenderDebugMode::ShadedNormal)
     {
         materialDebugMode = activeDebugMode;
     }
@@ -217,15 +250,10 @@ void SceneRenderer::Render(
         m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
         m_screenSpaceEffects->BeginScenePass();
     }
-    else if (renderToTarget)
+    else if (target != nullptr)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
-        glViewport(0, 0, viewportWidth, viewportHeight);
+        target->Bind();
     }
-
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_TRUE);
-    glDepthFunc(GL_LEQUAL);
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
     for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
@@ -237,12 +265,6 @@ void SceneRenderer::Render(
         }
 
         const glm::mat4 modelMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
-        const GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-        if (object.GetMaterial().IsDoubleSided())
-        {
-            glDisable(GL_CULL_FACE);
-        }
-
         object.GetMaterial().Apply(
             camera,
             m_lighting,
@@ -254,11 +276,6 @@ void SceneRenderer::Render(
             materialDebugMode,
             m_directionalShadowSettings);
         object.GetMesh()->Draw();
-
-        if (object.GetMaterial().IsDoubleSided() && cullFaceEnabled)
-        {
-            glEnable(GL_CULL_FACE);
-        }
     }
 
     if (usePostProcess)
@@ -269,22 +286,19 @@ void SceneRenderer::Render(
         }
 
         m_screenSpaceEffects->EndScenePass();
-
-        if (renderToTarget)
+        if (target != nullptr)
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
+            GfxContext::Get().SetBoundOutputFramebuffer(target);
         }
-
         m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight, m_directionalShadowSettings);
         m_screenSpaceEffects->BlitDepthToFramebuffer(
-            renderToTarget ? targetFramebuffer : 0,
+            targetFramebuffer,
             viewportWidth,
             viewportHeight);
 
-        if (renderToTarget)
+        if (target != nullptr)
         {
-            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            target->BindDrawTarget(false);
         }
 
         if (options.showEditorOverlay)
@@ -298,6 +312,11 @@ void SceneRenderer::Render(
     else if (options.showGrid && scene.GetShowGrid())
     {
         m_grid->Draw(camera, false);
+    }
+
+    if (target != nullptr && !usePostProcess)
+    {
+        target->BindDrawTarget(false);
     }
 
     const SceneSelection& selection = scene.GetSelection();
@@ -336,10 +355,13 @@ void SceneRenderer::Render(
         }
     }
 
-    if (renderToTarget)
+    if (target != nullptr)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+        target->Unbind();
     }
+
+    (void)viewportWidth;
+    (void)viewportHeight;
 }
 
 const SceneLighting& SceneRenderer::GetLighting() const
@@ -354,21 +376,25 @@ SceneLighting& SceneRenderer::GetLighting()
 
 IBL& SceneRenderer::GetIBL()
 {
+    EnsureGpuResources();
     return *m_ibl;
 }
 
 const IBL& SceneRenderer::GetIBL() const
 {
+    EnsureGpuResources();
     return *m_ibl;
 }
 
 ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects()
 {
+    EnsureGpuResources();
     return *m_screenSpaceEffects;
 }
 
 const ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects() const
 {
+    EnsureGpuResources();
     return *m_screenSpaceEffects;
 }
 
@@ -384,5 +410,6 @@ DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings()
 
 const CascadedShadowMap& SceneRenderer::GetShadowMap() const
 {
+    EnsureGpuResources();
     return *m_shadowMap;
 }

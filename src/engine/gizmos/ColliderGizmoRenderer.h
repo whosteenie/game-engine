@@ -24,8 +24,4 @@ public:
 
 private:
     std::unique_ptr<Shader> m_shader;
-#if !defined(GAME_ENGINE_D3D12)
-    mutable unsigned int m_vao = 0;
-    mutable unsigned int m_vbo = 0;
-#endif
 };

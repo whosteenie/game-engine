@@ -1,4 +1,4 @@
-#include "engine/gizmos/GizmoDrawD3d12.h"
+#include "engine/gizmos/GizmoDraw.h"
 
 #include "engine/camera/Camera.h"
 #include "engine/rendering/Shader.h"
@@ -6,7 +6,7 @@
 
 #include <d3d12.h>
 
-namespace GizmoDrawD3d12
+namespace GizmoDraw
 {
     void DrawLineVertices(
         const Shader& shader,

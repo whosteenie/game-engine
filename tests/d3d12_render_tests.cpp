@@ -7,7 +7,7 @@
 #include "engine/lighting/IBL.h"
 #include "engine/lighting/Light.h"
 #include "engine/lighting/SceneLighting.h"
-#include "engine/gizmos/GizmoDrawD3d12.h"
+#include "engine/gizmos/GizmoDraw.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/GridRenderer.h"
 #include "engine/rendering/Material.h"
@@ -23,6 +23,7 @@
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
 #include "primitives/Cube.h"
+#include "primitives/Sphere.h"
 
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -33,6 +34,8 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <iostream>
+#include <cmath>
+#include <limits>
 #include <sstream>
 #include <vector>
 
@@ -79,6 +82,88 @@ namespace
         }
 
         return bestDistance;
+    }
+
+    Camera MakeOrbitCamera(
+        const float angleRadians,
+        const glm::vec3& target,
+        const float radius,
+        const float height)
+    {
+        const glm::vec3 eye(
+            target.x + std::cos(angleRadians) * radius,
+            height,
+            target.z + std::sin(angleRadians) * radius);
+        Camera camera(eye, 0.0f, 0.0f);
+        camera.SetOrientationFromDirection(target - eye);
+        camera.SetAspectFromFramebuffer(kFramebufferSize, kFramebufferSize);
+        return camera;
+    }
+
+    float CenterLuminance(const Framebuffer& framebuffer, int radius = 12)
+    {
+        const int center = kFramebufferSize / 2;
+        float sum = 0.0f;
+        int count = 0;
+        for (int y = center - radius; y <= center + radius; ++y)
+        {
+            for (int x = center - radius; x <= center + radius; ++x)
+            {
+                float rgba[4]{};
+                if (!ReadFramebufferPixel(framebuffer, x, y, rgba))
+                {
+                    continue;
+                }
+
+                sum += 0.2126f * rgba[0] + 0.7152f * rgba[1] + 0.0722f * rgba[2];
+                ++count;
+            }
+        }
+
+        return count > 0 ? sum / static_cast<float>(count) : 0.0f;
+    }
+
+    float LuminanceSpreadAcrossOrbitCameras(
+        Framebuffer& framebuffer,
+        Material& material,
+        Mesh& mesh,
+        const glm::mat4& modelMatrix,
+        const SceneLighting& lighting,
+        IBL& ibl,
+        const glm::vec3& target,
+        const RenderDebugMode debugMode,
+        const int cameraCount = 8)
+    {
+        float minLuminance = std::numeric_limits<float>::max();
+        float maxLuminance = 0.0f;
+
+        for (int step = 0; step < cameraCount; ++step)
+        {
+            const float angle = glm::two_pi<float>() * (static_cast<float>(step) / static_cast<float>(cameraCount));
+            const Camera camera = MakeOrbitCamera(angle, target, 6.0f, 3.5f);
+
+            BeginOffscreenPass(framebuffer);
+            GfxContext::Get().SetBoundOutputFramebuffer(&framebuffer);
+            framebuffer.Bind();
+            material.Apply(
+                camera,
+                lighting,
+                ibl,
+                modelMatrix,
+                nullptr,
+                false,
+                false,
+                debugMode,
+                DirectionalShadowSettings{});
+            mesh.Draw();
+            EndOffscreenPass();
+
+            const float luminance = CenterLuminance(framebuffer);
+            minLuminance = std::min(minLuminance, luminance);
+            maxLuminance = std::max(maxLuminance, luminance);
+        }
+
+        return maxLuminance - minLuminance;
     }
 
     float MaxChannelValue(
@@ -200,7 +285,7 @@ namespace
 
                 BeginOffscreenPass(framebuffer, false);
                 shader.Use(false);
-                GizmoDrawD3d12::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
+                GizmoDraw::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
                 EndOffscreenPass();
 
                 const float maxGreen = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 12, 1);
@@ -330,7 +415,7 @@ namespace
 
                 BeginOffscreenPass(framebuffer);
                 shader.Use(false);
-                GizmoDrawD3d12::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
+                GizmoDraw::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
                 EndOffscreenPass();
 
                 const float maxGreen = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 12, 1);
@@ -1125,6 +1210,146 @@ namespace
         context.Shutdown();
     }
 
+    void TestDirectDiffuseGeomStableAcrossOrbitCameras()
+    {
+        D3d12TestContext context;
+        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
+
+        {
+            Framebuffer framebuffer;
+            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+
+            std::unique_ptr<Mesh> cube = CreateCubeMesh();
+            Material material(
+                EngineConstants::LitVertexShader,
+                EngineConstants::PbrFragmentShader,
+                glm::vec3(0.75f, 0.75f, 0.75f),
+                0.35f,
+                0.0f);
+            SceneLighting lighting = MakeDefaultTestLighting();
+            IBL ibl(EngineConstants::EnvironmentHdr);
+            const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+            const glm::vec3 cubeTopTarget(0.0f, 2.0f, 0.0f);
+
+            const float spread = LuminanceSpreadAcrossOrbitCameras(
+                framebuffer,
+                material,
+                *cube,
+                modelMatrix,
+                lighting,
+                ibl,
+                cubeTopTarget,
+                RenderDebugMode::DirectDiffuseGeom);
+
+            test::ExpectTrue(
+                spread < 0.08f,
+                "Direct diffuse (geom N·L) on a uniform cube top should stay stable across orbit cameras");
+
+            Material::ReleaseGlobalGpuResources();
+            (void)framebuffer.Resize(0, 0);
+        }
+
+        context.Shutdown();
+    }
+
+    void TestDiffuseIblStableAtSpherePole()
+    {
+        D3d12TestContext context;
+        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
+
+        {
+            Framebuffer framebuffer;
+            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+
+            std::unique_ptr<Mesh> sphere = CreateSphereMesh(0.5f, 32, 16);
+            Material material(
+                EngineConstants::LitVertexShader,
+                EngineConstants::PbrFragmentShader,
+                glm::vec3(0.75f, 0.75f, 0.75f),
+                0.35f,
+                0.0f);
+            SceneLighting lighting = MakeDefaultTestLighting();
+            IBL ibl(EngineConstants::EnvironmentHdr);
+            const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+            const glm::vec3 spherePoleTarget(0.0f, 1.0f, 0.0f);
+
+            const float spread = LuminanceSpreadAcrossOrbitCameras(
+                framebuffer,
+                material,
+                *sphere,
+                modelMatrix,
+                lighting,
+                ibl,
+                spherePoleTarget,
+                RenderDebugMode::DiffuseIbl);
+
+            test::ExpectTrue(
+                spread < 0.10f,
+                "Diffuse IBL at the sphere pole should stay stable across orbit cameras");
+
+            Material::ReleaseGlobalGpuResources();
+            (void)framebuffer.Resize(0, 0);
+        }
+
+        context.Shutdown();
+    }
+
+    void TestWoodCubeDirectLightingViewSensitivity()
+    {
+        D3d12TestContext context;
+        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
+
+        {
+            Framebuffer framebuffer;
+            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+
+            std::unique_ptr<Mesh> cube = CreateCubeMesh();
+            Material material(
+                EngineConstants::LitVertexShader,
+                EngineConstants::PbrFragmentShader,
+                glm::vec3(0.9f, 0.15f, 0.1f),
+                0.35f,
+                0.0f);
+            ApplyWoodTableMaterialMaps(material);
+
+            SceneLighting lighting = MakeDefaultTestLighting();
+            IBL ibl(EngineConstants::EnvironmentHdr);
+            const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
+            const glm::vec3 cubeTopTarget(0.0f, 2.0f, 0.0f);
+
+            const float geomSpread = LuminanceSpreadAcrossOrbitCameras(
+                framebuffer,
+                material,
+                *cube,
+                modelMatrix,
+                lighting,
+                ibl,
+                cubeTopTarget,
+                RenderDebugMode::DirectDiffuseGeom);
+            const float directSpread = LuminanceSpreadAcrossOrbitCameras(
+                framebuffer,
+                material,
+                *cube,
+                modelMatrix,
+                lighting,
+                ibl,
+                cubeTopTarget,
+                RenderDebugMode::DirectLighting);
+
+            test::ExpectTrue(
+                geomSpread < 0.08f,
+                "Wood cube geom N·L should stay stable across orbit cameras");
+            test::ExpectTrue(
+                directSpread > geomSpread + 0.04f,
+                "Wood cube direct lighting should vary more than geom N·L across cameras (normal-map sensitivity)");
+
+            Material::ReleaseGlobalGpuResources();
+            (void)framebuffer.Resize(0, 0);
+        }
+
+        context.Shutdown();
+    }
+
     void TestMultiFrameOffscreenSyncStability()
     {
         D3d12TestContext context;
@@ -1472,6 +1697,9 @@ int main()
     TestPbrAlbedoRetainsColor();
     TestMaterialLayerUniformAlbedo();
     TestMaterialLayerAmbientIbl();
+    TestDirectDiffuseGeomStableAcrossOrbitCameras();
+    TestDiffuseIblStableAtSpherePole();
+    TestWoodCubeDirectLightingViewSensitivity();
     TestMultiFrameOffscreenSyncStability();
     TestPbrWithRenderedShadowCascades();
     TestEditorRenderingPath();

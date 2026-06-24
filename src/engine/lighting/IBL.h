@@ -1,13 +1,11 @@
 #pragma once
 
+#include "engine/rhi/d3d12/GpuBuffer.h"
+
 #include <cstdint>
 #include <string>
 
 class Shader;
-
-#if defined(GAME_ENGINE_D3D12)
-#include "engine/rhi/d3d12/GpuBuffer.h"
-#endif
 
 class IBL
 {
@@ -41,7 +39,6 @@ private:
         unsigned int mipLevel,
         bool generateMipmapsAfter);
 
-#if defined(GAME_ENGINE_D3D12)
     struct GpuTexture
     {
         void* resource = nullptr;
@@ -81,20 +78,6 @@ private:
 
     mutable bool m_gpuGenerated = false;
     std::string m_hdrPath;
-#else
-    unsigned int m_hdrTexture = 0;
-    unsigned int m_environmentCubemap = 0;
-    unsigned int m_irradianceMap = 0;
-    unsigned int m_prefilterMap = 0;
-    unsigned int m_brdfLut = 0;
-
-    unsigned int m_captureFbo = 0;
-    unsigned int m_captureRbo = 0;
-    unsigned int m_cubeVao = 0;
-    unsigned int m_cubeVbo = 0;
-    unsigned int m_quadVao = 0;
-    unsigned int m_quadVbo = 0;
-#endif
 
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;

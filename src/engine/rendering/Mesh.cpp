@@ -1,58 +1,12 @@
-#include <glad/glad.h>
-
 #include "engine/rendering/Mesh.h"
+
+#include "engine/rhi/GfxContext.h"
+#include "engine/rhi/d3d12/GpuBuffer.h"
+
+#include <d3d12.h>
 
 #include <cmath>
 #include <limits>
-#include <memory>
-#include <vector>
-
-namespace
-{
-    constexpr float kRayEpsilon = 1e-7f;
-
-    bool IntersectRayTriangle(
-        const glm::vec3& origin,
-        const glm::vec3& direction,
-        const glm::vec3& v0,
-        const glm::vec3& v1,
-        const glm::vec3& v2,
-        float& hitDistance)
-    {
-        const glm::vec3 edge1 = v1 - v0;
-        const glm::vec3 edge2 = v2 - v0;
-        const glm::vec3 pvec = glm::cross(direction, edge2);
-        const float determinant = glm::dot(edge1, pvec);
-        if (std::abs(determinant) < kRayEpsilon)
-        {
-            return false;
-        }
-
-        const float inverseDeterminant = 1.0f / determinant;
-        const glm::vec3 tvec = origin - v0;
-        const float u = glm::dot(tvec, pvec) * inverseDeterminant;
-        if (u < 0.0f || u > 1.0f)
-        {
-            return false;
-        }
-
-        const glm::vec3 qvec = glm::cross(tvec, edge1);
-        const float v = glm::dot(direction, qvec) * inverseDeterminant;
-        if (v < 0.0f || u + v > 1.0f)
-        {
-            return false;
-        }
-
-        const float distance = glm::dot(edge2, qvec) * inverseDeterminant;
-        if (distance < kRayEpsilon)
-        {
-            return false;
-        }
-
-        hitDistance = distance;
-        return true;
-    }
-}
 
 Mesh::Mesh(
     const float* vertices,
@@ -60,87 +14,41 @@ Mesh::Mesh(
     unsigned int floatsPerVertex,
     const unsigned int* indices,
     unsigned int indexCount)
-    : m_floatsPerVertex(floatsPerVertex)
+    : m_indexCount(indexCount),
+      m_floatsPerVertex(floatsPerVertex)
 {
+    m_vertices.assign(vertices, vertices + static_cast<std::size_t>(vertexCount) * floatsPerVertex);
     m_positions.reserve(vertexCount);
     for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
     {
-        const float* vertex = vertices + vertexIndex * floatsPerVertex;
-        m_positions.emplace_back(vertex[0], vertex[1], vertex[2]);
+        const unsigned int offset = vertexIndex * floatsPerVertex;
+        m_positions.emplace_back(vertices[offset], vertices[offset + 1], vertices[offset + 2]);
     }
 
-    m_indices.reserve(indexCount);
-    for (unsigned int index = 0; index + 2 < indexCount; index += 3)
-    {
-        const unsigned int i0 = indices[index];
-        const unsigned int i1 = indices[index + 1];
-        const unsigned int i2 = indices[index + 2];
-        if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount)
-        {
-            continue;
-        }
+    m_indices.assign(indices, indices + indexCount);
 
-        m_indices.push_back(i0);
-        m_indices.push_back(i1);
-        m_indices.push_back(i2);
-    }
+    const std::uint32_t vertexByteSize =
+        static_cast<std::uint32_t>(m_vertices.size() * sizeof(float));
+    const std::uint32_t indexByteSize =
+        static_cast<std::uint32_t>(m_indices.size() * sizeof(unsigned int));
+    m_vertexBuffer.Create(GpuBuffer::Type::Vertex, m_vertices.data(), vertexByteSize);
+    m_indexBuffer.Create(GpuBuffer::Type::Index, m_indices.data(), indexByteSize);
+}
 
-    m_indexCount = static_cast<unsigned int>(m_indices.size());
-
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-    glGenBuffers(1, &m_ebo);
-
-    glBindVertexArray(m_vao);
-
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        vertexCount * floatsPerVertex * sizeof(float),
-        vertices,
-        GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
-    glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
-        m_indices.size() * sizeof(unsigned int),
-        m_indices.data(),
-        GL_STATIC_DRAW);
-
-    const int stride = static_cast<int>(floatsPerVertex * sizeof(float));
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(0);
-
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(3 * sizeof(float)));
-    glEnableVertexAttribArray(1);
-
-    if (floatsPerVertex >= TexturedVertexFloatCount)
-    {
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(6 * sizeof(float)));
-        glEnableVertexAttribArray(2);
-
-        glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(8 * sizeof(float)));
-        glEnableVertexAttribArray(3);
-
-        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, stride, reinterpret_cast<void*>(10 * sizeof(float)));
-        glEnableVertexAttribArray(4);
-    }
-
-    glBindVertexArray(0);
+Mesh::~Mesh()
+{
+    ReleaseGpuResources();
 }
 
 Mesh::Mesh(Mesh&& other) noexcept
-    : m_vao(other.m_vao),
-      m_vbo(other.m_vbo),
-      m_ebo(other.m_ebo),
-      m_indexCount(other.m_indexCount),
+    : m_indexCount(other.m_indexCount),
+      m_floatsPerVertex(other.m_floatsPerVertex),
       m_positions(std::move(other.m_positions)),
-      m_indices(std::move(other.m_indices))
+      m_indices(std::move(other.m_indices)),
+      m_vertices(std::move(other.m_vertices)),
+      m_vertexBuffer(std::move(other.m_vertexBuffer)),
+      m_indexBuffer(std::move(other.m_indexBuffer))
 {
-    other.m_vao = 0;
-    other.m_vbo = 0;
-    other.m_ebo = 0;
     other.m_indexCount = 0;
 }
 
@@ -148,97 +56,106 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept
 {
     if (this != &other)
     {
-        DestroyGlResources();
-        m_vao = other.m_vao;
-        m_vbo = other.m_vbo;
-        m_ebo = other.m_ebo;
+        ReleaseGpuResources();
         m_indexCount = other.m_indexCount;
+        m_floatsPerVertex = other.m_floatsPerVertex;
         m_positions = std::move(other.m_positions);
         m_indices = std::move(other.m_indices);
-
-        other.m_vao = 0;
-        other.m_vbo = 0;
-        other.m_ebo = 0;
+        m_vertices = std::move(other.m_vertices);
+        m_vertexBuffer = std::move(other.m_vertexBuffer);
+        m_indexBuffer = std::move(other.m_indexBuffer);
         other.m_indexCount = 0;
     }
 
     return *this;
 }
 
-void Mesh::DestroyGlResources()
-{
-    if (m_vao != 0)
-    {
-        glDeleteVertexArrays(1, &m_vao);
-        m_vao = 0;
-    }
-
-    if (m_vbo != 0)
-    {
-        glDeleteBuffers(1, &m_vbo);
-        m_vbo = 0;
-    }
-
-    if (m_ebo != 0)
-    {
-        glDeleteBuffers(1, &m_ebo);
-        m_ebo = 0;
-    }
-}
-
-Mesh::~Mesh()
-{
-    DestroyGlResources();
-}
-
 std::unique_ptr<Mesh> Mesh::Clone() const
 {
-    if (m_vao == 0 || m_vbo == 0 || m_ebo == 0 || m_floatsPerVertex == 0 || m_indexCount == 0)
+    if (m_vertices.empty() || m_indices.empty())
     {
         return nullptr;
     }
 
-    GLint vertexBufferSize = 0;
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &vertexBufferSize);
-
-    GLint indexBufferSize = 0;
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
-    glGetBufferParameteriv(GL_ELEMENT_ARRAY_BUFFER, GL_BUFFER_SIZE, &indexBufferSize);
-
-    if (vertexBufferSize <= 0 || indexBufferSize <= 0)
-    {
-        glBindVertexArray(0);
-        return nullptr;
-    }
-
-    const unsigned int vertexFloatCount =
-        static_cast<unsigned int>(vertexBufferSize) / static_cast<unsigned int>(sizeof(float));
-    const unsigned int vertexCount = vertexFloatCount / m_floatsPerVertex;
-    const unsigned int indexCount = static_cast<unsigned int>(indexBufferSize) / sizeof(unsigned int);
-
-    std::vector<float> vertices(vertexFloatCount);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glGetBufferSubData(GL_ARRAY_BUFFER, 0, vertexBufferSize, vertices.data());
-
-    std::vector<unsigned int> indices(indexCount);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, m_ebo);
-    glGetBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, indexBufferSize, indices.data());
-
-    glBindVertexArray(0);
-
+    const unsigned int vertexCount =
+        static_cast<unsigned int>(m_vertices.size()) / m_floatsPerVertex;
     return std::make_unique<Mesh>(
-        vertices.data(),
+        m_vertices.data(),
         vertexCount,
         m_floatsPerVertex,
-        indices.data(),
-        indexCount);
+        m_indices.data(),
+        m_indexCount);
 }
 
 void Mesh::Draw() const
 {
-    glBindVertexArray(m_vao);
-    glDrawElements(GL_TRIANGLES, m_indexCount, GL_UNSIGNED_INT, 0);
+    if (!m_vertexBuffer.IsValid() || !m_indexBuffer.IsValid() || m_indexCount == 0)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_vertexBuffer.BindVertex(0, m_floatsPerVertex * static_cast<std::uint32_t>(sizeof(float)));
+    m_indexBuffer.BindIndex();
+    commandList->DrawIndexedInstanced(m_indexCount, 1, 0, 0, 0);
+}
+
+bool Mesh::IntersectRay(
+    const glm::vec3& localOrigin,
+    const glm::vec3& localDirection,
+    float& hitDistance) const
+{
+    hitDistance = std::numeric_limits<float>::max();
+    bool hit = false;
+
+    for (std::size_t triangleIndex = 0; triangleIndex + 2 < m_indices.size(); triangleIndex += 3)
+    {
+        const unsigned int i0 = m_indices[triangleIndex];
+        const unsigned int i1 = m_indices[triangleIndex + 1];
+        const unsigned int i2 = m_indices[triangleIndex + 2];
+        if (i0 >= m_positions.size() || i1 >= m_positions.size() || i2 >= m_positions.size())
+        {
+            continue;
+        }
+
+        const glm::vec3& a = m_positions[i0];
+        const glm::vec3& b = m_positions[i1];
+        const glm::vec3& c = m_positions[i2];
+
+        const glm::vec3 edge1 = b - a;
+        const glm::vec3 edge2 = c - a;
+        const glm::vec3 pvec = glm::cross(localDirection, edge2);
+        const float det = glm::dot(edge1, pvec);
+        if (std::fabs(det) < 1e-8f)
+        {
+            continue;
+        }
+
+        const float invDet = 1.0f / det;
+        const glm::vec3 tvec = localOrigin - a;
+        const float u = glm::dot(tvec, pvec) * invDet;
+        if (u < 0.0f || u > 1.0f)
+        {
+            continue;
+        }
+
+        const glm::vec3 qvec = glm::cross(tvec, edge1);
+        const float v = glm::dot(localDirection, qvec) * invDet;
+        if (v < 0.0f || u + v > 1.0f)
+        {
+            continue;
+        }
+
+        const float distance = glm::dot(edge2, qvec) * invDet;
+        if (distance > 0.0f && distance < hitDistance)
+        {
+            hitDistance = distance;
+            hit = true;
+        }
+    }
+
+    return hit;
 }
 
 const std::vector<glm::vec3>& Mesh::GetPositions() const
@@ -251,51 +168,9 @@ const std::vector<unsigned int>& Mesh::GetIndices() const
     return m_indices;
 }
 
-bool Mesh::IntersectRay(
-    const glm::vec3& localOrigin,
-    const glm::vec3& localDirection,
-    float& hitDistance) const
+void Mesh::ReleaseGpuResources()
 {
-    if (m_indices.size() < 3)
-    {
-        return false;
-    }
-
-    float closestDistance = std::numeric_limits<float>::max();
-    bool hit = false;
-
-    for (std::size_t index = 0; index + 2 < m_indices.size(); index += 3)
-    {
-        const unsigned int i0 = m_indices[index];
-        const unsigned int i1 = m_indices[index + 1];
-        const unsigned int i2 = m_indices[index + 2];
-        if (i0 >= m_positions.size() || i1 >= m_positions.size() || i2 >= m_positions.size())
-        {
-            continue;
-        }
-
-        const glm::vec3& v0 = m_positions[i0];
-        const glm::vec3& v1 = m_positions[i1];
-        const glm::vec3& v2 = m_positions[i2];
-
-        float triangleDistance = 0.0f;
-        if (!IntersectRayTriangle(localOrigin, localDirection, v0, v1, v2, triangleDistance))
-        {
-            continue;
-        }
-
-        if (triangleDistance < closestDistance)
-        {
-            closestDistance = triangleDistance;
-            hit = true;
-        }
-    }
-
-    if (!hit)
-    {
-        return false;
-    }
-
-    hitDistance = closestDistance;
-    return true;
+    m_vertexBuffer.Destroy();
+    m_indexBuffer.Destroy();
+    m_indexCount = 0;
 }

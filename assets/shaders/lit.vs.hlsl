@@ -43,6 +43,7 @@ VSOutput main(VSInput input)
     output.texCoord1 = input.texCoord1;
 
     float4 viewPos = mul(uView, worldPos);
+    // LH view space (+Z forward); cascade splits use positive view-space Z.
     output.viewDepth = viewPos.z;
 
     output.fragPosLightSpace = mul(uLightSpaceMatrix, worldPos);

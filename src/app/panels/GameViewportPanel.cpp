@@ -95,11 +95,7 @@ void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFr
     if (showRenderedFrame)
     {
         const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
-#if defined(GAME_ENGINE_D3D12)
         ImGui::Image(textureId, available);
-#else
-        ImGui::Image(textureId, available, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
-#endif
     }
     else
     {

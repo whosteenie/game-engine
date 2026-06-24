@@ -156,6 +156,21 @@ target_include_directories(D3D12MemoryAllocator PUBLIC
     ${d3d12memoryallocator_SOURCE_DIR}/src
 )
 
+FetchContent_Declare(
+    mikktspace
+    GIT_REPOSITORY https://github.com/mmikk/MikkTSpace.git
+    GIT_TAG master
+)
+FetchContent_GetProperties(mikktspace)
+if(NOT mikktspace_POPULATED)
+    FetchContent_Populate(mikktspace)
+endif()
+
+add_library(mikktspace STATIC
+    ${mikktspace_SOURCE_DIR}/mikktspace.c
+)
+target_include_directories(mikktspace PUBLIC ${mikktspace_SOURCE_DIR})
+
 add_library(imgui_lib STATIC
 
     ${imgui_SOURCE_DIR}/imgui.cpp
@@ -281,7 +296,7 @@ add_executable(game-engine
     src/app/scene/SceneMeshLibrary.cpp
     src/app/scene/SceneObjectOperations.cpp
     src/app/scene/SceneObjectStore.cpp
-    src/app/scene/SceneRendererD3d12.cpp
+    src/app/scene/SceneRenderer.cpp
     src/app/scene/SceneSelectionController.cpp
     src/app/scene/SceneSpawnService.cpp
     src/app/scene/SceneSpawnBuilders.cpp
@@ -289,7 +304,7 @@ add_executable(game-engine
 
     src/engine/camera/Camera.cpp
 
-    src/engine/platform/ImGuiLayerD3d12.cpp
+    src/engine/platform/ImGuiLayer.cpp
 
     src/engine/platform/ImGuiFonts.cpp
 
@@ -298,6 +313,7 @@ add_executable(game-engine
     src/engine/platform/Input.cpp
 
     src/engine/platform/InputDiagnostics.cpp
+    src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/FrameDiagnostics.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
 
@@ -306,8 +322,7 @@ add_executable(game-engine
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
 
     src/engine/rhi/d3d12/GpuBuffer.cpp
-
-    src/engine/rhi/d3d12/ShaderPath.cpp
+    src/engine/rhi/d3d12/HlslCompiler.cpp
 
     src/engine/lighting/Light.cpp
 
@@ -337,35 +352,37 @@ add_executable(game-engine
 
     src/engine/gizmos/GizmoGeometry.cpp
 
-    src/engine/gizmos/GizmoDrawD3d12.cpp
+    src/engine/gizmos/GizmoDraw.cpp
 
-    src/engine/gizmos/CameraGizmoRendererD3d12.cpp
+    src/engine/gizmos/CameraGizmoRenderer.cpp
 
-    src/engine/gizmos/LightGizmoRendererD3d12.cpp
+    src/engine/gizmos/LightGizmoRenderer.cpp
 
-    src/engine/gizmos/ColliderGizmoRendererD3d12.cpp
+    src/engine/gizmos/ColliderGizmoRenderer.cpp
 
-    src/engine/gizmos/SelectionRendererD3d12.cpp
+    src/engine/gizmos/SelectionRenderer.cpp
 
     src/engine/lighting/ShadowMapMath.cpp
-    src/engine/lighting/CascadedShadowMapD3d12.cpp
+    src/engine/lighting/LightingProbe.cpp
+    src/engine/lighting/CascadedShadowMap.cpp
     src/engine/rendering/RenderDebug.cpp
 
-    src/engine/lighting/IblD3d12.cpp
+    src/engine/lighting/IBL.cpp
 
     src/engine/rendering/Material.cpp
 
-    src/engine/rendering/TextureD3d12.cpp
+    src/engine/rendering/Texture.cpp
 
     src/engine/assets/TextureCache.cpp
 
     src/engine/rendering/MaterialTextures.cpp
 
-    src/engine/rendering/MeshD3d12.cpp
+    src/engine/rendering/Mesh.cpp
 
-    src/engine/rendering/GridRendererD3d12.cpp
+    src/engine/rendering/GridRenderer.cpp
 
     src/engine/assets/ModelImporter.cpp
+    src/engine/assets/TangentSpace.cpp
 
     src/engine/assets/StbImage.cpp
 
@@ -373,13 +390,13 @@ add_executable(game-engine
 
     src/engine/assets/FileDialog.cpp
 
-    src/engine/rendering/RendererD3d12.cpp
+    src/engine/rendering/Renderer.cpp
 
-    src/engine/rendering/FramebufferD3d12.cpp
+    src/engine/rendering/Framebuffer.cpp
 
-    src/engine/rendering/ScreenSpaceEffectsD3d12.cpp
+    src/engine/rendering/ScreenSpaceEffects.cpp
 
-    src/engine/rendering/ShaderD3d12.cpp
+    src/engine/rendering/Shader.cpp
 
     src/engine/rendering/ShaderCache.cpp
 
@@ -411,13 +428,14 @@ target_link_libraries(game-engine PRIVATE
     nlohmann_json::nlohmann_json
     Jolt
     D3D12MemoryAllocator
+    mikktspace
     d3d12
     dxgi
     dxguid
-    d3dcompiler
+    dxcompiler
 )
 
-target_compile_definitions(game-engine PRIVATE NOMINMAX GAME_ENGINE_D3D12)
+target_compile_definitions(game-engine PRIVATE NOMINMAX)
 
 if(GAME_ENGINE_D3D12_DEBUG_LAYER)
     target_compile_definitions(game-engine PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
@@ -430,6 +448,60 @@ endif()
 if(WIN32)
     target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32)
 endif()
+
+# DXC is linked at build time but loaded at runtime — copy vendored or SDK redist DLLs next to the exe.
+function(game_engine_copy_dxc_runtime target)
+    if(NOT WIN32)
+        return()
+    endif()
+
+    if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(_dxc_arch x64)
+    else()
+        set(_dxc_arch x86)
+    endif()
+
+    set(_dxc_redist_candidates
+        "${CMAKE_SOURCE_DIR}/vendor/dxc/${_dxc_arch}")
+    if(CMAKE_VS_WINDOWS_KITS_10_DIR AND CMAKE_VS_PLATFORM_NAME)
+        list(APPEND _dxc_redist_candidates
+            "${CMAKE_VS_WINDOWS_KITS_10_DIR}/Redist/D3D/${CMAKE_VS_PLATFORM_NAME}")
+    endif()
+    if(DEFINED ENV{WindowsSdkDir})
+        get_filename_component(_sdk_root "$ENV{WindowsSdkDir}/.." ABSOLUTE)
+        list(APPEND _dxc_redist_candidates "${_sdk_root}/Redist/D3D/${_dxc_arch}")
+    endif()
+    list(APPEND _dxc_redist_candidates
+        "C:/Program Files (x86)/Windows Kits/10/Redist/D3D/${_dxc_arch}")
+
+    set(_dxc_redist_dir "")
+    foreach(_candidate IN LISTS _dxc_redist_candidates)
+        if(EXISTS "${_candidate}/dxcompiler.dll" AND EXISTS "${_candidate}/dxil.dll")
+            set(_dxc_redist_dir "${_candidate}")
+            break()
+        endif()
+    endforeach()
+
+    if(NOT _dxc_redist_dir)
+        message(WARNING
+            "Could not locate dxcompiler.dll + dxil.dll. "
+            "Place them in vendor/dxc/${_dxc_arch}/ or install the Windows SDK D3D redist.")
+        return()
+    endif()
+
+    message(STATUS "DXC runtime for ${target}: ${_dxc_redist_dir}")
+
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_dxc_redist_dir}/dxcompiler.dll"
+            "$<TARGET_FILE_DIR:${target}>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_dxc_redist_dir}/dxil.dll"
+            "$<TARGET_FILE_DIR:${target}>"
+        COMMENT "Copying DXC runtime (dxcompiler.dll, dxil.dll)")
+endfunction()
+
+game_engine_copy_dxc_runtime(game-engine)
 
 
 
@@ -452,6 +524,7 @@ enable_testing()
 add_executable(engine-tests
     tests/shadow_map_math_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
+    src/engine/lighting/LightingProbe.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src)
@@ -473,29 +546,32 @@ if(WIN32)
         src/engine/rhi/GfxContext.cpp
         src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
         src/engine/rhi/d3d12/GpuBuffer.cpp
-        src/engine/rhi/d3d12/ShaderPath.cpp
-        src/engine/rendering/FramebufferD3d12.cpp
-        src/engine/rendering/ShaderD3d12.cpp
+    src/engine/rhi/d3d12/HlslCompiler.cpp
+        src/engine/rendering/Framebuffer.cpp
+        src/engine/rendering/Shader.cpp
         src/engine/rendering/ShaderCache.cpp
-        src/engine/rendering/MeshD3d12.cpp
+        src/engine/rendering/Mesh.cpp
         src/engine/rendering/Material.cpp
         src/engine/rendering/MaterialTextures.cpp
-        src/engine/rendering/TextureD3d12.cpp
+        src/engine/rendering/Texture.cpp
         src/engine/assets/TextureCache.cpp
         src/engine/assets/StbImage.cpp
+        src/engine/assets/TangentSpace.cpp
         src/engine/camera/Camera.cpp
         src/engine/platform/Input.cpp
         src/engine/lighting/SceneLighting.cpp
         src/engine/lighting/Light.cpp
-        src/engine/lighting/IblD3d12.cpp
-        src/engine/lighting/CascadedShadowMapD3d12.cpp
+        src/engine/lighting/IBL.cpp
+        src/engine/lighting/CascadedShadowMap.cpp
         src/engine/lighting/ShadowMapMath.cpp
-        src/engine/rendering/GridRendererD3d12.cpp
-        src/engine/gizmos/GizmoDrawD3d12.cpp
+        src/engine/rendering/GridRenderer.cpp
+        src/engine/gizmos/GizmoDraw.cpp
         src/engine/platform/FrameDiagnostics.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
         src/engine/rendering/RenderDebug.cpp
         src/primitives/Cube.cpp
+        src/primitives/Sphere.cpp
+        src/primitives/PrimitiveMeshUtils.cpp
     )
 
     add_executable(d3d12-render-tests ${D3D12_RENDER_TEST_SOURCES})
@@ -505,14 +581,16 @@ if(WIN32)
         glfw
         glm::glm
         imgui_lib
+        mikktspace
         nlohmann_json::nlohmann_json
         D3D12MemoryAllocator
         d3d12
         dxgi
         dxguid
-        d3dcompiler
+        dxcompiler
     )
-    target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX GAME_ENGINE_D3D12)
+    target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX)
+    game_engine_copy_dxc_runtime(d3d12-render-tests)
 
     add_custom_command(TARGET d3d12-render-tests POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory

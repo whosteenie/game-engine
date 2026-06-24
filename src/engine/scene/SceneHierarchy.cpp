@@ -57,10 +57,15 @@ namespace
 
 glm::mat4 GetObjectWorldMatrix(const std::vector<SceneObject>& objects, int objectIndex)
 {
+    if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+    {
+        return glm::mat4(1.0f);
+    }
+
     const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
     const glm::mat4 localMatrix = object.GetTransform().ToMatrix();
     const int parentIndex = object.GetParentIndex();
-    if (parentIndex < 0)
+    if (parentIndex < 0 || static_cast<std::size_t>(parentIndex) >= objects.size())
     {
         return localMatrix;
     }
@@ -95,6 +100,13 @@ void GetObjectLocalSelectionBounds(
     glm::vec3& boundsMin,
     glm::vec3& boundsMax)
 {
+    if (objectIndex < 0 || static_cast<std::size_t>(objectIndex) >= objects.size())
+    {
+        boundsMin = glm::vec3(-0.15f);
+        boundsMax = glm::vec3(0.15f);
+        return;
+    }
+
     const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
     bool hasBounds = false;
     boundsMin = glm::vec3(std::numeric_limits<float>::max());
@@ -326,8 +338,13 @@ std::vector<int> GetRootObjectIndices(const std::vector<SceneObject>& objects)
 bool IsObjectDescendantOf(const std::vector<SceneObject>& objects, int ancestor, int objectIndex)
 {
     int current = objectIndex;
-    while (current >= 0)
+    for (int depth = 0; depth < static_cast<int>(objects.size()); ++depth)
     {
+        if (current < 0 || static_cast<std::size_t>(current) >= objects.size())
+        {
+            break;
+        }
+
         if (current == ancestor)
         {
             return true;
@@ -357,8 +374,13 @@ std::vector<int> FilterToTopmostSelectedIndices(
 
         bool hasSelectedAncestor = false;
         int parentIndex = objects[static_cast<std::size_t>(objectIndex)].GetParentIndex();
-        while (parentIndex >= 0)
+        for (int depth = 0; depth < static_cast<int>(objects.size()) && parentIndex >= 0; ++depth)
         {
+            if (static_cast<std::size_t>(parentIndex) >= objects.size())
+            {
+                break;
+            }
+
             if (selectedSet.find(parentIndex) != selectedSet.end())
             {
                 hasSelectedAncestor = true;

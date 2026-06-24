@@ -8,6 +8,7 @@
 #include <iostream>
 
 #include "engine/lighting/ShadowMapMath.h"
+#include "engine/lighting/LightingProbe.h"
 
 namespace
 {
@@ -29,6 +30,91 @@ namespace
             std::cerr << "FAIL: " << message << " (actual=" << actual << " expected=" << expected << ")\n";
             ++gFailures;
         }
+    }
+
+    void RunLightingProbeTests()
+    {
+        const glm::vec3 lightDirection = glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f));
+        const glm::vec3 upNormal(0.0f, 1.0f, 0.0f);
+        const glm::vec3 cubeTop(0.0f, 2.0f, 0.0f);
+        const std::vector<float> cascadeSplits = ComputeCascadeSplitDistances(4, 0.1f, 100.0f);
+        const float nearPlane = 0.1f;
+        const float cascadeBlendRatio = 0.08f;
+        const int cascadeCount = 4;
+
+        const float expectedSunDot = glm::dot(upNormal, lightDirection);
+        float firstSunDot = 0.0f;
+        bool hasFirstSunDot = false;
+
+        for (int step = 0; step < 8; ++step)
+        {
+            const float angle = glm::two_pi<float>() * (static_cast<float>(step) / 8.0f);
+            const glm::vec3 eye(std::cos(angle) * 6.0f, 3.5f, std::sin(angle) * 6.0f);
+            const glm::mat4 viewMatrix = glm::lookAtLH(eye, cubeTop, glm::vec3(0.0f, 1.0f, 0.0f));
+
+            const LightingProbeResult probe = EvaluateLightingProbe(
+                viewMatrix,
+                cubeTop,
+                upNormal,
+                lightDirection,
+                cascadeSplits,
+                nearPlane,
+                cascadeBlendRatio,
+                cascadeCount);
+
+            ExpectNear(probe.sunDotGeomNormal, expectedSunDot, 1e-5f, "Sun dot on cube top should not depend on camera");
+            if (!hasFirstSunDot)
+            {
+                firstSunDot = probe.sunDotGeomNormal;
+                hasFirstSunDot = true;
+            }
+            else
+            {
+                ExpectNear(
+                    probe.sunDotGeomNormal,
+                    firstSunDot,
+                    1e-5f,
+                    "Sun dot on cube top should stay constant across orbit cameras");
+            }
+
+            ExpectTrue(probe.viewDepth > nearPlane, "View depth should be beyond the near plane");
+        }
+
+        const glm::mat4 nearFloorView = glm::lookAtLH(
+            glm::vec3(0.0f, 0.35f, 2.5f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 farFloorView = glm::lookAtLH(
+            glm::vec3(0.0f, 8.0f, 2.5f),
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            glm::vec3(0.0f, 1.0f, 0.0f));
+
+        const LightingProbeResult nearFloorProbe = EvaluateLightingProbe(
+            nearFloorView,
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            upNormal,
+            lightDirection,
+            cascadeSplits,
+            nearPlane,
+            cascadeBlendRatio,
+            cascadeCount);
+        const LightingProbeResult farFloorProbe = EvaluateLightingProbe(
+            farFloorView,
+            glm::vec3(0.0f, 0.0f, 0.0f),
+            upNormal,
+            lightDirection,
+            cascadeSplits,
+            nearPlane,
+            cascadeBlendRatio,
+            cascadeCount);
+
+        ExpectTrue(
+            nearFloorProbe.viewDepth < farFloorProbe.viewDepth,
+            "Floor probe view depth should decrease as the camera moves closer to the floor");
+
+        ExpectTrue(
+            nearFloorProbe.cascadeIndex <= farFloorProbe.cascadeIndex,
+            "Closer floor camera should not select a farther cascade than a higher camera");
     }
 }
 
@@ -228,6 +314,45 @@ int main()
         1e-5f,
         "Light view translation should stay anchored to world origin");
 
+    const glm::mat4 rotatedCameraView = glm::lookAt(
+        glm::vec3(6.0f, 2.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f),
+        glm::vec3(0.0f, 1.0f, 0.0f));
+    const std::array<glm::vec3, 8> rotatedFrustumCorners = ComputeCascadeFrustumCorners(
+        glm::inverse(rotatedCameraView),
+        16.0f / 9.0f,
+        45.0f,
+        cascadeSplits[0],
+        cascadeSplits[1]);
+
+    float rotatedStableHalfExtent = 0.0f;
+    glm::vec2 rotatedStableCenterLight(0.0f);
+    const ShadowLightSpaceSetup rotatedFrustumSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        rotatedFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        false,
+        nullptr,
+        &rotatedStableHalfExtent,
+        &rotatedStableCenterLight,
+        &stableOrthoNear,
+        &stableOrthoFar,
+        true);
+
+    const glm::vec3 cubeTopFace(0.0f, 2.0f, 0.0f);
+    const glm::vec3 cubeTopShadowNdc =
+        WorldToShadowNdc(rotatedFrustumSetup.lightSpaceMatrix, cubeTopFace);
+    ExpectTrue(
+        cubeTopShadowNdc.x >= 0.0f && cubeTopShadowNdc.x <= 1.0f,
+        "Cube top should stay inside shadow UV.x after camera rotation");
+    ExpectTrue(
+        cubeTopShadowNdc.y >= 0.0f && cubeTopShadowNdc.y <= 1.0f,
+        "Cube top should stay inside shadow UV.y after camera rotation");
+
     glm::vec3 intersectionMin;
     glm::vec3 intersectionMax;
     ExpectTrue(
@@ -242,9 +367,11 @@ int main()
     ExpectNear(intersectionMin.x, 0.0f, 1e-4f, "Intersection min X");
     ExpectNear(intersectionMax.y, 2.0f, 1e-4f, "Intersection max Y");
 
+    RunLightingProbeTests();
+
     if (gFailures == 0)
     {
-        std::cout << "All shadow map math tests passed.\n";
+        std::cout << "All engine tests passed.\n";
         return EXIT_SUCCESS;
     }
 

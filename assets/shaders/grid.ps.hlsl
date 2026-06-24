@@ -61,7 +61,7 @@ PSOutput main(PSInput input)
     clip(alpha - 0.02);
 
     float3 linearColor = pow(uColor, 2.2.xxx);
-    float3 viewNormal = normalize(mul((float3x3)uView, float3(0.0, 1.0, 0.0)));
+    float3 viewNormal = float3(0.0, 1.0, 0.0);
     output.oNormal = float4(viewNormal, 1.0);
 
     if (uSplitLightingOutput != 0)

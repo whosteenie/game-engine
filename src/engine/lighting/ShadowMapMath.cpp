@@ -24,7 +24,7 @@ namespace
             up = glm::vec3(0.0f, 0.0f, 1.0f);
         }
 
-        return glm::lookAt(lightEye, viewTarget, up);
+        return glm::lookAtLH(lightEye, viewTarget, up);
     }
 
     std::array<glm::vec3, 8> BuildAxisAlignedBoxCorners(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
@@ -154,31 +154,16 @@ namespace
         float snappedCenterY = desiredSnapCenterY;
         if (stableOrthoCenterLightInOut != nullptr)
         {
-            if (resetStableFit)
-            {
-                *stableOrthoCenterLightInOut = glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
-            }
-            else
-            {
-                const float centerDeltaX =
-                    std::abs(desiredSnapCenterX - stableOrthoCenterLightInOut->x);
-                const float centerDeltaY =
-                    std::abs(desiredSnapCenterY - stableOrthoCenterLightInOut->y);
-                constexpr float kCenterSnapTexelThreshold = 2.0f;
-                if (centerDeltaX >= texelWorldSize * kCenterSnapTexelThreshold ||
-                    centerDeltaY >= texelWorldSize * kCenterSnapTexelThreshold)
-                {
-                    *stableOrthoCenterLightInOut =
-                        glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
-                }
-            }
-
+            // Track the texel-snapped center every frame so rotating the camera cannot leave
+            // casters outside a stale ortho window (hysteresis caused view-dependent shadows).
+            (void)resetStableFit;
+            *stableOrthoCenterLightInOut = glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
             snappedCenterX = stableOrthoCenterLightInOut->x;
             snappedCenterY = stableOrthoCenterLightInOut->y;
         }
 
-        const float orthoNear = -maxZ - marginZ;
-        const float orthoFar = -minZ + marginZ;
+        const float orthoNear = minZ - marginZ;
+        const float orthoFar = maxZ + marginZ;
         float stableOrthoNear = orthoNear;
         float stableOrthoFar = orthoFar;
         if (stableOrthoZNearInOut != nullptr && stableOrthoZFarInOut != nullptr)
@@ -203,7 +188,7 @@ namespace
         setup.texelWorldSizeX = texelWorldSize;
         setup.texelWorldSizeY = texelWorldSize;
 
-        setup.lightProjection = glm::ortho(
+        setup.lightProjection = glm::orthoLH_ZO(
             snappedCenterX - halfExtent,
             snappedCenterX + halfExtent,
             snappedCenterY - halfExtent,
@@ -292,7 +277,8 @@ glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& w
 {
     const glm::vec4 lightSpace = lightSpaceMatrix * glm::vec4(worldPosition, 1.0f);
     const glm::vec3 projected = glm::vec3(lightSpace) / lightSpace.w;
-    return projected * 0.5f + 0.5f;
+    // orthoLH_ZO clip xy are [-1, 1]; depth is already in [0, 1].
+    return glm::vec3(projected.x * 0.5f + 0.5f, projected.y * 0.5f + 0.5f, projected.z);
 }
 
 float ComputeShadowBias(const float nDotL, const float texelSpan)
@@ -335,17 +321,17 @@ std::array<glm::vec3, 8> ComputeCascadeFrustumCorners(
     const float tanHalfFovX = tanHalfFovY * aspect;
 
     const std::array<glm::vec3, 4> nearPlaneOffsets = {
-        glm::vec3(-tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(-tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, -nearPlane),
+        glm::vec3(-tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(-tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, nearPlane),
     };
 
     const std::array<glm::vec3, 4> farPlaneOffsets = {
-        glm::vec3(-tanHalfFovX * farPlane, -tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(tanHalfFovX * farPlane, -tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(-tanHalfFovX * farPlane, tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(tanHalfFovX * farPlane, tanHalfFovY * farPlane, -farPlane),
+        glm::vec3(-tanHalfFovX * farPlane, -tanHalfFovY * farPlane, farPlane),
+        glm::vec3(tanHalfFovX * farPlane, -tanHalfFovY * farPlane, farPlane),
+        glm::vec3(-tanHalfFovX * farPlane, tanHalfFovY * farPlane, farPlane),
+        glm::vec3(tanHalfFovX * farPlane, tanHalfFovY * farPlane, farPlane),
     };
 
     std::array<glm::vec3, 8> corners{};

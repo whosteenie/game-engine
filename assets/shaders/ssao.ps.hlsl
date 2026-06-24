@@ -10,6 +10,7 @@ cbuffer PerPixel : register(b0)
 {
     float4x4 uProjection;
     float4x4 uInvProjection;
+    float4x4 uView;
     float4 uSamples[32];
     float uRadius;
     float uBias;
@@ -25,9 +26,25 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
+float DepthBufferToClipZ(float depth)
+{
+    return depth;
+}
+
+float2 DepthUvToClipXY(float2 texCoord)
+{
+    return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+}
+
+float2 ClipXYToDepthUv(float2 clipXY)
+{
+    return float2(clipXY.x * 0.5 + 0.5, (1.0 - clipXY.y) * 0.5);
+}
+
 float3 ReconstructViewPos(float2 texCoord, float depth)
 {
-    float4 clipSpace = float4(texCoord * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    float2 clipXY = DepthUvToClipXY(texCoord);
+    float4 clipSpace = float4(clipXY, DepthBufferToClipZ(depth), 1.0);
     float4 viewSpace = mul(uInvProjection, clipSpace);
     return viewSpace.xyz / viewSpace.w;
 }
@@ -50,14 +67,20 @@ float3 ReconstructViewNormal(float2 texCoord, float depth)
     return faceforward(normal, viewDir, normal);
 }
 
+bool SampleIsOccluded(float3 samplePos, float3 sampleViewPos, float bias)
+{
+    // LH view space: closer surfaces have smaller z.
+    return sampleViewPos.z <= samplePos.z - bias;
+}
+
 float3 SampleViewNormal(float2 texCoord, float depth)
 {
     if (uUseGeometryNormals != 0)
     {
-        float3 storedNormal = uNormalMap.Sample(uNormalSampler, texCoord).xyz;
-        if (dot(storedNormal, storedNormal) > 1e-4)
+        float3 worldNormal = uNormalMap.Sample(uNormalSampler, texCoord).xyz;
+        if (dot(worldNormal, worldNormal) > 1e-4)
         {
-            return normalize(storedNormal);
+            return normalize(mul((float3x3)uView, normalize(worldNormal)));
         }
     }
 
@@ -90,20 +113,19 @@ float main(PSInput input) : SV_Target
 
         float4 offset = mul(uProjection, float4(samplePos, 1.0));
         offset.xyz /= offset.w;
-        offset.xyz = offset.xyz * 0.5 + 0.5;
-
-        if (offset.x < 0.0 || offset.x > 1.0 || offset.y < 0.0 || offset.y > 1.0)
+        float2 sampleUv = ClipXYToDepthUv(offset.xy);
+        if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
         {
             continue;
         }
 
-        float sampleDepth = uDepthMap.Sample(uDepthSampler, offset.xy).r;
+        float sampleDepth = uDepthMap.Sample(uDepthSampler, sampleUv).r;
         if (sampleDepth >= 1.0)
         {
             continue;
         }
 
-        float3 sampleViewPos = ReconstructViewPos(offset.xy, sampleDepth);
+        float3 sampleViewPos = ReconstructViewPos(sampleUv, sampleDepth);
         float dist3D = length(sampleViewPos - samplePos);
 
         if (dist3D > uRadius)
@@ -117,7 +139,7 @@ float main(PSInput input) : SV_Target
         }
 
         validSamples++;
-        if (sampleViewPos.z >= samplePos.z + uBias)
+        if (SampleIsOccluded(samplePos, sampleViewPos, uBias))
         {
             occlusion += 1.0;
         }

@@ -2,8 +2,12 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/lighting/ShadowMapMath.h"
+#include "engine/rendering/Shader.h"
+#include "engine/rhi/GfxContext.h"
 
-#include <glad/glad.h>
+#include <D3D12MemAlloc.h>
+#include <d3d12.h>
+#include <dxgiformat.h>
 
 #include <glm/gtc/matrix_inverse.hpp>
 
@@ -11,9 +15,33 @@
 #include <limits>
 #include <stdexcept>
 
+namespace
+{
+    void TransitionResource(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* resource,
+        D3D12_RESOURCE_STATES before,
+        D3D12_RESOURCE_STATES after)
+    {
+        if (before == after)
+        {
+            return;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        commandList->ResourceBarrier(1, &barrier);
+    }
+}
+
 CascadedShadowMap::CascadedShadowMap(const int resolutionPerCascade)
     : m_resolution(resolutionPerCascade)
 {
+    m_dsvIndices.fill(UINT32_MAX);
     CreateResources();
 }
 
@@ -24,63 +52,117 @@ CascadedShadowMap::~CascadedShadowMap()
 
 void CascadedShadowMap::DestroyResources()
 {
-    if (m_depthTexture != 0)
+    if (!GfxContext::Get().IsInitialized())
     {
-        glDeleteTextures(1, &m_depthTexture);
-        m_depthTexture = 0;
+        return;
     }
 
-    if (m_fbo != 0)
+    if (m_depthSrvIndex != UINT32_MAX)
     {
-        glDeleteFramebuffers(1, &m_fbo);
-        m_fbo = 0;
+        GfxContext::Get().FreeOffscreenSrv(m_depthSrvIndex);
+        m_depthSrvIndex = UINT32_MAX;
     }
+
+    for (std::uint32_t& dsvIndex : m_dsvIndices)
+    {
+        if (dsvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().FreeOffscreenDsv(dsvIndex);
+            dsvIndex = UINT32_MAX;
+        }
+    }
+
+    if (m_depthAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_depthAllocation)->Release();
+        m_depthAllocation = nullptr;
+    }
+
+    m_depthResource = nullptr;
+    m_depthSrvCpuHandle = 0;
+    m_depthInShaderReadState = false;
 }
 
 void CascadedShadowMap::CreateResources()
 {
     DestroyResources();
 
-    glGenFramebuffers(1, &m_fbo);
-    glGenTextures(1, &m_depthTexture);
-
-    glBindTexture(GL_TEXTURE_2D_ARRAY, m_depthTexture);
-    glTexImage3D(
-        GL_TEXTURE_2D_ARRAY,
-        0,
-        GL_DEPTH_COMPONENT32F,
-        m_resolution,
-        m_resolution,
-        MaxCascades,
-        0,
-        GL_DEPTH_COMPONENT,
-        GL_FLOAT,
-        nullptr);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-    glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-
-    const float borderColor[] = {1.0f, 1.0f, 1.0f, 1.0f};
-    glTexParameterfv(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BORDER_COLOR, borderColor);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glFramebufferTextureLayer(
-        GL_FRAMEBUFFER,
-        GL_DEPTH_ATTACHMENT,
-        m_depthTexture,
-        0,
-        0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
-
-    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    if (!GfxContext::Get().IsInitialized())
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        throw std::runtime_error("Cascaded shadow framebuffer is incomplete");
+        return;
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC depthDesc{};
+    depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDesc.Width = static_cast<UINT64>(m_resolution);
+    depthDesc.Height = static_cast<UINT>(m_resolution);
+    depthDesc.DepthOrArraySize = static_cast<UINT16>(MaxCascades);
+    depthDesc.MipLevels = 1;
+    depthDesc.Format = DXGI_FORMAT_D32_FLOAT;
+    depthDesc.SampleDesc.Count = 1;
+    depthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE clearValue{};
+    clearValue.Format = DXGI_FORMAT_D32_FLOAT;
+    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Stencil = 0;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* depthResource = nullptr;
+    D3D12MA::Allocation* depthAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &depthDesc,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            &clearValue,
+            &depthAllocation,
+            IID_PPV_ARGS(&depthResource))))
+    {
+        throw std::runtime_error("Failed to create cascaded shadow depth texture array");
+    }
+
+    m_depthResource = depthResource;
+    m_depthAllocation = depthAllocation;
+
+    for (int cascadeIndex = 0; cascadeIndex < MaxCascades; ++cascadeIndex)
+    {
+        m_dsvIndices[static_cast<std::size_t>(cascadeIndex)] = GfxContext::Get().AllocateOffscreenDsv();
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+        dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+        dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+        dsvDesc.Texture2DArray.FirstArraySlice = static_cast<UINT>(cascadeIndex);
+        dsvDesc.Texture2DArray.ArraySize = 1;
+        dsvDesc.Texture2DArray.MipSlice = 0;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{};
+        dsvHandle.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(
+            m_dsvIndices[static_cast<std::size_t>(cascadeIndex)]);
+        device->CreateDepthStencilView(depthResource, &dsvDesc, dsvHandle);
+    }
+
+    m_depthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_depthSrvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_depthSrvIndex);
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    D3D12_CPU_DESCRIPTOR_HANDLE srvCpuHandle{};
+    srvCpuHandle.ptr = m_depthSrvCpuHandle;
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2DArray.MipLevels = 1;
+    srvDesc.Texture2DArray.FirstArraySlice = 0;
+    srvDesc.Texture2DArray.ArraySize = static_cast<UINT>(MaxCascades);
+    device->CreateShaderResourceView(depthResource, &srvDesc, srvCpuHandle);
+    (void)srvHeap;
 }
 
 void CascadedShadowMap::SetResolution(const int resolutionPerCascade)
@@ -104,7 +186,13 @@ void CascadedShadowMap::BeginFrame(
     const DirectionalShadowSettings& settings)
 {
     m_activeCascadeCount = settings.GetCascadeCount();
-    glGetIntegerv(GL_VIEWPORT, m_savedViewport);
+    m_savedViewportWidth = static_cast<float>(GfxContext::Get().GetWidth());
+    m_savedViewportHeight = static_cast<float>(GfxContext::Get().GetHeight());
+    int outputWidth = static_cast<int>(m_savedViewportWidth);
+    int outputHeight = static_cast<int>(m_savedViewportHeight);
+    GfxContext::Get().GetOutputRenderSize(outputWidth, outputHeight);
+    m_savedViewportWidth = static_cast<float>(outputWidth);
+    m_savedViewportHeight = static_cast<float>(outputHeight);
 
     const float shadowDrawDistance = hasCasterBounds
         ? ComputeShadowDrawDistance(camera.GetPosition(), casterBoundsMin, casterBoundsMax)
@@ -119,10 +207,17 @@ void CascadedShadowMap::BeginFrame(
 
     const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
     const glm::vec3 cameraPosition = camera.GetPosition();
+    const glm::vec3 cameraFront = glm::normalize(camera.GetFront());
     const float cameraMoveDistance = m_hasStableOrthoHalfExtents
         ? glm::length(cameraPosition - m_lastCameraPosition)
         : std::numeric_limits<float>::max();
-    const bool resetStableFit = cameraMoveDistance > 1.25f || !m_hasStableOrthoHalfExtents;
+    const float orientationChange = m_hasLastCameraOrientation
+        ? 1.0f - glm::clamp(glm::dot(cameraFront, glm::normalize(m_lastCameraFront)), -1.0f, 1.0f)
+        : 2.0f;
+    constexpr float kOrientationResetThreshold = 0.01f;
+    const bool resetStableFit = cameraMoveDistance > 1.25f ||
+        orientationChange > kOrientationResetThreshold ||
+        !m_hasStableOrthoHalfExtents;
     if (resetStableFit)
     {
         m_stableOrthoHalfExtents.fill(0.0f);
@@ -165,44 +260,91 @@ void CascadedShadowMap::BeginFrame(
     }
 
     m_lastCameraPosition = cameraPosition;
+    m_lastCameraFront = cameraFront;
+    m_hasLastCameraOrientation = true;
     m_hasStableOrthoHalfExtents = true;
     m_hasRenderedDepth = false;
 }
 
 void CascadedShadowMap::BeginCascade(const int cascadeIndex)
 {
-    glViewport(0, 0, m_resolution, m_resolution);
-    glBindFramebuffer(GL_FRAMEBUFFER, m_fbo);
-    glFramebufferTextureLayer(
-        GL_FRAMEBUFFER,
-        GL_DEPTH_ATTACHMENT,
-        m_depthTexture,
-        0,
-        cascadeIndex);
-    glClear(GL_DEPTH_BUFFER_BIT);
+    if (m_depthResource == nullptr ||
+        cascadeIndex < 0 ||
+        cascadeIndex >= MaxCascades ||
+        m_dsvIndices[static_cast<std::size_t>(cascadeIndex)] == UINT32_MAX)
+    {
+        return;
+    }
 
-    glEnable(GL_DEPTH_TEST);
-    glEnable(GL_POLYGON_OFFSET_FILL);
-    glPolygonOffset(1.0f, 2.0f);
-    glCullFace(GL_FRONT);
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    auto* depthResource = static_cast<ID3D12Resource*>(m_depthResource);
+
+    if (cascadeIndex == 0 && m_depthInShaderReadState)
+    {
+        TransitionResource(
+            commandList,
+            depthResource,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        m_depthInShaderReadState = false;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{};
+    dsvHandle.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(
+        m_dsvIndices[static_cast<std::size_t>(cascadeIndex)]);
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, &dsvHandle);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_resolution);
+    viewport.Height = static_cast<float>(m_resolution);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, m_resolution, m_resolution};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    m_inShadowPass = true;
     m_hasRenderedDepth = true;
 }
 
 void CascadedShadowMap::RestoreRasterState() const
 {
-    glDisable(GL_POLYGON_OFFSET_FILL);
-    glCullFace(GL_BACK);
-    glViewport(
-        m_savedViewport[0],
-        m_savedViewport[1],
-        m_savedViewport[2],
-        m_savedViewport[3]);
+    if (!m_inShadowPass)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = m_savedViewportWidth;
+    viewport.Height = m_savedViewportHeight;
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{
+        0,
+        0,
+        static_cast<LONG>(m_savedViewportWidth),
+        static_cast<LONG>(m_savedViewportHeight)};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
 }
 
 void CascadedShadowMap::EndFrame()
 {
+    if (m_depthResource != nullptr && m_inShadowPass)
+    {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+        TransitionResource(
+            commandList,
+            static_cast<ID3D12Resource*>(m_depthResource),
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        m_depthInShaderReadState = true;
+    }
+
     RestoreRasterState();
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    m_inShadowPass = false;
 }
 
 const glm::mat4& CascadedShadowMap::GetLightSpaceMatrix(const int cascadeIndex) const
@@ -237,13 +379,15 @@ int CascadedShadowMap::GetActiveCascadeCount() const
 
 void CascadedShadowMap::BindDepthTexture(const unsigned int textureUnit) const
 {
-    if (!m_hasRenderedDepth)
+    if (m_depthSrvCpuHandle == 0 || !m_hasRenderedDepth)
     {
         return;
     }
 
-    glActiveTexture(GL_TEXTURE0 + textureUnit);
-    glBindTexture(GL_TEXTURE_2D_ARRAY, m_depthTexture);
+    if (const Shader* shader = Shader::GetActiveShader())
+    {
+        shader->BindTextureSlot(static_cast<int>(textureUnit), m_depthSrvCpuHandle);
+    }
 }
 
 bool CascadedShadowMap::HasRenderedDepth() const

@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
+#include <string>
 
 class Camera;
 class CameraGizmoRenderer;
@@ -71,4 +72,6 @@ private:
     DirectionalShadowSettings m_directionalShadowSettings;
     SceneLighting m_lighting;
     mutable bool m_gpuResourcesInitialized = false;
+    mutable bool m_gpuResourcesInitFailed = false;
+    mutable std::string m_gpuResourcesInitError;
 };

@@ -28,26 +28,25 @@ struct PSInput
 
 float4 main(PSInput input) : SV_Target
 {
-    float depth = uDepthMap.Sample(uDepthSampler, input.texCoord).r;
+    float2 uv = input.texCoord;
+    float depth = uDepthMap.Sample(uDepthSampler, uv).r;
 
     float3 direct = 0.0.xxx;
     float3 indirect = 0.0.xxx;
 
     if (uUseSplitLighting != 0)
     {
-        direct = uDirectLighting.Sample(uDirectLightingSampler, input.texCoord).rgb;
-        indirect = uIndirectLighting.Sample(uIndirectLightingSampler, input.texCoord).rgb;
+        direct = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
+        indirect = uIndirectLighting.Sample(uIndirectLightingSampler, uv).rgb;
     }
     else
     {
-        float3 sceneColor = uDirectLighting.Sample(uDirectLightingSampler, input.texCoord).rgb;
-        direct = sceneColor;
+        direct = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
     }
 
     if (uUseShadowFactor != 0)
     {
-        float shadowFactor = uShadowFactorMap.Sample(uShadowFactorSampler, input.texCoord).r;
-        direct *= shadowFactor;
+        direct *= uShadowFactorMap.Sample(uShadowFactorSampler, uv).r;
     }
 
     if (depth >= 0.9999)
@@ -59,7 +58,7 @@ float4 main(PSInput input) : SV_Target
 
     if (uUseSsao != 0)
     {
-        float ssao = pow(uSsaoMap.Sample(uSsaoSampler, input.texCoord).r, uSsaoPower);
+        float ssao = pow(uSsaoMap.Sample(uSsaoSampler, uv).r, uSsaoPower);
         indirectOcclusion *= lerp(1.0, ssao, uAoStrength);
     }
 

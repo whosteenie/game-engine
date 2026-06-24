@@ -1,16 +1,17 @@
-#include <glad/glad.h>
-
 #include "engine/gizmos/LightGizmoRenderer.h"
+
 #include "engine/camera/Camera.h"
+#include "engine/components/LightComponent.h"
+#include "engine/gizmos/GizmoDraw.h"
 #include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/lighting/Light.h"
-#include "engine/components/LightComponent.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/rendering/Shader.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
+
 #include <algorithm>
 #include <vector>
 
@@ -21,7 +22,8 @@ namespace
 
     glm::vec3 BuildPerpendicular(const glm::vec3& normal)
     {
-        const glm::vec3 reference = glm::abs(normal.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+        const glm::vec3 reference =
+            glm::abs(normal.y) < 0.99f ? glm::vec3(0.0f, 1.0f, 0.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
         return glm::normalize(glm::cross(reference, normal));
     }
 
@@ -98,7 +100,8 @@ namespace
         for (int spoke = 0; spoke < spokeCount; ++spoke)
         {
             const float angle = glm::two_pi<float>() * static_cast<float>(spoke) / static_cast<float>(spokeCount);
-            const glm::vec3 rimPoint = baseCenter + (tangent * std::cos(angle) + bitangent * std::sin(angle)) * baseRadius;
+            const glm::vec3 rimPoint =
+                baseCenter + (tangent * std::cos(angle) + bitangent * std::sin(angle)) * baseRadius;
             GizmoGeometry::AppendLine(vertices, position, rimPoint);
         }
 
@@ -132,7 +135,8 @@ namespace
             break;
         case LightType::Spot:
         {
-            const float outerCutoffDegrees = glm::degrees(std::acos(glm::clamp(light.GetOuterCutoffCos(), -1.0f, 1.0f)));
+            const float outerCutoffDegrees =
+                glm::degrees(std::acos(glm::clamp(light.GetOuterCutoffCos(), -1.0f, 1.0f)));
             AppendSpotGizmo(vertices, light.GetPosition(), light.GetDirection(), outerCutoffDegrees, light.GetRange());
             break;
         }
@@ -143,22 +147,9 @@ namespace
 LightGizmoRenderer::LightGizmoRenderer()
     : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
 {
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
 }
 
-LightGizmoRenderer::~LightGizmoRenderer()
-{
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
-}
+LightGizmoRenderer::~LightGizmoRenderer() = default;
 
 void LightGizmoRenderer::Draw(
     const Camera& camera,
@@ -171,15 +162,9 @@ void LightGizmoRenderer::Draw(
         return;
     }
 
-    m_shader->Use();
-    m_shader->SetMat4("uView", camera.GetViewMatrix());
-    m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
-
-    glBindVertexArray(m_vao);
-
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
-        const SceneObject& object = objects[objectIndex];
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
         if (!object.HasLight())
         {
             continue;
@@ -194,17 +179,11 @@ void LightGizmoRenderer::Draw(
             continue;
         }
 
-        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-
         const bool selected = std::find(
                                   selectedObjectIndices.begin(),
                                   selectedObjectIndices.end(),
                                   objectIndex)
             != selectedObjectIndices.end();
-        m_shader->SetVec3("uColor", GizmoColor(light, selected));
-        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
+        GizmoDraw::DrawLineVertices(*m_shader, camera, vertices, GizmoColor(light, selected));
     }
-
-    glBindVertexArray(0);
 }

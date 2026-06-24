@@ -1,5 +1,7 @@
 #include "app/core/Application.h"
 
+#include "engine/platform/ExceptionMessage.h"
+
 #include <iostream>
 #include <string>
 
@@ -7,25 +9,7 @@ namespace
 {
     void PrintFatalError(const char* prefix, const std::exception& exception)
     {
-        std::string details;
-        try
-        {
-            if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
-            {
-                details = what;
-            }
-        }
-        catch (...)
-        {
-            details.clear();
-        }
-
-        if (details.empty())
-        {
-            details = typeid(exception).name();
-        }
-
-        std::cerr << prefix << details << "\n";
+        std::cerr << prefix << SafeExceptionMessage(exception) << "\n";
     }
 }
 

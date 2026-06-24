@@ -2,9 +2,7 @@
 
 #include <memory>
 
-#if defined(GAME_ENGINE_D3D12)
 #include "engine/rhi/d3d12/GpuBuffer.h"
-#endif
 
 class Camera;
 class Shader;
@@ -24,17 +22,11 @@ public:
 
 private:
     void BuildGridGeometry(float halfExtent);
-    void DestroyGlResources();
+    void ReleaseGpuResources();
 
     std::unique_ptr<Shader> m_shader;
-#if !defined(GAME_ENGINE_D3D12)
-    unsigned int m_vao = 0;
-    unsigned int m_vbo = 0;
-    unsigned int m_ebo = 0;
-#else
     GpuBuffer m_vertexBuffer;
     GpuBuffer m_indexBuffer;
-#endif
     unsigned int m_indexCount = 0;
 
     float m_halfExtent = 14.0f;

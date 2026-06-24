@@ -91,7 +91,7 @@ private:
     int m_shadowMapResolution = 4096;
     int m_cascadeCount = 4;
     float m_cascadeSplitLambda = 0.82f;
-    float m_cascadeBlendRatio = 0.25f;
+    float m_cascadeBlendRatio = 0.08f;
     bool m_tightNearPlaneXyFit = false;
     float m_xyMarginFraction = 0.03f;
     float m_zMarginFraction = 0.12f;

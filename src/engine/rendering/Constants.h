@@ -2,37 +2,38 @@
 
 namespace EngineConstants
 {
-    inline constexpr const char* LitVertexShader = "assets/shaders/lit.vert";
-    inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.frag";
-    inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vert";
-    inline constexpr const char* ShadowDepthFragmentShader = "assets/shaders/shadow_depth.frag";
-    inline constexpr const char* GridVertexShader = "assets/shaders/grid.vert";
-    inline constexpr const char* GridFragmentShader = "assets/shaders/grid.frag";
-    inline constexpr const char* LineFragmentShader = "assets/shaders/line.frag";
-    inline constexpr const char* SelectionOutlineVertexShader = "assets/shaders/selection_outline.vert";
-    inline constexpr const char* SelectionOutlineFragmentShader = "assets/shaders/selection_outline.frag";
-    inline constexpr const char* SelectionMaskVertexShader = "assets/shaders/selection_mask.vert";
-    inline constexpr const char* SelectionMaskFragmentShader = "assets/shaders/selection_mask.frag";
-    inline constexpr const char* SelectionEdgeFragmentShader = "assets/shaders/selection_edge.frag";
-    inline constexpr const char* SelectionGlowFragmentShader = "assets/shaders/selection_glow.frag";
-    inline constexpr const char* SelectionSharpFragmentShader = "assets/shaders/selection_sharp.frag";
+    inline constexpr const char* LitVertexShader = "assets/shaders/lit.vs.hlsl";
+    inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.ps.hlsl";
+    inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vs.hlsl";
+    inline constexpr const char* ShadowDepthFragmentShader = "assets/shaders/shadow_depth.ps.hlsl";
+    inline constexpr const char* GridVertexShader = "assets/shaders/grid.vs.hlsl";
+    inline constexpr const char* GridFragmentShader = "assets/shaders/grid.ps.hlsl";
+    inline constexpr const char* LineFragmentShader = "assets/shaders/line.ps.hlsl";
+    inline constexpr const char* SelectionOutlineVertexShader = "assets/shaders/selection_outline.vs.hlsl";
+    inline constexpr const char* SelectionOutlineFragmentShader = "assets/shaders/selection_outline.ps.hlsl";
+    inline constexpr const char* SelectionMaskVertexShader = "assets/shaders/selection_mask.vs.hlsl";
+    inline constexpr const char* SelectionMaskFragmentShader = "assets/shaders/selection_mask.ps.hlsl";
+    inline constexpr const char* SelectionEdgeFragmentShader = "assets/shaders/selection_edge.ps.hlsl";
+    inline constexpr const char* SelectionGlowFragmentShader = "assets/shaders/selection_glow.ps.hlsl";
+    inline constexpr const char* SelectionSharpFragmentShader = "assets/shaders/selection_sharp.ps.hlsl";
 
-    inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vert";
-    inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.frag";
-    inline constexpr const char* SsaoBlurFragmentShader = "assets/shaders/ssao_blur.frag";
-    inline constexpr const char* ScreenCompositeFragmentShader = "assets/shaders/screen_composite.frag";
-    inline constexpr const char* BloomExtractFragmentShader = "assets/shaders/bloom_extract.frag";
-    inline constexpr const char* BloomBlurFragmentShader = "assets/shaders/bloom_blur.frag";
-    inline constexpr const char* ShadowBlurFragmentShader = "assets/shaders/shadow_blur.frag";
-    inline constexpr const char* TonemapFragmentShader = "assets/shaders/tonemap.frag";
-    inline constexpr const char* DebugChannelFragmentShader = "assets/shaders/debug_channel.frag";
+    inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vs.hlsl";
+    inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.ps.hlsl";
+    inline constexpr const char* SsaoBlurFragmentShader = "assets/shaders/ssao_blur.ps.hlsl";
+    inline constexpr const char* ScreenCompositeFragmentShader = "assets/shaders/screen_composite.ps.hlsl";
+    inline constexpr const char* BloomExtractFragmentShader = "assets/shaders/bloom_extract.ps.hlsl";
+    inline constexpr const char* BloomBlurFragmentShader = "assets/shaders/bloom_blur.ps.hlsl";
+    inline constexpr const char* ShadowBlurFragmentShader = "assets/shaders/shadow_blur.ps.hlsl";
+    inline constexpr const char* TonemapFragmentShader = "assets/shaders/tonemap.ps.hlsl";
+    inline constexpr const char* DebugChannelFragmentShader = "assets/shaders/debug_channel.ps.hlsl";
 
-    inline constexpr const char* IblCubemapVertexShader = "assets/shaders/ibl_cubemap.vert";
-    inline constexpr const char* IblEquirectToCubemapFragmentShader = "assets/shaders/ibl_equirect_to_cubemap.frag";
-    inline constexpr const char* IblIrradianceFragmentShader = "assets/shaders/ibl_irradiance.frag";
-    inline constexpr const char* IblPrefilterFragmentShader = "assets/shaders/ibl_prefilter.frag";
-    inline constexpr const char* IblBrdfVertexShader = "assets/shaders/ibl_brdf.vert";
-    inline constexpr const char* IblBrdfFragmentShader = "assets/shaders/ibl_brdf.frag";
+    inline constexpr const char* IblCubemapVertexShader = "assets/shaders/ibl_cubemap.vs.hlsl";
+    inline constexpr const char* IblEquirectToCubemapFragmentShader =
+        "assets/shaders/ibl_equirect_to_cubemap.ps.hlsl";
+    inline constexpr const char* IblIrradianceFragmentShader = "assets/shaders/ibl_irradiance.ps.hlsl";
+    inline constexpr const char* IblPrefilterFragmentShader = "assets/shaders/ibl_prefilter.ps.hlsl";
+    inline constexpr const char* IblBrdfVertexShader = "assets/shaders/ibl_brdf.vs.hlsl";
+    inline constexpr const char* IblBrdfFragmentShader = "assets/shaders/ibl_brdf.ps.hlsl";
 
     inline constexpr const char* EnvironmentHdr = "assets/environment/studio_small_09_1k.hdr";
 

@@ -490,6 +490,14 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::LightSpaceUv),
             RenderDebugModeLabel(RenderDebugMode::LightSpaceDepth),
             RenderDebugModeLabel(RenderDebugMode::CascadeIndex),
+            RenderDebugModeLabel(RenderDebugMode::GeometricNormal),
+            RenderDebugModeLabel(RenderDebugMode::TangentHandedness),
+            RenderDebugModeLabel(RenderDebugMode::ViewDepth),
+            RenderDebugModeLabel(RenderDebugMode::CascadeBlendFactor),
+            RenderDebugModeLabel(RenderDebugMode::DiffuseIbl),
+            RenderDebugModeLabel(RenderDebugMode::SpecularIbl),
+            RenderDebugModeLabel(RenderDebugMode::DirectDiffuseGeom),
+            RenderDebugModeLabel(RenderDebugMode::ShadedNormal),
             RenderDebugModeLabel(RenderDebugMode::Ssao),
             RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),
         };
@@ -503,7 +511,49 @@ void LightingPanel::Draw(
             screenSpaceEffects.SetDebugMode(static_cast<RenderDebugMode>(debugMode));
         }
 
+        if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceUv))
+        {
+            ImGui::TextWrapped(
+                "Light-space UV shifts with the flycam: cascades refit to the camera frustum each frame.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::CascadeIndex))
+        {
+            ImGui::TextWrapped(
+                "Cascade tint is stable per split; brightness encodes view depth within the active cascade.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::DirectLighting))
+        {
+            ImGui::TextWrapped("Shows unshadowed direct lighting (N·L and BRDF), not the shadow factor pass.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::DirectDiffuseGeom))
+        {
+            ImGui::TextWrapped(
+                "Sun diffuse on geometric normals only. Stable across flycam if this view is flat but Direct lighting is not.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadedNormal))
+        {
+            ImGui::TextWrapped("Normal used for lighting after normal-map perturbation. Compare with Geometric normal.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::DiffuseIbl))
+        {
+            ImGui::TextWrapped("Indirect diffuse from irradiance cubemap (geom normal). Should be smooth on spheres.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SpecularIbl))
+        {
+            ImGui::TextWrapped("Indirect specular from prefiltered env map. View-dependent by design.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::CascadeBlendFactor))
+        {
+            ImGui::TextWrapped(
+                "Cascade cross-fade weight. Bright bands on the floor near the camera often indicate a blend seam.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ViewDepth))
+        {
+            ImGui::TextWrapped("Linear view-space Z used for cascade selection. Compare with Cascade index.");
+        }
+
         static std::string diagnosticStatus;
+        ImGui::TextDisabled("HDR+SSAO on by default; enable Bloom in panel for full post stack.");
         ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/import console logs.");
         if (ImGui::Button("Write diagnostics/render_diagnostics.txt"))
         {

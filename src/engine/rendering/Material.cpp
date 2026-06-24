@@ -209,9 +209,7 @@ void Material::Apply(
     lighting.Apply(*m_shader);
     ibl.BindTextures(*m_shader);
 
-#if defined(GAME_ENGINE_D3D12)
     m_shader->FlushUniforms();
-#endif
 }
 
 void Material::BindMaps() const

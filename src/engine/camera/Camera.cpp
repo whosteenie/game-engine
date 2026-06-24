@@ -68,11 +68,7 @@ void Camera::ProcessMouseMovement(float xOffset, float yOffset)
     xOffset *= m_mouseSensitivity;
     yOffset *= m_mouseSensitivity;
 
-#if defined(GAME_ENGINE_D3D12)
     m_yaw -= xOffset;
-#else
-    m_yaw += xOffset;
-#endif
     m_pitch += yOffset;
 
     m_pitch = std::clamp(m_pitch, -89.0f, 89.0f);
@@ -82,11 +78,7 @@ void Camera::ProcessMouseMovement(float xOffset, float yOffset)
 
 glm::mat4 Camera::BuildViewMatrixFromState() const
 {
-#if defined(GAME_ENGINE_D3D12)
     return glm::lookAtLH(m_position, m_position + m_front, m_worldUp);
-#else
-    return glm::lookAt(m_position, m_position + m_front, m_worldUp);
-#endif
 }
 
 glm::mat4 Camera::GetViewMatrix() const
@@ -96,11 +88,7 @@ glm::mat4 Camera::GetViewMatrix() const
 
 glm::mat4 Camera::GetProjectionMatrix() const
 {
-#if defined(GAME_ENGINE_D3D12)
     return glm::perspectiveLH_ZO(glm::radians(m_fov), m_aspect, m_near, m_far);
-#else
-    return glm::perspective(glm::radians(m_fov), m_aspect, m_near, m_far);
-#endif
 }
 
 glm::vec3 Camera::GetPosition() const
@@ -162,11 +150,7 @@ void Camera::SetAspect(float aspect)
 glm::mat4 Camera::BuildViewMatrixLookingAt(const glm::vec3& target, float distance) const
 {
     const glm::vec3 eye = target - m_front * distance;
-#if defined(GAME_ENGINE_D3D12)
     return glm::lookAtLH(eye, target, m_worldUp);
-#else
-    return glm::lookAt(eye, target, m_worldUp);
-#endif
 }
 
 void Camera::ApplyViewManipulateResult(

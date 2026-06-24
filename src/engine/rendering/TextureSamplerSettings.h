@@ -1,7 +1,5 @@
 #pragma once
 
-#if defined(GAME_ENGINE_D3D12)
-
 namespace TexSampler
 {
     constexpr unsigned int WrapRepeat = 1;
@@ -23,17 +21,3 @@ struct TextureSamplerSettings
     unsigned int minFilter = TexSampler::FilterLinearMipmapLinear;
     unsigned int magFilter = TexSampler::FilterLinear;
 };
-
-#else
-
-#include <glad/glad.h>
-
-struct TextureSamplerSettings
-{
-    unsigned int wrapS = GL_REPEAT;
-    unsigned int wrapT = GL_REPEAT;
-    unsigned int minFilter = GL_LINEAR_MIPMAP_LINEAR;
-    unsigned int magFilter = GL_LINEAR;
-};
-
-#endif

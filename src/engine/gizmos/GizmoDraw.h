@@ -6,7 +6,7 @@
 class Camera;
 class Shader;
 
-namespace GizmoDrawD3d12
+namespace GizmoDraw
 {
     void DrawLineVertices(
         const Shader& shader,

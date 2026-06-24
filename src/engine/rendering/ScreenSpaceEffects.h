@@ -2,14 +2,13 @@
 
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/RenderDebug.h"
+
+#include "engine/rhi/d3d12/GpuBuffer.h"
+
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
 #include <vector>
-
-#if defined(GAME_ENGINE_D3D12)
-#include "engine/rhi/d3d12/GpuBuffer.h"
-#endif
 
 class Camera;
 class Framebuffer;
@@ -89,7 +88,6 @@ public:
     void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
 private:
-#if defined(GAME_ENGINE_D3D12)
     struct InternalTarget
     {
         void* resource = nullptr;
@@ -129,40 +127,6 @@ private:
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
-#else
-    void CreateFullscreenQuad();
-    void CreateNoiseTexture();
-    void CreateKernel();
-    void CreateSingleChannelTarget(unsigned int& fbo, unsigned int& texture, int width, int height) const;
-    void CreateHdrColorTarget(unsigned int& fbo, unsigned int& texture, int width, int height) const;
-    void DestroySingleChannelTarget(unsigned int& fbo, unsigned int& texture) const;
-    void DestroyHdrColorTarget(unsigned int& fbo, unsigned int& texture) const;
-    void ResizeSingleChannelTargets(int width, int height);
-    void ResizeHdrColorTarget(int width, int height);
-    void ResizeBloomTargets(int width, int height);
-    void DrawFullscreenQuad() const;
-
-    unsigned int m_quadVao = 0;
-    unsigned int m_quadVbo = 0;
-    unsigned int m_noiseTexture = 0;
-
-    unsigned int m_ssaoFbo = 0;
-    unsigned int m_ssaoTexture = 0;
-    unsigned int m_ssaoBlurFbo = 0;
-    unsigned int m_ssaoBlurTexture = 0;
-    unsigned int m_shadowBlurFbo = 0;
-    unsigned int m_shadowBlurTexture = 0;
-    unsigned int m_shadowBlur2Fbo = 0;
-    unsigned int m_shadowBlur2Texture = 0;
-    unsigned int m_hdrCompositeFbo = 0;
-    unsigned int m_hdrCompositeTexture = 0;
-    unsigned int m_bloomExtractFbo = 0;
-    unsigned int m_bloomExtractTexture = 0;
-    unsigned int m_bloomBlurFbo = 0;
-    unsigned int m_bloomBlurTexture = 0;
-    unsigned int m_bloomBlur2Fbo = 0;
-    unsigned int m_bloomBlur2Texture = 0;
-#endif
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
@@ -174,10 +138,6 @@ private:
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_debugChannelShader;
 
-#if !defined(GAME_ENGINE_D3D12)
-    // GL-only members listed above in #else block
-#endif
-
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
     int m_height = 0;
@@ -186,7 +146,7 @@ private:
     mutable bool m_logHdrApplySnapshot = false;
     bool m_ssaoEnabled = true;
     float m_ssaoRadius = 0.35f;
-    float m_ssaoBias = 0.015f;
+    float m_ssaoBias = 0.025f;
     float m_ssaoPower = 1.6f;
     float m_aoStrength = 0.75f;
     float m_exposure = 0.0f;

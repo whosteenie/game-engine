@@ -1,41 +1,84 @@
-#include <glad/glad.h>
-
 #include "engine/rendering/ScreenSpaceEffects.h"
 
 #include "engine/camera/Camera.h"
+#include "engine/platform/RenderPathDiagnostics.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rhi/GfxContext.h"
+
+#include <D3D12MemAlloc.h>
+#include <d3d12.h>
+#include <dxgiformat.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <random>
+#include <stdexcept>
+#include <vector>
 
 namespace
 {
     constexpr float kBackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
+
+    // Fullscreen quad UVs for top-left texture origin (D3D12 convention).
+    constexpr float kQuadVertices[] = {
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f, -1.0f, 1.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 0.0f,
+    };
 
     float SrgbChannelToLinear(float channel)
     {
         return std::pow(channel, 2.2f);
     }
 
-    constexpr float kQuadVertices[] = {
-        -1.0f, -1.0f, 0.0f, 0.0f,
-         1.0f, -1.0f, 1.0f, 0.0f,
-         1.0f,  1.0f, 1.0f, 1.0f,
-        -1.0f, -1.0f, 0.0f, 0.0f,
-         1.0f,  1.0f, 1.0f, 1.0f,
-        -1.0f,  1.0f, 0.0f, 1.0f,
-    };
-
     bool IsPostProcessDebugMode(RenderDebugMode mode)
     {
         return mode == RenderDebugMode::Ssao ||
                mode == RenderDebugMode::CompositeOcclusion;
+    }
+
+    void TransitionResource(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* resource,
+        D3D12_RESOURCE_STATES before,
+        D3D12_RESOURCE_STATES after)
+    {
+        if (before == after || resource == nullptr)
+        {
+            return;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        commandList->ResourceBarrier(1, &barrier);
+    }
+
+    void CreateTexture2DSrv(
+        ID3D12Device* device,
+        ID3D12Resource* resource,
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+        DXGI_FORMAT format,
+        std::uint32_t mipLevels)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = mipLevels;
+        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
     }
 }
 
@@ -67,55 +110,131 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::DebugChannelFragmentShader))
 {
     CreateFullscreenQuad();
-    CreateNoiseTexture();
     CreateKernel();
+    CreateNoiseTexture();
+
+    // HDR post-processing + SSAO defaults; selection overlay after tonemap (SceneRenderer).
+    // Stage 3+: Bloom toggle, depth blit for gizmo occlusion, play-mode parity.
 }
 
 ScreenSpaceEffects::~ScreenSpaceEffects()
 {
-    DestroySingleChannelTarget(m_ssaoFbo, m_ssaoTexture);
-    DestroySingleChannelTarget(m_ssaoBlurFbo, m_ssaoBlurTexture);
-    DestroySingleChannelTarget(m_shadowBlurFbo, m_shadowBlurTexture);
-    DestroySingleChannelTarget(m_shadowBlur2Fbo, m_shadowBlur2Texture);
-    DestroyHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture);
-    DestroyHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture);
-    DestroyHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture);
-    DestroyHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture);
-
-    if (m_noiseTexture != 0)
-    {
-        glDeleteTextures(1, &m_noiseTexture);
-    }
-
-    if (m_quadVbo != 0)
-    {
-        glDeleteBuffers(1, &m_quadVbo);
-    }
-
-    if (m_quadVao != 0)
-    {
-        glDeleteVertexArrays(1, &m_quadVao);
-    }
+    DestroyInternalTarget(m_ssaoTarget);
+    DestroyInternalTarget(m_ssaoBlurTarget);
+    DestroyInternalTarget(m_shadowBlurTarget);
+    DestroyInternalTarget(m_shadowBlur2Target);
+    DestroyInternalTarget(m_hdrCompositeTarget);
+    DestroyInternalTarget(m_bloomExtractTarget);
+    DestroyInternalTarget(m_bloomBlurTarget);
+    DestroyInternalTarget(m_bloomBlur2Target);
+    DestroyInternalTarget(m_noiseTexture);
 }
 
 void ScreenSpaceEffects::CreateFullscreenQuad()
 {
-    glGenVertexArrays(1, &m_quadVao);
-    glGenBuffers(1, &m_quadVbo);
-    glBindVertexArray(m_quadVao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_quadVbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(kQuadVertices), kQuadVertices, GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), reinterpret_cast<void*>(0));
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(
-        1,
-        2,
-        GL_FLOAT,
-        GL_FALSE,
-        4 * sizeof(float),
-        reinterpret_cast<void*>(2 * sizeof(float)));
-    glBindVertexArray(0);
+    m_quadVb.Create(
+        GpuBuffer::Type::Vertex,
+        kQuadVertices,
+        static_cast<std::uint32_t>(sizeof(kQuadVertices)));
+}
+
+void ScreenSpaceEffects::CreateInternalTarget(
+    InternalTarget& target,
+    const int width,
+    const int height,
+    const int format)
+{
+    DestroyInternalTarget(target);
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Width = static_cast<UINT64>(width);
+    resourceDesc.Height = static_cast<UINT>(height);
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = static_cast<DXGI_FORMAT>(format);
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12_CLEAR_VALUE clearValue{};
+    clearValue.Format = static_cast<DXGI_FORMAT>(format);
+    clearValue.Color[0] = 0.0f;
+    clearValue.Color[1] = 0.0f;
+    clearValue.Color[2] = 0.0f;
+    clearValue.Color[3] = 1.0f;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* resource = nullptr;
+    D3D12MA::Allocation* allocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+            &clearValue,
+            &allocation,
+            IID_PPV_ARGS(&resource))))
+    {
+        throw std::runtime_error("Failed to create post-process render target");
+    }
+
+    target.resource = resource;
+    target.allocation = allocation;
+    target.width = width;
+    target.height = height;
+    target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
+    target.rtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
+
+    CreateTexture2DSrv(
+        device,
+        resource,
+        {target.srvCpuHandle},
+        static_cast<DXGI_FORMAT>(format),
+        1);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
+    device->CreateRenderTargetView(resource, nullptr, rtvHandle);
+}
+
+void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
+{
+    if (target.srvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(target.srvIndex);
+        target.srvIndex = UINT32_MAX;
+    }
+
+    if (target.rtvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenRtvBlock(target.rtvIndex, 1);
+        target.rtvIndex = UINT32_MAX;
+    }
+
+    if (target.allocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(target.allocation)->Release();
+        target.allocation = nullptr;
+    }
+
+    target.resource = nullptr;
+    target.srvCpuHandle = 0;
+    target.width = 0;
+    target.height = 0;
+}
+
+void ScreenSpaceEffects::ResizeInternalTarget(
+    InternalTarget& target,
+    const int width,
+    const int height,
+    const int format)
+{
+    CreateInternalTarget(target, width, height, format);
 }
 
 void ScreenSpaceEffects::CreateNoiseTexture()
@@ -129,23 +248,128 @@ void ScreenSpaceEffects::CreateNoiseTexture()
         noiseValue = glm::normalize(glm::vec3(random(generator), random(generator), 0.0f));
     }
 
-    glGenTextures(1, &m_noiseTexture);
-    glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-    glTexImage2D(
-        GL_TEXTURE_2D,
-        0,
-        GL_RGB16F,
-        4,
-        4,
-        0,
-        GL_RGB,
-        GL_FLOAT,
-        noiseValues.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    const int noiseWidth = 4;
+    const int noiseHeight = 4;
+    std::vector<float> rgbaPixels(static_cast<std::size_t>(noiseWidth * noiseHeight * 4));
+    for (std::size_t pixelIndex = 0; pixelIndex < noiseValues.size(); ++pixelIndex)
+    {
+        rgbaPixels[pixelIndex * 4 + 0] = noiseValues[pixelIndex].x;
+        rgbaPixels[pixelIndex * 4 + 1] = noiseValues[pixelIndex].y;
+        rgbaPixels[pixelIndex * 4 + 2] = noiseValues[pixelIndex].z;
+        rgbaPixels[pixelIndex * 4 + 3] = 1.0f;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+    const DXGI_FORMAT format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+
+    D3D12_RESOURCE_DESC textureDesc{};
+    textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    textureDesc.Width = noiseWidth;
+    textureDesc.Height = noiseHeight;
+    textureDesc.DepthOrArraySize = 1;
+    textureDesc.MipLevels = 1;
+    textureDesc.Format = format;
+    textureDesc.SampleDesc.Count = 1;
+    textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12MA::ALLOCATION_DESC textureAllocationDesc{};
+    textureAllocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* textureResource = nullptr;
+    D3D12MA::Allocation* textureAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &textureAllocationDesc,
+            &textureDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            &textureAllocation,
+            IID_PPV_ARGS(&textureResource))))
+    {
+        throw std::runtime_error("Failed to create SSAO noise texture");
+    }
+
+    const UINT64 uploadPitch = (static_cast<UINT64>(noiseWidth) * sizeof(float) * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
+        ~(static_cast<UINT64>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
+    const UINT64 uploadSize = uploadPitch * static_cast<UINT64>(noiseHeight);
+
+    D3D12_RESOURCE_DESC uploadDesc{};
+    uploadDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    uploadDesc.Width = uploadSize;
+    uploadDesc.Height = 1;
+    uploadDesc.DepthOrArraySize = 1;
+    uploadDesc.MipLevels = 1;
+    uploadDesc.Format = DXGI_FORMAT_UNKNOWN;
+    uploadDesc.SampleDesc.Count = 1;
+    uploadDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};
+    uploadAllocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+
+    ID3D12Resource* uploadResource = nullptr;
+    D3D12MA::Allocation* uploadAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &uploadAllocationDesc,
+            &uploadDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            &uploadAllocation,
+            IID_PPV_ARGS(&uploadResource))))
+    {
+        textureAllocation->Release();
+        textureResource->Release();
+        throw std::runtime_error("Failed to create SSAO noise upload buffer");
+    }
+
+    void* mapped = nullptr;
+    uploadResource->Map(0, nullptr, &mapped);
+    for (int row = 0; row < noiseHeight; ++row)
+    {
+        std::memcpy(
+            static_cast<std::uint8_t*>(mapped) + static_cast<std::size_t>(row) * uploadPitch,
+            rgbaPixels.data() + static_cast<std::size_t>(row) * noiseWidth * 4,
+            static_cast<std::size_t>(noiseWidth) * 4 * sizeof(float));
+    }
+    uploadResource->Unmap(0, nullptr);
+
+    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+
+        D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
+        destinationLocation.pResource = textureResource;
+        destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        destinationLocation.SubresourceIndex = 0;
+
+        D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
+        sourceLocation.pResource = uploadResource;
+        sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        sourceLocation.PlacedFootprint.Offset = 0;
+        sourceLocation.PlacedFootprint.Footprint.Format = format;
+        sourceLocation.PlacedFootprint.Footprint.Width = noiseWidth;
+        sourceLocation.PlacedFootprint.Footprint.Height = noiseHeight;
+        sourceLocation.PlacedFootprint.Footprint.Depth = 1;
+        sourceLocation.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(uploadPitch);
+
+        commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+
+        TransitionResource(
+            commandList,
+            textureResource,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    });
+
+    uploadAllocation->Release();
+    uploadResource->Release();
+
+    m_noiseTexture.resource = textureResource;
+    m_noiseTexture.allocation = textureAllocation;
+    m_noiseTexture.width = noiseWidth;
+    m_noiseTexture.height = noiseHeight;
+    m_noiseTexture.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_noiseTexture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_noiseTexture.srvIndex);
+    CreateTexture2DSrv(device, textureResource, {m_noiseTexture.srvCpuHandle}, format, 1);
 }
 
 void ScreenSpaceEffects::CreateKernel()
@@ -170,120 +394,33 @@ void ScreenSpaceEffects::CreateKernel()
     }
 }
 
-void ScreenSpaceEffects::CreateSingleChannelTarget(
-    unsigned int& fbo,
-    unsigned int& texture,
-    int width,
-    int height) const
+void ScreenSpaceEffects::ResizeSingleChannelTargets(const int width, const int height)
 {
-    glGenFramebuffers(1, &fbo);
-    glGenTextures(1, &texture);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_R16F, width, height, 0, GL_RED, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-
-    const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
-    glDrawBuffers(1, attachments);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    ResizeInternalTarget(m_ssaoTarget, width, height, format);
+    ResizeInternalTarget(m_ssaoBlurTarget, width, height, format);
+    ResizeInternalTarget(m_shadowBlurTarget, width, height, format);
+    ResizeInternalTarget(m_shadowBlur2Target, width, height, format);
 }
 
-void ScreenSpaceEffects::CreateHdrColorTarget(
-    unsigned int& fbo,
-    unsigned int& texture,
-    int width,
-    int height) const
+void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
 {
-    glGenFramebuffers(1, &fbo);
-    glGenTextures(1, &texture);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-
-    const unsigned int attachments[] = {GL_COLOR_ATTACHMENT0};
-    glDrawBuffers(1, attachments);
-
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    ResizeInternalTarget(m_hdrCompositeTarget, width, height, format);
 }
 
-void ScreenSpaceEffects::DestroyHdrColorTarget(unsigned int& fbo, unsigned int& texture) const
-{
-    if (texture != 0)
-    {
-        glDeleteTextures(1, &texture);
-        texture = 0;
-    }
-
-    if (fbo != 0)
-    {
-        glDeleteFramebuffers(1, &fbo);
-        fbo = 0;
-    }
-}
-
-void ScreenSpaceEffects::ResizeHdrColorTarget(int width, int height)
-{
-    DestroyHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture);
-    CreateHdrColorTarget(m_hdrCompositeFbo, m_hdrCompositeTexture, width, height);
-}
-
-void ScreenSpaceEffects::ResizeBloomTargets(int width, int height)
+void ScreenSpaceEffects::ResizeBloomTargets(const int width, const int height)
 {
     const int bloomWidth = std::max(1, width / 2);
     const int bloomHeight = std::max(1, height / 2);
+    const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
 
-    DestroyHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture);
-    DestroyHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture);
-    DestroyHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture);
-
-    CreateHdrColorTarget(m_bloomExtractFbo, m_bloomExtractTexture, bloomWidth, bloomHeight);
-    CreateHdrColorTarget(m_bloomBlurFbo, m_bloomBlurTexture, bloomWidth, bloomHeight);
-    CreateHdrColorTarget(m_bloomBlur2Fbo, m_bloomBlur2Texture, bloomWidth, bloomHeight);
+    ResizeInternalTarget(m_bloomExtractTarget, bloomWidth, bloomHeight, format);
+    ResizeInternalTarget(m_bloomBlurTarget, bloomWidth, bloomHeight, format);
+    ResizeInternalTarget(m_bloomBlur2Target, bloomWidth, bloomHeight, format);
 }
 
-void ScreenSpaceEffects::DestroySingleChannelTarget(unsigned int& fbo, unsigned int& texture) const
-{
-    if (texture != 0)
-    {
-        glDeleteTextures(1, &texture);
-        texture = 0;
-    }
-
-    if (fbo != 0)
-    {
-        glDeleteFramebuffers(1, &fbo);
-        fbo = 0;
-    }
-}
-
-void ScreenSpaceEffects::ResizeSingleChannelTargets(int width, int height)
-{
-    DestroySingleChannelTarget(m_ssaoFbo, m_ssaoTexture);
-    DestroySingleChannelTarget(m_ssaoBlurFbo, m_ssaoBlurTexture);
-    DestroySingleChannelTarget(m_shadowBlurFbo, m_shadowBlurTexture);
-    DestroySingleChannelTarget(m_shadowBlur2Fbo, m_shadowBlur2Texture);
-
-    CreateSingleChannelTarget(m_ssaoFbo, m_ssaoTexture, width, height);
-    CreateSingleChannelTarget(m_ssaoBlurFbo, m_ssaoBlurTexture, width, height);
-    CreateSingleChannelTarget(m_shadowBlurFbo, m_shadowBlurTexture, width, height);
-    CreateSingleChannelTarget(m_shadowBlur2Fbo, m_shadowBlur2Texture, width, height);
-}
-
-void ScreenSpaceEffects::Resize(int width, int height)
+void ScreenSpaceEffects::Resize(const int width, const int height)
 {
     if (width <= 0 || height <= 0)
     {
@@ -295,7 +432,10 @@ void ScreenSpaceEffects::Resize(int width, int height)
         return;
     }
 
-    m_sceneFramebuffer->Resize(width, height, FramebufferColorMode::SplitDirectIndirect);
+    if (!m_sceneFramebuffer->Resize(width, height, FramebufferColorMode::SplitDirectIndirect))
+    {
+        return;
+    }
     ResizeSingleChannelTargets(width, height);
     ResizeHdrColorTarget(width, height);
     ResizeBloomTargets(width, height);
@@ -305,10 +445,12 @@ void ScreenSpaceEffects::Resize(int width, int height)
 
 void ScreenSpaceEffects::BeginScenePass() const
 {
-    m_sceneFramebuffer->Bind();
+    m_sceneFramebuffer->BindDrawTarget(false);
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
     const float directClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-  const float indirectClear[] = {
+    const float indirectClear[] = {
         SrgbChannelToLinear(kBackgroundSrgb[0]),
         SrgbChannelToLinear(kBackgroundSrgb[1]),
         SrgbChannelToLinear(kBackgroundSrgb[2]),
@@ -317,24 +459,38 @@ void ScreenSpaceEffects::BeginScenePass() const
     if (m_sceneFramebuffer->HasSplitLighting())
     {
         const float normalClear[] = {0.0f, 0.0f, 1.0f, 1.0f};
-        glClearBufferfv(GL_COLOR, 0, directClear);
-        glClearBufferfv(GL_COLOR, 1, indirectClear);
+        const float shadowClear[] = {1.0f, 0.0f, 0.0f, 0.0f};
+
+        D3D12_CPU_DESCRIPTOR_HANDLE directRtv{ m_sceneFramebuffer->GetColorRtvCpuHandle(0) };
+        D3D12_CPU_DESCRIPTOR_HANDLE indirectRtv{ m_sceneFramebuffer->GetColorRtvCpuHandle(1) };
+        D3D12_CPU_DESCRIPTOR_HANDLE normalRtv{ m_sceneFramebuffer->GetColorRtvCpuHandle(2) };
+        D3D12_CPU_DESCRIPTOR_HANDLE shadowRtv{ m_sceneFramebuffer->GetColorRtvCpuHandle(3) };
+
+        commandList->ClearRenderTargetView(directRtv, directClear, 0, nullptr);
+        commandList->ClearRenderTargetView(indirectRtv, indirectClear, 0, nullptr);
         if (m_sceneFramebuffer->HasGeometryNormals())
         {
-            glClearBufferfv(GL_COLOR, 2, normalClear);
+            commandList->ClearRenderTargetView(normalRtv, normalClear, 0, nullptr);
         }
         if (m_sceneFramebuffer->HasShadowFactor())
         {
-            const float shadowClear[] = {1.0f, 0.0f, 0.0f, 0.0f};
-            glClearBufferfv(GL_COLOR, 3, shadowClear);
+            commandList->ClearRenderTargetView(shadowRtv, shadowClear, 0, nullptr);
         }
-        glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     }
     else
     {
-        glClearColor(indirectClear[0], indirectClear[1], indirectClear[2], indirectClear[3]);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+        D3D12_CPU_DESCRIPTOR_HANDLE colorRtv{ m_sceneFramebuffer->GetColorRtvCpuHandle(0) };
+        commandList->ClearRenderTargetView(colorRtv, indirectClear, 0, nullptr);
     }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{ m_sceneFramebuffer->GetDepthDsvCpuHandle() };
+    commandList->ClearDepthStencilView(
+        depthDsv,
+        D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+        1.0f,
+        0,
+        0,
+        nullptr);
 }
 
 void ScreenSpaceEffects::EndScenePass() const
@@ -344,9 +500,75 @@ void ScreenSpaceEffects::EndScenePass() const
 
 void ScreenSpaceEffects::DrawFullscreenQuad() const
 {
-    glBindVertexArray(m_quadVao);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    glBindVertexArray(0);
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    m_quadVb.BindVertex(0, 4 * static_cast<std::uint32_t>(sizeof(float)));
+    commandList->DrawInstanced(6, 1, 0, 0);
+}
+
+void ScreenSpaceEffects::DrawFullscreenToTarget(
+    Shader& shader,
+    InternalTarget& target,
+    const int width,
+    const int height,
+    const float clearColor[4]) const
+{
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    auto* resource = static_cast<ID3D12Resource*>(target.resource);
+
+    TransitionResource(
+        commandList,
+        resource,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{ GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex) };
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(width);
+    viewport.Height = static_cast<float>(height);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, width, height};
+
+    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+
+    shader.BindPipeline();
+    shader.FlushUniforms();
+    DrawFullscreenQuad();
+
+    TransitionResource(
+        commandList,
+        resource,
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+void ScreenSpaceEffects::BindOutputTarget(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (outputTarget != nullptr)
+    {
+        GfxContext::Get().SetBoundOutputFramebuffer(outputTarget);
+        outputTarget->BindDrawTarget(false);
+    }
+    else
+    {
+        GfxContext::Get().BindSwapChainRenderTarget(false);
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(viewportWidth);
+    viewport.Height = static_cast<float>(viewportHeight);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, viewportWidth, viewportHeight};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
 }
 
 void ScreenSpaceEffects::Apply(
@@ -360,13 +582,10 @@ void ScreenSpaceEffects::Apply(
         return;
     }
 
-    const bool runSsao = m_ssaoEnabled &&
-        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::CascadeIndex);
+    const Framebuffer* outputTarget = GfxContext::Get().GetBoundOutputFramebuffer();
 
-    GLint previousFramebuffer = 0;
-    GLint previousViewport[4] = {0, 0, 0, 0};
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
-    glGetIntegerv(GL_VIEWPORT, previousViewport);
+    const bool runSsao = m_ssaoEnabled &&
+        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::ShadedNormal);
 
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 inverseProjectionMatrix = glm::inverse(projectionMatrix);
@@ -377,16 +596,10 @@ void ScreenSpaceEffects::Apply(
         1.0f / static_cast<float>(m_width),
         1.0f / static_cast<float>(m_height));
 
-    glDisable(GL_DEPTH_TEST);
-
     if (runSsao)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, m_ssaoFbo);
-        glViewport(0, 0, m_width, m_height);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        const float ssaoClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
-        m_ssaoShader->Use();
         m_ssaoShader->SetInt("uDepthMap", 0);
         m_ssaoShader->SetInt("uNormalMap", 2);
         m_ssaoShader->SetInt("uNoiseMap", 1);
@@ -395,99 +608,83 @@ void ScreenSpaceEffects::Apply(
             m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
         m_ssaoShader->SetMat4("uProjection", projectionMatrix);
         m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_ssaoShader->SetMat4("uView", camera.GetViewMatrix());
         m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
         m_ssaoShader->SetFloat("uBias", m_ssaoBias);
         m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
         m_ssaoShader->SetVec3Array("uSamples", m_kernelSamples.data(), KernelSampleCount);
         m_ssaoShader->SetFloat("uNoiseScaleX", noiseScale.x);
         m_ssaoShader->SetFloat("uNoiseScaleY", noiseScale.y);
+        m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_ssaoShader->BindTextureSlot(1, m_noiseTexture.srvCpuHandle);
+        m_ssaoShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_noiseTexture);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetNormalColorTexture());
-        DrawFullscreenQuad();
-
-        glBindFramebuffer(GL_FRAMEBUFFER, m_ssaoBlurFbo);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        m_blurShader->Use();
         m_blurShader->SetInt("uInput", 0);
         m_blurShader->SetFloat("uTexelSizeX", texelSize.x);
         m_blurShader->SetFloat("uTexelSizeY", texelSize.y);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_ssaoTexture);
-        DrawFullscreenQuad();
+        m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+        DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
     }
 
     const bool pbrDebugActive =
-        m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::CascadeIndex;
+        m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::ShadedNormal;
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
 
-    unsigned int shadowFactorTexture = m_sceneFramebuffer->GetShadowFactorTexture();
+    std::uintptr_t shadowFactorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(3);
     if (useShadowFactorComposite &&
         shadowSettings.GetShadowBlurEnabled() &&
         shadowSettings.GetShadowBlurRadius() > 0.0f)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, m_shadowBlurFbo);
-        glViewport(0, 0, m_width, m_height);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        const float shadowClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
-        m_shadowBlurShader->Use();
         m_shadowBlurShader->SetInt("uInput", 0);
         m_shadowBlurShader->SetInt("uDepthMap", 1);
         m_shadowBlurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
         m_shadowBlurShader->SetFloat("uDirectionX", texelSize.x);
         m_shadowBlurShader->SetFloat("uDirectionY", 0.0f);
         m_shadowBlurShader->SetFloat("uBlurRadius", shadowSettings.GetShadowBlurRadius());
-        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.08f);
-        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.18f);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, shadowFactorTexture);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
-        DrawFullscreenQuad();
+        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.14f);
+        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.28f);
+        m_shadowBlurShader->BindTextureSlot(0, shadowFactorSrv);
+        m_shadowBlurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_shadowBlurShader,
+            const_cast<InternalTarget&>(m_shadowBlurTarget),
+            m_width,
+            m_height,
+            shadowClear);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_shadowBlur2Fbo);
-        glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        m_shadowBlurShader->Use();
         m_shadowBlurShader->SetInt("uInput", 0);
         m_shadowBlurShader->SetInt("uDepthMap", 1);
         m_shadowBlurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
         m_shadowBlurShader->SetFloat("uDirectionX", 0.0f);
         m_shadowBlurShader->SetFloat("uDirectionY", texelSize.y);
         m_shadowBlurShader->SetFloat("uBlurRadius", shadowSettings.GetShadowBlurRadius());
-        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.08f);
-        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.18f);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_shadowBlurTexture);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
-        DrawFullscreenQuad();
+        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.14f);
+        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.28f);
+        m_shadowBlurShader->BindTextureSlot(0, m_shadowBlurTarget.srvCpuHandle);
+        m_shadowBlurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_shadowBlurShader,
+            const_cast<InternalTarget&>(m_shadowBlur2Target),
+            m_width,
+            m_height,
+            shadowClear);
 
-        shadowFactorTexture = m_shadowBlur2Texture;
+        shadowFactorSrv = m_shadowBlur2Target.srvCpuHandle;
     }
 
-    std::uintptr_t hdrColorTexture = m_sceneFramebuffer->GetColorTexture();
+    std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
 
     if (m_sceneFramebuffer->HasSplitLighting())
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, m_hdrCompositeFbo);
-        glViewport(0, 0, m_width, m_height);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        const float compositeClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-        m_compositeShader->Use();
         m_compositeShader->SetInt("uDirectLighting", 0);
         m_compositeShader->SetInt("uIndirectLighting", 1);
-        m_compositeShader->SetInt("uDepthMap", 3);
-        m_compositeShader->SetInt("uSsaoMap", 2);
+        m_compositeShader->SetInt("uDepthMap", 2);
+        m_compositeShader->SetInt("uSsaoMap", 3);
         m_compositeShader->SetInt("uUseSplitLighting", 1);
         m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
         m_compositeShader->SetInt("uUseShadowFactor", useShadowFactorComposite ? 1 : 0);
@@ -497,33 +694,28 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_compositeShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_compositeShader->BindTextureSlot(3, m_ssaoBlurTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(4, shadowFactorSrv);
+        DrawFullscreenToTarget(
+            *m_compositeShader,
+            const_cast<InternalTarget&>(m_hdrCompositeTarget),
+            m_width,
+            m_height,
+            compositeClear);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_sceneFramebuffer->GetColorTexture()));
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetIndirectColorTexture());
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
-        glActiveTexture(GL_TEXTURE4);
-        glBindTexture(GL_TEXTURE_2D, shadowFactorTexture);
-        DrawFullscreenQuad();
-
-        hdrColorTexture = m_hdrCompositeTexture;
+        hdrColorSrv = m_hdrCompositeTarget.srvCpuHandle;
     }
     else if (runSsao)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, m_hdrCompositeFbo);
-        glViewport(0, 0, m_width, m_height);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        const float compositeClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-        m_compositeShader->Use();
         m_compositeShader->SetInt("uDirectLighting", 0);
         m_compositeShader->SetInt("uIndirectLighting", 0);
         m_compositeShader->SetInt("uDepthMap", 2);
-        m_compositeShader->SetInt("uSsaoMap", 1);
+        m_compositeShader->SetInt("uSsaoMap", 3);
         m_compositeShader->SetInt("uUseSplitLighting", 0);
         m_compositeShader->SetInt("uUseSsao", 1);
         m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
@@ -531,19 +723,20 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_compositeShader->BindTextureSlot(3, m_ssaoBlurTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_compositeShader,
+            const_cast<InternalTarget&>(m_hdrCompositeTarget),
+            m_width,
+            m_height,
+            compositeClear);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(m_sceneFramebuffer->GetColorTexture()));
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, m_ssaoBlurTexture);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, m_sceneFramebuffer->GetDepthTexture());
-        DrawFullscreenQuad();
-
-        hdrColorTexture = m_hdrCompositeTexture;
+        hdrColorSrv = m_hdrCompositeTarget.srvCpuHandle;
     }
 
-    unsigned int bloomTexture = 0;
+    std::uintptr_t bloomSrv = 0;
     if (m_bloomEnabled)
     {
         const int bloomWidth = std::max(1, m_width / 2);
@@ -551,95 +744,109 @@ void ScreenSpaceEffects::Apply(
         const glm::vec2 bloomTexelSize(
             1.0f / static_cast<float>(bloomWidth),
             1.0f / static_cast<float>(bloomHeight));
+        const float bloomClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomExtractFbo);
-        glViewport(0, 0, bloomWidth, bloomHeight);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        m_bloomExtractShader->Use();
         m_bloomExtractShader->SetInt("uHdrColor", 0);
         m_bloomExtractShader->SetFloat("uThreshold", m_bloomThreshold);
         m_bloomExtractShader->SetFloat("uSoftKnee", m_bloomSoftKnee);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, hdrColorTexture);
-        DrawFullscreenQuad();
+        m_bloomExtractShader->BindTextureSlot(0, hdrColorSrv);
+        DrawFullscreenToTarget(
+            *m_bloomExtractShader,
+            const_cast<InternalTarget&>(m_bloomExtractTarget),
+            bloomWidth,
+            bloomHeight,
+            bloomClear);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomBlurFbo);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        m_bloomBlurShader->Use();
         m_bloomBlurShader->SetInt("uInput", 0);
         m_bloomBlurShader->SetFloat("uDirectionX", bloomTexelSize.x);
         m_bloomBlurShader->SetFloat("uDirectionY", 0.0f);
         m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_bloomExtractTexture);
-        DrawFullscreenQuad();
+        m_bloomBlurShader->BindTextureSlot(0, m_bloomExtractTarget.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_bloomBlurShader,
+            const_cast<InternalTarget&>(m_bloomBlurTarget),
+            bloomWidth,
+            bloomHeight,
+            bloomClear);
 
-        glBindFramebuffer(GL_FRAMEBUFFER, m_bloomBlur2Fbo);
-        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        m_bloomBlurShader->Use();
         m_bloomBlurShader->SetInt("uInput", 0);
         m_bloomBlurShader->SetFloat("uDirectionX", 0.0f);
         m_bloomBlurShader->SetFloat("uDirectionY", bloomTexelSize.y);
         m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_bloomBlurTexture);
-        DrawFullscreenQuad();
+        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlurTarget.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_bloomBlurShader,
+            const_cast<InternalTarget&>(m_bloomBlur2Target),
+            bloomWidth,
+            bloomHeight,
+            bloomClear);
 
-        bloomTexture = m_bloomBlur2Texture;
+        bloomSrv = m_bloomBlur2Target.srvCpuHandle;
     }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
-    glViewport(0, 0, viewportWidth, viewportHeight);
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
 
     if (IsPostProcessDebugMode(m_debugMode))
     {
-        unsigned int debugTexture = 0;
+        std::uintptr_t debugSrv = 0;
         if (m_debugMode == RenderDebugMode::Ssao && runSsao)
         {
-            debugTexture = m_ssaoBlurTexture;
+            debugSrv = m_ssaoBlurTarget.srvCpuHandle;
         }
         else if (m_debugMode == RenderDebugMode::CompositeOcclusion && runSsao)
         {
-            debugTexture = m_hdrCompositeTexture;
+            debugSrv = m_hdrCompositeTarget.srvCpuHandle;
         }
 
-        if (debugTexture != 0)
+        if (debugSrv != 0)
         {
-            m_debugChannelShader->Use();
+            m_debugChannelShader->Use(false, true);
             m_debugChannelShader->SetInt("uInput", 0);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, debugTexture);
+            m_debugChannelShader->BindTextureSlot(0, debugSrv);
+            m_debugChannelShader->FlushUniforms();
             DrawFullscreenQuad();
-            glEnable(GL_DEPTH_TEST);
-            glBindTexture(GL_TEXTURE_2D, 0);
             return;
         }
     }
 
-    m_tonemapShader->Use();
+    m_tonemapShader->Use(false, true);
     m_tonemapShader->SetInt("uHdrColor", 0);
     m_tonemapShader->SetFloat("uExposure", m_exposure);
     m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
     m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
     m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
     m_tonemapShader->SetInt("uBloom", 1);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, hdrColorTexture);
+    m_tonemapShader->BindTextureSlot(0, hdrColorSrv);
     if (m_bloomEnabled)
     {
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, bloomTexture);
+        m_tonemapShader->BindTextureSlot(1, bloomSrv);
     }
+    m_tonemapShader->FlushUniforms();
     DrawFullscreenQuad();
 
-    glEnable(GL_DEPTH_TEST);
-    glBindTexture(GL_TEXTURE_2D, 0);
+    if (m_logHdrApplySnapshot)
+    {
+        m_logHdrApplySnapshot = false;
+        std::uint32_t srvUsed = 0;
+        std::uint32_t srvCapacity = 0;
+        GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
+        RenderPathDiagnostics::LogHdrApplySnapshot(
+            m_width,
+            m_height,
+            viewportWidth,
+            viewportHeight,
+            m_sceneFramebuffer->IsValid(),
+            m_sceneFramebuffer->HasSplitLighting(),
+            runSsao,
+            useShadowFactorComposite,
+            outputTarget != nullptr,
+            hdrColorSrv,
+            m_sceneFramebuffer->GetColorSrvCpuHandle(0),
+            m_sceneFramebuffer->GetColorSrvCpuHandle(1),
+            m_sceneFramebuffer->GetDepthSrvCpuHandle(),
+            srvUsed,
+            srvCapacity);
+    }
 }
 
 bool ScreenSpaceEffects::IsEnabled() const
@@ -649,7 +856,14 @@ bool ScreenSpaceEffects::IsEnabled() const
 
 void ScreenSpaceEffects::SetEnabled(bool enabled)
 {
+    if (m_enabled == enabled)
+    {
+        return;
+    }
+
     m_enabled = enabled;
+    RenderPathDiagnostics::LogHdrToggled(enabled);
+    m_logHdrApplySnapshot = true;
 }
 
 bool ScreenSpaceEffects::IsSsaoEnabled() const
@@ -783,28 +997,13 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 }
 
 void ScreenSpaceEffects::BlitDepthToFramebuffer(
-    std::uintptr_t drawFramebuffer,
-    int viewportWidth,
-    int viewportHeight) const
+    const std::uintptr_t drawFramebuffer,
+    const int viewportWidth,
+    const int viewportHeight) const
 {
-    if (!m_sceneFramebuffer->IsValid())
-    {
-        return;
-    }
-
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(m_sceneFramebuffer->GetFramebuffer()));
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
-    glBlitFramebuffer(
-        0,
-        0,
-        m_width,
-        m_height,
-        0,
-        0,
-        viewportWidth,
-        viewportHeight,
-        GL_DEPTH_BUFFER_BIT,
-        GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(drawFramebuffer));
-    glViewport(0, 0, viewportWidth, viewportHeight);
+    (void)drawFramebuffer;
+    (void)viewportWidth;
+    (void)viewportHeight;
+    // Depth texture copies are not reliable across D3D12 drivers; gizmos draw without
+    // viewport depth for now.
 }

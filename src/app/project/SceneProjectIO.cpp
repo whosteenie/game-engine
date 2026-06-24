@@ -37,6 +37,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -889,13 +890,26 @@ namespace SceneProjectIODetail
         sceneObjects.reserve(objectValues.size());
 
         const std::size_t objectCount = objectValues.size();
+        std::unique_ptr<ScopedNativeProgress> loadProgress;
+        if (showProgress && objectCount > 0)
+        {
+            loadProgress = std::make_unique<ScopedNativeProgress>(
+                "Loading Project",
+                "Loading scene objects...");
+        }
+
         std::size_t objectIndex = 0;
         for (const json& objectValue : objectValues)
         {
             ++objectIndex;
-            if (showProgress)
+            if (loadProgress != nullptr)
             {
-                // Native progress disabled during project load (see SceneProjectIO::Load).
+                const std::string objectName = objectValue.value("name", "object");
+                loadProgress->SetMessage(
+                    "Loading '" + objectName + "' (" + std::to_string(objectIndex) + "/" +
+                    std::to_string(objectCount) + ")");
+                loadProgress->SetProgress(
+                    static_cast<float>(objectIndex) / static_cast<float>(objectCount));
             }
 
             try
@@ -1283,6 +1297,8 @@ bool SceneProjectIO::Load(
 
     try
     {
+        ScopedNativeProgress progress("Loading Project", "Reading project file...");
+
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
         {
@@ -1291,8 +1307,10 @@ bool SceneProjectIO::Load(
         }
 
         json root;
+        progress.SetMessage("Parsing project file...");
         input >> root;
 
+        progress.SetMessage("Loading scene...");
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)

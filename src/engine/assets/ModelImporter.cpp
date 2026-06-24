@@ -3,6 +3,7 @@
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/assets/TangentSpace.h"
 #include "engine/assets/ProjectAssets.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
@@ -221,24 +222,12 @@ namespace
         switch (wrap)
         {
         case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::WrapClampToEdge;
-#else
-            return GL_CLAMP_TO_EDGE;
-#endif
         case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::WrapMirroredRepeat;
-#else
-            return GL_MIRRORED_REPEAT;
-#endif
         case TINYGLTF_TEXTURE_WRAP_REPEAT:
         default:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::WrapRepeat;
-#else
-            return GL_REPEAT;
-#endif
         }
     }
 
@@ -247,42 +236,18 @@ namespace
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterNearest;
-#else
-            return GL_NEAREST;
-#endif
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterNearestMipmapNearest;
-#else
-            return GL_NEAREST_MIPMAP_NEAREST;
-#endif
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterNearestMipmapLinear;
-#else
-            return GL_NEAREST_MIPMAP_LINEAR;
-#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterLinearMipmapNearest;
-#else
-            return GL_LINEAR_MIPMAP_NEAREST;
-#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterLinearMipmapLinear;
-#else
-            return GL_LINEAR_MIPMAP_LINEAR;
-#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterLinear;
-#else
-            return GL_LINEAR;
-#endif
         }
     }
 
@@ -291,18 +256,10 @@ namespace
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterNearest;
-#else
-            return GL_NEAREST;
-#endif
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-#if defined(GAME_ENGINE_D3D12)
             return TexSampler::FilterLinear;
-#else
-            return GL_LINEAR;
-#endif
         }
     }
 
@@ -343,70 +300,6 @@ namespace
             std::to_string(samplerSettings.minFilter) + ":" +
             std::to_string(samplerSettings.magFilter) + ":" +
             (colorSpace == TextureColorSpace::SRGB ? "s" : "l");
-    }
-
-    void GenerateTangents(
-        std::vector<float>& vertices,
-        const std::vector<unsigned int>& indices)
-    {
-        const unsigned int vertexCount = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
-        std::vector<glm::vec3> tan1(vertexCount, glm::vec3(0.0f));
-        std::vector<glm::vec3> tan2(vertexCount, glm::vec3(0.0f));
-
-        for (std::size_t triangleIndex = 0; triangleIndex + 2 < indices.size(); triangleIndex += 3)
-        {
-            const unsigned int index0 = indices[triangleIndex];
-            const unsigned int index1 = indices[triangleIndex + 1];
-            const unsigned int index2 = indices[triangleIndex + 2];
-
-            const float* vertex0 = &vertices[static_cast<std::size_t>(index0) * Mesh::TexturedVertexFloatCount];
-            const float* vertex1 = &vertices[static_cast<std::size_t>(index1) * Mesh::TexturedVertexFloatCount];
-            const float* vertex2 = &vertices[static_cast<std::size_t>(index2) * Mesh::TexturedVertexFloatCount];
-
-            const glm::vec3 position0(vertex0[0], vertex0[1], vertex0[2]);
-            const glm::vec3 position1(vertex1[0], vertex1[1], vertex1[2]);
-            const glm::vec3 position2(vertex2[0], vertex2[1], vertex2[2]);
-            const glm::vec2 uv0(vertex0[6], vertex0[7]);
-            const glm::vec2 uv1(vertex1[6], vertex1[7]);
-            const glm::vec2 uv2(vertex2[6], vertex2[7]);
-
-            const glm::vec3 edge1 = position1 - position0;
-            const glm::vec3 edge2 = position2 - position0;
-            const glm::vec2 deltaUv1 = uv1 - uv0;
-            const glm::vec2 deltaUv2 = uv2 - uv0;
-
-            const float determinant = deltaUv1.x * deltaUv2.y - deltaUv2.x * deltaUv1.y;
-            if (std::abs(determinant) < 1.0e-8f)
-            {
-                continue;
-            }
-
-            const float inverseDeterminant = 1.0f / determinant;
-            const glm::vec3 tangent =
-                (edge1 * deltaUv2.y - edge2 * deltaUv1.y) * inverseDeterminant;
-            const glm::vec3 bitangent =
-                (edge2 * deltaUv1.x - edge1 * deltaUv2.x) * inverseDeterminant;
-
-            tan1[index0] += tangent;
-            tan1[index1] += tangent;
-            tan1[index2] += tangent;
-            tan2[index0] += bitangent;
-            tan2[index1] += bitangent;
-            tan2[index2] += bitangent;
-        }
-
-        for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
-        {
-            float* vertex = &vertices[static_cast<std::size_t>(vertexIndex) * Mesh::TexturedVertexFloatCount];
-            const glm::vec3 normal(vertex[3], vertex[4], vertex[5]);
-            const glm::vec3 tangent = glm::normalize(tan1[vertexIndex] - normal * glm::dot(normal, tan1[vertexIndex]));
-            const glm::vec3 bitangent = glm::normalize(tan2[vertexIndex] - normal * glm::dot(normal, tan2[vertexIndex]));
-            const float handedness = glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f ? -1.0f : 1.0f;
-            vertex[10] = tangent.x;
-            vertex[11] = tangent.y;
-            vertex[12] = tangent.z;
-            vertex[13] = handedness;
-        }
     }
 
     int g_importTextureFailures = 0;
@@ -909,7 +802,21 @@ namespace
 
         if (tangents == nullptr)
         {
-            GenerateTangents(vertices, indices);
+            TangentSpace::GenerateMikkTSpaceTangents(vertices, indices);
+        }
+
+        for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); vertexIndex += Mesh::TexturedVertexFloatCount)
+        {
+            const glm::vec4 tangent(
+                vertices[vertexIndex + 10],
+                vertices[vertexIndex + 11],
+                vertices[vertexIndex + 12],
+                vertices[vertexIndex + 13]);
+            const glm::vec4 finalized = TangentSpace::FinalizeImportTangent(tangent);
+            vertices[vertexIndex + 10] = finalized.x;
+            vertices[vertexIndex + 11] = finalized.y;
+            vertices[vertexIndex + 12] = finalized.z;
+            vertices[vertexIndex + 13] = finalized.w;
         }
 
         outMesh = PrimitiveMesh::BuildMesh(vertices, indices);
