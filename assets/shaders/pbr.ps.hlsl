@@ -420,8 +420,12 @@ float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, 
     float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
     float minSeparation = texelUvSpan * max(0.75, 1.25 * uDepthBiasScale);
 
-    // Offset the receiver toward the light so adjacent faces do not self-shadow in texel blocks.
-    float3 biasedWorldPos = worldPos + normal * worldBias + lightDir * (texelWorldSpan * 2.0 * uWorldBiasScale);
+    // Offset lit receivers toward the light to reduce texel-block self-shadow on adjacent cube faces.
+    // Scale by sun-facing: back faces keep the true depth so cube self-shadow matches curved meshes.
+    float facingLight = saturate(nDotL / 0.15);
+    float3 biasedWorldPos = worldPos
+        + normal * worldBias
+        + lightDir * (texelWorldSpan * 2.0 * uWorldBiasScale * facingLight);
     float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, biasedWorldPos);
 
     if (sampleCoords.z < 0.0 || sampleCoords.z > 1.0)
@@ -603,8 +607,13 @@ PSOutput main(PSInput input)
     float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(max(dot(normal, viewDir), 0.0), roughness)).rg;
     float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
 
-    float3 specularEnergy = FresnelSchlickRoughness(max(dot(normal, viewDir), 0.0), f0, roughness);
+    // Indirect energy split: use geom N·V and clamp mapped roughness so dark roughness-map
+    // pockets do not swing Fresnel with flycam on geom-back faces (direct is already zero there).
+    float nDotVGeom = max(dot(geomNormalNorm, viewDir), 0.0);
+    float roughnessForIndirectEnergy = max(roughness, 0.55);
+    float3 specularEnergy = FresnelSchlickRoughness(nDotVGeom, f0, roughnessForIndirectEnergy);
     float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
+    diffuseEnergy = lerp(1.0.xxx, diffuseEnergy, sunGeomFacing);
     float3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity * ambientOcclusion;
 
     float3 directShadowed = 0.0.xxx;
