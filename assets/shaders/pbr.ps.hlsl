@@ -56,6 +56,12 @@ cbuffer PerPixel : register(b0)
     float4x4 uLightSpaceMatrices[MAX_CASCADES];
     float uCascadeEndSplits[MAX_CASCADES];
     float uCascadeTexelWorldSizes[MAX_CASCADES];
+    float uCascadeClipDepthMin[MAX_CASCADES];
+    float uCascadeClipDepthMax[MAX_CASCADES];
+    float uCascadeStableOrthoNear[MAX_CASCADES];
+    float uCascadeStableOrthoFar[MAX_CASCADES];
+    float uCascadeContentOrthoNear[MAX_CASCADES];
+    float uCascadeContentOrthoFar[MAX_CASCADES];
     float uCascadeBlendRatio;
     int uCascadeCount;
     float uCascadeNearPlane;
@@ -252,6 +258,35 @@ float FetchShadowDepth(int cascadeIndex, float2 shadowUv)
     return uShadowMap.Sample(uShadowMapSampler, float3(shadowUv, (float)cascadeIndex)).r;
 }
 
+float FetchShadowDepthRaw(int cascadeIndex, float2 shadowUv)
+{
+    uint width = 0;
+    uint height = 0;
+    uint layers = 0;
+    uShadowMap.GetDimensions(width, height, layers);
+    const uint resolution = max(width, 1u);
+    uint2 texel = uint2(shadowUv * float(resolution));
+    texel = min(texel, uint2(resolution - 1, resolution - 1));
+    return uShadowMap.Load(int4(texel.x, texel.y, cascadeIndex, 0)).r;
+}
+
+float3 DebugShadowBoundsColor(bool inBounds, float clipZ)
+{
+    if (inBounds)
+    {
+        return -1.0.xxx;
+    }
+    if (clipZ < 0.0)
+    {
+        return float3(0.15, 0.15, 0.85);
+    }
+    if (clipZ > 1.0)
+    {
+        return float3(0.85, 0.15, 0.15);
+    }
+    return float3(0.15, 0.85, 0.15);
+}
+
 float3 WorldToShadowSampleCoords(int cascadeIndex, float3 worldPos)
 {
     float4 lightSpace = mul(uLightSpaceMatrices[cascadeIndex], float4(worldPos, 1.0));
@@ -260,6 +295,18 @@ float3 WorldToShadowSampleCoords(int cascadeIndex, float3 worldPos)
     coords.xy = coords.xy * 0.5 + 0.5;
     coords.y = 1.0 - coords.y;
     return coords;
+}
+
+float NormalizeCascadeClipDepth(int cascadeIndex, float stableClipZ)
+{
+    float depthMin = uCascadeClipDepthMin[cascadeIndex];
+    float depthMax = uCascadeClipDepthMax[cascadeIndex];
+    return saturate((stableClipZ - depthMin) / max(depthMax - depthMin, 1e-5));
+}
+
+float VisualizeClipDepth(int cascadeIndex, float clipZ)
+{
+    return NormalizeCascadeClipDepth(cascadeIndex, clipZ);
 }
 
 bool IsShadowBlocked(int cascadeIndex, float2 shadowUv, float compareDepth, float minSeparation)
@@ -406,26 +453,35 @@ float FilterShadowPcss(int cascadeIndex, float2 shadowUv, float compareDepth, fl
     return FilterShadowGridPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, kernelRadius);
 }
 
-float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, float3 lightDir)
+float SampleCascadeShadowInternal(
+    int cascadeIndex,
+    float3 worldPos,
+    float3 geomNormal,
+    float3 lightDir,
+    bool applyReceiverBias)
 {
     float3 normal = normalize(geomNormal);
     float nDotL = saturate(dot(normal, lightDir));
-    float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
 
     float2 texelSize = 1.0 / float2(uShadowMapResolution, uShadowMapResolution);
     float texelUvSpan = max(texelSize.x, texelSize.y);
     float texelWorldSpan = uCascadeTexelWorldSizes[cascadeIndex];
-
-    float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15)) * uWorldBiasScale;
-    float depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
     float minSeparation = texelUvSpan * max(0.75, 1.25 * uDepthBiasScale);
 
-    // Offset lit receivers toward the light to reduce texel-block self-shadow on adjacent cube faces.
-    // Scale by sun-facing: back faces keep the true depth so cube self-shadow matches curved meshes.
-    float facingLight = saturate(nDotL / 0.15);
-    float3 biasedWorldPos = worldPos
-        + normal * worldBias
-        + lightDir * (texelWorldSpan * 2.0 * uWorldBiasScale * facingLight);
+    float3 biasedWorldPos = worldPos;
+    float depthBias = texelUvSpan * 0.25 * uDepthBiasScale;
+
+    if (applyReceiverBias)
+    {
+        float sinTheta = sqrt(max(1.0 - nDotL * nDotL, 1e-5));
+        float worldBias = texelWorldSpan * (1.5 + 3.5 * sinTheta / max(nDotL, 0.15)) * uWorldBiasScale;
+        depthBias = texelUvSpan * (1.0 + 2.0 * sinTheta / max(nDotL, 0.15)) * uDepthBiasScale;
+        float facingLight = saturate(nDotL / 0.15);
+        biasedWorldPos = worldPos
+            + normal * worldBias
+            + lightDir * (texelWorldSpan * 2.0 * uWorldBiasScale * facingLight);
+    }
+
     float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, biasedWorldPos);
 
     if (sampleCoords.z < 0.0 || sampleCoords.z > 1.0)
@@ -433,8 +489,6 @@ float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, 
         return 1.0;
     }
 
-    // Do not clamp out-of-bounds UV to the map edge: that samples unrelated depths and
-    // produces view-dependent false shadows on receivers near the cascade boundary.
     if (any(sampleCoords.xy < 0.0) || any(sampleCoords.xy > 1.0))
     {
         return 1.0;
@@ -443,11 +497,14 @@ float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, 
     float2 shadowUv = sampleCoords.xy;
     float compareDepth = clamp(sampleCoords.z - depthBias, 0.0, 1.0);
 
-    float shadow = uShadowFilterMode == 1
+    return uShadowFilterMode == 1
         ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize)
         : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, uPcfKernelRadius);
+}
 
-    return shadow;
+float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, float3 lightDir)
+{
+    return SampleCascadeShadowInternal(cascadeIndex, worldPos, geomNormal, lightDir, true);
 }
 
 int SelectCascadeIndex(float viewDepth)
@@ -462,6 +519,59 @@ int SelectCascadeIndex(float viewDepth)
         }
     }
     return cascadeIndex;
+}
+
+float3 DebugDepthOutOfBoundsColor()
+{
+    return float3(1.0, 0.0, 1.0);
+}
+
+bool IsInShadowCascadeBounds(float3 sampleCoords)
+{
+    return sampleCoords.z >= 0.0 && sampleCoords.z <= 1.0
+        && all(sampleCoords.xy >= 0.0) && all(sampleCoords.xy <= 1.0);
+}
+
+int SelectCascadeForReceiverWorldPos(float3 worldPos, float viewDepth)
+{
+    [loop]
+    for (int candidateIndex = 0; candidateIndex < uCascadeCount; ++candidateIndex)
+    {
+        float3 sampleCoords = WorldToShadowSampleCoords(candidateIndex, worldPos);
+        if (IsInShadowCascadeBounds(sampleCoords))
+        {
+            return candidateIndex;
+        }
+    }
+
+    return clamp(SelectCascadeIndex(viewDepth), 0, max(uCascadeCount - 1, 0));
+}
+
+struct UnbiasedShadowSample
+{
+    int cascadeIndex;
+    float2 shadowUv;
+    float receiverClipZ;
+    float compareDepth;
+    float minSeparation;
+    bool inBounds;
+};
+
+UnbiasedShadowSample BuildUnbiasedShadowSample(float3 worldPos, float viewDepth)
+{
+    UnbiasedShadowSample sampleData;
+    sampleData.cascadeIndex = SelectCascadeForReceiverWorldPos(worldPos, viewDepth);
+    float2 texelSize = 1.0 / float2(uShadowMapResolution, uShadowMapResolution);
+    float texelUvSpan = max(texelSize.x, texelSize.y);
+    sampleData.minSeparation = texelUvSpan * max(0.75, 1.25 * uDepthBiasScale);
+    float3 sampleCoords = WorldToShadowSampleCoords(sampleData.cascadeIndex, worldPos);
+    sampleData.receiverClipZ = sampleCoords.z;
+    sampleData.shadowUv = sampleCoords.xy;
+    sampleData.inBounds = sampleCoords.z >= 0.0 && sampleCoords.z <= 1.0
+        && all(sampleCoords.xy >= 0.0) && all(sampleCoords.xy <= 1.0);
+    float depthBias = texelUvSpan * 0.25 * uDepthBiasScale;
+    sampleData.compareDepth = clamp(sampleCoords.z - depthBias, 0.0, 1.0);
+    return sampleData;
 }
 
 float ComputeCascadeBlendFactor(float viewDepth)
@@ -488,14 +598,17 @@ float ComputeCascadeBlendFactor(float viewDepth)
     return 0.0;
 }
 
-float CalcShadow(float3 fragPos, float viewDepth, float3 geomNormal, float3 lightDir)
+float CalcShadowInternal(
+    float3 fragPos,
+    float viewDepth,
+    float3 geomNormal,
+    float3 lightDir,
+    bool applyReceiverBias)
 {
     if (uReceiveShadow == 0)
     {
         return 1.0;
     }
-
-    float3 normal = normalize(geomNormal);
 
     [loop]
     for (int boundaryIndex = 0; boundaryIndex < uCascadeCount - 1; ++boundaryIndex)
@@ -512,15 +625,22 @@ float CalcShadow(float3 fragPos, float viewDepth, float3 geomNormal, float3 ligh
 
         if (viewDepth > blendStart && viewDepth <= splitDistance)
         {
-            float nearShadow = SampleCascadeShadow(boundaryIndex, fragPos, geomNormal, lightDir);
-            float farShadow = SampleCascadeShadow(boundaryIndex + 1, fragPos, geomNormal, lightDir);
+            float nearShadow = SampleCascadeShadowInternal(
+                boundaryIndex, fragPos, geomNormal, lightDir, applyReceiverBias);
+            float farShadow = SampleCascadeShadowInternal(
+                boundaryIndex + 1, fragPos, geomNormal, lightDir, applyReceiverBias);
             float blendFactor = smoothstep(blendStart, splitDistance, viewDepth);
             return lerp(nearShadow, farShadow, blendFactor);
         }
     }
 
     int cascadeIndex = SelectCascadeIndex(viewDepth);
-    return SampleCascadeShadow(cascadeIndex, fragPos, geomNormal, lightDir);
+    return SampleCascadeShadowInternal(cascadeIndex, fragPos, geomNormal, lightDir, applyReceiverBias);
+}
+
+float CalcShadow(float3 fragPos, float viewDepth, float3 geomNormal, float3 lightDir)
+{
+    return CalcShadowInternal(fragPos, viewDepth, geomNormal, lightDir, true);
 }
 
 float2 SelectTexCoord(int texCoordSet, float2 texCoord0, float2 texCoord1)
@@ -674,7 +794,7 @@ PSOutput main(PSInput input)
 
     if (uDebugMode != 0)
     {
-        float3 debugColor = result;
+        float3 debugColor = 0.0.xxx;
         if (uDebugMode == 1)
         {
             float shadow = 1.0;
@@ -694,15 +814,24 @@ PSOutput main(PSInput input)
         }
         else if (uDebugMode == 4)
         {
-            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            int cascadeIndex = SelectCascadeForReceiverWorldPos(input.fragPos, input.viewDepth);
             float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
             debugColor = float3(sampleCoords.xy, 0.0);
         }
         else if (uDebugMode == 5)
         {
-            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            int cascadeIndex = SelectCascadeForReceiverWorldPos(input.fragPos, input.viewDepth);
             float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
-            debugColor = sampleCoords.z.xxx;
+            if (sampleCoords.z >= 0.0 && sampleCoords.z <= 1.0)
+            {
+                // Raw stable clip Z (OpenGL-style shadow depth). No normalization — corner-based
+                // ranges were saturating most of the scene to hard white/black.
+                debugColor = sampleCoords.z.xxx;
+            }
+            else
+            {
+                debugColor = DebugDepthOutOfBoundsColor();
+            }
         }
         else if (uDebugMode == 6)
         {
@@ -796,6 +925,103 @@ PSOutput main(PSInput input)
         else if (uDebugMode == 14)
         {
             debugColor = normalize(normal) * 0.5 + 0.5;
+        }
+        else if (uDebugMode == 15)
+        {
+            float shadow = 1.0;
+            if (uShadowLightIndex >= 0)
+            {
+                shadow = CalcShadowInternal(
+                    input.fragPos,
+                    input.viewDepth,
+                    geomNormal,
+                    normalize(uLightDirections[uShadowLightIndex].xyz),
+                    false);
+            }
+            debugColor = shadow.xxx;
+        }
+        else if (uDebugMode == 16)
+        {
+            UnbiasedShadowSample shadowSample = BuildUnbiasedShadowSample(input.fragPos, input.viewDepth);
+            if (!shadowSample.inBounds)
+            {
+                debugColor = DebugDepthOutOfBoundsColor();
+            }
+            else
+            {
+                float storedDepth = FetchShadowDepthRaw(shadowSample.cascadeIndex, shadowSample.shadowUv);
+                debugColor = storedDepth.xxx;
+            }
+        }
+        else if (uDebugMode == 17)
+        {
+            UnbiasedShadowSample shadowSample = BuildUnbiasedShadowSample(input.fragPos, input.viewDepth);
+            if (!shadowSample.inBounds)
+            {
+                debugColor = DebugDepthOutOfBoundsColor();
+            }
+            else
+            {
+                float storedDepth = FetchShadowDepthRaw(shadowSample.cascadeIndex, shadowSample.shadowUv);
+                float separation = shadowSample.receiverClipZ - storedDepth;
+                float separationInBiasUnits =
+                    separation / max(shadowSample.minSeparation, 1e-5);
+                debugColor = saturate(separationInBiasUnits * 0.5 + 0.5).xxx;
+            }
+        }
+        else if (uDebugMode == 20)
+        {
+            float sunFacing = 0.0;
+            if (uShadowLightIndex >= 0)
+            {
+                float3 lightDir;
+                float attenuation;
+                float spotIntensity;
+                CalcLightDirectionAndAttenuation(
+                    uLightTypes[uShadowLightIndex],
+                    uLightPositions[uShadowLightIndex].xyz,
+                    uLightDirections[uShadowLightIndex].xyz,
+                    uLightAttenConstant[uShadowLightIndex],
+                    uLightAttenLinear[uShadowLightIndex],
+                    uLightAttenQuadratic[uShadowLightIndex],
+                    uLightRange[uShadowLightIndex],
+                    uLightInnerCutoffCos[uShadowLightIndex],
+                    uLightOuterCutoffCos[uShadowLightIndex],
+                    input.fragPos,
+                    lightDir,
+                    attenuation,
+                    spotIntensity);
+                sunFacing = saturate(dot(normalize(geomNormal), lightDir));
+            }
+            debugColor = sunFacing.xxx;
+        }
+        else if (uDebugMode == 21)
+        {
+            UnbiasedShadowSample shadowSample = BuildUnbiasedShadowSample(input.fragPos, input.viewDepth);
+            debugColor = shadowSample.inBounds
+                ? VisualizeClipDepth(shadowSample.cascadeIndex, shadowSample.compareDepth).xxx
+                : DebugDepthOutOfBoundsColor();
+        }
+        else if (uDebugMode == 22)
+        {
+            UnbiasedShadowSample shadowSample = BuildUnbiasedShadowSample(input.fragPos, input.viewDepth);
+            if (!shadowSample.inBounds)
+            {
+                debugColor = 0.5.xxx;
+            }
+            else
+            {
+                bool blocked = IsShadowBlocked(
+                    shadowSample.cascadeIndex,
+                    shadowSample.shadowUv,
+                    shadowSample.compareDepth,
+                    shadowSample.minSeparation);
+                debugColor = blocked ? 0.0.xxx : 1.0.xxx;
+            }
+        }
+        else
+        {
+            debugColor = float3(1.0, 0.0, 1.0);
         }
 
         output.oDirect = float4(debugColor, 1.0);

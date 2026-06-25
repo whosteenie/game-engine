@@ -34,11 +34,53 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Direct diffuse (geom N·L)";
     case RenderDebugMode::ShadedNormal:
         return "Shaded normal (PBR)";
+    case RenderDebugMode::ShadowFactorUnbiased:
+        return "Shadow factor (unbiased)";
+    case RenderDebugMode::ShadowMapStoredDepth:
+        return "Shadow map stored depth";
+    case RenderDebugMode::ShadowDepthSeparation:
+        return "Shadow depth separation";
     case RenderDebugMode::Ssao:
         return "SSAO buffer";
     case RenderDebugMode::CompositeOcclusion:
         return "Composite occlusion (SSAO)";
+    case RenderDebugMode::GeomSunFacing:
+        return "Geom sun facing (N·L)";
+    case RenderDebugMode::ShadowCompareDepth:
+        return "Shadow compare depth";
+    case RenderDebugMode::ShadowBlockedCenter:
+        return "Shadow blocked (center texel)";
     default:
         return "Unknown";
+    }
+}
+
+bool IsPbrMaterialDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::ShadowFactor:
+    case RenderDebugMode::DirectLighting:
+    case RenderDebugMode::AmbientIbl:
+    case RenderDebugMode::LightSpaceUv:
+    case RenderDebugMode::LightSpaceDepth:
+    case RenderDebugMode::CascadeIndex:
+    case RenderDebugMode::GeometricNormal:
+    case RenderDebugMode::TangentHandedness:
+    case RenderDebugMode::ViewDepth:
+    case RenderDebugMode::CascadeBlendFactor:
+    case RenderDebugMode::DiffuseIbl:
+    case RenderDebugMode::SpecularIbl:
+    case RenderDebugMode::DirectDiffuseGeom:
+    case RenderDebugMode::ShadedNormal:
+    case RenderDebugMode::ShadowFactorUnbiased:
+    case RenderDebugMode::ShadowMapStoredDepth:
+    case RenderDebugMode::ShadowDepthSeparation:
+    case RenderDebugMode::GeomSunFacing:
+    case RenderDebugMode::ShadowCompareDepth:
+    case RenderDebugMode::ShadowBlockedCenter:
+        return true;
+    default:
+        return false;
     }
 }

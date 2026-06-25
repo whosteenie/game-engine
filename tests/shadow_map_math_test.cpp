@@ -9,6 +9,10 @@
 
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/lighting/LightingProbe.h"
+#include "engine/platform/ExceptionMessage.h"
+
+#include <stdexcept>
+#include <string>
 
 namespace
 {
@@ -116,6 +120,67 @@ namespace
             nearFloorProbe.cascadeIndex <= farFloorProbe.cascadeIndex,
             "Closer floor camera should not select a farther cascade than a higher camera");
     }
+
+    void ExpectContains(const std::string& haystack, const std::string& needle, const char* message)
+    {
+        if (haystack.find(needle) == std::string::npos)
+        {
+            std::cerr << "FAIL: " << message << " (haystack=\"" << haystack << "\")\n";
+            ++gFailures;
+        }
+    }
+
+    void RunExceptionMessageTests()
+    {
+        ExpectTrue(
+            SanitizeLogText("Failed to open project file for reading.") ==
+                "Failed to open project file for reading.",
+            "ASCII status text should pass through unchanged");
+
+        const std::string binaryPayload(128, static_cast<char>(0xE2));
+        const std::string sanitizedBinary = SanitizeLogText(binaryPayload, "Failed to load project.");
+        ExpectContains(sanitizedBinary, "non-text payload", "Binary payloads should describe byte content");
+        ExpectContains(sanitizedBinary, "128 bytes", "Binary payloads should include byte count");
+
+        try
+        {
+            throw std::runtime_error("Shader compile failed: assets/shaders/pbr.ps.hlsl");
+        }
+        catch (const std::exception& exception)
+        {
+            const std::string message = SafeExceptionMessage(exception);
+            ExpectContains(message, "Shader compile failed", "Readable exception messages should survive");
+        }
+
+        try
+        {
+            const std::string message = "Material shader/GPU setup failed: nested detail";
+            throw std::runtime_error(message);
+        }
+        catch (const std::exception& exception)
+        {
+            const std::string formatted = SafeExceptionMessage(exception);
+            ExpectContains(
+                formatted,
+                "Material shader/GPU setup failed",
+                "Owned-string runtime_error messages should survive throw/catch");
+        }
+
+        try
+        {
+            throw std::runtime_error("");
+        }
+        catch (const std::exception& exception)
+        {
+            const std::string message = SafeExceptionMessage(exception);
+            ExpectContains(message, "runtime_error", "Empty what() should include exception type");
+            ExpectContains(message, "empty or unusable", "Empty what() should explain missing message");
+        }
+
+        const std::string formatted = FormatExceptionContext("Load", std::runtime_error("bad json"));
+        ExpectContains(formatted, "Load:", "Formatted context should include phase prefix");
+        ExpectContains(formatted, "bad json", "Formatted context should include exception text");
+    }
 }
 
 int main()
@@ -147,6 +212,23 @@ int main()
     ExpectTrue(cubeShadowNdc.x >= 0.0f && cubeShadowNdc.x <= 1.0f, "Cube center UV.x should be inside shadow map");
     ExpectTrue(cubeShadowNdc.y >= 0.0f && cubeShadowNdc.y <= 1.0f, "Cube center UV.y should be inside shadow map");
     ExpectTrue(cubeShadowNdc.z >= 0.0f && cubeShadowNdc.z <= 1.0f, "Cube center depth should be inside shadow map");
+    ExpectTrue(
+        setup.clipDepthContentMin < setup.clipDepthContentMax,
+        "Cascade clip depth content bounds should span a positive range");
+    const float contentSpan = setup.clipDepthContentMax - setup.clipDepthContentMin;
+    ExpectTrue(contentSpan > 0.5f, "Content depth bounds should span most of clip space for scene bounds");
+
+    const glm::vec3 floorPoint(0.0f, 0.0f, 0.0f);
+    const ShadowReceiverProbeResult floorProbe = EvaluateShadowReceiverProbe(
+        floorPoint,
+        5.0f,
+        &setup.lightSpaceMatrix,
+        &setup,
+        nullptr,
+        1);
+    ExpectTrue(
+        floorProbe.normalizedClipZ >= 0.0f && floorProbe.normalizedClipZ <= 1.0f,
+        "Floor probe normalized clip depth should stay in [0, 1]");
 
     const float snapMagnitude = glm::length(setup.snapOffsetNdc);
     ExpectTrue(
@@ -196,7 +278,7 @@ int main()
 
     const glm::vec3 casterBoundsMin(-20.0f, 0.0f, -20.0f);
     const glm::vec3 casterBoundsMax(20.0f, 10.0f, 20.0f);
-    const ShadowLightSpaceSetup frustumOnlyXySetup = BuildShadowLightSpaceForFrustumCorners(
+    const ShadowLightSpaceSetup nearFrustumCascadeSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         nearFrustumCorners,
         4096,
@@ -205,6 +287,24 @@ int main()
         &casterBoundsMin,
         &casterBoundsMax,
         true);
+    const ShadowLightSpaceSetup farFrustumCascadeSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        farFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true);
+    ExpectTrue(
+        nearFrustumCascadeSetup.clipDepthContentMin != farFrustumCascadeSetup.clipDepthContentMin ||
+            nearFrustumCascadeSetup.clipDepthContentMax != farFrustumCascadeSetup.clipDepthContentMax,
+        "Near and far cascade frustum debug depth ranges should differ");
+    ExpectTrue(
+        nearFrustumCascadeSetup.orthoWidth < farFrustumCascadeSetup.orthoWidth,
+        "Near cascade ortho should be tighter than far cascade with frustum-only XY fit");
+
+    const ShadowLightSpaceSetup frustumOnlyXySetup = nearFrustumCascadeSetup;
     const ShadowLightSpaceSetup frustumPlusCasterXySetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         nearFrustumCorners,
@@ -222,7 +322,6 @@ int main()
         frustumOnlyXySetup.texelWorldSizeX <= frustumPlusCasterXySetup.texelWorldSizeX + 1e-6f,
         "Frustum-only XY fit should produce equal or smaller texels");
 
-    const glm::vec3 floorPoint(0.0f, 0.0f, 0.0f);
     float stableHalfExtent = 0.0f;
     glm::vec2 stableCenterLight(0.0f);
     float stableOrthoNear = 0.0f;
@@ -287,6 +386,46 @@ int main()
         floorShadowNdcEnd.y,
         1e-5f,
         "Floor shadow UV.y should stay stable when the frustum is unchanged");
+
+    // When stable Z is artificially much wider than per-frame bounds, content clip range stays usable.
+    float artificiallyWideNear = -500.0f;
+    float artificiallyWideFar = 500.0f;
+    float wideStableHalfExtent = stableHalfExtent * 4.0f;
+    glm::vec2 wideStableCenter = stableCenterLight;
+    const ShadowLightSpaceSetup wideStableSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &casterBoundsMin,
+        &casterBoundsMax,
+        true,
+        nullptr,
+        &wideStableHalfExtent,
+        &wideStableCenter,
+        &artificiallyWideNear,
+        &artificiallyWideFar,
+        false);
+    const float wideContentSpan =
+        wideStableSetup.clipDepthContentMax - wideStableSetup.clipDepthContentMin;
+    ExpectTrue(
+        wideContentSpan > 0.01f,
+        "Frustum stable clipZ bounds should span a positive range even with wide stable Z");
+
+    const ShadowReceiverProbeResult wideStableFloorProbe = EvaluateShadowReceiverProbe(
+        floorPoint,
+        5.0f,
+        &wideStableSetup.lightSpaceMatrix,
+        &wideStableSetup,
+        nullptr,
+        1);
+    ExpectTrue(
+        wideStableFloorProbe.normalizedClipZ >= 0.0f && wideStableFloorProbe.normalizedClipZ <= 1.0f,
+        "Floor normalized clip depth should stay in [0, 1] with artificially wide stable Z");
+    ExpectTrue(
+        wideStableFloorProbe.normalizedClipZ > 0.05f && wideStableFloorProbe.normalizedClipZ < 0.95f,
+        "Floor normalized clip depth should use mid-range with wide stable Z (not flat debug band)");
 
     const ShadowLightSpaceSetup dollyFrustumSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
@@ -368,6 +507,7 @@ int main()
     ExpectNear(intersectionMax.y, 2.0f, 1e-4f, "Intersection max Y");
 
     RunLightingProbeTests();
+    RunExceptionMessageTests();
 
     if (gFailures == 0)
     {

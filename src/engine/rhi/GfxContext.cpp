@@ -1,6 +1,7 @@
 #include "engine/rhi/GfxContext.h"
 
 #include "engine/platform/FrameDiagnostics.h"
+#include "engine/platform/EngineDiagnostics.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
@@ -38,8 +39,6 @@ namespace
         }
     }
 
-    thread_local std::string g_lastGpuAllocationError;
-
     constexpr std::uint32_t SrvDescriptorCount = 4096;
     constexpr std::uint32_t OffscreenRtvCount = 256;
     constexpr std::uint32_t OffscreenDsvCount = 64;
@@ -67,7 +66,8 @@ namespace GfxContextDetail
 {
     void SetGpuAllocationError(const char* message)
     {
-        g_lastGpuAllocationError = message != nullptr ? message : "unknown GPU allocation error";
+        EngineDiagnostics::SetLastGpuAllocationError(
+            message != nullptr ? message : "unknown GPU allocation error");
     }
 }
 
@@ -396,6 +396,7 @@ void GfxContext::Shutdown()
     m_fenceValues[1] = 0;
     m_boundOutputFramebuffer = nullptr;
     m_frameRecording = false;
+    m_frameCommandsSubmitted = false;
 }
 
 void GfxContext::ResizeInternal(const int width, const int height)
@@ -418,6 +419,7 @@ void GfxContext::ResizeInternal(const int width, const int height)
     m_fenceValues[1] = 0;
     m_submissionFenceValue = 0;
     m_frameRecording = false;
+    m_frameCommandsSubmitted = false;
 
     CreateRenderTargets();
 }
@@ -478,6 +480,11 @@ void GfxContext::BeginFrame()
         return;
     }
 
+    if (m_frameRecording)
+    {
+        CancelFrame();
+    }
+
     ProcessPendingResize();
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     FrameDiagnostics::LogPhase("BeginFrame-wait");
@@ -488,6 +495,7 @@ void GfxContext::BeginFrame()
 
     m_impl->TransientUploadArenas[m_frameIndex].Offset = 0;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
+    m_frameCommandsSubmitted = false;
 
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -523,7 +531,7 @@ void GfxContext::CancelFrame()
 
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     auto* commandList = m_impl->CommandList.Get();
-    if (commandList != nullptr)
+    if (!m_frameCommandsSubmitted && commandList != nullptr)
     {
         D3D12_RESOURCE_BARRIER barrier{};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -533,23 +541,23 @@ void GfxContext::CancelFrame()
         barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
         commandList->ResourceBarrier(1, &barrier);
 
-        ThrowIfFailed(commandList->Close(), "CommandList close failed");
+        const HRESULT closeResult = commandList->Close();
+        if (SUCCEEDED(closeResult))
+        {
+            ID3D12CommandList* commandLists[] = {commandList};
+            m_impl->CommandQueue->ExecuteCommandLists(1, commandLists);
+            SignalFrameSubmission();
+            m_frameCommandsSubmitted = true;
+        }
+    }
 
-        ID3D12CommandList* commandLists[] = {commandList};
-        m_impl->CommandQueue->ExecuteCommandLists(1, commandLists);
-
-        const std::uint64_t fenceValue = AllocateNextFenceValue(frame.FenceValue);
-        ThrowIfFailed(
-            m_impl->CommandQueue->Signal(m_impl->Fence.Get(), fenceValue),
-            "CancelFrame signal failed");
-        WaitForFenceValue(fenceValue);
-
-        frame.FenceValue = fenceValue;
-        m_fenceValues[m_frameIndex] = fenceValue;
-        m_submissionFenceValue = std::max(m_submissionFenceValue, fenceValue);
+    if (m_frameCommandsSubmitted)
+    {
+        WaitForFenceValue(frame.FenceValue);
     }
 
     m_frameRecording = false;
+    m_frameCommandsSubmitted = false;
     m_boundOutputFramebuffer = nullptr;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
 }
@@ -578,7 +586,10 @@ void GfxContext::SubmitCommandList()
 
     ID3D12CommandList* commandLists[] = {m_impl->CommandList.Get()};
     m_impl->CommandQueue->ExecuteCommandLists(1, commandLists);
-    MoveToNextFrame();
+    SignalFrameSubmission();
+    m_frameCommandsSubmitted = true;
+    m_frameRecording = false;
+    AdvanceSwapchainFrameIndex();
 }
 
 void GfxContext::EndFrame()
@@ -616,11 +627,33 @@ void GfxContext::EndFrame()
 
     ID3D12CommandList* commandLists[] = {m_impl->CommandList.Get()};
     m_impl->CommandQueue->ExecuteCommandLists(1, commandLists);
+    SignalFrameSubmission();
+    m_frameCommandsSubmitted = true;
 
     PumpWindowEvents(m_window);
-    ThrowIfFailed(m_impl->SwapChain->Present(1, 0), "Present failed");
-    MoveToNextFrame();
+
+    const HRESULT presentResult = m_impl->SwapChain->Present(1, 0);
+
     m_frameRecording = false;
+    m_boundOutputFramebuffer = nullptr;
+
+    if (FAILED(presentResult))
+    {
+        std::string message =
+            "Present failed (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(presentResult))
+            + ")";
+        std::string deviceRemovedReason;
+        if (IsDeviceRemoved(&deviceRemovedReason))
+        {
+            message += "; device removed: " + deviceRemovedReason;
+        }
+        m_frameCommandsSubmitted = false;
+        throw std::runtime_error(message);
+    }
+
+    m_frameCommandsSubmitted = false;
+    AdvanceSwapchainFrameIndex();
     ProcessPendingResize();
 }
 
@@ -1019,14 +1052,14 @@ GfxContext::TransientUploadAllocation GfxContext::AllocateTransientUpload(
     TransientUploadArena& arena = m_impl->TransientUploadArenas[m_frameIndex];
     if (arena.Resource == nullptr || arena.Mapped == nullptr)
     {
-        g_lastGpuAllocationError = "Transient upload arena is not initialized";
+        EngineDiagnostics::SetLastGpuAllocationError("Transient upload arena is not initialized");
         return allocation;
     }
 
     const std::uint32_t alignedSize = (byteSize + 255u) & ~255u;
     if (arena.Offset + alignedSize > TransientUploadCapacityBytes)
     {
-        g_lastGpuAllocationError = "Transient upload arena exhausted";
+        EngineDiagnostics::SetLastGpuAllocationError("Transient upload arena exhausted");
         return allocation;
     }
 
@@ -1163,7 +1196,7 @@ void GfxContext::WaitForGpu()
     WaitForFenceValue(maxFenceValue);
 }
 
-void GfxContext::MoveToNextFrame()
+void GfxContext::SignalFrameSubmission()
 {
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     const std::uint64_t nextFenceValue = AllocateNextFenceValue(frame.FenceValue);
@@ -1171,7 +1204,17 @@ void GfxContext::MoveToNextFrame()
     frame.FenceValue = nextFenceValue;
     m_fenceValues[m_frameIndex] = nextFenceValue;
     m_submissionFenceValue = std::max(m_submissionFenceValue, nextFenceValue);
+}
+
+void GfxContext::AdvanceSwapchainFrameIndex()
+{
     m_frameIndex = m_impl->SwapChain->GetCurrentBackBufferIndex();
+}
+
+void GfxContext::MoveToNextFrame()
+{
+    SignalFrameSubmission();
+    AdvanceSwapchainFrameIndex();
 }
 
 std::uint64_t GfxContext::AllocateNextFenceValue(const std::uint64_t frameFenceValue) const
@@ -1323,7 +1366,7 @@ bool GfxContext::ReadbackPresentedColorPixel(const int x, const int y, float out
 
 std::string GfxContext::GetLastGpuAllocationError()
 {
-    return g_lastGpuAllocationError;
+    return EngineDiagnostics::GetLastGpuAllocationError();
 }
 
 void GfxContext::GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& outCapacity) const

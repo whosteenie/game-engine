@@ -6,6 +6,7 @@
 #include "engine/camera/Camera.h"
 #include "engine/rendering/Constants.h"
 #include "engine/lighting/IBL.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/scene/JsonMath.h"
@@ -126,7 +127,6 @@ void Material::Apply(
     m_shader->SetFloat("uMetallic", m_metallic);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
-    m_shader->SetInt("uDebugMode", static_cast<int>(debugMode));
 
     m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() && m_albedoMap != nullptr && m_albedoMap->IsValid() ? 1 : 0);
     m_shader->SetInt("uUseNormalMap", HasNormalMap() && m_normalMap != nullptr && m_normalMap->IsValid() ? 1 : 0);
@@ -166,15 +166,51 @@ void Material::Apply(
         const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& cascadeSetups =
             shadowMap->GetCascadeSetups();
         std::array<float, CascadedShadowMap::MaxCascades> cascadeTexelWorldSizes{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeClipDepthMin{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeClipDepthMax{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeStableOrthoNear{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeStableOrthoFar{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeContentOrthoNear{};
+        std::array<float, CascadedShadowMap::MaxCascades> cascadeContentOrthoFar{};
         for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
         {
             const ShadowLightSpaceSetup& setup = cascadeSetups[static_cast<std::size_t>(cascadeIndex)];
             cascadeTexelWorldSizes[static_cast<std::size_t>(cascadeIndex)] =
                 std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
+            cascadeClipDepthMin[static_cast<std::size_t>(cascadeIndex)] = setup.clipDepthContentMin;
+            cascadeClipDepthMax[static_cast<std::size_t>(cascadeIndex)] = setup.clipDepthContentMax;
+            cascadeStableOrthoNear[static_cast<std::size_t>(cascadeIndex)] = setup.stableOrthoNear;
+            cascadeStableOrthoFar[static_cast<std::size_t>(cascadeIndex)] = setup.stableOrthoFar;
+            cascadeContentOrthoNear[static_cast<std::size_t>(cascadeIndex)] = setup.contentOrthoNear;
+            cascadeContentOrthoFar[static_cast<std::size_t>(cascadeIndex)] = setup.contentOrthoFar;
         }
         m_shader->SetFloatArray(
             "uCascadeTexelWorldSizes",
             cascadeTexelWorldSizes.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeClipDepthMin",
+            cascadeClipDepthMin.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeClipDepthMax",
+            cascadeClipDepthMax.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeStableOrthoNear",
+            cascadeStableOrthoNear.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeStableOrthoFar",
+            cascadeStableOrthoFar.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeContentOrthoNear",
+            cascadeContentOrthoNear.data(),
+            CascadedShadowMap::MaxCascades);
+        m_shader->SetFloatArray(
+            "uCascadeContentOrthoFar",
+            cascadeContentOrthoFar.data(),
             CascadedShadowMap::MaxCascades);
 
         m_shader->SetFloat("uCascadeBlendRatio", shadowSettings.GetCascadeBlendRatio());
@@ -208,6 +244,8 @@ void Material::Apply(
 
     lighting.Apply(*m_shader);
     ibl.BindTextures(*m_shader);
+
+    m_shader->SetInt("uDebugMode", static_cast<int>(debugMode));
 
     m_shader->FlushUniforms();
 }
@@ -591,12 +629,21 @@ std::unique_ptr<Material> MaterialFromJson(
     const float roughness = value.at("roughness").get<float>();
     const float metallic = value.at("metallic").get<float>();
 
-    auto material = std::make_unique<Material>(
-        EngineConstants::LitVertexShader,
-        EngineConstants::PbrFragmentShader,
-        albedo,
-        roughness,
-        metallic);
+    std::unique_ptr<Material> material;
+    try
+    {
+        material = std::make_unique<Material>(
+            EngineConstants::LitVertexShader,
+            EngineConstants::PbrFragmentShader,
+            albedo,
+            roughness,
+            metallic);
+    }
+    catch (const std::exception& exception)
+    {
+        throw std::runtime_error(
+            std::string("Material shader/GPU setup failed: ") + SafeExceptionMessage(exception));
+    }
 
     material->SetDoubleSided(value.value("doubleSided", false));
 

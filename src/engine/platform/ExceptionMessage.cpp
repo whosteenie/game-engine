@@ -1,12 +1,105 @@
 #include "engine/platform/ExceptionMessage.h"
 
-#include "engine/rhi/GfxContext.h"
+#include "engine/platform/EngineDiagnostics.h"
+
 #include <algorithm>
 #include <cctype>
+#include <sstream>
 #include <typeinfo>
 
 namespace
 {
+    constexpr std::size_t kMaxLogTextLength = 2048;
+    constexpr std::size_t kMaxWhatScanLength = 4096;
+
+    std::string DemangleTypeName(const char* mangledName)
+    {
+        if (mangledName == nullptr || mangledName[0] == '\0')
+        {
+            return "std::exception";
+        }
+
+        std::string typeName = mangledName;
+        if (typeName.rfind("class ", 0) == 0)
+        {
+            typeName.erase(0, 6);
+        }
+        else if (typeName.rfind("struct ", 0) == 0)
+        {
+            typeName.erase(0, 7);
+        }
+
+        return typeName;
+    }
+
+    std::string HexPreview(const unsigned char* bytes, const std::size_t length)
+    {
+        std::ostringstream stream;
+        const std::size_t previewLength = std::min(length, static_cast<std::size_t>(8));
+        for (std::size_t index = 0; index < previewLength; ++index)
+        {
+            if (index > 0)
+            {
+                stream << ' ';
+            }
+            stream << std::hex;
+            const int value = static_cast<int>(bytes[index]);
+            if (value < 16)
+            {
+                stream << '0';
+            }
+            stream << value;
+        }
+        stream << std::dec;
+        return stream.str();
+    }
+
+    std::string CopyExceptionWhat(const char* what, bool* outHadNonAscii)
+    {
+        std::string message;
+        if (what == nullptr)
+        {
+            if (outHadNonAscii != nullptr)
+            {
+                *outHadNonAscii = false;
+            }
+            return message;
+        }
+
+        message.reserve(128);
+        bool hadNonAscii = false;
+        for (std::size_t index = 0; index < kMaxWhatScanLength && what[index] != '\0'; ++index)
+        {
+            const unsigned char byte = static_cast<unsigned char>(what[index]);
+            if (byte == '\n' || byte == '\r' || byte == '\t')
+            {
+                message.push_back(' ');
+                continue;
+            }
+
+            if (byte >= 32 && byte < 127)
+            {
+                message.push_back(static_cast<char>(byte));
+            }
+            else
+            {
+                hadNonAscii = true;
+            }
+        }
+
+        if (outHadNonAscii != nullptr)
+        {
+            *outHadNonAscii = hadNonAscii;
+        }
+
+        while (!message.empty() && message.back() == ' ')
+        {
+            message.pop_back();
+        }
+
+        return message;
+    }
+
     bool LooksLikeCorruptMessage(const std::string& message)
     {
         if (message.empty())
@@ -15,10 +108,16 @@ namespace
         }
 
         if (message.find("Failed") != std::string::npos ||
+            message.find("failed") != std::string::npos ||
+            message.find("error") != std::string::npos ||
+            message.find("Error") != std::string::npos ||
             message.find("HRESULT") != std::string::npos ||
             message.find("Shader") != std::string::npos ||
             message.find("D3D12") != std::string::npos ||
-            message.find("GPU") != std::string::npos)
+            message.find("GPU") != std::string::npos ||
+            message.find("json") != std::string::npos ||
+            message.find("project") != std::string::npos ||
+            message.find("Project") != std::string::npos)
         {
             return false;
         }
@@ -41,59 +140,114 @@ namespace
 
         return letterCount < 4;
     }
+}
 
-    std::string CopyAsciiWhat(const char* what)
+std::string SanitizeLogText(const std::string_view text, const std::string_view fallbackIfEmpty)
+{
+    std::string sanitized;
+    sanitized.reserve(std::min(text.size(), kMaxLogTextLength));
+
+    int letterCount = 0;
+    for (std::size_t index = 0; index < text.size() && sanitized.size() < kMaxLogTextLength; ++index)
     {
-        std::string message;
-        if (what == nullptr)
+        const unsigned char byte = static_cast<unsigned char>(text[index]);
+        if (byte == '\n' || byte == '\r' || byte == '\t')
         {
-            return message;
+            sanitized.push_back(' ');
+            continue;
         }
 
-        message.reserve(128);
-        for (std::size_t index = 0; index < 512 && what[index] != '\0'; ++index)
+        if (byte >= 32 && byte < 127)
         {
-            const unsigned char byte = static_cast<unsigned char>(what[index]);
-            if (byte >= 32 && byte < 127)
+            sanitized.push_back(static_cast<char>(byte));
+            if (std::isalpha(byte) != 0)
             {
-                message.push_back(static_cast<char>(byte));
+                ++letterCount;
             }
         }
-
-        return message;
     }
+
+    while (!sanitized.empty() && sanitized.back() == ' ')
+    {
+        sanitized.pop_back();
+    }
+
+    if (sanitized.empty() || letterCount < 2)
+    {
+        if (!text.empty())
+        {
+            const unsigned char* bytes = reinterpret_cast<const unsigned char*>(text.data());
+            const std::size_t byteLength = std::min(text.size(), static_cast<std::size_t>(64));
+            return std::string(fallbackIfEmpty)
+                + " (non-text payload, " + std::to_string(text.size()) + " bytes, hex "
+                + HexPreview(bytes, byteLength) + ")";
+        }
+
+        return std::string(fallbackIfEmpty);
+    }
+
+    if (sanitized.size() < text.size())
+    {
+        sanitized += " (truncated)";
+    }
+
+    return sanitized;
 }
 
 std::string SafeExceptionMessage(const std::exception& exception)
 {
+    bool hadNonAscii = false;
     std::string message;
     try
     {
-        message = CopyAsciiWhat(exception.what());
+        message = CopyExceptionWhat(exception.what(), &hadNonAscii);
     }
     catch (...)
     {
         message.clear();
+        hadNonAscii = true;
     }
 
-    if (LooksLikeCorruptMessage(message))
+    const bool rejectedAsCorrupt = LooksLikeCorruptMessage(message);
+    if (rejectedAsCorrupt)
     {
         message.clear();
     }
 
     if (message.empty())
     {
-        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        const std::string gpuError = EngineDiagnostics::GetLastGpuAllocationError();
         if (!gpuError.empty())
         {
-            message = gpuError;
+            message = SanitizeLogText(gpuError, "GPU allocation failed");
         }
     }
+
     if (message.empty())
     {
-        message = typeid(exception).name();
-        message += " (exception message unavailable)";
+        const std::string typeName = DemangleTypeName(typeid(exception).name());
+        message = typeName;
+        if (hadNonAscii)
+        {
+            message += " (exception message contained non-ASCII or unreadable data)";
+        }
+        else if (rejectedAsCorrupt)
+        {
+            message += " (exception message was empty or unusable)";
+        }
+        else
+        {
+            message += " (exception message unavailable)";
+        }
     }
 
     return message;
+}
+
+std::string FormatExceptionContext(const char* context, const std::exception& exception)
+{
+    const std::string contextText = SanitizeLogText(
+        context != nullptr ? std::string_view(context) : std::string_view(),
+        "operation");
+    return contextText + ": " + SafeExceptionMessage(exception);
 }

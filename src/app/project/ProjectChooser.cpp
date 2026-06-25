@@ -6,10 +6,13 @@
 #include "app/scene/Scene.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 
@@ -20,7 +23,7 @@ namespace
     void DrawErrorText(const std::string& message)
     {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextUnformatted(message.c_str());
+        ImGui::TextWrapped("%s", message.c_str());
         ImGui::PopStyleColor();
     }
 }
@@ -52,6 +55,22 @@ bool ProjectChooser::IsBlockingEditor() const
     return m_showNewProjectForm || m_startupMode;
 }
 
+void ProjectChooser::ReturnToStartupWithError(
+    ProjectSession& project,
+    Scene& scene,
+    const std::string& message)
+{
+    if (project.HasActiveProject())
+    {
+        project.CloseProject();
+        scene.ResetToDefault();
+    }
+
+    m_startupMode = true;
+    m_showNewProjectForm = false;
+    m_errorMessage = SanitizeLogText(message, "Project operation failed.");
+}
+
 bool ProjectChooser::OpenProjectAtPath(
     ProjectSession& project,
     Scene& scene,
@@ -63,6 +82,9 @@ bool ProjectChooser::OpenProjectAtPath(
     EditorClipboard& clipboard,
     std::string& outError)
 {
+    outError.clear();
+    EngineLog::Info("project", "Opening project: " + projectFilePath);
+
     try
     {
         if (GfxContext::Get().IsInitialized())
@@ -70,9 +92,12 @@ bool ProjectChooser::OpenProjectAtPath(
             GfxContext::Get().WaitForSwapchainFrames();
         }
 
+        EngineLog::Info("project", "Loading project file");
         if (!project.OpenProject(scene, projectFilePath, editorState))
         {
-            outError = project.GetStatusMessage();
+            outError = SanitizeLogText(project.GetStatusMessage(), "Failed to open project.");
+            EngineLog::LogFailure("project", "OpenProject", outError);
+            ReturnToStartupWithError(project, scene, outError);
             return false;
         }
 
@@ -81,25 +106,41 @@ bool ProjectChooser::OpenProjectAtPath(
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
+
+        if (applyEditorState)
+        {
+            EngineLog::Info("project", "Applying editor state");
+            try
+            {
+                applyEditorState(editorState);
+            }
+            catch (const std::exception& exception)
+            {
+                outError = FormatExceptionContext("ApplyProjectEditorState", exception);
+                EngineLog::LogFailure("project", "ApplyProjectEditorState", outError);
+                ReturnToStartupWithError(project, scene, outError);
+                return false;
+            }
+        }
+
         m_startupMode = false;
         m_showNewProjectForm = false;
         m_errorMessage.clear();
-        if (applyEditorState)
-        {
-            applyEditorState(editorState);
-        }
+        EngineLog::Info("project", "Project opened: " + project.GetProjectFilePath());
         return true;
     }
     catch (const std::exception& exception)
     {
-        if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
-        {
-            outError = what;
-        }
-        else
-        {
-            outError = "Failed to open project.";
-        }
+        outError = FormatExceptionContext("OpenProjectAtPath", exception);
+        EngineLog::LogFailure("project", "OpenProjectAtPath", outError);
+        ReturnToStartupWithError(project, scene, outError);
+        return false;
+    }
+    catch (...)
+    {
+        outError = "OpenProjectAtPath: unknown exception";
+        EngineLog::LogFailure("project", "OpenProjectAtPath", outError);
+        ReturnToStartupWithError(project, scene, outError);
         return false;
     }
 }
@@ -187,6 +228,10 @@ bool ProjectChooser::DrawNewProjectForm(
         return false;
     }
 
+    bool projectCreated = false;
+    ProjectEditorState createdEditorState = ProjectEditorState::CreateDefault();
+    bool dismissForm = false;
+
     ImGui::TextUnformatted("Project name");
     ImGui::SetNextItemWidth(-FLT_MIN);
     ImGui::InputText("##ProjectName", m_newProjectName, sizeof(m_newProjectName));
@@ -229,21 +274,8 @@ bool ProjectChooser::DrawNewProjectForm(
                      m_newProjectName,
                      ProjectEditorState::CreateDefault()))
         {
-            settings.SetLastNewProjectParentDirectory(m_newProjectDirectory);
-            settings.AddRecentProject(project.GetProjectFilePath());
-            settings.Save();
-            m_startupMode = false;
-            m_showNewProjectForm = false;
-            m_errorMessage.clear();
-            undoStack.Clear();
-            clipboard.Clear();
-            if (applyEditorState)
-            {
-                applyEditorState(ProjectEditorState::CreateDefault());
-            }
-            ImGui::CloseCurrentPopup();
-            ImGui::EndPopup();
-            return true;
+            projectCreated = true;
+            createdEditorState = ProjectEditorState::CreateDefault();
         }
         else
         {
@@ -254,20 +286,54 @@ bool ProjectChooser::DrawNewProjectForm(
     ImGui::SameLine();
     if (ImGui::Button(startup ? "Back" : "Cancel", ImVec2(120.0f, 0.0f)))
     {
-        m_showNewProjectForm = false;
-        m_errorMessage.clear();
-        ImGui::CloseCurrentPopup();
+        dismissForm = true;
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_Escape))
     {
-        m_showNewProjectForm = false;
-        m_errorMessage.clear();
-        ImGui::CloseCurrentPopup();
+        dismissForm = true;
     }
 
     ImGui::EndPopup();
-    return false;
+
+    if (dismissForm)
+    {
+        m_showNewProjectForm = false;
+        m_errorMessage.clear();
+        return false;
+    }
+
+    if (!projectCreated)
+    {
+        return false;
+    }
+
+    settings.SetLastNewProjectParentDirectory(m_newProjectDirectory);
+    settings.AddRecentProject(project.GetProjectFilePath());
+    settings.Save();
+    undoStack.Clear();
+    clipboard.Clear();
+
+    if (applyEditorState)
+    {
+        try
+        {
+            applyEditorState(createdEditorState);
+        }
+        catch (const std::exception& exception)
+        {
+            const std::string applyError = FormatExceptionContext("ApplyProjectEditorState", exception);
+            EngineLog::LogFailure("project", "ApplyProjectEditorState", applyError);
+            ReturnToStartupWithError(project, scene, applyError);
+            return false;
+        }
+    }
+
+    m_startupMode = false;
+    m_showNewProjectForm = false;
+    m_errorMessage.clear();
+    EngineLog::Info("project", "Project created: " + project.GetProjectFilePath());
+    return true;
 }
 
 bool ProjectChooser::DrawStartupScreen(
@@ -294,15 +360,21 @@ bool ProjectChooser::DrawStartupScreen(
     }
 
     const float panelWidth = 520.0f;
-    const float panelHeight = 420.0f;
+    const float mainPanelHeight = 400.0f;
+    const float errorPanelMaxHeight = 120.0f;
+
+    const bool showStartupError = !m_errorMessage.empty() && !m_showNewProjectForm;
+    const float groupHeight = mainPanelHeight + (showStartupError ? (ImGui::GetStyle().ItemSpacing.y + errorPanelMaxHeight) : 0.0f);
     ImGui::SetCursorPos(ImVec2(
         (viewport->WorkSize.x - panelWidth) * 0.5f,
-        (viewport->WorkSize.y - panelHeight) * 0.5f));
+        std::max((viewport->WorkSize.y - groupHeight) * 0.5f, ImGui::GetStyle().WindowPadding.y)));
+
+    ImGui::BeginGroup();
 
     ImGui::BeginChild(
         "ProjectChooserPanel",
-        ImVec2(panelWidth, panelHeight),
-        ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
+        ImVec2(panelWidth, mainPanelHeight),
+        ImGuiChildFlags_Borders);
 
     ImGui::TextUnformatted("Game Engine Editor");
     ImGui::Separator();
@@ -318,7 +390,7 @@ bool ProjectChooser::DrawStartupScreen(
         if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
         {
             std::string error;
-            if (!TryOpenProject(
+                if (!TryOpenProject(
                     project,
                     scene,
                     settings,
@@ -328,9 +400,9 @@ bool ProjectChooser::DrawStartupScreen(
                     undoStack,
                     clipboard,
                     error))
-            {
-                m_errorMessage = error;
-            }
+                {
+                    ReturnToStartupWithError(project, scene, error.empty() ? "Failed to open project." : error);
+                }
         }
     }
 
@@ -346,6 +418,11 @@ bool ProjectChooser::DrawStartupScreen(
         ImGui::Separator();
         ImGui::Spacing();
         ImGui::TextUnformatted("Recent Projects");
+
+        const float recentListHeight = std::max(
+            80.0f,
+            mainPanelHeight - ImGui::GetCursorPosY() - ImGui::GetFrameHeightWithSpacing() * 3.0f);
+        ImGui::BeginChild("ProjectChooserRecentList", ImVec2(0.0f, recentListHeight), ImGuiChildFlags_None);
 
         for (const std::string& projectPath : recentProjects)
         {
@@ -365,7 +442,7 @@ bool ProjectChooser::DrawStartupScreen(
                     clipboard,
                     error))
                 {
-                    m_errorMessage = error;
+                    ReturnToStartupWithError(project, scene, error.empty() ? "Failed to open project." : error);
                     settings.RemoveRecentProject(projectPath);
                     settings.Save();
                 }
@@ -378,12 +455,8 @@ bool ProjectChooser::DrawStartupScreen(
 
             ImGui::PopID();
         }
-    }
 
-    if (!m_errorMessage.empty() && !m_showNewProjectForm)
-    {
-        ImGui::Spacing();
-        DrawErrorText(m_errorMessage);
+        ImGui::EndChild();
     }
 
     ImGui::Spacing();
@@ -399,6 +472,21 @@ bool ProjectChooser::DrawStartupScreen(
     }
 
     ImGui::EndChild();
+
+    if (showStartupError)
+    {
+        ImGui::Spacing();
+        ImGui::BeginChild(
+            "ProjectChooserError",
+            ImVec2(panelWidth, errorPanelMaxHeight),
+            ImGuiChildFlags_Borders);
+        ImGui::TextUnformatted("Last error");
+        ImGui::Separator();
+        DrawErrorText(m_errorMessage);
+        ImGui::EndChild();
+    }
+
+    ImGui::EndGroup();
     ImGui::End();
 
     if (m_showNewProjectForm)
@@ -419,10 +507,14 @@ bool ProjectChooser::Draw(
     UndoStack& undoStack,
     EditorClipboard& clipboard)
 {
-    if (project.HasActiveProject() && !m_showNewProjectForm)
+    if (project.HasActiveProject() && !m_startupMode && !m_showNewProjectForm)
     {
-        m_startupMode = false;
         return false;
+    }
+
+    if (!project.HasActiveProject())
+    {
+        m_startupMode = true;
     }
 
     if (m_showNewProjectForm && !m_startupMode)

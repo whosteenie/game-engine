@@ -14,6 +14,8 @@ public:
     void InitPlatformBackend();
     void BeginFrame();
     void EndFrame();
+    // Closes an interrupted Dear ImGui frame without building draw data (used after exceptions).
+    void CancelInterruptedFrame();
 
 private:
     GLFWwindow* m_window = nullptr;

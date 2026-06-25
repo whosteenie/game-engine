@@ -55,7 +55,13 @@ public:
 
     const CascadedShadowMap& GetShadowMap() const;
 
+    bool IsGpuResourcesReady() const { return m_gpuResourcesInitialized; }
+    bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
+    const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
+    void PrepareGpuResources() const { EnsureGpuResources(); }
+
 private:
+    [[noreturn]] void ThrowGpuResourcesUnavailable() const;
     void EnsureGpuResources() const;
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;

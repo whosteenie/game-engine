@@ -22,7 +22,6 @@ public:
     void MarkDirty();
     void MarkClean();
     void SetStatusMessage(const std::string& message);
-    bool ConsumeEditorLayoutLoadRequest();
 
     void CloseProject();
 
@@ -49,5 +48,4 @@ private:
     std::string m_statusMessage;
     bool m_dirty = false;
     bool m_hasActiveProject = false;
-    bool m_pendingEditorLayoutLoad = false;
 };

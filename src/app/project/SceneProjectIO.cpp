@@ -22,6 +22,8 @@
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/assets/ModelImporter.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"
 #include "engine/scene/ScenePrimitive.h"
@@ -30,7 +32,6 @@
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
 
-#include <imgui.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -679,68 +680,6 @@ namespace SceneProjectIODetail
         }
     }
 
-    fs::path GetEditorLayoutPath(const std::string& projectRoot)
-    {
-        return fs::path(projectRoot) / ".editor" / "imgui.ini";
-    }
-
-    bool SaveEditorLayout(const std::string& projectRoot)
-    {
-        std::size_t iniSize = 0;
-        const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
-        if (iniData == nullptr || iniSize == 0)
-        {
-            return true;
-        }
-
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        std::error_code error;
-        fs::create_directories(layoutPath.parent_path(), error);
-
-        std::ofstream output(layoutPath, std::ios::binary);
-        if (!output)
-        {
-            return false;
-        }
-
-        output.write(iniData, static_cast<std::streamsize>(iniSize));
-        return static_cast<bool>(output);
-    }
-
-    bool LoadEditorLayout(const std::string& projectRoot)
-    {
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        if (!fs::exists(layoutPath))
-        {
-            return true;
-        }
-
-        std::ifstream input(layoutPath, std::ios::binary);
-        if (!input)
-        {
-            return false;
-        }
-
-        const std::string iniData(
-            (std::istreambuf_iterator<char>(input)),
-            std::istreambuf_iterator<char>());
-        if (iniData.empty())
-        {
-            return true;
-        }
-
-        ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
-        return true;
-    }
-
-    bool DeleteEditorLayout(const std::string& projectRoot)
-    {
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        std::error_code error;
-        fs::remove(layoutPath, error);
-        return true;
-    }
-
     json SerializeObjects(const Scene& scene, const std::string& projectRoot)
     {
         json objects = json::array();
@@ -1020,11 +959,9 @@ namespace SceneProjectIODetail
             }
             catch (const std::exception& exception)
             {
-                const char* what = exception.what();
-                outError = (what != nullptr && what[0] != '\0')
-                    ? std::string("Failed loading object '")
-                          + objectValue.value("name", "?") + "': " + what
-                    : std::string("Failed loading object '") + objectValue.value("name", "?") + "'.";
+                const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
+                outError = FormatExceptionContext(context.c_str(), exception);
+                EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
                 return false;
             }
         }
@@ -1271,17 +1208,12 @@ bool SceneProjectIO::Save(
 
         output << root.dump(2);
 
-        if (!SceneProjectIODetail::SaveEditorLayout(projectRoot))
-        {
-            outError = "Failed to save editor layout.";
-            return false;
-        }
-
         return true;
     }
     catch (const std::exception& exception)
     {
-        outError = exception.what();
+        outError = FormatExceptionContext("Failed to save project", exception);
+        EngineLog::LogFailure("project-io", "Save", outError);
         return false;
     }
 }
@@ -1315,23 +1247,8 @@ bool SceneProjectIO::Load(
     }
     catch (const std::exception& exception)
     {
-        const char* what = exception.what();
-        outError = (what != nullptr && what[0] != '\0') ? what : "Failed to load project.";
+        outError = FormatExceptionContext("Failed to load project file", exception);
+        EngineLog::LogFailure("project-io", "Load", outError);
         return false;
     }
-}
-
-bool SceneProjectIO::SaveEditorLayout(const std::string& projectRoot)
-{
-    return SceneProjectIODetail::SaveEditorLayout(projectRoot);
-}
-
-bool SceneProjectIO::LoadEditorLayout(const std::string& projectRoot)
-{
-    return SceneProjectIODetail::LoadEditorLayout(projectRoot);
-}
-
-bool SceneProjectIO::DeleteEditorLayout(const std::string& projectRoot)
-{
-    return SceneProjectIODetail::DeleteEditorLayout(projectRoot);
 }

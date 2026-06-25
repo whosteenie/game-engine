@@ -59,6 +59,8 @@ private:
     glm::vec3 m_lastCameraFront{0.0f, 0.0f, 1.0f};
     bool m_hasLastCameraOrientation = false;
     bool m_hasStableOrthoHalfExtents = false;
+    bool m_lastTightNearPlaneXyFit = false;
+    bool m_hasLastTightNearPlaneXyFit = false;
     bool m_hasRenderedDepth = false;
 
     void* m_depthResource = nullptr;

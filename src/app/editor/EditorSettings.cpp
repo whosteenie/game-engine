@@ -1,5 +1,7 @@
 #include "app/editor/EditorSettings.h"
 
+#include <imgui.h>
+
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
@@ -57,6 +59,86 @@ void EditorSettings::EnsureAppDataDirectoryExists()
 {
     std::error_code error;
     fs::create_directories(GetSettingsDirectory(), error);
+}
+
+bool EditorSettings::SaveGlobalEditorLayout()
+{
+    std::size_t iniSize = 0;
+    const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
+    if (iniData == nullptr || iniSize == 0)
+    {
+        return true;
+    }
+
+    EnsureAppDataDirectoryExists();
+    const fs::path layoutPath = GetGlobalImGuiIniPath();
+
+    std::ofstream output(layoutPath, std::ios::binary);
+    if (!output)
+    {
+        return false;
+    }
+
+    output.write(iniData, static_cast<std::streamsize>(iniSize));
+    return static_cast<bool>(output);
+}
+
+bool EditorSettings::LoadGlobalEditorLayout()
+{
+    const fs::path layoutPath = GetGlobalImGuiIniPath();
+    if (!fs::exists(layoutPath))
+    {
+        return false;
+    }
+
+    std::ifstream input(layoutPath, std::ios::binary);
+    if (!input)
+    {
+        return false;
+    }
+
+    const std::string iniData(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    if (iniData.empty())
+    {
+        return false;
+    }
+
+    ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
+    return true;
+}
+
+bool EditorSettings::TryMigrateProjectEditorLayout(const std::string& projectRoot)
+{
+    if (projectRoot.empty())
+    {
+        return false;
+    }
+
+    const fs::path projectLayoutPath = fs::path(projectRoot) / ".editor" / "imgui.ini";
+    if (!fs::exists(projectLayoutPath))
+    {
+        return false;
+    }
+
+    std::ifstream input(projectLayoutPath, std::ios::binary);
+    if (!input)
+    {
+        return false;
+    }
+
+    const std::string iniData(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    if (iniData.empty())
+    {
+        return false;
+    }
+
+    ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
+    SaveGlobalEditorLayout();
+    return true;
 }
 
 bool EditorSettings::DeleteGlobalImGuiIni()

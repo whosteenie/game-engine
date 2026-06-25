@@ -92,7 +92,7 @@ private:
     int m_cascadeCount = 4;
     float m_cascadeSplitLambda = 0.82f;
     float m_cascadeBlendRatio = 0.08f;
-    bool m_tightNearPlaneXyFit = false;
+    bool m_tightNearPlaneXyFit = true;
     float m_xyMarginFraction = 0.03f;
     float m_zMarginFraction = 0.12f;
     bool m_usePoissonPcf = true;

@@ -5,6 +5,9 @@
 
 #include "app/scene/SceneRenderer.h"
 
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
+
 #include "app/scene/SceneEditor.h"
 #include "engine/camera/Camera.h"
 #include "engine/rhi/GfxContext.h"
@@ -28,6 +31,14 @@
 SceneRenderer::SceneRenderer() = default;
 
 SceneRenderer::~SceneRenderer() = default;
+
+void SceneRenderer::ThrowGpuResourcesUnavailable() const
+{
+    throw std::runtime_error(
+        m_gpuResourcesInitError.empty()
+            ? std::string("GPU resources are not initialized.")
+            : m_gpuResourcesInitError);
+}
 
 void SceneRenderer::EnsureGpuResources() const
 {
@@ -60,14 +71,13 @@ void SceneRenderer::EnsureGpuResources() const
     {
         self->m_gpuResourcesInitFailed = true;
         self->m_gpuResourcesInitError = SafeExceptionMessage(exception);
-        throw std::runtime_error(
-            std::string("GPU init failed: ") + self->m_gpuResourcesInitError);
+        EngineLog::Error("scene", "GPU init failed: " + self->m_gpuResourcesInitError);
     }
     catch (...)
     {
         self->m_gpuResourcesInitFailed = true;
         self->m_gpuResourcesInitError = "unknown GPU initialization error";
-        throw std::runtime_error(self->m_gpuResourcesInitError);
+        EngineLog::Error("scene", self->m_gpuResourcesInitError);
     }
 }
 
@@ -239,8 +249,7 @@ void SceneRenderer::Render(
 
     RenderDebugMode materialDebugMode = RenderDebugMode::None;
     const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
-    if (activeDebugMode >= RenderDebugMode::ShadowFactor &&
-        activeDebugMode <= RenderDebugMode::ShadedNormal)
+    if (IsPbrMaterialDebugMode(activeDebugMode))
     {
         materialDebugMode = activeDebugMode;
     }
@@ -377,24 +386,44 @@ SceneLighting& SceneRenderer::GetLighting()
 IBL& SceneRenderer::GetIBL()
 {
     EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_ibl == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
     return *m_ibl;
 }
 
 const IBL& SceneRenderer::GetIBL() const
 {
     EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_ibl == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
     return *m_ibl;
 }
 
 ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects()
 {
     EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
     return *m_screenSpaceEffects;
 }
 
 const ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects() const
 {
     EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
     return *m_screenSpaceEffects;
 }
 
@@ -411,5 +440,10 @@ DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings()
 const CascadedShadowMap& SceneRenderer::GetShadowMap() const
 {
     EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_shadowMap == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
     return *m_shadowMap;
 }

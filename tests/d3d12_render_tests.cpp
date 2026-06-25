@@ -1,6 +1,15 @@
 #include "d3d12_test_harness.h"
 #include "test_expect.h"
 
+// MANUAL GPU TEST SUITE — DO NOT AUTO-RUN
+// ---------------------------------------
+// This executable spins up a real D3D12 device + GLFW window and runs many slow
+// GPU integration tests. It is NOT part of CTest and is OFF by default in CMake.
+//
+// Agents / CI: never build or run this unless the user explicitly asks.
+// Enable build: cmake -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
+// Run manually:  .\build\Debug\d3d12-render-tests.exe
+
 #include "engine/camera/Camera.h"
 #include "engine/lighting/CascadedShadowMap.h"
 #include "engine/lighting/DirectionalShadowSettings.h"

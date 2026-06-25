@@ -26,10 +26,6 @@ struct SceneProjectIO
         const std::string& projectFilePath,
         std::string& outError);
 
-    static bool SaveEditorLayout(const std::string& projectRoot);
-    static bool LoadEditorLayout(const std::string& projectRoot);
-    static bool DeleteEditorLayout(const std::string& projectRoot);
-
 private:
     static nlohmann::json SerializeScene(
         const Scene& scene,

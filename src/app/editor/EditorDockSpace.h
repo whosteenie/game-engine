@@ -3,7 +3,8 @@
 class EditorDockSpace
 {
 public:
-    void Begin(float topToolbarHeight = 0.0f);
+    void Begin(float topToolbarHeight = 0.0f, bool deferLayoutBuild = false);
+    void CommitLayout();
     void End();
 
     void AfterEditorPanels();
@@ -13,6 +14,8 @@ public:
     void ResetLayout();
 
 private:
+    void BuildLayoutIfNeeded();
+
     bool m_layoutBuilt = false;
     bool m_forceDefaultLayout = false;
 };

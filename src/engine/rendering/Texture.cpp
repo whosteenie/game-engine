@@ -273,7 +273,8 @@ void Texture::UploadPixels(
         static_cast<D3D12MA::Allocation*>(m_allocation)->Release();
         m_allocation = nullptr;
         m_resource = nullptr;
-        throw std::runtime_error(GfxContext::GetLastGpuAllocationError());
+        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
     }
 
     m_srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_srvDescriptorIndex);

@@ -214,10 +214,12 @@ void CascadedShadowMap::BeginFrame(
     const float orientationChange = m_hasLastCameraOrientation
         ? 1.0f - glm::clamp(glm::dot(cameraFront, glm::normalize(m_lastCameraFront)), -1.0f, 1.0f)
         : 2.0f;
-    constexpr float kOrientationResetThreshold = 0.01f;
+    constexpr float kOrientationResetThreshold = 0.025f;
     const bool resetStableFit = cameraMoveDistance > 1.25f ||
         orientationChange > kOrientationResetThreshold ||
-        !m_hasStableOrthoHalfExtents;
+        !m_hasStableOrthoHalfExtents ||
+        (m_hasLastTightNearPlaneXyFit &&
+            settings.GetTightNearPlaneXyFit() != m_lastTightNearPlaneXyFit);
     if (resetStableFit)
     {
         m_stableOrthoHalfExtents.fill(0.0f);
@@ -263,6 +265,8 @@ void CascadedShadowMap::BeginFrame(
     m_lastCameraFront = cameraFront;
     m_hasLastCameraOrientation = true;
     m_hasStableOrthoHalfExtents = true;
+    m_lastTightNearPlaneXyFit = settings.GetTightNearPlaneXyFit();
+    m_hasLastTightNearPlaneXyFit = true;
     m_hasRenderedDepth = false;
 }
 

@@ -8,6 +8,11 @@ set(CMAKE_CXX_STANDARD 17)
 
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    # Allow parallel CL.exe invocations (MSBuild /m) without vc143.pdb lock failures.
+    add_compile_options(/FS)
+endif()
+
 option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only)" OFF)
 
 
@@ -313,6 +318,8 @@ add_executable(game-engine
     src/engine/platform/Input.cpp
 
     src/engine/platform/InputDiagnostics.cpp
+    src/engine/platform/EngineLog.cpp
+    src/engine/platform/EngineDiagnostics.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/FrameDiagnostics.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
@@ -525,6 +532,8 @@ add_executable(engine-tests
     tests/shadow_map_math_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
+    src/engine/platform/ExceptionMessage.cpp
+    src/engine/platform/EngineDiagnostics.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src)
@@ -539,7 +548,16 @@ add_executable(descriptor-heap-tests
 target_include_directories(descriptor-heap-tests PRIVATE src tests)
 add_test(NAME descriptor-heap-tests COMMAND descriptor-heap-tests)
 
-if(WIN32)
+# GPU render integration tests (manual only).
+# Heavy: creates a real D3D12 device/window and can run for a long time.
+# Off by default so `cmake --build .` and `ctest` never pick it up accidentally.
+# Enable explicitly: cmake -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
+# Run manually:      .\build\Debug\d3d12-render-tests.exe
+option(GAME_ENGINE_BUILD_D3D12_RENDER_TESTS
+    "Build d3d12-render-tests (GPU-heavy manual suite; never auto-run without user permission)"
+    OFF)
+
+if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
     set(D3D12_RENDER_TEST_SOURCES
         tests/d3d12_render_tests.cpp
         tests/d3d12_test_harness.cpp
@@ -567,6 +585,9 @@ if(WIN32)
         src/engine/rendering/GridRenderer.cpp
         src/engine/gizmos/GizmoDraw.cpp
         src/engine/platform/FrameDiagnostics.cpp
+        src/engine/platform/EngineDiagnostics.cpp
+        src/engine/platform/EngineLog.cpp
+        src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
         src/engine/rendering/RenderDebug.cpp
         src/primitives/Cube.cpp
@@ -598,9 +619,6 @@ if(WIN32)
             "$<TARGET_FILE_DIR:d3d12-render-tests>/assets"
         COMMENT "Copying assets for d3d12-render-tests")
 
-    add_test(NAME d3d12-render-tests COMMAND d3d12-render-tests)
-    set_tests_properties(d3d12-render-tests PROPERTIES
-        LABELS "d3d12"
-        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/Debug")
+    # Intentionally NOT registered with CTest — run the .exe manually when needed.
 endif()
 

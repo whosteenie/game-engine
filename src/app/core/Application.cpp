@@ -3,7 +3,6 @@
 
 #include "app/core/Application.h"
 #include "app/editor/EditorSettings.h"
-#include "app/project/SceneProjectIO.h"
 #include "app/editor/EditorDockSpace.h"
 #include "app/editor/EditorTopToolbar.h"
 #include "app/editor/EditorViewportRect.h"
@@ -32,6 +31,10 @@
 #include "engine/assets/FileDialog.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/platform/ImGuiLayer.h"
+#include "engine/platform/EngineLog.h"
+
+#include <imgui.h>
+#include <imgui_internal.h>
 #include "engine/rhi/GfxContext.h"
 
 #include <ImGuizmo.h>
@@ -68,25 +71,7 @@ namespace
 {
     [[noreturn]] void RethrowAsRuntimeError(const char* phase, const std::exception& exception)
     {
-        std::string details;
-        try
-        {
-            if (const char* what = exception.what(); what != nullptr && what[0] != '\0')
-            {
-                details = what;
-            }
-        }
-        catch (...)
-        {
-            details.clear();
-        }
-
-        if (details.empty())
-        {
-            details = typeid(exception).name();
-        }
-
-        throw std::runtime_error(std::string(phase) + ": " + details);
+        throw std::runtime_error(std::string(phase) + ": " + SafeExceptionMessage(exception));
     }
 
     std::string DescribeException(const std::exception& exception)
@@ -103,7 +88,9 @@ namespace
         }
         catch (const std::exception& exception)
         {
-            throw std::runtime_error(std::string(phase) + ": " + SafeExceptionMessage(exception));
+            const std::string safeMessage = SafeExceptionMessage(exception);
+            EngineLog::LogFailure("application", phase, safeMessage);
+            throw std::runtime_error(std::string(phase) + ": " + safeMessage);
         }
     }
 
@@ -274,6 +261,7 @@ Application::Application(int width, int height, const char* title)
         framebufferHeight = std::max(framebufferHeight, 1);
 
         EditorSettings::EnsureAppDataDirectoryExists();
+        EngineLog::EnsureLogDirectoryExists();
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
         GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
         m_imguiLayer->InitPlatformBackend();
@@ -324,10 +312,7 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
-    if (m_projectSession && m_projectSession->HasActiveProject())
-    {
-        SceneProjectIO::SaveEditorLayout(m_projectSession->GetProjectRootDirectory());
-    }
+    EditorSettings::SaveGlobalEditorLayout();
 
     if (m_editorSettings)
     {
@@ -408,6 +393,13 @@ void Application::Run()
             const std::string described = DescribeException(exception);
             const std::string message = "Application frame: " + described;
             InputDiagnostics::Log(message.c_str());
+            if (described.find("device removed") != std::string::npos
+                || described.find("Present failed") != std::string::npos
+                || described.find("HRESULT=0x887a") != std::string::npos)
+            {
+                EngineLog::Error("application", "Fatal GPU error — closing application.");
+                glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+            }
             if (described != lastLoggedFrameError)
             {
                 lastLoggedFrameError = described;
@@ -436,6 +428,7 @@ void Application::Run()
         }
         catch (...)
         {
+            EngineLog::Error("application", "Application frame: unknown exception");
             std::cerr << "Application frame: unknown exception\n";
             if (m_projectSession != nullptr)
             {
@@ -465,7 +458,7 @@ void Application::RecoverInterruptedFrame()
     {
         try
         {
-            m_imguiLayer->EndFrame();
+            m_imguiLayer->CancelInterruptedFrame();
         }
         catch (...)
         {
@@ -517,16 +510,16 @@ void Application::Update(double deltaTime)
     InputDiagnostics::LogFrame(m_window, "after-poll");
 
     std::string pendingProjectError;
-    if (m_projectChooser->ProcessPendingProjectOpen(
-            *m_projectSession,
-            *m_scene,
-            *m_editorSettings,
-            m_projectEditorState,
-            [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
-            m_undoStack,
-            m_editorClipboard,
-            pendingProjectError)
-        && !pendingProjectError.empty())
+    const bool openedProject = m_projectChooser->ProcessPendingProjectOpen(
+        *m_projectSession,
+        *m_scene,
+        *m_editorSettings,
+        m_projectEditorState,
+        [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+        m_undoStack,
+        m_editorClipboard,
+        pendingProjectError);
+    if (!openedProject && !pendingProjectError.empty())
     {
         m_projectChooser->SetErrorMessage(pendingProjectError);
     }
@@ -538,11 +531,6 @@ void Application::Update(double deltaTime)
     m_imguiLayer->BeginFrame();
     m_imguiFrameActive = true;
     InputDiagnostics::LogFrame(m_window, "after-imgui-newframe");
-
-    if (m_projectSession->ConsumeEditorLayoutLoadRequest())
-    {
-        SceneProjectIO::LoadEditorLayout(m_projectSession->GetProjectRootDirectory());
-    }
 
     m_projectChooser->Draw(
         *m_projectSession,
@@ -637,7 +625,33 @@ void Application::Update(double deltaTime)
         Scene* editorScene = GetEditorTargetScene();
         UndoStack* editorUndoStack = GetEditorUndoStack();
 
-        m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight());
+        const bool loadGlobalEditorLayout = !m_globalEditorLayoutLoaded;
+        m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight(), loadGlobalEditorLayout);
+        if (loadGlobalEditorLayout)
+        {
+            try
+            {
+                ImGui::ClearIniSettings();
+                if (!EditorSettings::LoadGlobalEditorLayout()
+                    && m_projectSession->HasActiveProject()
+                    && !EditorSettings::TryMigrateProjectEditorLayout(
+                        m_projectSession->GetProjectRootDirectory()))
+                {
+                    EngineLog::Warn(
+                        "editor",
+                        "No saved editor layout found; using default layout.");
+                }
+            }
+            catch (const std::exception& exception)
+            {
+                EngineLog::LogException("editor", "LoadGlobalEditorLayout", exception);
+                EditorSettings::DeleteGlobalImGuiIni();
+                m_editorDockSpace->ResetLayout();
+            }
+
+            m_globalEditorLayoutLoaded = true;
+        }
+        m_editorDockSpace->CommitLayout();
         m_sceneViewportPanel->Draw(*m_camera, *editorScene);
 
         Scene* gameScene = m_scene.get();
@@ -930,7 +944,13 @@ bool Application::TrySaveProject()
 
     if (!m_projectSession->IsUntitled())
     {
-        return m_projectSession->Save(*m_scene, m_projectEditorState);
+        if (!m_projectSession->Save(*m_scene, m_projectEditorState))
+        {
+            return false;
+        }
+
+        EditorSettings::SaveGlobalEditorLayout();
+        return true;
     }
 
     std::string projectPath;
@@ -947,18 +967,13 @@ bool Application::TrySaveProject()
     m_editorSettings->AddRecentProject(m_projectSession->GetProjectFilePath());
     m_editorSettings->SetLastNewProjectParentDirectoryFromProjectFile(m_projectSession->GetProjectFilePath());
     m_editorSettings->Save();
+    EditorSettings::SaveGlobalEditorLayout();
     return true;
 }
 
 void Application::ResetEditorLayout()
 {
     EditorSettings::DeleteGlobalImGuiIni();
-
-    if (m_projectSession->HasActiveProject())
-    {
-        SceneProjectIO::DeleteEditorLayout(m_projectSession->GetProjectRootDirectory());
-    }
-
     m_editorDockSpace->ResetLayout();
 }
 

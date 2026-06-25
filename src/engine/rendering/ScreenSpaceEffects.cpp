@@ -4,6 +4,7 @@
 #include "engine/platform/RenderPathDiagnostics.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
@@ -584,8 +585,7 @@ void ScreenSpaceEffects::Apply(
 
     const Framebuffer* outputTarget = GfxContext::Get().GetBoundOutputFramebuffer();
 
-    const bool runSsao = m_ssaoEnabled &&
-        !(m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::ShadedNormal);
+    const bool runSsao = m_ssaoEnabled && !IsPbrMaterialDebugMode(m_debugMode);
 
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 inverseProjectionMatrix = glm::inverse(projectionMatrix);
@@ -627,8 +627,7 @@ void ScreenSpaceEffects::Apply(
         DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
     }
 
-    const bool pbrDebugActive =
-        m_debugMode >= RenderDebugMode::ShadowFactor && m_debugMode <= RenderDebugMode::ShadedNormal;
+    const bool pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
 
     std::uintptr_t shadowFactorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(3);
@@ -677,7 +676,7 @@ void ScreenSpaceEffects::Apply(
 
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
 
-    if (m_sceneFramebuffer->HasSplitLighting())
+    if (m_sceneFramebuffer->HasSplitLighting() && !pbrDebugActive)
     {
         const float compositeClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -737,7 +736,7 @@ void ScreenSpaceEffects::Apply(
     }
 
     std::uintptr_t bloomSrv = 0;
-    if (m_bloomEnabled)
+    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode))
     {
         const int bloomWidth = std::max(1, m_width / 2);
         const int bloomHeight = std::max(1, m_height / 2);
@@ -786,6 +785,17 @@ void ScreenSpaceEffects::Apply(
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
 
+    if (IsPbrMaterialDebugMode(m_debugMode))
+    {
+        m_debugChannelShader->Use(false, true);
+        m_debugChannelShader->SetInt("uOutputRgb", 1);
+        m_debugChannelShader->SetInt("uInput", 0);
+        m_debugChannelShader->BindTextureSlot(0, hdrColorSrv);
+        m_debugChannelShader->FlushUniforms();
+        DrawFullscreenQuad();
+        return;
+    }
+
     if (IsPostProcessDebugMode(m_debugMode))
     {
         std::uintptr_t debugSrv = 0;
@@ -801,6 +811,7 @@ void ScreenSpaceEffects::Apply(
         if (debugSrv != 0)
         {
             m_debugChannelShader->Use(false, true);
+            m_debugChannelShader->SetInt("uOutputRgb", 0);
             m_debugChannelShader->SetInt("uInput", 0);
             m_debugChannelShader->BindTextureSlot(0, debugSrv);
             m_debugChannelShader->FlushUniforms();

@@ -66,6 +66,7 @@ private:
 
     void BuildFromHlsl(const std::string& vertexPath, const std::string& fragmentPath);
     void WriteUniform(const char* name, const void* data, std::uint32_t size) const;
+    void WriteScalarArray(const char* name, const void* values, std::uint32_t elementSize, int count) const;
 
     std::vector<ConstantBuffer> m_constantBuffers;
     std::unordered_map<std::string, std::vector<UniformLocation>> m_uniformLocations;

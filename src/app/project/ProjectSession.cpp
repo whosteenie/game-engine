@@ -3,6 +3,8 @@
 #include "app/project/ProjectEditorState.h"
 #include "app/scene/Scene.h"
 #include "app/project/SceneProjectIO.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
 #include <cctype>
@@ -17,18 +19,7 @@ void ProjectSession::MarkDirty()
 
 void ProjectSession::SetStatusMessage(const std::string& message)
 {
-    m_statusMessage = message;
-}
-
-bool ProjectSession::ConsumeEditorLayoutLoadRequest()
-{
-    if (!m_pendingEditorLayoutLoad)
-    {
-        return false;
-    }
-
-    m_pendingEditorLayoutLoad = false;
-    return true;
+    m_statusMessage = SanitizeLogText(message, "Internal error.");
 }
 
 void ProjectSession::MarkClean()
@@ -44,7 +35,6 @@ void ProjectSession::CloseProject()
     m_statusMessage.clear();
     m_dirty = false;
     m_hasActiveProject = false;
-    m_pendingEditorLayoutLoad = false;
 }
 
 std::string ProjectSession::SanitizeProjectName(const std::string& projectName)
@@ -154,7 +144,7 @@ bool ProjectSession::Save(Scene& scene, const ProjectEditorState& editorState)
     std::string error;
     if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
-        m_statusMessage = error.empty() ? "Failed to save project." : error;
+        SetStatusMessage(error.empty() ? "Failed to save project." : error);
         return false;
     }
 
@@ -170,7 +160,7 @@ bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath, co
     std::string error;
     if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
-        m_statusMessage = error.empty() ? "Failed to save project." : error;
+        SetStatusMessage(error.empty() ? "Failed to save project." : error);
         return false;
     }
 
@@ -186,25 +176,27 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
     std::string error;
     if (!SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
+        const std::string loadError = error.empty() ? "Failed to load project." : error;
+        SetStatusMessage(loadError);
+
         try
         {
             scene.ResetToDefault();
         }
         catch (const std::exception& exception)
         {
-            const char* what = exception.what();
-            error = (what != nullptr && what[0] != '\0') ? what : "Failed to reset scene after load error.";
+            EngineLog::LogFailure(
+                "project",
+                "ResetToDefault",
+                FormatExceptionContext("Failed to reset scene after load error", exception));
         }
 
-        m_statusMessage = error.empty() ? "Failed to load project." : error;
         m_hasActiveProject = false;
-        m_pendingEditorLayoutLoad = false;
         return false;
     }
 
     MarkClean();
     m_hasActiveProject = true;
-    m_pendingEditorLayoutLoad = true;
     m_statusMessage = "Opened " + m_displayName;
     return true;
 }

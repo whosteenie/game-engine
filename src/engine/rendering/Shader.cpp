@@ -1,5 +1,6 @@
 #include "engine/rendering/Shader.h"
 
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
@@ -151,10 +152,19 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const std::string vertexSource = ReadTextFile(vertexPath.c_str());
     const std::string fragmentSource = ReadTextFile(fragmentPath.c_str());
 
-    HlslCompileResult vertexCompile =
-        CompileHlsl(vertexSource, vertexPath, "main", "vs_6_0");
-    HlslCompileResult pixelCompile =
-        CompileHlsl(fragmentSource, fragmentPath, "main", "ps_6_0");
+    HlslCompileResult vertexCompile{};
+    HlslCompileResult pixelCompile{};
+    try
+    {
+        vertexCompile = CompileHlsl(vertexSource, vertexPath, "main", "vs_6_0");
+        pixelCompile = CompileHlsl(fragmentSource, fragmentPath, "main", "ps_6_0");
+    }
+    catch (const std::exception& exception)
+    {
+        throw std::runtime_error(
+            std::string("Shader compile failed for ") + vertexPath + " / " + fragmentPath + ": "
+            + SafeExceptionMessage(exception));
+    }
     m_vertexShader = vertexCompile.shader.Detach();
     m_pixelShader = pixelCompile.shader.Detach();
 
@@ -199,9 +209,14 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         {
             D3D12_STATIC_SAMPLER_DESC sampler{};
             sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-            sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-            sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            // t4–t7 (albedo/normal/AO/roughness) tile with UV repeat; shadow + IBL stay clamped.
+            const bool wrapMaterialMaps = registerIndex >= 4 && registerIndex <= 7;
+            const D3D12_TEXTURE_ADDRESS_MODE addressMode = wrapMaterialMaps
+                ? D3D12_TEXTURE_ADDRESS_MODE_WRAP
+                : D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            sampler.AddressU = addressMode;
+            sampler.AddressV = addressMode;
+            sampler.AddressW = addressMode;
             sampler.ShaderRegister = registerIndex;
             sampler.RegisterSpace = 0;
             sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -573,7 +588,14 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
 
     auto createPipeline = [&](const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc) {
         ComPtr<ID3D12PipelineState> pipeline;
-        ThrowIfFailed(device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pipeline)), "CreatePSO failed");
+        const HRESULT createResult =
+            device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&pipeline));
+        if (FAILED(createResult))
+        {
+            throw std::runtime_error(
+                std::string("CreateGraphicsPipelineState failed for ") + fragmentPath + " (HRESULT=0x"
+                + std::to_string(static_cast<unsigned long>(createResult)) + ")");
+        }
         return pipeline.Detach();
     };
 
@@ -659,6 +681,63 @@ void Shader::WriteUniform(const char* name, const void* data, const std::uint32_
 
         const std::uint32_t copySize = std::min(size, location.size);
         std::memcpy(buffer.staging.data() + location.offset, data, copySize);
+    }
+}
+
+void Shader::WriteScalarArray(
+    const char* name,
+    const void* values,
+    const std::uint32_t elementSize,
+    const int count) const
+{
+    if (values == nullptr || count <= 0)
+    {
+        return;
+    }
+
+    const auto iterator = m_uniformLocations.find(name);
+    if (iterator == m_uniformLocations.end())
+    {
+        return;
+    }
+
+    for (const UniformLocation& location : iterator->second)
+    {
+        if (location.size == 0 || location.bufferIndex >= m_constantBuffers.size())
+        {
+            continue;
+        }
+
+        ConstantBuffer& buffer =
+            const_cast<std::vector<ConstantBuffer>&>(m_constantBuffers)[location.bufferIndex];
+        if (location.offset >= buffer.size)
+        {
+            continue;
+        }
+
+        const std::uint32_t tightSize = static_cast<std::uint32_t>(count) * elementSize;
+        const std::uint32_t packedSize = static_cast<std::uint32_t>(count) * 16u;
+        const std::uint32_t writeSize = std::min(location.size, buffer.size - location.offset);
+
+        if (count > 1 && elementSize < 16u)
+        {
+            const std::uint32_t copySize = std::min(packedSize, writeSize);
+            std::vector<std::uint8_t> packed(copySize, 0);
+            for (int index = 0; index < count; ++index)
+            {
+                std::memcpy(
+                    packed.data() + static_cast<std::size_t>(index) * 16u,
+                    static_cast<const std::uint8_t*>(values) +
+                        static_cast<std::size_t>(index) * elementSize,
+                    elementSize);
+            }
+            std::memcpy(buffer.staging.data() + location.offset, packed.data(), copySize);
+        }
+        else
+        {
+            const std::uint32_t copySize = std::min(tightSize, writeSize);
+            std::memcpy(buffer.staging.data() + location.offset, values, copySize);
+        }
     }
 }
 
@@ -780,12 +859,12 @@ void Shader::SetInt(const char* name, const int value) const
 
 void Shader::SetIntArray(const char* name, const int* values, const int count) const
 {
-    WriteUniform(name, values, static_cast<std::uint32_t>(count) * sizeof(int));
+    WriteScalarArray(name, values, sizeof(int), count);
 }
 
 void Shader::SetFloatArray(const char* name, const float* values, const int count) const
 {
-    WriteUniform(name, values, static_cast<std::uint32_t>(count) * sizeof(float));
+    WriteScalarArray(name, values, sizeof(float), count);
 }
 
 void Shader::SetMat4(const char* name, const glm::mat4& value) const

@@ -15,6 +15,14 @@ struct ShadowLightSpaceSetup
     float orthoHeight = 0.0f;
     float texelWorldSizeX = 0.0f;
     float texelWorldSizeY = 0.0f;
+    // Clip-space Z range of cascade content (for depth debug normalization).
+    float clipDepthContentMin = 0.0f;
+    float clipDepthContentMax = 1.0f;
+    // Per-frame and stable ortho Z used to map stable shadow-map depth into content clip space.
+    float stableOrthoNear = 0.0f;
+    float stableOrthoFar = 1.0f;
+    float contentOrthoNear = 0.0f;
+    float contentOrthoFar = 1.0f;
 };
 
 ShadowLightSpaceSetup BuildShadowLightSpace(
@@ -41,6 +49,26 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     bool resetStableFit = true);
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition);
+
+// Matches pbr.ps.hlsl WorldToShadowSampleCoords (UV top-left origin, Y flipped for D3D).
+glm::vec3 WorldToShadowSampleCoords(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition);
+
+struct ShadowReceiverProbeResult
+{
+    int cascadeIndex = 0;
+    glm::vec2 shadowUv{0.0f};
+    float receiverClipZ = 0.0f;
+    float normalizedClipZ = 0.0f;
+    bool inBounds = false;
+};
+
+ShadowReceiverProbeResult EvaluateShadowReceiverProbe(
+    const glm::vec3& worldPosition,
+    float viewDepth,
+    const glm::mat4* lightSpaceMatrices,
+    const ShadowLightSpaceSetup* cascadeSetups,
+    const float* cascadeEndSplits,
+    int cascadeCount);
 
 float ComputeShadowBias(float nDotL, float texelSpan);
 

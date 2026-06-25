@@ -1,5 +1,6 @@
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
+#include "engine/platform/EngineLog.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 
 #include <windows.h>
@@ -141,6 +142,44 @@ namespace
     };
 }
 
+namespace
+{
+    [[noreturn]] void ThrowShaderCompileError(const std::string& message)
+    {
+        EngineLog::Warn("hlsl", message);
+        throw std::runtime_error(message);
+    }
+
+    void AppendUtf8Blob(std::string& message, IDxcBlobUtf8* errors)
+    {
+        if (errors == nullptr)
+        {
+            return;
+        }
+
+        const char* errorText = errors->GetStringPointer();
+        const std::size_t errorLength = static_cast<std::size_t>(errors->GetStringLength());
+        if (errorText == nullptr || errorLength == 0)
+        {
+            return;
+        }
+
+        for (std::size_t index = 0; index < errorLength; ++index)
+        {
+            const unsigned char byte = static_cast<unsigned char>(errorText[index]);
+            if (byte == '\0')
+            {
+                break;
+            }
+
+            if (byte == '\n' || byte == '\r' || byte == '\t' || (byte >= 32 && byte < 127))
+            {
+                message.push_back(static_cast<char>(byte));
+            }
+        }
+    }
+}
+
 HlslCompileResult CompileHlsl(
     const std::string& source,
     const std::string& sourcePath,
@@ -192,7 +231,7 @@ HlslCompileResult CompileHlsl(
 
     if (FAILED(compileHr))
     {
-        throw std::runtime_error(
+        ThrowShaderCompileError(
             std::string("DXC Compile call failed for ") + sourcePath + " (" + targetProfile + ")");
     }
 
@@ -204,13 +243,12 @@ HlslCompileResult CompileHlsl(
     if (FAILED(status))
     {
         std::string message = "Shader compile failed: " + sourcePath + " (" + targetProfile + ")";
-        if (errors != nullptr)
+        if (errors != nullptr && errors->GetStringLength() > 0)
         {
             message.append("\n");
-            message.append(errors->GetStringPointer());
+            AppendUtf8Blob(message, errors.Get());
         }
-
-        throw std::runtime_error(message);
+        ThrowShaderCompileError(message);
     }
 
     if (errors != nullptr && errors->GetStringLength() > 0)
@@ -219,25 +257,36 @@ HlslCompileResult CompileHlsl(
     }
 
     HlslCompileResult result{};
-    ThrowIfFailed(
-        compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&result.shader), nullptr),
-        "DXC_OUT_OBJECT");
+    HRESULT objectHr = compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&result.shader), nullptr);
+    if (FAILED(objectHr))
+    {
+        ThrowShaderCompileError(
+            std::string("DXC_OUT_OBJECT failed for ") + sourcePath + " (" + targetProfile + ") (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(objectHr)) + ")");
+    }
 
     ComPtr<IDxcBlob> reflectionBlob;
-    if (FAILED(compileResult->GetOutput(DXC_OUT_REFLECTION, IID_PPV_ARGS(&reflectionBlob), nullptr)) ||
-        reflectionBlob == nullptr)
+    const HRESULT reflectionHr =
+        compileResult->GetOutput(DXC_OUT_REFLECTION, IID_PPV_ARGS(&reflectionBlob), nullptr);
+    if (FAILED(reflectionHr) || reflectionBlob == nullptr)
     {
-        throw std::runtime_error(
-            std::string("Shader reflection missing for ") + sourcePath + " (" + targetProfile + ")");
+        ThrowShaderCompileError(
+            std::string("Shader reflection missing for ") + sourcePath + " (" + targetProfile + ") (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(reflectionHr)) + ")");
     }
 
     DxcBuffer reflectionData{};
     reflectionData.Ptr = reflectionBlob->GetBufferPointer();
     reflectionData.Size = static_cast<UINT32>(reflectionBlob->GetBufferSize());
     reflectionData.Encoding = DXC_CP_ACP;
-    ThrowIfFailed(
-        utils->CreateReflection(&reflectionData, IID_PPV_ARGS(&result.reflection)),
-        "CreateReflection");
+    const HRESULT createReflectionHr =
+        utils->CreateReflection(&reflectionData, IID_PPV_ARGS(&result.reflection));
+    if (FAILED(createReflectionHr))
+    {
+        ThrowShaderCompileError(
+            std::string("CreateReflection failed for ") + sourcePath + " (" + targetProfile + ") (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(createReflectionHr)) + ")");
+    }
 
     return result;
 }

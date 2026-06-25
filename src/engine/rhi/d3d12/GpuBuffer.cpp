@@ -89,15 +89,18 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
 
     ID3D12Resource* resource = nullptr;
     D3D12MA::Allocation* allocation = nullptr;
-    if (FAILED(allocator->CreateResource(
-            &defaultAllocationDesc,
-            &resourceDesc,
-            D3D12_RESOURCE_STATE_COPY_DEST,
-            nullptr,
-            &allocation,
-            IID_PPV_ARGS(&resource))))
+    const HRESULT createDefaultResult = allocator->CreateResource(
+        &defaultAllocationDesc,
+        &resourceDesc,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        nullptr,
+        &allocation,
+        IID_PPV_ARGS(&resource));
+    if (FAILED(createDefaultResult))
     {
-        throw std::runtime_error("Failed to create GPU buffer (default heap)");
+        throw std::runtime_error(
+            std::string("Failed to create GPU buffer (default heap) (HRESULT=0x")
+            + std::to_string(static_cast<unsigned long>(createDefaultResult)) + ")");
     }
 
     D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};

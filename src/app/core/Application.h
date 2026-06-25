@@ -96,6 +96,7 @@ private:
     bool m_gameViewRenderedLastFrame = false;
     bool m_imguiFrameActive = false;
     bool m_gfxFrameActive = false;
+    bool m_globalEditorLayoutLoaded = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

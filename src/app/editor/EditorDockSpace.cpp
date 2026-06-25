@@ -16,7 +16,24 @@ namespace
     }
 }
 
-void EditorDockSpace::Begin(const float topToolbarHeight)
+void EditorDockSpace::BuildLayoutIfNeeded()
+{
+    if (m_layoutBuilt)
+    {
+        return;
+    }
+
+    const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
+    if (m_forceDefaultLayout || !HasPersistedDockLayout(dockspaceId))
+    {
+        EditorDockLayout::BuildDefaultLayout(dockspaceId);
+    }
+
+    m_layoutBuilt = true;
+    m_forceDefaultLayout = false;
+}
+
+void EditorDockSpace::Begin(const float topToolbarHeight, const bool deferLayoutBuild)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImVec2 hostPos = viewport->WorkPos;
@@ -42,16 +59,15 @@ void EditorDockSpace::Begin(const float topToolbarHeight)
     const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
     ImGui::DockSpace(dockspaceId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_None);
 
-    if (!m_layoutBuilt)
+    if (!deferLayoutBuild)
     {
-        if (m_forceDefaultLayout || !HasPersistedDockLayout(dockspaceId))
-        {
-            EditorDockLayout::BuildDefaultLayout(dockspaceId);
-        }
-
-        m_layoutBuilt = true;
-        m_forceDefaultLayout = false;
+        BuildLayoutIfNeeded();
     }
+}
+
+void EditorDockSpace::CommitLayout()
+{
+    BuildLayoutIfNeeded();
 }
 
 void EditorDockSpace::End()

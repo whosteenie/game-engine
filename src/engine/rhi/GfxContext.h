@@ -104,6 +104,8 @@ private:
     void WaitForGpu();
     void WaitForFenceValue(std::uint64_t fenceValue);
     std::uint64_t AllocateNextFenceValue(std::uint64_t frameFenceValue) const;
+    void SignalFrameSubmission();
+    void AdvanceSwapchainFrameIndex();
     void MoveToNextFrame();
     void ProcessPendingResize();
     void ResizeInternal(int width, int height);
@@ -125,6 +127,7 @@ private:
     std::uint64_t m_submissionFenceValue = 0;
     const Framebuffer* m_boundOutputFramebuffer = nullptr;
     bool m_frameRecording = false;
+    bool m_frameCommandsSubmitted = false;
     int m_pendingResizeWidth = 0;
     int m_pendingResizeHeight = 0;
 };

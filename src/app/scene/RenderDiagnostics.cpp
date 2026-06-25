@@ -174,6 +174,17 @@ namespace RenderDiagnostics
             out << "Size: " << viewportWidth << " x " << viewportHeight << "\n";
             out << "Camera position: " << FormatVec3(camera.GetPosition()) << "\n\n";
 
+            scene.GetRenderer().PrepareGpuResources();
+            if (!scene.GetRenderer().IsGpuResourcesReady())
+            {
+                statusMessage = scene.GetRenderer().GetGpuResourcesInitError();
+                if (statusMessage.empty())
+                {
+                    statusMessage = "GPU resources are not initialized.";
+                }
+                return false;
+            }
+
             glm::vec3 shadowBoundsMin;
             glm::vec3 shadowBoundsMax;
             ComputeShadowSceneBounds(scene, shadowBoundsMin, shadowBoundsMax);
@@ -218,6 +229,71 @@ namespace RenderDiagnostics
                 CascadedShadowMap::DefaultResolution);
             out << "Legacy single-map texel size (full scene fit): "
                 << legacySetup.texelWorldSizeX << " / " << legacySetup.texelWorldSizeY << "\n\n";
+
+            out << "[Runtime cascade matrices (GPU path)]\n";
+            const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& runtimeMatrices =
+                shadowMap.GetLightSpaceMatrices();
+            const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& runtimeSetups =
+                shadowMap.GetCascadeSetups();
+            const std::array<float, CascadedShadowMap::MaxCascades>& runtimeSplits =
+                shadowMap.GetCascadeEndSplits();
+            const int activeCascadeCount = shadowMap.GetActiveCascadeCount();
+            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
+            {
+                const ShadowLightSpaceSetup& setup = runtimeSetups[static_cast<std::size_t>(cascadeIndex)];
+                out << "C" << cascadeIndex << " ortho " << setup.orthoWidth << " x " << setup.orthoHeight
+                    << " m | frustum stable clipZ [" << setup.clipDepthContentMin << ", "
+                    << setup.clipDepthContentMax << "]\n";
+            }
+
+            if (activeCascadeCount > 1)
+            {
+                const ShadowLightSpaceSetup& firstSetup = runtimeSetups[0];
+                const ShadowLightSpaceSetup& lastSetup =
+                    runtimeSetups[static_cast<std::size_t>(activeCascadeCount - 1)];
+                const bool identicalDepthRange =
+                    std::abs(firstSetup.clipDepthContentMin - lastSetup.clipDepthContentMin) < 1e-5f &&
+                    std::abs(firstSetup.clipDepthContentMax - lastSetup.clipDepthContentMax) < 1e-5f;
+                const bool oversizedNearOrtho = firstSetup.orthoWidth > 15.0f;
+                if (identicalDepthRange && oversizedNearOrtho)
+                {
+                    out << "WARNING: Near cascades share full-scene ortho/depth range. "
+                        << "Enable Frustum-only XY fit and move the camera >1.25 m to reset stable fit.\n";
+                }
+            }
+            out << "Light-space depth debug shows raw stable clip Z in [0,1] (no normalization).\n\n";
+
+            const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
+            const glm::vec4 viewFocus = camera.GetViewMatrix() * glm::vec4(focusPoint, 1.0f);
+            const std::array<glm::vec3, 3> receiverProbePoints = {
+                focusPoint,
+                glm::vec3(0.0f, 0.0f, 0.0f),
+                glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z),
+            };
+            const char* receiverProbeNames[3] = {
+                "focus-3m-ahead",
+                "world-origin-floor",
+                "floor-under-camera",
+            };
+            out << "[Light-space receiver probe (matches debug shader)]\n";
+            for (std::size_t probeIndex = 0; probeIndex < receiverProbePoints.size(); ++probeIndex)
+            {
+                const glm::vec3& worldPoint = receiverProbePoints[probeIndex];
+                const glm::vec4 viewPoint = camera.GetViewMatrix() * glm::vec4(worldPoint, 1.0f);
+                const ShadowReceiverProbeResult probe = EvaluateShadowReceiverProbe(
+                    worldPoint,
+                    viewPoint.z,
+                    runtimeMatrices.data(),
+                    runtimeSetups.data(),
+                    runtimeSplits.data(),
+                    activeCascadeCount);
+                out << receiverProbeNames[probeIndex] << " @ " << FormatVec3(worldPoint) << "\n";
+                out << "  viewDepth=" << viewPoint.z << " cascade=C" << probe.cascadeIndex
+                    << " inBounds=" << (probe.inBounds ? "yes" : "no") << "\n";
+                out << "  clipZ=" << probe.receiverClipZ << " normalized=" << probe.normalizedClipZ
+                    << " uv=" << FormatVec3(glm::vec3(probe.shadowUv, 0.0f)) << "\n";
+            }
+            out << "\n";
 
             const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
             for (int cascadeIndex = 0; cascadeIndex < shadowSettings.GetCascadeCount(); ++cascadeIndex)

@@ -30,6 +30,7 @@ public:
     void OpenNewProjectForm(EditorSettings& settings);
     bool IsBlockingEditor() const;
     void SetErrorMessage(const std::string& message) { m_errorMessage = message; }
+    void ReturnToStartupWithError(ProjectSession& project, Scene& scene, const std::string& message);
 
     bool OpenProjectAtPath(
         ProjectSession& project,

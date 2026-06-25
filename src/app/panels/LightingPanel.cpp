@@ -9,6 +9,7 @@
 #include "engine/lighting/CascadedShadowMap.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/IBL.h"
+#include "engine/lighting/ShadowMapMath.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 
@@ -57,6 +58,17 @@ void LightingPanel::Draw(
     ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cameraPosition.x, cameraPosition.y, cameraPosition.z);
 
     SceneRenderer& renderer = scene.GetRenderer();
+    renderer.PrepareGpuResources();
+    if (!renderer.IsGpuResourcesReady() || renderer.HasGpuResourcesInitFailed())
+    {
+        ImGui::TextUnformatted("Renderer unavailable:");
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+        ImGui::TextWrapped("%s", renderer.GetGpuResourcesInitError().c_str());
+        ImGui::PopStyleColor();
+        ImGui::End();
+        return;
+    }
+
     IBL& ibl = renderer.GetIBL();
     ScreenSpaceEffects& screenSpaceEffects = renderer.GetScreenSpaceEffects();
 
@@ -303,7 +315,7 @@ void LightingPanel::Draw(
 
             const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
             const glm::vec4 viewFocus = camera.GetViewMatrix() * glm::vec4(focusPoint, 1.0f);
-            const float focusViewDepth = -viewFocus.z;
+            const float focusViewDepth = viewFocus.z;
             int focusCascade = 0;
             const std::array<float, CascadedShadowMap::MaxCascades>& splits = shadowMap.GetCascadeEndSplits();
             for (int cascadeIndex = 0; cascadeIndex < shadowMap.GetActiveCascadeCount() - 1; ++cascadeIndex)
@@ -317,19 +329,62 @@ void LightingPanel::Draw(
 
             const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& setups =
                 shadowMap.GetCascadeSetups();
-            for (int cascadeIndex = 0; cascadeIndex < shadowMap.GetActiveCascadeCount(); ++cascadeIndex)
+            const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& lightSpaceMatrices =
+                shadowMap.GetLightSpaceMatrices();
+            const int activeCascadeCount = shadowMap.GetActiveCascadeCount();
+            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
             {
                 const ShadowLightSpaceSetup& setup = setups[static_cast<std::size_t>(cascadeIndex)];
                 const float texelSpan =
                     std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
                 const float splitEnd = splits[static_cast<std::size_t>(cascadeIndex)];
                 ImGui::BulletText(
-                    "C%d: texel %.4f m | split end %.2f | ortho %.1f x %.1f m",
+                    "C%d: texel %.4f m | split end %.2f | ortho %.1f x %.1f m | stable clipZ [%.3f, %.3f]",
                     cascadeIndex,
                     texelSpan,
                     splitEnd,
                     setup.orthoWidth,
-                    setup.orthoHeight);
+                    setup.orthoHeight,
+                    setup.clipDepthContentMin,
+                    setup.clipDepthContentMax);
+            }
+
+            if (ImGui::TreeNode("Light-space receiver probe"))
+            {
+                const auto probeAt = [&](const char* label, const glm::vec3& worldPoint) {
+                    const glm::vec4 viewPoint = camera.GetViewMatrix() * glm::vec4(worldPoint, 1.0f);
+                    const ShadowReceiverProbeResult probe = EvaluateShadowReceiverProbe(
+                        worldPoint,
+                        viewPoint.z,
+                        lightSpaceMatrices.data(),
+                        setups.data(),
+                        splits.data(),
+                        activeCascadeCount);
+                    const ShadowLightSpaceSetup& setup =
+                        setups[static_cast<std::size_t>(probe.cascadeIndex)];
+                    ImGui::Text("%s @ (%.2f, %.2f, %.2f)", label, worldPoint.x, worldPoint.y, worldPoint.z);
+                    ImGui::BulletText(
+                        "cascade C%d | inBounds %s | raw clipZ %.4f (debug view)",
+                        probe.cascadeIndex,
+                        probe.inBounds ? "yes" : "no",
+                        probe.receiverClipZ);
+                    ImGui::BulletText(
+                        "UV (%.3f, %.3f) | C%d stable clipZ [%.3f, %.3f]",
+                        probe.shadowUv.x,
+                        probe.shadowUv.y,
+                        probe.cascadeIndex,
+                        setup.clipDepthContentMin,
+                        setup.clipDepthContentMax);
+                };
+
+                probeAt("Focus (3m ahead)", focusPoint);
+                probeAt("World origin floor", glm::vec3(0.0f, 0.0f, 0.0f));
+                probeAt("Floor under camera", glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z));
+
+                ImGui::TextDisabled(
+                    "Debug depth: stable clip Z normalized to this cascade's view-frustum range. "
+                    "Magenta = stable Z outside [0,1].");
+                ImGui::TreePop();
             }
 
             ImGui::Separator();
@@ -498,8 +553,14 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SpecularIbl),
             RenderDebugModeLabel(RenderDebugMode::DirectDiffuseGeom),
             RenderDebugModeLabel(RenderDebugMode::ShadedNormal),
+            RenderDebugModeLabel(RenderDebugMode::ShadowFactorUnbiased),
+            RenderDebugModeLabel(RenderDebugMode::ShadowMapStoredDepth),
+            RenderDebugModeLabel(RenderDebugMode::ShadowDepthSeparation),
             RenderDebugModeLabel(RenderDebugMode::Ssao),
             RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),
+            RenderDebugModeLabel(RenderDebugMode::GeomSunFacing),
+            RenderDebugModeLabel(RenderDebugMode::ShadowCompareDepth),
+            RenderDebugModeLabel(RenderDebugMode::ShadowBlockedCenter),
         };
 
         if (ImGui::Combo(
@@ -550,6 +611,45 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::ViewDepth))
         {
             ImGui::TextWrapped("Linear view-space Z used for cascade selection. Compare with Cascade index.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadowFactorUnbiased))
+        {
+            ImGui::TextWrapped(
+                "Shadow map PCF with receiver bias disabled. Use with Shadow depth separation to split map vs bias issues.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadowMapStoredDepth))
+        {
+            ImGui::TextWrapped(
+                "Raw depth stored in the shadow map at the receiver's light-space UV (center texel, no filtering). Black = near, white = far.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadowDepthSeparation))
+        {
+            ImGui::TextWrapped(
+                "Receiver clip depth minus stored map depth, scaled by the minimum separation threshold. Mid-gray = match; brighter = behind stored; darker = in front.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GeomSunFacing))
+        {
+            ImGui::TextWrapped(
+                "Geometric N·L for the shadow-casting directional light only. White = faces the sun; black = back faces. No albedo.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadowCompareDepth))
+        {
+            ImGui::TextWrapped(
+                "Clip depth used in the shadow compare test (unbiased path, tiny depth bias only). Should track stored depth on lit surfaces.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::ShadowBlockedCenter))
+        {
+            ImGui::TextWrapped(
+                "Single-texel shadow test with no PCF/PCSS. White = lit, black = blocked. Use with PCF filter mode to isolate compare logic.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
+        {
+            ImGui::TextWrapped(
+                "Raw stable clip Z in [0,1] (black=near plane, white=far plane). "
+                "Shows surface detail directly — no normalization. Magenta = Z out of bounds.");
+            ImGui::TextDisabled(
+                "If you see hard white/black regions: enable Frustum-only XY fit, move camera to reset stable fit, "
+                "then compare with Shadow map stored depth.");
         }
 
         static std::string diagnosticStatus;

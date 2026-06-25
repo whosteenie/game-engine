@@ -265,7 +265,8 @@ void Framebuffer::Create(const int width, const int height)
 
     if (m_rtvBaseIndex == UINT32_MAX || (needsDepth && m_dsvIndex == UINT32_MAX))
     {
-        throw std::runtime_error(GfxContext::GetLastGpuAllocationError());
+        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
     }
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
 
@@ -356,7 +357,8 @@ void Framebuffer::Create(const int width, const int height)
         m_colorSrvIndices[attachmentIndex] = GfxContext::Get().AllocateOffscreenSrv();
         if (m_colorSrvIndices[attachmentIndex] == UINT32_MAX)
         {
-            throw std::runtime_error(GfxContext::GetLastGpuAllocationError());
+            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
         }
 
         GfxContext::Get().CreateSrvForTexture(
@@ -459,7 +461,8 @@ void Framebuffer::Create(const int width, const int height)
         m_depthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         if (m_depthSrvIndex == UINT32_MAX)
         {
-            throw std::runtime_error(GfxContext::GetLastGpuAllocationError());
+            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
         }
 
         GfxContext::Get().CreateSrvForTexture(
