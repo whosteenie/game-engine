@@ -2,6 +2,7 @@
 
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/SsaoDiagnostics.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
@@ -58,6 +59,9 @@ public:
     float GetSsaoPower() const;
     void SetSsaoPower(float power);
 
+    int GetSsaoShaderDebugMode() const;
+    void SetSsaoShaderDebugMode(int mode);
+
     float GetAoStrength() const;
     void SetAoStrength(float strength);
 
@@ -86,6 +90,8 @@ public:
     void SetDebugMode(RenderDebugMode mode);
 
     void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
+
+    const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
 
 private:
     struct InternalTarget
@@ -116,6 +122,17 @@ private:
         int height,
         const float clearColor[4]) const;
     void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
+    void FinalizePendingSsaoGpuReadback() const;
+    void CaptureSsaoDiagnosticsCpu(
+        const bool runSsao,
+        const bool compositeRan,
+        const bool compositeUsesSsao,
+        const bool pbrDebugActive,
+        const bool useShadowFactorComposite,
+        const char* hdrColorSource,
+        const char* ssaoDebugViewSource,
+        std::uintptr_t hdrColorSrv,
+        std::uintptr_t shadowFactorSrv) const;
 
     GpuBuffer m_quadVb;
     InternalTarget m_noiseTexture;
@@ -144,10 +161,15 @@ private:
 
     bool m_enabled = true;
     mutable bool m_logHdrApplySnapshot = false;
+    mutable bool m_logSsaoApplySnapshot = false;
+    mutable bool m_pendingSsaoGpuReadback = false;
+    mutable std::uint64_t m_ssaoDiagnosticsFrame = 0;
+    mutable SsaoDiagnosticsSnapshot m_ssaoDiagnostics{};
     bool m_ssaoEnabled = true;
-    float m_ssaoRadius = 0.35f;
+    float m_ssaoRadius = 0.5f;
     float m_ssaoBias = 0.025f;
     float m_ssaoPower = 1.6f;
+    int m_ssaoShaderDebugMode = 0;
     float m_aoStrength = 0.75f;
     float m_exposure = 0.0f;
     TonemapMode m_tonemapMode = TonemapMode::Gamma;

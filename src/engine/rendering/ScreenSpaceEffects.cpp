@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <random>
 #include <stdexcept>
@@ -45,6 +46,267 @@ namespace
     {
         return mode == RenderDebugMode::Ssao ||
                mode == RenderDebugMode::CompositeOcclusion;
+    }
+
+    float HalfToFloat(const std::uint16_t half)
+    {
+        const std::uint32_t sign = static_cast<std::uint32_t>(half & 0x8000u) << 16;
+        const std::uint32_t exponent = (half & 0x7C00u) >> 10;
+        const std::uint32_t mantissa = half & 0x03FFu;
+        std::uint32_t bits = 0;
+        if (exponent == 0)
+        {
+            if (mantissa == 0)
+            {
+                bits = sign;
+            }
+            else
+            {
+                int adjustedExponent = -1;
+                std::uint32_t adjustedMantissa = mantissa;
+                while ((adjustedMantissa & 0x0400u) == 0)
+                {
+                    adjustedMantissa <<= 1;
+                    --adjustedExponent;
+                }
+                adjustedMantissa &= 0x03FFu;
+                bits = sign |
+                    static_cast<std::uint32_t>((15 + adjustedExponent) << 23) |
+                    (adjustedMantissa << 13);
+            }
+        }
+        else if (exponent == 0x1Fu)
+        {
+            bits = sign | 0x7F800000u | (mantissa << 13);
+        }
+        else
+        {
+            bits = sign |
+                static_cast<std::uint32_t>((exponent + (127 - 15)) << 23) |
+                (mantissa << 13);
+        }
+
+        float value = 0.0f;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
+    bool ReadbackTextureCenterRgba16F(
+        void* resource,
+        const int width,
+        const int height,
+        const int x,
+        const int y,
+        float outRgba[4])
+    {
+        if (resource == nullptr || outRgba == nullptr || width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+        auto* textureResource = static_cast<ID3D12Resource*>(resource);
+        constexpr UINT64 kReadbackSize = sizeof(std::uint16_t) * 4ull;
+
+        D3D12_RESOURCE_DESC readbackDesc{};
+        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        readbackDesc.Width = kReadbackSize;
+        readbackDesc.Height = 1;
+        readbackDesc.DepthOrArraySize = 1;
+        readbackDesc.MipLevels = 1;
+        readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+        readbackDesc.SampleDesc.Count = 1;
+        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        D3D12MA::ALLOCATION_DESC readbackAllocationDesc{};
+        readbackAllocationDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+
+        ID3D12Resource* readbackResource = nullptr;
+        D3D12MA::Allocation* readbackAllocation = nullptr;
+        if (FAILED(allocator->CreateResource(
+                &readbackAllocationDesc,
+                &readbackDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                &readbackAllocation,
+                IID_PPV_ARGS(&readbackResource))))
+        {
+            return false;
+        }
+
+        const int clampedX = std::clamp(x, 0, width - 1);
+        const int clampedY = std::clamp(y, 0, height - 1);
+
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPtr) {
+            auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPtr);
+
+            D3D12_RESOURCE_BARRIER toCopy{};
+            toCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            toCopy.Transition.pResource = textureResource;
+            toCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            toCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            toCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            commandList->ResourceBarrier(1, &toCopy);
+
+            D3D12_TEXTURE_COPY_LOCATION source{};
+            source.pResource = textureResource;
+            source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            source.SubresourceIndex = 0;
+
+            D3D12_TEXTURE_COPY_LOCATION destination{};
+            destination.pResource = readbackResource;
+            destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            destination.PlacedFootprint.Offset = 0;
+            destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            destination.PlacedFootprint.Footprint.Width = 1;
+            destination.PlacedFootprint.Footprint.Height = 1;
+            destination.PlacedFootprint.Footprint.Depth = 1;
+            destination.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(kReadbackSize);
+
+            D3D12_BOX sourceBox{};
+            sourceBox.left = static_cast<UINT>(clampedX);
+            sourceBox.top = static_cast<UINT>(clampedY);
+            sourceBox.front = 0;
+            sourceBox.right = static_cast<UINT>(clampedX + 1);
+            sourceBox.bottom = static_cast<UINT>(clampedY + 1);
+            sourceBox.back = 1;
+            commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, &sourceBox);
+
+            D3D12_RESOURCE_BARRIER fromCopy{};
+            fromCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            fromCopy.Transition.pResource = textureResource;
+            fromCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            fromCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            fromCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            commandList->ResourceBarrier(1, &fromCopy);
+        });
+
+        D3D12_RANGE readRange{0, static_cast<SIZE_T>(kReadbackSize)};
+        void* mapped = nullptr;
+        if (FAILED(readbackResource->Map(0, &readRange, &mapped)))
+        {
+            readbackAllocation->Release();
+            readbackResource->Release();
+            return false;
+        }
+
+        const auto* halfChannels = static_cast<const std::uint16_t*>(mapped);
+        for (int channel = 0; channel < 4; ++channel)
+        {
+            outRgba[channel] = HalfToFloat(halfChannels[channel]);
+        }
+
+        readbackResource->Unmap(0, nullptr);
+        readbackAllocation->Release();
+        readbackResource->Release();
+        return true;
+    }
+
+    bool ReadbackDepthCenter(
+        void* resource,
+        const int width,
+        const int height,
+        const int x,
+        const int y,
+        float& outDepth)
+    {
+        if (resource == nullptr || width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+        auto* textureResource = static_cast<ID3D12Resource*>(resource);
+        constexpr UINT64 kReadbackSize = sizeof(float);
+
+        D3D12_RESOURCE_DESC readbackDesc{};
+        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        readbackDesc.Width = kReadbackSize;
+        readbackDesc.Height = 1;
+        readbackDesc.DepthOrArraySize = 1;
+        readbackDesc.MipLevels = 1;
+        readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+        readbackDesc.SampleDesc.Count = 1;
+        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        D3D12MA::ALLOCATION_DESC readbackAllocationDesc{};
+        readbackAllocationDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+
+        ID3D12Resource* readbackResource = nullptr;
+        D3D12MA::Allocation* readbackAllocation = nullptr;
+        if (FAILED(allocator->CreateResource(
+                &readbackAllocationDesc,
+                &readbackDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                &readbackAllocation,
+                IID_PPV_ARGS(&readbackResource))))
+        {
+            return false;
+        }
+
+        const int clampedX = std::clamp(x, 0, width - 1);
+        const int clampedY = std::clamp(y, 0, height - 1);
+
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPtr) {
+            auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPtr);
+
+            D3D12_RESOURCE_BARRIER toCopy{};
+            toCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            toCopy.Transition.pResource = textureResource;
+            toCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            toCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            toCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            commandList->ResourceBarrier(1, &toCopy);
+
+            D3D12_TEXTURE_COPY_LOCATION source{};
+            source.pResource = textureResource;
+            source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            source.SubresourceIndex = 0;
+
+            D3D12_TEXTURE_COPY_LOCATION destination{};
+            destination.pResource = readbackResource;
+            destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            destination.PlacedFootprint.Offset = 0;
+            destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R32_UINT;
+            destination.PlacedFootprint.Footprint.Width = 1;
+            destination.PlacedFootprint.Footprint.Height = 1;
+            destination.PlacedFootprint.Footprint.Depth = 1;
+            destination.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(kReadbackSize);
+
+            D3D12_BOX sourceBox{};
+            sourceBox.left = static_cast<UINT>(clampedX);
+            sourceBox.top = static_cast<UINT>(clampedY);
+            sourceBox.front = 0;
+            sourceBox.right = static_cast<UINT>(clampedX + 1);
+            sourceBox.bottom = static_cast<UINT>(clampedY + 1);
+            sourceBox.back = 1;
+            commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, &sourceBox);
+
+            D3D12_RESOURCE_BARRIER fromCopy{};
+            fromCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            fromCopy.Transition.pResource = textureResource;
+            fromCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            fromCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            fromCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+            commandList->ResourceBarrier(1, &fromCopy);
+        });
+
+        D3D12_RANGE readRange{0, static_cast<SIZE_T>(kReadbackSize)};
+        void* mapped = nullptr;
+        if (FAILED(readbackResource->Map(0, &readRange, &mapped)))
+        {
+            readbackAllocation->Release();
+            readbackResource->Release();
+            return false;
+        }
+
+        const auto rawDepth = *static_cast<const std::uint32_t*>(mapped);
+        outDepth = static_cast<float>(rawDepth & 0x00FFFFFFu) / 16777215.0f;
+        readbackResource->Unmap(0, nullptr);
+        readbackAllocation->Release();
+        readbackResource->Release();
+        return true;
     }
 
     void TransitionResource(
@@ -246,7 +508,12 @@ void ScreenSpaceEffects::CreateNoiseTexture()
     std::array<glm::vec3, 16> noiseValues{};
     for (glm::vec3& noiseValue : noiseValues)
     {
-        noiseValue = glm::normalize(glm::vec3(random(generator), random(generator), 0.0f));
+        glm::vec3 sample(random(generator), random(generator), random(generator));
+        if (glm::dot(sample, sample) < 1e-6f)
+        {
+            sample = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+        noiseValue = glm::normalize(sample);
     }
 
     const int noiseWidth = 4;
@@ -578,6 +845,8 @@ void ScreenSpaceEffects::Apply(
     const int viewportHeight,
     const DirectionalShadowSettings& shadowSettings) const
 {
+    FinalizePendingSsaoGpuReadback();
+
     if (!m_enabled || !m_sceneFramebuffer->IsValid())
     {
         return;
@@ -586,6 +855,7 @@ void ScreenSpaceEffects::Apply(
     const Framebuffer* outputTarget = GfxContext::Get().GetBoundOutputFramebuffer();
 
     const bool runSsao = m_ssaoEnabled && !IsPbrMaterialDebugMode(m_debugMode);
+    const bool pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
 
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 inverseProjectionMatrix = glm::inverse(projectionMatrix);
@@ -600,6 +870,14 @@ void ScreenSpaceEffects::Apply(
     {
         const float ssaoClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
+        glm::vec4 packedKernelSamples[KernelSampleCount];
+        for (int sampleIndex = 0; sampleIndex < KernelSampleCount; ++sampleIndex)
+        {
+            packedKernelSamples[sampleIndex] =
+                glm::vec4(m_kernelSamples[static_cast<std::size_t>(sampleIndex)], 0.0f);
+        }
+
+        m_ssaoShader->Use(false);
         m_ssaoShader->SetInt("uDepthMap", 0);
         m_ssaoShader->SetInt("uNormalMap", 1);
         m_ssaoShader->SetInt("uNoiseMap", 2);
@@ -611,8 +889,11 @@ void ScreenSpaceEffects::Apply(
         m_ssaoShader->SetMat4("uView", camera.GetViewMatrix());
         m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
         m_ssaoShader->SetFloat("uBias", m_ssaoBias);
+        m_ssaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
+        m_ssaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
         m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
-        m_ssaoShader->SetVec3Array("uSamples", m_kernelSamples.data(), KernelSampleCount);
+        m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
+        m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
         m_ssaoShader->SetFloat("uNoiseScaleX", noiseScale.x);
         m_ssaoShader->SetFloat("uNoiseScaleY", noiseScale.y);
         m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
@@ -621,13 +902,15 @@ void ScreenSpaceEffects::Apply(
         DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
         m_blurShader->SetInt("uInput", 0);
+        m_blurShader->SetInt("uDepthMap", 1);
         m_blurShader->SetFloat("uTexelSizeX", texelSize.x);
         m_blurShader->SetFloat("uTexelSizeY", texelSize.y);
+        m_blurShader->SetFloat("uDepthThreshold", 0.02f);
         m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+        m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
     }
 
-    const bool pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
 
     std::uintptr_t shadowFactorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(3);
@@ -675,6 +958,10 @@ void ScreenSpaceEffects::Apply(
     }
 
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
+    const char* hdrColorSource = "scene_direct";
+    bool compositeRan = false;
+    const bool compositeUsesSsao = runSsao;
+    const char* ssaoDebugViewSource = "none";
 
     if (m_sceneFramebuffer->HasSplitLighting() && !pbrDebugActive)
     {
@@ -706,6 +993,8 @@ void ScreenSpaceEffects::Apply(
             compositeClear);
 
         hdrColorSrv = m_hdrCompositeTarget.srvCpuHandle;
+        hdrColorSource = "hdr_composite_split";
+        compositeRan = true;
     }
     else if (runSsao)
     {
@@ -733,6 +1022,8 @@ void ScreenSpaceEffects::Apply(
             compositeClear);
 
         hdrColorSrv = m_hdrCompositeTarget.srvCpuHandle;
+        hdrColorSource = "hdr_composite_ssao_only";
+        compositeRan = true;
     }
 
     std::uintptr_t bloomSrv = 0;
@@ -793,19 +1084,39 @@ void ScreenSpaceEffects::Apply(
         m_debugChannelShader->BindTextureSlot(0, hdrColorSrv);
         m_debugChannelShader->FlushUniforms();
         DrawFullscreenQuad();
+        CaptureSsaoDiagnosticsCpu(
+            runSsao,
+            compositeRan,
+            compositeUsesSsao,
+            pbrDebugActive,
+            useShadowFactorComposite,
+            hdrColorSource,
+            ssaoDebugViewSource,
+            hdrColorSrv,
+            shadowFactorSrv);
+        if (m_logSsaoApplySnapshot)
+        {
+            m_pendingSsaoGpuReadback = true;
+        }
         return;
     }
 
     if (IsPostProcessDebugMode(m_debugMode))
     {
         std::uintptr_t debugSrv = 0;
-        if (m_debugMode == RenderDebugMode::Ssao && runSsao)
+        if (m_debugMode == RenderDebugMode::Ssao)
         {
-            debugSrv = m_ssaoBlurTarget.srvCpuHandle;
+            debugSrv = (m_ssaoShaderDebugMode != 0)
+                ? m_ssaoTarget.srvCpuHandle
+                : m_ssaoBlurTarget.srvCpuHandle;
+            ssaoDebugViewSource = runSsao
+                ? ((m_ssaoShaderDebugMode != 0) ? "ssao_raw_debug" : "ssao_blur_live")
+                : "ssao_blur_stale_pass_off";
         }
         else if (m_debugMode == RenderDebugMode::CompositeOcclusion && runSsao)
         {
             debugSrv = m_hdrCompositeTarget.srvCpuHandle;
+            ssaoDebugViewSource = "composite_occlusion";
         }
 
         if (debugSrv != 0)
@@ -816,6 +1127,20 @@ void ScreenSpaceEffects::Apply(
             m_debugChannelShader->BindTextureSlot(0, debugSrv);
             m_debugChannelShader->FlushUniforms();
             DrawFullscreenQuad();
+            CaptureSsaoDiagnosticsCpu(
+                runSsao,
+                compositeRan,
+                compositeUsesSsao,
+                pbrDebugActive,
+                useShadowFactorComposite,
+                hdrColorSource,
+                ssaoDebugViewSource,
+                hdrColorSrv,
+                shadowFactorSrv);
+            if (m_logSsaoApplySnapshot)
+            {
+                m_pendingSsaoGpuReadback = true;
+            }
             return;
         }
     }
@@ -858,6 +1183,21 @@ void ScreenSpaceEffects::Apply(
             srvUsed,
             srvCapacity);
     }
+
+    CaptureSsaoDiagnosticsCpu(
+        runSsao,
+        compositeRan,
+        compositeUsesSsao,
+        pbrDebugActive,
+        useShadowFactorComposite,
+        hdrColorSource,
+        ssaoDebugViewSource,
+        hdrColorSrv,
+        shadowFactorSrv);
+    if (m_logSsaoApplySnapshot)
+    {
+        m_pendingSsaoGpuReadback = true;
+    }
 }
 
 bool ScreenSpaceEffects::IsEnabled() const
@@ -884,7 +1224,157 @@ bool ScreenSpaceEffects::IsSsaoEnabled() const
 
 void ScreenSpaceEffects::SetSsaoEnabled(bool enabled)
 {
+    if (m_ssaoEnabled == enabled)
+    {
+        return;
+    }
+
     m_ssaoEnabled = enabled;
+    RenderPathDiagnostics::LogSsaoToggled(enabled);
+    m_logSsaoApplySnapshot = true;
+}
+
+const SsaoDiagnosticsSnapshot& ScreenSpaceEffects::GetSsaoDiagnostics() const
+{
+    return m_ssaoDiagnostics;
+}
+
+void ScreenSpaceEffects::FinalizePendingSsaoGpuReadback() const
+{
+    if (!m_pendingSsaoGpuReadback)
+    {
+        return;
+    }
+
+    m_pendingSsaoGpuReadback = false;
+
+    if (m_width <= 0 || m_height <= 0)
+    {
+        if (m_logSsaoApplySnapshot)
+        {
+            m_logSsaoApplySnapshot = false;
+            RenderPathDiagnostics::LogSsaoApplySnapshot(m_ssaoDiagnostics);
+        }
+        return;
+    }
+
+    const int centerX = m_width / 2;
+    const int centerY = m_height / 2;
+    float rgba[4] = {};
+
+    if (ReadbackTextureCenterRgba16F(
+            m_ssaoTarget.resource,
+            m_width,
+            m_height,
+            centerX,
+            centerY,
+            rgba))
+    {
+        m_ssaoDiagnostics.centerSsaoRaw = rgba[0];
+        m_ssaoDiagnostics.gpuReadbackValid = true;
+    }
+
+    if (m_sceneFramebuffer != nullptr)
+    {
+        float hardwareDepth = -1.0f;
+        if (ReadbackDepthCenter(
+                m_sceneFramebuffer->GetDepthResource(),
+                m_width,
+                m_height,
+                centerX,
+                centerY,
+                hardwareDepth))
+        {
+            m_ssaoDiagnostics.centerHardwareDepth = hardwareDepth;
+            m_ssaoDiagnostics.centerDepth = hardwareDepth;
+            m_ssaoDiagnostics.gpuReadbackValid = true;
+        }
+    }
+
+    if (ReadbackTextureCenterRgba16F(
+            m_ssaoBlurTarget.resource,
+            m_width,
+            m_height,
+            centerX,
+            centerY,
+            rgba))
+    {
+        m_ssaoDiagnostics.centerSsaoBlur = rgba[0];
+        m_ssaoDiagnostics.gpuReadbackValid = true;
+    }
+
+    if (m_sceneFramebuffer != nullptr && m_sceneFramebuffer->HasGeometryNormals())
+    {
+        if (ReadbackTextureCenterRgba16F(
+                m_sceneFramebuffer->GetColorResource(2),
+                m_width,
+                m_height,
+                centerX,
+                centerY,
+                rgba))
+        {
+            m_ssaoDiagnostics.centerNormalR = rgba[0];
+            m_ssaoDiagnostics.centerNormalG = rgba[1];
+            m_ssaoDiagnostics.centerNormalB = rgba[2];
+            m_ssaoDiagnostics.gpuReadbackValid = true;
+        }
+    }
+
+    if (m_logSsaoApplySnapshot)
+    {
+        m_logSsaoApplySnapshot = false;
+        RenderPathDiagnostics::LogSsaoApplySnapshot(m_ssaoDiagnostics);
+    }
+}
+
+void ScreenSpaceEffects::CaptureSsaoDiagnosticsCpu(
+    const bool runSsao,
+    const bool compositeRan,
+    const bool compositeUsesSsao,
+    const bool pbrDebugActive,
+    const bool useShadowFactorComposite,
+    const char* hdrColorSource,
+    const char* ssaoDebugViewSource,
+    const std::uintptr_t hdrColorSrv,
+    const std::uintptr_t shadowFactorSrv) const
+{
+    ++m_ssaoDiagnosticsFrame;
+    m_ssaoDiagnostics.captureFrame = m_ssaoDiagnosticsFrame;
+    m_ssaoDiagnostics.enabled = m_ssaoEnabled;
+    m_ssaoDiagnostics.postProcessEnabled = m_enabled;
+    m_ssaoDiagnostics.passExecuted = runSsao;
+    m_ssaoDiagnostics.compositeUsesSsao = compositeUsesSsao;
+    m_ssaoDiagnostics.compositeRan = compositeRan;
+    m_ssaoDiagnostics.shadowComposite = useShadowFactorComposite;
+    m_ssaoDiagnostics.splitLighting = m_sceneFramebuffer->HasSplitLighting();
+    m_ssaoDiagnostics.geometryNormals = m_sceneFramebuffer->HasGeometryNormals();
+    m_ssaoDiagnostics.pbrDebugActive = pbrDebugActive;
+    m_ssaoDiagnostics.debugMode = m_debugMode;
+    m_ssaoDiagnostics.sceneWidth = m_width;
+    m_ssaoDiagnostics.sceneHeight = m_height;
+    m_ssaoDiagnostics.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+    m_ssaoDiagnostics.normalSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(2);
+    m_ssaoDiagnostics.noiseSrv = m_noiseTexture.srvCpuHandle;
+    m_ssaoDiagnostics.ssaoRawSrv = m_ssaoTarget.srvCpuHandle;
+    m_ssaoDiagnostics.ssaoBlurSrv = m_ssaoBlurTarget.srvCpuHandle;
+    m_ssaoDiagnostics.hdrColorSrv = hdrColorSrv;
+    m_ssaoDiagnostics.shadowFactorSrv = shadowFactorSrv;
+    m_ssaoDiagnostics.hasUniformSamples = m_ssaoShader->HasUniform("uSamples");
+    m_ssaoDiagnostics.hasUniformKernelSize = m_ssaoShader->HasUniform("uKernelSize");
+    m_ssaoDiagnostics.kernelCount = KernelSampleCount;
+    if (!m_kernelSamples.empty())
+    {
+        m_ssaoDiagnostics.kernelSample0X = m_kernelSamples[0].x;
+        m_ssaoDiagnostics.kernelSample0Y = m_kernelSamples[0].y;
+        m_ssaoDiagnostics.kernelSample0Z = m_kernelSamples[0].z;
+    }
+    m_ssaoDiagnostics.radius = m_ssaoRadius;
+    m_ssaoDiagnostics.bias = m_ssaoBias;
+    m_ssaoDiagnostics.aoStrength = m_aoStrength;
+    m_ssaoDiagnostics.ssaoPower = m_ssaoPower;
+    m_ssaoDiagnostics.hdrColorSource = hdrColorSource != nullptr ? hdrColorSource : "null";
+    m_ssaoDiagnostics.ssaoDebugViewSource =
+        ssaoDebugViewSource != nullptr ? ssaoDebugViewSource : "null";
 }
 
 float ScreenSpaceEffects::GetSsaoRadius() const
@@ -915,6 +1405,16 @@ float ScreenSpaceEffects::GetSsaoPower() const
 void ScreenSpaceEffects::SetSsaoPower(float power)
 {
     m_ssaoPower = std::max(power, 0.1f);
+}
+
+int ScreenSpaceEffects::GetSsaoShaderDebugMode() const
+{
+    return m_ssaoShaderDebugMode;
+}
+
+void ScreenSpaceEffects::SetSsaoShaderDebugMode(const int mode)
+{
+    m_ssaoShaderDebugMode = std::clamp(mode, 0, 6);
 }
 
 float ScreenSpaceEffects::GetAoStrength() const

@@ -1,11 +1,13 @@
 #pragma once
 
+#include "engine/rendering/SsaoDiagnostics.h"
+
 #include <cstdint>
 #include <string>
 
-// Opt-in render/import/HDR diagnostics. Enable with environment variable:
+// Opt-in render/import/HDR/SSAO diagnostics. Enable with environment variable:
 //   GAME_ENGINE_RENDER_DEBUG=1
-// Logs are event-driven (HDR toggle, model import, texture failures) — not per-frame.
+// Logs are event-driven (HDR toggle, SSAO toggle, model import, texture failures) — not per-frame.
 
 namespace RenderPathDiagnostics
 {
@@ -14,6 +16,11 @@ namespace RenderPathDiagnostics
     void Log(const char* category, const std::string& message);
 
     void LogHdrToggled(bool enabled);
+
+    void LogSsaoToggled(bool enabled);
+
+    // Called once on the first post-process Apply after an SSAO toggle.
+    void LogSsaoApplySnapshot(const SsaoDiagnosticsSnapshot& snapshot);
 
     // Called once on the first post-process Apply after an HDR toggle.
     void LogHdrApplySnapshot(

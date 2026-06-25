@@ -448,12 +448,13 @@ void LightingPanel::Draw(
         }
 
         float ssaoRadius = screenSpaceEffects.GetSsaoRadius();
-        if (ImGui::SliderFloat("SSAO radius", &ssaoRadius, 0.05f, 1.0f))
+        if (ImGui::SliderFloat("SSAO radius", &ssaoRadius, 0.1f, 1.5f))
         {
             screenSpaceEffects.SetSsaoRadius(ssaoRadius);
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+        ImGui::TextDisabled("Radius is view-space units (fixed, not scaled by depth).");
 
         float ssaoBias = screenSpaceEffects.GetSsaoBias();
         if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
@@ -471,6 +472,30 @@ void LightingPanel::Draw(
         }
         HandleRendererFieldEditEvents(editContext);
 
+        int ssaoShaderDebug = screenSpaceEffects.GetSsaoShaderDebugMode();
+        if (ImGui::Combo(
+                "SSAO shader debug",
+                &ssaoShaderDebug,
+                "AO output\0"
+                "Used samples\0"
+                "Occlusion hits\0"
+                "Depth delta\0"
+                "Force 0.5\0"
+                "View depth\0"
+                "Proj vs depth\0\0"))
+        {
+            screenSpaceEffects.SetSsaoShaderDebugMode(ssaoShaderDebug);
+        }
+        if (ssaoShaderDebug != 0)
+        {
+            ImGui::TextDisabled(
+                "Shader debug shows raw SSAO target (unblurred). Set debug view to SSAO buffer.");
+        }
+        ImGui::TextDisabled(
+            "Intensity = pow() on AO in composite (indirect only). Blend = how much AO affects indirect.");
+        ImGui::TextDisabled(
+            "Radius/bias affect the SSAO pass; try Composite occlusion debug view for final factor.");
+
         float aoStrength = screenSpaceEffects.GetAoStrength();
         if (ImGui::SliderFloat("SSAO blend strength", &aoStrength, 0.0f, 1.0f))
         {
@@ -478,6 +503,82 @@ void LightingPanel::Draw(
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+
+        const SsaoDiagnosticsSnapshot& ssaoDiag = screenSpaceEffects.GetSsaoDiagnostics();
+        if (ImGui::TreeNode("SSAO diagnostics (live)"))
+        {
+            ImGui::Text("Frame %llu", static_cast<unsigned long long>(ssaoDiag.captureFrame));
+            ImGui::Text(
+                "enabled=%s  pass=%s  composite=%s  compositeSsao=%s  shadowComposite=%s",
+                ssaoDiag.enabled ? "yes" : "no",
+                ssaoDiag.passExecuted ? "yes" : "no",
+                ssaoDiag.compositeRan ? "yes" : "no",
+                ssaoDiag.compositeUsesSsao ? "yes" : "no",
+                ssaoDiag.shadowComposite ? "yes" : "no");
+            ImGui::Text(
+                "hdrSrc=%s  debugView=%s  split=%s  geomNormals=%s",
+                ssaoDiag.hdrColorSource,
+                ssaoDiag.ssaoDebugViewSource,
+                ssaoDiag.splitLighting ? "yes" : "no",
+                ssaoDiag.geometryNormals ? "yes" : "no");
+            ImGui::Text(
+                "bindings depth=0x%zx normal=0x%zx noise=0x%zx ssaoBlur=0x%zx shadow=0x%zx",
+                ssaoDiag.depthSrv,
+                ssaoDiag.normalSrv,
+                ssaoDiag.noiseSrv,
+                ssaoDiag.ssaoBlurSrv,
+                ssaoDiag.shadowFactorSrv);
+            ImGui::Text(
+                "uniforms uSamples=%s uKernelSize=%s  kernelCount=%d  kernel0=(%.3f, %.3f, %.3f)",
+                ssaoDiag.hasUniformSamples ? "ok" : "MISSING",
+                ssaoDiag.hasUniformKernelSize ? "ok" : "MISSING",
+                ssaoDiag.kernelCount,
+                ssaoDiag.kernelSample0X,
+                ssaoDiag.kernelSample0Y,
+                ssaoDiag.kernelSample0Z);
+            if (ssaoDiag.gpuReadbackValid)
+            {
+                ImGui::Text(
+                    "center GPU: hwDepth=%.4f ssaoRaw=%.4f ssaoBlur=%.4f normal=(%.3f, %.3f, %.3f)",
+                    ssaoDiag.centerHardwareDepth,
+                    ssaoDiag.centerSsaoRaw,
+                    ssaoDiag.centerSsaoBlur,
+                    ssaoDiag.centerNormalR,
+                    ssaoDiag.centerNormalG,
+                    ssaoDiag.centerNormalB);
+                if (ssaoDiag.centerSsaoBlur >= 0.99f)
+                {
+                    ImGui::TextColored(
+                        ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                        "ssaoBlur ~1.0 at center => open surface or sky (expected)");
+                }
+                else if (ssaoDiag.centerSsaoBlur < 0.99f)
+                {
+                    ImGui::TextColored(
+                        ImVec4(0.45f, 1.0f, 0.55f, 1.0f),
+                        "ssaoBlur < 1.0 => occlusion detected at center readback");
+                }
+            }
+            else
+            {
+                ImGui::TextDisabled(
+                    "GPU center readback appears after SSAO toggle (one frame delay).");
+            }
+            if (ssaoDiag.normalSrv == 0)
+            {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    "normalSrv is null — geometry-normal G-buffer missing");
+            }
+            if (ssaoDiag.shadowFactorSrv != 0 && ssaoDiag.normalSrv == ssaoDiag.shadowFactorSrv)
+            {
+                ImGui::TextColored(
+                    ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                    "normalSrv == shadowFactorSrv — bindings swapped?");
+            }
+            ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");
+            ImGui::TreePop();
+        }
     }
 
     if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
@@ -598,6 +699,12 @@ void LightingPanel::Draw(
                 "Raw center-texel compare: receiver clip Z vs stored map depth, no PCF, no receiver bias, no min-separation floor. "
                 "White = lit, black = blocked. Fix this view before tuning bias or blur.");
         }
+        else if (debugMode == static_cast<int>(RenderDebugMode::Ssao))
+        {
+            ImGui::TextWrapped(
+                "Blurred SSAO factor (1 = no occlusion). Use SSAO shader debug combo for raw/instrumented views. "
+                "When SSAO is off the pass is skipped and the buffer is stale.");
+        }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {
             ImGui::TextWrapped(
@@ -610,7 +717,7 @@ void LightingPanel::Draw(
 
         static std::string diagnosticStatus;
         ImGui::TextDisabled("HDR+SSAO on by default; enable Bloom in panel for full post stack.");
-        ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/import console logs.");
+        ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/SSAO/import stderr logs.");
         if (ImGui::Button("Write diagnostics/render_diagnostics.txt"))
         {
             const ImVec2 viewportSize = ImGui::GetContentRegionAvail();

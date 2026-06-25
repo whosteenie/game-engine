@@ -1,5 +1,8 @@
 #include "engine/platform/RenderPathDiagnostics.h"
 
+#include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/SsaoDiagnostics.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -53,6 +56,73 @@ namespace RenderPathDiagnostics
         }
 
         WriteLine("hdr", std::string("post-processing ") + (enabled ? "enabled" : "disabled"));
+    }
+
+    void LogSsaoToggled(const bool enabled)
+    {
+        if (!QueryEnabled())
+        {
+            return;
+        }
+
+        WriteLine("ssao", std::string("SSAO ") + (enabled ? "enabled" : "disabled"));
+    }
+
+    void LogSsaoApplySnapshot(const SsaoDiagnosticsSnapshot& snapshot)
+    {
+        if (!QueryEnabled())
+        {
+            return;
+        }
+
+        char buffer[1536];
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "apply frame=%llu enabled=%d pass=%d composite=%d compositeSsao=%d shadowComposite=%d split=%d geomNormals=%d "
+            "pbrDebug=%d debugMode=%s hdrSrc=%s debugSrc=%s scene=%dx%d "
+            "srv depth=0x%zx normal=0x%zx noise=0x%zx ssaoRaw=0x%zx ssaoBlur=0x%zx hdr=0x%zx shadow=0x%zx "
+            "uniforms samples=%d kernelSize=%d kernelCount=%d kernel0=(%.4f,%.4f,%.4f) radius=%.3f bias=%.4f ao=%.2f power=%.2f "
+            "gpuReadback=%d center hwDepth=%.4f normal=(%.3f,%.3f,%.3f) ssaoRaw=%.4f ssaoBlur=%.4f",
+            static_cast<unsigned long long>(snapshot.captureFrame),
+            snapshot.enabled ? 1 : 0,
+            snapshot.passExecuted ? 1 : 0,
+            snapshot.compositeRan ? 1 : 0,
+            snapshot.compositeUsesSsao ? 1 : 0,
+            snapshot.shadowComposite ? 1 : 0,
+            snapshot.splitLighting ? 1 : 0,
+            snapshot.geometryNormals ? 1 : 0,
+            snapshot.pbrDebugActive ? 1 : 0,
+            RenderDebugModeLabel(snapshot.debugMode),
+            snapshot.hdrColorSource != nullptr ? snapshot.hdrColorSource : "null",
+            snapshot.ssaoDebugViewSource != nullptr ? snapshot.ssaoDebugViewSource : "null",
+            snapshot.sceneWidth,
+            snapshot.sceneHeight,
+            snapshot.depthSrv,
+            snapshot.normalSrv,
+            snapshot.noiseSrv,
+            snapshot.ssaoRawSrv,
+            snapshot.ssaoBlurSrv,
+            snapshot.hdrColorSrv,
+            snapshot.shadowFactorSrv,
+            snapshot.hasUniformSamples ? 1 : 0,
+            snapshot.hasUniformKernelSize ? 1 : 0,
+            snapshot.kernelCount,
+            snapshot.kernelSample0X,
+            snapshot.kernelSample0Y,
+            snapshot.kernelSample0Z,
+            snapshot.radius,
+            snapshot.bias,
+            snapshot.aoStrength,
+            snapshot.ssaoPower,
+            snapshot.gpuReadbackValid ? 1 : 0,
+            snapshot.centerHardwareDepth,
+            snapshot.centerNormalR,
+            snapshot.centerNormalG,
+            snapshot.centerNormalB,
+            snapshot.centerSsaoRaw,
+            snapshot.centerSsaoBlur);
+        WriteLine("ssao", buffer);
     }
 
     void LogHdrApplySnapshot(
