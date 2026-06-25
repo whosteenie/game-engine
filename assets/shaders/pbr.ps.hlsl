@@ -692,7 +692,7 @@ float3 CalcNormalFromMap(float3 normal, float4 tangent, float2 texCoord)
     float3 bitangent = normalize(cross(normal, tangentVector) * tangent.w);
     float3x3 tbn = float3x3(tangentVector, bitangent, normal);
 
-    return normalize(mul(tbn, tangentNormal));
+    return normalize(mul(tangentNormal, tbn));
 }
 
 float3 ToViewNormal(float3 worldNormal)

@@ -108,7 +108,7 @@ float main(PSInput input) : SV_Target
     [loop]
     for (int i = 0; i < uKernelSize; ++i)
     {
-        float3 sampleOffset = mul(tbn, uSamples[i].xyz);
+        float3 sampleOffset = mul(uSamples[i].xyz, tbn);
         float3 samplePos = fragPos + sampleOffset * uRadius;
 
         float4 offset = mul(uProjection, float4(samplePos, 1.0));

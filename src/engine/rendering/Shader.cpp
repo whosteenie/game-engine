@@ -897,7 +897,7 @@ void Shader::SetVec3(const char* name, const glm::vec3& value) const
 
 void Shader::SetVec3Array(const char* name, const glm::vec3* values, const int count) const
 {
-    WriteUniform(name, values, static_cast<std::uint32_t>(count) * sizeof(glm::vec3));
+    WriteScalarArray(name, values, sizeof(glm::vec3), count);
 }
 
 void Shader::SetVec4Array(const char* name, const glm::vec4* values, const int count) const

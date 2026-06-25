@@ -57,18 +57,20 @@ float4 main(PSInput input) : SV_Target
 
     float3 mapped;
 
-    if (uTonemapMode == 0)
-    {
-        mapped = LinearToSrgb(hdr);
-    }
-    else if (uTonemapMode == 1)
+    if (uTonemapMode == 1)
     {
         mapped = Reinhard(hdr);
     }
-    else
+    else if (uTonemapMode == 2)
     {
         mapped = ACESFilm(hdr);
     }
+    else
+    {
+        mapped = hdr;
+    }
+
+    mapped = LinearToSrgb(mapped);
 
     uint width;
     uint height;

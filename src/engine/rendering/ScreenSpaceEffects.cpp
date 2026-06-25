@@ -601,8 +601,8 @@ void ScreenSpaceEffects::Apply(
         const float ssaoClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
         m_ssaoShader->SetInt("uDepthMap", 0);
-        m_ssaoShader->SetInt("uNormalMap", 2);
-        m_ssaoShader->SetInt("uNoiseMap", 1);
+        m_ssaoShader->SetInt("uNormalMap", 1);
+        m_ssaoShader->SetInt("uNoiseMap", 2);
         m_ssaoShader->SetInt(
             "uUseGeometryNormals",
             m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
@@ -616,8 +616,8 @@ void ScreenSpaceEffects::Apply(
         m_ssaoShader->SetFloat("uNoiseScaleX", noiseScale.x);
         m_ssaoShader->SetFloat("uNoiseScaleY", noiseScale.y);
         m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssaoShader->BindTextureSlot(1, m_noiseTexture.srvCpuHandle);
-        m_ssaoShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
         DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
         m_blurShader->SetInt("uInput", 0);
