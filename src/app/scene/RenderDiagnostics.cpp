@@ -72,7 +72,7 @@ namespace
         const glm::mat4& lightSpaceMatrix,
         const glm::vec3& lightDirection)
     {
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         glm::vec3 boundsMin;
         glm::vec3 boundsMax;
         scene.GetWorldBounds(objectIndex, boundsMin, boundsMax);

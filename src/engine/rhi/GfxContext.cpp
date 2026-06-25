@@ -956,6 +956,16 @@ const Framebuffer* GfxContext::GetBoundOutputFramebuffer() const
     return m_boundOutputFramebuffer;
 }
 
+void GfxContext::SetMaterialTextureFilterMode(const TextureFilterMode mode)
+{
+    m_materialTextureFilterMode = mode;
+}
+
+TextureFilterMode GfxContext::GetMaterialTextureFilterMode() const
+{
+    return m_materialTextureFilterMode;
+}
+
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const
 {
     outWidth = m_width;

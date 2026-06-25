@@ -605,7 +605,7 @@ namespace
 
     void DrawLightSection(Scene& scene, int objectIndex, LightEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         LightComponent& light = object.GetLight();
 
         int lightTypeIndex = static_cast<int>(light.type);
@@ -628,7 +628,7 @@ namespace
                         CaptureObjectLights,
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             LightComponent& targetLight = targetObject.GetLight();
                             const bool preserveShadow = targetLight.castsShadow;
                             targetLight = MakeDefaultLightComponent(newType);
@@ -676,7 +676,7 @@ namespace
                         },
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             LightComponent& targetLight = targetObject.GetLight();
                             if (castsShadow)
                             {
@@ -826,7 +826,7 @@ namespace
 
     void DrawCameraSection(Scene& scene, int objectIndex, CameraEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         CameraComponent& camera = object.GetCamera();
 
         if (ImGui::SliderFloat("FOV", &camera.fovDegrees, 15.0f, 120.0f))
@@ -876,7 +876,7 @@ namespace
                         },
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             CameraComponent& targetCamera = targetObject.GetCamera();
                             targetCamera.isMain = isMain;
                             if (targetCamera.isMain)
@@ -903,7 +903,7 @@ namespace
 
     void DrawRigidBodySection(Scene& scene, int objectIndex, RigidBodyEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         RigidBodyComponent& rigidBody = object.GetRigidBody();
 
         if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.001f, 10000.0f))
@@ -928,7 +928,7 @@ namespace
 
     void DrawColliderSection(Scene& scene, int objectIndex, ColliderEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         ColliderComponent& collider = object.GetCollider();
 
         int shapeIndex = static_cast<int>(collider.shape);
@@ -945,7 +945,7 @@ namespace
                         editContext.objectIndices,
                         "Collider",
                         [&](Scene& target) {
-                            target.GetObject(static_cast<std::size_t>(objectIndex))
+                            target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                 .GetCollider()
                                 .shape = newShape;
                             target.MarkDirty();
@@ -1003,7 +1003,7 @@ namespace
         const int fromIndex,
         const int beforeIndex)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const int slotCount = static_cast<int>(object.GetEffectiveInspectorComponentOrder().size());
         if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
         {
@@ -1075,7 +1075,7 @@ namespace
         const auto* dragPayload = static_cast<const InspectorComponentDragPayload*>(activePayload->Data);
         const int fromIndex = dragPayload->slotIndex;
         const int slotCount = static_cast<int>(
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetEffectiveInspectorComponentOrder().size());
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetEffectiveInspectorComponentOrder().size());
         if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
         {
             return false;
@@ -1283,7 +1283,7 @@ namespace
         const int objectIndex,
         TransformEditContext& editContext)
     {
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         if (!selectedObject.IsRenderable())
         {
             ImGui::TextUnformatted("Empty object (transform container only).");
@@ -1301,7 +1301,7 @@ namespace
                     {objectIndex},
                     "Cast shadow",
                     [&](Scene& target) {
-                        target.GetObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadow);
+                        target.GetSceneObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadow);
                         target.MarkDirty();
                     });
             }
@@ -1323,7 +1323,7 @@ namespace
                     {objectIndex},
                     "Receive shadow",
                     [&](Scene& target) {
-                        target.GetObject(static_cast<std::size_t>(objectIndex))
+                        target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetReceiveShadow(receiveShadow);
                         target.MarkDirty();
                     });
@@ -1347,7 +1347,7 @@ namespace
         RigidBodyEditContext& rigidBodyEditContext,
         ColliderEditContext& colliderEditContext)
     {
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
         const std::vector<InspectorComponentType> componentOrder =
             selectedObject.GetEffectiveInspectorComponentOrder();
         const int slotCount = static_cast<int>(componentOrder.size());
@@ -1465,7 +1465,7 @@ namespace
     void DrawAddComponentFooter(Scene& scene, int objectIndex, UndoStack* undoStack)
     {
         std::vector<SceneSystemComponentType> addableComponents;
-        GetAddableSceneSystemComponents(scene.GetObject(static_cast<std::size_t>(objectIndex)), addableComponents);
+        GetAddableSceneSystemComponents(scene.GetSceneObject(static_cast<std::size_t>(objectIndex)), addableComponents);
         if (addableComponents.empty())
         {
             return;
@@ -1570,7 +1570,7 @@ namespace
                         [&](Scene& target) {
                             for (int objectIndex : selectedIndices)
                             {
-                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                     .SetCastShadow(castShadowField.value);
                             }
                             target.MarkDirty();
@@ -1580,7 +1580,7 @@ namespace
                 {
                     for (int objectIndex : selectedIndices)
                     {
-                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                        scene.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetCastShadow(castShadowField.value);
                     }
 
@@ -1601,7 +1601,7 @@ namespace
                         [&](Scene& target) {
                             for (int objectIndex : selectedIndices)
                             {
-                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                     .SetReceiveShadow(receiveShadowField.value);
                             }
                             target.MarkDirty();
@@ -1611,7 +1611,7 @@ namespace
                 {
                     for (int objectIndex : selectedIndices)
                     {
-                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                        scene.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetReceiveShadow(receiveShadowField.value);
                     }
 
@@ -1635,7 +1635,7 @@ namespace
         std::string& nameEditOldName)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
 
         ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());
 
@@ -1729,7 +1729,7 @@ namespace
         const int primaryIndex = scene.GetPrimarySelection();
         if (primaryIndex >= 0 && static_cast<std::size_t>(primaryIndex) < scene.GetObjects().size())
         {
-            ImGui::TextDisabled("Primary: %s", scene.GetObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
+            ImGui::TextDisabled("Primary: %s", scene.GetSceneObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
         }
 
         if (ShouldShowInspectorSection(InspectorSectionKind::Transform, scene, selectedIndices))

@@ -54,7 +54,12 @@ namespace
         destinationEffects.SetBloomSoftKnee(sourceEffects.GetBloomSoftKnee());
         destinationEffects.SetBloomIntensity(sourceEffects.GetBloomIntensity());
         destinationEffects.SetBloomBlurRadius(sourceEffects.GetBloomBlurRadius());
+        destinationEffects.SetAntiAliasingMode(sourceEffects.GetAntiAliasingMode());
+        destinationEffects.SetFxaaSubpixQuality(sourceEffects.GetFxaaSubpixQuality());
+        destinationEffects.SetFxaaEdgeThreshold(sourceEffects.GetFxaaEdgeThreshold());
+        destinationEffects.SetSsaoBlurDepthThreshold(sourceEffects.GetSsaoBlurDepthThreshold());
 
+        destinationRenderer.SetTextureFilterMode(sourceRenderer.GetTextureFilterMode());
         destinationRenderer.GetDirectionalShadowSettings() =
             sourceRenderer.GetDirectionalShadowSettings();
     }
@@ -478,12 +483,12 @@ std::vector<SceneObject>& Scene::GetObjects()
     return m_objectStore->Objects();
 }
 
-SceneObject& Scene::GetObject(std::size_t index)
+SceneObject& Scene::GetSceneObject(std::size_t index)
 {
     return m_objectStore->At(index);
 }
 
-const SceneObject& Scene::GetObject(std::size_t index) const
+const SceneObject& Scene::GetSceneObject(std::size_t index) const
 {
     return m_objectStore->At(index);
 }

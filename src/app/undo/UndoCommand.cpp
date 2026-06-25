@@ -158,7 +158,7 @@ namespace
                 continue;
             }
 
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform() = transform;
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform() = transform;
         }
 
         if (!transforms.empty())
@@ -184,7 +184,7 @@ void SetObjectNameCommand::ApplyName(UndoContext& context, const std::string& na
         return;
     }
 
-    context.scene.GetObject(static_cast<std::size_t>(objectIndex)).SetName(name);
+    context.scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).SetName(name);
     context.scene.MarkDirty();
 }
 
@@ -849,7 +849,7 @@ void ApplyObjectMaterial(Scene& scene, SceneObjectId objectId, const std::unique
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasMaterial())
     {
         return;
@@ -867,7 +867,7 @@ void ApplyObjectLight(Scene& scene, SceneObjectId objectId, const LightComponent
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasLight())
     {
         return;
@@ -885,7 +885,7 @@ void ApplyObjectCamera(Scene& scene, SceneObjectId objectId, const CameraCompone
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasCamera())
     {
         return;
@@ -908,7 +908,7 @@ void ApplyObjectRigidBody(Scene& scene, SceneObjectId objectId, const RigidBodyC
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasRigidBody())
     {
         return;
@@ -926,7 +926,7 @@ void ApplyObjectCollider(Scene& scene, SceneObjectId objectId, const ColliderCom
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasCollider())
     {
         return;
@@ -944,7 +944,7 @@ void ApplyObjectShadowFlags(Scene& scene, SceneObjectId objectId, const ObjectSh
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     object.SetCastShadow(flags.castShadow);
     object.SetReceiveShadow(flags.receiveShadow);
     scene.MarkDirty();
@@ -1231,7 +1231,7 @@ void ApplyObjectSystemComponentState(
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
 
     if (state.light.has_value())
     {
@@ -1327,10 +1327,10 @@ void PushSystemComponentMutation(
         return;
     }
 
-    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     const ObjectSystemComponentState before = CaptureObjectSystemComponentState(object);
     mutate(scene);
-    const SceneObject& updatedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const SceneObject& updatedObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     const ObjectSystemComponentState after = CaptureObjectSystemComponentState(updatedObject);
     if (AreObjectSystemComponentStatesEqual(before, after))
     {
@@ -1383,7 +1383,7 @@ private:
             return;
         }
 
-        SceneObject& object = context.scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = context.scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         object.SetInspectorComponentOrder(useAfter ? m_after : m_before);
         context.scene.MarkDirty();
     }
@@ -1406,7 +1406,7 @@ void PushInspectorComponentOrderMutation(
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     std::vector<InspectorComponentType> before = object.GetEffectiveInspectorComponentOrder();
     std::vector<InspectorComponentType> after = before;
     mutateOrder(after);

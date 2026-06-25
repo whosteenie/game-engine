@@ -61,7 +61,7 @@ std::optional<SceneCamera> SceneCamera::TryFromScene(const Scene& scene, float a
         return std::nullopt;
     }
 
-    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     const CameraComponent& component = object.GetCamera();
     const glm::mat4 worldMatrix = scene.GetWorldMatrix(objectIndex);
 

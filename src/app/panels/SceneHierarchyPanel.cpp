@@ -30,7 +30,7 @@ namespace
             return kInvalidSceneObjectId;
         }
 
-        return scene.GetObject(static_cast<std::size_t>(objectIndex)).GetId();
+        return scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetId();
     }
 
     bool IsNodeExpanded(
@@ -474,7 +474,7 @@ namespace
                 renameBuffer,
                 renameBufferSize,
                 "%s",
-                scene.GetObject(static_cast<std::size_t>(objectIndex)).GetName().c_str());
+                scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetName().c_str());
             focusRenameInput = true;
         }
 
@@ -517,7 +517,7 @@ namespace
             if (ImGui::MenuItem("Delete"))
         {
             const std::string objectName =
-                scene.GetObject(static_cast<std::size_t>(objectIndex)).GetName();
+                scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetName();
             PushDeleteObjects(
                 undoStack,
                 scene,
@@ -851,7 +851,7 @@ namespace
     {
         DrawHierarchyInsertGap(panel, scene, objectIndex, HierarchyInsertMode::Before);
 
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
         const bool isRenaming = objectIndex == pendingRenameIndex;
 
@@ -903,7 +903,7 @@ namespace
             {
                 if (renameBuffer[0] != '\0')
                 {
-                    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+                    const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
                     PushSetObjectName(
                         undoStack,
                         scene,

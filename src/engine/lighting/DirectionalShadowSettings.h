@@ -90,6 +90,18 @@ public:
     float GetShadowBlurRadius() const { return m_shadowBlurRadius; }
     void SetShadowBlurRadius(float radius) { m_shadowBlurRadius = std::clamp(radius, 0.0f, 8.0f); }
 
+    float GetShadowBlurDepthThreshold() const { return m_shadowBlurDepthThreshold; }
+    void SetShadowBlurDepthThreshold(float threshold)
+    {
+        m_shadowBlurDepthThreshold = std::clamp(threshold, 0.01f, 1.0f);
+    }
+
+    float GetShadowBlurShadowThreshold() const { return m_shadowBlurShadowThreshold; }
+    void SetShadowBlurShadowThreshold(float threshold)
+    {
+        m_shadowBlurShadowThreshold = std::clamp(threshold, 0.01f, 1.0f);
+    }
+
 private:
     DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCF;
     int m_shadowMapResolution = 4096;
@@ -113,4 +125,6 @@ private:
     float m_casterDepthBiasScale = 0.0f;
     bool m_shadowBlurEnabled = false;
     float m_shadowBlurRadius = 2.5f;
+    float m_shadowBlurDepthThreshold = 0.14f;
+    float m_shadowBlurShadowThreshold = 0.28f;
 };

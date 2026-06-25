@@ -143,7 +143,7 @@ namespace
     void ApplyWorldTransformToObject(Scene& scene, int objectIndex, const glm::vec3& worldPosition, const glm::quat& worldRotation)
     {
         const glm::vec3 preservedScale =
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
         Transform worldTransform;
         worldTransform.position = worldPosition;
         worldTransform.rotation = worldRotation;
@@ -415,7 +415,7 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
         const glm::vec3 colliderWorldCenter = JoltConversion::FromVec3(
             Vec3(position.GetX(), position.GetY(), position.GetZ()));
 
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const ColliderComponent& collider = object.GetCollider();
 
         Transform worldTransform;

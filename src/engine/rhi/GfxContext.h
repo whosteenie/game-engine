@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/rendering/TextureSamplerSettings.h"
+
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -99,6 +101,9 @@ public:
     void GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& outCapacity) const;
     bool IsDeviceRemoved(std::string* outReason = nullptr) const;
 
+    void SetMaterialTextureFilterMode(TextureFilterMode mode);
+    TextureFilterMode GetMaterialTextureFilterMode() const;
+
 private:
     GfxContext() = default;
 
@@ -130,4 +135,5 @@ private:
     bool m_frameCommandsSubmitted = false;
     int m_pendingResizeWidth = 0;
     int m_pendingResizeHeight = 0;
+    TextureFilterMode m_materialTextureFilterMode = TextureFilterMode::Trilinear;
 };

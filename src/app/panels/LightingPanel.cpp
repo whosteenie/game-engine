@@ -12,6 +12,7 @@
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/TextureSamplerSettings.h"
 
 #include <imgui.h>
 
@@ -21,6 +22,22 @@
 
 namespace
 {
+    const char* AntiAliasingModeLabel(AntiAliasingMode mode)
+    {
+        switch (mode)
+        {
+        case AntiAliasingMode::FXAA:
+            return "FXAA";
+        case AntiAliasingMode::TAA:
+            return "TAA (coming soon)";
+        case AntiAliasingMode::MSAA:
+            return "MSAA (coming soon)";
+        case AntiAliasingMode::None:
+        default:
+            return "None";
+        }
+    }
+
     void ApplyRendererChange(
         RendererEditContext& editContext,
         Scene& scene,
@@ -155,6 +172,14 @@ void LightingPanel::Draw(
             HandleRendererFieldEditEvents(editContext);
             ImGui::TextDisabled("Rotated PCF: 7x7 at radius 3, 9x9 at radius 4.");
 
+            int pcfSampleCount = shadowSettings.GetPcfSampleCount();
+            if (ImGui::SliderInt("PCF sample count", &pcfSampleCount, 8, 32))
+            {
+                shadowSettings.SetPcfSampleCount(pcfSampleCount);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
             bool useRotatedPcf = shadowSettings.GetUsePoissonPcf();
             if (ImGui::Checkbox("Rotated PCF", &useRotatedPcf))
             {
@@ -163,6 +188,14 @@ void LightingPanel::Draw(
             }
             HandleRendererFieldEditEvents(editContext);
             ImGui::TextDisabled("Per-pixel rotated grid; smoother than axis-aligned, no stochastic grain.");
+
+            float sunAngularDiameter = shadowSettings.GetSunAngularDiameterDegrees();
+            if (ImGui::SliderFloat("Sun angular diameter (deg)", &sunAngularDiameter, 0.0f, 5.0f))
+            {
+                shadowSettings.SetSunAngularDiameterDegrees(sunAngularDiameter);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
 
             float minPenumbraTexels = shadowSettings.GetMinPenumbraTexels();
             if (ImGui::SliderFloat("Min penumbra (texels)", &minPenumbraTexels, 0.0f, 16.0f))
@@ -187,6 +220,30 @@ void LightingPanel::Draw(
                 if (ImGui::SliderFloat("Shadow blur radius (px)", &shadowBlurRadius, 0.0f, 8.0f))
                 {
                     shadowSettings.SetShadowBlurRadius(shadowBlurRadius);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+
+                float shadowBlurDepthThreshold = shadowSettings.GetShadowBlurDepthThreshold();
+                if (ImGui::SliderFloat(
+                        "Shadow blur depth threshold",
+                        &shadowBlurDepthThreshold,
+                        0.01f,
+                        1.0f))
+                {
+                    shadowSettings.SetShadowBlurDepthThreshold(shadowBlurDepthThreshold);
+                    scene.MarkDirty();
+                }
+                HandleRendererFieldEditEvents(editContext);
+
+                float shadowBlurShadowThreshold = shadowSettings.GetShadowBlurShadowThreshold();
+                if (ImGui::SliderFloat(
+                        "Shadow blur visibility threshold",
+                        &shadowBlurShadowThreshold,
+                        0.01f,
+                        1.0f))
+                {
+                    shadowSettings.SetShadowBlurShadowThreshold(shadowBlurShadowThreshold);
                     scene.MarkDirty();
                 }
                 HandleRendererFieldEditEvents(editContext);
@@ -234,6 +291,15 @@ void LightingPanel::Draw(
         {
             ImGui::TextDisabled(
                 "Single shadow map (CSM off). Ortho covers scene casters plus the visible view frustum.");
+
+            bool tightNearPlaneFit = shadowSettings.GetTightNearPlaneXyFit();
+            if (ImGui::Checkbox("Tight near-plane XY fit", &tightNearPlaneFit))
+            {
+                shadowSettings.SetTightNearPlaneXyFit(tightNearPlaneFit);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Fit ortho XY to the view frustum; caster bounds still expand Z depth.");
 
             float xyMargin = shadowSettings.GetXyMarginFraction();
             if (ImGui::SliderFloat("Ortho XY margin", &xyMargin, 0.005f, 0.2f, "%.3f"))
@@ -472,6 +538,15 @@ void LightingPanel::Draw(
         }
         HandleRendererFieldEditEvents(editContext);
 
+        float ssaoBlurDepthThreshold = screenSpaceEffects.GetSsaoBlurDepthThreshold();
+        if (ImGui::SliderFloat("SSAO blur depth threshold", &ssaoBlurDepthThreshold, 0.001f, 0.25f))
+        {
+            screenSpaceEffects.SetSsaoBlurDepthThreshold(ssaoBlurDepthThreshold);
+            scene.MarkDirty();
+        }
+        HandleRendererFieldEditEvents(editContext);
+        ImGui::TextDisabled("Edge-aware blur: lower = sharper AO edges across depth discontinuities.");
+
         int ssaoShaderDebug = screenSpaceEffects.GetSsaoShaderDebugMode();
         if (ImGui::Combo(
                 "SSAO shader debug",
@@ -578,6 +653,115 @@ void LightingPanel::Draw(
             }
             ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");
             ImGui::TreePop();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        if (!screenSpaceEffects.IsEnabled())
+        {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
+                "Enable HDR post-processing (Screen Space section) for FXAA.");
+        }
+
+        const RenderDebugMode debugMode = screenSpaceEffects.GetDebugMode();
+        if (debugMode != RenderDebugMode::None)
+        {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
+                "FXAA only affects the final image. Set Diagnostics > Debug view to None.");
+            ImGui::TextDisabled("Active debug view: %s", RenderDebugModeLabel(debugMode));
+        }
+
+        const AntiAliasingMode currentAaMode = screenSpaceEffects.GetAntiAliasingMode();
+        if (ImGui::BeginCombo("Mode", AntiAliasingModeLabel(currentAaMode)))
+        {
+            const AntiAliasingMode selectableModes[] = {
+                AntiAliasingMode::None,
+                AntiAliasingMode::FXAA,
+            };
+            for (const AntiAliasingMode mode : selectableModes)
+            {
+                const bool selected = currentAaMode == mode;
+                if (ImGui::Selectable(AntiAliasingModeLabel(mode), selected) && !selected)
+                {
+                    ApplyRendererChange(
+                        editContext,
+                        scene,
+                        "Anti-aliasing",
+                        [mode](Scene& target) {
+                            target.GetRenderer().GetScreenSpaceEffects().SetAntiAliasingMode(mode);
+                            target.MarkDirty();
+                        });
+                    ImGui::CloseCurrentPopup();
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+
+            ImGui::BeginDisabled();
+            ImGui::Selectable(AntiAliasingModeLabel(AntiAliasingMode::TAA), false);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Temporal AA is not implemented yet.");
+            }
+            ImGui::Selectable(AntiAliasingModeLabel(AntiAliasingMode::MSAA), false);
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip(
+                    "MSAA requires swapchain/geometry sample-count changes and an engine restart.");
+            }
+            ImGui::EndDisabled();
+
+            ImGui::EndCombo();
+        }
+
+        if (currentAaMode == AntiAliasingMode::FXAA)
+        {
+            ImGui::TextDisabled("Tonemap -> FXAA -> viewport");
+            float fxaaSubpix = screenSpaceEffects.GetFxaaSubpixQuality();
+            if (ImGui::SliderFloat("FXAA subpixel quality", &fxaaSubpix, 0.0f, 1.0f))
+            {
+                screenSpaceEffects.SetFxaaSubpixQuality(fxaaSubpix);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float fxaaEdge = screenSpaceEffects.GetFxaaEdgeThreshold();
+            if (ImGui::SliderFloat("FXAA edge threshold", &fxaaEdge, 0.03125f, 0.5f))
+            {
+                screenSpaceEffects.SetFxaaEdgeThreshold(fxaaEdge);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::TextDisabled("Sampler filter (no mips yet on most textures).");
+
+        int textureFilterMode = static_cast<int>(renderer.GetTextureFilterMode());
+        const char* filterLabels[] = {"Trilinear", "Bilinear", "Nearest"};
+        if (ImGui::Combo("Material sampling", &textureFilterMode, filterLabels, IM_ARRAYSIZE(filterLabels)))
+        {
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Texture filter",
+                [textureFilterMode](Scene& target) {
+                    target.GetRenderer().SetTextureFilterMode(
+                        static_cast<TextureFilterMode>(textureFilterMode));
+                    target.MarkDirty();
+                });
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Updates GfxContext for new shaders. Existing PBR shaders keep their baked samplers until restart.");
         }
     }
 

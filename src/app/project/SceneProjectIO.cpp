@@ -29,6 +29,7 @@
 #include "engine/scene/ScenePrimitive.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/TextureSamplerSettings.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
 
@@ -385,6 +386,68 @@ namespace SceneProjectIODetail
         return TonemapMode::Gamma;
     }
 
+    const char* AntiAliasingModeToString(AntiAliasingMode mode)
+    {
+        switch (mode)
+        {
+        case AntiAliasingMode::FXAA:
+            return "FXAA";
+        case AntiAliasingMode::TAA:
+            return "TAA";
+        case AntiAliasingMode::MSAA:
+            return "MSAA";
+        case AntiAliasingMode::None:
+        default:
+            return "None";
+        }
+    }
+
+    AntiAliasingMode AntiAliasingModeFromString(const std::string& value)
+    {
+        if (value == "FXAA")
+        {
+            return AntiAliasingMode::FXAA;
+        }
+        if (value == "TAA")
+        {
+            return AntiAliasingMode::None;
+        }
+        if (value == "MSAA")
+        {
+            return AntiAliasingMode::None;
+        }
+
+        return AntiAliasingMode::None;
+    }
+
+    const char* TextureFilterModeToString(TextureFilterMode mode)
+    {
+        switch (mode)
+        {
+        case TextureFilterMode::Bilinear:
+            return "Bilinear";
+        case TextureFilterMode::Nearest:
+            return "Nearest";
+        case TextureFilterMode::Trilinear:
+        default:
+            return "Trilinear";
+        }
+    }
+
+    TextureFilterMode TextureFilterModeFromString(const std::string& value)
+    {
+        if (value == "Bilinear")
+        {
+            return TextureFilterMode::Bilinear;
+        }
+        if (value == "Nearest")
+        {
+            return TextureFilterMode::Nearest;
+        }
+
+        return TextureFilterMode::Trilinear;
+    }
+
     const char* ShadowFilterModeToString(DirectionalShadowFilterMode mode)
     {
         return mode == DirectionalShadowFilterMode::PCSS ? "PCSS" : "PCF";
@@ -406,6 +469,7 @@ namespace SceneProjectIODetail
         const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
         return json{
             {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
+            {"textureFilterMode", TextureFilterModeToString(scene.GetRenderer().GetTextureFilterMode())},
             {"directionalShadow",
              json{
                  {"filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode())},
@@ -430,6 +494,8 @@ namespace SceneProjectIODetail
                  {"casterDepthBiasScale", shadowSettings.GetCasterDepthBiasScale()},
                  {"shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()},
                  {"shadowBlurRadius", shadowSettings.GetShadowBlurRadius()},
+                 {"shadowBlurDepthThreshold", shadowSettings.GetShadowBlurDepthThreshold()},
+                 {"shadowBlurShadowThreshold", shadowSettings.GetShadowBlurShadowThreshold()},
              }},
             {"screenSpaceEffects",
              json{
@@ -446,6 +512,10 @@ namespace SceneProjectIODetail
                  {"bloomSoftKnee", effects.GetBloomSoftKnee()},
                  {"bloomIntensity", effects.GetBloomIntensity()},
                  {"bloomBlurRadius", effects.GetBloomBlurRadius()},
+                 {"antiAliasingMode", AntiAliasingModeToString(effects.GetAntiAliasingMode())},
+                 {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
+                 {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
+                 {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
              }},
         };
     }
@@ -461,6 +531,9 @@ namespace SceneProjectIODetail
             const float defaultEnvironmentIntensity = renderer.GetIBL().GetEnvironmentIntensity();
             renderer.GetIBL().SetEnvironmentIntensity(
                 rendererValue.value("environmentIntensity", defaultEnvironmentIntensity));
+            renderer.SetTextureFilterMode(TextureFilterModeFromString(rendererValue.value(
+                "textureFilterMode",
+                TextureFilterModeToString(renderer.GetTextureFilterMode()))));
         }
 
         if (rendererValue.contains("directionalShadow"))
@@ -511,6 +584,12 @@ namespace SceneProjectIODetail
                 shadowValue.value("shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()));
             shadowSettings.SetShadowBlurRadius(
                 shadowValue.value("shadowBlurRadius", shadowSettings.GetShadowBlurRadius()));
+            shadowSettings.SetShadowBlurDepthThreshold(shadowValue.value(
+                "shadowBlurDepthThreshold",
+                shadowSettings.GetShadowBlurDepthThreshold()));
+            shadowSettings.SetShadowBlurShadowThreshold(shadowValue.value(
+                "shadowBlurShadowThreshold",
+                shadowSettings.GetShadowBlurShadowThreshold()));
         }
 
         if (!gpuReady || !rendererValue.contains("screenSpaceEffects"))
@@ -534,6 +613,15 @@ namespace SceneProjectIODetail
         effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
         effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
         effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
+        effects.SetAntiAliasingMode(AntiAliasingModeFromString(effectsValue.value(
+            "antiAliasingMode",
+            AntiAliasingModeToString(effects.GetAntiAliasingMode()))));
+        effects.SetFxaaSubpixQuality(
+            effectsValue.value("fxaaSubpixQuality", effects.GetFxaaSubpixQuality()));
+        effects.SetFxaaEdgeThreshold(
+            effectsValue.value("fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()));
+        effects.SetSsaoBlurDepthThreshold(
+            effectsValue.value("ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()));
     }
 
     json SerializeProjectFilesFolderOpenStates(

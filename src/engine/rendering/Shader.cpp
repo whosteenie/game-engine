@@ -1,3 +1,4 @@
+#include "engine/rendering/TextureSamplerSettings.h"
 #include "engine/rendering/Shader.h"
 
 #include "engine/platform/ExceptionMessage.h"
@@ -208,9 +209,15 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         for (UINT registerIndex = 0; registerIndex <= 8; ++registerIndex)
         {
             D3D12_STATIC_SAMPLER_DESC sampler{};
-            // s8 = shadow map: point when sampled; shader uses Load for depth compares.
-            sampler.Filter = registerIndex == 8 ? D3D12_FILTER_MIN_MAG_MIP_POINT
-                                                : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            if (registerIndex == 8)
+            {
+                sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+            }
+            else
+            {
+                sampler.Filter = TextureFilterModeToD3D12Filter(
+                    GfxContext::Get().GetMaterialTextureFilterMode());
+            }
             // t4–t7 (albedo/normal/AO/roughness) tile with UV repeat; shadow + IBL stay clamped.
             const bool wrapMaterialMaps = registerIndex >= 4 && registerIndex <= 7;
             const D3D12_TEXTURE_ADDRESS_MODE addressMode = wrapMaterialMaps

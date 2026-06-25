@@ -4,6 +4,8 @@
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/SceneLighting.h"
 
+#include "engine/rendering/TextureSamplerSettings.h"
+
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
@@ -55,6 +57,9 @@ public:
 
     const CascadedShadowMap& GetShadowMap() const;
 
+    TextureFilterMode GetTextureFilterMode() const { return m_textureFilterMode; }
+    void SetTextureFilterMode(TextureFilterMode mode);
+
     bool IsGpuResourcesReady() const { return m_gpuResourcesInitialized; }
     bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
     const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
@@ -76,6 +81,7 @@ private:
     std::unique_ptr<IBL> m_ibl;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     DirectionalShadowSettings m_directionalShadowSettings;
+    TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;
     SceneLighting m_lighting;
     mutable bool m_gpuResourcesInitialized = false;
     mutable bool m_gpuResourcesInitFailed = false;

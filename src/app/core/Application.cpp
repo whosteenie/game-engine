@@ -103,7 +103,7 @@ namespace
             return false;
         }
 
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
         const glm::mat4 cameraWorldMatrix = glm::affineInverse(camera.GetViewMatrix());
         glm::mat4 localMatrix = cameraWorldMatrix;
         if (object.GetParentIndex() >= 0)
@@ -933,7 +933,7 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
         const int legacyIndex = static_cast<int>(storedKey);
         if (legacyIndex >= 0 && legacyIndex < objectCount)
         {
-            hierarchyOpenStates[m_scene->GetObject(static_cast<std::size_t>(legacyIndex)).GetId()] = true;
+            hierarchyOpenStates[m_scene->GetSceneObject(static_cast<std::size_t>(legacyIndex)).GetId()] = true;
         }
     }
     m_sceneHierarchyPanel->SetNodeOpenStates(hierarchyOpenStates);

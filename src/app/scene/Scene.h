@@ -75,8 +75,8 @@ public:
 
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();
-    SceneObject& GetObject(std::size_t index);
-    const SceneObject& GetObject(std::size_t index) const;
+    SceneObject& GetSceneObject(std::size_t index);
+    const SceneObject& GetSceneObject(std::size_t index) const;
     int FindObjectIndex(SceneObjectId id) const;
 
     std::vector<SceneObjectId> GetSelectionIds() const;

@@ -22,6 +22,14 @@ enum class TonemapMode
     ACES = 2
 };
 
+enum class AntiAliasingMode
+{
+    None = 0,
+    FXAA = 1,
+    TAA = 2,
+    MSAA = 3,
+};
+
 class ScreenSpaceEffects
 {
 public:
@@ -89,6 +97,18 @@ public:
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
 
+    AntiAliasingMode GetAntiAliasingMode() const;
+    void SetAntiAliasingMode(AntiAliasingMode mode);
+
+    float GetFxaaSubpixQuality() const;
+    void SetFxaaSubpixQuality(float quality);
+
+    float GetFxaaEdgeThreshold() const;
+    void SetFxaaEdgeThreshold(float threshold);
+
+    float GetSsaoBlurDepthThreshold() const;
+    void SetSsaoBlurDepthThreshold(float threshold);
+
     void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
     const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
@@ -114,13 +134,16 @@ private:
     void ResizeSingleChannelTargets(int width, int height);
     void ResizeHdrColorTarget(int width, int height);
     void ResizeBloomTargets(int width, int height);
+    void ResizeLdrTonemapTarget(int width, int height);
     void DrawFullscreenQuad() const;
+    void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
         Shader& shader,
         InternalTarget& target,
         int width,
         int height,
-        const float clearColor[4]) const;
+        const float clearColor[4],
+        bool viewportLdr = false) const;
     void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
     void FinalizePendingSsaoGpuReadback() const;
     void CaptureSsaoDiagnosticsCpu(
@@ -144,6 +167,7 @@ private:
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
+    InternalTarget m_ldrTonemapTarget;
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
@@ -153,6 +177,7 @@ private:
     std::unique_ptr<Shader> m_bloomBlurShader;
     std::unique_ptr<Shader> m_shadowBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
+    std::unique_ptr<Shader> m_fxaaShader;
     std::unique_ptr<Shader> m_debugChannelShader;
 
     std::vector<glm::vec3> m_kernelSamples;
@@ -179,4 +204,8 @@ private:
     float m_bloomIntensity = 0.4f;
     float m_bloomBlurRadius = 1.0f;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
+    AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
+    float m_fxaaSubpixQuality = 0.75f;
+    float m_fxaaEdgeThreshold = 0.03125f;
+    float m_ssaoBlurDepthThreshold = 0.02f;
 };

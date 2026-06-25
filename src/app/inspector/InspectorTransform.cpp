@@ -108,7 +108,7 @@ void ResetTransformsOnObjects(Scene& scene, const std::vector<int>& objectIndice
 {
     for (int objectIndex : objectIndices)
     {
-        scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().Reset();
+        scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform().Reset();
     }
 
     if (!objectIndices.empty())

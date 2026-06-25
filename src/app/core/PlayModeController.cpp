@@ -142,7 +142,7 @@ void PlayModeController::DebugNudgeRuntimeSelection(float deltaY)
         return;
     }
 
-    Transform& transform = m_runtimeScene->GetObject(static_cast<std::size_t>(objectIndex)).GetTransform();
+    Transform& transform = m_runtimeScene->GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform();
     transform.position.y += deltaY;
 }
 

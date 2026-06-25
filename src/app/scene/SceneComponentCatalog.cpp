@@ -93,7 +93,7 @@ void AddSceneSystemComponent(Scene& scene, int objectIndex, SceneSystemComponent
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!CanAddSceneSystemComponent(object, type))
     {
         return;
@@ -147,7 +147,7 @@ void RemoveSceneSystemComponent(Scene& scene, int objectIndex, SceneSystemCompon
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!SceneObjectHasSystemComponent(object, type))
     {
         return;

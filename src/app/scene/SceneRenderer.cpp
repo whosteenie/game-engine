@@ -67,6 +67,7 @@ void SceneRenderer::EnsureGpuResources() const
             EngineConstants::ShadowDepthVertexShader,
             EngineConstants::ShadowDepthFragmentShader);
         self->m_gpuResourcesInitialized = true;
+        GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
     }
     catch (const std::exception& exception)
     {
@@ -459,4 +460,13 @@ const CascadedShadowMap& SceneRenderer::GetShadowMap() const
     }
 
     return *m_shadowMap;
+}
+
+void SceneRenderer::SetTextureFilterMode(const TextureFilterMode mode)
+{
+    m_textureFilterMode = mode;
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().SetMaterialTextureFilterMode(mode);
+    }
 }

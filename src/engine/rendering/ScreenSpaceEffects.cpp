@@ -368,6 +368,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_tonemapShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::TonemapFragmentShader)),
+      m_fxaaShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::FxaaFragmentShader)),
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader))
@@ -390,6 +393,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
+    DestroyInternalTarget(m_ldrTonemapTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
 
@@ -688,6 +692,12 @@ void ScreenSpaceEffects::ResizeBloomTargets(const int width, const int height)
     ResizeInternalTarget(m_bloomBlur2Target, bloomWidth, bloomHeight, format);
 }
 
+void ScreenSpaceEffects::ResizeLdrTonemapTarget(const int width, const int height)
+{
+    const int format = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
+    ResizeInternalTarget(m_ldrTonemapTarget, width, height, format);
+}
+
 void ScreenSpaceEffects::Resize(const int width, const int height)
 {
     if (width <= 0 || height <= 0)
@@ -707,6 +717,7 @@ void ScreenSpaceEffects::Resize(const int width, const int height)
     ResizeSingleChannelTargets(width, height);
     ResizeHdrColorTarget(width, height);
     ResizeBloomTargets(width, height);
+    ResizeLdrTonemapTarget(width, height);
     m_width = width;
     m_height = height;
 }
@@ -774,12 +785,20 @@ void ScreenSpaceEffects::DrawFullscreenQuad() const
     commandList->DrawInstanced(6, 1, 0, 0);
 }
 
+void ScreenSpaceEffects::DrawFullscreenPass(Shader& shader, const bool viewportLdr) const
+{
+    shader.BindPipeline(false, viewportLdr);
+    shader.FlushUniforms();
+    DrawFullscreenQuad();
+}
+
 void ScreenSpaceEffects::DrawFullscreenToTarget(
     Shader& shader,
     InternalTarget& target,
     const int width,
     const int height,
-    const float clearColor[4]) const
+    const float clearColor[4],
+    const bool viewportLdr) const
 {
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     auto* resource = static_cast<ID3D12Resource*>(target.resource);
@@ -803,7 +822,7 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     commandList->RSSetScissorRects(1, &scissor);
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
-    shader.BindPipeline();
+    shader.BindPipeline(false, viewportLdr);
     shader.FlushUniforms();
     DrawFullscreenQuad();
 
@@ -905,7 +924,7 @@ void ScreenSpaceEffects::Apply(
         m_blurShader->SetInt("uDepthMap", 1);
         m_blurShader->SetFloat("uTexelSizeX", texelSize.x);
         m_blurShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_blurShader->SetFloat("uDepthThreshold", 0.02f);
+        m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);
         m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
         m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
@@ -926,8 +945,8 @@ void ScreenSpaceEffects::Apply(
         m_shadowBlurShader->SetFloat("uDirectionX", texelSize.x);
         m_shadowBlurShader->SetFloat("uDirectionY", 0.0f);
         m_shadowBlurShader->SetFloat("uBlurRadius", shadowSettings.GetShadowBlurRadius());
-        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.14f);
-        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.28f);
+        m_shadowBlurShader->SetFloat("uDepthThreshold", shadowSettings.GetShadowBlurDepthThreshold());
+        m_shadowBlurShader->SetFloat("uShadowThreshold", shadowSettings.GetShadowBlurShadowThreshold());
         m_shadowBlurShader->BindTextureSlot(0, shadowFactorSrv);
         m_shadowBlurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -943,8 +962,8 @@ void ScreenSpaceEffects::Apply(
         m_shadowBlurShader->SetFloat("uDirectionX", 0.0f);
         m_shadowBlurShader->SetFloat("uDirectionY", texelSize.y);
         m_shadowBlurShader->SetFloat("uBlurRadius", shadowSettings.GetShadowBlurRadius());
-        m_shadowBlurShader->SetFloat("uDepthThreshold", 0.14f);
-        m_shadowBlurShader->SetFloat("uShadowThreshold", 0.28f);
+        m_shadowBlurShader->SetFloat("uDepthThreshold", shadowSettings.GetShadowBlurDepthThreshold());
+        m_shadowBlurShader->SetFloat("uShadowThreshold", shadowSettings.GetShadowBlurShadowThreshold());
         m_shadowBlurShader->BindTextureSlot(0, m_shadowBlurTarget.srvCpuHandle);
         m_shadowBlurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -1145,20 +1164,57 @@ void ScreenSpaceEffects::Apply(
         }
     }
 
-    m_tonemapShader->Use(false, true);
-    m_tonemapShader->SetInt("uHdrColor", 0);
-    m_tonemapShader->SetFloat("uExposure", m_exposure);
-    m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
-    m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
-    m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
-    m_tonemapShader->SetInt("uBloom", 1);
-    m_tonemapShader->BindTextureSlot(0, hdrColorSrv);
-    if (m_bloomEnabled)
+    const bool useFxaa = m_antiAliasingMode == AntiAliasingMode::FXAA;
+    const float ldrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+    auto runTonemapPass = [&](const bool drawToLdrTarget) {
+        m_tonemapShader->Use(false, true);
+        m_tonemapShader->SetInt("uHdrColor", 0);
+        m_tonemapShader->SetFloat("uExposure", m_exposure);
+        m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
+        m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
+        m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
+        m_tonemapShader->SetInt("uBloom", 1);
+        m_tonemapShader->BindTextureSlot(0, hdrColorSrv);
+        if (m_bloomEnabled)
+        {
+            m_tonemapShader->BindTextureSlot(1, bloomSrv);
+        }
+        if (drawToLdrTarget)
+        {
+            DrawFullscreenToTarget(
+                *m_tonemapShader,
+                const_cast<InternalTarget&>(m_ldrTonemapTarget),
+                m_width,
+                m_height,
+                ldrClear,
+                true);
+        }
+        else
+        {
+            DrawFullscreenPass(*m_tonemapShader, true);
+        }
+    };
+
+    const bool fxaaTargetReady =
+        m_ldrTonemapTarget.srvCpuHandle != 0 && m_width > 0 && m_height > 0;
+    if (useFxaa && fxaaTargetReady)
     {
-        m_tonemapShader->BindTextureSlot(1, bloomSrv);
+        runTonemapPass(true);
+        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+
+        m_fxaaShader->Use(false, true);
+        m_fxaaShader->SetFloat("uTexelSizeX", texelSize.x);
+        m_fxaaShader->SetFloat("uTexelSizeY", texelSize.y);
+        m_fxaaShader->SetFloat("uSubpixQuality", m_fxaaSubpixQuality);
+        m_fxaaShader->SetFloat("uEdgeThreshold", m_fxaaEdgeThreshold);
+        m_fxaaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+        DrawFullscreenPass(*m_fxaaShader, true);
     }
-    m_tonemapShader->FlushUniforms();
-    DrawFullscreenQuad();
+    else
+    {
+        runTonemapPass(false);
+    }
 
     if (m_logHdrApplySnapshot)
     {
@@ -1505,6 +1561,51 @@ RenderDebugMode ScreenSpaceEffects::GetDebugMode() const
 void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 {
     m_debugMode = mode;
+}
+
+AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const
+{
+    return m_antiAliasingMode;
+}
+
+void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
+{
+    if (mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::MSAA)
+    {
+        return;
+    }
+
+    m_antiAliasingMode = mode;
+}
+
+float ScreenSpaceEffects::GetFxaaSubpixQuality() const
+{
+    return m_fxaaSubpixQuality;
+}
+
+void ScreenSpaceEffects::SetFxaaSubpixQuality(const float quality)
+{
+    m_fxaaSubpixQuality = std::clamp(quality, 0.0f, 1.0f);
+}
+
+float ScreenSpaceEffects::GetFxaaEdgeThreshold() const
+{
+    return m_fxaaEdgeThreshold;
+}
+
+void ScreenSpaceEffects::SetFxaaEdgeThreshold(const float threshold)
+{
+    m_fxaaEdgeThreshold = std::clamp(threshold, 0.03125f, 0.5f);
+}
+
+float ScreenSpaceEffects::GetSsaoBlurDepthThreshold() const
+{
+    return m_ssaoBlurDepthThreshold;
+}
+
+void ScreenSpaceEffects::SetSsaoBlurDepthThreshold(const float threshold)
+{
+    m_ssaoBlurDepthThreshold = std::clamp(threshold, 0.001f, 0.25f);
 }
 
 void ScreenSpaceEffects::BlitDepthToFramebuffer(

@@ -127,7 +127,7 @@ namespace
 
     ArchivedSceneObject ArchiveObject(const Scene& scene, int objectIndex)
     {
-        const SceneObject& source = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& source = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         SceneObjectComponentSnapshot components = CaptureSceneObjectComponents(source);
 
         ArchivedSceneObject archived;
