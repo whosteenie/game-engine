@@ -534,7 +534,10 @@ void LightingPanel::Draw(
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::DirectLighting))
         {
-            ImGui::TextWrapped("Shows unshadowed direct lighting (N·L and BRDF), not the shadow factor pass.");
+            ImGui::TextWrapped(
+                "Unshadowed direct (sun diffuse uses geom N·L; spec uses shaded normal + BRDF). "
+                "Should match Direct diffuse geom (13) in the large-scale terminator. "
+                "Final = this × shadow factor + IBL.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::DirectDiffuseGeom))
         {
@@ -580,7 +583,9 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::GeomSunFacing))
         {
             ImGui::TextWrapped(
-                "Geometric N·L for the shadow-casting directional light only. White = faces the sun; black = back faces. No albedo.");
+                "Geometric N·L for the shadow-casting directional light only. White = faces the sun; black = back faces. "
+                "No albedo, no IBL, no composite — not comparable to the final image directly. "
+                "Use Direct lighting (2) to preview the lit pass direct buffer.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::ShadowCompareDepth))
         {

@@ -250,7 +250,9 @@ float3 CalcCookTorranceContribution(
     float3 albedo,
     float roughness,
     float metallic,
-    float3 radiance)
+    float3 radiance,
+    float diffuseNdotL,
+    float specularNdotL)
 {
     float3 halfDir = normalize(viewDir + lightDir);
 
@@ -261,14 +263,14 @@ float3 CalcCookTorranceContribution(
     float3 fresnel = FresnelSchlick(max(dot(halfDir, viewDir), 0.0), f0);
 
     float3 numerator = normalDistribution * geometry * fresnel;
-    float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(dot(normal, lightDir), 0.0) + 0.0001;
+    float denominator = 4.0 * max(dot(normal, viewDir), 0.0) * max(specularNdotL, 0.0) + 0.0001;
     float3 specular = numerator / denominator;
 
     float3 specularEnergy = fresnel;
     float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
-    float normalDotLight = max(dot(normal, lightDir), 0.0);
 
-    return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
+    return diffuseEnergy * albedo / PI * radiance * diffuseNdotL
+        + specular * radiance * specularNdotL;
 }
 
 // Point-texel depth for manual compare tests (PCF averages compare results, not depth).
@@ -760,13 +762,12 @@ PSOutput main(PSInput input)
     float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(max(dot(normal, viewDir), 0.0), roughness)).rg;
     float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
 
-    // Indirect energy split: use geom N·V and clamp mapped roughness so dark roughness-map
-    // pockets do not swing Fresnel with flycam on geom-back faces (direct is already zero there).
+    // Indirect: clamp mapped roughness for Fresnel stability; spec IBL gated by geom sun-facing.
+    // Do not boost diffuse IBL on back faces — that removes the direct/indirect terminator.
     float nDotVGeom = max(dot(geomNormalNorm, viewDir), 0.0);
     float roughnessForIndirectEnergy = max(roughness, 0.55);
     float3 specularEnergy = FresnelSchlickRoughness(nDotVGeom, f0, roughnessForIndirectEnergy);
     float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
-    diffuseEnergy = lerp(1.0.xxx, diffuseEnergy, sunGeomFacing);
     float3 ambient = (diffuseEnergy * diffuseIbl + specularIbl) * uEnvironmentIntensity * ambientOcclusion;
 
     float3 directShadowed = 0.0.xxx;
@@ -796,7 +797,15 @@ PSOutput main(PSInput input)
             spotIntensity);
 
         float3 radiance = SrgbToLinear(uLightColors[i].rgb) * uLightIntensities[i];
-        float geomLightVisibility = max(dot(geomNormalNorm, lightDir), 0.0);
+        float perturbedNdotL = max(dot(normal, lightDir), 0.0);
+        float geomNdotL = max(dot(geomNormalNorm, lightDir), 0.0);
+        float diffuseNdotL = perturbedNdotL;
+        if (i == uShadowLightIndex && uLightTypes[i] == LIGHT_TYPE_DIRECTIONAL)
+        {
+            // Stable sun terminator on geometric normals; specular still uses the shaded normal.
+            diffuseNdotL = geomNdotL;
+        }
+
         float3 contribution = CalcCookTorranceContribution(
             normal,
             viewDir,
@@ -804,7 +813,11 @@ PSOutput main(PSInput input)
             albedo,
             roughness,
             metallic,
-            radiance);
+            radiance,
+            diffuseNdotL,
+            perturbedNdotL);
+
+        float3 litContribution = contribution * attenuation * spotIntensity;
 
         float lightShadow = 1.0;
         if (i == uShadowLightIndex)
@@ -813,7 +826,6 @@ PSOutput main(PSInput input)
             shadowFactor = lightShadow;
         }
 
-        float3 litContribution = contribution * attenuation * spotIntensity * geomLightVisibility;
         directUnshadowed += litContribution;
         directShadowed += litContribution * lightShadow;
     }
