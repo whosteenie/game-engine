@@ -16,6 +16,7 @@
 #include "engine/lighting/IBL.h"
 #include "engine/lighting/Light.h"
 #include "engine/lighting/SceneLighting.h"
+#include "engine/lighting/ShadowMapMath.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Material.h"
@@ -197,6 +198,18 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
         m_shadowDepthShader->SetMat4(
             "uLightSpaceMatrix",
             m_shadowMap->GetLightSpaceMatrix(cascadeIndex));
+
+        const ShadowLightSpaceSetup& cascadeSetup =
+            m_shadowMap->GetCascadeSetups()[static_cast<std::size_t>(cascadeIndex)];
+        const float texelSpan =
+            std::max(cascadeSetup.texelWorldSizeX, cascadeSetup.texelWorldSizeY);
+        const float casterDepthBias = ComputeCasterDepthBiasNormalized(
+            texelSpan,
+            cascadeSetup.stableOrthoNear,
+            cascadeSetup.stableOrthoFar,
+            m_directionalShadowSettings.GetCasterDepthBiasScale());
+        m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
+        m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
 
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {

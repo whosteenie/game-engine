@@ -271,7 +271,18 @@ void LightingPanel::Draw(
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Raise if you see acne; lower if shadows detach from surfaces.");
+
+            float casterDepthBiasScale = shadowSettings.GetCasterDepthBiasScale();
+            if (ImGui::SliderFloat("Caster depth bias scale", &casterDepthBiasScale, 0.0f, 4.0f))
+            {
+                shadowSettings.SetCasterDepthBiasScale(casterDepthBiasScale);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled(
+                "Receiver scales: raise if acne, lower if shadows detach. "
+                "Caster scale adds optional front-face shader bias; 0 relies on slope bias only. "
+                "Shadow pass uses front-face culling (back faces) for contact depth.");
 
             ImGui::TreePop();
         }

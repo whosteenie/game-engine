@@ -499,16 +499,17 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.DepthStencilState.DepthEnable = TRUE;
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-        // D32 shadow map: push casters slightly away from the light to prevent self-shadow acne
-        // in the receiver compare (mode 22). Receiver bias remains separate.
-        psoDesc.RasterizerState.DepthBias = 100000;
+        // Render back faces so closed meshes write sole/contact depth (Spyro feet). Flat contacts
+        // get zero raster slope bias; curved silhouettes use SlopeScaledDepthBias for acne.
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+        psoDesc.RasterizerState.DepthBias = 0;
         psoDesc.RasterizerState.DepthBiasClamp = 0.0f;
-        psoDesc.RasterizerState.SlopeScaledDepthBias = 2.0f;
+        psoDesc.RasterizerState.SlopeScaledDepthBias = 1.5f;
         static D3D12_INPUT_ELEMENT_DESC shadowLayout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };
-        psoDesc.InputLayout = {shadowLayout, 1};
+        psoDesc.InputLayout = {shadowLayout, 2};
     }
     else if (isFullscreen || isIblBrdf)
     {

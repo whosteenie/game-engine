@@ -74,6 +74,13 @@ ShadowReceiverProbeResult EvaluateShadowReceiverProbe(
 
 float ComputeShadowBias(float nDotL, float texelSpan);
 
+// Normalized LH ZO clip depth pushed onto casters during the shadow depth pass (~1 texel at scale 1).
+float ComputeCasterDepthBiasNormalized(
+    float texelWorldSize,
+    float orthoNear,
+    float orthoFar,
+    float scale);
+
 std::vector<float> ComputeCascadeSplitDistances(
     int cascadeCount,
     float nearPlane,

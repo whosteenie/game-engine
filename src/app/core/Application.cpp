@@ -156,28 +156,52 @@ namespace
         io.WantCaptureMouse = false;
     }
 
-    void WrapImGuiMouseCursorAtWindowEdges(GLFWwindow* window)
+    bool ShouldWrapMouseForImGuiInfiniteDrag()
     {
-        ImGuiIO& io = ImGui::GetIO();
+        ImGuiContext& g = *ImGui::GetCurrentContext();
+
         if (!ImGui::IsAnyItemActive())
         {
-            return;
+            return false;
         }
 
         if (ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate())
         {
-            return;
+            return false;
         }
 
-        const bool anyMouseDown =
-            ImGui::IsMouseDown(ImGuiMouseButton_Left)
-            || ImGui::IsMouseDown(ImGuiMouseButton_Right)
-            || ImGui::IsMouseDown(ImGuiMouseButton_Middle);
-        if (!anyMouseDown)
+        if (g.MovingWindow != nullptr)
+        {
+            return false;
+        }
+
+        if (g.DragDropActive)
+        {
+            return false;
+        }
+
+        if (EditorReorderDragDrop::IsReorderDragActive())
+        {
+            return false;
+        }
+
+        const int horizontalNavMask = (1 << ImGuiDir_Left) | (1 << ImGuiDir_Right);
+        if ((g.ActiveIdUsingNavDirMask & horizontalNavMask) != horizontalNavMask)
+        {
+            return false;
+        }
+
+        return ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    }
+
+    void WrapImGuiMouseCursorAtWindowEdges(GLFWwindow* window)
+    {
+        if (!ShouldWrapMouseForImGuiInfiniteDrag())
         {
             return;
         }
 
+        ImGuiIO& io = ImGui::GetIO();
         const ImVec2 displaySize = io.DisplaySize;
         if (displaySize.x <= 1.0f || displaySize.y <= 1.0f)
         {
@@ -366,6 +390,7 @@ void Application::Run()
                 [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
                 m_undoStack,
                 m_editorClipboard,
+                [this]() { EnsureEditorLayoutLoaded(); },
                 error))
         {
             m_projectChooser->SetErrorMessage(error.empty() ? "Failed to open project." : error);
@@ -518,6 +543,7 @@ void Application::Update(double deltaTime)
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
         m_undoStack,
         m_editorClipboard,
+        [this]() { EnsureEditorLayoutLoaded(); },
         pendingProjectError);
     if (!openedProject && !pendingProjectError.empty())
     {
@@ -625,32 +651,13 @@ void Application::Update(double deltaTime)
         Scene* editorScene = GetEditorTargetScene();
         UndoStack* editorUndoStack = GetEditorUndoStack();
 
-        const bool loadGlobalEditorLayout = !m_globalEditorLayoutLoaded;
-        m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight(), loadGlobalEditorLayout);
-        if (loadGlobalEditorLayout)
+        if (!m_globalEditorLayoutLoaded)
         {
-            try
-            {
-                ImGui::ClearIniSettings();
-                if (!EditorSettings::LoadGlobalEditorLayout()
-                    && m_projectSession->HasActiveProject()
-                    && !EditorSettings::TryMigrateProjectEditorLayout(
-                        m_projectSession->GetProjectRootDirectory()))
-                {
-                    EngineLog::Warn(
-                        "editor",
-                        "No saved editor layout found; using default layout.");
-                }
-            }
-            catch (const std::exception& exception)
-            {
-                EngineLog::LogException("editor", "LoadGlobalEditorLayout", exception);
-                EditorSettings::DeleteGlobalImGuiIni();
-                m_editorDockSpace->ResetLayout();
-            }
-
-            m_globalEditorLayoutLoaded = true;
+            EnsureEditorLayoutLoaded();
         }
+
+        const bool deferLayoutBuild = m_editorLayoutRestoredFromDisk && m_pendingEditorLayoutValidation;
+        m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight(), deferLayoutBuild);
         m_editorDockSpace->CommitLayout();
         m_sceneViewportPanel->Draw(*m_camera, *editorScene);
 
@@ -676,7 +683,12 @@ void Application::Update(double deltaTime)
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
             editorUndoStack);
-        m_editorDockSpace->AfterEditorPanels();
+        const bool validateRestoredLayout = m_pendingEditorLayoutValidation;
+        m_editorDockSpace->AfterEditorPanels(validateRestoredLayout);
+        if (validateRestoredLayout)
+        {
+            m_pendingEditorLayoutValidation = false;
+        }
         m_editorDockSpace->End();
 
         if (m_playModeController.ConsumeFocusGameViewRequest())
@@ -975,6 +987,48 @@ void Application::ResetEditorLayout()
 {
     EditorSettings::DeleteGlobalImGuiIni();
     m_editorDockSpace->ResetLayout();
+    m_editorLayoutRestoredFromDisk = false;
+    m_pendingEditorLayoutValidation = false;
+}
+
+void Application::EnsureEditorLayoutLoaded()
+{
+    if (m_globalEditorLayoutLoaded)
+    {
+        return;
+    }
+
+    try
+    {
+        ImGui::ClearIniSettings();
+        m_editorLayoutRestoredFromDisk = EditorSettings::LoadGlobalEditorLayout();
+        if (!m_editorLayoutRestoredFromDisk
+            && m_projectSession->HasActiveProject()
+            && EditorSettings::TryMigrateProjectEditorLayout(m_projectSession->GetProjectRootDirectory()))
+        {
+            m_editorLayoutRestoredFromDisk = true;
+        }
+
+        if (!m_editorLayoutRestoredFromDisk)
+        {
+            EngineLog::Warn("editor", "No saved editor layout found; using default layout.");
+            m_editorDockSpace->RequestLayoutRebuild();
+        }
+        else
+        {
+            m_pendingEditorLayoutValidation = true;
+        }
+    }
+    catch (const std::exception& exception)
+    {
+        EngineLog::LogException("editor", "LoadGlobalEditorLayout", exception);
+        EditorSettings::DeleteGlobalImGuiIni();
+        m_editorDockSpace->ResetLayout();
+        m_editorLayoutRestoredFromDisk = false;
+        m_pendingEditorLayoutValidation = false;
+    }
+
+    m_globalEditorLayoutLoaded = true;
 }
 
 void Application::DrawUnsavedChangesDialog()
@@ -1084,6 +1138,19 @@ void Application::Render()
 {
     if (GfxContext::Get().IsDeviceRemoved())
     {
+        if (m_imguiFrameActive)
+        {
+            try
+            {
+                m_imguiLayer->CancelInterruptedFrame();
+            }
+            catch (...)
+            {
+            }
+
+            m_imguiFrameActive = false;
+        }
+
         return;
     }
 

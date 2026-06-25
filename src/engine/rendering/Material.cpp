@@ -17,8 +17,16 @@
 #include "engine/rendering/Texture.h"
 
 #include <array>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
+
+namespace fs = std::filesystem;
+
+namespace
+{
+    Material::TexturePathResolverFn g_texturePathResolver;
+}
 
 namespace
 {
@@ -91,6 +99,16 @@ void Material::ReleaseGlobalGpuResources()
     defaults.roughness.reset();
 }
 
+void Material::SetTexturePathResolver(TexturePathResolverFn resolver)
+{
+    g_texturePathResolver = std::move(resolver);
+}
+
+void Material::ClearTexturePathResolver()
+{
+    g_texturePathResolver = {};
+}
+
 Material::Material(
     const char* vertexShaderPath,
     const char* fragmentShaderPath,
@@ -115,6 +133,58 @@ void Material::EnsureShader() const
     m_shader = ShaderCache::Load(m_vertexShaderPath.c_str(), m_fragmentShaderPath.c_str());
 }
 
+void Material::EnsureMapsLoaded() const
+{
+    TextureCache& cache = TextureCache::Get();
+
+    auto resolveLoadPath = [](const std::string& path) -> std::string {
+        if (path.empty())
+        {
+            return path;
+        }
+
+        std::error_code error;
+        if (fs::exists(fs::path(path), error))
+        {
+            return path;
+        }
+
+        if (g_texturePathResolver)
+        {
+            const std::string resolvedPath = g_texturePathResolver(path);
+            if (!resolvedPath.empty())
+            {
+                return resolvedPath;
+            }
+        }
+
+        return path;
+    };
+
+    auto loadIfNeeded =
+        [&](std::shared_ptr<Texture>& slot, const std::string& path, TextureColorSpace colorSpace) {
+            if (path.empty() || (slot != nullptr && slot->IsValid()))
+            {
+                return;
+            }
+
+            try
+            {
+                const std::string loadPath = resolveLoadPath(path);
+                slot = cache.Load(loadPath.c_str(), colorSpace);
+            }
+            catch (const std::exception&)
+            {
+                slot.reset();
+            }
+        };
+
+    loadIfNeeded(m_albedoMap, m_albedoMapPath, TextureColorSpace::SRGB);
+    loadIfNeeded(m_normalMap, m_normalMapPath, TextureColorSpace::Linear);
+    loadIfNeeded(m_aoMap, m_aoMapPath, TextureColorSpace::Linear);
+    loadIfNeeded(m_roughnessMap, m_roughnessMapPath, TextureColorSpace::Linear);
+}
+
 Material::~Material() = default;
 
 void Material::Apply(
@@ -129,6 +199,7 @@ void Material::Apply(
     const DirectionalShadowSettings& shadowSettings) const
 {
     EnsureShader();
+    EnsureMapsLoaded();
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
@@ -140,17 +211,16 @@ void Material::Apply(
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
 
-    m_shader->SetInt("uUseAlbedoMap", HasAlbedoMap() && m_albedoMap != nullptr && m_albedoMap->IsValid() ? 1 : 0);
-    m_shader->SetInt("uUseNormalMap", HasNormalMap() && m_normalMap != nullptr && m_normalMap->IsValid() ? 1 : 0);
-    m_shader->SetInt("uUseAoMap", HasAoMap() && m_aoMap != nullptr && m_aoMap->IsValid() ? 1 : 0);
-    m_shader->SetInt(
-        "uUseRoughnessMap",
-        HasRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid() && !m_useMetallicRoughnessMap
-            ? 1
-            : 0);
-    m_shader->SetInt(
-        "uUseMetallicRoughnessMap",
-        HasMetallicRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid() ? 1 : 0);
+    const bool albedoMapReady = m_albedoMap != nullptr && m_albedoMap->IsValid();
+    const bool normalMapReady = m_normalMap != nullptr && m_normalMap->IsValid();
+    const bool aoMapReady = m_aoMap != nullptr && m_aoMap->IsValid();
+    const bool roughnessMapReady = m_roughnessMap != nullptr && m_roughnessMap->IsValid();
+
+    m_shader->SetInt("uUseAlbedoMap", albedoMapReady ? 1 : 0);
+    m_shader->SetInt("uUseNormalMap", normalMapReady ? 1 : 0);
+    m_shader->SetInt("uUseAoMap", aoMapReady ? 1 : 0);
+    m_shader->SetInt("uUseRoughnessMap", roughnessMapReady && !m_useMetallicRoughnessMap ? 1 : 0);
+    m_shader->SetInt("uUseMetallicRoughnessMap", m_useMetallicRoughnessMap && roughnessMapReady ? 1 : 0);
     m_shader->SetInt("uAlbedoTexCoordSet", m_albedoTexCoordSet);
     m_shader->SetInt("uNormalTexCoordSet", m_normalTexCoordSet);
     m_shader->SetInt("uAoTexCoordSet", m_aoTexCoordSet);
@@ -266,21 +336,19 @@ void Material::BindMaps() const
 {
     const DefaultMaterialTextures& defaults = GetDefaultMaterialTextures();
 
-    const bool useAlbedoMap = HasAlbedoMap() && m_albedoMap != nullptr && m_albedoMap->IsValid();
-    const Texture& albedoTexture = useAlbedoMap ? *m_albedoMap : *defaults.white;
+    const Texture& albedoTexture =
+        m_albedoMap != nullptr && m_albedoMap->IsValid() ? *m_albedoMap : *defaults.white;
     albedoTexture.Bind(AlbedoMapUnit);
 
-    const bool useNormalMap = HasNormalMap() && m_normalMap != nullptr && m_normalMap->IsValid();
-    const Texture& normalTexture = useNormalMap ? *m_normalMap : *defaults.normal;
+    const Texture& normalTexture =
+        m_normalMap != nullptr && m_normalMap->IsValid() ? *m_normalMap : *defaults.normal;
     normalTexture.Bind(NormalMapUnit);
 
-    const bool useAoMap = HasAoMap() && m_aoMap != nullptr && m_aoMap->IsValid();
-    const Texture& aoTexture = useAoMap ? *m_aoMap : *defaults.ao;
+    const Texture& aoTexture = m_aoMap != nullptr && m_aoMap->IsValid() ? *m_aoMap : *defaults.ao;
     aoTexture.Bind(AoMapUnit);
 
-    const bool useRoughnessMap =
-        HasRoughnessMap() && m_roughnessMap != nullptr && m_roughnessMap->IsValid();
-    const Texture& roughnessTexture = useRoughnessMap ? *m_roughnessMap : *defaults.roughness;
+    const Texture& roughnessTexture =
+        m_roughnessMap != nullptr && m_roughnessMap->IsValid() ? *m_roughnessMap : *defaults.roughness;
     roughnessTexture.Bind(RoughnessMapUnit);
 }
 
@@ -444,22 +512,22 @@ bool Material::IsDoubleSided() const
 
 bool Material::HasAlbedoMap() const
 {
-    return m_albedoMap != nullptr && m_albedoMap->IsValid();
+    return !m_albedoMapPath.empty() || (m_albedoMap != nullptr && m_albedoMap->IsValid());
 }
 
 bool Material::HasNormalMap() const
 {
-    return m_normalMap != nullptr && m_normalMap->IsValid();
+    return !m_normalMapPath.empty() || (m_normalMap != nullptr && m_normalMap->IsValid());
 }
 
 bool Material::HasAoMap() const
 {
-    return m_aoMap != nullptr && m_aoMap->IsValid();
+    return !m_aoMapPath.empty() || (m_aoMap != nullptr && m_aoMap->IsValid());
 }
 
 bool Material::HasRoughnessMap() const
 {
-    return m_roughnessMap != nullptr && m_roughnessMap->IsValid();
+    return !m_roughnessMapPath.empty() || (m_roughnessMap != nullptr && m_roughnessMap->IsValid());
 }
 
 bool Material::HasMetallicRoughnessMap() const
@@ -542,22 +610,22 @@ std::unique_ptr<Material> Material::Clone() const
     copy->SetRoughnessTexCoordSet(m_roughnessTexCoordSet);
     copy->SetDoubleSided(m_doubleSided);
 
-    if (m_albedoMap != nullptr)
+    if (!m_albedoMapPath.empty())
     {
         copy->SetAlbedoMap(m_albedoMap, m_albedoMapPath);
     }
 
-    if (m_normalMap != nullptr)
+    if (!m_normalMapPath.empty())
     {
         copy->SetNormalMap(m_normalMap, m_normalMapPath);
     }
 
-    if (m_aoMap != nullptr)
+    if (!m_aoMapPath.empty())
     {
         copy->SetAoMap(m_aoMap, m_aoMapPath);
     }
 
-    if (m_roughnessMap != nullptr)
+    if (!m_roughnessMapPath.empty())
     {
         if (m_useMetallicRoughnessMap)
         {
@@ -665,10 +733,9 @@ std::unique_ptr<Material> MaterialFromJson(
     }
 
     const json& maps = value.at("maps");
-    TextureCache& cache = TextureCache::Get();
 
-    auto tryLoadMap =
-        [&](const char* key, TextureColorSpace colorSpace, auto setter) {
+    auto assignMapPath =
+        [&](const char* key, auto setter) {
             if (!maps.contains(key))
             {
                 return;
@@ -681,34 +748,18 @@ std::unique_ptr<Material> MaterialFromJson(
             }
 
             const std::string resolvedPath = resolvePath(storedPath);
-            try
-            {
-                std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), colorSpace);
-                setter(std::move(texture), toStoredPath(resolvedPath));
-            }
-            catch (const std::exception&)
-            {
-            }
+            setter(toStoredPath(resolvedPath));
         };
 
-    tryLoadMap(
-        "albedo",
-        TextureColorSpace::SRGB,
-        [&](std::shared_ptr<Texture> texture, const std::string& path) {
-            material->SetAlbedoMap(std::move(texture), path);
-        });
-    tryLoadMap(
-        "normal",
-        TextureColorSpace::Linear,
-        [&](std::shared_ptr<Texture> texture, const std::string& path) {
-            material->SetNormalMap(std::move(texture), path);
-        });
-    tryLoadMap(
-        "ao",
-        TextureColorSpace::Linear,
-        [&](std::shared_ptr<Texture> texture, const std::string& path) {
-            material->SetAoMap(std::move(texture), path);
-        });
+    assignMapPath("albedo", [&](const std::string& path) {
+        material->SetAlbedoMap(nullptr, path);
+    });
+    assignMapPath("normal", [&](const std::string& path) {
+        material->SetNormalMap(nullptr, path);
+    });
+    assignMapPath("ao", [&](const std::string& path) {
+        material->SetAoMap(nullptr, path);
+    });
 
     if (maps.contains("roughness"))
     {
@@ -716,25 +767,18 @@ std::unique_ptr<Material> MaterialFromJson(
         if (!storedPath.empty())
         {
             const std::string resolvedPath = resolvePath(storedPath);
+            const std::string relativePath = toStoredPath(resolvedPath);
             const bool metallicRoughness = maps.value("metallicRoughness", false);
-            try
+            if (metallicRoughness)
             {
-                std::shared_ptr<Texture> texture = cache.Load(resolvedPath.c_str(), TextureColorSpace::Linear);
-                const std::string relativePath = toStoredPath(resolvedPath);
-                if (metallicRoughness)
-                {
-                    material->SetMetallicRoughnessMap(
-                        std::move(texture),
-                        material->GetRoughnessTexCoordSet(),
-                        relativePath);
-                }
-                else
-                {
-                    material->SetRoughnessMap(std::move(texture), relativePath);
-                }
+                material->SetMetallicRoughnessMap(
+                    nullptr,
+                    material->GetRoughnessTexCoordSet(),
+                    relativePath);
             }
-            catch (const std::exception&)
+            else
             {
+                material->SetRoughnessMap(nullptr, relativePath);
             }
         }
     }

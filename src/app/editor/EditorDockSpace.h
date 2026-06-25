@@ -7,7 +7,7 @@ public:
     void CommitLayout();
     void End();
 
-    void AfterEditorPanels();
+    void AfterEditorPanels(bool validateRestoredLayout = false);
 
     bool IsLayoutBuilt() const { return m_layoutBuilt; }
     void RequestLayoutRebuild() { m_layoutBuilt = false; m_forceDefaultLayout = true; }

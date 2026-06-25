@@ -81,6 +81,9 @@ public:
     float GetDepthBiasScale() const { return m_depthBiasScale; }
     void SetDepthBiasScale(float scale) { m_depthBiasScale = std::clamp(scale, 0.0f, 4.0f); }
 
+    float GetCasterDepthBiasScale() const { return m_casterDepthBiasScale; }
+    void SetCasterDepthBiasScale(float scale) { m_casterDepthBiasScale = std::clamp(scale, 0.0f, 4.0f); }
+
     bool GetShadowBlurEnabled() const { return m_shadowBlurEnabled; }
     void SetShadowBlurEnabled(bool enabled) { m_shadowBlurEnabled = enabled; }
 
@@ -107,6 +110,7 @@ private:
     float m_pcssMaxPenumbraTexels = 32.0f;
     float m_worldBiasScale = 1.0f;
     float m_depthBiasScale = 1.0f;
+    float m_casterDepthBiasScale = 0.0f;
     bool m_shadowBlurEnabled = false;
     float m_shadowBlurRadius = 2.5f;
 };

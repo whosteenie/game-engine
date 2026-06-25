@@ -108,32 +108,7 @@ namespace SceneProjectIODetail
 
     std::string ResolveProjectPath(const std::string& projectRoot, const std::string& storedPath)
     {
-        if (storedPath.empty())
-        {
-            return {};
-        }
-
-        const fs::path stored(storedPath);
-        if (stored.is_absolute())
-        {
-            return stored.generic_string();
-        }
-
-        if (!projectRoot.empty())
-        {
-            const fs::path rooted = fs::path(projectRoot) / stored;
-            if (fs::exists(rooted))
-            {
-                return rooted.generic_string();
-            }
-        }
-
-        if (fs::exists(stored))
-        {
-            return stored.generic_string();
-        }
-
-        return (fs::path(projectRoot) / stored).generic_string();
+        return SceneProjectIO::ResolveProjectPath(projectRoot, storedPath);
     }
 
     std::optional<ScenePrimitive> DetectPrimitiveMesh(const Scene& scene, Mesh* mesh)
@@ -452,6 +427,7 @@ namespace SceneProjectIODetail
                  {"pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()},
                  {"worldBiasScale", shadowSettings.GetWorldBiasScale()},
                  {"depthBiasScale", shadowSettings.GetDepthBiasScale()},
+                 {"casterDepthBiasScale", shadowSettings.GetCasterDepthBiasScale()},
                  {"shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()},
                  {"shadowBlurRadius", shadowSettings.GetShadowBlurRadius()},
              }},
@@ -529,6 +505,8 @@ namespace SceneProjectIODetail
                 shadowValue.value("worldBiasScale", shadowSettings.GetWorldBiasScale()));
             shadowSettings.SetDepthBiasScale(
                 shadowValue.value("depthBiasScale", shadowSettings.GetDepthBiasScale()));
+            shadowSettings.SetCasterDepthBiasScale(
+                shadowValue.value("casterDepthBiasScale", shadowSettings.GetCasterDepthBiasScale()));
             shadowSettings.SetShadowBlurEnabled(
                 shadowValue.value("shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()));
             shadowSettings.SetShadowBlurRadius(
@@ -1150,6 +1128,9 @@ bool SceneProjectIO::DeserializeScene(
                 nullptr,
                 true))
         {
+            scene.GetObjectStore().Clear();
+            scene.GetMeshLibrary().ClearImportedMeshes();
+            scene.ClearSelection();
             return false;
         }
 
@@ -1239,6 +1220,8 @@ bool SceneProjectIO::Load(
 
     try
     {
+        SetMaterialTexturePathResolver(projectRoot);
+
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
 
         std::ifstream input(projectFilePath, std::ios::binary);
@@ -1261,4 +1244,43 @@ bool SceneProjectIO::Load(
         EngineLog::LogFailure("project-io", "Load", outError);
         return false;
     }
+}
+
+std::string SceneProjectIO::ResolveProjectPath(
+    const std::string& projectRoot,
+    const std::string& storedPath)
+{
+    if (storedPath.empty())
+    {
+        return {};
+    }
+
+    const fs::path stored(storedPath);
+    if (stored.is_absolute())
+    {
+        return stored.generic_string();
+    }
+
+    if (!projectRoot.empty())
+    {
+        const fs::path rooted = fs::path(projectRoot) / stored;
+        if (fs::exists(rooted))
+        {
+            return rooted.generic_string();
+        }
+    }
+
+    if (fs::exists(stored))
+    {
+        return stored.generic_string();
+    }
+
+    return (fs::path(projectRoot) / stored).generic_string();
+}
+
+void SceneProjectIO::SetMaterialTexturePathResolver(const std::string& projectRoot)
+{
+    Material::SetTexturePathResolver([projectRoot](const std::string& storedPath) {
+        return SceneProjectIO::ResolveProjectPath(projectRoot, storedPath);
+    });
 }

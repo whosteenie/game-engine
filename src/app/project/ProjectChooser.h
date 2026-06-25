@@ -16,6 +16,7 @@ class ProjectChooser
 public:
     using RequestCloseCallback = std::function<void()>;
     using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
+    using FinalizeEditorOpenFn = std::function<void()>;
 
     bool Draw(
         ProjectSession& project,
@@ -41,6 +42,7 @@ public:
         const ApplyEditorStateFn& applyEditorState,
         UndoStack& undoStack,
         EditorClipboard& clipboard,
+        const FinalizeEditorOpenFn& finalizeEditorOpen,
         std::string& outError);
 
     bool ProcessPendingProjectOpen(
@@ -51,6 +53,7 @@ public:
         const ApplyEditorStateFn& applyEditorState,
         UndoStack& undoStack,
         EditorClipboard& clipboard,
+        const FinalizeEditorOpenFn& finalizeEditorOpen,
         std::string& outError);
 
 private:

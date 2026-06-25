@@ -26,6 +26,9 @@ struct SceneProjectIO
         const std::string& projectFilePath,
         std::string& outError);
 
+    static std::string ResolveProjectPath(const std::string& projectRoot, const std::string& storedPath);
+    static void SetMaterialTexturePathResolver(const std::string& projectRoot);
+
 private:
     static nlohmann::json SerializeScene(
         const Scene& scene,

@@ -1,10 +1,12 @@
 #include "app/project/ProjectSession.h"
 
+#include "app/editor/EditorSettings.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/scene/Scene.h"
 #include "app/project/SceneProjectIO.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/rendering/Material.h"
 
 #include <algorithm>
 #include <cctype>
@@ -29,6 +31,12 @@ void ProjectSession::MarkClean()
 
 void ProjectSession::CloseProject()
 {
+    if (m_hasActiveProject)
+    {
+        EditorSettings::SaveGlobalEditorLayout();
+    }
+
+    Material::ClearTexturePathResolver();
     m_projectFilePath.clear();
     m_projectRootDirectory.clear();
     m_displayName = "Untitled";
@@ -111,6 +119,7 @@ bool ProjectSession::CreateNewProject(
 
     SetProjectRootDirectory(projectDirectory.string());
     SetProjectFilePath(projectPath.string());
+    SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
 
     fs::create_directories(projectDirectory / "Assets", error);
     if (error)

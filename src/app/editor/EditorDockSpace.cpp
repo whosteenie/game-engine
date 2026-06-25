@@ -75,7 +75,7 @@ void EditorDockSpace::End()
     ImGui::End();
 }
 
-void EditorDockSpace::AfterEditorPanels()
+void EditorDockSpace::AfterEditorPanels(const bool validateRestoredLayout)
 {
     if (!m_layoutBuilt)
     {
@@ -83,6 +83,11 @@ void EditorDockSpace::AfterEditorPanels()
     }
 
     const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
+    if (validateRestoredLayout)
+    {
+        EditorDockLayout::RepairLayout(dockspaceId);
+    }
+
     EditorDockLayout::AllowViewportUndocking(dockspaceId);
 }
 

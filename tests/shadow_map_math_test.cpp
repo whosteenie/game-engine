@@ -209,6 +209,13 @@ int main()
         grazingLightBias > facingLightBias,
         "Shadow bias should increase as the surface turns away from the light");
 
+    const float depthSpan = setup.stableOrthoFar - setup.stableOrthoNear;
+    const float casterBias = ComputeCasterDepthBiasNormalized(texelSpan, setup.stableOrthoNear, setup.stableOrthoFar, 1.0f);
+    ExpectTrue(casterBias > 0.0f, "Caster depth bias should be positive");
+    ExpectTrue(
+        casterBias < texelSpan / std::max(depthSpan, 1e-3f) * 1.01f,
+        "Caster depth bias at scale 1 should be about one texel in normalized depth");
+
     const glm::vec3 cubeCenter(0.0f, 1.5f, 0.0f);
     const glm::vec3 cubeShadowNdc = WorldToShadowNdc(setup.lightSpaceMatrix, cubeCenter);
     ExpectTrue(cubeShadowNdc.x >= 0.0f && cubeShadowNdc.x <= 1.0f, "Cube center UV.x should be inside shadow map");

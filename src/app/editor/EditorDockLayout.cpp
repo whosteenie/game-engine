@@ -42,3 +42,56 @@ void EditorDockLayout::AllowViewportUndocking(const ImGuiID dockspaceId)
             centralNode->LocalFlags & ~ImGuiDockNodeFlags_NoUndocking);
     }
 }
+
+namespace
+{
+    bool IsEditorPanelFloating(const char* windowName)
+    {
+        ImGuiWindow* window = ImGui::FindWindowByName(windowName);
+        if (window == nullptr)
+        {
+            return false;
+        }
+
+        return !window->DockIsActive;
+    }
+}
+
+bool EditorDockLayout::HasUndockedEditorPanels()
+{
+    static constexpr const char* kEditorPanelNames[] = {
+        "Game View",
+        "Scene View",
+        "Renderer Tuning",
+        "Inspector",
+        "Hierarchy",
+        "Project",
+    };
+
+    for (const char* panelName : kEditorPanelNames)
+    {
+        if (IsEditorPanelFloating(panelName))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void EditorDockLayout::RepairLayout(const ImGuiID dockspaceId)
+{
+    ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
+    if (dockNode == nullptr || !dockNode->IsSplitNode())
+    {
+        BuildDefaultLayout(dockspaceId);
+        return;
+    }
+
+    if (!HasUndockedEditorPanels())
+    {
+        return;
+    }
+
+    BuildDefaultLayout(dockspaceId);
+}

@@ -390,6 +390,16 @@ float ComputeShadowBias(const float nDotL, const float texelSpan)
     return texelSpan * (1.5f + 3.5f * sinTheta / std::max(clampedNDotL, 0.1f));
 }
 
+float ComputeCasterDepthBiasNormalized(
+    const float texelWorldSize,
+    const float orthoNear,
+    const float orthoFar,
+    const float scale)
+{
+    const float depthSpan = std::max(orthoFar - orthoNear, 1e-3f);
+    return (texelWorldSize / depthSpan) * std::max(scale, 0.0f);
+}
+
 std::vector<float> ComputeCascadeSplitDistances(
     const int cascadeCount,
     const float nearPlane,

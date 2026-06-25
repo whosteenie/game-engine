@@ -8,6 +8,7 @@
 #include "engine/assets/FileDialog.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/NativeProgressWindow.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
@@ -91,10 +92,13 @@ bool ProjectChooser::OpenProjectAtPath(
     const ApplyEditorStateFn& applyEditorState,
     UndoStack& undoStack,
     EditorClipboard& clipboard,
+    const FinalizeEditorOpenFn& finalizeEditorOpen,
     std::string& outError)
 {
     outError.clear();
     EngineLog::Info("project", "Opening project: " + projectFilePath);
+
+    ScopedNativeProgress progress("Loading Project", "Opening project...");
 
     try
     {
@@ -103,6 +107,7 @@ bool ProjectChooser::OpenProjectAtPath(
             GfxContext::Get().WaitForSwapchainFrames();
         }
 
+        progress.SetMessage("Loading project file...");
         EngineLog::Info("project", "Loading project file");
         if (!project.OpenProject(scene, projectFilePath, editorState))
         {
@@ -120,6 +125,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
+            progress.SetMessage("Applying editor preferences...");
             EngineLog::Info("project", "Applying editor state");
             try
             {
@@ -132,6 +138,12 @@ bool ProjectChooser::OpenProjectAtPath(
                 ReturnToStartupWithError(project, scene, outError);
                 return false;
             }
+        }
+
+        if (finalizeEditorOpen)
+        {
+            progress.SetMessage("Restoring editor layout...");
+            finalizeEditorOpen();
         }
 
         m_startupMode = false;
@@ -195,6 +207,7 @@ bool ProjectChooser::ProcessPendingProjectOpen(
     const ApplyEditorStateFn& applyEditorState,
     UndoStack& undoStack,
     EditorClipboard& clipboard,
+    const FinalizeEditorOpenFn& finalizeEditorOpen,
     std::string& outError)
 {
     if (m_pendingProjectPath.empty())
@@ -213,6 +226,7 @@ bool ProjectChooser::ProcessPendingProjectOpen(
         applyEditorState,
         undoStack,
         clipboard,
+        finalizeEditorOpen,
         outError);
 }
 
@@ -412,7 +426,7 @@ bool ProjectChooser::DrawStartupScreen(
                     clipboard,
                     error))
                 {
-                    ReturnToStartupWithError(project, scene, error.empty() ? "Failed to open project." : error);
+                    m_errorMessage = error.empty() ? "Failed to open project." : error;
                 }
         }
     }
@@ -453,7 +467,7 @@ bool ProjectChooser::DrawStartupScreen(
                     clipboard,
                     error))
                 {
-                    ReturnToStartupWithError(project, scene, error.empty() ? "Failed to open project." : error);
+                    m_errorMessage = error.empty() ? "Failed to open project." : error;
                     settings.RemoveRecentProject(projectPath);
                     settings.Save();
                 }

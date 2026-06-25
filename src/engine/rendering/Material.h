@@ -4,6 +4,7 @@
 #include "engine/rendering/RenderDebug.h"
 
 #include <glm/glm.hpp>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -27,6 +28,10 @@ public:
     ~Material();
 
     static void ReleaseGlobalGpuResources();
+
+    using TexturePathResolverFn = std::function<std::string(const std::string& storedPath)>;
+    static void SetTexturePathResolver(TexturePathResolverFn resolver);
+    static void ClearTexturePathResolver();
 
     void Apply(
         const Camera& camera,
@@ -90,6 +95,7 @@ public:
 private:
     void BindMaps() const;
     void EnsureShader() const;
+    void EnsureMapsLoaded() const;
 
     std::string m_vertexShaderPath;
     std::string m_fragmentShaderPath;
@@ -98,10 +104,10 @@ private:
     float m_roughness;
     float m_metallic;
 
-    std::shared_ptr<Texture> m_albedoMap;
-    std::shared_ptr<Texture> m_normalMap;
-    std::shared_ptr<Texture> m_aoMap;
-    std::shared_ptr<Texture> m_roughnessMap;
+    mutable std::shared_ptr<Texture> m_albedoMap;
+    mutable std::shared_ptr<Texture> m_normalMap;
+    mutable std::shared_ptr<Texture> m_aoMap;
+    mutable std::shared_ptr<Texture> m_roughnessMap;
 
     std::string m_albedoMapPath;
     std::string m_normalMapPath;
