@@ -21,7 +21,7 @@ struct PSOutput
     float4 oDirect : SV_Target0;
     float4 oIndirect : SV_Target1;
     float4 oNormal : SV_Target2;
-    float oShadowFactor : SV_Target3;
+    float4 oSunShadow : SV_Target3;
 };
 
 float3 LinearToSrgb(float3 linearColor)
@@ -68,7 +68,7 @@ PSOutput main(PSInput input)
     {
         output.oDirect = float4(linearColor, alpha);
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
-        output.oShadowFactor = 1.0;
+        output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
         return output;
     }
 
@@ -81,6 +81,6 @@ PSOutput main(PSInput input)
         output.oDirect = float4(LinearToSrgb(linearColor), alpha);
     }
     output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
-    output.oShadowFactor = 1.0;
+    output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
     return output;
 }

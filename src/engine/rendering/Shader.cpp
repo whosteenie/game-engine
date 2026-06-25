@@ -413,7 +413,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     psoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     psoDesc.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    psoDesc.RTVFormats[3] = DXGI_FORMAT_R16_FLOAT;
+    psoDesc.RTVFormats[3] = DXGI_FORMAT_R16G16B16A16_FLOAT;
     for (UINT targetIndex = 0; targetIndex < 4; ++targetIndex)
     {
         psoDesc.BlendState.RenderTarget[targetIndex].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -441,11 +441,25 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isSelectionOutline = vertexPath.find("selection_outline") != std::string::npos;
     const bool isSelectionGlow = fragmentPath.find("selection_glow") != std::string::npos;
     const bool isSelectionSharp = fragmentPath.find("selection_sharp") != std::string::npos;
+    const bool isGridComposite = fragmentPath.find("grid_composite") != std::string::npos;
 
     auto setupAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
         blendDesc.BlendEnable = TRUE;
         blendDesc.LogicOpEnable = FALSE;
         blendDesc.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        blendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        blendDesc.BlendOp = D3D12_BLEND_OP_ADD;
+        blendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
+        blendDesc.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+        blendDesc.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        blendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+    };
+
+    // Grid overlay capture stores premultiplied rgb (src.rgb * src.a); composite once onto scene.
+    auto setupPremultipliedAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
+        blendDesc.BlendEnable = TRUE;
+        blendDesc.LogicOpEnable = FALSE;
+        blendDesc.SrcBlend = D3D12_BLEND_ONE;
         blendDesc.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
         blendDesc.BlendOp = D3D12_BLEND_OP_ADD;
         blendDesc.SrcBlendAlpha = D3D12_BLEND_ONE;
@@ -534,6 +548,10 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         else if (isSelectionSharp)
         {
             setupAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
+        }
+        else if (isGridComposite)
+        {
+            setupPremultipliedAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
         }
     }
     else if (isSelectionMask)
@@ -654,6 +672,10 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         else if (isSelectionSharp)
         {
             setupAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
+        }
+        else if (isGridComposite)
+        {
+            setupPremultipliedAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
         }
 
         m_pipelineStateLdr = createPipeline(psoDesc);

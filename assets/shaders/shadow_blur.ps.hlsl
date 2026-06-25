@@ -39,7 +39,7 @@ float ViewDepth(float2 texCoord)
 
 float SampleWeight(float centerShadow, float centerViewDepth, float2 sampleUv, float kernelWeight)
 {
-    float sampleShadow = uInput.Sample(uInputSampler, sampleUv).r;
+    float sampleShadow = uInput.Sample(uInputSampler, sampleUv).a;
     float sampleViewDepth = ViewDepth(sampleUv);
     float depthWeight = 1.0 - smoothstep(
         uDepthThreshold * 0.5,
@@ -52,10 +52,11 @@ float SampleWeight(float centerShadow, float centerViewDepth, float2 sampleUv, f
     return kernelWeight * depthWeight * shadowWeight;
 }
 
-float main(PSInput input) : SV_Target
+float4 main(PSInput input) : SV_Target
 {
     float2 direction = float2(uDirectionX, uDirectionY) * uBlurRadius;
-    float centerShadow = uInput.Sample(uInputSampler, input.texCoord).r;
+    float4 center = uInput.Sample(uInputSampler, input.texCoord);
+    float centerShadow = center.a;
     float centerViewDepth = ViewDepth(input.texCoord);
 
     float result = 0.0;
@@ -78,10 +79,10 @@ float main(PSInput input) : SV_Target
         {
             float2 sampleUv = input.texCoord + offset * (float)sign;
             float weight = SampleWeight(centerShadow, centerViewDepth, sampleUv, kernelWeight);
-            result += uInput.Sample(uInputSampler, sampleUv).r * weight;
+            result += uInput.Sample(uInputSampler, sampleUv).a * weight;
             weightSum += weight;
         }
     }
 
-    return result / max(weightSum, 1e-5);
+    return float4(center.rgb, result / max(weightSum, 1e-5));
 }

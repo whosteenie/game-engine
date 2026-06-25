@@ -371,6 +371,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_fxaaShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::FxaaFragmentShader)),
+      m_gridCompositeShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::GridCompositeFragmentShader)),
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader))
@@ -394,6 +397,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
     DestroyInternalTarget(m_ldrTonemapTarget);
+    DestroyInternalTarget(m_gridOverlayTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
 
@@ -698,6 +702,12 @@ void ScreenSpaceEffects::ResizeLdrTonemapTarget(const int width, const int heigh
     ResizeInternalTarget(m_ldrTonemapTarget, width, height, format);
 }
 
+void ScreenSpaceEffects::ResizeGridOverlayTarget(const int width, const int height)
+{
+    const int format = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
+    ResizeInternalTarget(m_gridOverlayTarget, width, height, format);
+}
+
 void ScreenSpaceEffects::Resize(const int width, const int height)
 {
     if (width <= 0 || height <= 0)
@@ -718,6 +728,7 @@ void ScreenSpaceEffects::Resize(const int width, const int height)
     ResizeHdrColorTarget(width, height);
     ResizeBloomTargets(width, height);
     ResizeLdrTonemapTarget(width, height);
+    ResizeGridOverlayTarget(width, height);
     m_width = width;
     m_height = height;
 }
@@ -775,6 +786,68 @@ void ScreenSpaceEffects::BeginScenePass() const
 void ScreenSpaceEffects::EndScenePass() const
 {
     m_sceneFramebuffer->Unbind();
+}
+
+void ScreenSpaceEffects::BeginGridOverlayPass() const
+{
+    if (m_gridOverlayTarget.resource == nullptr || !m_sceneFramebuffer->IsValid())
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    TransitionResource(
+        commandList,
+        static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{
+        GfxContext::Get().GetOffscreenRtvCpuHandle(m_gridOverlayTarget.rtvIndex)};
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{m_sceneFramebuffer->GetDepthDsvCpuHandle()};
+
+    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_width);
+    viewport.Height = static_cast<float>(m_height);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, m_width, m_height};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+}
+
+void ScreenSpaceEffects::EndGridOverlayPass() const
+{
+    if (m_gridOverlayTarget.resource == nullptr)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    TransitionResource(
+        commandList,
+        static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
+        D3D12_RESOURCE_STATE_RENDER_TARGET,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+}
+
+void ScreenSpaceEffects::CompositeGridOverlay() const
+{
+    if (m_gridOverlayTarget.srvCpuHandle == 0 || m_width <= 0 || m_height <= 0)
+    {
+        return;
+    }
+
+    m_gridCompositeShader->Use(false, true);
+    m_gridCompositeShader->SetInt("uGridOverlay", 0);
+    m_gridCompositeShader->BindTextureSlot(0, m_gridOverlayTarget.srvCpuHandle);
+    m_gridCompositeShader->FlushUniforms();
+    DrawFullscreenPass(*m_gridCompositeShader, true);
 }
 
 void ScreenSpaceEffects::DrawFullscreenQuad() const

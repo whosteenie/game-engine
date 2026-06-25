@@ -111,6 +111,10 @@ public:
 
     void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
 
+    void BeginGridOverlayPass() const;
+    void EndGridOverlayPass() const;
+    void CompositeGridOverlay() const;
+
     const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
 
 private:
@@ -135,6 +139,7 @@ private:
     void ResizeHdrColorTarget(int width, int height);
     void ResizeBloomTargets(int width, int height);
     void ResizeLdrTonemapTarget(int width, int height);
+    void ResizeGridOverlayTarget(int width, int height);
     void DrawFullscreenQuad() const;
     void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
@@ -168,6 +173,7 @@ private:
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
     InternalTarget m_ldrTonemapTarget;
+    InternalTarget m_gridOverlayTarget;
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
@@ -178,6 +184,7 @@ private:
     std::unique_ptr<Shader> m_shadowBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_fxaaShader;
+    std::unique_ptr<Shader> m_gridCompositeShader;
     std::unique_ptr<Shader> m_debugChannelShader;
 
     std::vector<glm::vec3> m_kernelSamples;

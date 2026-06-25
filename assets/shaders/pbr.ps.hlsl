@@ -103,7 +103,7 @@ struct PSOutput
     float4 oDirect : SV_Target0;
     float4 oIndirect : SV_Target1;
     float4 oNormal : SV_Target2;
-    float oShadowFactor : SV_Target3;
+    float4 oSunShadow : SV_Target3;
 };
 
 float3 SrgbToLinear(float3 srgb)
@@ -749,7 +749,7 @@ PSOutput main(PSInput input)
     }
 
     float3 irradiance = EvaluateDiffuseIrradianceSh(geomNormalNorm);
-    float3 diffuseIbl = irradiance * albedo;
+    float3 diffuseIbl = irradiance * albedo / PI;
 
     float sunGeomFacing = 1.0;
     if (uShadowLightIndex >= 0 && uLightTypes[uShadowLightIndex] == LIGHT_TYPE_DIRECTIONAL)
@@ -772,6 +772,8 @@ PSOutput main(PSInput input)
 
     float3 directShadowed = 0.0.xxx;
     float3 directUnshadowed = 0.0.xxx;
+    float3 directFillUnshadowed = 0.0.xxx;
+    float3 directSunUnshadowed = 0.0.xxx;
     float shadowFactor = 1.0;
 
     [loop]
@@ -824,6 +826,11 @@ PSOutput main(PSInput input)
         {
             lightShadow = CalcShadow(input.fragPos, input.viewDepth, geomNormal, lightDir);
             shadowFactor = lightShadow;
+            directSunUnshadowed += litContribution;
+        }
+        else
+        {
+            directFillUnshadowed += litContribution;
         }
 
         directUnshadowed += litContribution;
@@ -923,7 +930,7 @@ PSOutput main(PSInput input)
         {
             float3 worldNormal = normalize(geomNormal);
             float3 irradiance = EvaluateDiffuseIrradianceSh(worldNormal);
-            float3 diffuseOnly = irradiance * albedo * (1.0 - metallic);
+            float3 diffuseOnly = irradiance * albedo * (1.0 - metallic) / PI;
             debugColor = diffuseOnly / (diffuseOnly + 0.25.xxx);
         }
         else if (uDebugMode == 12)
@@ -1068,16 +1075,16 @@ PSOutput main(PSInput input)
 
         output.oDirect = float4(debugColor, 1.0);
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
-        output.oShadowFactor = 1.0;
+        output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
         output.oNormal = float4(normalize(geomNormal), 1.0);
         return output;
     }
 
     if (uSplitLightingOutput != 0)
     {
-        output.oDirect = float4(directUnshadowed, 1.0);
+        output.oDirect = float4(directFillUnshadowed, 1.0);
         output.oIndirect = float4(ambient, 1.0);
-        output.oShadowFactor = shadowFactor;
+        output.oSunShadow = float4(directSunUnshadowed, shadowFactor);
         output.oNormal = float4(normalize(geomNormal), 1.0);
         return output;
     }
@@ -1092,7 +1099,7 @@ PSOutput main(PSInput input)
         output.oDirect = float4(LinearToSrgb(result), 1.0);
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
     }
-    output.oShadowFactor = 1.0;
+    output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
     output.oNormal = float4(normalize(geomNormal), 1.0);
     return output;
 }

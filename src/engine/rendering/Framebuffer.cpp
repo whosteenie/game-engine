@@ -48,16 +48,6 @@ namespace
 
 
 
-        if (attachmentIndex == 3)
-
-        {
-
-            return DXGI_FORMAT_R16_FLOAT;
-
-        }
-
-
-
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
 
     }

@@ -247,15 +247,23 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     const int shadowMapResolution,
     const float xyMarginFraction,
     const float zMarginFraction,
-    const glm::vec3* /*casterBoundsMin*/,
-    const glm::vec3* /*casterBoundsMax*/)
+    const glm::vec3* casterBoundsMin,
+    const glm::vec3* casterBoundsMax)
 {
     const std::vector<glm::vec3> frustumPoints(frustumCorners.begin(), frustumCorners.end());
+
+    std::vector<glm::vec3> zWorldPoints = frustumPoints;
+    if (casterBoundsMin != nullptr && casterBoundsMax != nullptr)
+    {
+        const std::array<glm::vec3, 8> casterCorners =
+            BuildAxisAlignedBoxCorners(*casterBoundsMin, *casterBoundsMax);
+        zWorldPoints.insert(zWorldPoints.end(), casterCorners.begin(), casterCorners.end());
+    }
 
     ShadowLightSpaceSetup setup = BuildShadowLightSpaceFromWorldPoints(
         lightDirectionTowardSource,
         frustumPoints,
-        frustumPoints,
+        zWorldPoints,
         shadowMapResolution,
         xyMarginFraction,
         zMarginFraction);

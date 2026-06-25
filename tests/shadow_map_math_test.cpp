@@ -331,16 +331,10 @@ int main()
         frustumWithCasterSetup.texelWorldSizeX,
         1e-6f,
         "Caster bounds should not change cascade texel size in XY");
-    ExpectNear(
-        frustumOnlySetup.stableOrthoNear,
-        frustumWithCasterSetup.stableOrthoNear,
-        1e-3f,
-        "Intersecting caster bounds should not affect ortho near plane");
-    ExpectNear(
-        frustumOnlySetup.stableOrthoFar,
-        frustumWithCasterSetup.stableOrthoFar,
-        1e-3f,
-        "Intersecting caster bounds should not affect ortho far plane");
+    ExpectTrue(
+        frustumWithCasterSetup.stableOrthoNear != frustumOnlySetup.stableOrthoNear ||
+            frustumWithCasterSetup.stableOrthoFar != frustumOnlySetup.stableOrthoFar,
+        "Intersecting caster bounds that extend frustum depth should affect ortho Z");
 
     const glm::vec3 distantCasterMin(-20.0f, -100.0f, -20.0f);
     const glm::vec3 distantCasterMax(20.0f, -90.0f, 20.0f);
@@ -352,16 +346,14 @@ int main()
         0.12f,
         &distantCasterMin,
         &distantCasterMax);
-    ExpectNear(
-        frustumOnlySetup.stableOrthoNear,
-        distantCasterSetup.stableOrthoNear,
-        1e-3f,
-        "Non-intersecting caster bounds should not affect ortho near plane");
-    ExpectNear(
-        frustumOnlySetup.stableOrthoFar,
-        distantCasterSetup.stableOrthoFar,
-        1e-3f,
-        "Non-intersecting caster bounds should not affect ortho far plane");
+    ExpectTrue(
+        distantCasterSetup.stableOrthoNear != frustumOnlySetup.stableOrthoNear ||
+            distantCasterSetup.stableOrthoFar != frustumOnlySetup.stableOrthoFar,
+        "Non-intersecting caster bounds should expand ortho Z range");
+    ExpectTrue(
+        (distantCasterSetup.stableOrthoFar - distantCasterSetup.stableOrthoNear) >
+            (frustumOnlySetup.stableOrthoFar - frustumOnlySetup.stableOrthoNear),
+        "Non-intersecting caster bounds should widen ortho depth span");
 
     const glm::mat4 nearCameraView = glm::lookAt(
         glm::vec3(0.0f, 2.0f, 6.0f),

@@ -36,17 +36,15 @@ float4 main(PSInput input) : SV_Target
 
     if (uUseSplitLighting != 0)
     {
-        direct = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
+        float3 fillDirect = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
         indirect = uIndirectLighting.Sample(uIndirectLightingSampler, uv).rgb;
+        float4 sunShadow = uShadowFactorMap.Sample(uShadowFactorSampler, uv);
+        float3 sunDirect = sunShadow.rgb * (uUseShadowFactor != 0 ? sunShadow.a : 1.0);
+        direct = fillDirect + sunDirect;
     }
     else
     {
         direct = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
-    }
-
-    if (uUseShadowFactor != 0)
-    {
-        direct *= uShadowFactorMap.Sample(uShadowFactorSampler, uv).r;
     }
 
     if (depth >= 0.9999)
