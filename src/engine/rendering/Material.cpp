@@ -97,11 +97,22 @@ Material::Material(
     const glm::vec3& albedo,
     float roughness,
     float metallic)
-    : m_shader(ShaderCache::Load(vertexShaderPath, fragmentShaderPath)),
+    : m_vertexShaderPath(vertexShaderPath),
+      m_fragmentShaderPath(fragmentShaderPath),
       m_albedo(albedo),
       m_roughness(roughness),
       m_metallic(metallic)
 {
+}
+
+void Material::EnsureShader() const
+{
+    if (m_shader != nullptr)
+    {
+        return;
+    }
+
+    m_shader = ShaderCache::Load(m_vertexShaderPath.c_str(), m_fragmentShaderPath.c_str());
 }
 
 Material::~Material() = default;
@@ -117,6 +128,7 @@ void Material::Apply(
     const RenderDebugMode debugMode,
     const DirectionalShadowSettings& shadowSettings) const
 {
+    EnsureShader();
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
@@ -629,21 +641,12 @@ std::unique_ptr<Material> MaterialFromJson(
     const float roughness = value.at("roughness").get<float>();
     const float metallic = value.at("metallic").get<float>();
 
-    std::unique_ptr<Material> material;
-    try
-    {
-        material = std::make_unique<Material>(
-            EngineConstants::LitVertexShader,
-            EngineConstants::PbrFragmentShader,
-            albedo,
-            roughness,
-            metallic);
-    }
-    catch (const std::exception& exception)
-    {
-        throw std::runtime_error(
-            std::string("Material shader/GPU setup failed: ") + SafeExceptionMessage(exception));
-    }
+    std::unique_ptr<Material> material = std::make_unique<Material>(
+        EngineConstants::LitVertexShader,
+        EngineConstants::PbrFragmentShader,
+        albedo,
+        roughness,
+        metallic);
 
     material->SetDoubleSided(value.value("doubleSided", false));
 

@@ -208,7 +208,9 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         for (UINT registerIndex = 0; registerIndex <= 8; ++registerIndex)
         {
             D3D12_STATIC_SAMPLER_DESC sampler{};
-            sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+            // s8 = shadow map: point when sampled; shader uses Load for depth compares.
+            sampler.Filter = registerIndex == 8 ? D3D12_FILTER_MIN_MAG_MIP_POINT
+                                                : D3D12_FILTER_MIN_MAG_MIP_LINEAR;
             // t4–t7 (albedo/normal/AO/roughness) tile with UV repeat; shadow + IBL stay clamped.
             const bool wrapMaterialMaps = registerIndex >= 4 && registerIndex <= 7;
             const D3D12_TEXTURE_ADDRESS_MODE addressMode = wrapMaterialMaps
@@ -498,8 +500,11 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
-        psoDesc.RasterizerState.DepthBias = 0;
-        psoDesc.RasterizerState.SlopeScaledDepthBias = 0.0f;
+        // D32 shadow map: push casters slightly away from the light to prevent self-shadow acne
+        // in the receiver compare (mode 22). Receiver bias remains separate.
+        psoDesc.RasterizerState.DepthBias = 100000;
+        psoDesc.RasterizerState.DepthBiasClamp = 0.0f;
+        psoDesc.RasterizerState.SlopeScaledDepthBias = 2.0f;
         static D3D12_INPUT_ELEMENT_DESC shadowLayout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
         };

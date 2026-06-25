@@ -271,12 +271,8 @@ float3 CalcCookTorranceContribution(
     return (diffuseEnergy * albedo / PI + specular) * radiance * normalDotLight;
 }
 
+// Point-texel depth for manual compare tests (PCF averages compare results, not depth).
 float FetchShadowDepth(int cascadeIndex, float2 shadowUv)
-{
-    return uShadowMap.Sample(uShadowMapSampler, float3(shadowUv, (float)cascadeIndex)).r;
-}
-
-float FetchShadowDepthRaw(int cascadeIndex, float2 shadowUv)
 {
     uint width = 0;
     uint height = 0;
@@ -286,6 +282,11 @@ float FetchShadowDepthRaw(int cascadeIndex, float2 shadowUv)
     uint2 texel = uint2(shadowUv * float(resolution));
     texel = min(texel, uint2(resolution - 1, resolution - 1));
     return uShadowMap.Load(int4(texel.x, texel.y, cascadeIndex, 0)).r;
+}
+
+float FetchShadowDepthRaw(int cascadeIndex, float2 shadowUv)
+{
+    return FetchShadowDepth(cascadeIndex, shadowUv);
 }
 
 float3 DebugShadowBoundsColor(bool inBounds, float clipZ)
@@ -331,6 +332,20 @@ bool IsShadowBlocked(int cascadeIndex, float2 shadowUv, float compareDepth, floa
 {
     float storedDepth = FetchShadowDepth(cascadeIndex, shadowUv);
     return (compareDepth - storedDepth) > minSeparation;
+}
+
+// Mode 22 arbiter: raw center-texel compare with no receiver bias or min-separation floor.
+bool IsShadowBlockedRawCenterTexel(int cascadeIndex, float3 worldPos)
+{
+    float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, worldPos);
+    if (sampleCoords.z < 0.0 || sampleCoords.z > 1.0
+        || any(sampleCoords.xy < 0.0) || any(sampleCoords.xy > 1.0))
+    {
+        return false;
+    }
+
+    float storedDepth = FetchShadowDepth(cascadeIndex, sampleCoords.xy);
+    return sampleCoords.z > storedDepth;
 }
 
 float ShadowFilterRotation(int cascadeIndex)
@@ -578,7 +593,7 @@ struct UnbiasedShadowSample
 UnbiasedShadowSample BuildUnbiasedShadowSample(float3 worldPos, float viewDepth)
 {
     UnbiasedShadowSample sampleData;
-    sampleData.cascadeIndex = SelectCascadeForReceiverWorldPos(worldPos, viewDepth);
+    sampleData.cascadeIndex = SelectCascadeIndex(viewDepth);
     float2 texelSize = 1.0 / float2(uShadowMapResolution, uShadowMapResolution);
     float texelUvSpan = max(texelSize.x, texelSize.y);
     sampleData.minSeparation = texelUvSpan * max(0.75, 1.25 * uDepthBiasScale);
@@ -838,7 +853,7 @@ PSOutput main(PSInput input)
         }
         else if (uDebugMode == 5)
         {
-            int cascadeIndex = SelectCascadeForReceiverWorldPos(input.fragPos, input.viewDepth);
+            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
             float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
             if (sampleCoords.z >= 0.0 && sampleCoords.z <= 1.0)
             {
@@ -1022,18 +1037,15 @@ PSOutput main(PSInput input)
         }
         else if (uDebugMode == 22)
         {
-            UnbiasedShadowSample shadowSample = BuildUnbiasedShadowSample(input.fragPos, input.viewDepth);
-            if (!shadowSample.inBounds)
+            int cascadeIndex = SelectCascadeIndex(input.viewDepth);
+            float3 sampleCoords = WorldToShadowSampleCoords(cascadeIndex, input.fragPos);
+            if (!IsInShadowCascadeBounds(sampleCoords))
             {
                 debugColor = 0.5.xxx;
             }
             else
             {
-                bool blocked = IsShadowBlocked(
-                    shadowSample.cascadeIndex,
-                    shadowSample.shadowUv,
-                    shadowSample.compareDepth,
-                    shadowSample.minSeparation);
+                bool blocked = IsShadowBlockedRawCenterTexel(cascadeIndex, input.fragPos);
                 debugColor = blocked ? 0.0.xxx : 1.0.xxx;
             }
         }

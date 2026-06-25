@@ -18,7 +18,7 @@ struct ShadowLightSpaceSetup
     // Clip-space Z range of cascade content (for depth debug normalization).
     float clipDepthContentMin = 0.0f;
     float clipDepthContentMax = 1.0f;
-    // Per-frame and stable ortho Z used to map stable shadow-map depth into content clip space.
+    // Ortho Z planes used by lightProjection (identical for shadow pass and sampling).
     float stableOrthoNear = 0.0f;
     float stableOrthoFar = 1.0f;
     float contentOrthoNear = 0.0f;
@@ -39,14 +39,16 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     float xyMarginFraction,
     float zMarginFraction,
     const glm::vec3* casterBoundsMin = nullptr,
-    const glm::vec3* casterBoundsMax = nullptr,
-    bool tightNearPlaneXyFit = true,
-    const glm::vec3* lightViewAnchor = nullptr,
-    float* stableOrthoHalfExtentInOut = nullptr,
-    glm::vec2* stableOrthoCenterLightInOut = nullptr,
-    float* stableOrthoZNearInOut = nullptr,
-    float* stableOrthoZFarInOut = nullptr,
-    bool resetStableFit = true);
+    const glm::vec3* casterBoundsMax = nullptr);
+
+// Single directional shadow map: fit ortho to an axis-aligned world bounds box.
+ShadowLightSpaceSetup BuildShadowLightSpaceForBounds(
+    const glm::vec3& lightDirectionTowardSource,
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    int shadowMapResolution,
+    float xyMarginFraction,
+    float zMarginFraction);
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition);
 

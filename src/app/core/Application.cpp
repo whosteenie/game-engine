@@ -1082,6 +1082,11 @@ void Application::FramebufferSizeCallback(GLFWwindow* window, int width, int hei
 
 void Application::Render()
 {
+    if (GfxContext::Get().IsDeviceRemoved())
+    {
+        return;
+    }
+
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {
         FrameDiagnostics::LogPhase("render-begin");

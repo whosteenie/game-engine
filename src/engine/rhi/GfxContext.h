@@ -97,6 +97,7 @@ public:
 
     static std::string GetLastGpuAllocationError();
     void GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& outCapacity) const;
+    bool IsDeviceRemoved(std::string* outReason = nullptr) const;
 
 private:
     GfxContext() = default;
@@ -112,7 +113,6 @@ private:
     void CreateRenderTargets();
     void ReleaseRenderTargets();
     void RenderImGui(ImDrawData* drawData);
-    bool IsDeviceRemoved(std::string* outReason = nullptr) const;
 
     GLFWwindow* m_window = nullptr;
     int m_width = 0;

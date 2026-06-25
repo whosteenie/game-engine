@@ -287,8 +287,7 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        true);
+        &casterBoundsMax);
     const ShadowLightSpaceSetup farFrustumCascadeSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         farFrustumCorners,
@@ -296,8 +295,7 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        true);
+        &casterBoundsMax);
     ExpectTrue(
         nearFrustumCascadeSetup.clipDepthContentMin != farFrustumCascadeSetup.clipDepthContentMin ||
             nearFrustumCascadeSetup.clipDepthContentMax != farFrustumCascadeSetup.clipDepthContentMax,
@@ -306,28 +304,57 @@ int main()
         nearFrustumCascadeSetup.orthoWidth < farFrustumCascadeSetup.orthoWidth,
         "Near cascade ortho should be tighter than far cascade with frustum-only XY fit");
 
-    const ShadowLightSpaceSetup frustumOnlyXySetup = nearFrustumCascadeSetup;
-    const ShadowLightSpaceSetup frustumPlusCasterXySetup = BuildShadowLightSpaceForFrustumCorners(
+    const ShadowLightSpaceSetup frustumOnlySetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         nearFrustumCorners,
         4096,
         0.03f,
         0.12f,
-        &casterBoundsMin,
-        &casterBoundsMax,
-        false);
+        nullptr,
+        nullptr);
+    const ShadowLightSpaceSetup frustumWithCasterSetup = nearFrustumCascadeSetup;
 
-    ExpectTrue(
-        frustumOnlyXySetup.orthoWidth <= frustumPlusCasterXySetup.orthoWidth + 1e-3f,
-        "Frustum-only XY fit should not enlarge ortho width versus frustum + caster fit");
-    ExpectTrue(
-        frustumOnlyXySetup.texelWorldSizeX <= frustumPlusCasterXySetup.texelWorldSizeX + 1e-6f,
-        "Frustum-only XY fit should produce equal or smaller texels");
+    ExpectNear(
+        frustumOnlySetup.orthoWidth,
+        frustumWithCasterSetup.orthoWidth,
+        1e-3f,
+        "Caster bounds should not expand ortho XY (frustum-only fit is always on)");
+    ExpectNear(
+        frustumOnlySetup.texelWorldSizeX,
+        frustumWithCasterSetup.texelWorldSizeX,
+        1e-6f,
+        "Caster bounds should not change cascade texel size in XY");
+    ExpectNear(
+        frustumOnlySetup.stableOrthoNear,
+        frustumWithCasterSetup.stableOrthoNear,
+        1e-3f,
+        "Intersecting caster bounds should not affect ortho near plane");
+    ExpectNear(
+        frustumOnlySetup.stableOrthoFar,
+        frustumWithCasterSetup.stableOrthoFar,
+        1e-3f,
+        "Intersecting caster bounds should not affect ortho far plane");
 
-    float stableHalfExtent = 0.0f;
-    glm::vec2 stableCenterLight(0.0f);
-    float stableOrthoNear = 0.0f;
-    float stableOrthoFar = 0.0f;
+    const glm::vec3 distantCasterMin(-20.0f, -100.0f, -20.0f);
+    const glm::vec3 distantCasterMax(20.0f, -90.0f, 20.0f);
+    const ShadowLightSpaceSetup distantCasterSetup = BuildShadowLightSpaceForFrustumCorners(
+        lightDirection,
+        nearFrustumCorners,
+        4096,
+        0.03f,
+        0.12f,
+        &distantCasterMin,
+        &distantCasterMax);
+    ExpectNear(
+        frustumOnlySetup.stableOrthoNear,
+        distantCasterSetup.stableOrthoNear,
+        1e-3f,
+        "Non-intersecting caster bounds should not affect ortho near plane");
+    ExpectNear(
+        frustumOnlySetup.stableOrthoFar,
+        distantCasterSetup.stableOrthoFar,
+        1e-3f,
+        "Non-intersecting caster bounds should not affect ortho far plane");
 
     const glm::mat4 nearCameraView = glm::lookAt(
         glm::vec3(0.0f, 2.0f, 6.0f),
@@ -352,14 +379,7 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        true,
-        nullptr,
-        &stableHalfExtent,
-        &stableCenterLight,
-        &stableOrthoNear,
-        &stableOrthoFar,
-        true);
+        &casterBoundsMax);
     const ShadowLightSpaceSetup stableRetainedSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         nearFrustumCorners,
@@ -367,14 +387,7 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        true,
-        nullptr,
-        &stableHalfExtent,
-        &stableCenterLight,
-        &stableOrthoNear,
-        &stableOrthoFar,
-        false);
+        &casterBoundsMax);
 
     const glm::vec3 floorShadowNdcStart = WorldToShadowNdc(stablePassSetup.lightSpaceMatrix, floorPoint);
     const glm::vec3 floorShadowNdcEnd = WorldToShadowNdc(stableRetainedSetup.lightSpaceMatrix, floorPoint);
@@ -389,45 +402,35 @@ int main()
         1e-5f,
         "Floor shadow UV.y should stay stable when the frustum is unchanged");
 
-    // When stable Z is artificially much wider than per-frame bounds, content clip range stays usable.
-    float artificiallyWideNear = -500.0f;
-    float artificiallyWideFar = 500.0f;
-    float wideStableHalfExtent = stableHalfExtent * 4.0f;
-    glm::vec2 wideStableCenter = stableCenterLight;
-    const ShadowLightSpaceSetup wideStableSetup = BuildShadowLightSpaceForFrustumCorners(
-        lightDirection,
-        nearFrustumCorners,
-        4096,
-        0.03f,
-        0.12f,
-        &casterBoundsMin,
-        &casterBoundsMax,
-        true,
-        nullptr,
-        &wideStableHalfExtent,
-        &wideStableCenter,
-        &artificiallyWideNear,
-        &artificiallyWideFar,
-        false);
-    const float wideContentSpan =
-        wideStableSetup.clipDepthContentMax - wideStableSetup.clipDepthContentMin;
+    // Per-frame ortho Z should spread scene depth across a meaningful clip-Z band.
+    const float contentClipSpan =
+        stablePassSetup.clipDepthContentMax - stablePassSetup.clipDepthContentMin;
     ExpectTrue(
-        wideContentSpan > 0.01f,
-        "Frustum stable clipZ bounds should span a positive range even with wide stable Z");
+        contentClipSpan > 0.05f,
+        "Cascade content clip-Z span should use a meaningful slice of [0, 1]");
 
-    const ShadowReceiverProbeResult wideStableFloorProbe = EvaluateShadowReceiverProbe(
+    const glm::vec3 cubeTopPoint(0.0f, 2.0f, 0.0f);
+    const float floorClipZ =
+        WorldToShadowSampleCoords(stablePassSetup.lightSpaceMatrix, floorPoint).z;
+    const float cubeTopClipZ =
+        WorldToShadowSampleCoords(stablePassSetup.lightSpaceMatrix, cubeTopPoint).z;
+    ExpectTrue(
+        std::abs(floorClipZ - cubeTopClipZ) > 0.02f,
+        "Separated world points should map to distinct light-space clip Z values");
+
+    const ShadowReceiverProbeResult cascadeFloorProbe = EvaluateShadowReceiverProbe(
         floorPoint,
         5.0f,
-        &wideStableSetup.lightSpaceMatrix,
-        &wideStableSetup,
+        &stablePassSetup.lightSpaceMatrix,
+        &stablePassSetup,
         nullptr,
         1);
     ExpectTrue(
-        wideStableFloorProbe.normalizedClipZ >= 0.0f && wideStableFloorProbe.normalizedClipZ <= 1.0f,
-        "Floor normalized clip depth should stay in [0, 1] with artificially wide stable Z");
+        cascadeFloorProbe.normalizedClipZ >= 0.0f && cascadeFloorProbe.normalizedClipZ <= 1.0f,
+        "Floor normalized clip depth should stay in [0, 1]");
     ExpectTrue(
-        wideStableFloorProbe.normalizedClipZ > 0.05f && wideStableFloorProbe.normalizedClipZ < 0.95f,
-        "Floor normalized clip depth should use mid-range with wide stable Z (not flat debug band)");
+        cascadeFloorProbe.normalizedClipZ > 0.05f && cascadeFloorProbe.normalizedClipZ < 0.95f,
+        "Floor normalized clip depth should land in the mid-range of the content band");
 
     const ShadowLightSpaceSetup dollyFrustumSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
@@ -436,14 +439,7 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        true,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        true);
+        &casterBoundsMax);
     ExpectNear(
         stablePassSetup.lightView[0][0],
         dollyFrustumSetup.lightView[0][0],
@@ -466,8 +462,6 @@ int main()
         cascadeSplits[0],
         cascadeSplits[1]);
 
-    float rotatedStableHalfExtent = 0.0f;
-    glm::vec2 rotatedStableCenterLight(0.0f);
     const ShadowLightSpaceSetup rotatedFrustumSetup = BuildShadowLightSpaceForFrustumCorners(
         lightDirection,
         rotatedFrustumCorners,
@@ -475,24 +469,19 @@ int main()
         0.03f,
         0.12f,
         &casterBoundsMin,
-        &casterBoundsMax,
-        false,
-        nullptr,
-        &rotatedStableHalfExtent,
-        &rotatedStableCenterLight,
-        &stableOrthoNear,
-        &stableOrthoFar,
-        true);
+        &casterBoundsMax);
 
-    const glm::vec3 cubeTopFace(0.0f, 2.0f, 0.0f);
-    const glm::vec3 cubeTopShadowNdc =
-        WorldToShadowNdc(rotatedFrustumSetup.lightSpaceMatrix, cubeTopFace);
+    const ShadowLightSpaceSetup globalCasterSetup =
+        BuildShadowLightSpace(lightDirection, casterBoundsMin, casterBoundsMax, 4096);
+    ExpectTrue(rotatedFrustumSetup.orthoWidth > 0.0f, "Rotated cascade ortho should be valid");
     ExpectTrue(
-        cubeTopShadowNdc.x >= 0.0f && cubeTopShadowNdc.x <= 1.0f,
-        "Cube top should stay inside shadow UV.x after camera rotation");
+        rotatedFrustumSetup.orthoWidth < globalCasterSetup.orthoWidth,
+        "Rotated cascade ortho should stay tighter than global caster bounds");
+    const float rotatedContentClipSpan =
+        rotatedFrustumSetup.clipDepthContentMax - rotatedFrustumSetup.clipDepthContentMin;
     ExpectTrue(
-        cubeTopShadowNdc.y >= 0.0f && cubeTopShadowNdc.y <= 1.0f,
-        "Cube top should stay inside shadow UV.y after camera rotation");
+        rotatedContentClipSpan > 0.05f,
+        "Rotated cascade content clip-Z span should use a meaningful slice of [0, 1]");
 
     glm::vec3 intersectionMin;
     glm::vec3 intersectionMax;

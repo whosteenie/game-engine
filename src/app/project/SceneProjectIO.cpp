@@ -477,8 +477,15 @@ namespace SceneProjectIODetail
     void DeserializeRenderer(Scene& scene, const json& rendererValue)
     {
         SceneRenderer& renderer = scene.GetRenderer();
-        renderer.GetIBL().SetEnvironmentIntensity(
-            rendererValue.value("environmentIntensity", renderer.GetIBL().GetEnvironmentIntensity()));
+        renderer.PrepareGpuResources();
+        const bool gpuReady = renderer.IsGpuResourcesReady();
+
+        if (gpuReady)
+        {
+            const float defaultEnvironmentIntensity = renderer.GetIBL().GetEnvironmentIntensity();
+            renderer.GetIBL().SetEnvironmentIntensity(
+                rendererValue.value("environmentIntensity", defaultEnvironmentIntensity));
+        }
 
         if (rendererValue.contains("directionalShadow"))
         {
@@ -528,7 +535,7 @@ namespace SceneProjectIODetail
                 shadowValue.value("shadowBlurRadius", shadowSettings.GetShadowBlurRadius()));
         }
 
-        if (!rendererValue.contains("screenSpaceEffects"))
+        if (!gpuReady || !rendererValue.contains("screenSpaceEffects"))
         {
             return;
         }
@@ -1046,6 +1053,9 @@ namespace SceneProjectIODetail
                 meshReusePool,
                 showProgress))
         {
+            scene.GetObjectStore().Clear();
+            scene.GetMeshLibrary().ClearImportedMeshes();
+            scene.ClearSelection();
             return false;
         }
 

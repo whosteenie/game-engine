@@ -230,42 +230,10 @@ void LightingPanel::Draw(
             ImGui::TreePop();
         }
 
-        if (ImGui::TreeNodeEx("Cascade splits (CSM)", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNodeEx("Shadow map fit", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            int cascadeCount = shadowSettings.GetCascadeCount();
-            if (ImGui::SliderInt("Cascade count", &cascadeCount, 1, DirectionalShadowSettings::MaxCascades))
-            {
-                shadowSettings.SetCascadeCount(cascadeCount);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-
-            float splitLambda = shadowSettings.GetCascadeSplitLambda();
-            if (ImGui::SliderFloat("Split lambda", &splitLambda, 0.0f, 1.0f))
-            {
-                shadowSettings.SetCascadeSplitLambda(splitLambda);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("0 = uniform splits, 1 = logarithmic (more near detail)");
-
-            float blendRatio = shadowSettings.GetCascadeBlendRatio();
-            if (ImGui::SliderFloat("Cascade blend ratio", &blendRatio, 0.0f, 0.5f))
-            {
-                shadowSettings.SetCascadeBlendRatio(blendRatio);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
-
-            bool tightNearPlaneXyFit = shadowSettings.GetTightNearPlaneXyFit();
-            if (ImGui::Checkbox("Frustum-only XY fit", &tightNearPlaneXyFit))
-            {
-                shadowSettings.SetTightNearPlaneXyFit(tightNearPlaneXyFit);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
             ImGui::TextDisabled(
-                "Exclude caster bounds from ortho XY (smaller texels). Casters still set Z depth range.");
+                "Single shadow map (CSM off). Ortho covers scene casters plus the visible view frustum.");
 
             float xyMargin = shadowSettings.GetXyMarginFraction();
             if (ImGui::SliderFloat("Ortho XY margin", &xyMargin, 0.005f, 0.2f, "%.3f"))
@@ -308,46 +276,23 @@ void LightingPanel::Draw(
             ImGui::TreePop();
         }
 
-        if (ImGui::TreeNodeEx("Live cascade stats", ImGuiTreeNodeFlags_DefaultOpen))
+        if (ImGui::TreeNodeEx("Shadow map stats", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::Text("Active resolution: %d x %d per cascade", shadowMap.GetResolution(), shadowMap.GetResolution());
-            ImGui::Text("Active cascades: %d", shadowMap.GetActiveCascadeCount());
-
-            const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
-            const glm::vec4 viewFocus = camera.GetViewMatrix() * glm::vec4(focusPoint, 1.0f);
-            const float focusViewDepth = viewFocus.z;
-            int focusCascade = 0;
-            const std::array<float, CascadedShadowMap::MaxCascades>& splits = shadowMap.GetCascadeEndSplits();
-            for (int cascadeIndex = 0; cascadeIndex < shadowMap.GetActiveCascadeCount() - 1; ++cascadeIndex)
-            {
-                if (focusViewDepth > splits[static_cast<std::size_t>(cascadeIndex)])
-                {
-                    focusCascade = cascadeIndex + 1;
-                }
-            }
-            ImGui::Text("Focus view depth (3m ahead): %.2f -> cascade %d", focusViewDepth, focusCascade);
+            ImGui::Text("Resolution: %d x %d", shadowMap.GetResolution(), shadowMap.GetResolution());
 
             const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& setups =
                 shadowMap.GetCascadeSetups();
             const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& lightSpaceMatrices =
                 shadowMap.GetLightSpaceMatrices();
-            const int activeCascadeCount = shadowMap.GetActiveCascadeCount();
-            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
-            {
-                const ShadowLightSpaceSetup& setup = setups[static_cast<std::size_t>(cascadeIndex)];
-                const float texelSpan =
-                    std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
-                const float splitEnd = splits[static_cast<std::size_t>(cascadeIndex)];
-                ImGui::BulletText(
-                    "C%d: texel %.4f m | split end %.2f | ortho %.1f x %.1f m | stable clipZ [%.3f, %.3f]",
-                    cascadeIndex,
-                    texelSpan,
-                    splitEnd,
-                    setup.orthoWidth,
-                    setup.orthoHeight,
-                    setup.clipDepthContentMin,
-                    setup.clipDepthContentMax);
-            }
+            const ShadowLightSpaceSetup& setup = setups[0];
+            const float texelSpan = std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
+            ImGui::BulletText(
+                "Ortho %.1f x %.1f m | texel %.4f m | content clipZ [%.3f, %.3f]",
+                setup.orthoWidth,
+                setup.orthoHeight,
+                texelSpan,
+                setup.clipDepthContentMin,
+                setup.clipDepthContentMax);
 
             if (ImGui::TreeNode("Light-space receiver probe"))
             {
@@ -358,40 +303,34 @@ void LightingPanel::Draw(
                         viewPoint.z,
                         lightSpaceMatrices.data(),
                         setups.data(),
-                        splits.data(),
-                        activeCascadeCount);
-                    const ShadowLightSpaceSetup& setup =
-                        setups[static_cast<std::size_t>(probe.cascadeIndex)];
+                        shadowMap.GetCascadeEndSplits().data(),
+                        1);
                     ImGui::Text("%s @ (%.2f, %.2f, %.2f)", label, worldPoint.x, worldPoint.y, worldPoint.z);
                     ImGui::BulletText(
-                        "cascade C%d | inBounds %s | raw clipZ %.4f (debug view)",
-                        probe.cascadeIndex,
+                        "inBounds %s | raw clipZ %.4f | UV (%.3f, %.3f)",
                         probe.inBounds ? "yes" : "no",
-                        probe.receiverClipZ);
-                    ImGui::BulletText(
-                        "UV (%.3f, %.3f) | C%d stable clipZ [%.3f, %.3f]",
+                        probe.receiverClipZ,
                         probe.shadowUv.x,
-                        probe.shadowUv.y,
-                        probe.cascadeIndex,
-                        setup.clipDepthContentMin,
-                        setup.clipDepthContentMax);
+                        probe.shadowUv.y);
                 };
 
+                const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
                 probeAt("Focus (3m ahead)", focusPoint);
                 probeAt("World origin floor", glm::vec3(0.0f, 0.0f, 0.0f));
-                probeAt("Floor under camera", glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z));
+                probeAt(
+                    "Floor under camera",
+                    glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z));
 
                 ImGui::TextDisabled(
-                    "Debug depth: stable clip Z normalized to this cascade's view-frustum range. "
-                    "Magenta = stable Z outside [0,1].");
+                    "Magenta in light-space depth debug = clip Z outside [0, 1]. "
+                    "UV outside [0, 1] = shadow map coverage.");
                 ImGui::TreePop();
             }
 
             ImGui::Separator();
             ImGui::TextWrapped(
-                "Blockiness usually means texel size is too large for the view. "
-                "Enable tight near-plane XY fit, Poisson PCF, and check focus cascade texel size. "
-                "Use debug views: Shadow factor (raw map), Cascade index.");
+                "Large texels or blocky shadows: raise resolution or lower ortho margin. "
+                "Debug: Shadow factor (1), Shadow blocked (22).");
             ImGui::TreePop();
         }
     }
@@ -640,7 +579,8 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::ShadowBlockedCenter))
         {
             ImGui::TextWrapped(
-                "Single-texel shadow test with no PCF/PCSS. White = lit, black = blocked. Use with PCF filter mode to isolate compare logic.");
+                "Raw center-texel compare: receiver clip Z vs stored map depth, no PCF, no receiver bias, no min-separation floor. "
+                "White = lit, black = blocked. Fix this view before tuning bias or blur.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

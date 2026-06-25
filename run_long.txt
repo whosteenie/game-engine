@@ -1,0 +1,12 @@
+﻿game-engine.exe : [2026-06-25 09:35:22] [info] [project] Opening project: 
+C:\Users\justi\Desktop\whoengine-tests\d12test8\d12test8.gameproject
+At line:1 char:156
++ ... roject"; $env:GAME_ENGINE_LOG="1"; & ".\game-engine.exe" 2>&1 | Out-F ...
++                                        ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: ([2026-06-25 09:...st8.gameproject:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+[2026-06-25 09:35:22] [info] [project] Loading project file
+[2026-06-25 09:35:27] [info] [project] Applying editor state
+[2026-06-25 09:35:27] [info] [project] Project opened: 
+C:\Users\justi\Desktop\whoengine-tests\d12test8\d12test8.gameproject

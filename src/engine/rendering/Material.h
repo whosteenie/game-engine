@@ -89,8 +89,11 @@ public:
 
 private:
     void BindMaps() const;
+    void EnsureShader() const;
 
-    std::shared_ptr<Shader> m_shader;
+    std::string m_vertexShaderPath;
+    std::string m_fragmentShaderPath;
+    mutable std::shared_ptr<Shader> m_shader;
     glm::vec3 m_albedo;
     float m_roughness;
     float m_metallic;

@@ -63,7 +63,18 @@ void ProjectChooser::ReturnToStartupWithError(
     if (project.HasActiveProject())
     {
         project.CloseProject();
+    }
+
+    try
+    {
         scene.ResetToDefault();
+    }
+    catch (const std::exception& exception)
+    {
+        EngineLog::LogFailure(
+            "project",
+            "ReturnToStartupWithError",
+            FormatExceptionContext("Failed to reset scene after project error", exception));
     }
 
     m_startupMode = true;

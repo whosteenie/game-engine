@@ -185,7 +185,7 @@ void CascadedShadowMap::BeginFrame(
     const bool hasCasterBounds,
     const DirectionalShadowSettings& settings)
 {
-    m_activeCascadeCount = settings.GetCascadeCount();
+    m_activeCascadeCount = 1;
     m_savedViewportWidth = static_cast<float>(GfxContext::Get().GetWidth());
     m_savedViewportHeight = static_cast<float>(GfxContext::Get().GetHeight());
     int outputWidth = static_cast<int>(m_savedViewportWidth);
@@ -197,76 +197,27 @@ void CascadedShadowMap::BeginFrame(
     const float shadowDrawDistance = hasCasterBounds
         ? ComputeShadowDrawDistance(camera.GetPosition(), casterBoundsMin, casterBoundsMax)
         : camera.GetFarPlane();
-    const float cascadeFarPlane = std::min(camera.GetFarPlane(), shadowDrawDistance);
-
-    const std::vector<float> splitDistances = ComputeCascadeSplitDistances(
-        m_activeCascadeCount,
-        camera.GetNearPlane(),
-        cascadeFarPlane,
-        settings.GetCascadeSplitLambda());
+    const float shadowFarPlane = std::min(camera.GetFarPlane(), shadowDrawDistance);
+    m_cascadeEndSplits[0] = shadowFarPlane;
 
     const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
-    const glm::vec3 cameraPosition = camera.GetPosition();
-    const glm::vec3 cameraFront = glm::normalize(camera.GetFront());
-    const float cameraMoveDistance = m_hasStableOrthoHalfExtents
-        ? glm::length(cameraPosition - m_lastCameraPosition)
-        : std::numeric_limits<float>::max();
-    const float orientationChange = m_hasLastCameraOrientation
-        ? 1.0f - glm::clamp(glm::dot(cameraFront, glm::normalize(m_lastCameraFront)), -1.0f, 1.0f)
-        : 2.0f;
-    constexpr float kOrientationResetThreshold = 0.025f;
-    const bool resetStableFit = cameraMoveDistance > 1.25f ||
-        orientationChange > kOrientationResetThreshold ||
-        !m_hasStableOrthoHalfExtents ||
-        (m_hasLastTightNearPlaneXyFit &&
-            settings.GetTightNearPlaneXyFit() != m_lastTightNearPlaneXyFit);
-    if (resetStableFit)
-    {
-        m_stableOrthoHalfExtents.fill(0.0f);
-        m_stableOrthoCentersLight.fill(glm::vec2(0.0f));
-        m_stableOrthoZNear.fill(0.0f);
-        m_stableOrthoZFar.fill(0.0f);
-        m_hasStableOrthoHalfExtents = false;
-    }
+    const std::array<glm::vec3, 8> frustumCorners = ComputeCascadeFrustumCorners(
+        inverseViewMatrix,
+        camera.GetAspect(),
+        camera.GetFov(),
+        camera.GetNearPlane(),
+        shadowFarPlane);
 
-    for (int cascadeIndex = 0; cascadeIndex < m_activeCascadeCount; ++cascadeIndex)
-    {
-        const float cascadeNear = splitDistances[static_cast<std::size_t>(cascadeIndex)];
-        const float cascadeFar = splitDistances[static_cast<std::size_t>(cascadeIndex + 1)];
-        m_cascadeEndSplits[static_cast<std::size_t>(cascadeIndex)] = cascadeFar;
+    m_cascadeSetups[0] = BuildShadowLightSpaceForFrustumCorners(
+        lightDirectionTowardSource,
+        frustumCorners,
+        m_resolution,
+        settings.GetXyMarginFraction(),
+        settings.GetZMarginFraction(),
+        hasCasterBounds ? &casterBoundsMin : nullptr,
+        hasCasterBounds ? &casterBoundsMax : nullptr);
+    m_lightSpaceMatrices[0] = m_cascadeSetups[0].lightSpaceMatrix;
 
-        const std::array<glm::vec3, 8> frustumCorners = ComputeCascadeFrustumCorners(
-            inverseViewMatrix,
-            camera.GetAspect(),
-            camera.GetFov(),
-            cascadeNear,
-            cascadeFar);
-
-        m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)] = BuildShadowLightSpaceForFrustumCorners(
-            lightDirectionTowardSource,
-            frustumCorners,
-            m_resolution,
-            settings.GetXyMarginFraction(),
-            settings.GetZMarginFraction(),
-            hasCasterBounds ? &casterBoundsMin : nullptr,
-            hasCasterBounds ? &casterBoundsMax : nullptr,
-            settings.GetTightNearPlaneXyFit(),
-            nullptr,
-            &m_stableOrthoHalfExtents[static_cast<std::size_t>(cascadeIndex)],
-            &m_stableOrthoCentersLight[static_cast<std::size_t>(cascadeIndex)],
-            &m_stableOrthoZNear[static_cast<std::size_t>(cascadeIndex)],
-            &m_stableOrthoZFar[static_cast<std::size_t>(cascadeIndex)],
-            resetStableFit);
-        m_lightSpaceMatrices[static_cast<std::size_t>(cascadeIndex)] =
-            m_cascadeSetups[static_cast<std::size_t>(cascadeIndex)].lightSpaceMatrix;
-    }
-
-    m_lastCameraPosition = cameraPosition;
-    m_lastCameraFront = cameraFront;
-    m_hasLastCameraOrientation = true;
-    m_hasStableOrthoHalfExtents = true;
-    m_lastTightNearPlaneXyFit = settings.GetTightNearPlaneXyFit();
-    m_hasLastTightNearPlaneXyFit = true;
     m_hasRenderedDepth = false;
 }
 

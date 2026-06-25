@@ -47,20 +47,10 @@ private:
     void RestoreRasterState() const;
 
     int m_resolution;
-    int m_activeCascadeCount = MaxCascades;
+    int m_activeCascadeCount = 1;
     std::array<glm::mat4, MaxCascades> m_lightSpaceMatrices{};
     std::array<ShadowLightSpaceSetup, MaxCascades> m_cascadeSetups{};
     std::array<float, MaxCascades> m_cascadeEndSplits{};
-    std::array<float, MaxCascades> m_stableOrthoHalfExtents{};
-    std::array<glm::vec2, MaxCascades> m_stableOrthoCentersLight{};
-    std::array<float, MaxCascades> m_stableOrthoZNear{};
-    std::array<float, MaxCascades> m_stableOrthoZFar{};
-    glm::vec3 m_lastCameraPosition{0.0f};
-    glm::vec3 m_lastCameraFront{0.0f, 0.0f, 1.0f};
-    bool m_hasLastCameraOrientation = false;
-    bool m_hasStableOrthoHalfExtents = false;
-    bool m_lastTightNearPlaneXyFit = false;
-    bool m_hasLastTightNearPlaneXyFit = false;
     bool m_hasRenderedDepth = false;
 
     void* m_depthResource = nullptr;

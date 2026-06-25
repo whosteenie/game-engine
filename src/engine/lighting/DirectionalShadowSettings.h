@@ -22,8 +22,9 @@ public:
         m_shadowMapResolution = std::clamp(resolution, 512, 8192);
     }
 
-    int GetCascadeCount() const { return m_cascadeCount; }
-    void SetCascadeCount(int count) { m_cascadeCount = std::clamp(count, 1, MaxCascades); }
+    // CSM disabled for now — single shadow map only (MaxCascades kept for texture array layout).
+    int GetCascadeCount() const { return 1; }
+    void SetCascadeCount(int /*count*/) { m_cascadeCount = 1; }
 
     float GetCascadeSplitLambda() const { return m_cascadeSplitLambda; }
     void SetCascadeSplitLambda(float lambda) { m_cascadeSplitLambda = std::clamp(lambda, 0.0f, 1.0f); }
@@ -87,16 +88,16 @@ public:
     void SetShadowBlurRadius(float radius) { m_shadowBlurRadius = std::clamp(radius, 0.0f, 8.0f); }
 
 private:
-    DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCSS;
+    DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCF;
     int m_shadowMapResolution = 4096;
-    int m_cascadeCount = 4;
+    int m_cascadeCount = 1;
     float m_cascadeSplitLambda = 0.82f;
     float m_cascadeBlendRatio = 0.08f;
     bool m_tightNearPlaneXyFit = true;
-    float m_xyMarginFraction = 0.03f;
-    float m_zMarginFraction = 0.12f;
-    bool m_usePoissonPcf = true;
-    int m_pcfKernelRadius = 4;
+    float m_xyMarginFraction = 0.05f;
+    float m_zMarginFraction = 0.10f;
+    bool m_usePoissonPcf = false;
+    int m_pcfKernelRadius = 2;
     int m_pcfSampleCount = 32;
     float m_minPenumbraTexels = 2.5f;
     float m_sunAngularDiameterDegrees = 0.5f;
@@ -106,6 +107,6 @@ private:
     float m_pcssMaxPenumbraTexels = 32.0f;
     float m_worldBiasScale = 1.0f;
     float m_depthBiasScale = 1.0f;
-    bool m_shadowBlurEnabled = true;
+    bool m_shadowBlurEnabled = false;
     float m_shadowBlurRadius = 2.5f;
 };
