@@ -375,6 +375,7 @@ add_executable(game-engine
     src/engine/rendering/RenderDebug.cpp
 
     src/engine/lighting/IBL.cpp
+    src/engine/lighting/IrradianceSh.cpp
 
     src/engine/rendering/Material.cpp
 
@@ -530,8 +531,10 @@ enable_testing()
 
 add_executable(engine-tests
     tests/shadow_map_math_test.cpp
+    tests/irradiance_sh_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
+    src/engine/lighting/IrradianceSh.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/EngineDiagnostics.cpp
 )
@@ -580,6 +583,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         src/engine/lighting/SceneLighting.cpp
         src/engine/lighting/Light.cpp
         src/engine/lighting/IBL.cpp
+        src/engine/lighting/IrradianceSh.cpp
         src/engine/lighting/CascadedShadowMap.cpp
         src/engine/lighting/ShadowMapMath.cpp
         src/engine/rendering/GridRenderer.cpp

@@ -35,6 +35,7 @@ public:
     void SetVec2(const char* name, const glm::vec2& value) const;
     void SetVec3(const char* name, const glm::vec3& value) const;
     void SetVec3Array(const char* name, const glm::vec3* values, int count) const;
+    void SetVec4Array(const char* name, const glm::vec4* values, int count) const;
 
     void BindTextureSlot(int unit, std::uintptr_t srvCpuHandle) const;
 

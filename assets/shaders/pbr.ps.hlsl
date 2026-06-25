@@ -7,7 +7,6 @@ static const int LIGHT_TYPE_DIRECTIONAL = 0;
 static const int LIGHT_TYPE_POINT = 1;
 static const int LIGHT_TYPE_SPOT = 2;
 
-TextureCube uIrradianceMap : register(t1);
 TextureCube uPrefilterMap : register(t2);
 Texture2D uBrdfLut : register(t3);
 Texture2D uAlbedoMap : register(t4);
@@ -16,7 +15,6 @@ Texture2D uAoMap : register(t6);
 Texture2D uRoughnessMap : register(t7);
 Texture2DArray uShadowMap : register(t8);
 
-SamplerState uIrradianceSampler : register(s1);
 SamplerState uPrefilterSampler : register(s2);
 SamplerState uBrdfLutSampler : register(s3);
 SamplerState uAlbedoSampler : register(s4);
@@ -85,6 +83,7 @@ cbuffer PerPixel : register(b0)
     int uDebugMode;
     float uMaxReflectionLod;
     float uEnvironmentIntensity;
+    float4 uIrradianceSh[9];
 };
 
 struct PSInput
@@ -115,6 +114,25 @@ float3 SrgbToLinear(float3 srgb)
 float3 LinearToSrgb(float3 linearColor)
 {
     return pow(max(linearColor, 0.0.xxx), 1.0.xxx / 2.2);
+}
+
+float3 EvaluateDiffuseIrradianceSh(float3 normal)
+{
+    float3 n = normalize(normal);
+    float x = n.x;
+    float y = n.y;
+    float z = n.z;
+
+    float3 irradiance = uIrradianceSh[0].rgb * 0.282095;
+    irradiance += uIrradianceSh[1].rgb * (0.488603 * y);
+    irradiance += uIrradianceSh[2].rgb * (0.488603 * z);
+    irradiance += uIrradianceSh[3].rgb * (0.488603 * x);
+    irradiance += uIrradianceSh[4].rgb * (1.092548 * x * y);
+    irradiance += uIrradianceSh[5].rgb * (1.092548 * y * z);
+    irradiance += uIrradianceSh[6].rgb * (0.315392 * (3.0 * z * z - 1.0));
+    irradiance += uIrradianceSh[7].rgb * (1.092548 * z * x);
+    irradiance += uIrradianceSh[8].rgb * (0.546274 * (x * x - y * y));
+    return max(irradiance, 0.0.xxx);
 }
 
 float DistributionGGX(float3 normal, float3 halfDir, float roughness)
@@ -713,7 +731,7 @@ PSOutput main(PSInput input)
         ambientOcclusion = uAoMap.Sample(uAoSampler, aoTexCoord).r;
     }
 
-    float3 irradiance = uIrradianceMap.Sample(uIrradianceSampler, geomNormalNorm).rgb;
+    float3 irradiance = EvaluateDiffuseIrradianceSh(geomNormalNorm);
     float3 diffuseIbl = irradiance * albedo;
 
     float sunGeomFacing = 1.0;
@@ -877,7 +895,7 @@ PSOutput main(PSInput input)
         else if (uDebugMode == 11)
         {
             float3 worldNormal = normalize(geomNormal);
-            float3 irradiance = uIrradianceMap.Sample(uIrradianceSampler, worldNormal).rgb;
+            float3 irradiance = EvaluateDiffuseIrradianceSh(worldNormal);
             float3 diffuseOnly = irradiance * albedo * (1.0 - metallic);
             debugColor = diffuseOnly / (diffuseOnly + 0.25.xxx);
         }

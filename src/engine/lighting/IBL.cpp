@@ -1,4 +1,5 @@
 #include "engine/lighting/IBL.h"
+#include "engine/lighting/IrradianceSh.h"
 
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
@@ -248,7 +249,7 @@ IBL::~IBL()
 IBL::IBL(IBL&& other) noexcept
     : m_hdrGpu(other.m_hdrGpu),
       m_environmentCubemapGpu(other.m_environmentCubemapGpu),
-      m_irradianceMapGpu(other.m_irradianceMapGpu),
+      m_irradianceSh(other.m_irradianceSh),
       m_prefilterMapGpu(other.m_prefilterMapGpu),
       m_brdfLutGpu(other.m_brdfLutGpu),
       m_cubeVb(std::move(other.m_cubeVb)),
@@ -265,7 +266,7 @@ IBL::IBL(IBL&& other) noexcept
 {
     other.m_hdrGpu = {};
     other.m_environmentCubemapGpu = {};
-    other.m_irradianceMapGpu = {};
+    other.m_irradianceSh = {};
     other.m_prefilterMapGpu = {};
     other.m_brdfLutGpu = {};
     other.m_captureDepthResource = nullptr;
@@ -284,7 +285,7 @@ IBL& IBL::operator=(IBL&& other) noexcept
         DestroyResources();
         m_hdrGpu = other.m_hdrGpu;
         m_environmentCubemapGpu = other.m_environmentCubemapGpu;
-        m_irradianceMapGpu = other.m_irradianceMapGpu;
+        m_irradianceSh = other.m_irradianceSh;
         m_prefilterMapGpu = other.m_prefilterMapGpu;
         m_brdfLutGpu = other.m_brdfLutGpu;
         m_cubeVb = std::move(other.m_cubeVb);
@@ -301,7 +302,7 @@ IBL& IBL::operator=(IBL&& other) noexcept
 
         other.m_hdrGpu = {};
         other.m_environmentCubemapGpu = {};
-        other.m_irradianceMapGpu = {};
+        other.m_irradianceSh = {};
         other.m_prefilterMapGpu = {};
         other.m_brdfLutGpu = {};
         other.m_captureDepthResource = nullptr;
@@ -341,7 +342,6 @@ void IBL::DestroyResources()
 {
     DestroyGpuTexture(m_hdrGpu);
     DestroyGpuTexture(m_environmentCubemapGpu);
-    DestroyGpuTexture(m_irradianceMapGpu);
     DestroyGpuTexture(m_prefilterMapGpu);
     DestroyGpuTexture(m_brdfLutGpu);
 
@@ -447,6 +447,8 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
     }
 
     stbi_image_free(imageData);
+
+    m_irradianceSh = ProjectIrradianceSh9FromEquirect(rgba, width, height);
 
     float maxHdrChannel = 0.0f;
     for (const float channel : rgba)
@@ -688,24 +690,6 @@ void IBL::CreateEnvironmentCubemap()
     m_activeCaptureTarget = nullptr;
 }
 
-void IBL::CreateIrradianceMap()
-{
-    m_irradianceMapGpu = CreateCubemapTextureResource(
-        64,
-        1,
-        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
-
-    Shader irradianceShader(
-        EngineConstants::IblCubemapVertexShader,
-        EngineConstants::IblIrradianceFragmentShader);
-    irradianceShader.BindTextureSlot(0, m_environmentCubemapGpu.srvCpuHandle);
-    irradianceShader.SetInt("uEnvironmentMap", 0);
-
-    m_activeCaptureTarget = &m_irradianceMapGpu;
-    CaptureCubemapFaces(0, irradianceShader, 64, 0, false);
-    m_activeCaptureTarget = nullptr;
-}
-
 void IBL::CreatePrefilterMap()
 {
     const unsigned int prefilterResolution = 128;
@@ -813,7 +797,6 @@ void IBL::GenerateGpuResources()
         }
 
         CreateEnvironmentCubemap();
-        CreateIrradianceMap();
         CreatePrefilterMap();
         CreateBrdfLut();
         m_gpuGenerated = true;
@@ -832,8 +815,10 @@ void IBL::BindTextures(Shader& shader) const
         const_cast<IBL*>(this)->GenerateGpuResources();
     }
 
-    shader.BindTextureSlot(1, m_irradianceMapGpu.srvCpuHandle);
-    shader.SetInt("uIrradianceMap", 1);
+    shader.SetVec4Array(
+        "uIrradianceSh",
+        m_irradianceSh.coefficients.data(),
+        static_cast<int>(m_irradianceSh.coefficients.size()));
 
     shader.BindTextureSlot(2, m_prefilterMapGpu.srvCpuHandle);
     shader.SetInt("uPrefilterMap", 2);

@@ -723,7 +723,9 @@ void Shader::WriteScalarArray(
         {
             const std::uint32_t copySize = std::min(packedSize, writeSize);
             std::vector<std::uint8_t> packed(copySize, 0);
-            for (int index = 0; index < count; ++index)
+            const int elementsToPack = static_cast<int>(
+                std::min(static_cast<std::uint32_t>(count), copySize / 16u));
+            for (int index = 0; index < elementsToPack; ++index)
             {
                 std::memcpy(
                     packed.data() + static_cast<std::size_t>(index) * 16u,
@@ -890,6 +892,11 @@ void Shader::SetVec3(const char* name, const glm::vec3& value) const
 void Shader::SetVec3Array(const char* name, const glm::vec3* values, const int count) const
 {
     WriteUniform(name, values, static_cast<std::uint32_t>(count) * sizeof(glm::vec3));
+}
+
+void Shader::SetVec4Array(const char* name, const glm::vec4* values, const int count) const
+{
+    WriteUniform(name, values, static_cast<std::uint32_t>(count) * sizeof(glm::vec4));
 }
 
 unsigned int Shader::GetProgramId() const

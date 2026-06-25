@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/lighting/IrradianceSh.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
 #include <cstdint>
@@ -28,7 +29,6 @@ private:
     void DestroyResources();
     void LoadHdrEquirectangular(const char* hdrPath);
     void CreateEnvironmentCubemap();
-    void CreateIrradianceMap();
     void CreatePrefilterMap();
     void CreateBrdfLut();
 
@@ -62,7 +62,7 @@ private:
 
     GpuTexture m_hdrGpu{};
     GpuTexture m_environmentCubemapGpu{};
-    GpuTexture m_irradianceMapGpu{};
+    IrradianceSh9 m_irradianceSh{};
     GpuTexture m_prefilterMapGpu{};
     GpuTexture m_brdfLutGpu{};
 

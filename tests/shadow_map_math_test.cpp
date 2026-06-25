@@ -14,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 
+void RunIrradianceShTests(int& failures);
+
 namespace
 {
     int gFailures = 0;
@@ -508,6 +510,7 @@ int main()
 
     RunLightingProbeTests();
     RunExceptionMessageTests();
+    RunIrradianceShTests(gFailures);
 
     if (gFailures == 0)
     {
