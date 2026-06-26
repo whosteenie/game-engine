@@ -145,7 +145,7 @@ namespace
 }
 
 LightGizmoRenderer::LightGizmoRenderer()
-    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader))
 {
 }
 

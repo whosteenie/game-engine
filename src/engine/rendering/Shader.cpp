@@ -476,6 +476,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isIblCubemap = vertexPath.find("ibl_cubemap") != std::string::npos;
     const bool isIblBrdf = vertexPath.find("ibl_brdf") != std::string::npos;
     const bool isGridVertex = vertexPath.find("grid.v") != std::string::npos;
+    const bool isGizmoLineVertex = vertexPath.find("gizmo_line.v") != std::string::npos;
     const bool isSkyboxVertex = vertexPath.find("skybox.v") != std::string::npos;
     const bool isSkyBackground = fragmentPath.find("sky_background") != std::string::npos;
     const bool isLinePixel = fragmentPath.find("line.p") != std::string::npos;
@@ -626,6 +627,14 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.DepthStencilState.DepthEnable = TRUE;
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+    }
+    else if (isGizmoLineVertex && isLinePixel)
+    {
+        psoDesc.InputLayout = {positionLayout, 1};
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+        applySingleRenderTarget(DXGI_FORMAT_R16G16B16A16_FLOAT);
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        applyNoDepthPass();
     }
     else if (isGridVertex && isLinePixel)
     {

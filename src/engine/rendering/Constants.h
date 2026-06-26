@@ -9,6 +9,7 @@ namespace EngineConstants
     inline constexpr const char* ShadowDepthFragmentShader = "assets/shaders/shadow_depth.ps.hlsl";
     inline constexpr const char* GridVertexShader = "assets/shaders/grid.vs.hlsl";
     inline constexpr const char* GridFragmentShader = "assets/shaders/grid.ps.hlsl";
+    inline constexpr const char* GizmoLineVertexShader = "assets/shaders/gizmo_line.vs.hlsl";
     inline constexpr const char* LineFragmentShader = "assets/shaders/line.ps.hlsl";
     inline constexpr const char* SelectionOutlineVertexShader = "assets/shaders/selection_outline.vs.hlsl";
     inline constexpr const char* SelectionOutlineFragmentShader = "assets/shaders/selection_outline.ps.hlsl";
