@@ -20,6 +20,7 @@
 #include "engine/scene/SceneObjectComponents.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -38,6 +39,16 @@ namespace
 
         destinationRenderer.GetIBL().SetEnvironmentIntensity(
             sourceRenderer.GetIBL().GetEnvironmentIntensity());
+
+        EnvironmentMap& destinationEnvironment = destinationRenderer.GetEnvironmentMap();
+        const EnvironmentMap& sourceEnvironment = sourceRenderer.GetEnvironmentMap();
+        destinationEnvironment.SetEnabled(sourceEnvironment.IsEnabled());
+        destinationEnvironment.SetBackgroundMode(sourceEnvironment.GetBackgroundMode());
+        destinationEnvironment.SetHdrPath(sourceEnvironment.GetHdrPath());
+        destinationEnvironment.SetRotationDegrees(sourceEnvironment.GetRotationDegrees());
+        destinationEnvironment.SetExposure(sourceEnvironment.GetExposure());
+        destinationEnvironment.SetSolidBackgroundColorSrgb(
+            sourceEnvironment.GetSolidBackgroundColorSrgb());
 
         const ScreenSpaceEffects& sourceEffects = sourceRenderer.GetScreenSpaceEffects();
         ScreenSpaceEffects& destinationEffects = destinationRenderer.GetScreenSpaceEffects();

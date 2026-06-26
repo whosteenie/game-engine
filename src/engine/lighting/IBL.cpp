@@ -16,6 +16,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -261,8 +262,14 @@ IBL::IBL(IBL&& other) noexcept
       m_activeCaptureTarget(other.m_activeCaptureTarget),
       m_gpuGenerated(other.m_gpuGenerated),
       m_hdrPath(std::move(other.m_hdrPath)),
+      m_loadError(std::move(other.m_loadError)),
+      m_rotationYRadians(other.m_rotationYRadians),
       m_maxPrefilterMipLevel(other.m_maxPrefilterMipLevel),
-      m_environmentIntensity(other.m_environmentIntensity)
+      m_environmentIntensity(other.m_environmentIntensity),
+      m_hdrWidth(other.m_hdrWidth),
+      m_hdrHeight(other.m_hdrHeight),
+      m_cubemapResolutionMode(other.m_cubemapResolutionMode),
+      m_captureDepthWidth(other.m_captureDepthWidth)
 {
     other.m_hdrGpu = {};
     other.m_environmentCubemapGpu = {};
@@ -276,6 +283,12 @@ IBL::IBL(IBL&& other) noexcept
     other.m_activeCaptureTarget = nullptr;
     other.m_gpuGenerated = false;
     other.m_hdrPath.clear();
+    other.m_loadError.clear();
+    other.m_rotationYRadians = 0.0f;
+    other.m_hdrWidth = 0;
+    other.m_hdrHeight = 0;
+    other.m_cubemapResolutionMode = EnvironmentIblCubemapResolution::Auto;
+    other.m_captureDepthWidth = 0;
 }
 
 IBL& IBL::operator=(IBL&& other) noexcept
@@ -297,8 +310,14 @@ IBL& IBL::operator=(IBL&& other) noexcept
         m_activeCaptureTarget = other.m_activeCaptureTarget;
         m_gpuGenerated = other.m_gpuGenerated;
         m_hdrPath = std::move(other.m_hdrPath);
+        m_loadError = std::move(other.m_loadError);
+        m_rotationYRadians = other.m_rotationYRadians;
         m_maxPrefilterMipLevel = other.m_maxPrefilterMipLevel;
         m_environmentIntensity = other.m_environmentIntensity;
+        m_hdrWidth = other.m_hdrWidth;
+        m_hdrHeight = other.m_hdrHeight;
+        m_cubemapResolutionMode = other.m_cubemapResolutionMode;
+        m_captureDepthWidth = other.m_captureDepthWidth;
 
         other.m_hdrGpu = {};
         other.m_environmentCubemapGpu = {};
@@ -312,6 +331,8 @@ IBL& IBL::operator=(IBL&& other) noexcept
         other.m_activeCaptureTarget = nullptr;
         other.m_gpuGenerated = false;
         other.m_hdrPath.clear();
+        other.m_loadError.clear();
+        other.m_rotationYRadians = 0.0f;
     }
 
     return *this;
@@ -338,11 +359,19 @@ void IBL::DestroyGpuTexture(GpuTexture& texture)
     texture = {};
 }
 
-void IBL::DestroyResources()
+void IBL::DestroyEnvironmentTextures()
 {
     DestroyGpuTexture(m_hdrGpu);
     DestroyGpuTexture(m_environmentCubemapGpu);
     DestroyGpuTexture(m_prefilterMapGpu);
+    m_irradianceSh = {};
+    m_gpuGenerated = false;
+    m_loadError.clear();
+}
+
+void IBL::DestroyResources()
+{
+    DestroyEnvironmentTextures();
     DestroyGpuTexture(m_brdfLutGpu);
 
     if (GfxContext::Get().IsInitialized())
@@ -367,6 +396,7 @@ void IBL::DestroyResources()
     }
 
     m_captureDepthResource = nullptr;
+    m_captureDepthWidth = 0;
     m_gpuGenerated = false;
 }
 
@@ -377,14 +407,31 @@ void IBL::CreateCaptureResources()
 
     m_captureRtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
     m_captureDepthDsvIndex = GfxContext::Get().AllocateOffscreenDsv();
+}
+
+void IBL::EnsureCaptureDepthBuffer(const std::uint32_t resolution)
+{
+    if (m_captureDepthResource != nullptr && m_captureDepthWidth >= resolution)
+    {
+        return;
+    }
 
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
 
+    if (m_captureDepthAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_captureDepthAllocation)->Release();
+        m_captureDepthAllocation = nullptr;
+    }
+
+    m_captureDepthResource = nullptr;
+    m_captureDepthWidth = 0;
+
     D3D12_RESOURCE_DESC depthDesc{};
     depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    depthDesc.Width = 512;
-    depthDesc.Height = 512;
+    depthDesc.Width = resolution;
+    depthDesc.Height = resolution;
     depthDesc.DepthOrArraySize = 1;
     depthDesc.MipLevels = 1;
     depthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -410,6 +457,7 @@ void IBL::CreateCaptureResources()
 
     m_captureDepthResource = depthResource;
     m_captureDepthAllocation = depthAllocation;
+    m_captureDepthWidth = resolution;
 
     D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
     dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
@@ -447,6 +495,9 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
     }
 
     stbi_image_free(imageData);
+
+    m_hdrWidth = width;
+    m_hdrHeight = height;
 
     m_irradianceSh = ProjectIrradianceSh9FromEquirect(rgba, width, height);
 
@@ -674,8 +725,11 @@ void IBL::CaptureCubemapFaces(
 
 void IBL::CreateEnvironmentCubemap()
 {
+    const std::uint32_t faceResolution = ResolveCubemapFaceResolution();
+    EnsureCaptureDepthBuffer(faceResolution);
+
     m_environmentCubemapGpu = CreateCubemapTextureResource(
-        512,
+        faceResolution,
         1,
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
 
@@ -684,17 +738,21 @@ void IBL::CreateEnvironmentCubemap()
         EngineConstants::IblEquirectToCubemapFragmentShader);
     equirectShader.BindTextureSlot(0, m_hdrGpu.srvCpuHandle);
     equirectShader.SetInt("uEquirectangularMap", 0);
+    equirectShader.SetFloat("uRotationY", m_rotationYRadians);
 
     m_activeCaptureTarget = &m_environmentCubemapGpu;
-    CaptureCubemapFaces(0, equirectShader, 512, 0, false);
+    CaptureCubemapFaces(0, equirectShader, faceResolution, 0, false);
     m_activeCaptureTarget = nullptr;
 }
 
 void IBL::CreatePrefilterMap()
 {
-    const unsigned int prefilterResolution = 128;
-    const unsigned int mipLevels = 5;
-    m_maxPrefilterMipLevel = static_cast<float>(mipLevels - 1);
+    const std::uint32_t cubemapResolution = ResolveCubemapFaceResolution();
+    const unsigned int prefilterResolution =
+        std::clamp(cubemapResolution / 4u, 128u, 512u);
+    const unsigned int mipLevels =
+        static_cast<unsigned int>(std::log2(static_cast<double>(prefilterResolution))) + 1u;
+    m_maxPrefilterMipLevel = static_cast<float>(mipLevels - 1u);
 
     m_prefilterMapGpu = CreateCubemapTextureResource(
         prefilterResolution,
@@ -711,7 +769,9 @@ void IBL::CreatePrefilterMap()
     {
         const unsigned int mipWidth =
             prefilterResolution * static_cast<unsigned int>(std::pow(0.5, static_cast<double>(mip)));
-        const float roughness = static_cast<float>(mip) / static_cast<float>(mipLevels - 1);
+        const float roughness = mipLevels <= 1
+            ? 0.0f
+            : static_cast<float>(mip) / static_cast<float>(mipLevels - 1);
         prefilterShader.SetFloat("uRoughness", roughness);
         m_activeCaptureTarget = &m_prefilterMapGpu;
         CaptureCubemapFaces(0, prefilterShader, mipWidth, mip, false);
@@ -798,21 +858,156 @@ void IBL::GenerateGpuResources()
 
         CreateEnvironmentCubemap();
         CreatePrefilterMap();
-        CreateBrdfLut();
+        if (m_brdfLutGpu.resource == nullptr)
+        {
+            CreateBrdfLut();
+        }
         m_gpuGenerated = true;
+        m_loadError.clear();
+    }
+    catch (const std::exception& exception)
+    {
+        m_loadError = exception.what();
+        DestroyEnvironmentTextures();
+        throw;
     }
     catch (...)
     {
-        DestroyResources();
+        m_loadError = "unknown IBL generation error";
+        DestroyEnvironmentTextures();
         throw;
     }
+}
+
+void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
+{
+    const std::string nextPath = hdrPath != nullptr ? hdrPath : "";
+    if (nextPath.empty())
+    {
+        throw std::runtime_error("HDR environment path is empty");
+    }
+
+    if (m_gpuGenerated && nextPath == m_hdrPath && rotationYRadians == m_rotationYRadians)
+    {
+        return;
+    }
+
+    m_hdrPath = nextPath;
+    m_rotationYRadians = rotationYRadians;
+    DestroyEnvironmentTextures();
+
+    try
+    {
+        if (m_captureDepthResource == nullptr)
+        {
+            CreateCaptureResources();
+        }
+
+        LoadHdrEquirectangular(m_hdrPath.c_str());
+        CreateEnvironmentCubemap();
+        CreatePrefilterMap();
+        if (m_brdfLutGpu.resource == nullptr)
+        {
+            CreateBrdfLut();
+        }
+        m_gpuGenerated = true;
+        m_loadError.clear();
+    }
+    catch (const std::exception& exception)
+    {
+        m_loadError = exception.what();
+        DestroyEnvironmentTextures();
+        throw;
+    }
+    catch (...)
+    {
+        m_loadError = "unknown IBL reload error";
+        DestroyEnvironmentTextures();
+        throw;
+    }
+}
+
+bool IBL::IsReady() const
+{
+    return m_gpuGenerated;
+}
+
+const std::string& IBL::GetLoadError() const
+{
+    return m_loadError;
+}
+
+const std::string& IBL::GetHdrPath() const
+{
+    return m_hdrPath;
+}
+
+float IBL::GetRotationYRadians() const
+{
+    return m_rotationYRadians;
+}
+
+std::uintptr_t IBL::GetEnvironmentCubemapSrvCpuHandle() const
+{
+    if (!m_gpuGenerated)
+    {
+        try
+        {
+            const_cast<IBL*>(this)->GenerateGpuResources();
+        }
+        catch (...)
+        {
+            return 0;
+        }
+    }
+
+    if (!m_gpuGenerated)
+    {
+        return 0;
+    }
+
+    return m_environmentCubemapGpu.srvCpuHandle;
+}
+
+std::uintptr_t IBL::GetHdrEquirectSrvCpuHandle() const
+{
+    if (!m_gpuGenerated)
+    {
+        try
+        {
+            const_cast<IBL*>(this)->GenerateGpuResources();
+        }
+        catch (...)
+        {
+            return 0;
+        }
+    }
+
+    if (!m_gpuGenerated || m_hdrGpu.srvCpuHandle == 0)
+    {
+        return 0;
+    }
+
+    return m_hdrGpu.srvCpuHandle;
 }
 
 void IBL::BindTextures(Shader& shader) const
 {
     if (!m_gpuGenerated)
     {
-        const_cast<IBL*>(this)->GenerateGpuResources();
+        try
+        {
+            const_cast<IBL*>(this)->GenerateGpuResources();
+        }
+        catch (...)
+        {
+            return;
+        }
+    }
+
+    if (!m_gpuGenerated)
+    {
+        return;
     }
 
     shader.SetVec4Array(
@@ -843,4 +1038,72 @@ float IBL::GetEnvironmentIntensity() const
 void IBL::SetEnvironmentIntensity(float intensity)
 {
     m_environmentIntensity = intensity;
+}
+
+std::uint32_t IBL::ResolveCubemapFaceResolution() const
+{
+    return ResolveEnvironmentCubemapFaceResolution(
+        m_cubemapResolutionMode,
+        m_hdrWidth,
+        m_hdrHeight);
+}
+
+EnvironmentIblCubemapResolution IBL::GetCubemapResolutionMode() const
+{
+    return m_cubemapResolutionMode;
+}
+
+void IBL::SetCubemapResolutionMode(const EnvironmentIblCubemapResolution mode)
+{
+    if (mode == m_cubemapResolutionMode)
+    {
+        return;
+    }
+
+    m_cubemapResolutionMode = mode;
+    if (!m_gpuGenerated || m_hdrGpu.resource == nullptr)
+    {
+        return;
+    }
+
+    try
+    {
+        if (m_captureDepthResource == nullptr)
+        {
+            CreateCaptureResources();
+        }
+
+        DestroyGpuTexture(m_environmentCubemapGpu);
+        DestroyGpuTexture(m_prefilterMapGpu);
+        CreateEnvironmentCubemap();
+        CreatePrefilterMap();
+        m_loadError.clear();
+    }
+    catch (const std::exception& exception)
+    {
+        m_loadError = exception.what();
+        DestroyEnvironmentTextures();
+        throw;
+    }
+}
+
+std::uint32_t IBL::GetCubemapFaceResolution() const
+{
+    if (m_hdrWidth > 0 || m_hdrHeight > 0)
+    {
+        return ResolveCubemapFaceResolution();
+    }
+
+    if (m_cubemapResolutionMode != EnvironmentIblCubemapResolution::Auto)
+    {
+        return static_cast<std::uint32_t>(m_cubemapResolutionMode);
+    }
+
+    return 1024;
+}
+
+void IBL::GetHdrDimensions(int& width, int& height) const
+{
+    width = m_hdrWidth;
+    height = m_hdrHeight;
 }

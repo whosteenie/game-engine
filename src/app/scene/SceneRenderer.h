@@ -16,6 +16,7 @@ class CameraGizmoRenderer;
 class CascadedShadowMap;
 class ColliderGizmoRenderer;
 class GridRenderer;
+class EnvironmentMap;
 class IBL;
 class LightGizmoRenderer;
 class ScreenSpaceEffects;
@@ -43,6 +44,9 @@ public:
 
     IBL& GetIBL();
     const IBL& GetIBL() const;
+
+    EnvironmentMap& GetEnvironmentMap();
+    const EnvironmentMap& GetEnvironmentMap() const;
 
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
@@ -84,7 +88,7 @@ private:
     std::unique_ptr<LightGizmoRenderer> m_lightGizmos;
     std::unique_ptr<Shader> m_shadowDepthShader;
     std::unique_ptr<CascadedShadowMap> m_shadowMap;
-    std::unique_ptr<IBL> m_ibl;
+    std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;

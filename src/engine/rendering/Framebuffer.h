@@ -22,7 +22,7 @@ public:
     void Unbind() const;
 
     void ClearRenderTarget() const;
-    void BindDrawTarget(bool clearAttachments = true) const;
+    void BindDrawTarget(bool clearAttachments = true, const float clearColor[4] = nullptr) const;
     void EnsureShaderResourceState() const;
     std::uintptr_t GetColorSrvCpuHandle(int attachmentIndex = 0) const;
     std::uintptr_t GetDepthSrvCpuHandle() const;

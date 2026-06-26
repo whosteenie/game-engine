@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/rendering/RenderDebug.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
@@ -12,6 +12,7 @@
 #include <vector>
 
 class Camera;
+class EnvironmentMap;
 class Framebuffer;
 class Shader;
 
@@ -48,17 +49,20 @@ public:
     void PrepareAntiAliasingFrame(Camera& camera) const;
     void FinalizeAntiAliasingFrame(const Camera& camera) const;
 
-    void BeginScenePass() const;
+    void BeginScenePass(const EnvironmentMap& environmentMap) const;
     void EndScenePass() const;
 
     void Apply(
         const Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        const DirectionalShadowSettings& shadowSettings) const;
+        const DirectionalShadowSettings& shadowSettings,
+        const EnvironmentMap& environmentMap) const;
 
     bool IsEnabled() const;
     void SetEnabled(bool enabled);
+
+    bool HasSplitLighting() const;
 
     bool IsSsaoEnabled() const;
     void SetSsaoEnabled(bool enabled);

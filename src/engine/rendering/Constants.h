@@ -42,7 +42,14 @@ namespace EngineConstants
     inline constexpr const char* IblBrdfVertexShader = "assets/shaders/ibl_brdf.vs.hlsl";
     inline constexpr const char* IblBrdfFragmentShader = "assets/shaders/ibl_brdf.ps.hlsl";
 
-    inline constexpr const char* EnvironmentHdr = "assets/environment/studio_small_09_1k.hdr";
+    inline constexpr const char* SkyboxVertexShader = "assets/shaders/skybox.vs.hlsl";
+    inline constexpr const char* SkyboxFragmentShader = "assets/shaders/skybox.ps.hlsl";
+    inline constexpr const char* SkyBackgroundFragmentShader = "assets/shaders/sky_background.ps.hlsl";
+
+    inline constexpr float BackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
+
+    inline constexpr const char* EnvironmentHdr = "assets/environment/qwantani_puresky_2k.hdr";
+    inline constexpr const char* EnvironmentHdrStudio = "assets/environment/studio_small_09_2k.hdr";
 
     inline constexpr const char* CubeAlbedoTexture = "assets/textures/cube_albedo.jpg";
     inline constexpr const char* CubeNormalTexture = "assets/textures/cube_normal.jpg";

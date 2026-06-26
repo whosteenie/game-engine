@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine/lighting/EnvironmentIblSettings.h"
 #include "engine/lighting/IrradianceSh.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
@@ -24,9 +25,26 @@ public:
     float GetEnvironmentIntensity() const;
     void SetEnvironmentIntensity(float intensity);
 
+    bool IsReady() const;
+    const std::string& GetLoadError() const;
+    const std::string& GetHdrPath() const;
+    float GetRotationYRadians() const;
+    std::uintptr_t GetEnvironmentCubemapSrvCpuHandle() const;
+    std::uintptr_t GetHdrEquirectSrvCpuHandle() const;
+
+    void ReloadFromHdr(const char* hdrPath, float rotationYRadians = 0.0f);
+
+    EnvironmentIblCubemapResolution GetCubemapResolutionMode() const;
+    void SetCubemapResolutionMode(EnvironmentIblCubemapResolution mode);
+    std::uint32_t GetCubemapFaceResolution() const;
+    void GetHdrDimensions(int& width, int& height) const;
+
 private:
+    void EnsureCaptureDepthBuffer(std::uint32_t resolution);
+    std::uint32_t ResolveCubemapFaceResolution() const;
     void CreateCaptureResources();
     void DestroyResources();
+    void DestroyEnvironmentTextures();
     void LoadHdrEquirectangular(const char* hdrPath);
     void CreateEnvironmentCubemap();
     void CreatePrefilterMap();
@@ -71,6 +89,7 @@ private:
 
     void* m_captureDepthResource = nullptr;
     void* m_captureDepthAllocation = nullptr;
+    std::uint32_t m_captureDepthWidth = 0;
     std::uint32_t m_captureDepthDsvIndex = UINT32_MAX;
     std::uint32_t m_captureRtvIndex = UINT32_MAX;
 
@@ -78,7 +97,13 @@ private:
 
     mutable bool m_gpuGenerated = false;
     std::string m_hdrPath;
+    std::string m_loadError;
+    float m_rotationYRadians = 0.0f;
 
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;
+
+    int m_hdrWidth = 0;
+    int m_hdrHeight = 0;
+    EnvironmentIblCubemapResolution m_cubemapResolutionMode = EnvironmentIblCubemapResolution::Auto;
 };

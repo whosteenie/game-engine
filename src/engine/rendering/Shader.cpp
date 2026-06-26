@@ -217,12 +217,24 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         table.DescriptorTable.pDescriptorRanges = &ranges.back();
         rootParams.push_back(table);
 
+        const bool isSkyBackgroundFragment = fragmentPath.find("sky_background") != std::string::npos;
+        const bool isScreenCompositeFragment = fragmentPath.find("screen_composite") != std::string::npos;
+
         for (UINT registerIndex = 0; registerIndex <= 8; ++registerIndex)
         {
             D3D12_STATIC_SAMPLER_DESC sampler{};
+            const bool isEnvironmentEquirectSampler =
+                (isSkyBackgroundFragment && registerIndex == 0)
+                || (isScreenCompositeFragment && registerIndex == 5);
             if (registerIndex == 8)
             {
                 sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+            }
+            else if (isEnvironmentEquirectSampler)
+            {
+                sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+                sampler.MaxAnisotropy = 1;
+                sampler.MipLODBias = 0.0f;
             }
             else
             {
@@ -248,6 +260,12 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             sampler.AddressU = addressMode;
             sampler.AddressV = addressMode;
             sampler.AddressW = addressMode;
+            if (isEnvironmentEquirectSampler)
+            {
+                sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            }
             sampler.ShaderRegister = registerIndex;
             sampler.RegisterSpace = 0;
             sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
@@ -458,6 +476,8 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isIblCubemap = vertexPath.find("ibl_cubemap") != std::string::npos;
     const bool isIblBrdf = vertexPath.find("ibl_brdf") != std::string::npos;
     const bool isGridVertex = vertexPath.find("grid.v") != std::string::npos;
+    const bool isSkyboxVertex = vertexPath.find("skybox.v") != std::string::npos;
+    const bool isSkyBackground = fragmentPath.find("sky_background") != std::string::npos;
     const bool isLinePixel = fragmentPath.find("line.p") != std::string::npos;
     const bool isSelectionMask = vertexPath.find("selection_mask") != std::string::npos;
     const bool isSelectionOutline = vertexPath.find("selection_outline") != std::string::npos;
@@ -626,6 +646,21 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             setupAlphaBlend(psoDesc.BlendState.RenderTarget[targetIndex]);
         }
     }
+    else if (isSkyboxVertex || isSkyBackground)
+    {
+        psoDesc.InputLayout = {positionLayout, 1};
+        if (isSkyBackground)
+        {
+            static D3D12_INPUT_ELEMENT_DESC fullscreenLayout[] = {
+                {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            };
+            psoDesc.InputLayout = {fullscreenLayout, 2};
+        }
+        psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        applyNoDepthPass();
+    }
     else
     {
         psoDesc.InputLayout = {inputLayout, 5};
@@ -637,7 +672,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     }
 
     const bool isPbr = fragmentPath.find("pbr.p") != std::string::npos;
-    const bool supportsMrt = isPbr || (isGridVertex && !isLinePixel);
+    const bool supportsMrt = isPbr || (isGridVertex && !isLinePixel) || isSkyboxVertex || isSkyBackground;
 
     auto createPipeline = [&](const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc) {
         ComPtr<ID3D12PipelineState> pipeline;

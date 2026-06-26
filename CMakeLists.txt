@@ -377,6 +377,7 @@ add_executable(game-engine
     src/engine/rendering/RenderDebug.cpp
 
     src/engine/lighting/IBL.cpp
+    src/engine/lighting/EnvironmentMap.cpp
     src/engine/lighting/IrradianceSh.cpp
 
     src/engine/rendering/Material.cpp
@@ -390,6 +391,7 @@ add_executable(game-engine
     src/engine/rendering/Mesh.cpp
 
     src/engine/rendering/GridRenderer.cpp
+    src/engine/rendering/SkyboxRenderer.cpp
 
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/TangentSpace.cpp
@@ -586,10 +588,12 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         src/engine/lighting/SceneLighting.cpp
         src/engine/lighting/Light.cpp
         src/engine/lighting/IBL.cpp
+        src/engine/lighting/EnvironmentMap.cpp
         src/engine/lighting/IrradianceSh.cpp
         src/engine/lighting/CascadedShadowMap.cpp
         src/engine/lighting/ShadowMapMath.cpp
         src/engine/rendering/GridRenderer.cpp
+        src/engine/rendering/SkyboxRenderer.cpp
         src/engine/gizmos/GizmoDraw.cpp
         src/engine/platform/FrameDiagnostics.cpp
         src/engine/platform/EngineDiagnostics.cpp

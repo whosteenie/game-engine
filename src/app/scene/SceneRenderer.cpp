@@ -13,7 +13,7 @@
 #include "engine/rhi/GfxContext.h"
 #include "engine/components/LightComponent.h"
 #include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/IBL.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/Light.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/lighting/ShadowMapMath.h"
@@ -27,6 +27,7 @@
 #include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 SceneRenderer::SceneRenderer() = default;
@@ -61,7 +62,7 @@ void SceneRenderer::EnsureGpuResources() const
         self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>();
         self->m_lightGizmos = std::make_unique<LightGizmoRenderer>();
         self->m_shadowMap = std::make_unique<CascadedShadowMap>();
-        self->m_ibl = std::make_unique<IBL>(EngineConstants::EnvironmentHdr);
+        self->m_environmentMap = std::make_unique<EnvironmentMap>();
         self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
         self->m_shadowDepthShader = std::make_unique<Shader>(
             EngineConstants::ShadowDepthVertexShader,
@@ -259,6 +260,8 @@ void SceneRenderer::Render(
         GfxContext::Get().SetBoundOutputFramebuffer(target);
     }
 
+    m_environmentMap->SyncGpuResources();
+
     SyncLighting(scene);
     if (options.enableShadowPass)
     {
@@ -281,12 +284,34 @@ void SceneRenderer::Render(
             m_screenSpaceEffects->GetRenderWidth(),
             m_screenSpaceEffects->GetRenderHeight());
         m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera);
-        m_screenSpaceEffects->BeginScenePass();
+        m_screenSpaceEffects->BeginScenePass(*m_environmentMap);
     }
     else if (target != nullptr)
     {
-        target->Bind();
+        const glm::vec3 solidSrgb = m_environmentMap->GetSolidBackgroundColorSrgb();
+        const glm::vec3 solidBackground = glm::vec3(
+            std::pow(solidSrgb.x, 2.2f),
+            std::pow(solidSrgb.y, 2.2f),
+            std::pow(solidSrgb.z, 2.2f));
+        const float solidClear[] = {solidBackground.x, solidBackground.y, solidBackground.z, 1.0f};
+        const float blackClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const float* clearColor =
+            m_environmentMap->UsesSolidColorBackground() ? solidClear : blackClear;
+        target->BindDrawTarget(true, clearColor);
+        GfxContext::Get().SetBoundOutputFramebuffer(target);
     }
+
+    bool splitLightingMrt = false;
+    if (usePostProcess)
+    {
+        splitLightingMrt = m_screenSpaceEffects->HasSplitLighting();
+    }
+    else if (target != nullptr)
+    {
+        splitLightingMrt = target->HasSplitLighting();
+    }
+
+    m_environmentMap->RenderSkybox(camera, splitLightingMrt);
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
     for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
@@ -301,11 +326,11 @@ void SceneRenderer::Render(
         object.GetMaterial().Apply(
             camera,
             m_lighting,
-            *m_ibl,
+            m_environmentMap->GetIBL(),
             modelMatrix,
             m_shadowMap.get(),
             object.ReceivesShadow(),
-            usePostProcess,
+            splitLightingMrt,
             materialDebugMode,
             m_directionalShadowSettings);
         object.GetMesh()->Draw();
@@ -326,7 +351,12 @@ void SceneRenderer::Render(
         {
             GfxContext::Get().SetBoundOutputFramebuffer(target);
         }
-        m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight, m_directionalShadowSettings);
+        m_screenSpaceEffects->Apply(
+            camera,
+            viewportWidth,
+            viewportHeight,
+            m_directionalShadowSettings,
+            *m_environmentMap);
         m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera);
 
         if (target != nullptr)
@@ -415,23 +445,45 @@ SceneLighting& SceneRenderer::GetLighting()
 IBL& SceneRenderer::GetIBL()
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_ibl == nullptr)
+    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
 
-    return *m_ibl;
+    return m_environmentMap->GetIBL();
 }
 
 const IBL& SceneRenderer::GetIBL() const
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_ibl == nullptr)
+    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
 
-    return *m_ibl;
+    return m_environmentMap->GetIBL();
+}
+
+EnvironmentMap& SceneRenderer::GetEnvironmentMap()
+{
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
+    return *m_environmentMap;
+}
+
+const EnvironmentMap& SceneRenderer::GetEnvironmentMap() const
+{
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    {
+        ThrowGpuResourcesUnavailable();
+    }
+
+    return *m_environmentMap;
 }
 
 ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects()

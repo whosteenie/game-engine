@@ -2,6 +2,8 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/platform/RenderPathDiagnostics.h"
+#include "engine/lighting/EnvironmentMap.h"
+#include "engine/lighting/IBL.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/RenderDebug.h"
@@ -12,6 +14,7 @@
 #include <d3d12.h>
 #include <dxgiformat.h>
 
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
@@ -40,6 +43,41 @@ namespace
     float SrgbChannelToLinear(float channel)
     {
         return std::pow(channel, 2.2f);
+    }
+
+    glm::vec3 SolidBackgroundLinear(const EnvironmentMap& environmentMap)
+    {
+        const glm::vec3 colorSrgb = environmentMap.GetSolidBackgroundColorSrgb();
+        return glm::vec3(
+            SrgbChannelToLinear(colorSrgb.x),
+            SrgbChannelToLinear(colorSrgb.y),
+            SrgbChannelToLinear(colorSrgb.z));
+    }
+
+    void SetCompositeBackgroundUniforms(
+        Shader& shader,
+        const Camera& camera,
+        const EnvironmentMap& environmentMap)
+    {
+        glm::mat4 view = camera.GetViewMatrix();
+        view[3] = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        const glm::mat4 invView = glm::inverse(view);
+        const glm::mat4 invProjection = glm::inverse(camera.GetProjectionMatrix());
+
+        shader.SetMat4("uInvView", invView);
+        shader.SetMat4("uInvProjection", invProjection);
+        shader.SetInt(
+            "uBackgroundMode",
+            environmentMap.UsesSkyboxBackground() ? 0 : 1);
+        shader.SetFloat("uSkyboxExposure", environmentMap.GetExposure());
+        shader.SetFloat("uEnvironmentRotationY", environmentMap.GetIBL().GetRotationYRadians());
+        shader.SetVec3("uSolidBackgroundColor", SolidBackgroundLinear(environmentMap));
+
+        if (environmentMap.UsesSkyboxBackground())
+        {
+            shader.BindTextureSlot(5, environmentMap.GetIBL().GetHdrEquirectSrvCpuHandle());
+            shader.SetInt("uEquirectMap", 5);
+        }
     }
 
     bool IsPostProcessDebugMode(RenderDebugMode mode)
@@ -842,18 +880,23 @@ void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& camera) const
     ++m_taaFrameIndex;
 }
 
-void ScreenSpaceEffects::BeginScenePass() const
+bool ScreenSpaceEffects::HasSplitLighting() const
+{
+    return m_sceneFramebuffer != nullptr && m_sceneFramebuffer->HasSplitLighting();
+}
+
+void ScreenSpaceEffects::BeginScenePass(const EnvironmentMap& environmentMap) const
 {
     m_sceneFramebuffer->BindDrawTarget(false);
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
     const float directClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-    const float indirectClear[] = {
-        SrgbChannelToLinear(kBackgroundSrgb[0]),
-        SrgbChannelToLinear(kBackgroundSrgb[1]),
-        SrgbChannelToLinear(kBackgroundSrgb[2]),
-        1.0f};
+    const glm::vec3 solidBackground = SolidBackgroundLinear(environmentMap);
+    const float solidClear[] = {solidBackground.x, solidBackground.y, solidBackground.z, 1.0f};
+    const float blackClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const float* indirectClear =
+        environmentMap.UsesSolidColorBackground() ? solidClear : blackClear;
 
     if (m_sceneFramebuffer->HasSplitLighting())
     {
@@ -1052,7 +1095,8 @@ void ScreenSpaceEffects::Apply(
     const Camera& camera,
     const int viewportWidth,
     const int viewportHeight,
-    const DirectionalShadowSettings& shadowSettings) const
+    const DirectionalShadowSettings& shadowSettings,
+    const EnvironmentMap& environmentMap) const
 {
     FinalizePendingSsaoGpuReadback();
 
@@ -1207,6 +1251,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+        SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
@@ -1238,6 +1283,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+        SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());

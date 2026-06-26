@@ -594,7 +594,7 @@ void Framebuffer::ClearRenderTarget() const
     TransitionColorAttachment(0, kShaderResourceState);
 }
 
-void Framebuffer::BindDrawTarget(const bool clearAttachments) const
+void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearColor[4]) const
 {
     if (m_colorResources[0] == nullptr || m_rtvBaseIndex == UINT32_MAX)
     {
@@ -644,10 +644,15 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments) const
 
     if (clearAttachments)
     {
-        const float clearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+        const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+        const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
         for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
         {
-            commandList->ClearRenderTargetView(rtvs[static_cast<std::size_t>(attachmentIndex)], clearColor, 0, nullptr);
+            commandList->ClearRenderTargetView(
+                rtvs[static_cast<std::size_t>(attachmentIndex)],
+                resolvedClearColor,
+                0,
+                nullptr);
         }
 
         if (dsvPointer != nullptr)

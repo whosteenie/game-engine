@@ -10,6 +10,7 @@
 #include "app/scene/SceneRenderer.h"
 #include "app/scene/SceneSpawnService.h"
 #include "engine/rendering/Constants.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 #include "engine/components/CameraComponent.h"
 #include "engine/components/ColliderComponent.h"
@@ -512,6 +513,21 @@ namespace SceneProjectIODetail
         const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
         return json{
             {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
+            {"skybox",
+             json{
+                 {"enabled", scene.GetRenderer().GetEnvironmentMap().IsEnabled()},
+                 {"backgroundMode", static_cast<int>(scene.GetRenderer().GetEnvironmentMap().GetBackgroundMode())},
+                 {"hdrPath", scene.GetRenderer().GetEnvironmentMap().GetHdrPath()},
+                 {"rotationDegrees", scene.GetRenderer().GetEnvironmentMap().GetRotationDegrees()},
+                 {"exposure", scene.GetRenderer().GetEnvironmentMap().GetExposure()},
+                 {"iblCubemapResolution",
+                  static_cast<int>(scene.GetRenderer().GetEnvironmentMap().GetIblCubemapResolution())},
+                 {"solidBackgroundColor",
+                  json::array(
+                      {scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().x,
+                       scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().y,
+                       scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().z})},
+             }},
             {"textureFilterMode", TextureFilterModeToString(scene.GetRenderer().GetTextureFilterMode())},
             {"textureAnisotropy", scene.GetRenderer().GetTextureAnisotropy()},
             {"textureMipBias", scene.GetRenderer().GetTextureMipBias()},
@@ -580,6 +596,34 @@ namespace SceneProjectIODetail
             const float defaultEnvironmentIntensity = renderer.GetIBL().GetEnvironmentIntensity();
             renderer.GetIBL().SetEnvironmentIntensity(
                 rendererValue.value("environmentIntensity", defaultEnvironmentIntensity));
+            EnvironmentMap& environmentMap = renderer.GetEnvironmentMap();
+            if (rendererValue.contains("skybox"))
+            {
+                const json& skyboxValue = rendererValue.at("skybox");
+                environmentMap.SetEnabled(skyboxValue.value("enabled", environmentMap.IsEnabled()));
+                environmentMap.SetBackgroundMode(static_cast<EnvironmentBackgroundMode>(
+                    skyboxValue.value(
+                        "backgroundMode",
+                        static_cast<int>(environmentMap.GetBackgroundMode()))));
+                environmentMap.SetHdrPath(skyboxValue.value("hdrPath", environmentMap.GetHdrPath()));
+                environmentMap.SetRotationDegrees(
+                    skyboxValue.value("rotationDegrees", environmentMap.GetRotationDegrees()));
+                environmentMap.SetExposure(skyboxValue.value("exposure", environmentMap.GetExposure()));
+                environmentMap.SetIblCubemapResolution(static_cast<EnvironmentIblCubemapResolution>(
+                    skyboxValue.value(
+                        "iblCubemapResolution",
+                        static_cast<int>(environmentMap.GetIblCubemapResolution()))));
+                if (skyboxValue.contains("solidBackgroundColor")
+                    && skyboxValue.at("solidBackgroundColor").is_array()
+                    && skyboxValue.at("solidBackgroundColor").size() == 3)
+                {
+                    const json& colorValue = skyboxValue.at("solidBackgroundColor");
+                    environmentMap.SetSolidBackgroundColorSrgb(glm::vec3(
+                        colorValue[0].get<float>(),
+                        colorValue[1].get<float>(),
+                        colorValue[2].get<float>()));
+                }
+            }
             renderer.SetTextureFilterMode(TextureFilterModeFromString(rendererValue.value(
                 "textureFilterMode",
                 TextureFilterModeToString(renderer.GetTextureFilterMode()))));

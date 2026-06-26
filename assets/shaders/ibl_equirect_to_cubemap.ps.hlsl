@@ -1,7 +1,19 @@
 Texture2D uEquirectangularMap : register(t0);
 SamplerState uEquirectangularSampler : register(s0);
 
+cbuffer PerPixel : register(b0)
+{
+    float uRotationY;
+};
+
 static const float2 InvAtan = float2(0.1591, 0.3183);
+
+float3 RotateY(float3 direction, float angle)
+{
+    float c = cos(angle);
+    float s = sin(angle);
+    return float3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+}
 
 struct PSInput
 {
@@ -19,7 +31,8 @@ float2 SampleSphericalMap(float3 direction)
 
 float4 main(PSInput input) : SV_Target
 {
-    float2 uv = SampleSphericalMap(normalize(input.localPos));
+    float3 direction = RotateY(normalize(input.localPos), uRotationY);
+    float2 uv = SampleSphericalMap(direction);
     float3 color = uEquirectangularMap.Sample(uEquirectangularSampler, uv).rgb;
     return float4(color, 1.0);
 }
