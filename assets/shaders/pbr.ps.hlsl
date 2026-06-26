@@ -96,6 +96,8 @@ struct PSInput
     float4 tangent : TEXCOORD4;
     float4 fragPosLightSpace : TEXCOORD5;
     float viewDepth : TEXCOORD6;
+    float4 currClip : TEXCOORD7;
+    float4 prevClip : TEXCOORD8;
 };
 
 struct PSOutput
@@ -104,7 +106,15 @@ struct PSOutput
     float4 oIndirect : SV_Target1;
     float4 oNormal : SV_Target2;
     float4 oSunShadow : SV_Target3;
+    float4 oVelocity : SV_Target4;
 };
+
+float2 ComputeMotionNdc(float4 currClip, float4 prevClip)
+{
+    float2 currNdc = currClip.xy / currClip.w;
+    float2 prevNdc = prevClip.xy / prevClip.w;
+    return currNdc - prevNdc;
+}
 
 float3 SrgbToLinear(float3 srgb)
 {
@@ -1080,6 +1090,7 @@ PSOutput main(PSInput input)
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
         output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
         output.oNormal = float4(normalize(geomNormal), 1.0);
+        output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
         return output;
     }
 
@@ -1089,6 +1100,7 @@ PSOutput main(PSInput input)
         output.oIndirect = float4(ambient, 1.0);
         output.oSunShadow = float4(directSunUnshadowed, shadowFactor);
         output.oNormal = float4(normalize(geomNormal), 1.0);
+        output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
         return output;
     }
 
@@ -1104,5 +1116,6 @@ PSOutput main(PSInput input)
     }
     output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
     output.oNormal = float4(normalize(geomNormal), 1.0);
+    output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
     return output;
 }

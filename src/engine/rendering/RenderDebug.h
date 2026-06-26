@@ -25,6 +25,7 @@ enum class RenderDebugMode
     GeomSunFacing,
     ShadowCompareDepth,
     ShadowBlockedCenter,
+    MotionVectors,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);

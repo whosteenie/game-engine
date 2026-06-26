@@ -2,6 +2,7 @@
 
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/EnvironmentMap.h"
+#include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
@@ -48,6 +49,8 @@ public:
 
     void PrepareAntiAliasingFrame(Camera& camera) const;
     void FinalizeAntiAliasingFrame(const Camera& camera) const;
+    const MotionVectorFrameState& GetMotionVectorFrameState() const;
+    void AdvanceTemporalFrame(const Camera& camera) const;
 
     void BeginScenePass(const EnvironmentMap& environmentMap) const;
     void EndScenePass() const;
@@ -167,6 +170,7 @@ private:
     void ResizeGridOverlayTarget(int width, int height);
     float GetActiveRenderScale() const;
     void ResetTaaHistory() const;
+    void InvalidateTemporalHistory() const;
     void DrawFullscreenQuad() const;
     void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
@@ -221,6 +225,7 @@ private:
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_gridCompositeShader;
     std::unique_ptr<Shader> m_debugChannelShader;
+    std::unique_ptr<Shader> m_velocityDebugShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -260,5 +265,6 @@ private:
     mutable bool m_taaHistoryValid = false;
     mutable int m_taaFrameIndex = 0;
     mutable glm::mat4 m_prevViewProjection{1.0f};
+    mutable MotionVectorFrameState m_motionVectorFrameState{};
     AntiAliasingMode m_lastAntiAliasingMode = AntiAliasingMode::None;
 };

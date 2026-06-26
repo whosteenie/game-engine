@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/lighting/DirectionalShadowSettings.h"
+#include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/RenderDebug.h"
 
 #include <glm/glm.hpp>
@@ -42,7 +43,9 @@ public:
         bool receiveShadow = true,
         bool outputLinear = false,
         RenderDebugMode debugMode = RenderDebugMode::None,
-        const DirectionalShadowSettings& shadowSettings = DirectionalShadowSettings{}) const;
+        const DirectionalShadowSettings& shadowSettings = DirectionalShadowSettings{},
+        const MotionVectorFrameState& motionFrameState = MotionVectorFrameState{},
+        const glm::mat4& prevModel = glm::mat4(1.0f)) const;
 
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;

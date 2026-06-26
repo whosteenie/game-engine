@@ -83,7 +83,8 @@ namespace
     bool IsPostProcessDebugMode(RenderDebugMode mode)
     {
         return mode == RenderDebugMode::Ssao ||
-               mode == RenderDebugMode::CompositeOcclusion;
+               mode == RenderDebugMode::CompositeOcclusion ||
+               mode == RenderDebugMode::MotionVectors;
     }
 
     float HalfToFloat(const std::uint16_t half)
@@ -426,7 +427,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::GridCompositeFragmentShader)),
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::DebugChannelFragmentShader))
+          EngineConstants::DebugChannelFragmentShader)),
+      m_velocityDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::VelocityDebugFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -803,11 +807,17 @@ int ScreenSpaceEffects::GetRenderHeight() const
     return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportHeight) * GetActiveRenderScale())));
 }
 
+void ScreenSpaceEffects::InvalidateTemporalHistory() const
+{
+    m_motionVectorFrameState = {};
+}
+
 void ScreenSpaceEffects::ResetTaaHistory() const
 {
     m_taaHistoryValid = false;
     m_taaFrameIndex = 0;
     m_prevViewProjection = glm::mat4(1.0f);
+    InvalidateTemporalHistory();
 }
 
 void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeight)
@@ -880,6 +890,20 @@ void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& camera) const
     ++m_taaFrameIndex;
 }
 
+const MotionVectorFrameState& ScreenSpaceEffects::GetMotionVectorFrameState() const
+{
+    return m_motionVectorFrameState;
+}
+
+void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
+{
+    m_motionVectorFrameState.prevView = camera.GetViewMatrix();
+    m_motionVectorFrameState.prevUnjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+    m_motionVectorFrameState.prevViewProjection =
+        m_motionVectorFrameState.prevUnjitteredProjection * m_motionVectorFrameState.prevView;
+    m_motionVectorFrameState.historyValid = true;
+}
+
 bool ScreenSpaceEffects::HasSplitLighting() const
 {
     return m_sceneFramebuffer != nullptr && m_sceneFramebuffer->HasSplitLighting();
@@ -917,6 +941,12 @@ void ScreenSpaceEffects::BeginScenePass(const EnvironmentMap& environmentMap) co
         if (m_sceneFramebuffer->HasShadowFactor())
         {
             commandList->ClearRenderTargetView(shadowRtv, shadowClear, 0, nullptr);
+        }
+        if (m_sceneFramebuffer->HasVelocity())
+        {
+            const float velocityClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+            D3D12_CPU_DESCRIPTOR_HANDLE velocityRtv{m_sceneFramebuffer->GetColorRtvCpuHandle(4)};
+            commandList->ClearRenderTargetView(velocityRtv, velocityClear, 0, nullptr);
         }
     }
     else
@@ -1388,6 +1418,32 @@ void ScreenSpaceEffects::Apply(
         {
             debugSrv = m_hdrCompositeTarget.srvCpuHandle;
             ssaoDebugViewSource = "composite_occlusion";
+        }
+        else if (m_debugMode == RenderDebugMode::MotionVectors && m_sceneFramebuffer->HasVelocity())
+        {
+            m_velocityDebugShader->Use(false, true);
+            m_velocityDebugShader->SetInt("uVelocityMap", 0);
+            m_velocityDebugShader->SetInt("uDepthMap", 1);
+            m_velocityDebugShader->SetFloat("uVelocityScale", 80.0f);
+            m_velocityDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+            m_velocityDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_velocityDebugShader->FlushUniforms();
+            DrawFullscreenQuad();
+            CaptureSsaoDiagnosticsCpu(
+                runSsao,
+                compositeRan,
+                compositeUsesSsao,
+                pbrDebugActive,
+                useShadowFactorComposite,
+                hdrColorSource,
+                "motion_vectors",
+                hdrColorSrv,
+                shadowFactorSrv);
+            if (m_logSsaoApplySnapshot)
+            {
+                m_pendingSsaoGpuReadback = true;
+            }
+            return;
         }
 
         if (debugSrv != 0)

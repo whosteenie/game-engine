@@ -1072,6 +1072,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::GeomSunFacing),
             RenderDebugModeLabel(RenderDebugMode::ShadowCompareDepth),
             RenderDebugModeLabel(RenderDebugMode::ShadowBlockedCenter),
+            RenderDebugModeLabel(RenderDebugMode::MotionVectors),
         };
 
         if (ImGui::Combo(
@@ -1164,6 +1165,13 @@ void LightingPanel::Draw(
             ImGui::TextWrapped(
                 "Blurred SSAO factor (1 = no occlusion). Use SSAO shader debug combo for raw/instrumented views. "
                 "When SSAO is off the pass is skipped and the buffer is stale.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::MotionVectors))
+        {
+            ImGui::TextWrapped(
+                "Per-pixel screen-space velocity (hue = direction, brightness = magnitude). "
+                "Pan the camera on static geometry for a uniform field; move an object for localized color. "
+                "Sky and first frame after load/resize are black (zero velocity).");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

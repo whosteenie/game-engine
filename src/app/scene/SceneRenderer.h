@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 class Camera;
 class CameraGizmoRenderer;
@@ -95,6 +96,7 @@ private:
     std::uint32_t m_textureAnisotropy = 8;
     float m_textureMipBias = 0.0f;
     SceneLighting m_lighting;
+    mutable std::vector<glm::mat4> m_previousWorldMatrices;
     mutable bool m_gpuResourcesInitialized = false;
     mutable bool m_gpuResourcesInitFailed = false;
     mutable std::string m_gpuResourcesInitError;

@@ -21,6 +21,7 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/Shader.h"
@@ -314,6 +315,19 @@ void SceneRenderer::Render(
     m_environmentMap->RenderSkybox(camera, splitLightingMrt);
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
+    if (m_previousWorldMatrices.size() != objects.size())
+    {
+        m_previousWorldMatrices.resize(objects.size());
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        {
+            m_previousWorldMatrices[objectIndex] =
+                scene.GetWorldMatrix(static_cast<int>(objectIndex));
+        }
+    }
+
+    const MotionVectorFrameState motionFrameState =
+        usePostProcess ? m_screenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
+
     for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
     {
         const SceneObject& object = objects[objectIndex];
@@ -332,8 +346,19 @@ void SceneRenderer::Render(
             object.ReceivesShadow(),
             splitLightingMrt,
             materialDebugMode,
-            m_directionalShadowSettings);
+            m_directionalShadowSettings,
+            motionFrameState,
+            m_previousWorldMatrices[objectIndex]);
         object.GetMesh()->Draw();
+    }
+
+    if (usePostProcess)
+    {
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        {
+            m_previousWorldMatrices[objectIndex] =
+                scene.GetWorldMatrix(static_cast<int>(objectIndex));
+        }
     }
 
     if (usePostProcess)
@@ -358,6 +383,7 @@ void SceneRenderer::Render(
             m_directionalShadowSettings,
             *m_environmentMap);
         m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera);
+        m_screenSpaceEffects->AdvanceTemporalFrame(camera);
 
         if (target != nullptr)
         {

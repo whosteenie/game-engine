@@ -196,14 +196,21 @@ void Material::Apply(
     const bool receiveShadow,
     const bool outputLinear,
     const RenderDebugMode debugMode,
-    const DirectionalShadowSettings& shadowSettings) const
+    const DirectionalShadowSettings& shadowSettings,
+    const MotionVectorFrameState& motionFrameState,
+    const glm::mat4& prevModel) const
 {
     EnsureShader();
     EnsureMapsLoaded();
     m_shader->Use(outputLinear, !outputLinear, m_doubleSided);
     m_shader->SetMat4("uModel", model);
+    m_shader->SetMat4("uPrevModel", prevModel);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
+    m_shader->SetMat4("uPrevView", motionFrameState.prevView);
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
+    m_shader->SetMat4("uUnjitteredProjection", camera.GetUnjitteredProjectionMatrix());
+    m_shader->SetMat4("uPrevUnjitteredProjection", motionFrameState.prevUnjitteredProjection);
+    m_shader->SetFloat("uTemporalHistoryValid", motionFrameState.historyValid ? 1.0f : 0.0f);
     m_shader->SetVec3("uViewPos", camera.GetPosition());
     m_shader->SetVec3("uAlbedo", m_albedo);
     m_shader->SetFloat("uRoughness", m_roughness);

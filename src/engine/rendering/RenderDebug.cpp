@@ -50,6 +50,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Shadow compare depth";
     case RenderDebugMode::ShadowBlockedCenter:
         return "Shadow blocked (center texel)";
+    case RenderDebugMode::MotionVectors:
+        return "Motion vectors";
     default:
         return "Unknown";
     }

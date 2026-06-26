@@ -48,6 +48,11 @@ namespace
 
 
 
+        if (attachmentIndex == 4)
+        {
+            return DXGI_FORMAT_R16G16_FLOAT;
+        }
+
         return DXGI_FORMAT_R16G16B16A16_FLOAT;
 
     }
@@ -56,7 +61,7 @@ namespace
 
     int ColorAttachmentCount(FramebufferColorMode colorMode)
     {
-        return colorMode == FramebufferColorMode::SplitDirectIndirect ? 4 : 1;
+        return colorMode == FramebufferColorMode::SplitDirectIndirect ? 5 : 1;
     }
 
     constexpr std::uint32_t kShaderResourceState =
@@ -794,6 +799,21 @@ bool Framebuffer::HasShadowFactor() const
 
     return m_colorMode == FramebufferColorMode::SplitDirectIndirect;
 
+}
+
+bool Framebuffer::HasVelocity() const
+{
+    return m_colorMode == FramebufferColorMode::SplitDirectIndirect;
+}
+
+std::uintptr_t Framebuffer::GetVelocityTexture() const
+{
+    if (m_colorSrvIndices[4] == UINT32_MAX)
+    {
+        return 0;
+    }
+
+    return reinterpret_cast<std::uintptr_t>(GfxContext::Get().GetSrvHeapGpuHandle(m_colorSrvIndices[4]));
 }
 
 

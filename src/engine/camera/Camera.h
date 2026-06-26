@@ -16,6 +16,7 @@ public:
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
+    glm::mat4 GetUnjitteredProjectionMatrix() const;
     glm::vec3 GetPosition() const;
     glm::vec3 GetFront() const;
     float GetYaw() const;
