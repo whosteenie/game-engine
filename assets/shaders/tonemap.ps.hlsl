@@ -52,7 +52,7 @@ float4 main(PSInput input) : SV_Target
 
     if (uUseBloom != 0)
     {
-        hdr += uBloom.Sample(uBloomSampler, input.texCoord).rgb * uBloomIntensity * exp2(uExposure);
+        hdr += uBloom.Sample(uBloomSampler, input.texCoord).rgb * uBloomIntensity;
     }
 
     float3 mapped;

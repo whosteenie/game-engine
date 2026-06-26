@@ -954,7 +954,8 @@ void LightingPanel::Draw(
         }
         else if (currentAaMode == AntiAliasingMode::TAA)
         {
-            ImGui::TextDisabled("Jittered render -> tonemap -> temporal resolve -> viewport");
+            ImGui::TextDisabled(
+                "HDR temporal resolve (motion vectors) -> bloom -> tonemap -> viewport");
             float taaBlend = screenSpaceEffects.GetTaaBlendFactor();
             if (ImGui::SliderFloat("TAA history blend", &taaBlend, 0.0f, 0.99f))
             {
@@ -1054,7 +1055,7 @@ void LightingPanel::Draw(
                     target.MarkDirty();
                 });
             ImGui::TextDisabled(
-                "Independent of LDR TAA. Validate with Anti-aliasing = None.");
+                "Independent of HDR TAA. Validate with Anti-aliasing = None.");
             ImGui::TreePop();
         }
 

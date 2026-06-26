@@ -252,6 +252,8 @@ private:
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
+    InternalTarget m_bloomHistoryTarget;
+    InternalTarget m_bloomTemporalTarget;
     InternalTarget m_ldrTonemapTarget;
     InternalTarget m_smaaEdgeTarget;
     InternalTarget m_smaaOutputTarget;
@@ -265,6 +267,7 @@ private:
     std::unique_ptr<Shader> m_compositeShader;
     std::unique_ptr<Shader> m_bloomExtractShader;
     std::unique_ptr<Shader> m_bloomBlurShader;
+    std::unique_ptr<Shader> m_bloomTemporalShader;
     std::unique_ptr<Shader> m_shadowBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_fxaaShader;
@@ -311,6 +314,7 @@ private:
     float m_bloomSoftKnee = 0.5f;
     float m_bloomIntensity = 0.4f;
     float m_bloomBlurRadius = 1.0f;
+    float m_bloomTemporalBlendFactor = 0.88f;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     float m_fxaaSubpixQuality = 0.75f;
@@ -337,9 +341,9 @@ private:
 
     mutable bool m_taaHistoryValid = false;
     mutable int m_taaFrameIndex = 0;
+    mutable bool m_bloomHistoryValid = false;
     mutable bool m_radianceHistoryValid = false;
     mutable int m_giFrameIndex = 0;
-    mutable glm::mat4 m_prevViewProjection{1.0f};
     mutable glm::mat4 m_giPrevViewProjection{1.0f};
     mutable MotionVectorFrameState m_motionVectorFrameState{};
     mutable std::uintptr_t m_lastSsgiInjectSrv = 0;
