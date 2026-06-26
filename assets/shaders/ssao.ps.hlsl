@@ -94,25 +94,11 @@ float InterleavedGradientNoise(float2 pixel)
     return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
 }
 
-float3 FallbackNoiseVector(float2 screenPixel)
+float3x3 BuildRotatedTbn(float3 normal, float2 screenPixel)
 {
-    const float angle = 6.28318530718 * InterleavedGradientNoise(screenPixel);
-    return float3(cos(angle), sin(angle), 0.0);
-}
-
-float3x3 BuildRotatedTbn(float3 normal, float2 texCoord, float2 screenPixel)
-{
-    uint noiseWidth;
-    uint noiseHeight;
-    uNoiseMap.GetDimensions(noiseWidth, noiseHeight);
-
-    uint2 noiseCoord = uint2((uint)screenPixel.x % max(noiseWidth, 1u), (uint)screenPixel.y % max(noiseHeight, 1u));
-    float3 randomVector = uNoiseMap.Load(int3(noiseCoord, 0)).xyz;
-
-    if (dot(randomVector, randomVector) < 1e-5)
-    {
-        randomVector = FallbackNoiseVector(screenPixel);
-    }
+    // Per-pixel interleaved gradient noise avoids the visible 4x4 tiling from a small noise texture.
+    const float angle = 6.28318530718 * InterleavedGradientNoise(screenPixel + 0.5);
+    float3 randomVector = float3(cos(angle), sin(angle), 0.0);
 
     float3 tangent = randomVector - normal * dot(randomVector, normal);
     if (dot(tangent, tangent) < 1e-5)
@@ -155,11 +141,11 @@ float main(PSInput input) : SV_Target
     }
 
     float3 normal = SampleViewNormal(input.texCoord, depth);
-    float3x3 tbn = BuildRotatedTbn(normal, input.texCoord, input.position.xy);
+    float3x3 tbn = BuildRotatedTbn(normal, input.position.xy);
 
     const float radius = max(uRadius, 1e-4);
     const float bias = max(uBias, 0.0);
-    const float thicknessLimit = max(radius * 0.65, bias * 4.0);
+    const float thicknessLimit = max(radius * 1.05, bias * 6.0);
     const int kernelSize = clamp(uKernelSize, 1, SSAO_KERNEL_SIZE);
 
     float occlusion = 0.0;
@@ -240,5 +226,6 @@ float main(PSInput input) : SV_Target
         return 1.0;
     }
 
-    return 1.0 - saturate(occlusion / (float)usedSamples);
+    const float visibility = 1.0 - saturate(occlusion / (float)usedSamples);
+    return visibility;
 }

@@ -7,10 +7,10 @@ SamplerState uDepthSampler : register(s1);
 cbuffer PerPixel : register(b0)
 {
     float4x4 uInvProjection;
-    float uTexelSizeX;
-    float uTexelSizeY;
+    float2 uTexelSize;
+    float2 uBlurDirection;
     float uDepthThreshold;
-    float _pad0;
+    float uBlurSpread;
 };
 
 struct PSInput
@@ -18,6 +18,9 @@ struct PSInput
     float4 position : SV_Position;
     float2 texCoord : TEXCOORD0;
 };
+
+static const int kBlurRadius = 3;
+static const float kBlurWeights[7] = {0.0312, 0.0878, 0.1719, 0.2182, 0.1719, 0.0878, 0.0312};
 
 float ViewDepth(float2 texCoord)
 {
@@ -29,7 +32,7 @@ float ViewDepth(float2 texCoord)
 
 float main(PSInput input) : SV_Target
 {
-    const float2 texelSize = float2(uTexelSizeX, uTexelSizeY);
+    const float2 direction = uBlurDirection * uTexelSize * max(uBlurSpread, 1.0);
     const float centerDepth = ViewDepth(input.texCoord);
     const float centerAo = uInput.Sample(uInputSampler, input.texCoord).r;
 
@@ -37,23 +40,19 @@ float main(PSInput input) : SV_Target
     float weightSum = 0.0;
 
     [loop]
-    for (int x = -1; x <= 1; ++x)
+    for (int tap = -kBlurRadius; tap <= kBlurRadius; ++tap)
     {
-        [loop]
-        for (int y = -1; y <= 1; ++y)
-        {
-            const float2 sampleUv = input.texCoord + float2((float)x, (float)y) * texelSize;
-            const float sampleDepth = ViewDepth(sampleUv);
-            const float relativeDepthDelta =
-                abs(sampleDepth - centerDepth) / max(centerDepth, 1e-3);
-            const float depthWeight = 1.0 - smoothstep(
-                uDepthThreshold * 0.5,
-                uDepthThreshold,
-                relativeDepthDelta);
-            const float weight = depthWeight;
-            result += uInput.Sample(uInputSampler, sampleUv).r * weight;
-            weightSum += weight;
-        }
+        const float2 sampleUv = input.texCoord + direction * (float)tap;
+        const float sampleDepth = ViewDepth(sampleUv);
+        const float relativeDepthDelta =
+            abs(sampleDepth - centerDepth) / max(abs(centerDepth), 1e-3);
+        const float depthWeight = 1.0 - smoothstep(
+            uDepthThreshold * 0.5,
+            uDepthThreshold,
+            relativeDepthDelta);
+        const float weight = kBlurWeights[tap + kBlurRadius] * depthWeight;
+        result += uInput.Sample(uInputSampler, sampleUv).r * weight;
+        weightSum += weight;
     }
 
     if (weightSum <= 1e-5)

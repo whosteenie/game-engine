@@ -951,9 +951,6 @@ void ScreenSpaceEffects::Apply(
 
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 inverseProjectionMatrix = glm::inverse(projectionMatrix);
-    const glm::vec2 noiseScale(
-        static_cast<float>(m_width) / 4.0f,
-        static_cast<float>(m_height) / 4.0f);
     const glm::vec2 texelSize(
         1.0f / static_cast<float>(m_width),
         1.0f / static_cast<float>(m_height));
@@ -986,22 +983,42 @@ void ScreenSpaceEffects::Apply(
         m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
         m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
         m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
-        m_ssaoShader->SetFloat("uNoiseScaleX", noiseScale.x);
-        m_ssaoShader->SetFloat("uNoiseScaleY", noiseScale.y);
         m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
         m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
         DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
-        m_blurShader->SetInt("uInput", 0);
-        m_blurShader->SetInt("uDepthMap", 1);
-        m_blurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_blurShader->SetFloat("uTexelSizeX", texelSize.x);
-        m_blurShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);
-        m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
-        m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
+        if (m_ssaoShaderDebugMode == 0)
+        {
+            m_blurShader->Use(false);
+            m_blurShader->SetInt("uInput", 0);
+            m_blurShader->SetInt("uDepthMap", 1);
+            m_blurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+            m_blurShader->SetVec2("uTexelSize", texelSize);
+            m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);
+            m_blurShader->SetFloat("uBlurSpread", 1.0f);
+
+            m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
+            m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
+
+            m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
+            m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
+            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
+
+            m_blurShader->SetFloat("uBlurSpread", 2.5f);
+            m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
+            m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
+
+            m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
+            m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
+            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
+        }
     }
 
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
@@ -1076,7 +1093,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_compositeShader->BindTextureSlot(3, m_ssaoBlurTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
         m_compositeShader->BindTextureSlot(4, shadowFactorSrv);
         DrawFullscreenToTarget(
             *m_compositeShader,
@@ -1105,7 +1122,7 @@ void ScreenSpaceEffects::Apply(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
-        m_compositeShader->BindTextureSlot(3, m_ssaoBlurTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
             *m_compositeShader,
@@ -1199,9 +1216,7 @@ void ScreenSpaceEffects::Apply(
         std::uintptr_t debugSrv = 0;
         if (m_debugMode == RenderDebugMode::Ssao)
         {
-            debugSrv = (m_ssaoShaderDebugMode != 0)
-                ? m_ssaoTarget.srvCpuHandle
-                : m_ssaoBlurTarget.srvCpuHandle;
+            debugSrv = m_ssaoTarget.srvCpuHandle;
             ssaoDebugViewSource = runSsao
                 ? ((m_ssaoShaderDebugMode != 0) ? "ssao_raw_debug" : "ssao_blur_live")
                 : "ssao_blur_stale_pass_off";
@@ -1422,7 +1437,7 @@ void ScreenSpaceEffects::FinalizePendingSsaoGpuReadback() const
     }
 
     if (ReadbackTextureCenterRgba16F(
-            m_ssaoBlurTarget.resource,
+            m_ssaoTarget.resource,
             m_width,
             m_height,
             centerX,

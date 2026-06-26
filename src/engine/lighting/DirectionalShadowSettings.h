@@ -122,7 +122,7 @@ private:
     float m_pcssMaxPenumbraTexels = 32.0f;
     float m_worldBiasScale = 1.0f;
     float m_depthBiasScale = 1.0f;
-    float m_casterDepthBiasScale = 0.0f;
+    float m_casterDepthBiasScale = 2.0f;
     bool m_shadowBlurEnabled = false;
     float m_shadowBlurRadius = 2.5f;
     float m_shadowBlurDepthThreshold = 0.14f;

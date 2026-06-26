@@ -198,11 +198,11 @@ private:
     mutable std::uint64_t m_ssaoDiagnosticsFrame = 0;
     mutable SsaoDiagnosticsSnapshot m_ssaoDiagnostics{};
     bool m_ssaoEnabled = true;
-    float m_ssaoRadius = 0.5f;
-    float m_ssaoBias = 0.025f;
-    float m_ssaoPower = 1.6f;
+    float m_ssaoRadius = 0.6f;
+    float m_ssaoBias = 0.012f;
+    float m_ssaoPower = 2.2f;
     int m_ssaoShaderDebugMode = 0;
-    float m_aoStrength = 0.75f;
+    float m_aoStrength = 1.0f;
     float m_exposure = 0.0f;
     TonemapMode m_tonemapMode = TonemapMode::Gamma;
     bool m_bloomEnabled = false;
