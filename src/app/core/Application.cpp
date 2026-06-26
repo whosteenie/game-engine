@@ -8,6 +8,7 @@
 #include "app/editor/EditorViewportRect.h"
 #include "app/panels/GameViewportPanel.h"
 #include "app/panels/LightingPanel.h"
+#include "app/panels/PerformancePanel.h"
 #include "app/editor/MainMenuBar.h"
 #include "app/editor/EditorReorderDragDrop.h"
 #include "app/project/ProjectChooser.h"
@@ -298,6 +299,7 @@ Application::Application(int width, int height, const char* title)
         m_mainMenuBar = std::make_unique<MainMenuBar>();
         m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
         m_lightingPanel = std::make_unique<LightingPanel>();
+        m_performancePanel = std::make_unique<PerformancePanel>();
         m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
         m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
         m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
@@ -535,6 +537,8 @@ void Application::InitGLAD()
 
 void Application::Update(double deltaTime)
 {
+    m_performancePanel->OnFrame(deltaTime);
+
     glfwPollEvents();
     InputDiagnostics::LogFrame(m_window, "after-poll");
 
@@ -607,11 +611,16 @@ void Application::Update(double deltaTime)
 
     if (editorActive)
     {
+        int windowWidth = 0;
+        int windowHeight = 0;
+        glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
+
         EditorPanelVisibility panelVisibility;
         panelVisibility.hierarchy = &m_sceneHierarchyPanel->ShowPanel();
         panelVisibility.inspector = &m_sceneInspectorPanel->ShowPanel();
         panelVisibility.toolbar = &m_sceneToolbarPanel->ShowPanel();
         panelVisibility.lighting = &m_lightingPanel->ShowPanel();
+        panelVisibility.performance = &m_performancePanel->ShowPanel();
         panelVisibility.project = &m_projectFilesPanel->ShowPanel();
         panelVisibility.sceneView = &m_sceneViewportPanel->ShowPanel();
         panelVisibility.gameView = &m_gameViewportPanel->ShowPanel();
@@ -687,6 +696,13 @@ void Application::Update(double deltaTime)
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
             editorUndoStack);
+        m_performancePanel->Draw(
+            *editorScene,
+            m_sceneViewportPanel->GetRenderWidth(),
+            m_sceneViewportPanel->GetRenderHeight(),
+            windowWidth,
+            windowHeight,
+            m_playModeController.IsActive());
         const bool validateRestoredLayout = m_pendingEditorLayoutValidation;
         m_editorDockSpace->AfterEditorPanels(validateRestoredLayout);
         if (validateRestoredLayout)
@@ -895,6 +911,7 @@ void Application::CaptureProjectEditorState(ProjectEditorState& editorState) con
     editorState.showInspector = m_sceneInspectorPanel->ShowPanel();
     editorState.showToolbar = m_sceneToolbarPanel->ShowPanel();
     editorState.showLighting = m_lightingPanel->ShowPanel();
+    editorState.showPerformance = m_performancePanel->ShowPanel();
     editorState.showProjectFiles = m_projectFilesPanel->ShowPanel();
     editorState.showSceneView = m_sceneViewportPanel->ShowPanel();
     editorState.showGameView = m_gameViewportPanel->ShowPanel();
@@ -914,6 +931,7 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_sceneInspectorPanel->ShowPanel() = editorState.showInspector;
     m_sceneToolbarPanel->ShowPanel() = editorState.showToolbar;
     m_lightingPanel->ShowPanel() = editorState.showLighting;
+    m_performancePanel->ShowPanel() = editorState.showPerformance;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
     m_sceneViewportPanel->ShowPanel() = editorState.showSceneView;
     m_gameViewportPanel->ShowPanel() = editorState.showGameView;

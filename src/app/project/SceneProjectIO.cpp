@@ -718,6 +718,7 @@ namespace SceneProjectIODetail
                  {"inspector", editorState.showInspector},
                  {"toolbar", editorState.showToolbar},
                  {"lighting", editorState.showLighting},
+                 {"performance", editorState.showPerformance},
                  {"projectFiles", editorState.showProjectFiles},
                  {"sceneView", editorState.showSceneView},
                  {"gameView", editorState.showGameView},
@@ -756,6 +757,7 @@ namespace SceneProjectIODetail
             editorState.showInspector = panelsValue.value("inspector", editorState.showInspector);
             editorState.showToolbar = panelsValue.value("toolbar", editorState.showToolbar);
             editorState.showLighting = panelsValue.value("lighting", editorState.showLighting);
+            editorState.showPerformance = panelsValue.value("performance", editorState.showPerformance);
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
             editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
             editorState.showGameView = panelsValue.value("gameView", editorState.showGameView);

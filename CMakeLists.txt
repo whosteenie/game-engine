@@ -271,6 +271,7 @@ add_executable(game-engine
     src/app/panels/ProjectFilesPanel.cpp
 
     src/app/panels/LightingPanel.cpp
+    src/app/panels/PerformancePanel.cpp
     src/app/scene/RenderDiagnostics.cpp
 
     src/app/editor/EditorWidgets.cpp

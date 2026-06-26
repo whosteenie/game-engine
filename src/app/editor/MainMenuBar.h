@@ -22,6 +22,7 @@ struct EditorPanelVisibility
     bool* project = nullptr;
     bool* sceneView = nullptr;
     bool* gameView = nullptr;
+    bool* performance = nullptr;
 };
 
 using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;

@@ -14,6 +14,7 @@ class EditorDockSpace;
 class EditorTopToolbar;
 class EditorSettings;
 class LightingPanel;
+class PerformancePanel;
 class MainMenuBar;
 class ProjectChooser;
 class ProjectFilesPanel;
@@ -80,6 +81,7 @@ private:
     std::unique_ptr<MainMenuBar> m_mainMenuBar;
     std::unique_ptr<EditorTopToolbar> m_editorTopToolbar;
     std::unique_ptr<LightingPanel> m_lightingPanel;
+    std::unique_ptr<PerformancePanel> m_performancePanel;
     std::unique_ptr<SceneToolbarPanel> m_sceneToolbarPanel;
     std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<SceneInspectorPanel> m_sceneInspectorPanel;
