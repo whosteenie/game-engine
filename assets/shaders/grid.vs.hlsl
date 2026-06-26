@@ -2,6 +2,9 @@ cbuffer PerVertex : register(b0)
 {
     float4x4 uView;
     float4x4 uProjection;
+    float2 uGridSnapOrigin;
+    float uGridHeight;
+    float _pad0;
 };
 
 struct VSInput
@@ -18,7 +21,10 @@ struct VSOutput
 VSOutput main(VSInput input)
 {
     VSOutput output;
-    output.worldPos = input.position;
-    output.position = mul(uProjection, mul(uView, float4(input.position, 1.0)));
+    output.worldPos = float3(
+        input.position.x + uGridSnapOrigin.x,
+        uGridHeight,
+        input.position.z + uGridSnapOrigin.y);
+    output.position = mul(uProjection, mul(uView, float4(output.worldPos, 1.0)));
     return output;
 }

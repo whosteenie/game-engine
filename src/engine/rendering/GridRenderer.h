@@ -29,7 +29,10 @@ private:
     GpuBuffer m_indexBuffer;
     unsigned int m_indexCount = 0;
 
-    float m_halfExtent = 14.0f;
+    float m_halfExtent = 256.0f;
     float m_cellSize = 1.0f;
     float m_majorInterval = 10.0f;
+    float m_gridHeight = 0.051f;
+    float m_fadeStartFraction = 0.35f;
+    float m_fadeEndFraction = 0.92f;
 };

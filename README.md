@@ -25,3 +25,4 @@ Optional: copy `dxcompiler.dll` and `dxil.dll` into `vendor/dxc/x64/` before bui
 ## Documentation
 
 - [D3D12 cleanup plan](devdoc/d3d12-cleanup.md) — phased roadmap to a single-convention, OpenGL-free renderer.
+- [SSGI groundwork](devdoc/ssgi-groundwork.md) — prerequisites and phased plan before production screen-space GI.

@@ -7,6 +7,7 @@
 
 #include <d3d12.h>
 
+#include <cmath>
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -28,7 +29,10 @@ GridRenderer::GridRenderer(GridRenderer&& other) noexcept
       m_indexCount(other.m_indexCount),
       m_halfExtent(other.m_halfExtent),
       m_cellSize(other.m_cellSize),
-      m_majorInterval(other.m_majorInterval)
+      m_majorInterval(other.m_majorInterval),
+      m_gridHeight(other.m_gridHeight),
+      m_fadeStartFraction(other.m_fadeStartFraction),
+      m_fadeEndFraction(other.m_fadeEndFraction)
 {
     other.m_indexCount = 0;
 }
@@ -45,6 +49,9 @@ GridRenderer& GridRenderer::operator=(GridRenderer&& other) noexcept
         m_halfExtent = other.m_halfExtent;
         m_cellSize = other.m_cellSize;
         m_majorInterval = other.m_majorInterval;
+        m_gridHeight = other.m_gridHeight;
+        m_fadeStartFraction = other.m_fadeStartFraction;
+        m_fadeEndFraction = other.m_fadeEndFraction;
         other.m_indexCount = 0;
     }
 
@@ -60,13 +67,11 @@ void GridRenderer::ReleaseGpuResources()
 
 void GridRenderer::BuildGridGeometry(float halfExtent)
 {
-    const float y = 0.051f;
-
     const std::vector<float> vertices = {
-        -halfExtent, y, -halfExtent,
-         halfExtent, y, -halfExtent,
-         halfExtent, y,  halfExtent,
-        -halfExtent, y,  halfExtent,
+        -halfExtent, 0.0f, -halfExtent,
+         halfExtent, 0.0f, -halfExtent,
+         halfExtent, 0.0f,  halfExtent,
+        -halfExtent, 0.0f,  halfExtent,
     };
 
     const std::vector<unsigned int> indices = {
@@ -93,13 +98,23 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
         return;
     }
 
+    const glm::vec3 cameraPosition = camera.GetPosition();
+    const float patchSize = m_halfExtent * 2.0f;
+    const glm::vec2 gridSnapOrigin(
+        std::floor(cameraPosition.x / patchSize) * patchSize,
+        std::floor(cameraPosition.z / patchSize) * patchSize);
+
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
+    m_shader->SetVec2("uGridSnapOrigin", gridSnapOrigin);
+    m_shader->SetFloat("uGridHeight", m_gridHeight);
     m_shader->SetVec3("uColor", glm::vec3(0.35f, 0.38f, 0.42f));
-    m_shader->SetVec3("uCameraPosition", camera.GetPosition());
+    m_shader->SetVec3("uCameraPosition", cameraPosition);
     m_shader->SetFloat("uCellSize", m_cellSize);
     m_shader->SetFloat("uMajorInterval", m_majorInterval);
+    m_shader->SetFloat("uFadeStart", m_halfExtent * m_fadeStartFraction);
+    m_shader->SetFloat("uFadeEnd", m_halfExtent * m_fadeEndFraction);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
     m_shader->FlushUniforms();

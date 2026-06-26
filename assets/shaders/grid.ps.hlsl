@@ -1,8 +1,9 @@
 cbuffer PerPixel : register(b0)
 {
     float3 uColor;
-    float _pad0;
+    float uFadeStart;
     float3 uCameraPosition;
+    float uFadeEnd;
     float uCellSize;
     float4x4 uView;
     float uMajorInterval;
@@ -57,7 +58,10 @@ PSOutput main(PSInput input)
     float3 viewDir = normalize(uCameraPosition - input.worldPos);
     float grazeFade = smoothstep(0.04, 0.22, abs(viewDir.y));
 
-    float alpha = lineStrength * grazeFade;
+    float distXZ = length(input.worldPos.xz - uCameraPosition.xz);
+    float distFade = 1.0 - smoothstep(uFadeStart, uFadeEnd, distXZ);
+
+    float alpha = lineStrength * grazeFade * distFade;
     clip(alpha - 0.02);
 
     float3 linearColor = pow(uColor, 2.2.xxx);
