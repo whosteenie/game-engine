@@ -14,6 +14,9 @@ public:
 
     std::uint32_t Capacity() const { return m_capacity; }
     std::uint32_t UsedCount() const { return m_usedCount; }
+    std::uint32_t IndexOffset() const { return m_indexOffset; }
+
+    void SetIndexOffset(std::uint32_t offset) { m_indexOffset = offset; }
 
     std::uint32_t AllocateOne();
     std::uint32_t AllocateBlock(std::uint32_t count);
@@ -25,5 +28,9 @@ public:
 private:
     std::uint32_t m_capacity = 0;
     std::uint32_t m_usedCount = 0;
+    std::uint32_t m_indexOffset = 0;
     std::vector<bool> m_allocated;
+
+    bool IsLocalIndex(std::uint32_t index) const;
+    std::uint32_t ToLocalIndex(std::uint32_t index) const;
 };

@@ -35,6 +35,10 @@ public:
     float GetFov() const;
     float GetAspect() const;
 
+    void SetProjectionJitter(const glm::vec2& jitterNdc);
+    void ClearProjectionJitter();
+    glm::vec2 GetProjectionJitter() const;
+
 private:
     void UpdateCameraVectors();
     glm::mat4 BuildViewMatrixFromState() const;
@@ -56,4 +60,6 @@ private:
     float m_aspect = 1.0f;
     float m_near = 0.1f;
     float m_far = 10000.0f;
+
+    glm::vec2 m_projectionJitterNdc{0.0f};
 };

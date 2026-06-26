@@ -370,6 +370,7 @@ Application::~Application()
         TextureCache::Get().Clear();
         ShaderCache::Clear();
         Material::ReleaseGlobalGpuResources();
+        Texture::ReleaseUploadResources();
     }
 
     m_imguiLayer.reset();

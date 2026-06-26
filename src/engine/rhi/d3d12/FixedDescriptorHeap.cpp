@@ -8,6 +8,22 @@ FixedDescriptorHeap::FixedDescriptorHeap(const std::uint32_t capacity)
 {
 }
 
+bool FixedDescriptorHeap::IsLocalIndex(const std::uint32_t index) const
+{
+    return index < m_capacity;
+}
+
+std::uint32_t FixedDescriptorHeap::ToLocalIndex(const std::uint32_t index) const
+{
+    if (index < m_indexOffset)
+    {
+        return kInvalid;
+    }
+
+    const std::uint32_t localIndex = index - m_indexOffset;
+    return IsLocalIndex(localIndex) ? localIndex : kInvalid;
+}
+
 std::uint32_t FixedDescriptorHeap::AllocateOne()
 {
     return AllocateBlock(1);
@@ -43,7 +59,7 @@ std::uint32_t FixedDescriptorHeap::AllocateBlock(const std::uint32_t count)
         }
 
         m_usedCount += count;
-        return start;
+        return m_indexOffset + start;
     }
 
     return kInvalid;
@@ -56,14 +72,15 @@ void FixedDescriptorHeap::FreeOne(const std::uint32_t index)
 
 void FixedDescriptorHeap::FreeBlock(const std::uint32_t baseIndex, const std::uint32_t count)
 {
-    if (baseIndex == kInvalid || count == 0 || baseIndex >= m_capacity)
+    const std::uint32_t localBaseIndex = ToLocalIndex(baseIndex);
+    if (localBaseIndex == kInvalid || count == 0)
     {
         return;
     }
 
-    for (std::uint32_t offset = 0; offset < count && baseIndex + offset < m_capacity; ++offset)
+    for (std::uint32_t offset = 0; offset < count && localBaseIndex + offset < m_capacity; ++offset)
     {
-        const std::uint32_t index = baseIndex + offset;
+        const std::uint32_t index = localBaseIndex + offset;
         if (m_allocated[index])
         {
             m_allocated[index] = false;
@@ -74,10 +91,12 @@ void FixedDescriptorHeap::FreeBlock(const std::uint32_t baseIndex, const std::ui
 
 bool FixedDescriptorHeap::IsAllocated(const std::uint32_t index) const
 {
-    return IsValidIndex(index) && m_allocated[index];
+    const std::uint32_t localIndex = ToLocalIndex(index);
+    return localIndex != kInvalid && m_allocated[localIndex];
 }
 
 bool FixedDescriptorHeap::IsValidIndex(const std::uint32_t index) const
 {
-    return index != kInvalid && index < m_capacity;
+    const std::uint32_t localIndex = ToLocalIndex(index);
+    return localIndex != kInvalid;
 }

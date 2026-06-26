@@ -60,7 +60,8 @@ public:
         int formatRgba_UNORM,
         std::uint32_t descriptorIndex,
         int width,
-        int height) const;
+        int height,
+        std::uint32_t mipLevels = 1) const;
     void ClearOffscreenTarget(
         void* resource,
         std::uint32_t rtvIndex,
@@ -84,6 +85,7 @@ public:
 
     // Per-draw SRV table base index in the global SRV heap (see Shader::FlushUniforms).
     std::uint32_t AllocateDrawSrvTable();
+    void ResetDrawSrvTable();
 
     void AllocSrvDescriptorForImGui(void* out_cpu_handle, void* out_gpu_handle);
     void FreeSrvDescriptorFromCpuHandle(std::uintptr_t cpu_handle_ptr);
@@ -103,6 +105,12 @@ public:
 
     void SetMaterialTextureFilterMode(TextureFilterMode mode);
     TextureFilterMode GetMaterialTextureFilterMode() const;
+
+    void SetMaterialTextureAnisotropy(std::uint32_t anisotropy);
+    std::uint32_t GetMaterialTextureAnisotropy() const;
+
+    void SetMaterialTextureMipBias(float mipBias);
+    float GetMaterialTextureMipBias() const;
 
 private:
     GfxContext() = default;
@@ -136,4 +144,6 @@ private:
     int m_pendingResizeWidth = 0;
     int m_pendingResizeHeight = 0;
     TextureFilterMode m_materialTextureFilterMode = TextureFilterMode::Trilinear;
+    std::uint32_t m_materialTextureAnisotropy = 8;
+    float m_materialTextureMipBias = 0.0f;
 };

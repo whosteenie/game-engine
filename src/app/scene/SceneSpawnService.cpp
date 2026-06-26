@@ -109,7 +109,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         glm::vec3(1.0f),
         1.0f,
         0.0f);
-    ApplyConcreteFloorMaterialMaps(*floorMaterial);
+    AssignConcreteFloorMaterialMapPaths(*floorMaterial);
 
     SceneSpawnBuilders::AppendObject(
         scene,
@@ -133,7 +133,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         glm::vec3(1.0f),
         0.85f,
         0.0f);
-    ApplyWoodTableMaterialMaps(*cubeMaterial);
+    AssignWoodTableMaterialMapPaths(*cubeMaterial);
 
     Transform cubeTransform;
     cubeTransform.position = glm::vec3(0.0f, 1.5f, 0.0f);
@@ -159,6 +159,7 @@ void SceneSpawnService::ResetToDefault(Scene& scene)
 {
     scene.GetObjectStore().Clear();
     scene.GetMeshLibrary().ClearImportedMeshes();
+    scene.GetMeshLibrary().InvalidatePrimitives();
     scene.GetSelectionController().Clear();
     scene.GetObjectStore().SetNextId(1);
     scene.SetShowLightGizmos(true);

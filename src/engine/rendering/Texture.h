@@ -30,6 +30,7 @@ public:
         TextureColorSpace colorSpace,
         const TextureSamplerSettings& samplerSettings = TextureSamplerSettings{},
         bool flipVertically = false);
+    static void ReleaseUploadResources();
     ~Texture();
 
     Texture(const Texture&) = delete;

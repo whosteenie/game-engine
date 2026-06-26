@@ -28,6 +28,8 @@ enum class AntiAliasingMode
     FXAA = 1,
     TAA = 2,
     MSAA = 3,
+    SMAA = 4,
+    SSAA = 5,
 };
 
 class ScreenSpaceEffects
@@ -41,7 +43,10 @@ public:
     ScreenSpaceEffects(const ScreenSpaceEffects&) = delete;
     ScreenSpaceEffects& operator=(const ScreenSpaceEffects&) = delete;
 
-    void Resize(int width, int height);
+    void Resize(int viewportWidth, int viewportHeight);
+
+    void PrepareAntiAliasingFrame(Camera& camera) const;
+    void FinalizeAntiAliasingFrame(const Camera& camera) const;
 
     void BeginScenePass() const;
     void EndScenePass() const;
@@ -106,6 +111,21 @@ public:
     float GetFxaaEdgeThreshold() const;
     void SetFxaaEdgeThreshold(float threshold);
 
+    float GetRenderScale() const;
+    void SetRenderScale(float scale);
+
+    float GetTaaBlendFactor() const;
+    void SetTaaBlendFactor(float factor);
+
+    float GetSmaaThreshold() const;
+    void SetSmaaThreshold(float threshold);
+
+    int GetSmaaSearchSteps() const;
+    void SetSmaaSearchSteps(int steps);
+
+    int GetRenderWidth() const;
+    int GetRenderHeight() const;
+
     float GetSsaoBlurDepthThreshold() const;
     void SetSsaoBlurDepthThreshold(float threshold);
 
@@ -139,7 +159,10 @@ private:
     void ResizeHdrColorTarget(int width, int height);
     void ResizeBloomTargets(int width, int height);
     void ResizeLdrTonemapTarget(int width, int height);
+    void ResizeAntiAliasingTargets(int width, int height);
     void ResizeGridOverlayTarget(int width, int height);
+    float GetActiveRenderScale() const;
+    void ResetTaaHistory() const;
     void DrawFullscreenQuad() const;
     void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
@@ -173,6 +196,10 @@ private:
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
     InternalTarget m_ldrTonemapTarget;
+    InternalTarget m_smaaEdgeTarget;
+    InternalTarget m_smaaOutputTarget;
+    InternalTarget m_taaHistoryTarget;
+    InternalTarget m_taaResolveTarget;
     InternalTarget m_gridOverlayTarget;
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
@@ -184,12 +211,18 @@ private:
     std::unique_ptr<Shader> m_shadowBlurShader;
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_fxaaShader;
+    std::unique_ptr<Shader> m_downsampleShader;
+    std::unique_ptr<Shader> m_taaShader;
+    std::unique_ptr<Shader> m_smaaEdgeShader;
+    std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_gridCompositeShader;
     std::unique_ptr<Shader> m_debugChannelShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
     int m_height = 0;
+    int m_viewportWidth = 0;
+    int m_viewportHeight = 0;
 
     bool m_enabled = true;
     mutable bool m_logHdrApplySnapshot = false;
@@ -214,5 +247,14 @@ private:
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     float m_fxaaSubpixQuality = 0.75f;
     float m_fxaaEdgeThreshold = 0.03125f;
+    float m_renderScale = 1.5f;
+    float m_taaBlendFactor = 0.9f;
+    float m_smaaThreshold = 0.05f;
+    int m_smaaSearchSteps = 4;
     float m_ssaoBlurDepthThreshold = 0.02f;
+
+    mutable bool m_taaHistoryValid = false;
+    mutable int m_taaFrameIndex = 0;
+    mutable glm::mat4 m_prevViewProjection{1.0f};
+    AntiAliasingMode m_lastAntiAliasingMode = AntiAliasingMode::None;
 };

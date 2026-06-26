@@ -47,7 +47,8 @@ float4 main(PSInput input) : SV_Target
         direct = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
     }
 
-    if (depth >= 0.9999)
+    // Cleared depth is exactly 1.0; only skip SSAO for empty background pixels.
+    if (depth >= 1.0)
     {
         return float4(direct + indirect, 1.0);
     }

@@ -68,6 +68,8 @@ void SceneRenderer::EnsureGpuResources() const
             EngineConstants::ShadowDepthFragmentShader);
         self->m_gpuResourcesInitialized = true;
         GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
+        GfxContext::Get().SetMaterialTextureAnisotropy(self->m_textureAnisotropy);
+        GfxContext::Get().SetMaterialTextureMipBias(self->m_textureMipBias);
     }
     catch (const std::exception& exception)
     {
@@ -242,6 +244,8 @@ void SceneRenderer::Render(
         return;
     }
 
+    GfxContext::Get().ResetDrawSrvTable();
+
     Framebuffer* target = nullptr;
     if (targetFramebuffer != 0)
     {
@@ -250,7 +254,7 @@ void SceneRenderer::Render(
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
 
-    if (target != nullptr && !usePostProcess)
+    if (target != nullptr)
     {
         GfxContext::Get().SetBoundOutputFramebuffer(target);
     }
@@ -271,7 +275,12 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
+        Camera& antiAliasCamera = const_cast<Camera&>(camera);
         m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
+        antiAliasCamera.SetAspectFromFramebuffer(
+            m_screenSpaceEffects->GetRenderWidth(),
+            m_screenSpaceEffects->GetRenderHeight());
+        m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera);
         m_screenSpaceEffects->BeginScenePass();
     }
     else if (target != nullptr)
@@ -318,6 +327,7 @@ void SceneRenderer::Render(
             GfxContext::Get().SetBoundOutputFramebuffer(target);
         }
         m_screenSpaceEffects->Apply(camera, viewportWidth, viewportHeight, m_directionalShadowSettings);
+        m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera);
 
         if (target != nullptr)
         {
@@ -473,5 +483,23 @@ void SceneRenderer::SetTextureFilterMode(const TextureFilterMode mode)
     if (GfxContext::Get().IsInitialized())
     {
         GfxContext::Get().SetMaterialTextureFilterMode(mode);
+    }
+}
+
+void SceneRenderer::SetTextureAnisotropy(const std::uint32_t anisotropy)
+{
+    m_textureAnisotropy = std::clamp(anisotropy, 1u, 16u);
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().SetMaterialTextureAnisotropy(m_textureAnisotropy);
+    }
+}
+
+void SceneRenderer::SetTextureMipBias(const float mipBias)
+{
+    m_textureMipBias = std::clamp(mipBias, -4.0f, 4.0f);
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().SetMaterialTextureMipBias(m_textureMipBias);
     }
 }

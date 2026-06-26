@@ -1,7 +1,9 @@
 #include "engine/rendering/Texture.h"
 
+#include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/d3d12/GpuBuffer.h"
 
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
@@ -10,13 +12,253 @@
 #include <stb_image.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace
 {
+    constexpr float kQuadVertices[] = {
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f, -1.0f, 1.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f, -1.0f, 0.0f, 1.0f,
+         1.0f,  1.0f, 1.0f, 0.0f,
+        -1.0f,  1.0f, 0.0f, 0.0f,
+    };
+
+    std::unique_ptr<GpuBuffer> g_mipmapQuadBuffer;
+    std::unique_ptr<Shader> g_mipmapGenShader;
+
+    GpuBuffer& GetMipmapQuadBuffer()
+    {
+        if (g_mipmapQuadBuffer == nullptr)
+        {
+            g_mipmapQuadBuffer = std::make_unique<GpuBuffer>();
+            g_mipmapQuadBuffer->Create(
+                GpuBuffer::Type::Vertex,
+                kQuadVertices,
+                static_cast<std::uint32_t>(sizeof(kQuadVertices)));
+        }
+
+        return *g_mipmapQuadBuffer;
+    }
+
+    Shader& GetMipmapGenShader()
+    {
+        if (g_mipmapGenShader == nullptr)
+        {
+            g_mipmapGenShader = std::make_unique<Shader>(
+                EngineConstants::FullscreenVertexShader,
+                EngineConstants::MipmapGenFragmentShader);
+        }
+
+        return *g_mipmapGenShader;
+    }
+
+    void TransitionResource(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* resource,
+        D3D12_RESOURCE_STATES before,
+        D3D12_RESOURCE_STATES after)
+    {
+        if (before == after || resource == nullptr)
+        {
+            return;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        commandList->ResourceBarrier(1, &barrier);
+    }
+
+    std::uint32_t CalculateMipLevelCount(int width, int height)
+    {
+        const int largestDimension = std::max(width, height);
+        if (largestDimension <= 1)
+        {
+            return 1;
+        }
+
+        return 1 + static_cast<std::uint32_t>(std::floor(std::log2(static_cast<double>(largestDimension))));
+    }
+
+    struct CpuMipLevel
+    {
+        int width = 1;
+        int height = 1;
+        std::vector<unsigned char> pixels;
+    };
+
+    std::vector<CpuMipLevel> GenerateCpuMipChain(
+        const std::vector<unsigned char>& basePixels,
+        const int baseWidth,
+        const int baseHeight,
+        const std::uint32_t mipLevels)
+    {
+        std::vector<CpuMipLevel> mipChain;
+        mipChain.reserve(mipLevels);
+        mipChain.push_back(CpuMipLevel{baseWidth, baseHeight, basePixels});
+
+        for (std::uint32_t mipLevel = 1; mipLevel < mipLevels; ++mipLevel)
+        {
+            const CpuMipLevel& source = mipChain.back();
+            CpuMipLevel dest;
+            dest.width = std::max(1, source.width / 2);
+            dest.height = std::max(1, source.height / 2);
+            dest.pixels.resize(static_cast<std::size_t>(dest.width) * static_cast<std::size_t>(dest.height) * 4);
+
+            for (int y = 0; y < dest.height; ++y)
+            {
+                for (int x = 0; x < dest.width; ++x)
+                {
+                    unsigned int sum[4] = {};
+                    for (int offsetY = 0; offsetY < 2; ++offsetY)
+                    {
+                        for (int offsetX = 0; offsetX < 2; ++offsetX)
+                        {
+                            const int sourceX = std::min(source.width - 1, x * 2 + offsetX);
+                            const int sourceY = std::min(source.height - 1, y * 2 + offsetY);
+                            const std::size_t sourceIndex =
+                                (static_cast<std::size_t>(sourceY) * static_cast<std::size_t>(source.width)
+                                + static_cast<std::size_t>(sourceX)) * 4;
+                            for (int channel = 0; channel < 4; ++channel)
+                            {
+                                sum[channel] += source.pixels[sourceIndex + static_cast<std::size_t>(channel)];
+                            }
+                        }
+                    }
+
+                    const std::size_t destIndex =
+                        (static_cast<std::size_t>(y) * static_cast<std::size_t>(dest.width)
+                        + static_cast<std::size_t>(x)) * 4;
+                    for (int channel = 0; channel < 4; ++channel)
+                    {
+                        dest.pixels[destIndex + static_cast<std::size_t>(channel)] =
+                            static_cast<unsigned char>((sum[channel] + 2) / 4);
+                    }
+                }
+            }
+
+            mipChain.push_back(std::move(dest));
+        }
+
+        return mipChain;
+    }
+
+    void GenerateMipmapChain(
+        ID3D12Device* device,
+        ID3D12Resource* textureResource,
+        DXGI_FORMAT format,
+        int width,
+        int height,
+        std::uint32_t mipLevels)
+    {
+        if (mipLevels <= 1)
+        {
+            return;
+        }
+
+        const std::uint32_t tempSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        const std::uint32_t tempRtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
+        if (tempSrvIndex == UINT32_MAX || tempRtvIndex == UINT32_MAX)
+        {
+            if (tempSrvIndex != UINT32_MAX)
+            {
+                GfxContext::Get().FreeOffscreenSrv(tempSrvIndex);
+            }
+            if (tempRtvIndex != UINT32_MAX)
+            {
+                GfxContext::Get().FreeOffscreenRtvBlock(tempRtvIndex, 1);
+            }
+            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+            throw std::runtime_error(
+                gpuError.empty() ? "Mipmap generation failed: out of GPU descriptors" : gpuError);
+        }
+
+        const D3D12_CPU_DESCRIPTOR_HANDLE tempRtvHandle{
+            GfxContext::Get().GetOffscreenRtvCpuHandle(tempRtvIndex)};
+        const D3D12_CPU_DESCRIPTOR_HANDLE tempSrvHandle{GfxContext::Get().GetSrvCpuHandle(tempSrvIndex)};
+
+        // Initialize upload resources before ExecuteImmediate — GpuBuffer::Create also uploads.
+        Shader& mipShader = GetMipmapGenShader();
+        GpuBuffer& quadBuffer = GetMipmapQuadBuffer();
+
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+            auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+            int sourceWidth = width;
+            int sourceHeight = height;
+
+            for (std::uint32_t mipLevel = 1; mipLevel < mipLevels; ++mipLevel)
+            {
+                const int destWidth = std::max(1, sourceWidth / 2);
+                const int destHeight = std::max(1, sourceHeight / 2);
+
+                D3D12_SHADER_RESOURCE_VIEW_DESC sourceSrvDesc{};
+                sourceSrvDesc.Format = format;
+                sourceSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                sourceSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                sourceSrvDesc.Texture2D.MostDetailedMip = mipLevel - 1;
+                sourceSrvDesc.Texture2D.MipLevels = 1;
+                device->CreateShaderResourceView(textureResource, &sourceSrvDesc, tempSrvHandle);
+
+                D3D12_RENDER_TARGET_VIEW_DESC destRtvDesc{};
+                destRtvDesc.Format = format;
+                destRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+                destRtvDesc.Texture2D.MipSlice = mipLevel;
+                device->CreateRenderTargetView(textureResource, &destRtvDesc, tempRtvHandle);
+
+                TransitionResource(
+                    commandList,
+                    textureResource,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+                D3D12_VIEWPORT viewport{};
+                viewport.Width = static_cast<float>(destWidth);
+                viewport.Height = static_cast<float>(destHeight);
+                viewport.MaxDepth = 1.0f;
+                D3D12_RECT scissor{0, 0, destWidth, destHeight};
+                commandList->RSSetViewports(1, &viewport);
+                commandList->RSSetScissorRects(1, &scissor);
+                commandList->OMSetRenderTargets(1, &tempRtvHandle, FALSE, nullptr);
+
+                mipShader.BindPipeline(false, true);
+                mipShader.SetFloat("uTexelSizeX", 1.0f / static_cast<float>(sourceWidth));
+                mipShader.SetFloat("uTexelSizeY", 1.0f / static_cast<float>(sourceHeight));
+                mipShader.BindTextureSlot(0, tempSrvHandle.ptr);
+                mipShader.FlushUniforms();
+
+                ID3D12DescriptorHeap* heaps[] = {
+                    static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap())};
+                commandList->SetDescriptorHeaps(1, heaps);
+                commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                quadBuffer.BindVertexToCommandList(commandList, 0, 4 * static_cast<std::uint32_t>(sizeof(float)));
+                commandList->DrawInstanced(6, 1, 0, 0);
+
+                TransitionResource(
+                    commandList,
+                    textureResource,
+                    D3D12_RESOURCE_STATE_RENDER_TARGET,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+                sourceWidth = destWidth;
+                sourceHeight = destHeight;
+            }
+        });
+
+        GfxContext::Get().FreeOffscreenSrv(tempSrvIndex);
+        GfxContext::Get().FreeOffscreenRtvBlock(tempRtvIndex, 1);
+    }
+
     std::vector<unsigned char> ExpandToRgba(
         const unsigned char* pixels,
         int width,
@@ -123,6 +365,16 @@ std::shared_ptr<Texture> Texture::CreateFromPixels(
     return texture;
 }
 
+void Texture::ReleaseUploadResources()
+{
+    g_mipmapGenShader.reset();
+    if (g_mipmapQuadBuffer != nullptr)
+    {
+        g_mipmapQuadBuffer->Destroy();
+        g_mipmapQuadBuffer.reset();
+    }
+}
+
 Texture::~Texture()
 {
     if (!GfxContext::Get().IsInitialized())
@@ -156,24 +408,36 @@ void Texture::UploadPixels(
     const DXGI_FORMAT format = (colorSpace == TextureColorSpace::SRGB)
         ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
         : DXGI_FORMAT_R8G8B8A8_UNORM;
+    const std::uint32_t mipLevels = CalculateMipLevelCount(width, height);
+    const std::vector<CpuMipLevel> mipChain = GenerateCpuMipChain(rgba, width, height, mipLevels);
 
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
-
-    const UINT64 uploadPitch = (static_cast<UINT64>(width) * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) &
-        ~(static_cast<UINT64>(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT) - 1);
-    const UINT64 uploadSize = uploadPitch * static_cast<UINT64>(height);
 
     D3D12_RESOURCE_DESC textureDesc{};
     textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     textureDesc.Width = static_cast<UINT64>(width);
     textureDesc.Height = static_cast<UINT>(height);
     textureDesc.DepthOrArraySize = 1;
-    textureDesc.MipLevels = 1;
+    textureDesc.MipLevels = mipLevels;
     textureDesc.Format = format;
     textureDesc.SampleDesc.Count = 1;
     textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> uploadLayouts(mipLevels);
+    std::vector<UINT> uploadRowCounts(mipLevels);
+    std::vector<UINT64> uploadRowSizes(mipLevels);
+    UINT64 uploadSize = 0;
+    device->GetCopyableFootprints(
+        &textureDesc,
+        0,
+        mipLevels,
+        0,
+        uploadLayouts.data(),
+        uploadRowCounts.data(),
+        uploadRowSizes.data(),
+        &uploadSize);
 
     D3D12MA::ALLOCATION_DESC textureAllocationDesc{};
     textureAllocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -229,12 +493,21 @@ void Texture::UploadPixels(
         throw std::runtime_error("Failed to map texture upload buffer");
     }
 
-    for (int row = 0; row < height; ++row)
+    for (std::uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
     {
-        std::memcpy(
-            static_cast<unsigned char*>(mapped) + static_cast<std::size_t>(row) * uploadPitch,
-            rgba.data() + static_cast<std::size_t>(row) * static_cast<std::size_t>(width) * 4,
-            static_cast<std::size_t>(width) * 4);
+        const CpuMipLevel& mip = mipChain[static_cast<std::size_t>(mipLevel)];
+        const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& footprint = uploadLayouts[static_cast<std::size_t>(mipLevel)];
+        unsigned char* destination =
+            static_cast<unsigned char*>(mapped) + static_cast<std::size_t>(footprint.Offset);
+        const std::size_t sourceRowBytes = static_cast<std::size_t>(mip.width) * 4;
+
+        for (int row = 0; row < mip.height; ++row)
+        {
+            std::memcpy(
+                destination + static_cast<std::size_t>(row) * footprint.Footprint.RowPitch,
+                mip.pixels.data() + static_cast<std::size_t>(row) * sourceRowBytes,
+                sourceRowBytes);
+        }
     }
     uploadResource->Unmap(0, nullptr);
 
@@ -242,16 +515,19 @@ void Texture::UploadPixels(
     GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
         auto* uploadCommandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
 
-        D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
-        sourceLocation.pResource = uploadResource;
-        sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-        device->GetCopyableFootprints(&textureDesc, 0, 1, 0, &sourceLocation.PlacedFootprint, nullptr, nullptr, nullptr);
+        for (std::uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
+        {
+            D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
+            sourceLocation.pResource = uploadResource;
+            sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            sourceLocation.PlacedFootprint = uploadLayouts[static_cast<std::size_t>(mipLevel)];
 
-        D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
-        destinationLocation.pResource = textureResourcePtr;
-        destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-        destinationLocation.SubresourceIndex = 0;
-        uploadCommandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+            D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
+            destinationLocation.pResource = textureResourcePtr;
+            destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            destinationLocation.SubresourceIndex = mipLevel;
+            uploadCommandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+        }
 
         D3D12_RESOURCE_BARRIER barrier{};
         barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -283,7 +559,8 @@ void Texture::UploadPixels(
         static_cast<int>(format),
         m_srvDescriptorIndex,
         width,
-        height);
+        height,
+        mipLevels);
     m_id = static_cast<unsigned int>(reinterpret_cast<std::uintptr_t>(
         GfxContext::Get().GetSrvHeapGpuHandle(m_srvDescriptorIndex)));
 }

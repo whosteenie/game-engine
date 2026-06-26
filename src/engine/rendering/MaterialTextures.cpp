@@ -71,6 +71,22 @@ void ApplyWoodTableMaterialMaps(Material& material)
         });
 }
 
+void AssignWoodTableMaterialMapPaths(Material& material)
+{
+    material.SetAlbedoMap(nullptr, EngineConstants::CubeAlbedoTexture);
+    material.SetNormalMap(nullptr, EngineConstants::CubeNormalTexture);
+    material.SetAoMap(nullptr, EngineConstants::CubeAoTexture);
+    material.SetRoughnessMap(nullptr, EngineConstants::CubeRoughnessTexture);
+}
+
+void AssignConcreteFloorMaterialMapPaths(Material& material)
+{
+    material.SetAlbedoMap(nullptr, EngineConstants::FloorAlbedoTexture);
+    material.SetNormalMap(nullptr, EngineConstants::FloorNormalTexture);
+    material.SetAoMap(nullptr, EngineConstants::FloorAoTexture);
+    material.SetRoughnessMap(nullptr, EngineConstants::FloorRoughnessTexture);
+}
+
 void ApplyConcreteFloorMaterialMaps(Material& material)
 {
     TryAssignMap(

@@ -19,6 +19,7 @@
 #include <glm/glm.hpp>
 
 #include <functional>
+#include <cmath>
 
 namespace
 {
@@ -29,9 +30,13 @@ namespace
         case AntiAliasingMode::FXAA:
             return "FXAA";
         case AntiAliasingMode::TAA:
-            return "TAA (coming soon)";
+            return "TAA";
         case AntiAliasingMode::MSAA:
-            return "MSAA (coming soon)";
+            return "MSAA (not supported)";
+        case AntiAliasingMode::SMAA:
+            return "SMAA";
+        case AntiAliasingMode::SSAA:
+            return "SSAA";
         case AntiAliasingMode::None:
         default:
             return "None";
@@ -680,6 +685,9 @@ void LightingPanel::Draw(
             const AntiAliasingMode selectableModes[] = {
                 AntiAliasingMode::None,
                 AntiAliasingMode::FXAA,
+                AntiAliasingMode::SMAA,
+                AntiAliasingMode::TAA,
+                AntiAliasingMode::SSAA,
             };
             for (const AntiAliasingMode mode : selectableModes)
             {
@@ -703,11 +711,6 @@ void LightingPanel::Draw(
             }
 
             ImGui::BeginDisabled();
-            ImGui::Selectable(AntiAliasingModeLabel(AntiAliasingMode::TAA), false);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGui::SetTooltip("Temporal AA is not implemented yet.");
-            }
             ImGui::Selectable(AntiAliasingModeLabel(AntiAliasingMode::MSAA), false);
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
@@ -738,11 +741,56 @@ void LightingPanel::Draw(
             }
             HandleRendererFieldEditEvents(editContext);
         }
+        else if (currentAaMode == AntiAliasingMode::SMAA)
+        {
+            ImGui::TextDisabled("Tonemap -> SMAA edge -> SMAA blend -> viewport");
+            float smaaThreshold = screenSpaceEffects.GetSmaaThreshold();
+            if (ImGui::SliderFloat("SMAA edge threshold", &smaaThreshold, 0.01f, 0.25f))
+            {
+                screenSpaceEffects.SetSmaaThreshold(smaaThreshold);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            int smaaSteps = screenSpaceEffects.GetSmaaSearchSteps();
+            if (ImGui::SliderInt("SMAA search steps", &smaaSteps, 1, 8))
+            {
+                screenSpaceEffects.SetSmaaSearchSteps(smaaSteps);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+        }
+        else if (currentAaMode == AntiAliasingMode::TAA)
+        {
+            ImGui::TextDisabled("Jittered render -> tonemap -> temporal resolve -> viewport");
+            float taaBlend = screenSpaceEffects.GetTaaBlendFactor();
+            if (ImGui::SliderFloat("TAA history blend", &taaBlend, 0.0f, 0.99f))
+            {
+                screenSpaceEffects.SetTaaBlendFactor(taaBlend);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+        }
+        else if (currentAaMode == AntiAliasingMode::SSAA)
+        {
+            ImGui::TextDisabled("Supersampled scene -> tonemap -> downsample -> viewport");
+            float renderScale = screenSpaceEffects.GetRenderScale();
+            if (ImGui::SliderFloat("Render scale", &renderScale, 1.0f, 2.0f, "%.2fx"))
+            {
+                screenSpaceEffects.SetRenderScale(renderScale);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled(
+                "Internal render: %dx%d",
+                std::max(1, static_cast<int>(std::lround(static_cast<float>(viewportWidth) * renderScale))),
+                std::max(1, static_cast<int>(std::lround(static_cast<float>(viewportHeight) * renderScale))));
+        }
     }
 
     if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextDisabled("Sampler filter (no mips yet on most textures).");
+        ImGui::TextDisabled("Material textures upload with full mip chains.");
 
         int textureFilterMode = static_cast<int>(renderer.GetTextureFilterMode());
         const char* filterLabels[] = {"Trilinear", "Bilinear", "Nearest"};
@@ -763,6 +811,34 @@ void LightingPanel::Draw(
             ImGui::SetTooltip(
                 "Updates GfxContext for new shaders. Existing PBR shaders keep their baked samplers until restart.");
         }
+
+        int anisotropy = static_cast<int>(renderer.GetTextureAnisotropy());
+        if (ImGui::SliderInt("Anisotropic filtering", &anisotropy, 1, 16))
+        {
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Texture anisotropy",
+                [anisotropy](Scene& target) {
+                    target.GetRenderer().SetTextureAnisotropy(static_cast<std::uint32_t>(anisotropy));
+                    target.MarkDirty();
+                });
+        }
+        HandleRendererFieldEditEvents(editContext);
+
+        float mipBias = renderer.GetTextureMipBias();
+        if (ImGui::SliderFloat("Mip bias", &mipBias, -2.0f, 2.0f))
+        {
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Texture mip bias",
+                [mipBias](Scene& target) {
+                    target.GetRenderer().SetTextureMipBias(mipBias);
+                    target.MarkDirty();
+                });
+        }
+        HandleRendererFieldEditEvents(editContext);
     }
 
     if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))

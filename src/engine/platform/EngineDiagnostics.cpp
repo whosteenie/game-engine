@@ -12,6 +12,11 @@ namespace EngineDiagnostics
         g_lastGpuAllocationError = message;
     }
 
+    void ClearLastGpuAllocationError()
+    {
+        g_lastGpuAllocationError.clear();
+    }
+
     std::string GetLastGpuAllocationError()
     {
         return g_lastGpuAllocationError;

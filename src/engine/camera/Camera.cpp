@@ -88,7 +88,14 @@ glm::mat4 Camera::GetViewMatrix() const
 
 glm::mat4 Camera::GetProjectionMatrix() const
 {
-    return glm::perspectiveLH_ZO(glm::radians(m_fov), m_aspect, m_near, m_far);
+    glm::mat4 projection = glm::perspectiveLH_ZO(glm::radians(m_fov), m_aspect, m_near, m_far);
+    if (m_projectionJitterNdc.x != 0.0f || m_projectionJitterNdc.y != 0.0f)
+    {
+        projection[2][0] += m_projectionJitterNdc.x;
+        projection[2][1] += m_projectionJitterNdc.y;
+    }
+
+    return projection;
 }
 
 glm::vec3 Camera::GetPosition() const
@@ -202,6 +209,21 @@ float Camera::GetFov() const
 float Camera::GetAspect() const
 {
     return m_aspect;
+}
+
+void Camera::SetProjectionJitter(const glm::vec2& jitterNdc)
+{
+    m_projectionJitterNdc = jitterNdc;
+}
+
+void Camera::ClearProjectionJitter()
+{
+    m_projectionJitterNdc = glm::vec2(0.0f);
+}
+
+glm::vec2 Camera::GetProjectionJitter() const
+{
+    return m_projectionJitterNdc;
 }
 
 float Camera::ComputeFitDistance(float boundsRadius, float padding) const

@@ -371,6 +371,18 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_fxaaShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::FxaaFragmentShader)),
+      m_downsampleShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DownsampleFragmentShader)),
+      m_taaShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::TaaFragmentShader)),
+      m_smaaEdgeShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SmaaEdgeFragmentShader)),
+      m_smaaNeighborShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SmaaNeighborFragmentShader)),
       m_gridCompositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GridCompositeFragmentShader)),
@@ -397,6 +409,10 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
     DestroyInternalTarget(m_ldrTonemapTarget);
+    DestroyInternalTarget(m_smaaEdgeTarget);
+    DestroyInternalTarget(m_smaaOutputTarget);
+    DestroyInternalTarget(m_taaHistoryTarget);
+    DestroyInternalTarget(m_taaResolveTarget);
     DestroyInternalTarget(m_gridOverlayTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
@@ -475,6 +491,18 @@ void ScreenSpaceEffects::CreateInternalTarget(
 
 void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
 {
+    if (!GfxContext::Get().IsInitialized())
+    {
+        target.srvIndex = UINT32_MAX;
+        target.rtvIndex = UINT32_MAX;
+        target.allocation = nullptr;
+        target.resource = nullptr;
+        target.srvCpuHandle = 0;
+        target.width = 0;
+        target.height = 0;
+        return;
+    }
+
     if (target.srvIndex != UINT32_MAX)
     {
         GfxContext::Get().FreeOffscreenSrv(target.srvIndex);
@@ -708,29 +736,110 @@ void ScreenSpaceEffects::ResizeGridOverlayTarget(const int width, const int heig
     ResizeInternalTarget(m_gridOverlayTarget, width, height, format);
 }
 
-void ScreenSpaceEffects::Resize(const int width, const int height)
+void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int height)
 {
-    if (width <= 0 || height <= 0)
+    const int ldrFormat = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
+    ResizeInternalTarget(m_smaaEdgeTarget, width, height, ldrFormat);
+    ResizeInternalTarget(m_smaaOutputTarget, width, height, ldrFormat);
+    ResizeInternalTarget(m_taaHistoryTarget, width, height, ldrFormat);
+    ResizeInternalTarget(m_taaResolveTarget, width, height, ldrFormat);
+}
+
+float ScreenSpaceEffects::GetActiveRenderScale() const
+{
+    if (m_antiAliasingMode == AntiAliasingMode::SSAA)
+    {
+        return std::clamp(m_renderScale, 1.0f, 2.0f);
+    }
+
+    return 1.0f;
+}
+
+int ScreenSpaceEffects::GetRenderWidth() const
+{
+    return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportWidth) * GetActiveRenderScale())));
+}
+
+int ScreenSpaceEffects::GetRenderHeight() const
+{
+    return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportHeight) * GetActiveRenderScale())));
+}
+
+void ScreenSpaceEffects::ResetTaaHistory() const
+{
+    m_taaHistoryValid = false;
+    m_taaFrameIndex = 0;
+    m_prevViewProjection = glm::mat4(1.0f);
+}
+
+void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeight)
+{
+    if (viewportWidth <= 0 || viewportHeight <= 0)
     {
         return;
     }
 
-    if (m_width == width && m_height == height && m_sceneFramebuffer->IsValid())
+    m_viewportWidth = viewportWidth;
+    m_viewportHeight = viewportHeight;
+    const int renderWidth = GetRenderWidth();
+    const int renderHeight = GetRenderHeight();
+
+    if (m_width == renderWidth && m_height == renderHeight && m_sceneFramebuffer->IsValid())
     {
         return;
     }
 
-    if (!m_sceneFramebuffer->Resize(width, height, FramebufferColorMode::SplitDirectIndirect))
+    if (!m_sceneFramebuffer->Resize(renderWidth, renderHeight, FramebufferColorMode::SplitDirectIndirect))
     {
         return;
     }
-    ResizeSingleChannelTargets(width, height);
-    ResizeHdrColorTarget(width, height);
-    ResizeBloomTargets(width, height);
-    ResizeLdrTonemapTarget(width, height);
-    ResizeGridOverlayTarget(width, height);
-    m_width = width;
-    m_height = height;
+    ResizeSingleChannelTargets(renderWidth, renderHeight);
+    ResizeHdrColorTarget(renderWidth, renderHeight);
+    ResizeBloomTargets(renderWidth, renderHeight);
+    ResizeLdrTonemapTarget(renderWidth, renderHeight);
+    ResizeAntiAliasingTargets(renderWidth, renderHeight);
+    ResizeGridOverlayTarget(renderWidth, renderHeight);
+    m_width = renderWidth;
+    m_height = renderHeight;
+    ResetTaaHistory();
+}
+
+namespace
+{
+    glm::vec2 HaltonJitter(const int frameIndex, const int width, const int height)
+    {
+        static constexpr float kHalton23[][2] = {
+            {0.0f, 0.0f},         {0.5f, 0.333333f},    {0.25f, 0.666667f},   {0.75f, 0.111111f},
+            {0.125f, 0.444444f},  {0.625f, 0.777778f},  {0.375f, 0.222222f},  {0.875f, 0.555556f},
+            {0.0625f, 0.888889f}, {0.5625f, 0.037037f}, {0.3125f, 0.37037f},  {0.8125f, 0.703704f},
+            {0.1875f, 0.148148f}, {0.6875f, 0.481481f}, {0.4375f, 0.814815f}, {0.9375f, 0.259259f},
+        };
+
+        const int sampleIndex = frameIndex % 16;
+        const float jitterX = ((kHalton23[sampleIndex][0] - 0.5f) * 2.0f) / static_cast<float>(width);
+        const float jitterY = ((kHalton23[sampleIndex][1] - 0.5f) * 2.0f) / static_cast<float>(height);
+        return glm::vec2(jitterX, jitterY);
+    }
+}
+
+void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera) const
+{
+    camera.ClearProjectionJitter();
+    if (m_antiAliasingMode == AntiAliasingMode::TAA && m_width > 0 && m_height > 0)
+    {
+        camera.SetProjectionJitter(HaltonJitter(m_taaFrameIndex, m_width, m_height));
+    }
+}
+
+void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& camera) const
+{
+    if (m_antiAliasingMode != AntiAliasingMode::TAA)
+    {
+        return;
+    }
+
+    m_prevViewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+    ++m_taaFrameIndex;
 }
 
 void ScreenSpaceEffects::BeginScenePass() const
@@ -911,10 +1020,18 @@ void ScreenSpaceEffects::BindOutputTarget(
     const int viewportWidth,
     const int viewportHeight) const
 {
+    int outputWidth = viewportWidth;
+    int outputHeight = viewportHeight;
+
     if (outputTarget != nullptr)
     {
         GfxContext::Get().SetBoundOutputFramebuffer(outputTarget);
         outputTarget->BindDrawTarget(false);
+        if (outputTarget->GetWidth() > 0 && outputTarget->GetHeight() > 0)
+        {
+            outputWidth = outputTarget->GetWidth();
+            outputHeight = outputTarget->GetHeight();
+        }
     }
     else
     {
@@ -923,10 +1040,10 @@ void ScreenSpaceEffects::BindOutputTarget(
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     D3D12_VIEWPORT viewport{};
-    viewport.Width = static_cast<float>(viewportWidth);
-    viewport.Height = static_cast<float>(viewportHeight);
+    viewport.Width = static_cast<float>(outputWidth);
+    viewport.Height = static_cast<float>(outputHeight);
     viewport.MaxDepth = 1.0f;
-    D3D12_RECT scissor{0, 0, viewportWidth, viewportHeight};
+    D3D12_RECT scissor{0, 0, outputWidth, outputHeight};
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
 }
@@ -1254,6 +1371,12 @@ void ScreenSpaceEffects::Apply(
     }
 
     const bool useFxaa = m_antiAliasingMode == AntiAliasingMode::FXAA;
+    const bool useSmaa = m_antiAliasingMode == AntiAliasingMode::SMAA;
+    const bool useTaa = m_antiAliasingMode == AntiAliasingMode::TAA;
+    const bool useSsaa = m_antiAliasingMode == AntiAliasingMode::SSAA;
+    const bool needsLdrIntermediate =
+        useFxaa || useSmaa || useTaa || (useSsaa && m_viewportWidth > 0 && m_viewportHeight > 0
+        && (m_width != m_viewportWidth || m_height != m_viewportHeight));
     const float ldrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
     auto runTonemapPass = [&](const bool drawToLdrTarget) {
@@ -1285,23 +1408,107 @@ void ScreenSpaceEffects::Apply(
         }
     };
 
-    const bool fxaaTargetReady =
+    const bool ldrTargetReady =
         m_ldrTonemapTarget.srvCpuHandle != 0 && m_width > 0 && m_height > 0;
-    if (useFxaa && fxaaTargetReady)
+
+    auto blitLdrToViewport = [&](const std::uintptr_t sourceSrv) {
+        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+        m_downsampleShader->Use(false, true);
+        m_downsampleShader->BindTextureSlot(0, sourceSrv);
+        DrawFullscreenPass(*m_downsampleShader, true);
+    };
+
+    if (needsLdrIntermediate && ldrTargetReady)
     {
         runTonemapPass(true);
-        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
 
-        m_fxaaShader->Use(false, true);
-        m_fxaaShader->SetFloat("uTexelSizeX", texelSize.x);
-        m_fxaaShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_fxaaShader->SetFloat("uSubpixQuality", m_fxaaSubpixQuality);
-        m_fxaaShader->SetFloat("uEdgeThreshold", m_fxaaEdgeThreshold);
-        m_fxaaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
-        DrawFullscreenPass(*m_fxaaShader, true);
+        if (useFxaa)
+        {
+            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+            m_fxaaShader->Use(false, true);
+            m_fxaaShader->SetFloat("uTexelSizeX", texelSize.x);
+            m_fxaaShader->SetFloat("uTexelSizeY", texelSize.y);
+            m_fxaaShader->SetFloat("uSubpixQuality", m_fxaaSubpixQuality);
+            m_fxaaShader->SetFloat("uEdgeThreshold", m_fxaaEdgeThreshold);
+            m_fxaaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+            DrawFullscreenPass(*m_fxaaShader, true);
+        }
+        else if (useSmaa)
+        {
+            m_smaaEdgeShader->Use(false, true);
+            m_smaaEdgeShader->SetFloat("uTexelSizeX", texelSize.x);
+            m_smaaEdgeShader->SetFloat("uTexelSizeY", texelSize.y);
+            m_smaaEdgeShader->SetFloat("uThreshold", m_smaaThreshold);
+            m_smaaEdgeShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+            DrawFullscreenToTarget(
+                *m_smaaEdgeShader,
+                const_cast<InternalTarget&>(m_smaaEdgeTarget),
+                m_width,
+                m_height,
+                ldrClear,
+                true);
+
+            m_smaaNeighborShader->Use(false, true);
+            m_smaaNeighborShader->SetFloat("uTexelSizeX", texelSize.x);
+            m_smaaNeighborShader->SetFloat("uTexelSizeY", texelSize.y);
+            m_smaaNeighborShader->SetFloat("uSearchSteps", static_cast<float>(m_smaaSearchSteps));
+            m_smaaNeighborShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+            m_smaaNeighborShader->BindTextureSlot(1, m_smaaEdgeTarget.srvCpuHandle);
+            DrawFullscreenToTarget(
+                *m_smaaNeighborShader,
+                const_cast<InternalTarget&>(m_smaaOutputTarget),
+                m_width,
+                m_height,
+                ldrClear,
+                true);
+
+            blitLdrToViewport(m_smaaOutputTarget.srvCpuHandle);
+        }
+        else if (useTaa)
+        {
+            const glm::mat4 viewProjection = projectionMatrix * camera.GetViewMatrix();
+            const glm::mat4 invViewProjection = glm::inverse(viewProjection);
+
+            m_taaShader->Use(false, true);
+            m_taaShader->SetMat4("uInvViewProj", invViewProjection);
+            m_taaShader->SetMat4("uPrevViewProj", m_prevViewProjection);
+            m_taaShader->SetFloat("uBlendFactor", m_taaBlendFactor);
+            m_taaShader->SetFloat("uHistoryValid", m_taaHistoryValid ? 1.0f : 0.0f);
+            m_taaShader->SetFloat("uTexelSizeX", texelSize.x);
+            m_taaShader->SetFloat("uTexelSizeY", texelSize.y);
+            m_taaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+            m_taaShader->BindTextureSlot(1, m_taaHistoryTarget.srvCpuHandle);
+            m_taaShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(
+                *m_taaShader,
+                const_cast<InternalTarget&>(m_taaResolveTarget),
+                m_width,
+                m_height,
+                ldrClear,
+                true);
+
+            blitLdrToViewport(m_taaResolveTarget.srvCpuHandle);
+
+            std::swap(
+                const_cast<InternalTarget&>(m_taaHistoryTarget),
+                const_cast<InternalTarget&>(m_taaResolveTarget));
+            m_taaHistoryValid = true;
+        }
+        else if (useSsaa && (m_width != viewportWidth || m_height != viewportHeight))
+        {
+            blitLdrToViewport(m_ldrTonemapTarget.srvCpuHandle);
+        }
+        else
+        {
+            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+            m_downsampleShader->Use(false, true);
+            m_downsampleShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
+            DrawFullscreenPass(*m_downsampleShader, true);
+        }
     }
     else
     {
+        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
         runTonemapPass(false);
     }
 
@@ -1659,12 +1866,66 @@ AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const
 
 void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
 {
-    if (mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::MSAA)
+    if (mode == AntiAliasingMode::MSAA)
     {
         return;
     }
 
+    if (m_antiAliasingMode != mode)
+    {
+        ResetTaaHistory();
+        m_lastAntiAliasingMode = mode;
+        m_width = 0;
+        m_height = 0;
+    }
+
     m_antiAliasingMode = mode;
+}
+
+float ScreenSpaceEffects::GetRenderScale() const
+{
+    return m_renderScale;
+}
+
+void ScreenSpaceEffects::SetRenderScale(const float scale)
+{
+    const float clampedScale = std::clamp(scale, 1.0f, 2.0f);
+    if (m_renderScale != clampedScale)
+    {
+        m_renderScale = clampedScale;
+        m_width = 0;
+        m_height = 0;
+    }
+}
+
+float ScreenSpaceEffects::GetTaaBlendFactor() const
+{
+    return m_taaBlendFactor;
+}
+
+void ScreenSpaceEffects::SetTaaBlendFactor(const float factor)
+{
+    m_taaBlendFactor = std::clamp(factor, 0.0f, 0.99f);
+}
+
+float ScreenSpaceEffects::GetSmaaThreshold() const
+{
+    return m_smaaThreshold;
+}
+
+void ScreenSpaceEffects::SetSmaaThreshold(const float threshold)
+{
+    m_smaaThreshold = std::clamp(threshold, 0.01f, 0.25f);
+}
+
+int ScreenSpaceEffects::GetSmaaSearchSteps() const
+{
+    return m_smaaSearchSteps;
+}
+
+void ScreenSpaceEffects::SetSmaaSearchSteps(const int steps)
+{
+    m_smaaSearchSteps = std::clamp(steps, 1, 8);
 }
 
 float ScreenSpaceEffects::GetFxaaSubpixQuality() const

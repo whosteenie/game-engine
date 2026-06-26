@@ -226,8 +226,19 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             }
             else
             {
-                sampler.Filter = TextureFilterModeToD3D12Filter(
-                    GfxContext::Get().GetMaterialTextureFilterMode());
+                const TextureFilterMode filterMode = GfxContext::Get().GetMaterialTextureFilterMode();
+                const std::uint32_t anisotropy = GfxContext::Get().GetMaterialTextureAnisotropy();
+                if (filterMode != TextureFilterMode::Nearest && anisotropy > 1)
+                {
+                    sampler.Filter = D3D12_FILTER_ANISOTROPIC;
+                    sampler.MaxAnisotropy = anisotropy;
+                }
+                else
+                {
+                    sampler.Filter = TextureFilterModeToD3D12Filter(filterMode);
+                    sampler.MaxAnisotropy = 1;
+                }
+                sampler.MipLODBias = GfxContext::Get().GetMaterialTextureMipBias();
             }
             // t4–t7 (albedo/normal/AO/roughness) tile with UV repeat; shadow + IBL stay clamped.
             const bool wrapMaterialMaps = registerIndex >= 4 && registerIndex <= 7;
@@ -890,7 +901,7 @@ void Shader::FlushUniformsOnCommandList(void* commandList) const
     }
 
     const std::uint32_t drawSrvTableStart = GfxContext::Get().AllocateDrawSrvTable();
-    if (drawSrvTableStart == 0)
+    if (drawSrvTableStart == UINT32_MAX)
     {
         return;
     }

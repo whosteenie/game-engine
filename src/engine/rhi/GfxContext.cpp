@@ -39,7 +39,10 @@ namespace
         }
     }
 
-    constexpr std::uint32_t SrvDescriptorCount = 4096;
+    constexpr std::uint32_t SrvDescriptorCount = 8192;
+    // Per-frame draw descriptor tables (copied texture slots) live below offscreen SRVs.
+    constexpr std::uint32_t OffscreenSrvDescriptorStart = 4096;
+    constexpr std::uint32_t OffscreenSrvDescriptorCount = SrvDescriptorCount - OffscreenSrvDescriptorStart;
     constexpr std::uint32_t OffscreenRtvCount = 256;
     constexpr std::uint32_t OffscreenDsvCount = 64;
 
@@ -100,6 +103,8 @@ struct GfxContext::Impl
     FixedDescriptorHeap SrvAllocator;
     FixedDescriptorHeap OffscreenRtvAllocator;
     FixedDescriptorHeap OffscreenDsvAllocator;
+
+    int ImmediateUploadDepth = 0;
 
     std::uint32_t DrawSrvTableNextIndex = GfxContext::DrawTextureDescriptorStart;
 };
@@ -299,7 +304,8 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_impl->Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_impl->SrvHeap)), "Create SRV heap failed");
     m_impl->SrvDescriptorSize = m_impl->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    m_impl->SrvAllocator = FixedDescriptorHeap(SrvDescriptorCount);
+    m_impl->SrvAllocator = FixedDescriptorHeap(OffscreenSrvDescriptorCount);
+    m_impl->SrvAllocator.SetIndexOffset(OffscreenSrvDescriptorStart);
 
     for (std::uint32_t frameIndex = 0; frameIndex < FrameCount; ++frameIndex)
     {
@@ -495,6 +501,7 @@ void GfxContext::BeginFrame()
 
     m_impl->TransientUploadArenas[m_frameIndex].Offset = 0;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
+    EngineDiagnostics::ClearLastGpuAllocationError();
     m_frameCommandsSubmitted = false;
 
     D3D12_RESOURCE_BARRIER barrier{};
@@ -842,7 +849,8 @@ void GfxContext::CreateSrvForTexture(
     int formatRgba_UNORM,
     std::uint32_t descriptorIndex,
     int width,
-    int height) const
+    int height,
+    const std::uint32_t mipLevels) const
 {
     auto* d3dResource = static_cast<ID3D12Resource*>(resource);
     auto* device = static_cast<ID3D12Device*>(GetDevice());
@@ -855,7 +863,7 @@ void GfxContext::CreateSrvForTexture(
     srvDesc.Format = static_cast<DXGI_FORMAT>(formatRgba_UNORM);
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.Texture2D.MipLevels = 1;
+    srvDesc.Texture2D.MipLevels = mipLevels;
     device->CreateShaderResourceView(d3dResource, &srvDesc, cpuHandle);
     (void)width;
     (void)height;
@@ -966,6 +974,26 @@ TextureFilterMode GfxContext::GetMaterialTextureFilterMode() const
     return m_materialTextureFilterMode;
 }
 
+void GfxContext::SetMaterialTextureAnisotropy(const std::uint32_t anisotropy)
+{
+    m_materialTextureAnisotropy = std::clamp(anisotropy, 1u, 16u);
+}
+
+std::uint32_t GfxContext::GetMaterialTextureAnisotropy() const
+{
+    return m_materialTextureAnisotropy;
+}
+
+void GfxContext::SetMaterialTextureMipBias(const float mipBias)
+{
+    m_materialTextureMipBias = std::clamp(mipBias, -4.0f, 4.0f);
+}
+
+float GfxContext::GetMaterialTextureMipBias() const
+{
+    return m_materialTextureMipBias;
+}
+
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const
 {
     outWidth = m_width;
@@ -989,6 +1017,20 @@ void GfxContext::ExecuteImmediate(const std::function<void(void* commandList)>& 
     {
         return;
     }
+
+    if (m_impl->ImmediateUploadDepth > 0)
+    {
+        throw std::runtime_error(
+            "Nested GPU upload (ExecuteImmediate called while another upload is in progress)");
+    }
+
+    struct ImmediateUploadScope
+    {
+        Impl* impl;
+        explicit ImmediateUploadScope(Impl* implIn) : impl(implIn) { ++impl->ImmediateUploadDepth; }
+        ~ImmediateUploadScope() { --impl->ImmediateUploadDepth; }
+    };
+    ImmediateUploadScope uploadScope(m_impl);
 
     ComPtr<ID3D12CommandAllocator> uploadAllocator;
     ComPtr<ID3D12GraphicsCommandList> uploadCommandList;
@@ -1030,19 +1072,28 @@ void GfxContext::ExecuteImmediate(const std::function<void(void* commandList)>& 
     m_submissionFenceValue = fenceValue;
 }
 
+void GfxContext::ResetDrawSrvTable()
+{
+    if (m_impl != nullptr)
+    {
+        m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
+    }
+}
+
 std::uint32_t GfxContext::AllocateDrawSrvTable()
 {
     if (m_impl == nullptr)
     {
-        return 0;
+        GfxContextDetail::SetGpuAllocationError("GfxContext is not initialized");
+        return UINT32_MAX;
     }
 
     const std::uint32_t tableStart = m_impl->DrawSrvTableNextIndex;
     const std::uint32_t nextIndex = tableStart + DrawTextureSlotsPerTable;
-    if (nextIndex > SrvDescriptorCount)
+    if (nextIndex > OffscreenSrvDescriptorStart)
     {
         GfxContextDetail::SetGpuAllocationError("Draw SRV descriptor table exhausted");
-        return 0;
+        return UINT32_MAX;
     }
 
     m_impl->DrawSrvTableNextIndex = nextIndex;

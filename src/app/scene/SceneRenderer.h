@@ -60,6 +60,12 @@ public:
     TextureFilterMode GetTextureFilterMode() const { return m_textureFilterMode; }
     void SetTextureFilterMode(TextureFilterMode mode);
 
+    std::uint32_t GetTextureAnisotropy() const { return m_textureAnisotropy; }
+    void SetTextureAnisotropy(std::uint32_t anisotropy);
+
+    float GetTextureMipBias() const { return m_textureMipBias; }
+    void SetTextureMipBias(float mipBias);
+
     bool IsGpuResourcesReady() const { return m_gpuResourcesInitialized; }
     bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
     const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
@@ -82,6 +88,8 @@ private:
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;
+    std::uint32_t m_textureAnisotropy = 8;
+    float m_textureMipBias = 0.0f;
     SceneLighting m_lighting;
     mutable bool m_gpuResourcesInitialized = false;
     mutable bool m_gpuResourcesInitFailed = false;

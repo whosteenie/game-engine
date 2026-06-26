@@ -226,6 +226,12 @@ float main(PSInput input) : SV_Target
         return 1.0;
     }
 
-    const float visibility = 1.0 - saturate(occlusion / (float)usedSamples);
+    float visibility = 1.0 - saturate(occlusion / (float)usedSamples);
+
+    // Depth precision collapses near the far plane; fade SSAO out so distant geometry is not crushed to black.
+    const float viewDistance = max(centerViewZ, 0.0);
+    const float distanceFade = smoothstep(uFarPlane * 0.2, uFarPlane * 0.85, viewDistance);
+    visibility = lerp(visibility, 1.0, distanceFade);
+
     return visibility;
 }

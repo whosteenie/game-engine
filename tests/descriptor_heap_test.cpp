@@ -52,6 +52,15 @@ int main()
     test::ExpectTrue(tiny.AllocateOne() == 0 && tiny.AllocateOne() == 1, "Tiny heap should allocate two slots");
     test::ExpectTrue(tiny.AllocateOne() == FixedDescriptorHeap::kInvalid, "Tiny heap should exhaust after two slots");
 
+    FixedDescriptorHeap offsetHeap(4);
+    offsetHeap.SetIndexOffset(100);
+    const std::uint32_t offsetSlot = offsetHeap.AllocateOne();
+    test::ExpectTrue(offsetSlot == 100, "Offset heap should return global descriptor index");
+    test::ExpectTrue(offsetHeap.IsValidIndex(offsetSlot), "Offset heap should validate global index");
+    test::ExpectTrue(!offsetHeap.IsValidIndex(0), "Indices below offset should be invalid");
+    offsetHeap.FreeOne(offsetSlot);
+    test::ExpectTrue(offsetHeap.AllocateOne() == 100, "Freed offset slot should be reallocated");
+
     if (test::FailureCount() == 0)
     {
         std::cout << "All descriptor heap tests passed.\n";

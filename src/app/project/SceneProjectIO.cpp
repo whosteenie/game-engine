@@ -425,6 +425,10 @@ namespace SceneProjectIODetail
             return "TAA";
         case AntiAliasingMode::MSAA:
             return "MSAA";
+        case AntiAliasingMode::SMAA:
+            return "SMAA";
+        case AntiAliasingMode::SSAA:
+            return "SSAA";
         case AntiAliasingMode::None:
         default:
             return "None";
@@ -439,11 +443,19 @@ namespace SceneProjectIODetail
         }
         if (value == "TAA")
         {
-            return AntiAliasingMode::None;
+            return AntiAliasingMode::TAA;
         }
         if (value == "MSAA")
         {
-            return AntiAliasingMode::None;
+            return AntiAliasingMode::MSAA;
+        }
+        if (value == "SMAA")
+        {
+            return AntiAliasingMode::SMAA;
+        }
+        if (value == "SSAA")
+        {
+            return AntiAliasingMode::SSAA;
         }
 
         return AntiAliasingMode::None;
@@ -499,6 +511,8 @@ namespace SceneProjectIODetail
         return json{
             {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
             {"textureFilterMode", TextureFilterModeToString(scene.GetRenderer().GetTextureFilterMode())},
+            {"textureAnisotropy", scene.GetRenderer().GetTextureAnisotropy()},
+            {"textureMipBias", scene.GetRenderer().GetTextureMipBias()},
             {"directionalShadow",
              json{
                  {"filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode())},
@@ -544,6 +558,10 @@ namespace SceneProjectIODetail
                  {"antiAliasingMode", AntiAliasingModeToString(effects.GetAntiAliasingMode())},
                  {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
                  {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
+                 {"renderScale", effects.GetRenderScale()},
+                 {"taaBlendFactor", effects.GetTaaBlendFactor()},
+                 {"smaaThreshold", effects.GetSmaaThreshold()},
+                 {"smaaSearchSteps", effects.GetSmaaSearchSteps()},
                  {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
              }},
         };
@@ -563,6 +581,12 @@ namespace SceneProjectIODetail
             renderer.SetTextureFilterMode(TextureFilterModeFromString(rendererValue.value(
                 "textureFilterMode",
                 TextureFilterModeToString(renderer.GetTextureFilterMode()))));
+            renderer.SetTextureAnisotropy(rendererValue.value(
+                "textureAnisotropy",
+                renderer.GetTextureAnisotropy()));
+            renderer.SetTextureMipBias(rendererValue.value(
+                "textureMipBias",
+                renderer.GetTextureMipBias()));
         }
 
         if (rendererValue.contains("directionalShadow"))
@@ -649,6 +673,10 @@ namespace SceneProjectIODetail
             effectsValue.value("fxaaSubpixQuality", effects.GetFxaaSubpixQuality()));
         effects.SetFxaaEdgeThreshold(
             effectsValue.value("fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()));
+        effects.SetRenderScale(effectsValue.value("renderScale", effects.GetRenderScale()));
+        effects.SetTaaBlendFactor(effectsValue.value("taaBlendFactor", effects.GetTaaBlendFactor()));
+        effects.SetSmaaThreshold(effectsValue.value("smaaThreshold", effects.GetSmaaThreshold()));
+        effects.SetSmaaSearchSteps(effectsValue.value("smaaSearchSteps", effects.GetSmaaSearchSteps()));
         effects.SetSsaoBlurDepthThreshold(
             effectsValue.value("ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()));
     }
@@ -932,6 +960,23 @@ namespace SceneProjectIODetail
         std::vector<SceneObject>& sceneObjects = scene.GetObjects();
         sceneObjects.reserve(objectValues.size());
 
+        try
+        {
+            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube);
+        }
+        catch (const std::exception& exception)
+        {
+            outError = FormatExceptionContext("Failed to create primitive meshes before loading objects", exception);
+            EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+            return false;
+        }
+        catch (...)
+        {
+            outError = "Failed to create primitive meshes before loading objects: unknown exception";
+            EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+            return false;
+        }
+
         const std::size_t objectCount = objectValues.size();
         std::unique_ptr<ScopedNativeProgress> loadProgress;
         if (showProgress && objectCount > 0)
@@ -1075,6 +1120,14 @@ namespace SceneProjectIODetail
             {
                 const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
                 outError = FormatExceptionContext(context.c_str(), exception);
+                EngineLog::LogException("project-io", "DeserializeObjects", exception);
+                EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+                return false;
+            }
+            catch (...)
+            {
+                const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
+                outError = context + ": unknown exception";
                 EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
                 return false;
             }

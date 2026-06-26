@@ -57,9 +57,15 @@ namespace
         destinationEffects.SetAntiAliasingMode(sourceEffects.GetAntiAliasingMode());
         destinationEffects.SetFxaaSubpixQuality(sourceEffects.GetFxaaSubpixQuality());
         destinationEffects.SetFxaaEdgeThreshold(sourceEffects.GetFxaaEdgeThreshold());
+        destinationEffects.SetRenderScale(sourceEffects.GetRenderScale());
+        destinationEffects.SetTaaBlendFactor(sourceEffects.GetTaaBlendFactor());
+        destinationEffects.SetSmaaThreshold(sourceEffects.GetSmaaThreshold());
+        destinationEffects.SetSmaaSearchSteps(sourceEffects.GetSmaaSearchSteps());
         destinationEffects.SetSsaoBlurDepthThreshold(sourceEffects.GetSsaoBlurDepthThreshold());
 
         destinationRenderer.SetTextureFilterMode(sourceRenderer.GetTextureFilterMode());
+        destinationRenderer.SetTextureAnisotropy(sourceRenderer.GetTextureAnisotropy());
+        destinationRenderer.SetTextureMipBias(sourceRenderer.GetTextureMipBias());
         destinationRenderer.GetDirectionalShadowSettings() =
             sourceRenderer.GetDirectionalShadowSettings();
     }
