@@ -56,6 +56,8 @@ public:
         const FinalizeEditorOpenFn& finalizeEditorOpen,
         std::string& outError);
 
+    bool QueueProjectOpen(const std::string& projectFilePath);
+
 private:
     bool DrawStartupScreen(
         ProjectSession& project,

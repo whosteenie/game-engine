@@ -7,6 +7,13 @@
 #include <sstream>
 #include <typeinfo>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 namespace
 {
     constexpr std::size_t kMaxLogTextLength = 2048;
@@ -52,6 +59,57 @@ namespace
         }
         stream << std::dec;
         return stream.str();
+    }
+
+    std::string DecodeUtf16LeAsUtf8(const char* what)
+    {
+#ifdef _WIN32
+        if (what == nullptr)
+        {
+            return {};
+        }
+
+        const auto* wide = reinterpret_cast<const wchar_t*>(what);
+        std::size_t wideLength = 0;
+        for (std::size_t index = 0; index < 2048 && wide[index] != L'\0'; ++index)
+        {
+            ++wideLength;
+        }
+
+        if (wideLength == 0)
+        {
+            return {};
+        }
+
+        const int utf8Length = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wide,
+            static_cast<int>(wideLength),
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+        if (utf8Length <= 0)
+        {
+            return {};
+        }
+
+        std::string utf8(static_cast<std::size_t>(utf8Length), '\0');
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wide,
+            static_cast<int>(wideLength),
+            utf8.data(),
+            utf8Length,
+            nullptr,
+            nullptr);
+        return utf8;
+#else
+        (void)what;
+        return {};
+#endif
     }
 
     std::string CopyExceptionWhat(const char* what, bool* outHadNonAscii)
@@ -201,6 +259,14 @@ std::string SafeExceptionMessage(const std::exception& exception)
     try
     {
         message = CopyExceptionWhat(exception.what(), &hadNonAscii);
+        if (message.empty() && hadNonAscii)
+        {
+            message = DecodeUtf16LeAsUtf8(exception.what());
+            if (!message.empty())
+            {
+                hadNonAscii = false;
+            }
+        }
     }
     catch (...)
     {
@@ -229,7 +295,36 @@ std::string SafeExceptionMessage(const std::exception& exception)
         message = typeName;
         if (hadNonAscii)
         {
-            message += " (exception message contained non-ASCII or unreadable data)";
+            try
+            {
+                const char* rawWhat = exception.what();
+                if (rawWhat != nullptr)
+                {
+                    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(rawWhat);
+                    std::size_t byteLength = 0;
+                    for (; byteLength < 64 && rawWhat[byteLength] != '\0'; ++byteLength)
+                    {
+                    }
+
+                    if (byteLength > 0)
+                    {
+                        message += " (exception message contained non-ASCII or unreadable data, hex "
+                            + HexPreview(bytes, byteLength) + ")";
+                    }
+                    else
+                    {
+                        message += " (exception message contained non-ASCII or unreadable data)";
+                    }
+                }
+                else
+                {
+                    message += " (exception message contained non-ASCII or unreadable data)";
+                }
+            }
+            catch (...)
+            {
+                message += " (exception message contained non-ASCII or unreadable data)";
+            }
         }
         else if (rejectedAsCorrupt)
         {

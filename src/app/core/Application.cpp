@@ -381,17 +381,21 @@ void Application::Run()
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
     {
         std::string error;
-        if (!m_projectChooser->OpenProjectAtPath(
-                *m_projectSession,
-                *m_scene,
-                *m_editorSettings,
-                m_projectEditorState,
-                autoOpenPath,
-                [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
-                m_undoStack,
-                m_editorClipboard,
-                [this]() { EnsureEditorLayoutLoaded(); },
-                error))
+        if (std::getenv("GAME_ENGINE_AUTO_OPEN_DEFERRED") != nullptr)
+        {
+            m_projectChooser->QueueProjectOpen(autoOpenPath);
+        }
+        else if (!m_projectChooser->OpenProjectAtPath(
+                     *m_projectSession,
+                     *m_scene,
+                     *m_editorSettings,
+                     m_projectEditorState,
+                     autoOpenPath,
+                     [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+                     m_undoStack,
+                     m_editorClipboard,
+                     [this]() { EnsureEditorLayoutLoaded(); },
+                     error))
         {
             m_projectChooser->SetErrorMessage(error.empty() ? "Failed to open project." : error);
         }

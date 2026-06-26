@@ -101,6 +101,8 @@ void SceneSpawnService::SetupDefaultSunLight(Scene& scene)
 
 void SceneSpawnService::SetupObjects(Scene& scene)
 {
+    Mesh* floorMesh = scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane);
+
     auto floorMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
         EngineConstants::PbrFragmentShader,
@@ -113,7 +115,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         scene,
         SceneSpawnBuilders::MakeRenderableObject(
             "Floor",
-            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane),
+            floorMesh,
             std::move(floorMaterial),
             glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent),
             glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent),
@@ -122,6 +124,8 @@ void SceneSpawnService::SetupObjects(Scene& scene)
             true,
             -1,
             1));
+
+    Mesh* cubeMesh = scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube);
 
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -138,7 +142,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         scene,
         SceneSpawnBuilders::MakeRenderableObject(
             "Cube",
-            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube),
+            cubeMesh,
             std::move(cubeMaterial),
             glm::vec3(-0.5f),
             glm::vec3(0.5f),

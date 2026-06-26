@@ -15,6 +15,7 @@
 #include "engine/scene/InspectorComponentOrder.h"
 #include "engine/lighting/Light.h"
 #include "engine/components/LightComponent.h"
+#include "engine/rendering/ColorSpace.h"
 #include "engine/rendering/Material.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneObject.h"
@@ -326,10 +327,10 @@ namespace
         Scene& scene,
         MaterialEditContext& editContext)
     {
-        glm::vec3 albedo = material.GetAlbedo();
-        if (EditorWidgets::ColorEditVec3("Albedo", albedo))
+        glm::vec3 albedoDisplay = ColorSpace::LinearToSrgb(material.GetAlbedo());
+        if (EditorWidgets::ColorEditVec3("Albedo", albedoDisplay))
         {
-            material.SetAlbedo(albedo);
+            material.SetAlbedo(ColorSpace::SrgbToLinear(albedoDisplay));
             scene.MarkDirty();
         }
         HandleMaterialFieldEditEvents(editContext);

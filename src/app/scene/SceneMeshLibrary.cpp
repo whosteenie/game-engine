@@ -1,5 +1,6 @@
 #include "app/scene/SceneMeshLibrary.h"
 
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "primitives/Capsule.h"
@@ -9,6 +10,7 @@
 #include "primitives/Sphere.h"
 
 #include <algorithm>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -19,6 +21,16 @@ SceneMeshLibrary::SceneMeshLibrary(float floorHalfExtent)
 
 SceneMeshLibrary::~SceneMeshLibrary() = default;
 
+void SceneMeshLibrary::InvalidatePrimitives()
+{
+    m_cubeMesh.reset();
+    m_sphereMesh.reset();
+    m_cylinderMesh.reset();
+    m_capsuleMesh.reset();
+    m_planeMesh.reset();
+    m_primitivesReady = false;
+}
+
 void SceneMeshLibrary::EnsurePrimitives() const
 {
     if (m_primitivesReady)
@@ -27,11 +39,31 @@ void SceneMeshLibrary::EnsurePrimitives() const
     }
 
     SceneMeshLibrary* self = const_cast<SceneMeshLibrary*>(this);
-    self->m_cubeMesh = CreateCubeMesh();
-    self->m_sphereMesh = CreateSphereMesh();
-    self->m_cylinderMesh = CreateCylinderMesh();
-    self->m_capsuleMesh = CreateCapsuleMesh();
-    self->m_planeMesh = CreatePlaneMesh(m_floorHalfExtent);
+    self->InvalidatePrimitives();
+
+    auto createPrimitive =
+        [&](const char* name, auto createFn, std::unique_ptr<Mesh>& outMesh) {
+            try
+            {
+                outMesh = createFn();
+            }
+            catch (const std::exception& exception)
+            {
+                self->InvalidatePrimitives();
+                throw std::runtime_error(
+                    std::string("Failed to create primitive mesh '") + name + "': "
+                    + SafeExceptionMessage(exception));
+            }
+        };
+
+    createPrimitive("Cube", []() { return CreateCubeMesh(); }, self->m_cubeMesh);
+    createPrimitive("Sphere", []() { return CreateSphereMesh(); }, self->m_sphereMesh);
+    createPrimitive("Cylinder", []() { return CreateCylinderMesh(); }, self->m_cylinderMesh);
+    createPrimitive("Capsule", []() { return CreateCapsuleMesh(); }, self->m_capsuleMesh);
+    createPrimitive(
+        "Plane",
+        [&]() { return CreatePlaneMesh(m_floorHalfExtent); },
+        self->m_planeMesh);
     self->m_primitivesReady = true;
 }
 

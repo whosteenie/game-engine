@@ -200,11 +200,13 @@ float CalcAttenuation(
 
 float CalcSpotIntensity(
     float3 lightDir,
-    float3 spotDirection,
+    float3 towardLightSource,
     float innerCutoffCos,
     float outerCutoffCos)
 {
-    float theta = dot(lightDir, normalize(spotDirection));
+    // Engine lights store +Y "toward source" (see LightGizmoRenderer shineDirection = -towardSource).
+    // glTF KHR_lights_punctual uses -Z emission; convert on import if/when glTF lights are loaded.
+    float theta = dot(lightDir, normalize(towardLightSource));
     return saturate((theta - outerCutoffCos) / (innerCutoffCos - outerCutoffCos + 0.0001));
 }
 
@@ -721,6 +723,7 @@ PSOutput main(PSInput input)
     float3 albedo = uAlbedo;
     if (uUseAlbedoMap != 0)
     {
+        // uAlbedo is linear (glTF baseColorFactor / inspector converts sRGB picks). Albedo map is UNORM_SRGB.
         float3 albedoSample = uAlbedoMap.Sample(uAlbedoSampler, albedoTexCoord).rgb;
         albedo *= albedoSample;
     }

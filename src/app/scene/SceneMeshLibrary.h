@@ -29,6 +29,7 @@ public:
         const std::vector<SceneObject>& objects,
         ImportedMeshReusePool& outPool);
     void ClearImportedMeshes();
+    void InvalidatePrimitives();
 
 private:
     void EnsurePrimitives() const;

@@ -3,6 +3,7 @@
 #include "app/editor/EditorSettings.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneMeshLibrary.h"
 #include "app/project/SceneProjectIO.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -194,6 +195,7 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
         }
         catch (const std::exception& exception)
         {
+            scene.GetMeshLibrary().InvalidatePrimitives();
             EngineLog::LogFailure(
                 "project",
                 "ResetToDefault",

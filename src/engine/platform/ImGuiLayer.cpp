@@ -99,11 +99,17 @@ void ImGuiLayer::CancelInterruptedFrame()
         return;
     }
 
-    // Best-effort stack drain so EndFrame does not assert on Missing End().
+    // Drain only real windows above the implicit debug window (stack size 1).
+    // End() when Size <= 1 asserts ("Calling End() too many times!").
     constexpr int kMaxRecoverySteps = 256;
-    for (int step = 0; step < kMaxRecoverySteps && context->CurrentWindow != nullptr; ++step)
+    for (int step = 0; step < kMaxRecoverySteps && context->CurrentWindowStack.Size > 1; ++step)
     {
         ImGuiWindow* window = context->CurrentWindow;
+        if (window == nullptr)
+        {
+            break;
+        }
+
         if ((window->Flags & ImGuiWindowFlags_Popup) != 0)
         {
             ImGui::EndPopup();
@@ -116,11 +122,6 @@ void ImGuiLayer::CancelInterruptedFrame()
         {
             ImGui::End();
         }
-    }
-
-    if (context->WithinFrameScope && context->WithinFrameScopeWithImplicitWindow)
-    {
-        ImGui::End();
     }
 
     if (context->WithinFrameScope)

@@ -38,7 +38,13 @@ VSOutput main(VSInput input)
 
     float3x3 normalMatrix = NormalMatrixFromModel(uModel);
     output.normal = mul(normalMatrix, input.normal);
-    output.tangent = float4(normalize(mul(normalMatrix, input.tangent.xyz)), input.tangent.w);
+
+    float tangentHandedness = input.tangent.w;
+    if (determinant((float3x3)uModel) < 0.0)
+    {
+        tangentHandedness = -tangentHandedness;
+    }
+    output.tangent = float4(normalize(mul(normalMatrix, input.tangent.xyz)), tangentHandedness);
     output.texCoord0 = input.texCoord0;
     output.texCoord1 = input.texCoord1;
 

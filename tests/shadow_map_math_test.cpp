@@ -15,6 +15,7 @@
 #include <string>
 
 void RunIrradianceShTests(int& failures);
+void RunColorSpaceTests(int& failures);
 
 namespace
 {
@@ -499,6 +500,7 @@ int main()
     RunLightingProbeTests();
     RunExceptionMessageTests();
     RunIrradianceShTests(gFailures);
+    RunColorSpaceTests(gFailures);
 
     if (gFailures == 0)
     {

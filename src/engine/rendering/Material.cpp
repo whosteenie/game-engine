@@ -200,7 +200,7 @@ void Material::Apply(
 {
     EnsureShader();
     EnsureMapsLoaded();
-    m_shader->Use(outputLinear, !outputLinear);
+    m_shader->Use(outputLinear, !outputLinear, m_doubleSided);
     m_shader->SetMat4("uModel", model);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());

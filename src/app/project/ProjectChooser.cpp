@@ -4,6 +4,7 @@
 #include "app/editor/EditorSettings.h"
 #include "app/project/ProjectSession.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneMeshLibrary.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/platform/EngineLog.h"
@@ -72,6 +73,7 @@ void ProjectChooser::ReturnToStartupWithError(
     }
     catch (const std::exception& exception)
     {
+        scene.GetMeshLibrary().InvalidatePrimitives();
         EngineLog::LogFailure(
             "project",
             "ReturnToStartupWithError",
@@ -168,6 +170,19 @@ bool ProjectChooser::OpenProjectAtPath(
     }
 }
 
+bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
+{
+    if (projectFilePath.empty())
+    {
+        m_errorMessage = "Project path is empty.";
+        return false;
+    }
+
+    m_pendingProjectPath = projectFilePath;
+    m_errorMessage.clear();
+    return true;
+}
+
 bool ProjectChooser::TryOpenProject(
     ProjectSession& project,
     Scene& scene,
@@ -186,16 +201,13 @@ bool ProjectChooser::TryOpenProject(
     (void)applyEditorState;
     (void)undoStack;
     (void)clipboard;
-    (void)outError;
-
-    if (projectFilePath.empty())
+    if (!QueueProjectOpen(projectFilePath))
     {
-        m_errorMessage = "Project path is empty.";
+        outError = m_errorMessage;
         return false;
     }
 
-    m_pendingProjectPath = projectFilePath;
-    m_errorMessage.clear();
+    outError.clear();
     return true;
 }
 

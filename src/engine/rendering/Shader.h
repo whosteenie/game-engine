@@ -20,9 +20,9 @@ public:
     Shader& operator=(Shader&& other) noexcept;
 
     // viewportLdr selects the UNORM pipeline for the editor viewport framebuffer.
-    void Use(bool mrtPass = false, bool viewportLdr = false) const;
+    void Use(bool mrtPass = false, bool viewportLdr = false, bool doubleSided = false) const;
     // Binds PSO/root signature without clearing texture slots (post-process draws).
-    void BindPipeline(bool mrtPass = false, bool viewportLdr = false) const;
+    void BindPipeline(bool mrtPass = false, bool viewportLdr = false, bool doubleSided = false) const;
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -75,6 +75,9 @@ private:
     void* m_pipelineState = nullptr;
     void* m_pipelineStateMrt = nullptr;
     void* m_pipelineStateLdr = nullptr;
+    void* m_pipelineStateDoubleSided = nullptr;
+    void* m_pipelineStateMrtDoubleSided = nullptr;
+    void* m_pipelineStateLdrDoubleSided = nullptr;
     void* m_vertexShader = nullptr;
     void* m_pixelShader = nullptr;
     std::vector<std::uintptr_t> m_textureSlots;

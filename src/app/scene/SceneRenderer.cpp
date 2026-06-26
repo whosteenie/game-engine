@@ -195,7 +195,6 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
     {
         m_shadowMap->BeginCascade(cascadeIndex);
 
-        m_shadowDepthShader->Use();
         m_shadowDepthShader->SetMat4(
             "uLightSpaceMatrix",
             m_shadowMap->GetLightSpaceMatrix(cascadeIndex));
@@ -220,6 +219,8 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
                 continue;
             }
 
+            const bool doubleSided = object.GetMaterial().IsDoubleSided();
+            m_shadowDepthShader->Use(false, false, doubleSided);
             m_shadowDepthShader->SetMat4("uModel", scene.GetWorldMatrix(static_cast<int>(objectIndex)));
             m_shadowDepthShader->FlushUniforms();
             object.GetMesh()->Draw();

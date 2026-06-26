@@ -532,6 +532,7 @@ enable_testing()
 add_executable(engine-tests
     tests/shadow_map_math_test.cpp
     tests/irradiance_sh_test.cpp
+    tests/color_space_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
     src/engine/lighting/IrradianceSh.cpp
