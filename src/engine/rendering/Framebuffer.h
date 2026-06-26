@@ -45,6 +45,7 @@ public:
     bool HasGeometryNormals() const;
     bool HasShadowFactor() const;
     bool HasVelocity() const;
+    bool HasMaterialGbuffer() const;
 
     std::uintptr_t GetVelocityTexture() const;
 
@@ -59,11 +60,13 @@ private:
     int m_width = 0;
     int m_height = 0;
 
-    static constexpr int MaxColorAttachments = 5;
+    static constexpr int MaxColorAttachments = 7;
 
     void* m_colorResources[MaxColorAttachments] = {};
     void* m_colorAllocations[MaxColorAttachments] = {};
     std::uint32_t m_colorSrvIndices[MaxColorAttachments] = {
+        UINT32_MAX,
+        UINT32_MAX,
         UINT32_MAX,
         UINT32_MAX,
         UINT32_MAX,

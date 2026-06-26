@@ -55,6 +55,9 @@ public:
     void SetRoughness(float roughness);
     void SetMetallic(float metallic);
 
+    const glm::vec3& GetEmissive() const;
+    void SetEmissive(const glm::vec3& emissive);
+
     void SetAlbedoMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetNormalMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetAoMap(std::shared_ptr<Texture> texture, std::string path = {});
@@ -106,6 +109,7 @@ private:
     glm::vec3 m_albedo;
     float m_roughness;
     float m_metallic;
+    glm::vec3 m_emissive{0.0f};
 
     mutable std::shared_ptr<Texture> m_albedoMap;
     mutable std::shared_ptr<Texture> m_normalMap;

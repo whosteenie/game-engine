@@ -61,7 +61,7 @@ namespace
 
     int ColorAttachmentCount(FramebufferColorMode colorMode)
     {
-        return colorMode == FramebufferColorMode::SplitDirectIndirect ? 5 : 1;
+        return colorMode == FramebufferColorMode::SplitDirectIndirect ? 7 : 1;
     }
 
     constexpr std::uint32_t kShaderResourceState =
@@ -802,6 +802,11 @@ bool Framebuffer::HasShadowFactor() const
 }
 
 bool Framebuffer::HasVelocity() const
+{
+    return m_colorMode == FramebufferColorMode::SplitDirectIndirect;
+}
+
+bool Framebuffer::HasMaterialGbuffer() const
 {
     return m_colorMode == FramebufferColorMode::SplitDirectIndirect;
 }

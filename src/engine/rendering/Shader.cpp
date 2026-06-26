@@ -682,7 +682,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
 
     const bool isPbr = fragmentPath.find("pbr.p") != std::string::npos;
     const bool supportsMrt = isPbr || (isGridVertex && !isLinePixel) || isSkyboxVertex || isSkyBackground;
-    const int mrtCount = isPbr ? 5 : 4;
+    const int mrtCount = isPbr ? 7 : 4;
 
     auto createPipeline = [&](const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc) {
         ComPtr<ID3D12PipelineState> pipeline;
@@ -705,6 +705,8 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[3] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[4] = isPbr ? DXGI_FORMAT_R16G16_FLOAT : DXGI_FORMAT_UNKNOWN;
+        psoDesc.RTVFormats[5] = isPbr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
+        psoDesc.RTVFormats[6] = isPbr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
         for (UINT targetIndex = 0; targetIndex < static_cast<UINT>(mrtCount); ++targetIndex)
         {
             psoDesc.BlendState.RenderTarget[targetIndex].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;

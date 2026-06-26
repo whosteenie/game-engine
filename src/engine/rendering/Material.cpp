@@ -215,6 +215,7 @@ void Material::Apply(
     m_shader->SetVec3("uAlbedo", m_albedo);
     m_shader->SetFloat("uRoughness", m_roughness);
     m_shader->SetFloat("uMetallic", m_metallic);
+    m_shader->SetVec3("uEmissive", m_emissive);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
 
@@ -404,6 +405,16 @@ void Material::SetMetallic(float metallic)
     m_metallic = metallic;
 }
 
+const glm::vec3& Material::GetEmissive() const
+{
+    return m_emissive;
+}
+
+void Material::SetEmissive(const glm::vec3& emissive)
+{
+    m_emissive = glm::max(emissive, glm::vec3(0.0f));
+}
+
 void Material::SetAlbedoMap(std::shared_ptr<Texture> texture, std::string path)
 {
     m_albedoMap = std::move(texture);
@@ -586,6 +597,7 @@ bool Material::ContentEquals(const Material& other) const
     return m_albedo == other.m_albedo
         && FloatsEqual(m_roughness, other.m_roughness)
         && FloatsEqual(m_metallic, other.m_metallic)
+        && m_emissive == other.m_emissive
         && m_doubleSided == other.m_doubleSided
         && HasAlbedoMap() == other.HasAlbedoMap()
         && HasNormalMap() == other.HasNormalMap()
@@ -615,6 +627,7 @@ std::unique_ptr<Material> Material::Clone() const
     copy->SetNormalTexCoordSet(m_normalTexCoordSet);
     copy->SetAoTexCoordSet(m_aoTexCoordSet);
     copy->SetRoughnessTexCoordSet(m_roughnessTexCoordSet);
+    copy->SetEmissive(m_emissive);
     copy->SetDoubleSided(m_doubleSided);
 
     if (!m_albedoMapPath.empty())

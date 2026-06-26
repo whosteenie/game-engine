@@ -3,6 +3,7 @@
 namespace EngineConstants
 {
     inline constexpr const char* VelocityDebugFragmentShader = "assets/shaders/velocity_debug.ps.hlsl";
+    inline constexpr const char* GBufferDebugFragmentShader = "assets/shaders/gbuffer_debug.ps.hlsl";
     inline constexpr const char* LitVertexShader = "assets/shaders/lit.vs.hlsl";
     inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.ps.hlsl";
     inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vs.hlsl";

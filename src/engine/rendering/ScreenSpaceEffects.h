@@ -226,6 +226,7 @@ private:
     std::unique_ptr<Shader> m_gridCompositeShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
+    std::unique_ptr<Shader> m_gbufferDebugShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;

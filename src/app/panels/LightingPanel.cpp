@@ -1073,6 +1073,10 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::ShadowCompareDepth),
             RenderDebugModeLabel(RenderDebugMode::ShadowBlockedCenter),
             RenderDebugModeLabel(RenderDebugMode::MotionVectors),
+            RenderDebugModeLabel(RenderDebugMode::GBufferAlbedo),
+            RenderDebugModeLabel(RenderDebugMode::GBufferRoughness),
+            RenderDebugModeLabel(RenderDebugMode::GBufferMetallic),
+            RenderDebugModeLabel(RenderDebugMode::GBufferEmissive),
         };
 
         if (ImGui::Combo(
@@ -1172,6 +1176,26 @@ void LightingPanel::Draw(
                 "Per-pixel screen-space velocity (hue = direction, brightness = magnitude). "
                 "Pan the camera on static geometry for a uniform field; move an object for localized color. "
                 "Sky and first frame after load/resize are black (zero velocity).");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GBufferAlbedo))
+        {
+            ImGui::TextWrapped(
+                "Linear base color (texture × factor), no lighting. Textured objects should match their albedo maps.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GBufferRoughness))
+        {
+            ImGui::TextWrapped(
+                "Per-pixel roughness in [0.04, 1]. White = fully rough; black = smoothest allowed value.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GBufferMetallic))
+        {
+            ImGui::TextWrapped(
+                "Per-pixel metallic in [0, 1]. White = metal; black = dielectric.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GBufferEmissive))
+        {
+            ImGui::TextWrapped(
+                "Linear emissive RGB (material emissive property). Black for non-emissive materials until emissive is authored.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

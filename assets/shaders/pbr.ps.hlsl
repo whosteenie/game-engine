@@ -30,6 +30,7 @@ cbuffer PerPixel : register(b0)
     float3 uAlbedo;
     float uRoughness;
     float uMetallic;
+    float3 uEmissive;
     int uUseAlbedoMap;
     int uUseNormalMap;
     int uUseAoMap;
@@ -107,7 +108,20 @@ struct PSOutput
     float4 oNormal : SV_Target2;
     float4 oSunShadow : SV_Target3;
     float4 oVelocity : SV_Target4;
+    float4 oMaterial0 : SV_Target5;
+    float4 oMaterial1 : SV_Target6;
 };
+
+void WriteGBufferMaterials(
+    inout PSOutput output,
+    float3 albedoLinear,
+    float roughness,
+    float metallic,
+    float3 emissiveLinear)
+{
+    output.oMaterial0 = float4(albedoLinear, roughness);
+    output.oMaterial1 = float4(metallic, emissiveLinear);
+}
 
 float2 ComputeMotionNdc(float4 currClip, float4 prevClip)
 {
@@ -753,6 +767,8 @@ PSOutput main(PSInput input)
     roughness = clamp(roughness, 0.04, 1.0);
     metallic = clamp(metallic, 0.0, 1.0);
 
+    float3 emissiveLinear = max(uEmissive, 0.0.xxx);
+
     float3 f0 = lerp(0.04.xxx, albedo, metallic);
 
     float ambientOcclusion = 1.0;
@@ -1091,6 +1107,7 @@ PSOutput main(PSInput input)
         output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
         output.oNormal = float4(normalize(geomNormal), 1.0);
         output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
+        WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
         return output;
     }
 
@@ -1101,6 +1118,7 @@ PSOutput main(PSInput input)
         output.oSunShadow = float4(directSunUnshadowed, shadowFactor);
         output.oNormal = float4(normalize(geomNormal), 1.0);
         output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
+        WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
         return output;
     }
 
@@ -1117,5 +1135,6 @@ PSOutput main(PSInput input)
     output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
     output.oNormal = float4(normalize(geomNormal), 1.0);
     output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
+    WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
     return output;
 }

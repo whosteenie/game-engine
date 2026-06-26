@@ -84,7 +84,25 @@ namespace
     {
         return mode == RenderDebugMode::Ssao ||
                mode == RenderDebugMode::CompositeOcclusion ||
-               mode == RenderDebugMode::MotionVectors;
+               mode == RenderDebugMode::MotionVectors ||
+               IsGBufferDebugMode(mode);
+    }
+
+    int GBufferDebugModeIndex(RenderDebugMode mode)
+    {
+        switch (mode)
+        {
+        case RenderDebugMode::GBufferAlbedo:
+            return 0;
+        case RenderDebugMode::GBufferRoughness:
+            return 1;
+        case RenderDebugMode::GBufferMetallic:
+            return 2;
+        case RenderDebugMode::GBufferEmissive:
+            return 3;
+        default:
+            return 0;
+        }
     }
 
     float HalfToFloat(const std::uint16_t half)
@@ -430,7 +448,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::DebugChannelFragmentShader)),
       m_velocityDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::VelocityDebugFragmentShader))
+          EngineConstants::VelocityDebugFragmentShader)),
+      m_gbufferDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::GBufferDebugFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -948,6 +969,15 @@ void ScreenSpaceEffects::BeginScenePass(const EnvironmentMap& environmentMap) co
             D3D12_CPU_DESCRIPTOR_HANDLE velocityRtv{m_sceneFramebuffer->GetColorRtvCpuHandle(4)};
             commandList->ClearRenderTargetView(velocityRtv, velocityClear, 0, nullptr);
         }
+        if (m_sceneFramebuffer->HasMaterialGbuffer())
+        {
+            const float material0Clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            const float material1Clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+            D3D12_CPU_DESCRIPTOR_HANDLE material0Rtv{m_sceneFramebuffer->GetColorRtvCpuHandle(5)};
+            D3D12_CPU_DESCRIPTOR_HANDLE material1Rtv{m_sceneFramebuffer->GetColorRtvCpuHandle(6)};
+            commandList->ClearRenderTargetView(material0Rtv, material0Clear, 0, nullptr);
+            commandList->ClearRenderTargetView(material1Rtv, material1Clear, 0, nullptr);
+        }
     }
     else
     {
@@ -1437,6 +1467,34 @@ void ScreenSpaceEffects::Apply(
                 useShadowFactorComposite,
                 hdrColorSource,
                 "motion_vectors",
+                hdrColorSrv,
+                shadowFactorSrv);
+            if (m_logSsaoApplySnapshot)
+            {
+                m_pendingSsaoGpuReadback = true;
+            }
+            return;
+        }
+        else if (IsGBufferDebugMode(m_debugMode) && m_sceneFramebuffer->HasMaterialGbuffer())
+        {
+            m_gbufferDebugShader->Use(false, true);
+            m_gbufferDebugShader->SetInt("uMaterial0Map", 0);
+            m_gbufferDebugShader->SetInt("uMaterial1Map", 1);
+            m_gbufferDebugShader->SetInt("uDepthMap", 2);
+            m_gbufferDebugShader->SetInt("uGBufferDebugMode", GBufferDebugModeIndex(m_debugMode));
+            m_gbufferDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+            m_gbufferDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+            m_gbufferDebugShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_gbufferDebugShader->FlushUniforms();
+            DrawFullscreenQuad();
+            CaptureSsaoDiagnosticsCpu(
+                runSsao,
+                compositeRan,
+                compositeUsesSsao,
+                pbrDebugActive,
+                useShadowFactorComposite,
+                hdrColorSource,
+                "gbuffer_material",
                 hdrColorSrv,
                 shadowFactorSrv);
             if (m_logSsaoApplySnapshot)

@@ -52,6 +52,14 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Shadow blocked (center texel)";
     case RenderDebugMode::MotionVectors:
         return "Motion vectors";
+    case RenderDebugMode::GBufferAlbedo:
+        return "G-buffer albedo";
+    case RenderDebugMode::GBufferRoughness:
+        return "G-buffer roughness";
+    case RenderDebugMode::GBufferMetallic:
+        return "G-buffer metallic";
+    case RenderDebugMode::GBufferEmissive:
+        return "G-buffer emissive";
     default:
         return "Unknown";
     }
@@ -81,6 +89,20 @@ bool IsPbrMaterialDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::GeomSunFacing:
     case RenderDebugMode::ShadowCompareDepth:
     case RenderDebugMode::ShadowBlockedCenter:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsGBufferDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::GBufferAlbedo:
+    case RenderDebugMode::GBufferRoughness:
+    case RenderDebugMode::GBufferMetallic:
+    case RenderDebugMode::GBufferEmissive:
         return true;
     default:
         return false;
