@@ -85,7 +85,13 @@ namespace
         return mode == RenderDebugMode::Ssao ||
                mode == RenderDebugMode::CompositeOcclusion ||
                mode == RenderDebugMode::MotionVectors ||
-               IsGBufferDebugMode(mode);
+               IsGBufferDebugMode(mode) ||
+               IsRadianceDebugMode(mode);
+    }
+
+    int RadianceDebugModeIndex(RenderDebugMode mode)
+    {
+        return mode == RenderDebugMode::RadianceValidity ? 1 : 0;
     }
 
     int GBufferDebugModeIndex(RenderDebugMode mode)
@@ -451,7 +457,13 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::VelocityDebugFragmentShader)),
       m_gbufferDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::GBufferDebugFragmentShader))
+          EngineConstants::GBufferDebugFragmentShader)),
+      m_radianceAssemblyShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RadianceAssemblyFragmentShader)),
+      m_radianceDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RadianceDebugFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -468,6 +480,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_shadowBlurTarget);
     DestroyInternalTarget(m_shadowBlur2Target);
     DestroyInternalTarget(m_hdrCompositeTarget);
+    DestroyInternalTarget(m_radianceTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -774,6 +787,7 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
 {
     const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     ResizeInternalTarget(m_hdrCompositeTarget, width, height, format);
+    ResizeInternalTarget(m_radianceTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeBloomTargets(const int width, const int height)
@@ -1288,6 +1302,35 @@ void ScreenSpaceEffects::Apply(
         shadowFactorSrv = m_shadowBlur2Target.srvCpuHandle;
     }
 
+    const bool runRadianceAssembly =
+        !pbrDebugActive &&
+        m_sceneFramebuffer->HasSplitLighting() &&
+        m_sceneFramebuffer->HasMaterialGbuffer() &&
+        m_radianceTarget.resource != nullptr;
+
+    if (runRadianceAssembly)
+    {
+        const float radianceClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        m_radianceAssemblyShader->Use(false);
+        m_radianceAssemblyShader->SetInt("uDirectLighting", 0);
+        m_radianceAssemblyShader->SetInt("uIndirectLighting", 1);
+        m_radianceAssemblyShader->SetInt("uDepthMap", 2);
+        m_radianceAssemblyShader->SetInt("uMaterial0Map", 3);
+        m_radianceAssemblyShader->SetInt("uMaterial1Map", 4);
+        m_radianceAssemblyShader->SetInt("uIncludeFillDirect", 1);
+        m_radianceAssemblyShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_radianceAssemblyShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_radianceAssemblyShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_radianceAssemblyShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_radianceAssemblyShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        DrawFullscreenToTarget(
+            *m_radianceAssemblyShader,
+            const_cast<InternalTarget&>(m_radianceTarget),
+            m_width,
+            m_height,
+            radianceClear);
+    }
+
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
     const char* hdrColorSource = "scene_direct";
     bool compositeRan = false;
@@ -1495,6 +1538,32 @@ void ScreenSpaceEffects::Apply(
                 useShadowFactorComposite,
                 hdrColorSource,
                 "gbuffer_material",
+                hdrColorSrv,
+                shadowFactorSrv);
+            if (m_logSsaoApplySnapshot)
+            {
+                m_pendingSsaoGpuReadback = true;
+            }
+            return;
+        }
+        else if (IsRadianceDebugMode(m_debugMode) && m_radianceTarget.srvCpuHandle != 0)
+        {
+            m_radianceDebugShader->Use(false, true);
+            m_radianceDebugShader->SetInt("uRadianceMap", 0);
+            m_radianceDebugShader->SetInt("uDepthMap", 1);
+            m_radianceDebugShader->SetInt("uRadianceDebugMode", RadianceDebugModeIndex(m_debugMode));
+            m_radianceDebugShader->BindTextureSlot(0, m_radianceTarget.srvCpuHandle);
+            m_radianceDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_radianceDebugShader->FlushUniforms();
+            DrawFullscreenQuad();
+            CaptureSsaoDiagnosticsCpu(
+                runSsao,
+                compositeRan,
+                compositeUsesSsao,
+                pbrDebugActive,
+                useShadowFactorComposite,
+                hdrColorSource,
+                "radiance_buffer",
                 hdrColorSrv,
                 shadowFactorSrv);
             if (m_logSsaoApplySnapshot)

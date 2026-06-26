@@ -30,9 +30,12 @@ enum class RenderDebugMode
     GBufferRoughness,
     GBufferMetallic,
     GBufferEmissive,
+    RadianceBuffer,
+    RadianceValidity,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
 bool IsGBufferDebugMode(RenderDebugMode mode);
+bool IsRadianceDebugMode(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

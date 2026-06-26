@@ -200,6 +200,7 @@ private:
     InternalTarget m_shadowBlurTarget;
     InternalTarget m_shadowBlur2Target;
     InternalTarget m_hdrCompositeTarget;
+    InternalTarget m_radianceTarget;
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -227,6 +228,8 @@ private:
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
+    std::unique_ptr<Shader> m_radianceAssemblyShader;
+    std::unique_ptr<Shader> m_radianceDebugShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;

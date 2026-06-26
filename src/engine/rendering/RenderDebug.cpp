@@ -60,6 +60,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "G-buffer metallic";
     case RenderDebugMode::GBufferEmissive:
         return "G-buffer emissive";
+    case RenderDebugMode::RadianceBuffer:
+        return "Radiance buffer";
+    case RenderDebugMode::RadianceValidity:
+        return "Radiance validity";
     default:
         return "Unknown";
     }
@@ -103,6 +107,18 @@ bool IsGBufferDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::GBufferRoughness:
     case RenderDebugMode::GBufferMetallic:
     case RenderDebugMode::GBufferEmissive:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsRadianceDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RadianceBuffer:
+    case RenderDebugMode::RadianceValidity:
         return true;
     default:
         return false;

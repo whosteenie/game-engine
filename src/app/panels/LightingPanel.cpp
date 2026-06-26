@@ -1077,6 +1077,8 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::GBufferRoughness),
             RenderDebugModeLabel(RenderDebugMode::GBufferMetallic),
             RenderDebugModeLabel(RenderDebugMode::GBufferEmissive),
+            RenderDebugModeLabel(RenderDebugMode::RadianceBuffer),
+            RenderDebugModeLabel(RenderDebugMode::RadianceValidity),
         };
 
         if (ImGui::Combo(
@@ -1196,6 +1198,17 @@ void LightingPanel::Draw(
         {
             ImGui::TextWrapped(
                 "Linear emissive RGB (material emissive property). Black for non-emissive materials until emissive is authored.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::RadianceBuffer))
+        {
+            ImGui::TextWrapped(
+                "Diffuse-dominant radiance assembled for SSGI trace hits: emissive + stripped indirect IBL + optional fill lights. "
+                "Sky is black; geometry should show soft ambient-tinted color (not final shaded composite).");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::RadianceValidity))
+        {
+            ImGui::TextWrapped(
+                "Radiance validity mask (A channel). White = traceable geometry; black = sky / background.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {
