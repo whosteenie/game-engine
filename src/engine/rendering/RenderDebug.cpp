@@ -78,6 +78,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSGI denoise temporal";
     case RenderDebugMode::SsgiDenoiseFinal:
         return "SSGI denoise final";
+    case RenderDebugMode::SsgiInject:
+        return "SSGI inject";
     default:
         return "Unknown";
     }
@@ -160,6 +162,8 @@ bool IsSsgiDenoiseDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::SsgiDenoiseSpatial:
     case RenderDebugMode::SsgiDenoiseTemporal:
     case RenderDebugMode::SsgiDenoiseFinal:
+        return true;
+    case RenderDebugMode::SsgiInject:
         return true;
     default:
         return false;

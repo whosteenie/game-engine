@@ -1093,8 +1093,39 @@ void LightingPanel::Draw(
                 scene.MarkDirty();
             }
             ImGui::TextDisabled(
-                "Pipeline: radiance assembly → optional noise → spatial blur → temporal. "
-                "Enable noise, compare SSGI trace raw vs denoise final.");
+                "Test path: optional noise → spatial → temporal. Disable when using real SSGI trace.");
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("SSGI trace (Phase 6)"))
+        {
+            bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
+            if (ImGui::Checkbox("Enable SSGI", &ssgiEnabled))
+            {
+                screenSpaceEffects.SetSsgiEnabled(ssgiEnabled);
+                scene.MarkDirty();
+            }
+            float ssgiStrength = screenSpaceEffects.GetSsgiStrength();
+            if (ImGui::SliderFloat("SSGI strength", &ssgiStrength, 0.0f, 1.5f))
+            {
+                screenSpaceEffects.SetSsgiStrength(ssgiStrength);
+                scene.MarkDirty();
+            }
+            float traceDistance = screenSpaceEffects.GetSsgiMaxTraceDistance();
+            if (ImGui::SliderFloat("Max trace distance", &traceDistance, 0.5f, 10.0f, "%.1f m"))
+            {
+                screenSpaceEffects.SetSsgiMaxTraceDistance(traceDistance);
+                scene.MarkDirty();
+            }
+            int stepCount = screenSpaceEffects.GetSsgiStepCount();
+            if (ImGui::SliderInt("Trace steps", &stepCount, 4, 32))
+            {
+                screenSpaceEffects.SetSsgiStepCount(stepCount);
+                scene.MarkDirty();
+            }
+            ImGui::TextDisabled(
+                "Screen-space trace → denoise → inject into indirect IBL before SSAO. "
+                "Turn off synthetic noise when testing. AA off recommended.");
             ImGui::TreePop();
         }
 
@@ -1137,6 +1168,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseSpatial),
             RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseTemporal),
             RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseFinal),
+            RenderDebugModeLabel(RenderDebugMode::SsgiInject),
         };
 
         if (ImGui::Combo(
@@ -1305,6 +1337,12 @@ void LightingPanel::Draw(
         {
             ImGui::TextWrapped(
                 "Full denoise pipeline output (same as temporal stage). Compare against trace raw with noise enabled.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiInject))
+        {
+            ImGui::TextWrapped(
+                "Denoised SSGI term injected into composite (strength-scaled in final image). "
+                "Requires Enable SSGI. Use Ambient / IBL debug to compare indirect before inject.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

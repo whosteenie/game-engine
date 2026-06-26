@@ -145,6 +145,18 @@ public:
     float GetSsgiSpatialBlurSpread() const;
     void SetSsgiSpatialBlurSpread(float spread);
 
+    bool IsSsgiEnabled() const;
+    void SetSsgiEnabled(bool enabled);
+
+    float GetSsgiStrength() const;
+    void SetSsgiStrength(float strength);
+
+    float GetSsgiMaxTraceDistance() const;
+    void SetSsgiMaxTraceDistance(float distance);
+
+    int GetSsgiStepCount() const;
+    void SetSsgiStepCount(int steps);
+
     float GetSmaaThreshold() const;
     void SetSmaaThreshold(float threshold);
 
@@ -263,6 +275,7 @@ private:
     std::unique_ptr<Shader> m_ssgiNoiseInjectShader;
     std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
     std::unique_ptr<Shader> m_ssgiDenoiseDebugShader;
+    std::unique_ptr<Shader> m_ssgiTraceShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -304,6 +317,11 @@ private:
     float m_ssgiSpatialBlurSpread = 1.0f;
     float m_ssgiRoughnessSpreadMin = 0.5f;
     float m_ssgiRoughnessSpreadMax = 1.75f;
+    bool m_ssgiEnabled = false;
+    float m_ssgiStrength = 0.35f;
+    float m_ssgiMaxTraceDistance = 3.0f;
+    int m_ssgiStepCount = 12;
+    float m_ssgiThickness = 0.5f;
     float m_smaaThreshold = 0.05f;
     int m_smaaSearchSteps = 4;
     float m_ssaoBlurDepthThreshold = 0.02f;
@@ -315,5 +333,6 @@ private:
     mutable glm::mat4 m_prevViewProjection{1.0f};
     mutable glm::mat4 m_giPrevViewProjection{1.0f};
     mutable MotionVectorFrameState m_motionVectorFrameState{};
+    mutable std::uintptr_t m_lastSsgiInjectSrv = 0;
     AntiAliasingMode m_lastAntiAliasingMode = AntiAliasingMode::None;
 };

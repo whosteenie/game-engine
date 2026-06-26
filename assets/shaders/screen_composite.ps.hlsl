@@ -6,6 +6,7 @@ Texture2D uDepthMap : register(t2);
 Texture2D uSsaoMap : register(t3);
 Texture2D uShadowFactorMap : register(t4);
 Texture2D uEquirectMap : register(t5);
+Texture2D uSsgiMap : register(t6);
 
 SamplerState uDirectLightingSampler : register(s0);
 SamplerState uIndirectLightingSampler : register(s1);
@@ -13,14 +14,17 @@ SamplerState uDepthSampler : register(s2);
 SamplerState uSsaoSampler : register(s3);
 SamplerState uShadowFactorSampler : register(s4);
 SamplerState uEquirectSampler : register(s5);
+SamplerState uSsgiSampler : register(s6);
 
 cbuffer PerPixel : register(b0)
 {
     int uUseSplitLighting;
     int uUseSsao;
     int uUseShadowFactor;
+    int uUseSsgi;
     float uSsaoPower;
     float uAoStrength;
+    float uSsgiStrength;
     int uDebugOcclusionOnly;
     int uBackgroundMode;
     float uSkyboxExposure;
@@ -79,6 +83,10 @@ float4 main(PSInput input) : SV_Target
     {
         float3 fillDirect = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
         indirect = uIndirectLighting.Sample(uIndirectLightingSampler, uv).rgb;
+        if (uUseSsgi != 0)
+        {
+            indirect += uSsgiStrength * uSsgiMap.Sample(uSsgiSampler, uv).rgb;
+        }
         float4 sunShadow = uShadowFactorMap.Sample(uShadowFactorSampler, uv);
         float3 sunDirect = sunShadow.rgb * (uUseShadowFactor != 0 ? sunShadow.a : 1.0);
         direct = fillDirect + sunDirect;

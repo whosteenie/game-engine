@@ -39,6 +39,7 @@ enum class RenderDebugMode
     SsgiDenoiseSpatial,
     SsgiDenoiseTemporal,
     SsgiDenoiseFinal,
+    SsgiInject,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);

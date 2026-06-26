@@ -12,6 +12,7 @@ namespace EngineConstants
     inline constexpr const char* SsgiNoiseInjectFragmentShader = "assets/shaders/ssgi_noise_inject.ps.hlsl";
     inline constexpr const char* SsgiDenoiseSpatialFragmentShader = "assets/shaders/ssgi_denoise_spatial.ps.hlsl";
     inline constexpr const char* SsgiDenoiseDebugFragmentShader = "assets/shaders/ssgi_denoise_debug.ps.hlsl";
+    inline constexpr const char* SsgiTraceFragmentShader = "assets/shaders/ssgi_trace.ps.hlsl";
     inline constexpr const char* LitVertexShader = "assets/shaders/lit.vs.hlsl";
     inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.ps.hlsl";
     inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vs.hlsl";

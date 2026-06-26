@@ -496,7 +496,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::SsgiDenoiseSpatialFragmentShader)),
       m_ssgiDenoiseDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsgiDenoiseDebugFragmentShader))
+          EngineConstants::SsgiDenoiseDebugFragmentShader)),
+      m_ssgiTraceShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SsgiTraceFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -1384,15 +1387,53 @@ void ScreenSpaceEffects::Apply(
     }
 
     std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
+
+    const bool runSsgiTrace =
+        runRadianceAssembly &&
+        m_ssgiEnabled &&
+        m_sceneFramebuffer->HasGeometryNormals() &&
+        m_radianceTraceInputTarget.resource != nullptr;
+
+    if (runSsgiTrace)
+    {
+        m_ssgiTraceShader->Use(false);
+        m_ssgiTraceShader->SetInt("uDepthMap", 0);
+        m_ssgiTraceShader->SetInt("uNormalMap", 1);
+        m_ssgiTraceShader->SetInt("uMaterial0Map", 2);
+        m_ssgiTraceShader->SetInt("uMaterial1Map", 3);
+        m_ssgiTraceShader->SetInt("uRadianceMap", 4);
+        m_ssgiTraceShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_ssgiTraceShader->SetMat4("uProjection", projectionMatrix);
+        m_ssgiTraceShader->SetMat4("uView", camera.GetViewMatrix());
+        m_ssgiTraceShader->SetFloat("uMaxTraceDistance", m_ssgiMaxTraceDistance);
+        m_ssgiTraceShader->SetInt("uStepCount", m_ssgiStepCount);
+        m_ssgiTraceShader->SetFloat("uThickness", m_ssgiThickness);
+        m_ssgiTraceShader->SetFloat("uFrameIndex", static_cast<float>(m_giFrameIndex));
+        m_ssgiTraceShader->SetFloat("uEdgeFadeScale", 20.0f);
+        m_ssgiTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_ssgiTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_ssgiTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_ssgiTraceShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_ssgiTraceShader->BindTextureSlot(4, m_radianceTarget.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_ssgiTraceShader,
+            const_cast<InternalTarget&>(m_radianceTraceInputTarget),
+            m_width,
+            m_height,
+            radianceClear);
+        temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
+    }
+
     const bool runSsgiDenoise =
         runRadianceAssembly &&
         m_ssgiDenoiseEnabled &&
         m_sceneFramebuffer->HasGeometryNormals() &&
         m_sceneFramebuffer->HasMaterialGbuffer() &&
         m_radianceTraceInputTarget.resource != nullptr &&
-        m_radianceSpatialTarget.resource != nullptr;
+        m_radianceSpatialTarget.resource != nullptr &&
+        (runSsgiTrace || m_ssgiNoiseInjectionEnabled);
 
-    if (runRadianceAssembly && (runSsgiDenoise || m_ssgiNoiseInjectionEnabled))
+    if (runRadianceAssembly && !runSsgiTrace && m_ssgiNoiseInjectionEnabled)
     {
         const float noiseStrength =
             m_ssgiNoiseInjectionEnabled ? m_ssgiNoiseStrength : 0.0f;
@@ -1456,7 +1497,9 @@ void ScreenSpaceEffects::Apply(
         runRadianceAssembly &&
         m_radianceHistoryTarget.resource != nullptr &&
         m_radianceTemporalTarget.resource != nullptr &&
-        m_radianceHistoryDepthTarget.resource != nullptr;
+        m_radianceHistoryDepthTarget.resource != nullptr &&
+        (runSsgiDenoise ||
+         (!m_ssgiEnabled && !m_ssgiNoiseInjectionEnabled && !m_ssgiDenoiseEnabled));
 
     if (runGiTemporal)
     {
@@ -1504,6 +1547,23 @@ void ScreenSpaceEffects::Apply(
         ++m_giFrameIndex;
     }
 
+    m_lastSsgiInjectSrv = 0;
+    if (runSsgiTrace)
+    {
+        if (runGiTemporal && m_radianceHistoryTarget.srvCpuHandle != 0)
+        {
+            m_lastSsgiInjectSrv = m_radianceHistoryTarget.srvCpuHandle;
+        }
+        else if (runSsgiDenoise && m_radianceSpatialTarget.srvCpuHandle != 0)
+        {
+            m_lastSsgiInjectSrv = m_radianceSpatialTarget.srvCpuHandle;
+        }
+        else if (m_radianceTraceInputTarget.srvCpuHandle != 0)
+        {
+            m_lastSsgiInjectSrv = m_radianceTraceInputTarget.srvCpuHandle;
+        }
+    }
+
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
     const char* hdrColorSource = "scene_direct";
     bool compositeRan = false;
@@ -1527,12 +1587,19 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
+        const bool useSsgiInject = runSsgiTrace && m_lastSsgiInjectSrv != 0;
+        m_compositeShader->SetInt("uUseSsgi", useSsgiInject ? 1 : 0);
+        m_compositeShader->SetFloat("uSsgiStrength", m_ssgiStrength);
+        m_compositeShader->SetInt("uSsgiMap", 6);
         SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
         m_compositeShader->BindTextureSlot(4, shadowFactorSrv);
+        m_compositeShader->BindTextureSlot(
+            6,
+            useSsgiInject ? m_lastSsgiInjectSrv : m_radianceTarget.srvCpuHandle);
         DrawFullscreenToTarget(
             *m_compositeShader,
             const_cast<InternalTarget&>(m_hdrCompositeTarget),
@@ -1752,7 +1819,12 @@ void ScreenSpaceEffects::Apply(
             if (m_debugMode == RenderDebugMode::SsgiTraceRaw)
             {
                 debugSrv = m_radianceTarget.srvCpuHandle;
-                if ((m_ssgiDenoiseEnabled || m_ssgiNoiseInjectionEnabled) &&
+                if (m_ssgiEnabled && m_radianceTraceInputTarget.srvCpuHandle != 0)
+                {
+                    debugSrv = m_radianceTraceInputTarget.srvCpuHandle;
+                }
+                else if (
+                    (m_ssgiDenoiseEnabled || m_ssgiNoiseInjectionEnabled) &&
                     m_radianceTraceInputTarget.srvCpuHandle != 0)
                 {
                     debugSrv = m_radianceTraceInputTarget.srvCpuHandle;
@@ -1772,6 +1844,11 @@ void ScreenSpaceEffects::Apply(
                 debugSource = m_debugMode == RenderDebugMode::SsgiDenoiseTemporal
                     ? "ssgi_denoise_temporal"
                     : "ssgi_denoise_final";
+            }
+            else if (m_debugMode == RenderDebugMode::SsgiInject)
+            {
+                debugSrv = m_lastSsgiInjectSrv != 0 ? m_lastSsgiInjectSrv : m_radianceTarget.srvCpuHandle;
+                debugSource = "ssgi_inject";
             }
 
             if (debugSrv != 0)
@@ -2470,6 +2547,46 @@ float ScreenSpaceEffects::GetSsgiSpatialBlurSpread() const
 void ScreenSpaceEffects::SetSsgiSpatialBlurSpread(const float spread)
 {
     m_ssgiSpatialBlurSpread = std::clamp(spread, 0.25f, 4.0f);
+}
+
+bool ScreenSpaceEffects::IsSsgiEnabled() const
+{
+    return m_ssgiEnabled;
+}
+
+void ScreenSpaceEffects::SetSsgiEnabled(const bool enabled)
+{
+    m_ssgiEnabled = enabled;
+}
+
+float ScreenSpaceEffects::GetSsgiStrength() const
+{
+    return m_ssgiStrength;
+}
+
+void ScreenSpaceEffects::SetSsgiStrength(const float strength)
+{
+    m_ssgiStrength = std::clamp(strength, 0.0f, 2.0f);
+}
+
+float ScreenSpaceEffects::GetSsgiMaxTraceDistance() const
+{
+    return m_ssgiMaxTraceDistance;
+}
+
+void ScreenSpaceEffects::SetSsgiMaxTraceDistance(const float distance)
+{
+    m_ssgiMaxTraceDistance = std::clamp(distance, 0.25f, 20.0f);
+}
+
+int ScreenSpaceEffects::GetSsgiStepCount() const
+{
+    return m_ssgiStepCount;
+}
+
+void ScreenSpaceEffects::SetSsgiStepCount(const int steps)
+{
+    m_ssgiStepCount = std::clamp(steps, 4, 32);
 }
 
 float ScreenSpaceEffects::GetSmaaThreshold() const
