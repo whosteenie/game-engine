@@ -280,9 +280,16 @@ void Scene::GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::
     GetObjectLocalSelectionBounds(m_objectStore->Objects(), objectIndex, boundsMin, boundsMax);
 }
 
-void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix)
+void Scene::ApplyGizmoWorldMatrix(
+    int objectIndex,
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix)
 {
-    ApplyObjectGizmoWorldMatrix(m_objectStore->Objects(), objectIndex, gizmoWorldMatrix);
+    ApplyObjectGizmoWorldMatrix(
+        m_objectStore->Objects(),
+        objectIndex,
+        oldGizmoWorldMatrix,
+        newGizmoWorldMatrix);
     MarkDirty();
 }
 
@@ -318,7 +325,10 @@ void Scene::ApplySelectionGizmoWorldMatrix(
 
     if (selectedIndices.size() == 1)
     {
-        ApplyGizmoWorldMatrix(selectedIndices.front(), newGizmoWorldMatrix);
+        ApplyGizmoWorldMatrix(
+            selectedIndices.front(),
+            oldGizmoWorldMatrix,
+            newGizmoWorldMatrix);
         return;
     }
 

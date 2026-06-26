@@ -130,7 +130,10 @@ public:
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
     glm::mat4 GetSelectionGizmoWorldMatrix(bool worldSpace) const;
     void GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
-    void ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix);
+    void ApplyGizmoWorldMatrix(
+        int objectIndex,
+        const glm::mat4& oldGizmoWorldMatrix,
+        const glm::mat4& newGizmoWorldMatrix);
     void ApplySelectionGizmoWorldMatrix(
         const glm::mat4& oldGizmoWorldMatrix,
         const glm::mat4& newGizmoWorldMatrix);

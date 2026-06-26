@@ -2,6 +2,7 @@
 
 #include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/EngineDiagnostics.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
@@ -21,6 +22,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <algorithm>
@@ -71,6 +73,13 @@ namespace GfxContextDetail
     {
         EngineDiagnostics::SetLastGpuAllocationError(
             message != nullptr ? message : "unknown GPU allocation error");
+    }
+
+    std::string FormatHresult(const HRESULT hr)
+    {
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "0x%08X", static_cast<unsigned>(hr));
+        return buffer;
     }
 }
 
@@ -647,14 +656,14 @@ void GfxContext::EndFrame()
     if (FAILED(presentResult))
     {
         std::string message =
-            "Present failed (HRESULT=0x"
-            + std::to_string(static_cast<unsigned long>(presentResult))
-            + ")";
+            "Present failed (HRESULT=" + GfxContextDetail::FormatHresult(presentResult) + ")";
         std::string deviceRemovedReason;
         if (IsDeviceRemoved(&deviceRemovedReason))
         {
             message += "; device removed: " + deviceRemovedReason;
         }
+        GfxContextDetail::SetGpuAllocationError(message.c_str());
+        EngineLog::Error("gfx", message);
         m_frameCommandsSubmitted = false;
         throw std::runtime_error(message);
     }
@@ -1205,8 +1214,7 @@ bool GfxContext::IsDeviceRemoved(std::string* outReason) const
 
     if (outReason != nullptr)
     {
-        *outReason =
-            "HRESULT=0x" + std::to_string(static_cast<unsigned long>(removedReason));
+        *outReason = "HRESULT=" + GfxContextDetail::FormatHresult(removedReason);
     }
 
     return true;

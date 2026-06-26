@@ -781,13 +781,21 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     else
     {
         m_pipelineState = createPipeline(psoDesc);
+        if (isGizmoLineVertex && isLinePixel)
+        {
+            applySingleRenderTarget(DXGI_FORMAT_R8G8B8A8_UNORM);
+            m_pipelineStateLdr = createPipeline(psoDesc);
+        }
+        else
+        {
+            m_pipelineStateLdr = nullptr;
+        }
         if (isShadowDepth)
         {
             psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
             m_pipelineStateDoubleSided = createPipeline(psoDesc);
         }
         m_pipelineStateMrt = nullptr;
-        m_pipelineStateLdr = nullptr;
     }
 
     m_textureSlots.assign(16, 0);

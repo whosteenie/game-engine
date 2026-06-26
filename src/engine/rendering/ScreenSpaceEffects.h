@@ -47,8 +47,8 @@ public:
 
     void Resize(int viewportWidth, int viewportHeight);
 
-    void PrepareAntiAliasingFrame(Camera& camera) const;
-    void FinalizeAntiAliasingFrame(const Camera& camera) const;
+    void PrepareAntiAliasingFrame(Camera& camera, bool freezeJitter = false) const;
+    void FinalizeAntiAliasingFrame(const Camera& camera, bool freezeJitter = false) const;
     const MotionVectorFrameState& GetMotionVectorFrameState() const;
     void AdvanceTemporalFrame(const Camera& camera) const;
 

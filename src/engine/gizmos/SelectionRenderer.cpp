@@ -75,7 +75,7 @@ namespace
         const std::vector<SelectionMeshDraw>& meshes)
     {
         shader.SetMat4("uView", camera.GetViewMatrix());
-        shader.SetMat4("uProjection", camera.GetProjectionMatrix());
+        shader.SetMat4("uProjection", camera.GetUnjitteredProjectionMatrix());
 
         for (const SelectionMeshDraw& meshDraw : meshes)
         {
@@ -400,7 +400,7 @@ void SelectionRenderer::DrawScreenSpace(
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
 
-    m_glowShader->Use();
+    m_glowShader->Use(false, true);
     m_glowShader->SetInt("uGlow", 0);
     m_glowShader->SetInt("uEdge", 1);
     m_glowShader->SetVec3("uColor", kSelectionGlowColor);
@@ -410,7 +410,7 @@ void SelectionRenderer::DrawScreenSpace(
     m_glowShader->FlushUniforms();
     DrawFullscreenQuad();
 
-    m_sharpShader->Use();
+    m_sharpShader->Use(false, true);
     m_sharpShader->SetInt("uEdge", 0);
     m_sharpShader->SetVec3("uColor", kSelectionColor);
     m_sharpShader->BindTextureSlot(0, m_edgeTarget.srvCpuHandle);

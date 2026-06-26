@@ -28,9 +28,10 @@ namespace GizmoDraw
             return;
         }
 
-        shader.Use();
+        // Editor viewport framebuffers are R8G8B8A8 (post-tonemap LDR).
+        shader.Use(false, true);
         shader.SetMat4("uView", camera.GetViewMatrix());
-        shader.SetMat4("uProjection", camera.GetProjectionMatrix());
+        shader.SetMat4("uProjection", camera.GetUnjitteredProjectionMatrix());
         shader.SetVec3("uColor", color);
         shader.FlushUniforms();
 

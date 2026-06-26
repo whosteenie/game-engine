@@ -964,18 +964,18 @@ namespace
     }
 }
 
-void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera) const
+void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera, const bool freezeJitter) const
 {
     camera.ClearProjectionJitter();
-    if (m_antiAliasingMode == AntiAliasingMode::TAA && m_width > 0 && m_height > 0)
+    if (m_antiAliasingMode == AntiAliasingMode::TAA && m_width > 0 && m_height > 0 && !freezeJitter)
     {
         camera.SetProjectionJitter(HaltonJitter(m_taaFrameIndex, m_width, m_height));
     }
 }
 
-void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& /*camera*/) const
+void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& /*camera*/, const bool freezeJitter) const
 {
-    if (m_antiAliasingMode != AntiAliasingMode::TAA)
+    if (m_antiAliasingMode != AntiAliasingMode::TAA || freezeJitter)
     {
         return;
     }
@@ -1660,7 +1660,7 @@ void ScreenSpaceEffects::Apply(
             : unjitteredProjection * viewMatrix;
         const float hdrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
-        m_taaShader->Use(false, true);
+        m_taaShader->Use(false, false);
         m_taaShader->SetMat4("uInvViewProj", invViewProjection);
         m_taaShader->SetMat4("uPrevViewProj", prevViewProjection);
         m_taaShader->SetFloat("uBlendFactor", m_taaBlendFactor);
@@ -1677,7 +1677,7 @@ void ScreenSpaceEffects::Apply(
             m_width,
             m_height,
             hdrClear,
-            true);
+            false);
 
         hdrColorSrv = m_taaResolveTarget.srvCpuHandle;
         hdrColorSource = "hdr_taa";
@@ -1769,7 +1769,7 @@ void ScreenSpaceEffects::Apply(
 
         if (m_sceneFramebuffer->HasVelocity() && m_bloomTemporalTarget.srvCpuHandle != 0)
         {
-            m_bloomTemporalShader->Use(false, true);
+            m_bloomTemporalShader->Use(false, false);
             m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
             m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
             m_bloomTemporalShader->SetFloat("uHistoryValid", m_bloomHistoryValid ? 1.0f : 0.0f);

@@ -5,6 +5,9 @@
 
 #include "app/scene/SceneRenderer.h"
 
+#include <imgui.h>
+#include <ImGuizmo.h>
+
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
 
@@ -255,6 +258,8 @@ void SceneRenderer::Render(
     }
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
+    const bool freezeTemporalJitter =
+        ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
 
     if (target != nullptr)
     {
@@ -284,7 +289,7 @@ void SceneRenderer::Render(
         antiAliasCamera.SetAspectFromFramebuffer(
             m_screenSpaceEffects->GetRenderWidth(),
             m_screenSpaceEffects->GetRenderHeight());
-        m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera);
+        m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera, freezeTemporalJitter);
         m_screenSpaceEffects->BeginScenePass(*m_environmentMap);
     }
     else if (target != nullptr)
@@ -382,7 +387,7 @@ void SceneRenderer::Render(
             viewportHeight,
             m_directionalShadowSettings,
             *m_environmentMap);
-        m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera);
+        m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera, freezeTemporalJitter);
         m_screenSpaceEffects->AdvanceTemporalFrame(camera);
 
         if (target != nullptr)
@@ -409,6 +414,11 @@ void SceneRenderer::Render(
     }
 
     if (target != nullptr && !usePostProcess)
+    {
+        target->BindDrawTarget(false);
+    }
+
+    if (target != nullptr)
     {
         target->BindDrawTarget(false);
     }

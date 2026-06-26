@@ -53,6 +53,53 @@ namespace
             }
         }
     }
+
+    void ExpandWorldBoundsFromRenderableMeshes(
+        const std::vector<SceneObject>& objects,
+        const int objectIndex,
+        glm::vec3& boundsMin,
+        glm::vec3& boundsMax,
+        bool& hasBounds)
+    {
+        std::vector<SelectionMeshDraw> meshes;
+        CollectRenderableSelectionMeshes(objects, objectIndex, meshes);
+        for (const SelectionMeshDraw& draw : meshes)
+        {
+            if (draw.mesh == nullptr)
+            {
+                continue;
+            }
+
+            for (const glm::vec3& localPosition : draw.mesh->GetPositions())
+            {
+                const glm::vec3 worldPosition =
+                    glm::vec3(draw.worldMatrix * glm::vec4(localPosition, 1.0f));
+                if (!hasBounds)
+                {
+                    boundsMin = worldPosition;
+                    boundsMax = worldPosition;
+                    hasBounds = true;
+                }
+                else
+                {
+                    ExpandBounds(boundsMin, boundsMax, worldPosition);
+                }
+            }
+        }
+    }
+
+    bool TryGetObjectGizmoPivotWorldBounds(
+        const std::vector<SceneObject>& objects,
+        const int objectIndex,
+        glm::vec3& boundsMin,
+        glm::vec3& boundsMax)
+    {
+        bool hasBounds = false;
+        boundsMin = glm::vec3(std::numeric_limits<float>::max());
+        boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+        ExpandWorldBoundsFromRenderableMeshes(objects, objectIndex, boundsMin, boundsMax, hasBounds);
+        return hasBounds;
+    }
 }
 
 glm::mat4 GetObjectWorldMatrix(const std::vector<SceneObject>& objects, int objectIndex)
@@ -172,27 +219,29 @@ void GetObjectWorldBounds(
 
 glm::mat4 GetObjectGizmoWorldMatrix(const std::vector<SceneObject>& objects, int objectIndex)
 {
-    glm::vec3 localBoundsMin;
-    glm::vec3 localBoundsMax;
-    GetObjectLocalSelectionBounds(objects, objectIndex, localBoundsMin, localBoundsMax);
-    const glm::vec3 localCenter = (localBoundsMin + localBoundsMax) * 0.5f;
-    return GetObjectWorldMatrix(objects, objectIndex) * glm::translate(glm::mat4(1.0f), localCenter);
+    glm::vec3 worldBoundsMin;
+    glm::vec3 worldBoundsMax;
+    if (!TryGetObjectGizmoPivotWorldBounds(objects, objectIndex, worldBoundsMin, worldBoundsMax))
+    {
+        GetObjectWorldBounds(objects, objectIndex, worldBoundsMin, worldBoundsMax);
+    }
+    const glm::vec3 pivotWorld = (worldBoundsMin + worldBoundsMax) * 0.5f;
+
+    const glm::mat4 worldMatrix = GetObjectWorldMatrix(objects, objectIndex);
+    const glm::vec3 pivotLocal =
+        glm::vec3(glm::inverse(worldMatrix) * glm::vec4(pivotWorld, 1.0f));
+    return worldMatrix * glm::translate(glm::mat4(1.0f), pivotLocal);
 }
 
 void ApplyObjectGizmoWorldMatrix(
     std::vector<SceneObject>& objects,
     int objectIndex,
-    const glm::mat4& gizmoWorldMatrix)
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix)
 {
-    glm::vec3 localBoundsMin;
-    glm::vec3 localBoundsMax;
-    GetObjectLocalSelectionBounds(objects, objectIndex, localBoundsMin, localBoundsMax);
-    const glm::vec3 localCenter = (localBoundsMin + localBoundsMax) * 0.5f;
-
-    const glm::mat4 newWorldMatrix =
-        gizmoWorldMatrix * glm::translate(glm::mat4(1.0f), -localCenter);
-
-    SetObjectWorldMatrix(objects, objectIndex, newWorldMatrix);
+    const glm::mat4 deltaMatrix = newGizmoWorldMatrix * glm::inverse(oldGizmoWorldMatrix);
+    const glm::mat4 oldWorldMatrix = GetObjectWorldMatrix(objects, objectIndex);
+    SetObjectWorldMatrix(objects, objectIndex, deltaMatrix * oldWorldMatrix);
 }
 
 glm::mat4 GetGroupSelectionGizmoWorldMatrix(
@@ -214,7 +263,10 @@ glm::mat4 GetGroupSelectionGizmoWorldMatrix(
 
         glm::vec3 objectBoundsMin;
         glm::vec3 objectBoundsMax;
-        GetObjectWorldBounds(objects, objectIndex, objectBoundsMin, objectBoundsMax);
+        if (!TryGetObjectGizmoPivotWorldBounds(objects, objectIndex, objectBoundsMin, objectBoundsMax))
+        {
+            GetObjectWorldBounds(objects, objectIndex, objectBoundsMin, objectBoundsMax);
+        }
 
         if (!hasBounds)
         {
@@ -248,8 +300,9 @@ glm::mat4 GetGroupSelectionGizmoWorldMatrix(
     }
 
     glm::mat4 gizmoWorldMatrix = GetObjectWorldMatrix(objects, orientationIndex);
-    gizmoWorldMatrix[3] = glm::vec4(center, 1.0f);
-    return gizmoWorldMatrix;
+    const glm::vec3 pivotLocal =
+        glm::vec3(glm::inverse(gizmoWorldMatrix) * glm::vec4(center, 1.0f));
+    return gizmoWorldMatrix * glm::translate(glm::mat4(1.0f), pivotLocal);
 }
 
 void ApplyGroupSelectionGizmoWorldMatrix(
