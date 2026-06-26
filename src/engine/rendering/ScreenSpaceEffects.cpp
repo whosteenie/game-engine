@@ -87,7 +87,8 @@ namespace
                mode == RenderDebugMode::MotionVectors ||
                IsGBufferDebugMode(mode) ||
                IsRadianceDebugMode(mode) ||
-               IsGiTemporalDebugMode(mode);
+               IsGiTemporalDebugMode(mode) ||
+               IsSsgiDenoiseDebugMode(mode);
     }
 
     int GiTemporalDebugModeIndex(RenderDebugMode mode)
@@ -486,7 +487,16 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::GiDepthHistoryFragmentShader)),
       m_giTemporalDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::GiTemporalDebugFragmentShader))
+          EngineConstants::GiTemporalDebugFragmentShader)),
+      m_ssgiNoiseInjectShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SsgiNoiseInjectFragmentShader)),
+      m_ssgiDenoiseSpatialShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SsgiDenoiseSpatialFragmentShader)),
+      m_ssgiDenoiseDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::SsgiDenoiseDebugFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -504,6 +514,9 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_shadowBlur2Target);
     DestroyInternalTarget(m_hdrCompositeTarget);
     DestroyInternalTarget(m_radianceTarget);
+    DestroyInternalTarget(m_radianceTraceInputTarget);
+    DestroyInternalTarget(m_radianceSpatialBlurTarget);
+    DestroyInternalTarget(m_radianceSpatialTarget);
     DestroyInternalTarget(m_radianceHistoryTarget);
     DestroyInternalTarget(m_radianceTemporalTarget);
     DestroyInternalTarget(m_radianceHistoryDepthTarget);
@@ -814,6 +827,9 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     ResizeInternalTarget(m_hdrCompositeTarget, width, height, format);
     ResizeInternalTarget(m_radianceTarget, width, height, format);
+    ResizeInternalTarget(m_radianceTraceInputTarget, width, height, format);
+    ResizeInternalTarget(m_radianceSpatialBlurTarget, width, height, format);
+    ResizeInternalTarget(m_radianceSpatialTarget, width, height, format);
     ResizeInternalTarget(m_radianceHistoryTarget, width, height, format);
     ResizeInternalTarget(m_radianceTemporalTarget, width, height, format);
     ResizeInternalTarget(m_radianceHistoryDepthTarget, width, height, format);
@@ -1343,9 +1359,10 @@ void ScreenSpaceEffects::Apply(
         m_sceneFramebuffer->HasMaterialGbuffer() &&
         m_radianceTarget.resource != nullptr;
 
+    const float radianceClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+
     if (runRadianceAssembly)
     {
-        const float radianceClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
         m_radianceAssemblyShader->Use(false);
         m_radianceAssemblyShader->SetInt("uDirectLighting", 0);
         m_radianceAssemblyShader->SetInt("uIndirectLighting", 1);
@@ -1364,6 +1381,75 @@ void ScreenSpaceEffects::Apply(
             m_width,
             m_height,
             radianceClear);
+    }
+
+    std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
+    const bool runSsgiDenoise =
+        runRadianceAssembly &&
+        m_ssgiDenoiseEnabled &&
+        m_sceneFramebuffer->HasGeometryNormals() &&
+        m_sceneFramebuffer->HasMaterialGbuffer() &&
+        m_radianceTraceInputTarget.resource != nullptr &&
+        m_radianceSpatialTarget.resource != nullptr;
+
+    if (runRadianceAssembly && (runSsgiDenoise || m_ssgiNoiseInjectionEnabled))
+    {
+        const float noiseStrength =
+            m_ssgiNoiseInjectionEnabled ? m_ssgiNoiseStrength : 0.0f;
+        m_ssgiNoiseInjectShader->Use(false);
+        m_ssgiNoiseInjectShader->SetInt("uRadianceMap", 0);
+        m_ssgiNoiseInjectShader->SetInt("uDepthMap", 1);
+        m_ssgiNoiseInjectShader->SetFloat("uNoiseStrength", noiseStrength);
+        m_ssgiNoiseInjectShader->SetFloat(
+            "uFrameIndex",
+            static_cast<float>(m_giFrameIndex));
+        m_ssgiNoiseInjectShader->BindTextureSlot(0, m_radianceTarget.srvCpuHandle);
+        m_ssgiNoiseInjectShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_ssgiNoiseInjectShader,
+            const_cast<InternalTarget&>(m_radianceTraceInputTarget),
+            m_width,
+            m_height,
+            radianceClear);
+        temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
+    }
+
+    if (runSsgiDenoise)
+    {
+        m_ssgiDenoiseSpatialShader->Use(false);
+        m_ssgiDenoiseSpatialShader->SetInt("uInput", 0);
+        m_ssgiDenoiseSpatialShader->SetInt("uDepthMap", 1);
+        m_ssgiDenoiseSpatialShader->SetInt("uNormalMap", 2);
+        m_ssgiDenoiseSpatialShader->SetInt("uMaterial0Map", 3);
+        m_ssgiDenoiseSpatialShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_ssgiDenoiseSpatialShader->SetVec2("uTexelSize", texelSize);
+        m_ssgiDenoiseSpatialShader->SetFloat("uDepthThreshold", m_ssgiSpatialDepthThreshold);
+        m_ssgiDenoiseSpatialShader->SetFloat("uBlurSpread", m_ssgiSpatialBlurSpread);
+        m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMin", m_ssgiRoughnessSpreadMin);
+        m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMax", m_ssgiRoughnessSpreadMax);
+        m_ssgiDenoiseSpatialShader->SetFloat("uNormalPower", 4.0f);
+        m_ssgiDenoiseSpatialShader->BindTextureSlot(0, temporalInputSrv);
+        m_ssgiDenoiseSpatialShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_ssgiDenoiseSpatialShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
+        DrawFullscreenToTarget(
+            *m_ssgiDenoiseSpatialShader,
+            const_cast<InternalTarget&>(m_radianceSpatialBlurTarget),
+            m_width,
+            m_height,
+            radianceClear);
+
+        m_ssgiDenoiseSpatialShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
+        m_ssgiDenoiseSpatialShader->BindTextureSlot(0, m_radianceSpatialBlurTarget.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_ssgiDenoiseSpatialShader,
+            const_cast<InternalTarget&>(m_radianceSpatialTarget),
+            m_width,
+            m_height,
+            radianceClear);
+
+        temporalInputSrv = m_radianceSpatialTarget.srvCpuHandle;
     }
 
     const bool runGiTemporal =
@@ -1390,7 +1476,7 @@ void ScreenSpaceEffects::Apply(
             m_radianceHistoryValid && m_motionVectorFrameState.historyValid ? 1.0f : 0.0f);
         m_temporalReprojectShader->SetFloat("uTexelSizeX", texelSize.x);
         m_temporalReprojectShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_temporalReprojectShader->BindTextureSlot(0, m_radianceTarget.srvCpuHandle);
+        m_temporalReprojectShader->BindTextureSlot(0, temporalInputSrv);
         m_temporalReprojectShader->BindTextureSlot(1, m_radianceHistoryTarget.srvCpuHandle);
         m_temporalReprojectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -1658,6 +1744,61 @@ void ScreenSpaceEffects::Apply(
                 m_pendingSsaoGpuReadback = true;
             }
             return;
+        }
+        else if (IsSsgiDenoiseDebugMode(m_debugMode))
+        {
+            std::uintptr_t debugSrv = 0;
+            const char* debugSource = "ssgi_denoise";
+            if (m_debugMode == RenderDebugMode::SsgiTraceRaw)
+            {
+                debugSrv = m_radianceTarget.srvCpuHandle;
+                if ((m_ssgiDenoiseEnabled || m_ssgiNoiseInjectionEnabled) &&
+                    m_radianceTraceInputTarget.srvCpuHandle != 0)
+                {
+                    debugSrv = m_radianceTraceInputTarget.srvCpuHandle;
+                }
+                debugSource = "ssgi_trace_raw";
+            }
+            else if (m_debugMode == RenderDebugMode::SsgiDenoiseSpatial)
+            {
+                debugSrv = m_radianceSpatialTarget.srvCpuHandle;
+                debugSource = "ssgi_denoise_spatial";
+            }
+            else if (
+                m_debugMode == RenderDebugMode::SsgiDenoiseTemporal ||
+                m_debugMode == RenderDebugMode::SsgiDenoiseFinal)
+            {
+                debugSrv = m_radianceHistoryTarget.srvCpuHandle;
+                debugSource = m_debugMode == RenderDebugMode::SsgiDenoiseTemporal
+                    ? "ssgi_denoise_temporal"
+                    : "ssgi_denoise_final";
+            }
+
+            if (debugSrv != 0)
+            {
+                m_ssgiDenoiseDebugShader->Use(false, true);
+                m_ssgiDenoiseDebugShader->SetInt("uRadianceMap", 0);
+                m_ssgiDenoiseDebugShader->SetInt("uDepthMap", 1);
+                m_ssgiDenoiseDebugShader->BindTextureSlot(0, debugSrv);
+                m_ssgiDenoiseDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+                m_ssgiDenoiseDebugShader->FlushUniforms();
+                DrawFullscreenQuad();
+                CaptureSsaoDiagnosticsCpu(
+                    runSsao,
+                    compositeRan,
+                    compositeUsesSsao,
+                    pbrDebugActive,
+                    useShadowFactorComposite,
+                    hdrColorSource,
+                    debugSource,
+                    hdrColorSrv,
+                    shadowFactorSrv);
+                if (m_logSsaoApplySnapshot)
+                {
+                    m_pendingSsaoGpuReadback = true;
+                }
+                return;
+            }
         }
         else if (
             IsGiTemporalDebugMode(m_debugMode) &&
@@ -2279,6 +2420,56 @@ float ScreenSpaceEffects::GetGiDepthThreshold() const
 void ScreenSpaceEffects::SetGiDepthThreshold(const float threshold)
 {
     m_giDepthThreshold = std::max(0.001f, threshold);
+}
+
+bool ScreenSpaceEffects::IsSsgiDenoiseEnabled() const
+{
+    return m_ssgiDenoiseEnabled;
+}
+
+void ScreenSpaceEffects::SetSsgiDenoiseEnabled(const bool enabled)
+{
+    m_ssgiDenoiseEnabled = enabled;
+}
+
+bool ScreenSpaceEffects::IsSsgiNoiseInjectionEnabled() const
+{
+    return m_ssgiNoiseInjectionEnabled;
+}
+
+void ScreenSpaceEffects::SetSsgiNoiseInjectionEnabled(const bool enabled)
+{
+    m_ssgiNoiseInjectionEnabled = enabled;
+}
+
+float ScreenSpaceEffects::GetSsgiNoiseStrength() const
+{
+    return m_ssgiNoiseStrength;
+}
+
+void ScreenSpaceEffects::SetSsgiNoiseStrength(const float strength)
+{
+    m_ssgiNoiseStrength = std::clamp(strength, 0.0f, 1.0f);
+}
+
+float ScreenSpaceEffects::GetSsgiSpatialDepthThreshold() const
+{
+    return m_ssgiSpatialDepthThreshold;
+}
+
+void ScreenSpaceEffects::SetSsgiSpatialDepthThreshold(const float threshold)
+{
+    m_ssgiSpatialDepthThreshold = std::max(0.001f, threshold);
+}
+
+float ScreenSpaceEffects::GetSsgiSpatialBlurSpread() const
+{
+    return m_ssgiSpatialBlurSpread;
+}
+
+void ScreenSpaceEffects::SetSsgiSpatialBlurSpread(const float spread)
+{
+    m_ssgiSpatialBlurSpread = std::clamp(spread, 0.25f, 4.0f);
 }
 
 float ScreenSpaceEffects::GetSmaaThreshold() const

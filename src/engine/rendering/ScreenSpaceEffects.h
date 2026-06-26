@@ -130,6 +130,21 @@ public:
     float GetGiDepthThreshold() const;
     void SetGiDepthThreshold(float threshold);
 
+    bool IsSsgiDenoiseEnabled() const;
+    void SetSsgiDenoiseEnabled(bool enabled);
+
+    bool IsSsgiNoiseInjectionEnabled() const;
+    void SetSsgiNoiseInjectionEnabled(bool enabled);
+
+    float GetSsgiNoiseStrength() const;
+    void SetSsgiNoiseStrength(float strength);
+
+    float GetSsgiSpatialDepthThreshold() const;
+    void SetSsgiSpatialDepthThreshold(float threshold);
+
+    float GetSsgiSpatialBlurSpread() const;
+    void SetSsgiSpatialBlurSpread(float spread);
+
     float GetSmaaThreshold() const;
     void SetSmaaThreshold(float threshold);
 
@@ -207,6 +222,9 @@ private:
     InternalTarget m_shadowBlur2Target;
     InternalTarget m_hdrCompositeTarget;
     InternalTarget m_radianceTarget;
+    InternalTarget m_radianceTraceInputTarget;
+    InternalTarget m_radianceSpatialBlurTarget;
+    InternalTarget m_radianceSpatialTarget;
     InternalTarget m_radianceHistoryTarget;
     InternalTarget m_radianceTemporalTarget;
     InternalTarget m_radianceHistoryDepthTarget;
@@ -242,6 +260,9 @@ private:
     std::unique_ptr<Shader> m_temporalReprojectShader;
     std::unique_ptr<Shader> m_giDepthHistoryShader;
     std::unique_ptr<Shader> m_giTemporalDebugShader;
+    std::unique_ptr<Shader> m_ssgiNoiseInjectShader;
+    std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
+    std::unique_ptr<Shader> m_ssgiDenoiseDebugShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -276,6 +297,13 @@ private:
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
     float m_giDepthThreshold = 0.05f;
+    bool m_ssgiDenoiseEnabled = true;
+    bool m_ssgiNoiseInjectionEnabled = false;
+    float m_ssgiNoiseStrength = 0.12f;
+    float m_ssgiSpatialDepthThreshold = 0.02f;
+    float m_ssgiSpatialBlurSpread = 1.0f;
+    float m_ssgiRoughnessSpreadMin = 0.5f;
+    float m_ssgiRoughnessSpreadMax = 1.75f;
     float m_smaaThreshold = 0.05f;
     int m_smaaSearchSteps = 4;
     float m_ssaoBlurDepthThreshold = 0.02f;

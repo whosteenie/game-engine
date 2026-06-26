@@ -1056,11 +1056,45 @@ void LightingPanel::Draw(
                 scene.MarkDirty();
             }
             ImGui::TextDisabled(
-                "Independent of LDR TAA. Uses per-frame prev view-proj from AdvanceTemporalFrame. "
-                "Validate with Anti-aliasing = None first; depth disocclusion comes in Phase 5.");
+                "Independent of LDR TAA. Validate with Anti-aliasing = None.");
+            ImGui::TreePop();
+        }
+
+        if (ImGui::TreeNode("SSGI denoise (Phase 5)"))
+        {
+            bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
+            if (ImGui::Checkbox("Enable spatial + temporal denoise", &denoiseEnabled))
+            {
+                screenSpaceEffects.SetSsgiDenoiseEnabled(denoiseEnabled);
+                scene.MarkDirty();
+            }
+            bool noiseEnabled = screenSpaceEffects.IsSsgiNoiseInjectionEnabled();
+            if (ImGui::Checkbox("Synthetic trace noise (test)", &noiseEnabled))
+            {
+                screenSpaceEffects.SetSsgiNoiseInjectionEnabled(noiseEnabled);
+                scene.MarkDirty();
+            }
+            float noiseStrength = screenSpaceEffects.GetSsgiNoiseStrength();
+            if (ImGui::SliderFloat("Noise strength", &noiseStrength, 0.0f, 0.5f))
+            {
+                screenSpaceEffects.SetSsgiNoiseStrength(noiseStrength);
+                scene.MarkDirty();
+            }
+            float blurSpread = screenSpaceEffects.GetSsgiSpatialBlurSpread();
+            if (ImGui::SliderFloat("Spatial blur spread", &blurSpread, 0.25f, 4.0f))
+            {
+                screenSpaceEffects.SetSsgiSpatialBlurSpread(blurSpread);
+                scene.MarkDirty();
+            }
+            float spatialDepth = screenSpaceEffects.GetSsgiSpatialDepthThreshold();
+            if (ImGui::SliderFloat("Spatial depth threshold", &spatialDepth, 0.001f, 0.1f, "%.3f"))
+            {
+                screenSpaceEffects.SetSsgiSpatialDepthThreshold(spatialDepth);
+                scene.MarkDirty();
+            }
             ImGui::TextDisabled(
-                "Debug: disocclusion = green when reprojection in bounds; "
-                "temporal delta = black when converged (try with AA off, hold still).");
+                "Pipeline: radiance assembly → optional noise → spatial blur → temporal. "
+                "Enable noise, compare SSGI trace raw vs denoise final.");
             ImGui::TreePop();
         }
 
@@ -1099,6 +1133,10 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RadianceTemporal),
             RenderDebugModeLabel(RenderDebugMode::GiDisocclusion),
             RenderDebugModeLabel(RenderDebugMode::RadianceTemporalDelta),
+            RenderDebugModeLabel(RenderDebugMode::SsgiTraceRaw),
+            RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseSpatial),
+            RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseTemporal),
+            RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseFinal),
         };
 
         if (ImGui::Combo(
@@ -1246,9 +1284,27 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::RadianceTemporalDelta))
         {
             ImGui::TextWrapped(
-                "Amplified |temporal − raw radiance|. Black = converged (temporal equals raw). "
-                "With AA off and camera still, should go black within a few frames. "
-                "Thin edge glow with TAA on is expected (jitter shifts raw radiance at silhouettes).");
+                "Amplified |temporal − raw radiance|. Black = converged. Edge glow during camera motion is OK.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiTraceRaw))
+        {
+            ImGui::TextWrapped(
+                "Simulated SSGI trace output (radiance + optional synthetic noise). Should look grainy when noise is on.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiDenoiseSpatial))
+        {
+            ImGui::TextWrapped(
+                "After edge-aware spatial blur only. Noise should be reduced vs trace raw; edges should stay sharp.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiDenoiseTemporal))
+        {
+            ImGui::TextWrapped(
+                "After spatial + temporal accumulation. Hold still — should be smoother than spatial-only.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiDenoiseFinal))
+        {
+            ImGui::TextWrapped(
+                "Full denoise pipeline output (same as temporal stage). Compare against trace raw with noise enabled.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

@@ -70,6 +70,14 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "GI disocclusion";
     case RenderDebugMode::RadianceTemporalDelta:
         return "Radiance temporal delta";
+    case RenderDebugMode::SsgiTraceRaw:
+        return "SSGI trace raw";
+    case RenderDebugMode::SsgiDenoiseSpatial:
+        return "SSGI denoise spatial";
+    case RenderDebugMode::SsgiDenoiseTemporal:
+        return "SSGI denoise temporal";
+    case RenderDebugMode::SsgiDenoiseFinal:
+        return "SSGI denoise final";
     default:
         return "Unknown";
     }
@@ -138,6 +146,20 @@ bool IsGiTemporalDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::RadianceTemporal:
     case RenderDebugMode::GiDisocclusion:
     case RenderDebugMode::RadianceTemporalDelta:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSsgiDenoiseDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::SsgiTraceRaw:
+    case RenderDebugMode::SsgiDenoiseSpatial:
+    case RenderDebugMode::SsgiDenoiseTemporal:
+    case RenderDebugMode::SsgiDenoiseFinal:
         return true;
     default:
         return false;
