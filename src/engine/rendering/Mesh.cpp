@@ -26,13 +26,32 @@ Mesh::Mesh(
     }
 
     m_indices.assign(indices, indices + indexCount);
+}
 
+void Mesh::EnsureGpuResources() const
+{
+    if (m_vertexBuffer.IsValid() && m_indexBuffer.IsValid())
+    {
+        return;
+    }
+
+    if (m_vertices.empty() || m_indices.empty() || m_indexCount == 0)
+    {
+        return;
+    }
+
+    if (!GfxContext::Get().IsInitialized() || GfxContext::Get().IsDeviceRemoved())
+    {
+        return;
+    }
+
+    Mesh* self = const_cast<Mesh*>(this);
     const std::uint32_t vertexByteSize =
         static_cast<std::uint32_t>(m_vertices.size() * sizeof(float));
     const std::uint32_t indexByteSize =
         static_cast<std::uint32_t>(m_indices.size() * sizeof(unsigned int));
-    m_vertexBuffer.Create(GpuBuffer::Type::Vertex, m_vertices.data(), vertexByteSize);
-    m_indexBuffer.Create(GpuBuffer::Type::Index, m_indices.data(), indexByteSize);
+    self->m_vertexBuffer.Create(GpuBuffer::Type::Vertex, m_vertices.data(), vertexByteSize);
+    self->m_indexBuffer.Create(GpuBuffer::Type::Index, m_indices.data(), indexByteSize);
 }
 
 Mesh::~Mesh()
@@ -89,6 +108,8 @@ std::unique_ptr<Mesh> Mesh::Clone() const
 
 void Mesh::Draw() const
 {
+    EnsureGpuResources();
+
     if (!m_vertexBuffer.IsValid() || !m_indexBuffer.IsValid() || m_indexCount == 0)
     {
         return;

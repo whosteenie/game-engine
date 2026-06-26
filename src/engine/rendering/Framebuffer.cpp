@@ -261,7 +261,8 @@ void Framebuffer::Create(const int width, const int height)
     if (m_rtvBaseIndex == UINT32_MAX || (needsDepth && m_dsvIndex == UINT32_MAX))
     {
         const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
+        throw std::runtime_error(
+            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
     }
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
 
@@ -353,7 +354,8 @@ void Framebuffer::Create(const int width, const int height)
         if (m_colorSrvIndices[attachmentIndex] == UINT32_MAX)
         {
             const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
+        throw std::runtime_error(
+            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
         }
 
         GfxContext::Get().CreateSrvForTexture(
@@ -457,7 +459,8 @@ void Framebuffer::Create(const int width, const int height)
         if (m_depthSrvIndex == UINT32_MAX)
         {
             const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(gpuError.empty() ? "GPU descriptor/SRV allocation failed" : gpuError);
+        throw std::runtime_error(
+            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
         }
 
         GfxContext::Get().CreateSrvForTexture(
@@ -597,6 +600,89 @@ void Framebuffer::ClearRenderTarget() const
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
     TransitionColorAttachment(0, kShaderResourceState);
+}
+
+void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float clearColor[4]) const
+{
+    if (m_colorResources[0] == nullptr || m_rtvBaseIndex == UINT32_MAX)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        TransitionColorAttachment(attachmentIndex, kRenderTargetState);
+    }
+
+    std::array<D3D12_CPU_DESCRIPTOR_HANDLE, MaxColorAttachments> rtvs{};
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        rtvs[static_cast<std::size_t>(attachmentIndex)].ptr =
+            GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+    }
+
+    commandList->OMSetRenderTargets(
+        static_cast<UINT>(m_colorAttachmentCount),
+        rtvs.data(),
+        FALSE,
+        nullptr);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_width);
+    viewport.Height = static_cast<float>(m_height);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, m_width, m_height};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    if (clearAttachments)
+    {
+        const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+        const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            commandList->ClearRenderTargetView(
+                rtvs[static_cast<std::size_t>(attachmentIndex)],
+                resolvedClearColor,
+                0,
+                nullptr);
+        }
+    }
+}
+
+void Framebuffer::PrepareDepthForDepthTestPass() const
+{
+    TransitionDepth(kDepthWriteState);
+}
+
+bool Framebuffer::BindGizmoDrawTarget() const
+{
+    if (m_colorResources[0] == nullptr || m_rtvBaseIndex == UINT32_MAX || m_depthResource == nullptr)
+    {
+        return false;
+    }
+
+    BindColorRenderTarget(false, nullptr);
+    PrepareDepthForDepthTestPass();
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    D3D12_CPU_DESCRIPTOR_HANDLE colorRtv{};
+    colorRtv.ptr = GetColorRtvCpuHandle(0);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = GetDepthDsvCpuHandle();
+
+    commandList->OMSetRenderTargets(1, &colorRtv, FALSE, &depthDsv);
+    GfxContext::Get().SetBoundOutputFramebuffer(this);
+    return true;
+}
+
+void Framebuffer::RestoreDepthShaderResource() const
+{
+    TransitionDepth(kShaderResourceState);
 }
 
 void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearColor[4]) const

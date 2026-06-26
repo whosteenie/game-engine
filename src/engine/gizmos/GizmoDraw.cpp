@@ -12,24 +12,24 @@ namespace GizmoDraw
         const Shader& shader,
         const Camera& camera,
         const std::vector<float>& vertices,
-        const glm::vec3& color)
+        const glm::vec3& color,
+        const bool depthReadOnly)
+{
+    if (vertices.size() < 6 || vertices.size() % 3 != 0)
     {
-        if (vertices.size() < 6 || vertices.size() % 3 != 0)
-        {
-            return;
-        }
+        return;
+    }
 
-        const std::uint32_t byteSize =
-            static_cast<std::uint32_t>(vertices.size() * sizeof(float));
-        const GfxContext::TransientUploadAllocation upload =
-            GfxContext::Get().AllocateTransientUpload(vertices.data(), byteSize);
-        if (upload.gpuAddress == 0 || upload.byteSize == 0)
-        {
-            return;
-        }
+    const std::uint32_t byteSize =
+        static_cast<std::uint32_t>(vertices.size() * sizeof(float));
+    const GfxContext::TransientUploadAllocation upload =
+        GfxContext::Get().AllocateTransientUpload(vertices.data(), byteSize);
+    if (upload.gpuAddress == 0 || upload.byteSize == 0)
+    {
+        return;
+    }
 
-        // Editor viewport framebuffers are R8G8B8A8 (post-tonemap LDR).
-        shader.Use(false, true);
+    shader.Use(false, true, false, depthReadOnly);
         shader.SetMat4("uView", camera.GetViewMatrix());
         shader.SetMat4("uProjection", camera.GetUnjitteredProjectionMatrix());
         shader.SetVec3("uColor", color);

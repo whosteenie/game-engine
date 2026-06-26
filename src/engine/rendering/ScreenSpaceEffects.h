@@ -178,7 +178,7 @@ public:
     float GetSsaoBlurDepthThreshold() const;
     void SetSsaoBlurDepthThreshold(float threshold);
 
-    void BlitDepthToFramebuffer(std::uintptr_t drawFramebuffer, int viewportWidth, int viewportHeight) const;
+    bool BlitDepthToFramebuffer(const Framebuffer* viewportTarget) const;
 
     void BeginGridOverlayPass() const;
     void EndGridOverlayPass() const;
@@ -276,6 +276,7 @@ private:
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_gridCompositeShader;
+    std::unique_ptr<Shader> m_depthBlitShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;

@@ -20,9 +20,18 @@ public:
     Shader& operator=(Shader&& other) noexcept;
 
     // viewportLdr selects the UNORM pipeline for the editor viewport framebuffer.
-    void Use(bool mrtPass = false, bool viewportLdr = false, bool doubleSided = false) const;
+    // depthReadOnly selects LDR + scene-depth testing (editor world gizmos).
+    void Use(
+        bool mrtPass = false,
+        bool viewportLdr = false,
+        bool doubleSided = false,
+        bool depthReadOnly = false) const;
     // Binds PSO/root signature without clearing texture slots (post-process draws).
-    void BindPipeline(bool mrtPass = false, bool viewportLdr = false, bool doubleSided = false) const;
+    void BindPipeline(
+        bool mrtPass = false,
+        bool viewportLdr = false,
+        bool doubleSided = false,
+        bool depthReadOnly = false) const;
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -75,6 +84,7 @@ private:
     void* m_pipelineState = nullptr;
     void* m_pipelineStateMrt = nullptr;
     void* m_pipelineStateLdr = nullptr;
+    void* m_pipelineStateLdrDepthRead = nullptr;
     void* m_pipelineStateDoubleSided = nullptr;
     void* m_pipelineStateMrtDoubleSided = nullptr;
     void* m_pipelineStateLdrDoubleSided = nullptr;

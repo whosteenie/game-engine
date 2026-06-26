@@ -98,7 +98,8 @@ void CameraGizmoRenderer::Draw(
     const Camera& camera,
     const std::vector<SceneObject>& objects,
     const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
-    const std::vector<int>& selectedObjectIndices) const
+    const std::vector<int>& selectedObjectIndices,
+    const bool depthReadOnly) const
 {
     if (objects.empty() || selectedObjectIndices.empty())
     {
@@ -133,6 +134,6 @@ void CameraGizmoRenderer::Draw(
             continue;
         }
 
-        GizmoDraw::DrawLineVertices(*m_shader, camera, vertices, GizmoColor(true));
+        GizmoDraw::DrawLineVertices(*m_shader, camera, vertices, GizmoColor(true), depthReadOnly);
     }
 }

@@ -38,6 +38,7 @@ public:
     const std::vector<unsigned int>& GetIndices() const;
 
 private:
+    void EnsureGpuResources() const;
     void ReleaseGpuResources();
 
     unsigned int m_indexCount = 0;

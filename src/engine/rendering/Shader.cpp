@@ -76,6 +76,7 @@ Shader::~Shader()
     releasePipeline(m_pipelineState);
     releasePipeline(m_pipelineStateMrt);
     releasePipeline(m_pipelineStateLdr);
+    releasePipeline(m_pipelineStateLdrDepthRead);
     releasePipeline(m_pipelineStateDoubleSided);
     releasePipeline(m_pipelineStateMrtDoubleSided);
     releasePipeline(m_pipelineStateLdrDoubleSided);
@@ -103,6 +104,7 @@ Shader::Shader(Shader&& other) noexcept
       m_pipelineState(other.m_pipelineState),
       m_pipelineStateMrt(other.m_pipelineStateMrt),
       m_pipelineStateLdr(other.m_pipelineStateLdr),
+      m_pipelineStateLdrDepthRead(other.m_pipelineStateLdrDepthRead),
       m_pipelineStateDoubleSided(other.m_pipelineStateDoubleSided),
       m_pipelineStateMrtDoubleSided(other.m_pipelineStateMrtDoubleSided),
       m_pipelineStateLdrDoubleSided(other.m_pipelineStateLdrDoubleSided),
@@ -115,6 +117,7 @@ Shader::Shader(Shader&& other) noexcept
     other.m_pipelineState = nullptr;
     other.m_pipelineStateMrt = nullptr;
     other.m_pipelineStateLdr = nullptr;
+    other.m_pipelineStateLdrDepthRead = nullptr;
     other.m_pipelineStateDoubleSided = nullptr;
     other.m_pipelineStateMrtDoubleSided = nullptr;
     other.m_pipelineStateLdrDoubleSided = nullptr;
@@ -134,6 +137,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         m_pipelineState = other.m_pipelineState;
         m_pipelineStateMrt = other.m_pipelineStateMrt;
         m_pipelineStateLdr = other.m_pipelineStateLdr;
+        m_pipelineStateLdrDepthRead = other.m_pipelineStateLdrDepthRead;
         m_pipelineStateDoubleSided = other.m_pipelineStateDoubleSided;
         m_pipelineStateMrtDoubleSided = other.m_pipelineStateMrtDoubleSided;
         m_pipelineStateLdrDoubleSided = other.m_pipelineStateLdrDoubleSided;
@@ -145,6 +149,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         other.m_pipelineState = nullptr;
         other.m_pipelineStateMrt = nullptr;
         other.m_pipelineStateLdr = nullptr;
+        other.m_pipelineStateLdrDepthRead = nullptr;
         other.m_pipelineStateDoubleSided = nullptr;
         other.m_pipelineStateMrtDoubleSided = nullptr;
         other.m_pipelineStateLdrDoubleSided = nullptr;
@@ -485,6 +490,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isSelectionGlow = fragmentPath.find("selection_glow") != std::string::npos;
     const bool isSelectionSharp = fragmentPath.find("selection_sharp") != std::string::npos;
     const bool isGridComposite = fragmentPath.find("grid_composite") != std::string::npos;
+    const bool isDepthBlit = fragmentPath.find("depth_blt") != std::string::npos;
 
     auto setupAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
         blendDesc.BlendEnable = TRUE;
@@ -575,6 +581,24 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         };
         psoDesc.InputLayout = {shadowLayout, 2};
     }
+    else if (isFullscreen && isDepthBlit)
+    {
+        static D3D12_INPUT_ELEMENT_DESC fullscreenLayout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        psoDesc.InputLayout = {fullscreenLayout, 2};
+        psoDesc.NumRenderTargets = 0;
+        for (UINT targetIndex = 0; targetIndex < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++targetIndex)
+        {
+            psoDesc.RTVFormats[targetIndex] = DXGI_FORMAT_UNKNOWN;
+        }
+        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        psoDesc.DepthStencilState.DepthEnable = TRUE;
+        psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+        psoDesc.DepthStencilState.StencilEnable = FALSE;
+    }
     else if (isFullscreen || isIblBrdf)
     {
         static D3D12_INPUT_ELEMENT_DESC fullscreenLayout[] = {
@@ -635,6 +659,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         applySingleRenderTarget(DXGI_FORMAT_R16G16B16A16_FLOAT);
         psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         applyNoDepthPass();
+        psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
     }
     else if (isGridVertex && isLinePixel)
     {
@@ -757,6 +782,12 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             m_pipelineStateLdrDoubleSided = createPipeline(psoDesc);
         }
     }
+    else if (isDepthBlit)
+    {
+        m_pipelineState = createPipeline(psoDesc);
+        m_pipelineStateLdr = nullptr;
+        m_pipelineStateMrt = nullptr;
+    }
     else if (isFullscreen || isIblBrdf)
     {
         m_pipelineState = createPipeline(psoDesc);
@@ -784,7 +815,13 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         if (isGizmoLineVertex && isLinePixel)
         {
             applySingleRenderTarget(DXGI_FORMAT_R8G8B8A8_UNORM);
+            applyNoDepthPass();
+            psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
             m_pipelineStateLdr = createPipeline(psoDesc);
+
+            setupDepthReadOnly(psoDesc.DepthStencilState);
+            psoDesc.DSVFormat = DXGI_FORMAT_D24_UNORM_S8_UINT;
+            m_pipelineStateLdrDepthRead = createPipeline(psoDesc);
         }
         else
         {
@@ -888,7 +925,11 @@ void Shader::WriteScalarArray(
     }
 }
 
-void Shader::BindPipeline(const bool mrtPass, const bool viewportLdr, const bool doubleSided) const
+void Shader::BindPipeline(
+    const bool mrtPass,
+    const bool viewportLdr,
+    const bool doubleSided,
+    const bool depthReadOnly) const
 {
     g_activeShader = this;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
@@ -912,6 +953,10 @@ void Shader::BindPipeline(const bool mrtPass, const bool viewportLdr, const bool
     {
         pipeline = m_pipelineStateMrt;
     }
+    else if (viewportLdr && depthReadOnly && m_pipelineStateLdrDepthRead != nullptr)
+    {
+        pipeline = m_pipelineStateLdrDepthRead;
+    }
     else if (viewportLdr && m_pipelineStateLdr != nullptr)
     {
         pipeline = m_pipelineStateLdr;
@@ -920,13 +965,17 @@ void Shader::BindPipeline(const bool mrtPass, const bool viewportLdr, const bool
     d3dCommandList->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(m_rootSignature));
 }
 
-void Shader::Use(const bool mrtPass, const bool viewportLdr, const bool doubleSided) const
+void Shader::Use(
+    const bool mrtPass,
+    const bool viewportLdr,
+    const bool doubleSided,
+    const bool depthReadOnly) const
 {
     std::fill(
         const_cast<std::vector<std::uintptr_t>&>(m_textureSlots).begin(),
         const_cast<std::vector<std::uintptr_t>&>(m_textureSlots).end(),
         0);
-    BindPipeline(mrtPass, viewportLdr, doubleSided);
+    BindPipeline(mrtPass, viewportLdr, doubleSided, depthReadOnly);
 }
 
 void Shader::UseOnCommandList(void* commandList) const

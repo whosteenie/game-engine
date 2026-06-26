@@ -1,6 +1,7 @@
 #include "app/scene/SceneMeshLibrary.h"
 
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/rhi/GfxContext.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "primitives/Capsule.h"
@@ -41,6 +42,19 @@ void SceneMeshLibrary::EnsurePrimitives() const
     SceneMeshLibrary* self = const_cast<SceneMeshLibrary*>(this);
     self->InvalidatePrimitives();
 
+    if (!GfxContext::Get().IsInitialized())
+    {
+        throw std::runtime_error(
+            "Failed to create primitive meshes: graphics context is not initialized");
+    }
+
+    std::string deviceRemovedReason;
+    if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+    {
+        throw std::runtime_error(
+            "Failed to create primitive meshes: D3D12 device was removed (" + deviceRemovedReason + ")");
+    }
+
     auto createPrimitive =
         [&](const char* name, auto createFn, std::unique_ptr<Mesh>& outMesh) {
             try
@@ -53,6 +67,13 @@ void SceneMeshLibrary::EnsurePrimitives() const
                 throw std::runtime_error(
                     std::string("Failed to create primitive mesh '") + name + "': "
                     + SafeExceptionMessage(exception));
+            }
+            catch (...)
+            {
+                self->InvalidatePrimitives();
+                throw std::runtime_error(
+                    std::string("Failed to create primitive mesh '") + name
+                    + "': unknown exception");
             }
         };
 

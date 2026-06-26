@@ -23,6 +23,10 @@ public:
 
     void ClearRenderTarget() const;
     void BindDrawTarget(bool clearAttachments = true, const float clearColor[4] = nullptr) const;
+    void BindColorRenderTarget(bool clearAttachments = false, const float clearColor[4] = nullptr) const;
+    bool BindGizmoDrawTarget() const;
+    void PrepareDepthForDepthTestPass() const;
+    void RestoreDepthShaderResource() const;
     void EnsureShaderResourceState() const;
     std::uintptr_t GetColorSrvCpuHandle(int attachmentIndex = 0) const;
     std::uintptr_t GetDepthSrvCpuHandle() const;

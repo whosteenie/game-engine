@@ -6,10 +6,22 @@
 #include <d3d12.h>
 
 #include <cstring>
+#include <sstream>
 #include <stdexcept>
 
 namespace
 {
+    std::string FormatHresult(const HRESULT hr)
+    {
+        std::ostringstream stream;
+        stream << "0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr);
+        return stream.str();
+    }
+
+    [[noreturn]] void ThrowGpuBufferError(const std::string& message)
+    {
+        throw std::runtime_error(message);
+    }
     std::uint64_t AlignBufferSize(const std::uint32_t byteSize)
     {
         return (static_cast<std::uint64_t>(byteSize) + 255ull) & ~255ull;
@@ -66,7 +78,14 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
 
     if (!GfxContext::Get().IsInitialized())
     {
-        throw std::runtime_error("Failed to create GPU buffer: graphics context is not initialized");
+        ThrowGpuBufferError("Failed to create GPU buffer: graphics context is not initialized");
+    }
+
+    std::string deviceRemovedReason;
+    if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+    {
+        ThrowGpuBufferError(
+            "Failed to create GPU buffer: D3D12 device was removed (" + deviceRemovedReason + ")");
     }
 
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
@@ -98,9 +117,8 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
         IID_PPV_ARGS(&resource));
     if (FAILED(createDefaultResult))
     {
-        throw std::runtime_error(
-            std::string("Failed to create GPU buffer (default heap) (HRESULT=0x")
-            + std::to_string(static_cast<unsigned long>(createDefaultResult)) + ")");
+        ThrowGpuBufferError(
+            "Failed to create GPU buffer (default heap) (HRESULT=" + FormatHresult(createDefaultResult) + ")");
     }
 
     D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};

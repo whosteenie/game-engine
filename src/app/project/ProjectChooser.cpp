@@ -111,6 +111,17 @@ bool ProjectChooser::OpenProjectAtPath(
             NativeProgressWindow::Instance().SetMessage("Finishing previous GPU work...");
             NativeProgressWindow::Instance().SetProgress(0.05f);
             GfxContext::Get().WaitForSwapchainFrames();
+
+            std::string deviceRemovedReason;
+            if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+            {
+                outError = "Cannot open project: D3D12 device was removed (" + deviceRemovedReason
+                    + "). Restart the editor.";
+                EngineLog::LogFailure("project", "OpenProject", outError);
+                ReturnToStartupWithError(project, scene, outError);
+                NativeProgressWindow::Instance().End();
+                return false;
+            }
         }
 
         NativeProgressWindow::Instance().SetMessage("Loading project file...");

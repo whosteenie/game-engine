@@ -467,6 +467,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_gridCompositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GridCompositeFragmentShader)),
+      m_depthBlitShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DepthBlitFragmentShader)),
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader)),
@@ -2750,14 +2753,39 @@ void ScreenSpaceEffects::SetSsaoBlurDepthThreshold(const float threshold)
     m_ssaoBlurDepthThreshold = std::clamp(threshold, 0.001f, 0.25f);
 }
 
-void ScreenSpaceEffects::BlitDepthToFramebuffer(
-    const std::uintptr_t drawFramebuffer,
-    const int viewportWidth,
-    const int viewportHeight) const
+bool ScreenSpaceEffects::BlitDepthToFramebuffer(const Framebuffer* viewportTarget) const
 {
-    (void)drawFramebuffer;
-    (void)viewportWidth;
-    (void)viewportHeight;
-    // Depth texture copies are not reliable across D3D12 drivers; gizmos draw without
-    // viewport depth for now.
+    if (viewportTarget == nullptr || !m_enabled || m_sceneFramebuffer == nullptr
+        || !m_sceneFramebuffer->IsValid() || m_sceneFramebuffer->GetDepthResource() == nullptr
+        || viewportTarget->GetDepthResource() == nullptr || m_depthBlitShader == nullptr)
+    {
+        return false;
+    }
+
+    m_sceneFramebuffer->EnsureShaderResourceState();
+    viewportTarget->PrepareDepthForDepthTestPass();
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = viewportTarget->GetDepthDsvCpuHandle();
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, &depthDsv);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(viewportTarget->GetWidth());
+    viewport.Height = static_cast<float>(viewportTarget->GetHeight());
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, viewportTarget->GetWidth(), viewportTarget->GetHeight()};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    GfxContext::Get().ResetDrawSrvTable();
+    m_depthBlitShader->Use(false, false);
+    m_depthBlitShader->SetInt("uDepth", 0);
+    m_depthBlitShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+    m_depthBlitShader->FlushUniforms();
+    DrawFullscreenQuad();
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    return true;
 }

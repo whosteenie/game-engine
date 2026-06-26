@@ -12,5 +12,6 @@ namespace GizmoDraw
         const Shader& shader,
         const Camera& camera,
         const std::vector<float>& vertices,
-        const glm::vec3& color);
+        const glm::vec3& color,
+        bool depthReadOnly = true);
 }

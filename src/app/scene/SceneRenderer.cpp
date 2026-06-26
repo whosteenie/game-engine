@@ -1,6 +1,7 @@
 #include "engine/gizmos/CameraGizmoRenderer.h"
 #include "engine/gizmos/ColliderGizmoRenderer.h"
 #include "engine/gizmos/LightGizmoRenderer.h"
+#include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/GridRenderer.h"
 
 #include "app/scene/SceneRenderer.h"
@@ -413,44 +414,6 @@ void SceneRenderer::Render(
         m_grid->Draw(camera, false);
     }
 
-    if (target != nullptr && !usePostProcess)
-    {
-        target->BindDrawTarget(false);
-    }
-
-    if (target != nullptr)
-    {
-        target->BindDrawTarget(false);
-    }
-
-    const SceneSelection& selection = scene.GetSelection();
-    if (options.showCameraGizmos)
-    {
-        m_cameraGizmos->Draw(
-            camera,
-            objects,
-            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-            selection.indices);
-    }
-
-    if (options.showLightGizmos && scene.GetShowLightGizmos())
-    {
-        m_lightGizmos->Draw(
-            camera,
-            objects,
-            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-            selection.indices);
-    }
-
-    if (options.showColliderGizmos)
-    {
-        m_colliderGizmos->Draw(
-            camera,
-            objects,
-            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-            selection.indices);
-    }
-
     if (!usePostProcess && options.showEditorOverlay)
     {
         if (const SceneEditor* editor = scene.TryGetSceneEditor())
@@ -459,9 +422,81 @@ void SceneRenderer::Render(
         }
     }
 
-    if (target != nullptr)
+    const bool drawWorldGizmos =
+        options.showCameraGizmos
+        || (options.showLightGizmos && scene.GetShowLightGizmos())
+        || options.showColliderGizmos;
+
+    if (target != nullptr && drawWorldGizmos)
     {
-        target->Unbind();
+        GfxContext::Get().ResetDrawSrvTable();
+
+        auto* viewportTarget = reinterpret_cast<Framebuffer*>(targetFramebuffer);
+        bool viewportDepthReadOnly = false;
+        if (usePostProcess)
+        {
+            if (m_screenSpaceEffects->BlitDepthToFramebuffer(viewportTarget))
+            {
+                viewportDepthReadOnly = viewportTarget->BindGizmoDrawTarget();
+            }
+            if (!viewportDepthReadOnly)
+            {
+                viewportTarget->BindDrawTarget(false);
+            }
+        }
+        else
+        {
+            viewportDepthReadOnly = viewportTarget->BindGizmoDrawTarget();
+            if (!viewportDepthReadOnly)
+            {
+                viewportTarget->BindDrawTarget(false);
+            }
+        }
+
+        const bool depthReadOnly = viewportDepthReadOnly;
+
+        const SceneSelection& selection = scene.GetSelection();
+        if (options.showLightGizmos && scene.GetShowLightGizmos())
+        {
+            m_lightGizmos->Draw(
+                camera,
+                objects,
+                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+                selection.indices,
+                depthReadOnly);
+        }
+
+        if (options.showCameraGizmos)
+        {
+            m_cameraGizmos->Draw(
+                camera,
+                objects,
+                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+                selection.indices,
+                depthReadOnly);
+        }
+
+        if (options.showColliderGizmos)
+        {
+            m_colliderGizmos->Draw(
+                camera,
+                objects,
+                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+                selection.indices,
+                depthReadOnly);
+        }
+
+        if (viewportDepthReadOnly)
+        {
+            viewportTarget->BindColorRenderTarget(false, nullptr);
+            viewportTarget->RestoreDepthShaderResource();
+        }
+
+        viewportTarget->Unbind();
+    }
+    else if (target != nullptr)
+    {
+        reinterpret_cast<Framebuffer*>(targetFramebuffer)->Unbind();
     }
 
     (void)viewportWidth;
