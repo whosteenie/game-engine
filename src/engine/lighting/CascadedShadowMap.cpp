@@ -200,22 +200,33 @@ void CascadedShadowMap::BeginFrame(
     const float shadowFarPlane = std::min(camera.GetFarPlane(), shadowDrawDistance);
     m_cascadeEndSplits[0] = shadowFarPlane;
 
-    const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
-    const std::array<glm::vec3, 8> frustumCorners = ComputeCascadeFrustumCorners(
-        inverseViewMatrix,
-        camera.GetAspect(),
-        camera.GetFov(),
-        camera.GetNearPlane(),
-        shadowFarPlane);
+    if (hasCasterBounds)
+    {
+        m_cascadeSetups[0] = BuildShadowLightSpaceForBounds(
+            lightDirectionTowardSource,
+            casterBoundsMin,
+            casterBoundsMax,
+            m_resolution,
+            settings.GetXyMarginFraction(),
+            settings.GetZMarginFraction());
+    }
+    else
+    {
+        const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
+        const std::array<glm::vec3, 8> frustumCorners = ComputeCascadeFrustumCorners(
+            inverseViewMatrix,
+            camera.GetAspect(),
+            camera.GetFov(),
+            camera.GetNearPlane(),
+            shadowFarPlane);
 
-    m_cascadeSetups[0] = BuildShadowLightSpaceForFrustumCorners(
-        lightDirectionTowardSource,
-        frustumCorners,
-        m_resolution,
-        settings.GetXyMarginFraction(),
-        settings.GetZMarginFraction(),
-        hasCasterBounds ? &casterBoundsMin : nullptr,
-        hasCasterBounds ? &casterBoundsMax : nullptr);
+        m_cascadeSetups[0] = BuildShadowLightSpaceForFrustumCorners(
+            lightDirectionTowardSource,
+            frustumCorners,
+            m_resolution,
+            settings.GetXyMarginFraction(),
+            settings.GetZMarginFraction());
+    }
     m_lightSpaceMatrices[0] = m_cascadeSetups[0].lightSpaceMatrix;
 
     m_hasRenderedDepth = false;

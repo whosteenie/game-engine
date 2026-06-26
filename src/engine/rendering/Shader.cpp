@@ -531,12 +531,12 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.DepthStencilState.DepthEnable = TRUE;
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
-        // Render back faces so closed meshes write sole/contact depth (Spyro feet). Flat contacts
-        // get zero raster slope bias; curved silhouettes use SlopeScaledDepthBias for acne.
-        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_FRONT;
+        // Store the closest caster surface from the light. Back-face shadow maps hide acne, but
+        // they also write the far side of convex casters and open contact gaps at the floor.
+        psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
         psoDesc.RasterizerState.DepthBias = 0;
         psoDesc.RasterizerState.DepthBiasClamp = 0.0f;
-        psoDesc.RasterizerState.SlopeScaledDepthBias = 1.5f;
+        psoDesc.RasterizerState.SlopeScaledDepthBias = 0.0f;
         static D3D12_INPUT_ELEMENT_DESC shadowLayout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
             {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},

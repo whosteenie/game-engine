@@ -23,8 +23,8 @@ VSOutput main(VSInput input)
 
     float4 clip = mul(uLightSpaceMatrix, mul(uModel, float4(input.position, 1.0)));
 
-    // Optional front-face-only slope bias. Back faces (used when front-face culling is on) keep
-    // zero shader push so flat soles stay in contact with the floor in mode 22.
+    // Optional caster-side slope bias. The default scale is zero; keep this explicit so contact
+    // behavior is controlled by the renderer tuning value rather than hidden rasterizer state.
     float3 normalWorld = normalize(mul((float3x3)uModel, input.normal));
     float nDotL = dot(normalWorld, normalize(uLightDirectionTowardSource));
     float sinTheta = (nDotL > 0.0) ? sqrt(saturate(1.0 - nDotL * nDotL)) : 0.0;

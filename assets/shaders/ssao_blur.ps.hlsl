@@ -6,6 +6,7 @@ SamplerState uDepthSampler : register(s1);
 
 cbuffer PerPixel : register(b0)
 {
+    float4x4 uInvProjection;
     float uTexelSizeX;
     float uTexelSizeY;
     float uDepthThreshold;
@@ -18,10 +19,18 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
+float ViewDepth(float2 texCoord)
+{
+    const float depth = uDepthMap.Sample(uDepthSampler, texCoord).r;
+    const float2 clipXY = float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+    const float4 viewSpace = mul(uInvProjection, float4(clipXY, depth, 1.0));
+    return viewSpace.z / viewSpace.w;
+}
+
 float main(PSInput input) : SV_Target
 {
     const float2 texelSize = float2(uTexelSizeX, uTexelSizeY);
-    const float centerDepth = uDepthMap.Sample(uDepthSampler, input.texCoord).r;
+    const float centerDepth = ViewDepth(input.texCoord);
     const float centerAo = uInput.Sample(uInputSampler, input.texCoord).r;
 
     float result = 0.0;
@@ -34,11 +43,13 @@ float main(PSInput input) : SV_Target
         for (int y = -1; y <= 1; ++y)
         {
             const float2 sampleUv = input.texCoord + float2((float)x, (float)y) * texelSize;
-            const float sampleDepth = uDepthMap.Sample(uDepthSampler, sampleUv).r;
+            const float sampleDepth = ViewDepth(sampleUv);
+            const float relativeDepthDelta =
+                abs(sampleDepth - centerDepth) / max(centerDepth, 1e-3);
             const float depthWeight = 1.0 - smoothstep(
                 uDepthThreshold * 0.5,
                 uDepthThreshold,
-                abs(sampleDepth - centerDepth));
+                relativeDepthDelta);
             const float weight = depthWeight;
             result += uInput.Sample(uInputSampler, sampleUv).r * weight;
             weightSum += weight;

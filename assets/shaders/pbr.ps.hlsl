@@ -534,9 +534,15 @@ float SampleCascadeShadowInternal(
     float2 shadowUv = sampleCoords.xy;
     float compareDepth = clamp(sampleCoords.z - depthBias, 0.0, 1.0);
 
-    return uShadowFilterMode == 1
+    float shadow = uShadowFilterMode == 1
         ? FilterShadowPcss(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize)
         : FilterShadowPcf(cascadeIndex, shadowUv, compareDepth, minSeparation, texelSize, uPcfKernelRadius);
+
+    // Fade shadowing near the geometric light terminator. The direct term is already
+    // vanishing here, and filtering shadow-map depth across smooth normals can reveal
+    // blocky caster triangles on curved primitives.
+    float terminatorFade = smoothstep(0.04, 0.18, nDotL);
+    return lerp(1.0, shadow, terminatorFade);
 }
 
 float SampleCascadeShadow(int cascadeIndex, float3 worldPos, float3 geomNormal, float3 lightDir)

@@ -94,20 +94,36 @@ float InterleavedGradientNoise(float2 pixel)
     return frac(52.9829189 * frac(dot(pixel, float2(0.06711056, 0.00583715))));
 }
 
-float3x3 BuildRotatedTbn(float3 normal, float2 screenPixel)
+float3 FallbackNoiseVector(float2 screenPixel)
 {
-    float3 helper = abs(normal.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
-    float3 tangent = normalize(cross(helper, normal));
+    const float angle = 6.28318530718 * InterleavedGradientNoise(screenPixel);
+    return float3(cos(angle), sin(angle), 0.0);
+}
+
+float3x3 BuildRotatedTbn(float3 normal, float2 texCoord, float2 screenPixel)
+{
+    uint noiseWidth;
+    uint noiseHeight;
+    uNoiseMap.GetDimensions(noiseWidth, noiseHeight);
+
+    uint2 noiseCoord = uint2((uint)screenPixel.x % max(noiseWidth, 1u), (uint)screenPixel.y % max(noiseHeight, 1u));
+    float3 randomVector = uNoiseMap.Load(int3(noiseCoord, 0)).xyz;
+
+    if (dot(randomVector, randomVector) < 1e-5)
+    {
+        randomVector = FallbackNoiseVector(screenPixel);
+    }
+
+    float3 tangent = randomVector - normal * dot(randomVector, normal);
+    if (dot(tangent, tangent) < 1e-5)
+    {
+        const float3 helper = abs(normal.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+        tangent = cross(helper, normal);
+    }
+    tangent = normalize(tangent);
     float3 bitangent = cross(normal, tangent);
 
-    const float angle = 6.28318530718 * InterleavedGradientNoise(screenPixel);
-    const float cosA = cos(angle);
-    const float sinA = sin(angle);
-
-    return float3x3(
-        tangent * cosA + bitangent * sinA,
-        bitangent * cosA - tangent * sinA,
-        normal);
+    return float3x3(tangent, bitangent, normal);
 }
 
 float main(PSInput input) : SV_Target
@@ -139,9 +155,11 @@ float main(PSInput input) : SV_Target
     }
 
     float3 normal = SampleViewNormal(input.texCoord, depth);
-    float3x3 tbn = BuildRotatedTbn(normal, input.position.xy);
+    float3x3 tbn = BuildRotatedTbn(normal, input.texCoord, input.position.xy);
 
-    const float radius = uRadius;
+    const float radius = max(uRadius, 1e-4);
+    const float bias = max(uBias, 0.0);
+    const float thicknessLimit = max(radius * 0.65, bias * 4.0);
     const int kernelSize = clamp(uKernelSize, 1, SSAO_KERNEL_SIZE);
 
     float occlusion = 0.0;
@@ -184,19 +202,20 @@ float main(PSInput input) : SV_Target
             continue;
         }
 
-        float sceneViewZ = ViewDepthAt(sampleUv, sceneDepth);
-        float rangeCheck = smoothstep(0.0, 1.0, radius / max(abs(centerViewZ - sceneViewZ), 1e-4));
-
         // LH view space (+Z forward): smaller Z is closer. Projection is only used for sampleUv.
-        const bool occluded = sceneViewZ <= samplePos.z - uBias;
+        float sceneViewZ = ViewDepthAt(sampleUv, sceneDepth);
         const float viewDelta = samplePos.z - sceneViewZ;
+        const float centerDistance = abs(centerViewZ - sceneViewZ);
+        const float rangeCheck = 1.0 - smoothstep(radius * 0.2, radius, centerDistance);
+        const float thicknessWeight = 1.0 - smoothstep(bias, thicknessLimit, viewDelta);
+        const bool occluded = viewDelta > bias && viewDelta < thicknessLimit;
 
         usedSamples++;
         deltaSum += viewDelta;
         if (occluded)
         {
             occludedSamples++;
-            occlusion += rangeCheck;
+            occlusion += rangeCheck * thicknessWeight;
         }
     }
 

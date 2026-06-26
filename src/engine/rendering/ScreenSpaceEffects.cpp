@@ -995,6 +995,7 @@ void ScreenSpaceEffects::Apply(
 
         m_blurShader->SetInt("uInput", 0);
         m_blurShader->SetInt("uDepthMap", 1);
+        m_blurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
         m_blurShader->SetFloat("uTexelSizeX", texelSize.x);
         m_blurShader->SetFloat("uTexelSizeY", texelSize.y);
         m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);

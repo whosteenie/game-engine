@@ -138,6 +138,35 @@ namespace SceneProjectIODetail
         return std::nullopt;
     }
 
+    bool TryGetPrimitiveLocalBounds(ScenePrimitive primitive, glm::vec3& outMin, glm::vec3& outMax)
+    {
+        switch (primitive)
+        {
+        case ScenePrimitive::Cube:
+        case ScenePrimitive::Sphere:
+        case ScenePrimitive::Cylinder:
+            outMin = glm::vec3(-0.5f);
+            outMax = glm::vec3(0.5f);
+            return true;
+        case ScenePrimitive::Capsule:
+            outMin = glm::vec3(-0.5f, -1.0f, -0.5f);
+            outMax = glm::vec3(0.5f, 1.0f, 0.5f);
+            return true;
+        case ScenePrimitive::Plane:
+            outMin = glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent);
+            outMax = glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool TryGetMeshLocalBounds(const Scene& scene, Mesh* mesh, glm::vec3& outMin, glm::vec3& outMax)
+    {
+        const std::optional<ScenePrimitive> primitive = DetectPrimitiveMesh(scene, mesh);
+        return primitive.has_value() && TryGetPrimitiveLocalBounds(*primitive, outMin, outMax);
+    }
+
     json SerializeMesh(const Scene& scene, const SceneObject& object, const std::string& projectRoot)
     {
         if (!object.HasMesh())
@@ -982,9 +1011,19 @@ namespace SceneProjectIODetail
             transform.rotation = QuatFromJson(transformValue.at("rotation"));
             transform.scale = Vec3FromJson(transformValue.at("scale"));
 
-            const json& boundsValue = objectValue.at("bounds");
-            const glm::vec3 boundsMin = Vec3FromJson(boundsValue.at("min"));
-            const glm::vec3 boundsMax = Vec3FromJson(boundsValue.at("max"));
+            glm::vec3 boundsMin(0.0f);
+            glm::vec3 boundsMax(0.0f);
+            if (objectValue.contains("bounds"))
+            {
+                const json& boundsValue = objectValue.at("bounds");
+                boundsMin = Vec3FromJson(boundsValue.at("min"));
+                boundsMax = Vec3FromJson(boundsValue.at("max"));
+            }
+            else if (!TryGetMeshLocalBounds(scene, mesh, boundsMin, boundsMax))
+            {
+                boundsMin = glm::vec3(-0.5f);
+                boundsMax = glm::vec3(0.5f);
+            }
 
             SceneObjectId objectId = kInvalidSceneObjectId;
             if (formatVersion >= 3 && objectValue.contains("id"))
