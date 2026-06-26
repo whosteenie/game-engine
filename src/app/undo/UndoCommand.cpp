@@ -620,16 +620,9 @@ const char* TransformObjectsCommand::GetName() const
     return m_name.c_str();
 }
 
-bool TransformObjectsCommand::TryMerge(const IUndoCommand& next)
+bool TransformObjectsCommand::TryMerge(const IUndoCommand& /*next*/)
 {
-    const auto* other = dynamic_cast<const TransformObjectsCommand*>(&next);
-    if (other == nullptr || !HasSameObjectIds(m_before, other->m_before))
-    {
-        return false;
-    }
-
-    m_after = other->m_after;
-    return true;
+    return false;
 }
 
 void PushTransformObjects(

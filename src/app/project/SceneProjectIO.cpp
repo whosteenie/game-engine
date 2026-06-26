@@ -578,6 +578,20 @@ namespace SceneProjectIODetail
                  {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
                  {"renderScale", effects.GetRenderScale()},
                  {"taaBlendFactor", effects.GetTaaBlendFactor()},
+                 {"giTemporalBlendFactor", effects.GetGiTemporalBlendFactor()},
+                 {"giDepthThreshold", effects.GetGiDepthThreshold()},
+                 {"ssgiDenoiseEnabled", effects.IsSsgiDenoiseEnabled()},
+                 {"ssgiNoiseInjectionEnabled", effects.IsSsgiNoiseInjectionEnabled()},
+                 {"ssgiNoiseStrength", effects.GetSsgiNoiseStrength()},
+                 {"ssgiSpatialBlurSpread", effects.GetSsgiSpatialBlurSpread()},
+                 {"ssgiSpatialDepthThreshold", effects.GetSsgiSpatialDepthThreshold()},
+                 {"ssgiRoughnessSpreadMin", effects.GetSsgiRoughnessSpreadMin()},
+                 {"ssgiRoughnessSpreadMax", effects.GetSsgiRoughnessSpreadMax()},
+                 {"ssgiEnabled", effects.IsSsgiEnabled()},
+                 {"ssgiStrength", effects.GetSsgiStrength()},
+                 {"ssgiMaxTraceDistance", effects.GetSsgiMaxTraceDistance()},
+                 {"ssgiStepCount", effects.GetSsgiStepCount()},
+                 {"ssgiThickness", effects.GetSsgiThickness()},
                  {"smaaThreshold", effects.GetSmaaThreshold()},
                  {"smaaSearchSteps", effects.GetSmaaSearchSteps()},
                  {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
@@ -721,6 +735,34 @@ namespace SceneProjectIODetail
             effectsValue.value("fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()));
         effects.SetRenderScale(effectsValue.value("renderScale", effects.GetRenderScale()));
         effects.SetTaaBlendFactor(effectsValue.value("taaBlendFactor", effects.GetTaaBlendFactor()));
+        effects.SetGiTemporalBlendFactor(
+            effectsValue.value("giTemporalBlendFactor", effects.GetGiTemporalBlendFactor()));
+        effects.SetGiDepthThreshold(effectsValue.value("giDepthThreshold", effects.GetGiDepthThreshold()));
+        effects.SetSsgiDenoiseEnabled(
+            effectsValue.value("ssgiDenoiseEnabled", effects.IsSsgiDenoiseEnabled()));
+        effects.SetSsgiNoiseInjectionEnabled(effectsValue.value(
+            "ssgiNoiseInjectionEnabled",
+            effects.IsSsgiNoiseInjectionEnabled()));
+        effects.SetSsgiNoiseStrength(
+            effectsValue.value("ssgiNoiseStrength", effects.GetSsgiNoiseStrength()));
+        effects.SetSsgiSpatialBlurSpread(
+            effectsValue.value("ssgiSpatialBlurSpread", effects.GetSsgiSpatialBlurSpread()));
+        effects.SetSsgiSpatialDepthThreshold(effectsValue.value(
+            "ssgiSpatialDepthThreshold",
+            effects.GetSsgiSpatialDepthThreshold()));
+        effects.SetSsgiRoughnessSpreadMin(effectsValue.value(
+            "ssgiRoughnessSpreadMin",
+            effects.GetSsgiRoughnessSpreadMin()));
+        effects.SetSsgiRoughnessSpreadMax(effectsValue.value(
+            "ssgiRoughnessSpreadMax",
+            effects.GetSsgiRoughnessSpreadMax()));
+        effects.SetSsgiEnabled(effectsValue.value("ssgiEnabled", effects.IsSsgiEnabled()));
+        effects.SetSsgiStrength(effectsValue.value("ssgiStrength", effects.GetSsgiStrength()));
+        effects.SetSsgiMaxTraceDistance(effectsValue.value(
+            "ssgiMaxTraceDistance",
+            effects.GetSsgiMaxTraceDistance()));
+        effects.SetSsgiStepCount(effectsValue.value("ssgiStepCount", effects.GetSsgiStepCount()));
+        effects.SetSsgiThickness(effectsValue.value("ssgiThickness", effects.GetSsgiThickness()));
         effects.SetSmaaThreshold(effectsValue.value("smaaThreshold", effects.GetSmaaThreshold()));
         effects.SetSmaaSearchSteps(effectsValue.value("smaaSearchSteps", effects.GetSmaaSearchSteps()));
         effects.SetSsaoBlurDepthThreshold(

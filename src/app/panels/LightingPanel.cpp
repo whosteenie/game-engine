@@ -1,6 +1,7 @@
 #include "app/panels/LightingPanel.h"
 
 #include "app/editor/EditorPanelConstraints.h"
+#include "app/editor/EditorUndoWidgets.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -86,20 +87,6 @@ namespace
         }
     }
 
-    void ApplyRendererChange(
-        RendererEditContext& editContext,
-        Scene& scene,
-        const char* commandName,
-        const std::function<void(Scene&)>& mutate)
-    {
-        if (editContext.undoStack != nullptr)
-        {
-            PushRendererMutation(*editContext.undoStack, scene, commandName, mutate);
-            return;
-        }
-
-        mutate(scene);
-    }
 }
 
 void LightingPanel::Draw(
@@ -620,12 +607,17 @@ void LightingPanel::Draw(
     if (ImGui::CollapsingHeader("HDR", ImGuiTreeNodeFlags_DefaultOpen))
     {
         float exposure = screenSpaceEffects.GetExposure();
-        if (ImGui::SliderFloat("Exposure (stops)", &exposure, -2.0f, 4.0f))
-        {
-            screenSpaceEffects.SetExposure(exposure);
-            scene.MarkDirty();
-        }
-        HandleRendererFieldEditEvents(editContext);
+        UndoableRendererSliderFloat(
+            "Exposure (stops)",
+            &exposure,
+            -2.0f,
+            4.0f,
+            "%.3f",
+            editContext,
+            [](Scene& target, float exposure) {
+                target.GetRenderer().GetScreenSpaceEffects().SetExposure(exposure);
+                target.MarkDirty();
+            });
 
         int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
         const char* tonemapModes[] = {"Gamma", "Reinhard", "ACES"};
@@ -1050,11 +1042,17 @@ void LightingPanel::Draw(
         if (ImGui::TreeNode("GI temporal (SSGI groundwork)"))
         {
             float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
-            if (ImGui::SliderFloat("GI history blend", &giBlend, 0.0f, 0.99f))
-            {
-                screenSpaceEffects.SetGiTemporalBlendFactor(giBlend);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "GI history blend",
+                &giBlend,
+                0.0f,
+                0.99f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float giBlend) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetGiTemporalBlendFactor(giBlend);
+                    target.MarkDirty();
+                });
             ImGui::TextDisabled(
                 "Independent of LDR TAA. Validate with Anti-aliasing = None.");
             ImGui::TreePop();
@@ -1063,35 +1061,59 @@ void LightingPanel::Draw(
         if (ImGui::TreeNode("SSGI denoise (Phase 5)"))
         {
             bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
-            if (ImGui::Checkbox("Enable spatial + temporal denoise", &denoiseEnabled))
-            {
-                screenSpaceEffects.SetSsgiDenoiseEnabled(denoiseEnabled);
-                scene.MarkDirty();
-            }
+            UndoableRendererCheckbox(
+                "Enable spatial + temporal denoise",
+                &denoiseEnabled,
+                editContext,
+                [](Scene& target, bool denoiseEnabled) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiDenoiseEnabled(denoiseEnabled);
+                    target.MarkDirty();
+                });
             bool noiseEnabled = screenSpaceEffects.IsSsgiNoiseInjectionEnabled();
-            if (ImGui::Checkbox("Synthetic trace noise (test)", &noiseEnabled))
-            {
-                screenSpaceEffects.SetSsgiNoiseInjectionEnabled(noiseEnabled);
-                scene.MarkDirty();
-            }
+            UndoableRendererCheckbox(
+                "Synthetic trace noise (test)",
+                &noiseEnabled,
+                editContext,
+                [](Scene& target, bool noiseEnabled) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiNoiseInjectionEnabled(noiseEnabled);
+                    target.MarkDirty();
+                });
             float noiseStrength = screenSpaceEffects.GetSsgiNoiseStrength();
-            if (ImGui::SliderFloat("Noise strength", &noiseStrength, 0.0f, 0.5f))
-            {
-                screenSpaceEffects.SetSsgiNoiseStrength(noiseStrength);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "Noise strength",
+                &noiseStrength,
+                0.0f,
+                0.5f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float noiseStrength) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiNoiseStrength(noiseStrength);
+                    target.MarkDirty();
+                });
             float blurSpread = screenSpaceEffects.GetSsgiSpatialBlurSpread();
-            if (ImGui::SliderFloat("Spatial blur spread", &blurSpread, 0.25f, 4.0f))
-            {
-                screenSpaceEffects.SetSsgiSpatialBlurSpread(blurSpread);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "Spatial blur spread",
+                &blurSpread,
+                0.25f,
+                4.0f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float blurSpread) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiSpatialBlurSpread(blurSpread);
+                    target.MarkDirty();
+                });
             float spatialDepth = screenSpaceEffects.GetSsgiSpatialDepthThreshold();
-            if (ImGui::SliderFloat("Spatial depth threshold", &spatialDepth, 0.001f, 0.1f, "%.3f"))
-            {
-                screenSpaceEffects.SetSsgiSpatialDepthThreshold(spatialDepth);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "Spatial depth threshold",
+                &spatialDepth,
+                0.001f,
+                0.1f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float spatialDepth) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiSpatialDepthThreshold(spatialDepth);
+                    target.MarkDirty();
+                });
             ImGui::TextDisabled(
                 "Test path: optional noise → spatial → temporal. Disable when using real SSGI trace.");
             ImGui::TreePop();
@@ -1100,29 +1122,49 @@ void LightingPanel::Draw(
         if (ImGui::TreeNode("SSGI trace (Phase 6)"))
         {
             bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
-            if (ImGui::Checkbox("Enable SSGI", &ssgiEnabled))
-            {
-                screenSpaceEffects.SetSsgiEnabled(ssgiEnabled);
-                scene.MarkDirty();
-            }
+            UndoableRendererCheckbox(
+                "Enable SSGI",
+                &ssgiEnabled,
+                editContext,
+                [](Scene& target, bool ssgiEnabled) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiEnabled(ssgiEnabled);
+                    target.MarkDirty();
+                });
             float ssgiStrength = screenSpaceEffects.GetSsgiStrength();
-            if (ImGui::SliderFloat("SSGI strength", &ssgiStrength, 0.0f, 1.5f))
-            {
-                screenSpaceEffects.SetSsgiStrength(ssgiStrength);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "SSGI strength",
+                &ssgiStrength,
+                0.0f,
+                1.5f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float ssgiStrength) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiStrength(ssgiStrength);
+                    target.MarkDirty();
+                });
             float traceDistance = screenSpaceEffects.GetSsgiMaxTraceDistance();
-            if (ImGui::SliderFloat("Max trace distance", &traceDistance, 0.5f, 10.0f, "%.1f m"))
-            {
-                screenSpaceEffects.SetSsgiMaxTraceDistance(traceDistance);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderFloat(
+                "Max trace distance",
+                &traceDistance,
+                0.5f,
+                10.0f,
+                "%.1f m",
+                editContext,
+                [](Scene& target, float traceDistance) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiMaxTraceDistance(traceDistance);
+                    target.MarkDirty();
+                });
             int stepCount = screenSpaceEffects.GetSsgiStepCount();
-            if (ImGui::SliderInt("Trace steps", &stepCount, 4, 32))
-            {
-                screenSpaceEffects.SetSsgiStepCount(stepCount);
-                scene.MarkDirty();
-            }
+            UndoableRendererSliderInt(
+                "Trace steps",
+                &stepCount,
+                4,
+                32,
+                editContext,
+                [](Scene& target, int stepCount) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiStepCount(stepCount);
+                    target.MarkDirty();
+                });
             ImGui::TextDisabled(
                 "Screen-space trace → denoise → inject into indirect IBL before SSAO. "
                 "Turn off synthetic noise when testing. AA off recommended.");

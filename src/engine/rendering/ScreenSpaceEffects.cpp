@@ -2549,6 +2549,26 @@ void ScreenSpaceEffects::SetSsgiSpatialBlurSpread(const float spread)
     m_ssgiSpatialBlurSpread = std::clamp(spread, 0.25f, 4.0f);
 }
 
+float ScreenSpaceEffects::GetSsgiRoughnessSpreadMin() const
+{
+    return m_ssgiRoughnessSpreadMin;
+}
+
+void ScreenSpaceEffects::SetSsgiRoughnessSpreadMin(const float spread)
+{
+    m_ssgiRoughnessSpreadMin = std::clamp(spread, 0.1f, 2.0f);
+}
+
+float ScreenSpaceEffects::GetSsgiRoughnessSpreadMax() const
+{
+    return m_ssgiRoughnessSpreadMax;
+}
+
+void ScreenSpaceEffects::SetSsgiRoughnessSpreadMax(const float spread)
+{
+    m_ssgiRoughnessSpreadMax = std::clamp(spread, 0.5f, 4.0f);
+}
+
 bool ScreenSpaceEffects::IsSsgiEnabled() const
 {
     return m_ssgiEnabled;
@@ -2587,6 +2607,16 @@ int ScreenSpaceEffects::GetSsgiStepCount() const
 void ScreenSpaceEffects::SetSsgiStepCount(const int steps)
 {
     m_ssgiStepCount = std::clamp(steps, 4, 32);
+}
+
+float ScreenSpaceEffects::GetSsgiThickness() const
+{
+    return m_ssgiThickness;
+}
+
+void ScreenSpaceEffects::SetSsgiThickness(const float thickness)
+{
+    m_ssgiThickness = std::clamp(thickness, 0.05f, 2.0f);
 }
 
 float ScreenSpaceEffects::GetSmaaThreshold() const

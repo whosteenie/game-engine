@@ -370,20 +370,8 @@ public:
         return m_name.c_str();
     }
 
-    bool TryMerge(const IUndoCommand& next) override
+    bool TryMerge(const IUndoCommand& /*next*/) override
     {
-        const auto* other = dynamic_cast<const ObjectPropertyCommand*>(&next);
-        if (other == nullptr || !HasSameObjectIds(m_before, other->m_before))
-        {
-            return false;
-        }
-
-        if constexpr (std::is_copy_assignable_v<T>)
-        {
-            m_after = other->m_after;
-            return true;
-        }
-
         return false;
     }
 

@@ -145,6 +145,12 @@ public:
     float GetSsgiSpatialBlurSpread() const;
     void SetSsgiSpatialBlurSpread(float spread);
 
+    float GetSsgiRoughnessSpreadMin() const;
+    void SetSsgiRoughnessSpreadMin(float spread);
+
+    float GetSsgiRoughnessSpreadMax() const;
+    void SetSsgiRoughnessSpreadMax(float spread);
+
     bool IsSsgiEnabled() const;
     void SetSsgiEnabled(bool enabled);
 
@@ -156,6 +162,9 @@ public:
 
     int GetSsgiStepCount() const;
     void SetSsgiStepCount(int steps);
+
+    float GetSsgiThickness() const;
+    void SetSsgiThickness(float thickness);
 
     float GetSmaaThreshold() const;
     void SetSmaaThreshold(float threshold);
