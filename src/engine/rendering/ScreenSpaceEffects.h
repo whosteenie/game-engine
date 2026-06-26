@@ -314,7 +314,9 @@ private:
     float m_bloomSoftKnee = 0.5f;
     float m_bloomIntensity = 0.4f;
     float m_bloomBlurRadius = 1.0f;
-    float m_bloomTemporalBlendFactor = 0.88f;
+    float m_bloomTemporalBlendFactor = 0.92f;
+    float m_bloomSameUvBlendFactor = 0.94f;
+    float m_bloomDepthThreshold = 0.015f;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     float m_fxaaSubpixQuality = 0.75f;

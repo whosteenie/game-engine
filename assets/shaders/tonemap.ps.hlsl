@@ -10,6 +10,9 @@ cbuffer PerPixel : register(b0)
     int uTonemapMode;
     int uUseBloom;
     float uBloomIntensity;
+    float uBloomTexelSizeX;
+    float uBloomTexelSizeY;
+    float2 _pad0;
 };
 
 struct PSInput
@@ -46,13 +49,24 @@ float InterleavedGradientNoise(float2 fragCoord)
     return frac(magic.z * frac(dot(fragCoord, magic.xy)));
 }
 
+float3 SampleBloomTent(float2 uv)
+{
+    const float2 texel = float2(uBloomTexelSizeX, uBloomTexelSizeY);
+    float3 result = uBloom.Sample(uBloomSampler, uv).rgb * 4.0;
+    result += uBloom.Sample(uBloomSampler, uv + float2(-texel.x, 0.0)).rgb;
+    result += uBloom.Sample(uBloomSampler, uv + float2(texel.x, 0.0)).rgb;
+    result += uBloom.Sample(uBloomSampler, uv + float2(0.0, -texel.y)).rgb;
+    result += uBloom.Sample(uBloomSampler, uv + float2(0.0, texel.y)).rgb;
+    return result * (1.0 / 8.0);
+}
+
 float4 main(PSInput input) : SV_Target
 {
     float3 hdr = uHdrColor.Sample(uHdrColorSampler, input.texCoord).rgb * exp2(uExposure);
 
     if (uUseBloom != 0)
     {
-        hdr += uBloom.Sample(uBloomSampler, input.texCoord).rgb * uBloomIntensity;
+        hdr += SampleBloomTent(input.texCoord) * uBloomIntensity;
     }
 
     float3 mapped;

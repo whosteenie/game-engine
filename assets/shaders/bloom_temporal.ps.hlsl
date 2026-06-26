@@ -11,9 +11,12 @@ SamplerState uDepthSampler : register(s3);
 cbuffer PerPixel : register(b0)
 {
     float uBlendFactor;
+    float uSameUvBlendFactor;
     float uHistoryValid;
+    float uDepthThreshold;
     float uTexelSizeX;
     float uTexelSizeY;
+    float2 _pad0;
 };
 
 struct PSInput
@@ -32,15 +35,19 @@ float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
     const float3 currentRgb = uCurrentBloom.Sample(uCurrentBloomSampler, uv).rgb;
     float3 minRgb = currentRgb;
     float3 maxRgb = currentRgb;
-    const float2 offsets[4] = {
+    const float2 offsets[8] = {
         float2(-texelSize.x, 0.0),
         float2(texelSize.x, 0.0),
         float2(0.0, -texelSize.y),
         float2(0.0, texelSize.y),
+        float2(-texelSize.x, -texelSize.y),
+        float2(texelSize.x, -texelSize.y),
+        float2(-texelSize.x, texelSize.y),
+        float2(texelSize.x, texelSize.y),
     };
 
     [unroll]
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 8; ++i)
     {
         const float3 sampleRgb = uCurrentBloom.Sample(uCurrentBloomSampler, uv + offsets[i]).rgb;
         minRgb = min(minRgb, sampleRgb);
@@ -48,7 +55,7 @@ float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
     }
 
     const float3 extent = max(maxRgb - currentRgb, currentRgb - minRgb) + 1e-4;
-    return clamp(historyRgb, currentRgb - extent * 1.5, currentRgb + extent * 1.5);
+    return clamp(historyRgb, currentRgb - extent * 1.25, currentRgb + extent * 1.25);
 }
 
 float3 main(PSInput input) : SV_Target
@@ -63,20 +70,39 @@ float3 main(PSInput input) : SV_Target
         return current;
     }
 
-    float historyAccepted = 0.0;
     float3 history = current;
-
-    const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
-    const float2 historyUv = uv - VelocityNdcToUvDelta(velocityNdc);
-    if (uHistoryValid > 0.5
-        && length(velocityNdc) > 1e-6
-        && historyUv.x >= 0.0 && historyUv.x <= 1.0
-        && historyUv.y >= 0.0 && historyUv.y <= 1.0)
+    if (uHistoryValid > 0.5)
     {
-        history = uHistoryBloom.Sample(uHistoryBloomSampler, historyUv).rgb;
-        history = ClipHistory(history, uv, texelSize);
-        historyAccepted = 1.0;
+        const float3 historySameUv = ClipHistory(
+            uHistoryBloom.Sample(uHistoryBloomSampler, uv).rgb,
+            uv,
+            texelSize);
+
+        float3 historyVelocity = historySameUv;
+        float velocityAccepted = 0.0;
+
+        const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
+        const float2 historyUv = uv - VelocityNdcToUvDelta(velocityNdc);
+        if (length(velocityNdc) > 1e-6
+            && historyUv.x >= 0.0 && historyUv.x <= 1.0
+            && historyUv.y >= 0.0 && historyUv.y <= 1.0)
+        {
+            const float historyDepth = uDepth.Sample(uDepthSampler, historyUv).r;
+            if (abs(historyDepth - depth) <= uDepthThreshold)
+            {
+                historyVelocity = ClipHistory(
+                    uHistoryBloom.Sample(uHistoryBloomSampler, historyUv).rgb,
+                    uv,
+                    texelSize);
+                velocityAccepted = saturate(length(velocityNdc) * 48.0);
+            }
+        }
+
+        history = lerp(historySameUv, historyVelocity, velocityAccepted);
+        const float3 sameUvResult = lerp(current, historySameUv, uSameUvBlendFactor);
+        const float3 velocityResult = lerp(current, history, uBlendFactor);
+        return lerp(sameUvResult, velocityResult, velocityAccepted);
     }
 
-    return lerp(current, history, uBlendFactor * historyAccepted);
+    return current;
 }

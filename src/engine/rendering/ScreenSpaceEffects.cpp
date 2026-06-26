@@ -1704,7 +1704,14 @@ void ScreenSpaceEffects::Apply(
         m_bloomExtractShader->SetFloat("uExposure", m_exposure);
         m_bloomExtractShader->SetFloat("uFullTexelSizeX", texelSize.x);
         m_bloomExtractShader->SetFloat("uFullTexelSizeY", texelSize.y);
+        const bool useMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+        m_bloomExtractShader->SetFloat("uUseMaterialGbuffer", useMaterialGbuffer ? 1.0f : 0.0f);
         m_bloomExtractShader->BindTextureSlot(0, hdrColorSrv);
+        if (useMaterialGbuffer)
+        {
+            m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+            m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        }
         DrawFullscreenToTarget(
             *m_bloomExtractShader,
             const_cast<InternalTarget&>(m_bloomExtractTarget),
@@ -1736,11 +1743,37 @@ void ScreenSpaceEffects::Apply(
             bloomHeight,
             bloomClear);
 
+        m_bloomBlurShader->SetInt("uInput", 0);
+        m_bloomBlurShader->SetFloat("uDirectionX", bloomTexelSize.x);
+        m_bloomBlurShader->SetFloat("uDirectionY", 0.0f);
+        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_bloomBlurShader,
+            const_cast<InternalTarget&>(m_bloomBlurTarget),
+            bloomWidth,
+            bloomHeight,
+            bloomClear);
+
+        m_bloomBlurShader->SetInt("uInput", 0);
+        m_bloomBlurShader->SetFloat("uDirectionX", 0.0f);
+        m_bloomBlurShader->SetFloat("uDirectionY", bloomTexelSize.y);
+        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlurTarget.srvCpuHandle);
+        DrawFullscreenToTarget(
+            *m_bloomBlurShader,
+            const_cast<InternalTarget&>(m_bloomBlur2Target),
+            bloomWidth,
+            bloomHeight,
+            bloomClear);
+
         if (m_sceneFramebuffer->HasVelocity() && m_bloomTemporalTarget.srvCpuHandle != 0)
         {
             m_bloomTemporalShader->Use(false, true);
             m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
+            m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
             m_bloomTemporalShader->SetFloat("uHistoryValid", m_bloomHistoryValid ? 1.0f : 0.0f);
+            m_bloomTemporalShader->SetFloat("uDepthThreshold", m_bloomDepthThreshold);
             m_bloomTemporalShader->SetFloat("uTexelSizeX", bloomTexelSize.x);
             m_bloomTemporalShader->SetFloat("uTexelSizeY", bloomTexelSize.y);
             m_bloomTemporalShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
@@ -2033,6 +2066,8 @@ void ScreenSpaceEffects::Apply(
         m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
         m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
         m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
+        m_tonemapShader->SetFloat("uBloomTexelSizeX", texelSize.x * 2.0f);
+        m_tonemapShader->SetFloat("uBloomTexelSizeY", texelSize.y * 2.0f);
         m_tonemapShader->SetInt("uBloom", 1);
         m_tonemapShader->BindTextureSlot(0, hdrColorSrv);
         if (m_bloomEnabled)
