@@ -70,6 +70,10 @@ namespace
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_RENDER_TARGET);
     constexpr std::uint32_t kDepthWriteState =
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    constexpr std::uint32_t kCopySourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_SOURCE);
+    constexpr std::uint32_t kCopyDestState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_DEST);
 
     void TransitionResourceState(
         ID3D12GraphicsCommandList* commandList,
@@ -680,8 +684,36 @@ bool Framebuffer::BindGizmoDrawTarget() const
     return true;
 }
 
+bool Framebuffer::CopyDepthFrom(const Framebuffer& source) const
+{
+    if (this == &source || m_depthResource == nullptr || source.m_depthResource == nullptr)
+    {
+        return false;
+    }
+
+    if (m_width != source.m_width || m_height != source.m_height)
+    {
+        return false;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    source.TransitionDepth(kCopySourceState);
+    TransitionDepth(kCopyDestState);
+
+    commandList->CopyResource(
+        static_cast<ID3D12Resource*>(m_depthResource),
+        static_cast<ID3D12Resource*>(source.m_depthResource));
+
+    source.TransitionDepth(kShaderResourceState);
+    return true;
+}
+
 void Framebuffer::RestoreDepthShaderResource() const
 {
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     TransitionDepth(kShaderResourceState);
 }
 
@@ -767,6 +799,8 @@ void Framebuffer::Bind() const
 
 void Framebuffer::Unbind() const
 {
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     EnsureShaderResourceState();
 }
 

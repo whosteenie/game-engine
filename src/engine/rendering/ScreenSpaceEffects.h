@@ -276,7 +276,6 @@ private:
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_gridCompositeShader;
-    std::unique_ptr<Shader> m_depthBlitShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
