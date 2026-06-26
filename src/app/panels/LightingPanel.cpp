@@ -1047,6 +1047,23 @@ void LightingPanel::Draw(
             "Use debug views to see which render pass causes an artifact. "
             "Write a report and share the txt file for help.");
 
+        if (ImGui::TreeNode("GI temporal (SSGI groundwork)"))
+        {
+            float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
+            if (ImGui::SliderFloat("GI history blend", &giBlend, 0.0f, 0.99f))
+            {
+                screenSpaceEffects.SetGiTemporalBlendFactor(giBlend);
+                scene.MarkDirty();
+            }
+            ImGui::TextDisabled(
+                "Independent of LDR TAA. Uses per-frame prev view-proj from AdvanceTemporalFrame. "
+                "Validate with Anti-aliasing = None first; depth disocclusion comes in Phase 5.");
+            ImGui::TextDisabled(
+                "Debug: disocclusion = green when reprojection in bounds; "
+                "temporal delta = black when converged (try with AA off, hold still).");
+            ImGui::TreePop();
+        }
+
         int debugMode = static_cast<int>(screenSpaceEffects.GetDebugMode());
         const char* debugModeLabels[] = {
             RenderDebugModeLabel(RenderDebugMode::None),
@@ -1079,6 +1096,9 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::GBufferEmissive),
             RenderDebugModeLabel(RenderDebugMode::RadianceBuffer),
             RenderDebugModeLabel(RenderDebugMode::RadianceValidity),
+            RenderDebugModeLabel(RenderDebugMode::RadianceTemporal),
+            RenderDebugModeLabel(RenderDebugMode::GiDisocclusion),
+            RenderDebugModeLabel(RenderDebugMode::RadianceTemporalDelta),
         };
 
         if (ImGui::Combo(
@@ -1209,6 +1229,26 @@ void LightingPanel::Draw(
         {
             ImGui::TextWrapped(
                 "Radiance validity mask (A channel). White = traceable geometry; black = sky / background.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::RadianceTemporal))
+        {
+            ImGui::TextWrapped(
+                "Velocity-reprojected radiance history after temporal accumulation. "
+                "Pan the camera on a static scene — color should stabilize after a few frames.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GiDisocclusion))
+        {
+            ImGui::TextWrapped(
+                "GI reprojection acceptance (not full depth disocclusion yet). "
+                "Green = history UV in bounds; red = out of bounds or first frame after invalidate. "
+                "Static scene should be all green. Object-motion rejection is Phase 5.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::RadianceTemporalDelta))
+        {
+            ImGui::TextWrapped(
+                "Amplified |temporal − raw radiance|. Black = converged (temporal equals raw). "
+                "With AA off and camera still, should go black within a few frames. "
+                "Thin edge glow with TAA on is expected (jitter shifts raw radiance at silhouettes).");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

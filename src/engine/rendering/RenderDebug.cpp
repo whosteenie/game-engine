@@ -64,6 +64,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Radiance buffer";
     case RenderDebugMode::RadianceValidity:
         return "Radiance validity";
+    case RenderDebugMode::RadianceTemporal:
+        return "Radiance temporal";
+    case RenderDebugMode::GiDisocclusion:
+        return "GI disocclusion";
+    case RenderDebugMode::RadianceTemporalDelta:
+        return "Radiance temporal delta";
     default:
         return "Unknown";
     }
@@ -119,6 +125,19 @@ bool IsRadianceDebugMode(const RenderDebugMode mode)
     {
     case RenderDebugMode::RadianceBuffer:
     case RenderDebugMode::RadianceValidity:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsGiTemporalDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RadianceTemporal:
+    case RenderDebugMode::GiDisocclusion:
+    case RenderDebugMode::RadianceTemporalDelta:
         return true;
     default:
         return false;

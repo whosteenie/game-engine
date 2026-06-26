@@ -86,7 +86,21 @@ namespace
                mode == RenderDebugMode::CompositeOcclusion ||
                mode == RenderDebugMode::MotionVectors ||
                IsGBufferDebugMode(mode) ||
-               IsRadianceDebugMode(mode);
+               IsRadianceDebugMode(mode) ||
+               IsGiTemporalDebugMode(mode);
+    }
+
+    int GiTemporalDebugModeIndex(RenderDebugMode mode)
+    {
+        switch (mode)
+        {
+        case RenderDebugMode::GiDisocclusion:
+            return 1;
+        case RenderDebugMode::RadianceTemporalDelta:
+            return 2;
+        default:
+            return 0;
+        }
     }
 
     int RadianceDebugModeIndex(RenderDebugMode mode)
@@ -463,7 +477,16 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::RadianceAssemblyFragmentShader)),
       m_radianceDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::RadianceDebugFragmentShader))
+          EngineConstants::RadianceDebugFragmentShader)),
+      m_temporalReprojectShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::TemporalReprojectFragmentShader)),
+      m_giDepthHistoryShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::GiDepthHistoryFragmentShader)),
+      m_giTemporalDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::GiTemporalDebugFragmentShader))
 {
     CreateFullscreenQuad();
     CreateKernel();
@@ -481,6 +504,9 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_shadowBlur2Target);
     DestroyInternalTarget(m_hdrCompositeTarget);
     DestroyInternalTarget(m_radianceTarget);
+    DestroyInternalTarget(m_radianceHistoryTarget);
+    DestroyInternalTarget(m_radianceTemporalTarget);
+    DestroyInternalTarget(m_radianceHistoryDepthTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -788,6 +814,9 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     ResizeInternalTarget(m_hdrCompositeTarget, width, height, format);
     ResizeInternalTarget(m_radianceTarget, width, height, format);
+    ResizeInternalTarget(m_radianceHistoryTarget, width, height, format);
+    ResizeInternalTarget(m_radianceTemporalTarget, width, height, format);
+    ResizeInternalTarget(m_radianceHistoryDepthTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeBloomTargets(const int width, const int height)
@@ -845,6 +874,9 @@ int ScreenSpaceEffects::GetRenderHeight() const
 void ScreenSpaceEffects::InvalidateTemporalHistory() const
 {
     m_motionVectorFrameState = {};
+    m_radianceHistoryValid = false;
+    m_giFrameIndex = 0;
+    m_giPrevViewProjection = glm::mat4(1.0f);
 }
 
 void ScreenSpaceEffects::ResetTaaHistory() const
@@ -933,9 +965,12 @@ const MotionVectorFrameState& ScreenSpaceEffects::GetMotionVectorFrameState() co
 void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
 {
     m_motionVectorFrameState.prevView = camera.GetViewMatrix();
+    m_motionVectorFrameState.prevProjection = camera.GetProjectionMatrix();
     m_motionVectorFrameState.prevUnjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     m_motionVectorFrameState.prevViewProjection =
         m_motionVectorFrameState.prevUnjitteredProjection * m_motionVectorFrameState.prevView;
+    m_giPrevViewProjection =
+        m_motionVectorFrameState.prevProjection * m_motionVectorFrameState.prevView;
     m_motionVectorFrameState.historyValid = true;
 }
 
@@ -1331,6 +1366,58 @@ void ScreenSpaceEffects::Apply(
             radianceClear);
     }
 
+    const bool runGiTemporal =
+        runRadianceAssembly &&
+        m_radianceHistoryTarget.resource != nullptr &&
+        m_radianceTemporalTarget.resource != nullptr &&
+        m_radianceHistoryDepthTarget.resource != nullptr;
+
+    if (runGiTemporal)
+    {
+        const glm::mat4 viewProjCurr = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+        const glm::mat4 invViewProjCurr = glm::inverse(viewProjCurr);
+        const float temporalClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+
+        m_temporalReprojectShader->Use(false);
+        m_temporalReprojectShader->SetInt("uCurrentRadiance", 0);
+        m_temporalReprojectShader->SetInt("uHistoryRadiance", 1);
+        m_temporalReprojectShader->SetInt("uDepth", 2);
+        m_temporalReprojectShader->SetMat4("uInvViewProj", invViewProjCurr);
+        m_temporalReprojectShader->SetMat4("uPrevViewProj", m_giPrevViewProjection);
+        m_temporalReprojectShader->SetFloat("uBlendFactor", m_giTemporalBlendFactor);
+        m_temporalReprojectShader->SetFloat(
+            "uHistoryValid",
+            m_radianceHistoryValid && m_motionVectorFrameState.historyValid ? 1.0f : 0.0f);
+        m_temporalReprojectShader->SetFloat("uTexelSizeX", texelSize.x);
+        m_temporalReprojectShader->SetFloat("uTexelSizeY", texelSize.y);
+        m_temporalReprojectShader->BindTextureSlot(0, m_radianceTarget.srvCpuHandle);
+        m_temporalReprojectShader->BindTextureSlot(1, m_radianceHistoryTarget.srvCpuHandle);
+        m_temporalReprojectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_temporalReprojectShader,
+            const_cast<InternalTarget&>(m_radianceTemporalTarget),
+            m_width,
+            m_height,
+            temporalClear);
+
+        // Stored for Phase 5+ proper depth disocclusion (point-sampled prev-view Z compare).
+        m_giDepthHistoryShader->Use(false);
+        m_giDepthHistoryShader->SetInt("uDepth", 0);
+        m_giDepthHistoryShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_giDepthHistoryShader,
+            const_cast<InternalTarget&>(m_radianceHistoryDepthTarget),
+            m_width,
+            m_height,
+            temporalClear);
+
+        std::swap(
+            const_cast<InternalTarget&>(m_radianceHistoryTarget),
+            const_cast<InternalTarget&>(m_radianceTemporalTarget));
+        m_radianceHistoryValid = true;
+        ++m_giFrameIndex;
+    }
+
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
     const char* hdrColorSource = "scene_direct";
     bool compositeRan = false;
@@ -1564,6 +1651,43 @@ void ScreenSpaceEffects::Apply(
                 useShadowFactorComposite,
                 hdrColorSource,
                 "radiance_buffer",
+                hdrColorSrv,
+                shadowFactorSrv);
+            if (m_logSsaoApplySnapshot)
+            {
+                m_pendingSsaoGpuReadback = true;
+            }
+            return;
+        }
+        else if (
+            IsGiTemporalDebugMode(m_debugMode) &&
+            m_radianceHistoryTarget.srvCpuHandle != 0)
+        {
+            m_giTemporalDebugShader->Use(false, true);
+            m_giTemporalDebugShader->SetInt("uTemporalRadiance", 0);
+            m_giTemporalDebugShader->SetInt("uCurrentRadiance", 1);
+            m_giTemporalDebugShader->SetInt("uDepthMap", 2);
+            m_giTemporalDebugShader->SetInt(
+                "uGiTemporalDebugMode",
+                GiTemporalDebugModeIndex(m_debugMode));
+            m_giTemporalDebugShader->SetFloat("uDifferenceGain", 25.0f);
+            m_giTemporalDebugShader->BindTextureSlot(0, m_radianceHistoryTarget.srvCpuHandle);
+            m_giTemporalDebugShader->BindTextureSlot(1, m_radianceTarget.srvCpuHandle);
+            m_giTemporalDebugShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_giTemporalDebugShader->FlushUniforms();
+            DrawFullscreenQuad();
+            CaptureSsaoDiagnosticsCpu(
+                runSsao,
+                compositeRan,
+                compositeUsesSsao,
+                pbrDebugActive,
+                useShadowFactorComposite,
+                hdrColorSource,
+                m_debugMode == RenderDebugMode::GiDisocclusion
+                    ? "gi_disocclusion"
+                    : (m_debugMode == RenderDebugMode::RadianceTemporalDelta
+                          ? "radiance_temporal_delta"
+                          : "radiance_temporal"),
                 hdrColorSrv,
                 shadowFactorSrv);
             if (m_logSsaoApplySnapshot)
@@ -2135,6 +2259,26 @@ float ScreenSpaceEffects::GetTaaBlendFactor() const
 void ScreenSpaceEffects::SetTaaBlendFactor(const float factor)
 {
     m_taaBlendFactor = std::clamp(factor, 0.0f, 0.99f);
+}
+
+float ScreenSpaceEffects::GetGiTemporalBlendFactor() const
+{
+    return m_giTemporalBlendFactor;
+}
+
+void ScreenSpaceEffects::SetGiTemporalBlendFactor(const float factor)
+{
+    m_giTemporalBlendFactor = std::clamp(factor, 0.0f, 0.99f);
+}
+
+float ScreenSpaceEffects::GetGiDepthThreshold() const
+{
+    return m_giDepthThreshold;
+}
+
+void ScreenSpaceEffects::SetGiDepthThreshold(const float threshold)
+{
+    m_giDepthThreshold = std::max(0.001f, threshold);
 }
 
 float ScreenSpaceEffects::GetSmaaThreshold() const
