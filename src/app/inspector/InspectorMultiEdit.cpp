@@ -1,5 +1,6 @@
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/undo/UndoCommand.h"
+#include "app/editor/EditorMouseWrapping.h"
 
 #include <imgui.h>
 
@@ -92,6 +93,7 @@ namespace
         else
         {
             changed = ImGui::DragFloat("##value", &field.value[axis], dragSpeed, 0.0f, 0.0f, format);
+            EditorMouseWrapping::MarkCurrentItemForMouseWrap();
             if (editContext != nullptr)
             {
                 HandleTransformFieldEditEvents(*editContext);

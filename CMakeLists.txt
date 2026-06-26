@@ -245,6 +245,7 @@ add_executable(game-engine
     src/app/editor/EditorTopToolbar.cpp
 
     src/app/editor/EditorClipboard.cpp
+    src/app/editor/EditorMouseWrapping.cpp
 
     src/app/undo/UndoCommand.cpp
 
@@ -627,4 +628,3 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
 
     # Intentionally NOT registered with CTest — run the .exe manually when needed.
 endif()
-

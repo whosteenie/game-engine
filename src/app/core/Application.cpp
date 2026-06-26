@@ -4,6 +4,7 @@
 #include "app/core/Application.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorDockSpace.h"
+#include "app/editor/EditorMouseWrapping.h"
 #include "app/editor/EditorTopToolbar.h"
 #include "app/editor/EditorViewportRect.h"
 #include "app/panels/GameViewportPanel.h"
@@ -192,7 +193,8 @@ namespace
             return false;
         }
 
-        return ImGui::IsMouseDown(ImGuiMouseButton_Left);
+        return EditorMouseWrapping::IsActiveItemMouseWrapEligible()
+            && ImGui::IsMouseDown(ImGuiMouseButton_Left);
     }
 
     void WrapImGuiMouseCursorAtWindowEdges(GLFWwindow* window)

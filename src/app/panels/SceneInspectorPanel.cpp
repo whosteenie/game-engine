@@ -9,6 +9,7 @@
 #include "app/scene/Scene.h"
 #include "app/scene/SceneComponentCatalog.h"
 #include "app/undo/UndoCommand.h"
+#include "app/editor/EditorMouseWrapping.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/components/CameraComponent.h"
@@ -115,6 +116,7 @@ namespace
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
         const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         if (editContext != nullptr)
         {
             HandleTransformFieldEditEvents(*editContext);
@@ -988,6 +990,7 @@ namespace
         {
             scene.MarkDirty();
         }
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         HandleColliderFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Is Trigger", &collider.isTrigger))

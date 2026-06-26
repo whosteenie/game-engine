@@ -93,6 +93,7 @@ void LightingPanel::Draw(
 
     IBL& ibl = renderer.GetIBL();
     ScreenSpaceEffects& screenSpaceEffects = renderer.GetScreenSpaceEffects();
+    BeginRendererEditFrame(editContext);
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
     {

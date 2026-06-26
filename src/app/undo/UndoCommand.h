@@ -617,10 +617,13 @@ struct RendererEditContext
     Scene* scene = nullptr;
     std::string commandName = "Renderer";
 
+    nlohmann::json frameBefore;
     nlohmann::json pendingBefore;
+    bool hasFrameBefore = false;
     bool sessionOpen = false;
 };
 
+void BeginRendererEditFrame(RendererEditContext& context);
 void HandleRendererFieldEditEvents(RendererEditContext& context);
 
 /*

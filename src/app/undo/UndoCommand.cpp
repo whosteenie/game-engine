@@ -1517,6 +1517,87 @@ nlohmann::json CaptureRendererSettings(const Scene& scene)
     return SceneProjectIODetail::SerializeRenderer(scene);
 }
 
+namespace
+{
+    nlohmann::json BuildRendererSettingsDelta(
+        const nlohmann::json& before,
+        const nlohmann::json& after,
+        const nlohmann::json& values)
+    {
+        if (before == after)
+        {
+            return nlohmann::json::object();
+        }
+
+        if (!before.is_object() || !after.is_object() || !values.is_object())
+        {
+            return values;
+        }
+
+        nlohmann::json delta = nlohmann::json::object();
+        for (const auto& [key, afterValue] : after.items())
+        {
+            const nlohmann::json beforeValue =
+                before.contains(key) ? before.at(key) : nlohmann::json();
+            const nlohmann::json value =
+                values.contains(key) ? values.at(key) : nlohmann::json();
+            nlohmann::json childDelta = BuildRendererSettingsDelta(beforeValue, afterValue, value);
+            if (!childDelta.is_object() || !childDelta.empty())
+            {
+                delta[key] = std::move(childDelta);
+            }
+        }
+
+        for (const auto& [key, beforeValue] : before.items())
+        {
+            if (after.contains(key))
+            {
+                continue;
+            }
+
+            const nlohmann::json value =
+                values.contains(key) ? values.at(key) : nlohmann::json();
+            delta[key] = value;
+        }
+
+        return delta;
+    }
+
+    void OverlayRendererSettingsDelta(nlohmann::json& target, const nlohmann::json& delta)
+    {
+        if (!delta.is_object())
+        {
+            target = delta;
+            return;
+        }
+
+        if (!target.is_object())
+        {
+            target = nlohmann::json::object();
+        }
+
+        for (const auto& [key, value] : delta.items())
+        {
+            if (value.is_object())
+            {
+                OverlayRendererSettingsDelta(target[key], value);
+            }
+            else
+            {
+                target[key] = value;
+            }
+        }
+    }
+
+    void ApplyRendererSettingsDelta(Scene& scene, const nlohmann::json& delta)
+    {
+        nlohmann::json current = CaptureRendererSettings(scene);
+        OverlayRendererSettingsDelta(current, delta);
+        SceneProjectIODetail::DeserializeRenderer(scene, current);
+        scene.MarkDirty();
+    }
+}
+
 bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& right)
 {
     return left == right;
@@ -1532,20 +1613,20 @@ RendererSettingsCommand::RendererSettingsCommand(
     nlohmann::json before,
     nlohmann::json after,
     std::string name)
-    : m_before(std::move(before)),
-      m_after(std::move(after)),
+    : m_before(BuildRendererSettingsDelta(before, after, before)),
+      m_after(BuildRendererSettingsDelta(before, after, after)),
       m_name(std::move(name))
 {
 }
 
 void RendererSettingsCommand::Undo(UndoContext& context)
 {
-    ApplyRendererSettings(context.scene, m_before);
+    ApplyRendererSettingsDelta(context.scene, m_before);
 }
 
 void RendererSettingsCommand::Redo(UndoContext& context)
 {
-    ApplyRendererSettings(context.scene, m_after);
+    ApplyRendererSettingsDelta(context.scene, m_after);
 }
 
 const char* RendererSettingsCommand::GetName() const
@@ -1555,14 +1636,8 @@ const char* RendererSettingsCommand::GetName() const
 
 bool RendererSettingsCommand::TryMerge(const IUndoCommand& next)
 {
-    const auto* other = dynamic_cast<const RendererSettingsCommand*>(&next);
-    if (other == nullptr)
-    {
-        return false;
-    }
-
-    m_after = other->m_after;
-    return true;
+    (void)next;
+    return false;
 }
 
 void PushRendererSettings(
@@ -1599,6 +1674,19 @@ void PushRendererMutation(
     PushRendererSettings(undoStack, std::move(before), std::move(after), commandName);
 }
 
+void BeginRendererEditFrame(RendererEditContext& context)
+{
+    if (context.scene == nullptr)
+    {
+        context.hasFrameBefore = false;
+        context.frameBefore = nlohmann::json();
+        return;
+    }
+
+    context.frameBefore = CaptureRendererSettings(*context.scene);
+    context.hasFrameBefore = true;
+}
+
 void HandleRendererFieldEditEvents(RendererEditContext& context)
 {
     if (context.undoStack == nullptr || context.scene == nullptr)
@@ -1608,7 +1696,9 @@ void HandleRendererFieldEditEvents(RendererEditContext& context)
 
     if (ImGui::IsItemActivated() && !context.sessionOpen)
     {
-        context.pendingBefore = CaptureRendererSettings(*context.scene);
+        context.pendingBefore = context.hasFrameBefore
+            ? context.frameBefore
+            : CaptureRendererSettings(*context.scene);
         context.sessionOpen = true;
     }
 
