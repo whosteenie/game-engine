@@ -912,7 +912,7 @@ void LightingPanel::Draw(
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::DiffuseIbl))
         {
-            ImGui::TextWrapped("Indirect diffuse from L2 SH9 irradiance (geom normal). Should be smooth on spheres.");
+            ImGui::TextWrapped("Indirect diffuse from L2 SH9 irradiance using the shaded normal.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::SpecularIbl))
         {

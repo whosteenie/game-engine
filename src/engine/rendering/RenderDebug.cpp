@@ -27,7 +27,7 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::CascadeBlendFactor:
         return "Cascade blend factor (PBR)";
     case RenderDebugMode::DiffuseIbl:
-        return "Diffuse IBL (geom normal)";
+        return "Diffuse IBL (shaded normal)";
     case RenderDebugMode::SpecularIbl:
         return "Specular IBL (PBR)";
     case RenderDebugMode::DirectDiffuseGeom:

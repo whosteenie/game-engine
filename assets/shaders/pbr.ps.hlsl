@@ -751,7 +751,7 @@ PSOutput main(PSInput input)
         ambientOcclusion = uAoMap.Sample(uAoSampler, aoTexCoord).r;
     }
 
-    float3 irradiance = EvaluateDiffuseIrradianceSh(geomNormalNorm);
+    float3 irradiance = EvaluateDiffuseIrradianceSh(normal);
     float3 diffuseIbl = irradiance * albedo / PI;
 
     float sunGeomFacing = 1.0;
@@ -807,8 +807,8 @@ PSOutput main(PSInput input)
         float diffuseNdotL = perturbedNdotL;
         if (i == uShadowLightIndex && uLightTypes[i] == LIGHT_TYPE_DIRECTIONAL)
         {
-            // Stable sun terminator on geometric normals; specular still uses the shaded normal.
-            diffuseNdotL = geomNdotL;
+            // Let normal maps shape sun diffuse, but keep the geometric hemisphere as the hard visibility gate.
+            diffuseNdotL = geomNdotL > 0.0 ? perturbedNdotL : 0.0;
         }
 
         float3 contribution = CalcCookTorranceContribution(
