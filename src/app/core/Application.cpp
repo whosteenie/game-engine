@@ -1272,6 +1272,10 @@ void Application::Render()
         FrameDiagnostics::LogPhase("present");
         m_renderer->EndFrame(m_window);
     });
+    if (editorActive)
+    {
+        m_projectChooser->CompleteDeferredProjectLoadProgress();
+    }
     m_imguiFrameActive = false;
     m_gfxFrameActive = false;
 }

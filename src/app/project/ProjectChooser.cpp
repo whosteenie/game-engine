@@ -100,34 +100,44 @@ bool ProjectChooser::OpenProjectAtPath(
     outError.clear();
     EngineLog::Info("project", "Opening project: " + projectFilePath);
 
-    ScopedNativeProgress progress("Loading Project", "Opening project...");
+    NativeProgressWindow::Instance().Begin("Loading Project", "Opening project...");
+    NativeProgressWindow::Instance().SetProgress(0.02f);
+    bool keepProgressOpenForFirstFrame = false;
 
     try
     {
         if (GfxContext::Get().IsInitialized())
         {
+            NativeProgressWindow::Instance().SetMessage("Finishing previous GPU work...");
+            NativeProgressWindow::Instance().SetProgress(0.05f);
             GfxContext::Get().WaitForSwapchainFrames();
         }
 
-        progress.SetMessage("Loading project file...");
+        NativeProgressWindow::Instance().SetMessage("Loading project file...");
+        NativeProgressWindow::Instance().SetProgress(0.08f);
         EngineLog::Info("project", "Loading project file");
         if (!project.OpenProject(scene, projectFilePath, editorState))
         {
             outError = SanitizeLogText(project.GetStatusMessage(), "Failed to open project.");
             EngineLog::LogFailure("project", "OpenProject", outError);
             ReturnToStartupWithError(project, scene, outError);
+            NativeProgressWindow::Instance().End();
             return false;
         }
+        NativeProgressWindow::Instance().SetProgress(0.78f);
 
         undoStack.Clear();
         clipboard.Clear();
+        NativeProgressWindow::Instance().SetMessage("Saving recent project settings...");
+        NativeProgressWindow::Instance().SetProgress(0.82f);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
 
         if (applyEditorState)
         {
-            progress.SetMessage("Applying editor preferences...");
+            NativeProgressWindow::Instance().SetMessage("Applying editor preferences...");
+            NativeProgressWindow::Instance().SetProgress(0.86f);
             EngineLog::Info("project", "Applying editor state");
             try
             {
@@ -138,19 +148,25 @@ bool ProjectChooser::OpenProjectAtPath(
                 outError = FormatExceptionContext("ApplyProjectEditorState", exception);
                 EngineLog::LogFailure("project", "ApplyProjectEditorState", outError);
                 ReturnToStartupWithError(project, scene, outError);
+                NativeProgressWindow::Instance().End();
                 return false;
             }
         }
 
         if (finalizeEditorOpen)
         {
-            progress.SetMessage("Restoring editor layout...");
+            NativeProgressWindow::Instance().SetMessage("Restoring editor layout...");
+            NativeProgressWindow::Instance().SetProgress(0.90f);
             finalizeEditorOpen();
         }
 
         m_startupMode = false;
         m_showNewProjectForm = false;
         m_errorMessage.clear();
+        NativeProgressWindow::Instance().SetMessage("Preparing first frame...");
+        NativeProgressWindow::Instance().SetProgress(0.96f);
+        m_deferredProjectLoadProgress = true;
+        keepProgressOpenForFirstFrame = true;
         EngineLog::Info("project", "Project opened: " + project.GetProjectFilePath());
         return true;
     }
@@ -159,6 +175,10 @@ bool ProjectChooser::OpenProjectAtPath(
         outError = FormatExceptionContext("OpenProjectAtPath", exception);
         EngineLog::LogFailure("project", "OpenProjectAtPath", outError);
         ReturnToStartupWithError(project, scene, outError);
+        if (!keepProgressOpenForFirstFrame)
+        {
+            NativeProgressWindow::Instance().End();
+        }
         return false;
     }
     catch (...)
@@ -166,8 +186,25 @@ bool ProjectChooser::OpenProjectAtPath(
         outError = "OpenProjectAtPath: unknown exception";
         EngineLog::LogFailure("project", "OpenProjectAtPath", outError);
         ReturnToStartupWithError(project, scene, outError);
+        if (!keepProgressOpenForFirstFrame)
+        {
+            NativeProgressWindow::Instance().End();
+        }
         return false;
     }
+}
+
+void ProjectChooser::CompleteDeferredProjectLoadProgress()
+{
+    if (!m_deferredProjectLoadProgress)
+    {
+        return;
+    }
+
+    NativeProgressWindow::Instance().SetMessage("Project ready.");
+    NativeProgressWindow::Instance().SetProgress(1.0f);
+    NativeProgressWindow::Instance().End();
+    m_deferredProjectLoadProgress = false;
 }
 
 bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)

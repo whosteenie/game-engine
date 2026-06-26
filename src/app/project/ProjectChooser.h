@@ -57,6 +57,7 @@ public:
         std::string& outError);
 
     bool QueueProjectOpen(const std::string& projectFilePath);
+    void CompleteDeferredProjectLoadProgress();
 
 private:
     bool DrawStartupScreen(
@@ -94,4 +95,5 @@ private:
     char m_newProjectDirectory[512] = {};
     std::string m_errorMessage;
     std::string m_pendingProjectPath;
+    bool m_deferredProjectLoadProgress = false;
 };

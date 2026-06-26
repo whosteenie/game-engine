@@ -49,6 +49,8 @@ using json = nlohmann::json;
 namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
+    constexpr float kProjectObjectLoadProgressStart = 0.15f;
+    constexpr float kProjectObjectLoadProgressEnd = 0.75f;
 
     std::string NormalizeSlashes(std::string path)
     {
@@ -984,6 +986,7 @@ namespace SceneProjectIODetail
             loadProgress = std::make_unique<ScopedNativeProgress>(
                 "Loading Project",
                 "Loading scene objects...");
+            loadProgress->SetProgress(kProjectObjectLoadProgressStart);
         }
 
         std::size_t objectIndex = 0;
@@ -996,8 +999,11 @@ namespace SceneProjectIODetail
                 loadProgress->SetMessage(
                     "Loading '" + objectName + "' (" + std::to_string(objectIndex) + "/" +
                     std::to_string(objectCount) + ")");
+                const float objectProgress =
+                    static_cast<float>(objectIndex) / static_cast<float>(objectCount);
                 loadProgress->SetProgress(
-                    static_cast<float>(objectIndex) / static_cast<float>(objectCount));
+                    kProjectObjectLoadProgressStart
+                    + objectProgress * (kProjectObjectLoadProgressEnd - kProjectObjectLoadProgressStart));
             }
 
             try
@@ -1405,6 +1411,7 @@ bool SceneProjectIO::Load(
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
+        progress.SetProgress(0.04f);
 
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
@@ -1415,9 +1422,11 @@ bool SceneProjectIO::Load(
 
         json root;
         progress.SetMessage("Parsing project file...");
+        progress.SetProgress(0.10f);
         input >> root;
 
         progress.SetMessage("Loading scene...");
+        progress.SetProgress(SceneProjectIODetail::kProjectObjectLoadProgressStart);
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)
