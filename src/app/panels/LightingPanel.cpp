@@ -670,36 +670,56 @@ void LightingPanel::Draw(
         if (bloomEnabled)
         {
             float bloomThreshold = screenSpaceEffects.GetBloomThreshold();
-            if (ImGui::SliderFloat("Bloom threshold", &bloomThreshold, 0.0f, 3.0f))
-            {
-                screenSpaceEffects.SetBloomThreshold(bloomThreshold);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
+            UndoableRendererSliderFloat(
+                "Bloom threshold",
+                &bloomThreshold,
+                0.0f,
+                3.0f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float bloomThreshold) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomThreshold(bloomThreshold);
+                    target.MarkDirty();
+                });
 
             float bloomSoftKnee = screenSpaceEffects.GetBloomSoftKnee();
-            if (ImGui::SliderFloat("Bloom soft knee", &bloomSoftKnee, 0.0f, 1.0f))
-            {
-                screenSpaceEffects.SetBloomSoftKnee(bloomSoftKnee);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
+            UndoableRendererSliderFloat(
+                "Bloom soft knee",
+                &bloomSoftKnee,
+                0.0f,
+                1.0f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float bloomSoftKnee) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomSoftKnee(bloomSoftKnee);
+                    target.MarkDirty();
+                });
 
             float bloomIntensity = screenSpaceEffects.GetBloomIntensity();
-            if (ImGui::SliderFloat("Bloom intensity", &bloomIntensity, 0.0f, 2.0f))
-            {
-                screenSpaceEffects.SetBloomIntensity(bloomIntensity);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
+            UndoableRendererSliderFloat(
+                "Bloom intensity",
+                &bloomIntensity,
+                0.0f,
+                2.0f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float bloomIntensity) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomIntensity(bloomIntensity);
+                    target.MarkDirty();
+                });
 
             float bloomBlurRadius = screenSpaceEffects.GetBloomBlurRadius();
-            if (ImGui::SliderFloat("Bloom blur radius", &bloomBlurRadius, 0.25f, 4.0f))
-            {
-                screenSpaceEffects.SetBloomBlurRadius(bloomBlurRadius);
-                scene.MarkDirty();
-            }
-            HandleRendererFieldEditEvents(editContext);
+            UndoableRendererSliderFloat(
+                "Bloom blur radius",
+                &bloomBlurRadius,
+                0.25f,
+                4.0f,
+                "%.3f",
+                editContext,
+                [](Scene& target, float bloomBlurRadius) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomBlurRadius(bloomBlurRadius);
+                    target.MarkDirty();
+                });
         }
     }
 

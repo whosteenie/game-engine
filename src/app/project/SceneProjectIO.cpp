@@ -471,6 +471,34 @@ namespace SceneProjectIODetail
         int msaaSampleCount = 1;
     };
 
+    LoadedScreenSpaceAaSettings NormalizeLoadedScreenSpaceAaSettings(
+        AntiAliasingMode antiAliasingMode,
+        int msaaSampleCount)
+    {
+        LoadedScreenSpaceAaSettings settings{};
+        settings.antiAliasingMode = antiAliasingMode;
+        settings.msaaSampleCount = msaaSampleCount;
+
+        if (settings.antiAliasingMode == AntiAliasingMode::MSAA)
+        {
+            if (settings.msaaSampleCount <= 1)
+            {
+                settings.msaaSampleCount = 4;
+            }
+            settings.antiAliasingMode = AntiAliasingMode::None;
+        }
+        if (settings.msaaSampleCount > 1 && settings.antiAliasingMode == AntiAliasingMode::TAA)
+        {
+            settings.antiAliasingMode = AntiAliasingMode::None;
+        }
+        if (settings.antiAliasingMode == AntiAliasingMode::TAA && settings.msaaSampleCount > 1)
+        {
+            settings.msaaSampleCount = 1;
+        }
+
+        return settings;
+    }
+
     LoadedScreenSpaceAaSettings ResolveLoadedScreenSpaceAaSettings(const json& rendererValue)
     {
         LoadedScreenSpaceAaSettings settings{};
@@ -480,30 +508,11 @@ namespace SceneProjectIODetail
         }
 
         const json& effectsValue = rendererValue.at("screenSpaceEffects");
-        AntiAliasingMode loadedAaMode = AntiAliasingModeFromString(effectsValue.value(
+        const AntiAliasingMode loadedAaMode = AntiAliasingModeFromString(effectsValue.value(
             "antiAliasingMode",
             AntiAliasingModeToString(AntiAliasingMode::None)));
-        int loadedMsaaSampleCount = effectsValue.value("msaaSampleCount", 1);
-        if (loadedAaMode == AntiAliasingMode::MSAA)
-        {
-            if (loadedMsaaSampleCount <= 1)
-            {
-                loadedMsaaSampleCount = 4;
-            }
-            loadedAaMode = AntiAliasingMode::None;
-        }
-        if (loadedMsaaSampleCount > 1 && loadedAaMode == AntiAliasingMode::TAA)
-        {
-            loadedAaMode = AntiAliasingMode::None;
-        }
-        if (loadedAaMode == AntiAliasingMode::TAA && loadedMsaaSampleCount > 1)
-        {
-            loadedMsaaSampleCount = 1;
-        }
-
-        settings.antiAliasingMode = loadedAaMode;
-        settings.msaaSampleCount = loadedMsaaSampleCount;
-        return settings;
+        const int loadedMsaaSampleCount = effectsValue.value("msaaSampleCount", 1);
+        return NormalizeLoadedScreenSpaceAaSettings(loadedAaMode, loadedMsaaSampleCount);
     }
 
     const char* AmbientOcclusionModeToString(const AmbientOcclusionMode mode)
@@ -678,201 +687,419 @@ namespace SceneProjectIODetail
         };
     }
 
-    void DeserializeRenderer(Scene& scene, const json& rendererValue)
+    void ApplyScreenSpaceEffectsDelta(ScreenSpaceEffects& effects, const json& effectsValue)
     {
-        SceneRenderer& renderer = scene.GetRenderer();
-        const LoadedScreenSpaceAaSettings loadedAaSettings =
-            ResolveLoadedScreenSpaceAaSettings(rendererValue);
-        if (loadedAaSettings.msaaSampleCount > 1)
+        if (effectsValue.contains("enabled"))
         {
-            ShaderCache::Clear();
+            effects.SetEnabled(effectsValue.at("enabled").get<bool>());
         }
-        renderer.PrepareGpuResourcesForGeometryMsaa(loadedAaSettings.msaaSampleCount);
-        const bool gpuReady = renderer.IsGpuResourcesReady();
-        if (gpuReady && loadedAaSettings.msaaSampleCount > 1)
+        if (effectsValue.contains("aoMode"))
         {
-            scene.InvalidateAllMaterialCachedShaders();
+            effects.SetAmbientOcclusionMode(AmbientOcclusionModeFromString(
+                effectsValue.at("aoMode").get<std::string>()));
         }
+        else if (effectsValue.contains("ssaoEnabled"))
+        {
+            effects.SetSsaoEnabled(effectsValue.at("ssaoEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssaoRadius"))
+        {
+            effects.SetSsaoRadius(effectsValue.at("ssaoRadius").get<float>());
+        }
+        if (effectsValue.contains("ssaoBias"))
+        {
+            effects.SetSsaoBias(effectsValue.at("ssaoBias").get<float>());
+        }
+        if (effectsValue.contains("ssaoPower"))
+        {
+            effects.SetSsaoPower(effectsValue.at("ssaoPower").get<float>());
+        }
+        if (effectsValue.contains("gtaoRadius"))
+        {
+            effects.SetGtaoRadius(effectsValue.at("gtaoRadius").get<float>());
+        }
+        if (effectsValue.contains("gtaoThickness"))
+        {
+            effects.SetGtaoThickness(effectsValue.at("gtaoThickness").get<float>());
+        }
+        if (effectsValue.contains("gtaoFalloff"))
+        {
+            effects.SetGtaoFalloff(effectsValue.at("gtaoFalloff").get<float>());
+        }
+        if (effectsValue.contains("gtaoPower"))
+        {
+            effects.SetGtaoPower(effectsValue.at("gtaoPower").get<float>());
+        }
+        if (effectsValue.contains("gtaoDirections"))
+        {
+            effects.SetGtaoDirections(effectsValue.at("gtaoDirections").get<int>());
+        }
+        if (effectsValue.contains("gtaoSteps"))
+        {
+            effects.SetGtaoSteps(effectsValue.at("gtaoSteps").get<int>());
+        }
+        if (effectsValue.contains("gtaoDenoiseEnabled"))
+        {
+            effects.SetGtaoDenoiseEnabled(effectsValue.at("gtaoDenoiseEnabled").get<bool>());
+        }
+        if (effectsValue.contains("aoStrength"))
+        {
+            effects.SetAoStrength(effectsValue.at("aoStrength").get<float>());
+        }
+        if (effectsValue.contains("exposure"))
+        {
+            effects.SetExposure(effectsValue.at("exposure").get<float>());
+        }
+        if (effectsValue.contains("tonemapMode"))
+        {
+            effects.SetTonemapMode(
+                TonemapModeFromString(effectsValue.at("tonemapMode").get<std::string>()));
+        }
+        if (effectsValue.contains("bloomEnabled"))
+        {
+            effects.SetBloomEnabled(effectsValue.at("bloomEnabled").get<bool>());
+        }
+        if (effectsValue.contains("bloomThreshold"))
+        {
+            effects.SetBloomThreshold(effectsValue.at("bloomThreshold").get<float>());
+        }
+        if (effectsValue.contains("bloomSoftKnee"))
+        {
+            effects.SetBloomSoftKnee(effectsValue.at("bloomSoftKnee").get<float>());
+        }
+        if (effectsValue.contains("bloomIntensity"))
+        {
+            effects.SetBloomIntensity(effectsValue.at("bloomIntensity").get<float>());
+        }
+        if (effectsValue.contains("bloomBlurRadius"))
+        {
+            effects.SetBloomBlurRadius(effectsValue.at("bloomBlurRadius").get<float>());
+        }
+        if (effectsValue.contains("fxaaSubpixQuality"))
+        {
+            effects.SetFxaaSubpixQuality(effectsValue.at("fxaaSubpixQuality").get<float>());
+        }
+        if (effectsValue.contains("fxaaEdgeThreshold"))
+        {
+            effects.SetFxaaEdgeThreshold(effectsValue.at("fxaaEdgeThreshold").get<float>());
+        }
+        if (effectsValue.contains("renderScale"))
+        {
+            effects.SetRenderScale(effectsValue.at("renderScale").get<float>());
+        }
+        if (effectsValue.contains("taaBlendFactor"))
+        {
+            effects.SetTaaBlendFactor(effectsValue.at("taaBlendFactor").get<float>());
+        }
+        if (effectsValue.contains("giTemporalBlendFactor"))
+        {
+            effects.SetGiTemporalBlendFactor(effectsValue.at("giTemporalBlendFactor").get<float>());
+        }
+        if (effectsValue.contains("giDepthThreshold"))
+        {
+            effects.SetGiDepthThreshold(effectsValue.at("giDepthThreshold").get<float>());
+        }
+        if (effectsValue.contains("ssgiDenoiseEnabled"))
+        {
+            effects.SetSsgiDenoiseEnabled(effectsValue.at("ssgiDenoiseEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssgiNoiseInjectionEnabled"))
+        {
+            effects.SetSsgiNoiseInjectionEnabled(
+                effectsValue.at("ssgiNoiseInjectionEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssgiNoiseStrength"))
+        {
+            effects.SetSsgiNoiseStrength(effectsValue.at("ssgiNoiseStrength").get<float>());
+        }
+        if (effectsValue.contains("ssgiSpatialBlurSpread"))
+        {
+            effects.SetSsgiSpatialBlurSpread(effectsValue.at("ssgiSpatialBlurSpread").get<float>());
+        }
+        if (effectsValue.contains("ssgiSpatialDepthThreshold"))
+        {
+            effects.SetSsgiSpatialDepthThreshold(
+                effectsValue.at("ssgiSpatialDepthThreshold").get<float>());
+        }
+        if (effectsValue.contains("ssgiRoughnessSpreadMin"))
+        {
+            effects.SetSsgiRoughnessSpreadMin(effectsValue.at("ssgiRoughnessSpreadMin").get<float>());
+        }
+        if (effectsValue.contains("ssgiRoughnessSpreadMax"))
+        {
+            effects.SetSsgiRoughnessSpreadMax(effectsValue.at("ssgiRoughnessSpreadMax").get<float>());
+        }
+        if (effectsValue.contains("ssgiEnabled"))
+        {
+            effects.SetSsgiEnabled(effectsValue.at("ssgiEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssgiStrength"))
+        {
+            effects.SetSsgiStrength(effectsValue.at("ssgiStrength").get<float>());
+        }
+        if (effectsValue.contains("ssgiMaxTraceDistance"))
+        {
+            effects.SetSsgiMaxTraceDistance(effectsValue.at("ssgiMaxTraceDistance").get<float>());
+        }
+        if (effectsValue.contains("ssgiStepCount"))
+        {
+            effects.SetSsgiStepCount(effectsValue.at("ssgiStepCount").get<int>());
+        }
+        if (effectsValue.contains("ssgiThickness"))
+        {
+            effects.SetSsgiThickness(effectsValue.at("ssgiThickness").get<float>());
+        }
+        if (effectsValue.contains("smaaThreshold"))
+        {
+            effects.SetSmaaThreshold(effectsValue.at("smaaThreshold").get<float>());
+        }
+        if (effectsValue.contains("smaaSearchSteps"))
+        {
+            effects.SetSmaaSearchSteps(effectsValue.at("smaaSearchSteps").get<int>());
+        }
+        if (effectsValue.contains("ssaoBlurDepthThreshold"))
+        {
+            effects.SetSsaoBlurDepthThreshold(
+                effectsValue.at("ssaoBlurDepthThreshold").get<float>());
+        }
+    }
 
-        if (gpuReady)
+    void ApplyDirectionalShadowDelta(DirectionalShadowSettings& shadowSettings, const json& shadowValue)
+    {
+        if (shadowValue.contains("filterMode"))
         {
-            const float defaultEnvironmentIntensity = renderer.GetIBL().GetEnvironmentIntensity();
-            renderer.GetIBL().SetEnvironmentIntensity(
-                rendererValue.value("environmentIntensity", defaultEnvironmentIntensity));
-            EnvironmentMap& environmentMap = renderer.GetEnvironmentMap();
-            if (rendererValue.contains("skybox"))
-            {
-                const json& skyboxValue = rendererValue.at("skybox");
-                environmentMap.SetEnabled(skyboxValue.value("enabled", environmentMap.IsEnabled()));
-                environmentMap.SetBackgroundMode(static_cast<EnvironmentBackgroundMode>(
-                    skyboxValue.value(
-                        "backgroundMode",
-                        static_cast<int>(environmentMap.GetBackgroundMode()))));
-                environmentMap.SetHdrPath(skyboxValue.value("hdrPath", environmentMap.GetHdrPath()));
-                environmentMap.SetRotationDegrees(
-                    skyboxValue.value("rotationDegrees", environmentMap.GetRotationDegrees()));
-                environmentMap.SetExposure(skyboxValue.value("exposure", environmentMap.GetExposure()));
-                environmentMap.SetIblCubemapResolution(static_cast<EnvironmentIblCubemapResolution>(
-                    skyboxValue.value(
-                        "iblCubemapResolution",
-                        static_cast<int>(environmentMap.GetIblCubemapResolution()))));
-                if (skyboxValue.contains("solidBackgroundColor")
-                    && skyboxValue.at("solidBackgroundColor").is_array()
-                    && skyboxValue.at("solidBackgroundColor").size() == 3)
-                {
-                    const json& colorValue = skyboxValue.at("solidBackgroundColor");
-                    environmentMap.SetSolidBackgroundColorSrgb(glm::vec3(
-                        colorValue[0].get<float>(),
-                        colorValue[1].get<float>(),
-                        colorValue[2].get<float>()));
-                }
-            }
-            renderer.SetTextureFilterMode(TextureFilterModeFromString(rendererValue.value(
-                "textureFilterMode",
-                TextureFilterModeToString(renderer.GetTextureFilterMode()))));
-            renderer.SetTextureAnisotropy(rendererValue.value(
-                "textureAnisotropy",
-                renderer.GetTextureAnisotropy()));
-            renderer.SetTextureMipBias(rendererValue.value(
-                "textureMipBias",
-                renderer.GetTextureMipBias()));
+            shadowSettings.SetFilterMode(
+                ShadowFilterModeFromString(shadowValue.at("filterMode").get<std::string>()));
         }
-
-        if (rendererValue.contains("directionalShadow"))
+        if (shadowValue.contains("shadowMapResolution"))
         {
-            const json& shadowValue = rendererValue.at("directionalShadow");
-            DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
-            shadowSettings.SetFilterMode(ShadowFilterModeFromString(
-                shadowValue.value("filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode()))));
-            shadowSettings.SetShadowMapResolution(
-                shadowValue.value("shadowMapResolution", shadowSettings.GetShadowMapResolution()));
-            shadowSettings.SetCascadeCount(shadowValue.value("cascadeCount", shadowSettings.GetCascadeCount()));
-            shadowSettings.SetCascadeSplitLambda(
-                shadowValue.value("cascadeSplitLambda", shadowSettings.GetCascadeSplitLambda()));
-            shadowSettings.SetCascadeBlendRatio(
-                shadowValue.value("cascadeBlendRatio", shadowSettings.GetCascadeBlendRatio()));
-            shadowSettings.SetTightNearPlaneXyFit(
-                shadowValue.value("tightNearPlaneXyFit", shadowSettings.GetTightNearPlaneXyFit()));
-            shadowSettings.SetXyMarginFraction(
-                shadowValue.value("xyMarginFraction", shadowSettings.GetXyMarginFraction()));
-            shadowSettings.SetZMarginFraction(
-                shadowValue.value("zMarginFraction", shadowSettings.GetZMarginFraction()));
-            shadowSettings.SetUsePoissonPcf(
-                shadowValue.value("usePoissonPcf", shadowSettings.GetUsePoissonPcf()));
-            shadowSettings.SetPcfKernelRadius(
-                shadowValue.value("pcfKernelRadius", shadowSettings.GetPcfKernelRadius()));
-            shadowSettings.SetPcfSampleCount(
-                shadowValue.value("pcfSampleCount", shadowSettings.GetPcfSampleCount()));
-            shadowSettings.SetMinPenumbraTexels(
-                shadowValue.value("minPenumbraTexels", shadowSettings.GetMinPenumbraTexels()));
-            shadowSettings.SetSunAngularDiameterDegrees(shadowValue.value(
-                "sunAngularDiameterDegrees",
-                shadowSettings.GetSunAngularDiameterDegrees()));
+            shadowSettings.SetShadowMapResolution(shadowValue.at("shadowMapResolution").get<int>());
+        }
+        if (shadowValue.contains("cascadeCount"))
+        {
+            shadowSettings.SetCascadeCount(shadowValue.at("cascadeCount").get<int>());
+        }
+        if (shadowValue.contains("cascadeSplitLambda"))
+        {
+            shadowSettings.SetCascadeSplitLambda(shadowValue.at("cascadeSplitLambda").get<float>());
+        }
+        if (shadowValue.contains("cascadeBlendRatio"))
+        {
+            shadowSettings.SetCascadeBlendRatio(shadowValue.at("cascadeBlendRatio").get<float>());
+        }
+        if (shadowValue.contains("tightNearPlaneXyFit"))
+        {
+            shadowSettings.SetTightNearPlaneXyFit(shadowValue.at("tightNearPlaneXyFit").get<bool>());
+        }
+        if (shadowValue.contains("xyMarginFraction"))
+        {
+            shadowSettings.SetXyMarginFraction(shadowValue.at("xyMarginFraction").get<float>());
+        }
+        if (shadowValue.contains("zMarginFraction"))
+        {
+            shadowSettings.SetZMarginFraction(shadowValue.at("zMarginFraction").get<float>());
+        }
+        if (shadowValue.contains("usePoissonPcf"))
+        {
+            shadowSettings.SetUsePoissonPcf(shadowValue.at("usePoissonPcf").get<bool>());
+        }
+        if (shadowValue.contains("pcfKernelRadius"))
+        {
+            shadowSettings.SetPcfKernelRadius(shadowValue.at("pcfKernelRadius").get<int>());
+        }
+        if (shadowValue.contains("pcfSampleCount"))
+        {
+            shadowSettings.SetPcfSampleCount(shadowValue.at("pcfSampleCount").get<int>());
+        }
+        if (shadowValue.contains("minPenumbraTexels"))
+        {
+            shadowSettings.SetMinPenumbraTexels(shadowValue.at("minPenumbraTexels").get<float>());
+        }
+        if (shadowValue.contains("sunAngularDiameterDegrees"))
+        {
+            shadowSettings.SetSunAngularDiameterDegrees(
+                shadowValue.at("sunAngularDiameterDegrees").get<float>());
+        }
+        if (shadowValue.contains("pcssLightAngularSize"))
+        {
             shadowSettings.SetPcssLightAngularSize(
-                shadowValue.value("pcssLightAngularSize", shadowSettings.GetPcssLightAngularSize()));
-            shadowSettings.SetPcssBlockerRadius(
-                shadowValue.value("pcssBlockerRadius", shadowSettings.GetPcssBlockerRadius()));
-            shadowSettings.SetPcssMinPenumbraTexels(
-                shadowValue.value("pcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels()));
-            shadowSettings.SetPcssMaxPenumbraTexels(
-                shadowValue.value("pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()));
-            shadowSettings.SetWorldBiasScale(
-                shadowValue.value("worldBiasScale", shadowSettings.GetWorldBiasScale()));
-            shadowSettings.SetDepthBiasScale(
-                shadowValue.value("depthBiasScale", shadowSettings.GetDepthBiasScale()));
-            shadowSettings.SetCasterDepthBiasScale(
-                shadowValue.value("casterDepthBiasScale", shadowSettings.GetCasterDepthBiasScale()));
-            shadowSettings.SetShadowBlurEnabled(
-                shadowValue.value("shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()));
-            shadowSettings.SetShadowBlurRadius(
-                shadowValue.value("shadowBlurRadius", shadowSettings.GetShadowBlurRadius()));
-            shadowSettings.SetShadowBlurDepthThreshold(shadowValue.value(
-                "shadowBlurDepthThreshold",
-                shadowSettings.GetShadowBlurDepthThreshold()));
-            shadowSettings.SetShadowBlurShadowThreshold(shadowValue.value(
-                "shadowBlurShadowThreshold",
-                shadowSettings.GetShadowBlurShadowThreshold()));
+                shadowValue.at("pcssLightAngularSize").get<float>());
         }
+        if (shadowValue.contains("pcssBlockerRadius"))
+        {
+            shadowSettings.SetPcssBlockerRadius(shadowValue.at("pcssBlockerRadius").get<int>());
+        }
+        if (shadowValue.contains("pcssMinPenumbraTexels"))
+        {
+            shadowSettings.SetPcssMinPenumbraTexels(
+                shadowValue.at("pcssMinPenumbraTexels").get<float>());
+        }
+        if (shadowValue.contains("pcssMaxPenumbraTexels"))
+        {
+            shadowSettings.SetPcssMaxPenumbraTexels(
+                shadowValue.at("pcssMaxPenumbraTexels").get<float>());
+        }
+        if (shadowValue.contains("worldBiasScale"))
+        {
+            shadowSettings.SetWorldBiasScale(shadowValue.at("worldBiasScale").get<float>());
+        }
+        if (shadowValue.contains("depthBiasScale"))
+        {
+            shadowSettings.SetDepthBiasScale(shadowValue.at("depthBiasScale").get<float>());
+        }
+        if (shadowValue.contains("casterDepthBiasScale"))
+        {
+            shadowSettings.SetCasterDepthBiasScale(
+                shadowValue.at("casterDepthBiasScale").get<float>());
+        }
+        if (shadowValue.contains("shadowBlurEnabled"))
+        {
+            shadowSettings.SetShadowBlurEnabled(shadowValue.at("shadowBlurEnabled").get<bool>());
+        }
+        if (shadowValue.contains("shadowBlurRadius"))
+        {
+            shadowSettings.SetShadowBlurRadius(shadowValue.at("shadowBlurRadius").get<float>());
+        }
+        if (shadowValue.contains("shadowBlurDepthThreshold"))
+        {
+            shadowSettings.SetShadowBlurDepthThreshold(
+                shadowValue.at("shadowBlurDepthThreshold").get<float>());
+        }
+        if (shadowValue.contains("shadowBlurShadowThreshold"))
+        {
+            shadowSettings.SetShadowBlurShadowThreshold(
+                shadowValue.at("shadowBlurShadowThreshold").get<float>());
+        }
+    }
 
-        if (!gpuReady || !rendererValue.contains("screenSpaceEffects"))
+    void ApplySkyboxDelta(EnvironmentMap& environmentMap, const json& skyboxValue)
+    {
+        if (skyboxValue.contains("enabled"))
+        {
+            environmentMap.SetEnabled(skyboxValue.at("enabled").get<bool>());
+        }
+        if (skyboxValue.contains("backgroundMode"))
+        {
+            environmentMap.SetBackgroundMode(static_cast<EnvironmentBackgroundMode>(
+                skyboxValue.at("backgroundMode").get<int>()));
+        }
+        if (skyboxValue.contains("hdrPath"))
+        {
+            environmentMap.SetHdrPath(skyboxValue.at("hdrPath").get<std::string>());
+        }
+        if (skyboxValue.contains("rotationDegrees"))
+        {
+            environmentMap.SetRotationDegrees(skyboxValue.at("rotationDegrees").get<float>());
+        }
+        if (skyboxValue.contains("exposure"))
+        {
+            environmentMap.SetExposure(skyboxValue.at("exposure").get<float>());
+        }
+        if (skyboxValue.contains("iblCubemapResolution"))
+        {
+            environmentMap.SetIblCubemapResolution(static_cast<EnvironmentIblCubemapResolution>(
+                skyboxValue.at("iblCubemapResolution").get<int>()));
+        }
+        if (skyboxValue.contains("solidBackgroundColor")
+            && skyboxValue.at("solidBackgroundColor").is_array()
+            && skyboxValue.at("solidBackgroundColor").size() == 3)
+        {
+            const json& colorValue = skyboxValue.at("solidBackgroundColor");
+            environmentMap.SetSolidBackgroundColorSrgb(glm::vec3(
+                colorValue[0].get<float>(),
+                colorValue[1].get<float>(),
+                colorValue[2].get<float>()));
+        }
+    }
+
+    void ApplyRendererSettingsDelta(Scene& scene, const json& delta)
+    {
+        if (!delta.is_object())
         {
             return;
         }
 
-        const json& effectsValue = rendererValue.at("screenSpaceEffects");
-        ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
-        effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
-        if (effectsValue.contains("aoMode"))
+        SceneRenderer& renderer = scene.GetRenderer();
+        const bool gpuReady = renderer.IsGpuResourcesReady();
+
+        if (delta.contains("screenSpaceEffects"))
         {
-            effects.SetAmbientOcclusionMode(AmbientOcclusionModeFromString(effectsValue.value(
-                "aoMode",
-                AmbientOcclusionModeToString(effects.GetAmbientOcclusionMode()))));
+            const json& effectsValue = delta.at("screenSpaceEffects");
+            if (effectsValue.contains("antiAliasingMode") || effectsValue.contains("msaaSampleCount"))
+            {
+                const ScreenSpaceEffects& currentEffects = renderer.GetScreenSpaceEffects();
+                const AntiAliasingMode aaMode = effectsValue.contains("antiAliasingMode")
+                    ? AntiAliasingModeFromString(
+                          effectsValue.at("antiAliasingMode").get<std::string>())
+                    : currentEffects.GetAntiAliasingMode();
+                const int msaaSampleCount = effectsValue.contains("msaaSampleCount")
+                    ? effectsValue.at("msaaSampleCount").get<int>()
+                    : currentEffects.GetMsaaSampleCount();
+                const LoadedScreenSpaceAaSettings loadedAaSettings =
+                    NormalizeLoadedScreenSpaceAaSettings(aaMode, msaaSampleCount);
+                if (loadedAaSettings.msaaSampleCount > 1)
+                {
+                    ShaderCache::Clear();
+                }
+                renderer.PrepareGpuResourcesForGeometryMsaa(loadedAaSettings.msaaSampleCount);
+                if (renderer.IsGpuResourcesReady() && loadedAaSettings.msaaSampleCount > 1)
+                {
+                    scene.InvalidateAllMaterialCachedShaders();
+                }
+
+                ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+                effects.SetAntiAliasingMode(loadedAaSettings.antiAliasingMode);
+                effects.SetMsaaSampleCount(loadedAaSettings.msaaSampleCount);
+            }
         }
-        else
+
+        if (gpuReady)
         {
-            effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
+            if (delta.contains("environmentIntensity"))
+            {
+                renderer.GetIBL().SetEnvironmentIntensity(delta.at("environmentIntensity").get<float>());
+            }
+
+            if (delta.contains("skybox"))
+            {
+                ApplySkyboxDelta(renderer.GetEnvironmentMap(), delta.at("skybox"));
+            }
+
+            if (delta.contains("textureFilterMode"))
+            {
+                renderer.SetTextureFilterMode(TextureFilterModeFromString(
+                    delta.at("textureFilterMode").get<std::string>()));
+            }
+            if (delta.contains("textureAnisotropy"))
+            {
+                renderer.SetTextureAnisotropy(delta.at("textureAnisotropy").get<float>());
+            }
+            if (delta.contains("textureMipBias"))
+            {
+                renderer.SetTextureMipBias(delta.at("textureMipBias").get<float>());
+            }
         }
-        effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
-        effects.SetSsaoBias(effectsValue.value("ssaoBias", effects.GetSsaoBias()));
-        effects.SetSsaoPower(effectsValue.value("ssaoPower", effects.GetSsaoPower()));
-        effects.SetGtaoRadius(effectsValue.value("gtaoRadius", effects.GetGtaoRadius()));
-        effects.SetGtaoThickness(effectsValue.value("gtaoThickness", effects.GetGtaoThickness()));
-        effects.SetGtaoFalloff(effectsValue.value("gtaoFalloff", effects.GetGtaoFalloff()));
-        effects.SetGtaoPower(effectsValue.value("gtaoPower", effects.GetGtaoPower()));
-        effects.SetGtaoDirections(effectsValue.value("gtaoDirections", effects.GetGtaoDirections()));
-        effects.SetGtaoSteps(effectsValue.value("gtaoSteps", effects.GetGtaoSteps()));
-        effects.SetGtaoDenoiseEnabled(effectsValue.value(
-            "gtaoDenoiseEnabled",
-            effects.IsGtaoDenoiseEnabled()));
-        effects.SetAoStrength(effectsValue.value("aoStrength", effects.GetAoStrength()));
-        effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
-        effects.SetTonemapMode(
-            TonemapModeFromString(effectsValue.value("tonemapMode", TonemapModeToString(effects.GetTonemapMode()))));
-        effects.SetBloomEnabled(effectsValue.value("bloomEnabled", effects.IsBloomEnabled()));
-        effects.SetBloomThreshold(effectsValue.value("bloomThreshold", effects.GetBloomThreshold()));
-        effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
-        effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
-        effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
-        effects.SetAntiAliasingMode(loadedAaSettings.antiAliasingMode);
-        effects.SetMsaaSampleCount(loadedAaSettings.msaaSampleCount);
-        effects.SetFxaaSubpixQuality(
-            effectsValue.value("fxaaSubpixQuality", effects.GetFxaaSubpixQuality()));
-        effects.SetFxaaEdgeThreshold(
-            effectsValue.value("fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()));
-        effects.SetRenderScale(effectsValue.value("renderScale", effects.GetRenderScale()));
-        effects.SetTaaBlendFactor(effectsValue.value("taaBlendFactor", effects.GetTaaBlendFactor()));
-        effects.SetGiTemporalBlendFactor(
-            effectsValue.value("giTemporalBlendFactor", effects.GetGiTemporalBlendFactor()));
-        effects.SetGiDepthThreshold(effectsValue.value("giDepthThreshold", effects.GetGiDepthThreshold()));
-        effects.SetSsgiDenoiseEnabled(
-            effectsValue.value("ssgiDenoiseEnabled", effects.IsSsgiDenoiseEnabled()));
-        effects.SetSsgiNoiseInjectionEnabled(effectsValue.value(
-            "ssgiNoiseInjectionEnabled",
-            effects.IsSsgiNoiseInjectionEnabled()));
-        effects.SetSsgiNoiseStrength(
-            effectsValue.value("ssgiNoiseStrength", effects.GetSsgiNoiseStrength()));
-        effects.SetSsgiSpatialBlurSpread(
-            effectsValue.value("ssgiSpatialBlurSpread", effects.GetSsgiSpatialBlurSpread()));
-        effects.SetSsgiSpatialDepthThreshold(effectsValue.value(
-            "ssgiSpatialDepthThreshold",
-            effects.GetSsgiSpatialDepthThreshold()));
-        effects.SetSsgiRoughnessSpreadMin(effectsValue.value(
-            "ssgiRoughnessSpreadMin",
-            effects.GetSsgiRoughnessSpreadMin()));
-        effects.SetSsgiRoughnessSpreadMax(effectsValue.value(
-            "ssgiRoughnessSpreadMax",
-            effects.GetSsgiRoughnessSpreadMax()));
-        effects.SetSsgiEnabled(effectsValue.value("ssgiEnabled", effects.IsSsgiEnabled()));
-        effects.SetSsgiStrength(effectsValue.value("ssgiStrength", effects.GetSsgiStrength()));
-        effects.SetSsgiMaxTraceDistance(effectsValue.value(
-            "ssgiMaxTraceDistance",
-            effects.GetSsgiMaxTraceDistance()));
-        effects.SetSsgiStepCount(effectsValue.value("ssgiStepCount", effects.GetSsgiStepCount()));
-        effects.SetSsgiThickness(effectsValue.value("ssgiThickness", effects.GetSsgiThickness()));
-        effects.SetSmaaThreshold(effectsValue.value("smaaThreshold", effects.GetSmaaThreshold()));
-        effects.SetSmaaSearchSteps(effectsValue.value("smaaSearchSteps", effects.GetSmaaSearchSteps()));
-        effects.SetSsaoBlurDepthThreshold(
-            effectsValue.value("ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()));
+
+        if (delta.contains("directionalShadow"))
+        {
+            ApplyDirectionalShadowDelta(
+                renderer.GetDirectionalShadowSettings(),
+                delta.at("directionalShadow"));
+        }
+
+        if (gpuReady && delta.contains("screenSpaceEffects"))
+        {
+            ApplyScreenSpaceEffectsDelta(
+                renderer.GetScreenSpaceEffects(),
+                delta.at("screenSpaceEffects"));
+        }
+
+        scene.MarkDirty();
+    }
+
+    void DeserializeRenderer(Scene& scene, const json& rendererValue)
+    {
+        ApplyRendererSettingsDelta(scene, rendererValue);
     }
 
     json SerializeProjectFilesFolderOpenStates(

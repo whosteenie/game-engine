@@ -1556,38 +1556,9 @@ namespace
         return delta;
     }
 
-    void OverlayRendererSettingsDelta(nlohmann::json& target, const nlohmann::json& delta)
-    {
-        if (!delta.is_object())
-        {
-            target = delta;
-            return;
-        }
-
-        if (!target.is_object())
-        {
-            target = nlohmann::json::object();
-        }
-
-        for (const auto& [key, value] : delta.items())
-        {
-            if (value.is_object())
-            {
-                OverlayRendererSettingsDelta(target[key], value);
-            }
-            else
-            {
-                target[key] = value;
-            }
-        }
-    }
-
     void ApplyRendererSettingsDelta(Scene& scene, const nlohmann::json& delta)
     {
-        nlohmann::json current = CaptureRendererSettings(scene);
-        OverlayRendererSettingsDelta(current, delta);
-        SceneProjectIODetail::DeserializeRenderer(scene, current);
-        scene.MarkDirty();
+        SceneProjectIODetail::ApplyRendererSettingsDelta(scene, delta);
     }
 }
 
@@ -1598,8 +1569,7 @@ bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& 
 
 void ApplyRendererSettings(Scene& scene, const nlohmann::json& settings)
 {
-    SceneProjectIODetail::DeserializeRenderer(scene, settings);
-    scene.MarkDirty();
+    SceneProjectIODetail::ApplyRendererSettingsDelta(scene, settings);
 }
 
 RendererSettingsCommand::RendererSettingsCommand(
