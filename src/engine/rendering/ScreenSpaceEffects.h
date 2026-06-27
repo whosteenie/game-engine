@@ -216,6 +216,7 @@ public:
     void SetSsaoBlurDepthThreshold(float threshold);
 
     bool BlitDepthToFramebuffer(const Framebuffer* viewportTarget) const;
+    std::uintptr_t GetSceneDepthSrvCpuHandle() const;
 
     void BeginGridOverlayPass() const;
     void EndGridOverlayPass() const;

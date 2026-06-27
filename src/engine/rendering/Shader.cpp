@@ -693,10 +693,6 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         setupDepthReadOnly(psoDesc.DepthStencilState);
-        // Bias grid depth toward the camera so lines stay in front of coplanar floor geometry.
-        psoDesc.RasterizerState.DepthBias = -80000;
-        psoDesc.RasterizerState.SlopeScaledDepthBias = -8.0f;
-        psoDesc.RasterizerState.DepthBiasClamp = 0.0f;
         for (UINT targetIndex = 0; targetIndex < 4; ++targetIndex)
         {
             setupAlphaBlend(psoDesc.BlendState.RenderTarget[targetIndex]);

@@ -1186,6 +1186,15 @@ void ScreenSpaceEffects::BeginGridOverlayPass() const
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
+    if (m_sceneFramebuffer->UsesMsaa())
+    {
+        m_sceneFramebuffer->PrepareResolvedDepthForDepthTestPass();
+    }
+    else
+    {
+        m_sceneFramebuffer->PrepareDepthForDepthTestPass();
+    }
+
     TransitionResource(
         commandList,
         static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
@@ -1194,10 +1203,11 @@ void ScreenSpaceEffects::BeginGridOverlayPass() const
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{
         GfxContext::Get().GetOffscreenRtvCpuHandle(m_gridOverlayTarget.rtvIndex)};
-    m_sceneFramebuffer->PrepareResolvedDepthForDepthTestPass();
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{m_sceneFramebuffer->GetResolvedDepthDsvCpuHandle()};
-
-    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = m_sceneFramebuffer->UsesMsaa()
+        ? m_sceneFramebuffer->GetResolvedDepthDsvCpuHandle()
+        : m_sceneFramebuffer->GetDepthDsvCpuHandle();
+    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &depthDsv);
 
     D3D12_VIEWPORT viewport{};
     viewport.Width = static_cast<float>(m_width);
@@ -1220,6 +1230,7 @@ void ScreenSpaceEffects::EndGridOverlayPass() const
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    m_sceneFramebuffer->EnsureShaderResourceState();
     TransitionResource(
         commandList,
         static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
@@ -3148,6 +3159,16 @@ float ScreenSpaceEffects::GetSsaoBlurDepthThreshold() const
 void ScreenSpaceEffects::SetSsaoBlurDepthThreshold(const float threshold)
 {
     m_ssaoBlurDepthThreshold = std::clamp(threshold, 0.001f, 0.25f);
+}
+
+std::uintptr_t ScreenSpaceEffects::GetSceneDepthSrvCpuHandle() const
+{
+    if (m_sceneFramebuffer == nullptr)
+    {
+        return 0;
+    }
+
+    return m_sceneFramebuffer->GetDepthSrvCpuHandle();
 }
 
 bool ScreenSpaceEffects::BlitDepthToFramebuffer(const Framebuffer* viewportTarget) const
