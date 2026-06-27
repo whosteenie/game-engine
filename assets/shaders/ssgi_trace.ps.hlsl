@@ -123,6 +123,7 @@ float4 main(PSInput input) : SV_Target
     const float stepSize = uMaxTraceDistance / (float)stepCount;
 
     float3 hitRadiance = 0.0.xxx;
+    float hitDistance01 = 0.0;
     float3 marchPos = viewPos;
 
     [loop]
@@ -155,11 +156,12 @@ float4 main(PSInput input) : SV_Target
             if (radiance.a > 0.5)
             {
                 hitRadiance = radiance.rgb;
+                hitDistance01 = saturate(traveled / max(uMaxTraceDistance, 1e-4));
             }
             break;
         }
     }
 
     const float edgeFade = EdgeFade(uv, uEdgeFadeScale);
-    return float4(hitRadiance * diffuseWeight * edgeFade, 1.0);
+    return float4(hitRadiance * diffuseWeight * edgeFade, hitDistance01);
 }

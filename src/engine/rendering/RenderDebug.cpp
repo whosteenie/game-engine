@@ -84,6 +84,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSGI denoise final";
     case RenderDebugMode::SsgiInject:
         return "SSGI inject";
+    case RenderDebugMode::SsgiTraceHitMask:
+        return "SSGI trace hit mask";
+    case RenderDebugMode::SsgiTraceHitDistance:
+        return "SSGI trace hit distance";
+    case RenderDebugMode::SsgiFinalContribution:
+        return "SSGI final contribution";
     default:
         return "Unknown";
     }
@@ -168,6 +174,9 @@ bool IsSsgiDenoiseDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::SsgiDenoiseFinal:
         return true;
     case RenderDebugMode::SsgiInject:
+    case RenderDebugMode::SsgiTraceHitMask:
+    case RenderDebugMode::SsgiTraceHitDistance:
+    case RenderDebugMode::SsgiFinalContribution:
         return true;
     default:
         return false;

@@ -1309,6 +1309,9 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseTemporal),
             RenderDebugModeLabel(RenderDebugMode::SsgiDenoiseFinal),
             RenderDebugModeLabel(RenderDebugMode::SsgiInject),
+            RenderDebugModeLabel(RenderDebugMode::SsgiTraceHitMask),
+            RenderDebugModeLabel(RenderDebugMode::SsgiTraceHitDistance),
+            RenderDebugModeLabel(RenderDebugMode::SsgiFinalContribution),
         };
 
         if (ImGui::Combo(
@@ -1473,6 +1476,16 @@ void LightingPanel::Draw(
             ImGui::TextWrapped(
                 "Simulated SSGI trace output (radiance + optional synthetic noise). Should look grainy when noise is on.");
         }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiTraceHitMask))
+        {
+            ImGui::TextWrapped(
+                "White pixels found an accepted SSGI screen-space hit; black pixels missed or were rejected.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiTraceHitDistance))
+        {
+            ImGui::TextWrapped(
+                "Accepted SSGI hit distance normalized by max trace distance. Black means no accepted hit.");
+        }
         else if (debugMode == static_cast<int>(RenderDebugMode::SsgiDenoiseSpatial))
         {
             ImGui::TextWrapped(
@@ -1493,6 +1506,11 @@ void LightingPanel::Draw(
             ImGui::TextWrapped(
                 "Denoised SSGI term injected into composite (strength-scaled in final image). "
                 "Requires Enable SSGI. Use Ambient / IBL debug to compare indirect before inject.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsgiFinalContribution))
+        {
+            ImGui::TextWrapped(
+                "Strength-scaled SSGI term that reaches the composite, isolated from direct/ambient lighting.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceDepth))
         {

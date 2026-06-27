@@ -128,6 +128,19 @@ namespace
         }
     }
 
+    int SsgiDebugModeIndex(RenderDebugMode mode)
+    {
+        switch (mode)
+        {
+        case RenderDebugMode::SsgiTraceHitMask:
+            return 1;
+        case RenderDebugMode::SsgiTraceHitDistance:
+            return 2;
+        default:
+            return 0;
+        }
+    }
+
     float HalfToFloat(const std::uint16_t half)
     {
         const std::uint32_t sign = static_cast<std::uint32_t>(half & 0x8000u) << 16;
@@ -2009,6 +2022,15 @@ void ScreenSpaceEffects::Apply(
                 }
                 debugSource = "ssgi_trace_raw";
             }
+            else if (
+                m_debugMode == RenderDebugMode::SsgiTraceHitMask ||
+                m_debugMode == RenderDebugMode::SsgiTraceHitDistance)
+            {
+                debugSrv = m_radianceTraceInputTarget.srvCpuHandle;
+                debugSource = m_debugMode == RenderDebugMode::SsgiTraceHitMask
+                    ? "ssgi_trace_hit_mask"
+                    : "ssgi_trace_hit_distance";
+            }
             else if (m_debugMode == RenderDebugMode::SsgiDenoiseSpatial)
             {
                 debugSrv = m_radianceSpatialTarget.srvCpuHandle;
@@ -2028,12 +2050,21 @@ void ScreenSpaceEffects::Apply(
                 debugSrv = m_lastSsgiInjectSrv != 0 ? m_lastSsgiInjectSrv : m_radianceTarget.srvCpuHandle;
                 debugSource = "ssgi_inject";
             }
+            else if (m_debugMode == RenderDebugMode::SsgiFinalContribution)
+            {
+                debugSrv = m_lastSsgiInjectSrv != 0 ? m_lastSsgiInjectSrv : m_radianceTarget.srvCpuHandle;
+                debugSource = "ssgi_final_contribution";
+            }
 
             if (debugSrv != 0)
             {
                 m_ssgiDenoiseDebugShader->Use(false, true);
                 m_ssgiDenoiseDebugShader->SetInt("uRadianceMap", 0);
                 m_ssgiDenoiseDebugShader->SetInt("uDepthMap", 1);
+                m_ssgiDenoiseDebugShader->SetInt("uDebugMode", SsgiDebugModeIndex(m_debugMode));
+                m_ssgiDenoiseDebugShader->SetFloat(
+                    "uDebugScale",
+                    m_debugMode == RenderDebugMode::SsgiFinalContribution ? m_ssgiStrength : 1.0f);
                 m_ssgiDenoiseDebugShader->BindTextureSlot(0, debugSrv);
                 m_ssgiDenoiseDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
                 m_ssgiDenoiseDebugShader->FlushUniforms();
