@@ -807,6 +807,10 @@ void Application::Update(double deltaTime)
     if (editorActive)
     {
         m_playModeController.Simulate(deltaTime);
+        if (!m_playModeController.IsActive() && !m_playModeController.GetLastError().empty())
+        {
+            m_projectSession->SetStatusMessage(m_playModeController.GetLastError());
+        }
 
         int viewportWidth = 0;
         int viewportHeight = 0;

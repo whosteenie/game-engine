@@ -97,11 +97,21 @@ Scene::~Scene() = default;
 
 SceneRenderer& Scene::GetRenderer()
 {
+    if (m_sharedRenderer != nullptr)
+    {
+        return *m_sharedRenderer;
+    }
+
     return *m_renderer;
 }
 
 const SceneRenderer& Scene::GetRenderer() const
 {
+    if (m_sharedRenderer != nullptr)
+    {
+        return *m_sharedRenderer;
+    }
+
     return *m_renderer;
 }
 
@@ -117,11 +127,21 @@ const SceneObjectStore& Scene::GetObjectStore() const
 
 SceneMeshLibrary& Scene::GetMeshLibrary()
 {
+    if (m_sharedMeshLibrary != nullptr)
+    {
+        return *m_sharedMeshLibrary;
+    }
+
     return *m_meshLibrary;
 }
 
 const SceneMeshLibrary& Scene::GetMeshLibrary() const
 {
+    if (m_sharedMeshLibrary != nullptr)
+    {
+        return *m_sharedMeshLibrary;
+    }
+
     return *m_meshLibrary;
 }
 
@@ -155,16 +175,27 @@ const SceneImportService& Scene::GetImportService() const
     return *m_importService;
 }
 
-std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
+void Scene::UseSharedPlayModeResources(const Scene& editScene)
+{
+    m_sharedMeshLibrary = const_cast<SceneMeshLibrary*>(&editScene.GetMeshLibrary());
+    m_sharedRenderer = const_cast<SceneRenderer*>(&editScene.GetRenderer());
+}
+
+std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source, const bool shareGpuResources)
 {
     auto clone = std::make_unique<Scene>();
     clone->m_objectStore->Objects().clear();
     clone->m_objectStore->Objects().reserve(source.m_objectStore->Objects().size());
 
-    const auto remapMesh = [&source](Mesh* sourceMesh, Scene& destination) -> Mesh* {
+    const auto remapMesh = [&source, shareGpuResources](Mesh* sourceMesh, Scene& destination) -> Mesh* {
         if (sourceMesh == nullptr)
         {
             return nullptr;
+        }
+
+        if (shareGpuResources)
+        {
+            return sourceMesh;
         }
 
         const ScenePrimitive primitives[] = {
@@ -228,8 +259,16 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
     clone->GetObjectStore().SetNextId(source.GetObjectStore().GetNextId());
     clone->SetShowLightGizmos(source.GetShowLightGizmos());
     clone->SetShowGrid(source.GetShowGrid());
-    clone->GetRenderer().GetLighting() = source.GetRenderer().GetLighting();
-    CopyRendererSettings(source, *clone);
+    if (!shareGpuResources)
+    {
+        clone->GetRenderer().GetLighting() = source.GetRenderer().GetLighting();
+        CopyRendererSettings(source, *clone);
+    }
+
+    if (shareGpuResources)
+    {
+        clone->UseSharedPlayModeResources(source);
+    }
 
     return clone;
 }

@@ -109,7 +109,10 @@ public:
         int parentIndex = -1,
         const std::string& projectRoot = {});
 
-    static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source);
+    static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source, bool shareGpuResources = true);
+
+    // Runtime play-mode clone shares GPU meshes and SceneRenderer with the edit scene.
+    void UseSharedPlayModeResources(const Scene& editScene);
 
     void MarkDirty();
     void SetDirtyCallback(std::function<void()> callback);
@@ -170,6 +173,8 @@ private:
     std::unique_ptr<SceneImportService> m_importService;
     SceneEditor* m_sceneEditor = nullptr;
     std::unique_ptr<SceneRenderer> m_renderer;
+    SceneMeshLibrary* m_sharedMeshLibrary = nullptr;
+    SceneRenderer* m_sharedRenderer = nullptr;
     std::unique_ptr<SceneSelectionController> m_selectionController;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
