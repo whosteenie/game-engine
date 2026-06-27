@@ -35,6 +35,7 @@ namespace
     constexpr unsigned int NormalMapUnit = 5;
     constexpr unsigned int AoMapUnit = 6;
     constexpr unsigned int RoughnessMapUnit = 7;
+    constexpr unsigned int EmissiveMapUnit = 9;
 
     struct DefaultMaterialTextures
     {
@@ -42,6 +43,7 @@ namespace
         std::shared_ptr<Texture> normal;
         std::shared_ptr<Texture> ao;
         std::shared_ptr<Texture> roughness;
+        std::shared_ptr<Texture> black;
     };
 
     DefaultMaterialTextures& GetDefaultMaterialTextures()
@@ -58,6 +60,7 @@ namespace
             const unsigned char normalPixel[] = {128, 128, 255, 255};
             const unsigned char aoPixel[] = {255, 255, 255, 255};
             const unsigned char roughnessPixel[] = {128, 128, 128, 255};
+            const unsigned char blackPixel[] = {0, 0, 0, 255};
 
             textures.white = Texture::CreateFromPixels(
                 whitePixel,
@@ -83,6 +86,12 @@ namespace
                 1,
                 4,
                 TextureColorSpace::Linear);
+            textures.black = Texture::CreateFromPixels(
+                blackPixel,
+                1,
+                1,
+                4,
+                TextureColorSpace::SRGB);
             defaults = std::move(textures);
         }
 
@@ -97,6 +106,7 @@ void Material::ReleaseGlobalGpuResources()
     defaults.normal.reset();
     defaults.ao.reset();
     defaults.roughness.reset();
+    defaults.black.reset();
 }
 
 void Material::SetTexturePathResolver(TexturePathResolverFn resolver)
@@ -183,6 +193,7 @@ void Material::EnsureMapsLoaded() const
     loadIfNeeded(m_normalMap, m_normalMapPath, TextureColorSpace::Linear);
     loadIfNeeded(m_aoMap, m_aoMapPath, TextureColorSpace::Linear);
     loadIfNeeded(m_roughnessMap, m_roughnessMapPath, TextureColorSpace::Linear);
+    loadIfNeeded(m_emissiveMap, m_emissiveMapPath, TextureColorSpace::SRGB);
 }
 
 Material::~Material() = default;
@@ -223,16 +234,19 @@ void Material::Apply(
     const bool normalMapReady = m_normalMap != nullptr && m_normalMap->IsValid();
     const bool aoMapReady = m_aoMap != nullptr && m_aoMap->IsValid();
     const bool roughnessMapReady = m_roughnessMap != nullptr && m_roughnessMap->IsValid();
+    const bool emissiveMapReady = m_emissiveMap != nullptr && m_emissiveMap->IsValid();
 
     m_shader->SetInt("uUseAlbedoMap", albedoMapReady ? 1 : 0);
     m_shader->SetInt("uUseNormalMap", normalMapReady ? 1 : 0);
     m_shader->SetInt("uUseAoMap", aoMapReady ? 1 : 0);
     m_shader->SetInt("uUseRoughnessMap", roughnessMapReady && !m_useMetallicRoughnessMap ? 1 : 0);
     m_shader->SetInt("uUseMetallicRoughnessMap", m_useMetallicRoughnessMap && roughnessMapReady ? 1 : 0);
+    m_shader->SetInt("uUseEmissiveMap", emissiveMapReady ? 1 : 0);
     m_shader->SetInt("uAlbedoTexCoordSet", m_albedoTexCoordSet);
     m_shader->SetInt("uNormalTexCoordSet", m_normalTexCoordSet);
     m_shader->SetInt("uAoTexCoordSet", m_aoTexCoordSet);
     m_shader->SetInt("uRoughnessTexCoordSet", m_roughnessTexCoordSet);
+    m_shader->SetInt("uEmissiveTexCoordSet", m_emissiveTexCoordSet);
     BindMaps();
 
     if (shadowMap != nullptr)
@@ -358,6 +372,10 @@ void Material::BindMaps() const
     const Texture& roughnessTexture =
         m_roughnessMap != nullptr && m_roughnessMap->IsValid() ? *m_roughnessMap : *defaults.roughness;
     roughnessTexture.Bind(RoughnessMapUnit);
+
+    const Texture& emissiveTexture =
+        m_emissiveMap != nullptr && m_emissiveMap->IsValid() ? *m_emissiveMap : *defaults.black;
+    emissiveTexture.Bind(EmissiveMapUnit);
 }
 
 void Material::SetRoughnessMap(std::shared_ptr<Texture> texture, std::string path)
@@ -373,6 +391,12 @@ void Material::SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int tex
     m_roughnessMapPath = std::move(path);
     m_roughnessTexCoordSet = texCoordSet;
     m_useMetallicRoughnessMap = true;
+}
+
+void Material::SetEmissiveMap(std::shared_ptr<Texture> texture, std::string path)
+{
+    m_emissiveMap = std::move(texture);
+    m_emissiveMapPath = std::move(path);
 }
 
 const glm::vec3& Material::GetAlbedo() const
@@ -458,6 +482,12 @@ void Material::ClearRoughnessMap()
     m_useMetallicRoughnessMap = false;
 }
 
+void Material::ClearEmissiveMap()
+{
+    m_emissiveMap.reset();
+    m_emissiveMapPath.clear();
+}
+
 const std::string& Material::GetAlbedoMapPath() const
 {
     return m_albedoMapPath;
@@ -476,6 +506,11 @@ const std::string& Material::GetAoMapPath() const
 const std::string& Material::GetRoughnessMapPath() const
 {
     return m_roughnessMapPath;
+}
+
+const std::string& Material::GetEmissiveMapPath() const
+{
+    return m_emissiveMapPath;
 }
 
 int Material::GetAlbedoTexCoordSet() const
@@ -498,6 +533,11 @@ int Material::GetRoughnessTexCoordSet() const
     return m_roughnessTexCoordSet;
 }
 
+int Material::GetEmissiveTexCoordSet() const
+{
+    return m_emissiveTexCoordSet;
+}
+
 void Material::SetAlbedoTexCoordSet(int texCoordSet)
 {
     m_albedoTexCoordSet = texCoordSet;
@@ -516,6 +556,11 @@ void Material::SetAoTexCoordSet(int texCoordSet)
 void Material::SetRoughnessTexCoordSet(int texCoordSet)
 {
     m_roughnessTexCoordSet = texCoordSet;
+}
+
+void Material::SetEmissiveTexCoordSet(int texCoordSet)
+{
+    m_emissiveTexCoordSet = texCoordSet;
 }
 
 void Material::SetDoubleSided(bool doubleSided)
@@ -546,6 +591,11 @@ bool Material::HasAoMap() const
 bool Material::HasRoughnessMap() const
 {
     return !m_roughnessMapPath.empty() || (m_roughnessMap != nullptr && m_roughnessMap->IsValid());
+}
+
+bool Material::HasEmissiveMap() const
+{
+    return !m_emissiveMapPath.empty() || (m_emissiveMap != nullptr && m_emissiveMap->IsValid());
 }
 
 bool Material::HasMetallicRoughnessMap() const
@@ -588,6 +638,12 @@ void Material::ApplyMissingTextureMapsFrom(const Material& source)
             SetRoughnessTexCoordSet(source.m_roughnessTexCoordSet);
         }
     }
+
+    if (!HasEmissiveMap() && source.m_emissiveMap != nullptr && source.m_emissiveMap->IsValid())
+    {
+        SetEmissiveMap(source.m_emissiveMap, source.m_emissiveMapPath);
+        SetEmissiveTexCoordSet(source.m_emissiveTexCoordSet);
+    }
 }
 
 bool Material::ContentEquals(const Material& other) const
@@ -603,15 +659,18 @@ bool Material::ContentEquals(const Material& other) const
         && HasNormalMap() == other.HasNormalMap()
         && HasAoMap() == other.HasAoMap()
         && HasRoughnessMap() == other.HasRoughnessMap()
+        && HasEmissiveMap() == other.HasEmissiveMap()
         && HasMetallicRoughnessMap() == other.HasMetallicRoughnessMap()
         && m_albedoMapPath == other.m_albedoMapPath
         && m_normalMapPath == other.m_normalMapPath
         && m_aoMapPath == other.m_aoMapPath
         && m_roughnessMapPath == other.m_roughnessMapPath
+        && m_emissiveMapPath == other.m_emissiveMapPath
         && m_albedoTexCoordSet == other.m_albedoTexCoordSet
         && m_normalTexCoordSet == other.m_normalTexCoordSet
         && m_aoTexCoordSet == other.m_aoTexCoordSet
-        && m_roughnessTexCoordSet == other.m_roughnessTexCoordSet;
+        && m_roughnessTexCoordSet == other.m_roughnessTexCoordSet
+        && m_emissiveTexCoordSet == other.m_emissiveTexCoordSet;
 }
 
 std::unique_ptr<Material> Material::Clone() const
@@ -627,6 +686,7 @@ std::unique_ptr<Material> Material::Clone() const
     copy->SetNormalTexCoordSet(m_normalTexCoordSet);
     copy->SetAoTexCoordSet(m_aoTexCoordSet);
     copy->SetRoughnessTexCoordSet(m_roughnessTexCoordSet);
+    copy->SetEmissiveTexCoordSet(m_emissiveTexCoordSet);
     copy->SetEmissive(m_emissive);
     copy->SetDoubleSided(m_doubleSided);
 
@@ -655,6 +715,11 @@ std::unique_ptr<Material> Material::Clone() const
         {
             copy->SetRoughnessMap(m_roughnessMap, m_roughnessMapPath);
         }
+    }
+
+    if (!m_emissiveMapPath.empty())
+    {
+        copy->SetEmissiveMap(m_emissiveMap, m_emissiveMapPath);
     }
 
     return copy;
@@ -702,10 +767,20 @@ nlohmann::json MaterialToJson(const Material& material, const MaterialStoredPath
         }
     }
 
+    if (material.HasEmissiveMap())
+    {
+        const std::string mapPath = toStoredPath(material.GetEmissiveMapPath());
+        if (!mapPath.empty())
+        {
+            maps["emissive"] = mapPath;
+        }
+    }
+
     return json{
         {"albedo", Vec3ToJson(material.GetAlbedo())},
         {"roughness", material.GetRoughness()},
         {"metallic", material.GetMetallic()},
+        {"emissive", Vec3ToJson(material.GetEmissive())},
         {"doubleSided", material.IsDoubleSided()},
         {"maps", maps},
         {"texCoordSets",
@@ -714,6 +789,7 @@ nlohmann::json MaterialToJson(const Material& material, const MaterialStoredPath
              {"normal", material.GetNormalTexCoordSet()},
              {"ao", material.GetAoTexCoordSet()},
              {"roughness", material.GetRoughnessTexCoordSet()},
+             {"emissive", material.GetEmissiveTexCoordSet()},
          }},
     };
 }
@@ -728,6 +804,9 @@ std::unique_ptr<Material> MaterialFromJson(
     const glm::vec3 albedo = Vec3FromJson(value.at("albedo"));
     const float roughness = value.at("roughness").get<float>();
     const float metallic = value.at("metallic").get<float>();
+    const glm::vec3 emissive = value.contains("emissive")
+        ? Vec3FromJson(value.at("emissive"))
+        : glm::vec3(0.0f);
 
     std::unique_ptr<Material> material = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
@@ -737,6 +816,7 @@ std::unique_ptr<Material> MaterialFromJson(
         metallic);
 
     material->SetDoubleSided(value.value("doubleSided", false));
+    material->SetEmissive(emissive);
 
     if (value.contains("texCoordSets"))
     {
@@ -745,6 +825,7 @@ std::unique_ptr<Material> MaterialFromJson(
         material->SetNormalTexCoordSet(texCoordSets.value("normal", 0));
         material->SetAoTexCoordSet(texCoordSets.value("ao", 0));
         material->SetRoughnessTexCoordSet(texCoordSets.value("roughness", 0));
+        material->SetEmissiveTexCoordSet(texCoordSets.value("emissive", 0));
     }
 
     if (!value.contains("maps"))
@@ -779,6 +860,9 @@ std::unique_ptr<Material> MaterialFromJson(
     });
     assignMapPath("ao", [&](const std::string& path) {
         material->SetAoMap(nullptr, path);
+    });
+    assignMapPath("emissive", [&](const std::string& path) {
+        material->SetEmissiveMap(nullptr, path);
     });
 
     if (maps.contains("roughness"))

@@ -14,6 +14,7 @@ Texture2D uNormalMap : register(t5);
 Texture2D uAoMap : register(t6);
 Texture2D uRoughnessMap : register(t7);
 Texture2DArray uShadowMap : register(t8);
+Texture2D uEmissiveMap : register(t9);
 
 SamplerState uPrefilterSampler : register(s2);
 SamplerState uBrdfLutSampler : register(s3);
@@ -36,10 +37,12 @@ cbuffer PerPixel : register(b0)
     int uUseAoMap;
     int uUseRoughnessMap;
     int uUseMetallicRoughnessMap;
+    int uUseEmissiveMap;
     int uAlbedoTexCoordSet;
     int uNormalTexCoordSet;
     int uAoTexCoordSet;
     int uRoughnessTexCoordSet;
+    int uEmissiveTexCoordSet;
     int uLightCount;
     int uLightTypes[MAX_LIGHTS];
     float4 uLightPositions[MAX_LIGHTS];
@@ -736,6 +739,7 @@ PSOutput main(PSInput input)
     float2 normalTexCoord = SelectTexCoord(uNormalTexCoordSet, input.texCoord0, input.texCoord1);
     float2 aoTexCoord = SelectTexCoord(uAoTexCoordSet, input.texCoord0, input.texCoord1);
     float2 roughnessTexCoord = SelectTexCoord(uRoughnessTexCoordSet, input.texCoord0, input.texCoord1);
+    float2 emissiveTexCoord = SelectTexCoord(uEmissiveTexCoordSet, input.texCoord0, input.texCoord1);
     if (uUseNormalMap != 0)
     {
         normal = CalcNormalFromMap(normal, input.tangent, normalTexCoord);
@@ -768,6 +772,11 @@ PSOutput main(PSInput input)
     metallic = clamp(metallic, 0.0, 1.0);
 
     float3 emissiveLinear = max(uEmissive, 0.0.xxx);
+    if (uUseEmissiveMap != 0)
+    {
+        // Emissive textures are authored as color textures; SRGB texture upload decodes to linear here.
+        emissiveLinear *= uEmissiveMap.Sample(uAlbedoSampler, emissiveTexCoord).rgb;
+    }
 
     float3 f0 = lerp(0.04.xxx, albedo, metallic);
 
@@ -871,7 +880,7 @@ PSOutput main(PSInput input)
         shadowFactor = 1.0;
     }
 
-    float3 result = ambient + directShadowed;
+    float3 result = ambient + directShadowed + emissiveLinear;
 
     if (uDebugMode != 0)
     {
@@ -1113,7 +1122,7 @@ PSOutput main(PSInput input)
 
     if (uSplitLightingOutput != 0)
     {
-        output.oDirect = float4(directFillUnshadowed, 1.0);
+        output.oDirect = float4(directFillUnshadowed + emissiveLinear, 1.0);
         output.oIndirect = float4(ambient, 1.0);
         output.oSunShadow = float4(directSunUnshadowed, shadowFactor);
         output.oNormal = float4(normalize(geomNormal), 1.0);

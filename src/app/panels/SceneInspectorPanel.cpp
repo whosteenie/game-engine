@@ -353,6 +353,18 @@ namespace
         }
         HandleMaterialFieldEditEvents(editContext);
 
+        glm::vec3 emissive = material.GetEmissive();
+        if (ImGui::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))
+        {
+            material.SetEmissive(emissive);
+            scene.MarkDirty();
+        }
+        HandleMaterialFieldEditEvents(editContext);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Linear HDR emissive RGB. Values above 1.0 can bloom.");
+        }
+
         bool doubleSided = material.IsDoubleSided();
         if (ImGui::Checkbox("Double sided", &doubleSided))
         {
@@ -448,6 +460,31 @@ namespace
                 scene.MarkDirty();
             }
             HandleMaterialFieldEditEvents(editContext);
+        }
+
+        DrawMaterialTextureSlot(
+            "Emissive",
+            material.HasEmissiveMap(),
+            material.GetEmissiveMapPath(),
+            TextureColorSpace::SRGB,
+            scene,
+            editContext.undoStack,
+            editContext.objectIndices,
+            [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                material.SetEmissiveMap(std::move(texture), path);
+            },
+            [&material]() { material.ClearEmissiveMap(); });
+
+        if (material.HasEmissiveMap())
+        {
+            int emissiveTexCoordSet = material.GetEmissiveTexCoordSet();
+            if (ImGui::Combo("Emissive UV set", &emissiveTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetEmissiveTexCoordSet(emissiveTexCoordSet);
+                scene.MarkDirty();
+            }
+            HandleMaterialFieldEditEvents(editContext);
+            ImGui::TextDisabled("Emission color multiplies the emissive map.");
         }
 
         if (material.HasMetallicRoughnessMap())

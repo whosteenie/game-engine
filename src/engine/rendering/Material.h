@@ -62,27 +62,32 @@ public:
     void SetNormalMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetAoMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetRoughnessMap(std::shared_ptr<Texture> texture, std::string path = {});
+    void SetEmissiveMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetMetallicRoughnessMap(std::shared_ptr<Texture> texture, int texCoordSet = 0, std::string path = {});
 
     void ClearAlbedoMap();
     void ClearNormalMap();
     void ClearAoMap();
     void ClearRoughnessMap();
+    void ClearEmissiveMap();
 
     const std::string& GetAlbedoMapPath() const;
     const std::string& GetNormalMapPath() const;
     const std::string& GetAoMapPath() const;
     const std::string& GetRoughnessMapPath() const;
+    const std::string& GetEmissiveMapPath() const;
 
     int GetAlbedoTexCoordSet() const;
     int GetNormalTexCoordSet() const;
     int GetAoTexCoordSet() const;
     int GetRoughnessTexCoordSet() const;
+    int GetEmissiveTexCoordSet() const;
 
     void SetAlbedoTexCoordSet(int texCoordSet);
     void SetNormalTexCoordSet(int texCoordSet);
     void SetAoTexCoordSet(int texCoordSet);
     void SetRoughnessTexCoordSet(int texCoordSet);
+    void SetEmissiveTexCoordSet(int texCoordSet);
 
     void SetDoubleSided(bool doubleSided);
     bool IsDoubleSided() const;
@@ -93,6 +98,7 @@ public:
     bool HasNormalMap() const;
     bool HasAoMap() const;
     bool HasRoughnessMap() const;
+    bool HasEmissiveMap() const;
     bool HasMetallicRoughnessMap() const;
 
     std::unique_ptr<Material> Clone() const;
@@ -115,16 +121,19 @@ private:
     mutable std::shared_ptr<Texture> m_normalMap;
     mutable std::shared_ptr<Texture> m_aoMap;
     mutable std::shared_ptr<Texture> m_roughnessMap;
+    mutable std::shared_ptr<Texture> m_emissiveMap;
 
     std::string m_albedoMapPath;
     std::string m_normalMapPath;
     std::string m_aoMapPath;
     std::string m_roughnessMapPath;
+    std::string m_emissiveMapPath;
 
     int m_albedoTexCoordSet = 0;
     int m_normalTexCoordSet = 0;
     int m_aoTexCoordSet = 0;
     int m_roughnessTexCoordSet = 0;
+    int m_emissiveTexCoordSet = 0;
     bool m_doubleSided = false;
     bool m_useMetallicRoughnessMap = false;
 };

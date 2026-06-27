@@ -483,6 +483,7 @@ namespace
         glm::vec3 albedo(0.8f);
         float roughness = 0.5f;
         float metallic = 0.0f;
+        glm::vec3 emissive(0.0f);
 
         if (materialIndex >= 0)
         {
@@ -494,6 +495,13 @@ namespace
                 static_cast<float>(pbr.baseColorFactor[2]));
             roughness = static_cast<float>(pbr.roughnessFactor);
             metallic = static_cast<float>(pbr.metallicFactor);
+            if (gltfMaterial.emissiveFactor.size() >= 3)
+            {
+                emissive = glm::vec3(
+                    static_cast<float>(gltfMaterial.emissiveFactor[0]),
+                    static_cast<float>(gltfMaterial.emissiveFactor[1]),
+                    static_cast<float>(gltfMaterial.emissiveFactor[2]));
+            }
 
             auto material = std::make_unique<Material>(
                 EngineConstants::LitVertexShader,
@@ -502,6 +510,7 @@ namespace
                 roughness,
                 metallic);
             material->SetDoubleSided(gltfMaterial.doubleSided);
+            material->SetEmissive(emissive);
 
             if (pbr.baseColorTexture.index >= 0)
             {
@@ -578,6 +587,25 @@ namespace
                 if (texture != nullptr && texture->IsValid())
                 {
                     material->SetAoMap(texture, StoreTexturePath(projectRoot, texturePath));
+                }
+            }
+
+            if (gltfMaterial.emissiveTexture.index >= 0)
+            {
+                material->SetEmissiveTexCoordSet(gltfMaterial.emissiveTexture.texCoord);
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    gltfMaterial.emissiveTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
+                    model,
+                    gltfMaterial.emissiveTexture.index,
+                    modelDirectory,
+                    TextureColorSpace::SRGB,
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetEmissiveMap(texture, StoreTexturePath(projectRoot, texturePath));
                 }
             }
 
