@@ -200,6 +200,43 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         m_impl->Adapter = adapter;
     }
 
+    auto queryMsaaSupport = [](ID3D12Device* device, const DXGI_FORMAT format, const UINT sampleCount) {
+        D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels{};
+        levels.Format = format;
+        levels.SampleCount = sampleCount;
+        return SUCCEEDED(device->CheckFeatureSupport(
+                   D3D12_FEATURE_MULTISAMPLE_QUALITY_LEVELS,
+                   &levels,
+                   sizeof(levels)))
+            && levels.NumQualityLevels > 0;
+    };
+
+    const DXGI_FORMAT msaaFormats[] = {
+        DXGI_FORMAT_R16G16B16A16_FLOAT,
+        DXGI_FORMAT_R16G16_FLOAT,
+        DXGI_FORMAT_D24_UNORM_S8_UINT,
+    };
+    const int msaaSampleCounts[] = {2, 4, 8};
+    m_supportedMsaaSampleCountsMask = 0;
+    for (const int sampleCount : msaaSampleCounts)
+    {
+        bool supported = true;
+        for (const DXGI_FORMAT format : msaaFormats)
+        {
+            if (!queryMsaaSupport(m_impl->Device.Get(), format, static_cast<UINT>(sampleCount)))
+            {
+                supported = false;
+                break;
+            }
+        }
+
+        if (supported)
+        {
+            m_supportedMsaaSampleCountsMask |= static_cast<std::uint8_t>(1u << sampleCount);
+        }
+    }
+    m_activeMsaaSampleCount = 1;
+
     D3D12MA::ALLOCATOR_DESC allocatorDesc{};
     allocatorDesc.pAdapter = m_impl->Adapter.Get();
     allocatorDesc.pDevice = m_impl->Device.Get();
@@ -1001,6 +1038,21 @@ void GfxContext::SetMaterialTextureMipBias(const float mipBias)
 float GfxContext::GetMaterialTextureMipBias() const
 {
     return m_materialTextureMipBias;
+}
+
+bool GfxContext::IsMsaaSampleCountSupported(const int sampleCount) const
+{
+    if (sampleCount <= 1)
+    {
+        return true;
+    }
+
+    if (sampleCount != 2 && sampleCount != 4 && sampleCount != 8)
+    {
+        return false;
+    }
+
+    return (m_supportedMsaaSampleCountsMask & static_cast<std::uint8_t>(1u << sampleCount)) != 0;
 }
 
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const

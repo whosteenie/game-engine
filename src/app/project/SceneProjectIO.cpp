@@ -610,6 +610,7 @@ namespace SceneProjectIODetail
                  {"bloomIntensity", effects.GetBloomIntensity()},
                  {"bloomBlurRadius", effects.GetBloomBlurRadius()},
                  {"antiAliasingMode", AntiAliasingModeToString(effects.GetAntiAliasingMode())},
+                 {"msaaSampleCount", effects.GetMsaaSampleCount()},
                  {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
                  {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
                  {"renderScale", effects.GetRenderScale()},
@@ -780,9 +781,28 @@ namespace SceneProjectIODetail
         effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
         effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
         effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
-        effects.SetAntiAliasingMode(AntiAliasingModeFromString(effectsValue.value(
+        AntiAliasingMode loadedAaMode = AntiAliasingModeFromString(effectsValue.value(
             "antiAliasingMode",
-            AntiAliasingModeToString(effects.GetAntiAliasingMode()))));
+            AntiAliasingModeToString(effects.GetAntiAliasingMode())));
+        int loadedMsaaSampleCount = effectsValue.value("msaaSampleCount", 1);
+        if (loadedAaMode == AntiAliasingMode::MSAA)
+        {
+            if (loadedMsaaSampleCount <= 1)
+            {
+                loadedMsaaSampleCount = 4;
+            }
+            loadedAaMode = AntiAliasingMode::None;
+        }
+        if (loadedMsaaSampleCount > 1 && loadedAaMode == AntiAliasingMode::TAA)
+        {
+            loadedAaMode = AntiAliasingMode::None;
+        }
+        if (loadedAaMode == AntiAliasingMode::TAA && loadedMsaaSampleCount > 1)
+        {
+            loadedMsaaSampleCount = 1;
+        }
+        effects.SetAntiAliasingMode(loadedAaMode);
+        effects.SetMsaaSampleCount(loadedMsaaSampleCount);
         effects.SetFxaaSubpixQuality(
             effectsValue.value("fxaaSubpixQuality", effects.GetFxaaSubpixQuality()));
         effects.SetFxaaEdgeThreshold(

@@ -112,6 +112,11 @@ public:
     void SetMaterialTextureMipBias(float mipBias);
     float GetMaterialTextureMipBias() const;
 
+    // Geometry MSAA (Phase 0: capability probe + active count; resolve pass in later phases).
+    int GetActiveMsaaSampleCount() const { return m_activeMsaaSampleCount; }
+    std::uint8_t GetSupportedMsaaSampleCountsMask() const { return m_supportedMsaaSampleCountsMask; }
+    bool IsMsaaSampleCountSupported(int sampleCount) const;
+
 private:
     GfxContext() = default;
 
@@ -146,4 +151,6 @@ private:
     TextureFilterMode m_materialTextureFilterMode = TextureFilterMode::Trilinear;
     std::uint32_t m_materialTextureAnisotropy = 8;
     float m_materialTextureMipBias = 0.0f;
+    int m_activeMsaaSampleCount = 1;
+    std::uint8_t m_supportedMsaaSampleCountsMask = 0;
 };

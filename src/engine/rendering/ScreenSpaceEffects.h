@@ -142,6 +142,11 @@ public:
     AntiAliasingMode GetAntiAliasingMode() const;
     void SetAntiAliasingMode(AntiAliasingMode mode);
 
+    int GetMsaaSampleCount() const;
+    void SetMsaaSampleCount(int sampleCount);
+    bool IsMsaaPendingReload() const;
+    bool IsMsaaEnabled() const { return GetMsaaSampleCount() > 1; }
+
     float GetFxaaSubpixQuality() const;
     void SetFxaaSubpixQuality(float quality);
 
@@ -361,6 +366,7 @@ private:
     float m_bloomDepthThreshold = 0.015f;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
+    int m_msaaSampleCount = 1;
     float m_fxaaSubpixQuality = 0.75f;
     float m_fxaaEdgeThreshold = 0.03125f;
     float m_renderScale = 1.5f;

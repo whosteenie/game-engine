@@ -17,6 +17,7 @@
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 
 #include <imgui.h>
@@ -997,16 +998,107 @@ void LightingPanel::Draw(
                 }
             }
 
-            ImGui::BeginDisabled();
-            ImGui::Selectable(AntiAliasingModeLabel(AntiAliasingMode::MSAA), false);
-            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            {
-                ImGui::SetTooltip(
-                    "MSAA requires swapchain/geometry sample-count changes and an engine restart.");
-            }
-            ImGui::EndDisabled();
-
             ImGui::EndCombo();
+        }
+
+        ImGui::Separator();
+        ImGui::TextDisabled(
+            "Geometry MSAA supersamples the scene G-buffer (Phase 0 — restart to apply). "
+            "Use post AA mode None when comparing MSAA quality.");
+
+        const int msaaSampleCount = screenSpaceEffects.GetMsaaSampleCount();
+        const char* msaaPreview = "Not enabled";
+        if (msaaSampleCount == 2)
+        {
+            msaaPreview = "2× MSAA";
+        }
+        else if (msaaSampleCount == 4)
+        {
+            msaaPreview = "4× MSAA";
+        }
+        else if (msaaSampleCount == 8)
+        {
+            msaaPreview = "8× MSAA";
+        }
+
+        static constexpr struct MsaaPreset
+        {
+            int count;
+            const char* label;
+        } kMsaaPresets[] = {
+            {2, "2× MSAA"},
+            {4, "4× MSAA"},
+            {8, "8× MSAA"},
+        };
+
+        if (ImGui::BeginCombo("Geometry MSAA", msaaPreview))
+        {
+            for (const MsaaPreset& preset : kMsaaPresets)
+            {
+                const bool supported = GfxContext::Get().IsMsaaSampleCountSupported(preset.count);
+                if (!supported)
+                {
+                    ImGui::BeginDisabled();
+                }
+
+                const bool selected = msaaSampleCount == preset.count;
+                if (ImGui::Selectable(preset.label, selected) && !selected && supported)
+                {
+                    ApplyRendererChange(
+                        editContext,
+                        scene,
+                        "Geometry MSAA",
+                        [preset](Scene& target) {
+                            target.GetRenderer().GetScreenSpaceEffects().SetMsaaSampleCount(preset.count);
+                            target.MarkDirty();
+                        });
+                    ImGui::CloseCurrentPopup();
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+
+                if (!supported)
+                {
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    {
+                        ImGui::SetTooltip("Not supported on this GPU for the scene G-buffer formats.");
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (msaaSampleCount > 1 && ImGui::SmallButton("Disable geometry MSAA"))
+        {
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Geometry MSAA",
+                [](Scene& target) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetMsaaSampleCount(1);
+                    target.MarkDirty();
+                });
+        }
+
+        if (screenSpaceEffects.IsMsaaPendingReload())
+        {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
+                "Restart the editor to apply geometry MSAA.");
+        }
+        else if (msaaSampleCount > 1)
+        {
+            ImGui::TextDisabled(
+                "Active geometry MSAA: %d× (matches requested setting).",
+                msaaSampleCount);
+        }
+
+        if (currentAaMode == AntiAliasingMode::TAA)
+        {
+            ImGui::TextDisabled("TAA and geometry MSAA are mutually exclusive.");
         }
 
         if (currentAaMode == AntiAliasingMode::FXAA)
@@ -1129,13 +1221,13 @@ void LightingPanel::Draw(
         HandleRendererFieldEditEvents(editContext);
     }
 
-    if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
+    if (ImGui::CollapsingHeader("Screen-space GI (SSGI)", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        ImGui::TextUnformatted(
-            "Use debug views to see which render pass causes an artifact. "
-            "Write a report and share the txt file for help.");
+        ImGui::TextDisabled(
+            "Screen-space indirect from emissive / radiance buffer. "
+            "Use Diagnostics debug views for pipeline isolation.");
 
-        if (ImGui::TreeNode("GI temporal (SSGI groundwork)"))
+        if (ImGui::TreeNode("GI temporal"))
         {
             float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
             UndoableRendererSliderFloat(
@@ -1169,7 +1261,7 @@ void LightingPanel::Draw(
             ImGui::TreePop();
         }
 
-        if (ImGui::TreeNode("SSGI denoise (Phase 5)"))
+        if (ImGui::TreeNode("Denoise"))
         {
             bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
             UndoableRendererCheckbox(
@@ -1226,11 +1318,11 @@ void LightingPanel::Draw(
                     target.MarkDirty();
                 });
             ImGui::TextDisabled(
-                "Test path: optional noise → spatial → temporal. Disable when using real SSGI trace.");
+                "Optional noise → spatial → temporal. Disable synthetic noise for real trace.");
             ImGui::TreePop();
         }
 
-        if (ImGui::TreeNode("SSGI trace (Phase 6)"))
+        if (ImGui::TreeNode("Trace & inject"))
         {
             bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
             UndoableRendererCheckbox(
@@ -1277,10 +1369,16 @@ void LightingPanel::Draw(
                     target.MarkDirty();
                 });
             ImGui::TextDisabled(
-                "Screen-space trace → denoise → inject into indirect IBL before SSAO. "
-                "Turn off synthetic noise when testing. AA off recommended.");
+                "Trace → denoise → inject into indirect before SSAO. AA = None recommended for tuning.");
             ImGui::TreePop();
         }
+    }
+
+    if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::TextUnformatted(
+            "Use debug views to see which render pass causes an artifact. "
+            "Write a report and share the txt file for help.");
 
         int debugMode = static_cast<int>(screenSpaceEffects.GetDebugMode());
         const char* debugModeLabels[] = {

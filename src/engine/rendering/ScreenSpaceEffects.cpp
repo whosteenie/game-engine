@@ -2744,6 +2744,11 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
         return;
     }
 
+    if (mode == AntiAliasingMode::TAA && m_msaaSampleCount > 1)
+    {
+        m_msaaSampleCount = 1;
+    }
+
     if (m_antiAliasingMode != mode)
     {
         ResetTaaHistory();
@@ -2753,6 +2758,48 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
     }
 
     m_antiAliasingMode = mode;
+}
+
+int ScreenSpaceEffects::GetMsaaSampleCount() const
+{
+    return m_msaaSampleCount;
+}
+
+void ScreenSpaceEffects::SetMsaaSampleCount(const int sampleCount)
+{
+    int clampedCount = sampleCount;
+    if (clampedCount <= 1)
+    {
+        clampedCount = 1;
+    }
+    else if (clampedCount != 2 && clampedCount != 4 && clampedCount != 8)
+    {
+        clampedCount = 4;
+    }
+
+    if (clampedCount > 1 && !GfxContext::Get().IsMsaaSampleCountSupported(clampedCount))
+    {
+        return;
+    }
+
+    if (clampedCount > 1 && m_antiAliasingMode == AntiAliasingMode::TAA)
+    {
+        SetAntiAliasingMode(AntiAliasingMode::None);
+    }
+
+    if (m_msaaSampleCount == clampedCount)
+    {
+        return;
+    }
+
+    m_msaaSampleCount = clampedCount;
+    m_width = 0;
+    m_height = 0;
+}
+
+bool ScreenSpaceEffects::IsMsaaPendingReload() const
+{
+    return m_msaaSampleCount != GfxContext::Get().GetActiveMsaaSampleCount();
 }
 
 float ScreenSpaceEffects::GetRenderScale() const
