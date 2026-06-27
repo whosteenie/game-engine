@@ -364,7 +364,7 @@ private:
     float m_renderScale = 1.5f;
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
-    float m_giDepthThreshold = 0.05f;
+    float m_giDepthThreshold = 0.003f;
     bool m_ssgiDenoiseEnabled = true;
     bool m_ssgiNoiseInjectionEnabled = false;
     float m_ssgiNoiseStrength = 0.12f;

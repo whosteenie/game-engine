@@ -1,5 +1,5 @@
 // SSGI Phase 6 — view-space screen trace with depth buffer ray march.
-// One cosine-weighted hemisphere ray per pixel; hit samples radiance assembly buffer.
+// Coarse uniform steps detect surface crossings; binary refinement removes step-quantization banding.
 // Miss returns 0 (incremental — IBL remains in composite).
 
 Texture2D uDepthMap : register(t0);
@@ -33,6 +33,9 @@ struct PSInput
 };
 
 static const float kPi = 3.14159265;
+static const int kRayCount = 4;
+static const int kRefineSteps = 4;
+static const float kMaxSsgiRadiance = 6.0;
 
 float Hash21(float2 p)
 {
@@ -80,6 +83,18 @@ float3 CosineHemisphereDirection(float2 xi, float3 normal)
     return normalize(localDir.x * tangent + localDir.y * bitangent + localDir.z * normal);
 }
 
+float3 ClampRadiance(float3 radiance)
+{
+    radiance = max(radiance, 0.0.xxx);
+    const float luminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
+    if (luminance <= kMaxSsgiRadiance)
+    {
+        return radiance;
+    }
+
+    return radiance * (kMaxSsgiRadiance / max(luminance, 1e-4));
+}
+
 float EdgeFade(float2 uv, float scale)
 {
     const float2 edgeDist = min(uv, 1.0 - uv);
@@ -89,6 +104,105 @@ float EdgeFade(float2 uv, float scale)
 float DiffuseSsgiWeight(float roughness, float metallic)
 {
     return (1.0 - metallic) * lerp(0.35, 1.0, roughness);
+}
+
+bool SampleRayDepthDelta(
+    float t,
+    float3 viewPos,
+    float3 rayDir,
+    out float2 sampleUv,
+    out float depthDelta)
+{
+    const float3 marchPos = viewPos + rayDir * t;
+    sampleUv = ViewPosToDepthUv(marchPos);
+    if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
+    {
+        depthDelta = 0.0;
+        return false;
+    }
+
+    const float sampleDepth = uDepthMap.Sample(uDepthSampler, sampleUv).r;
+    if (sampleDepth >= 0.9999)
+    {
+        depthDelta = 0.0;
+        return false;
+    }
+
+    const float3 sampleViewPos = ViewPosFromDepth(sampleUv, sampleDepth);
+    depthDelta = marchPos.z - sampleViewPos.z;
+    return true;
+}
+
+float RefineHitDistance(float tLow, float tHigh, float3 viewPos, float3 rayDir)
+{
+    [loop]
+    for (int refineIndex = 0; refineIndex < kRefineSteps; ++refineIndex)
+    {
+        const float tMid = 0.5 * (tLow + tHigh);
+        float2 sampleUv;
+        float depthDelta;
+        if (!SampleRayDepthDelta(tMid, viewPos, rayDir, sampleUv, depthDelta))
+        {
+            tHigh = tMid;
+            continue;
+        }
+
+        if (depthDelta > uThickness)
+        {
+            tHigh = tMid;
+        }
+        else if (depthDelta <= 0.0)
+        {
+            tLow = tMid;
+        }
+        else
+        {
+            tHigh = tMid;
+        }
+    }
+
+    return 0.5 * (tLow + tHigh);
+}
+
+bool TryAcceptHit(
+    float tHit,
+    float3 viewPos,
+    float3 rayDir,
+    out float3 hitRadiance,
+    out float hitConfidence)
+{
+    hitRadiance = 0.0.xxx;
+    hitConfidence = 0.0;
+
+    float2 sampleUv;
+    float depthDelta;
+    if (!SampleRayDepthDelta(tHit, viewPos, rayDir, sampleUv, depthDelta))
+    {
+        return false;
+    }
+
+    if (depthDelta <= 0.0 || depthDelta >= uThickness)
+    {
+        return false;
+    }
+
+    const float4 radiance = uRadianceMap.Sample(uRadianceSampler, sampleUv);
+    if (radiance.a <= 0.5)
+    {
+        return false;
+    }
+
+    const float3 sampleWorldNormal = normalize(uNormalMap.Sample(uNormalSampler, sampleUv).rgb);
+    float3 sampleViewNormal = mul((float3x3)uView, sampleWorldNormal);
+    sampleViewNormal = normalize(sampleViewNormal);
+
+    const float distance01 = saturate(tHit / max(uMaxTraceDistance, 1e-4));
+    const float distanceWeight = pow(saturate(1.0 - distance01), 2.0);
+    const float thicknessWeight = 1.0 - smoothstep(0.0, uThickness, depthDelta);
+    const float facingWeight = saturate(dot(sampleViewNormal, -rayDir));
+    hitConfidence = distanceWeight * thicknessWeight * facingWeight;
+    hitRadiance = ClampRadiance(radiance.rgb) * hitConfidence;
+    return hitConfidence > 0.0;
 }
 
 float4 main(PSInput input) : SV_Target
@@ -114,54 +228,68 @@ float4 main(PSInput input) : SV_Target
     viewNormal = normalize(viewNormal);
 
     const float3 viewPos = ViewPosFromDepth(uv, depth);
-    const float2 xi = float2(
-        Hash21(uv + float2(uFrameIndex * 0.013, 0.0)),
-        Hash21(uv.yx + float2(0.0, uFrameIndex * 0.027)));
-    const float3 rayDir = CosineHemisphereDirection(xi, viewNormal);
-
     const int stepCount = max(uStepCount, 1);
     const float stepSize = uMaxTraceDistance / (float)stepCount;
 
-    float3 hitRadiance = 0.0.xxx;
-    float hitDistance01 = 0.0;
-    float3 marchPos = viewPos;
+    float3 accumulatedRadiance = 0.0.xxx;
+    float confidenceSum = 0.0;
 
     [loop]
-    for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
+    for (int rayIndex = 0; rayIndex < kRayCount; ++rayIndex)
     {
-        marchPos += rayDir * stepSize;
-        const float traveled = length(marchPos - viewPos);
-        if (traveled > uMaxTraceDistance)
-        {
-            break;
-        }
+        const float raySeed = (float)rayIndex + 1.0;
+        const float2 xi = float2(
+            Hash21(uv + float2(uFrameIndex * 0.013 + raySeed * 17.17, raySeed * 3.31)),
+            Hash21(uv.yx + float2(raySeed * 11.73, uFrameIndex * 0.027 + raySeed * 5.97)));
+        const float3 rayDir = CosineHemisphereDirection(xi, viewNormal);
 
-        const float2 sampleUv = ViewPosToDepthUv(marchPos);
-        if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0)
-        {
-            break;
-        }
+        float tPrev = 0.0;
+        float prevDelta = 0.0;
+        bool hasPrevSample = false;
 
-        const float sampleDepth = uDepthMap.Sample(uDepthSampler, sampleUv).r;
-        if (sampleDepth >= 0.9999)
+        [loop]
+        for (int stepIndex = 0; stepIndex < stepCount; ++stepIndex)
         {
-            continue;
-        }
-
-        const float3 sampleViewPos = ViewPosFromDepth(sampleUv, sampleDepth);
-        const float depthDelta = marchPos.z - sampleViewPos.z;
-        if (depthDelta > 0.0 && depthDelta < uThickness)
-        {
-            const float4 radiance = uRadianceMap.Sample(uRadianceSampler, sampleUv);
-            if (radiance.a > 0.5)
+            const float t = (float)(stepIndex + 1) * stepSize;
+            if (t > uMaxTraceDistance)
             {
-                hitRadiance = radiance.rgb;
-                hitDistance01 = saturate(traveled / max(uMaxTraceDistance, 1e-4));
+                break;
             }
-            break;
+
+            float2 sampleUv;
+            float depthDelta;
+            if (!SampleRayDepthDelta(t, viewPos, rayDir, sampleUv, depthDelta))
+            {
+                break;
+            }
+
+            const bool crossedSurface = hasPrevSample && prevDelta <= 0.0 && depthDelta > 0.0;
+            const bool insideThickness = depthDelta > 0.0 && depthDelta < uThickness;
+            if (crossedSurface || insideThickness)
+            {
+                const float tLow = hasPrevSample ? tPrev : max(0.0, t - stepSize);
+                const float tHigh = t;
+                const float tHit = RefineHitDistance(tLow, tHigh, viewPos, rayDir);
+
+                float3 hitRadiance;
+                float hitConfidence;
+                if (TryAcceptHit(tHit, viewPos, rayDir, hitRadiance, hitConfidence))
+                {
+                    accumulatedRadiance += hitRadiance;
+                    confidenceSum += hitConfidence;
+                }
+                break;
+            }
+
+            tPrev = t;
+            prevDelta = depthDelta;
+            hasPrevSample = true;
         }
     }
 
     const float edgeFade = EdgeFade(uv, uEdgeFadeScale);
-    return float4(hitRadiance * diffuseWeight * edgeFade, hitDistance01);
+    const float3 tracedRadiance =
+        accumulatedRadiance * (1.0 / (float)kRayCount) * diffuseWeight * edgeFade;
+    const float confidence = saturate(confidenceSum * (1.0 / (float)kRayCount) * diffuseWeight * edgeFade);
+    return float4(tracedRadiance, confidence);
 }

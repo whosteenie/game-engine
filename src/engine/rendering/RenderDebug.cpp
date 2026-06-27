@@ -87,7 +87,7 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::SsgiTraceHitMask:
         return "SSGI trace hit mask";
     case RenderDebugMode::SsgiTraceHitDistance:
-        return "SSGI trace hit distance";
+        return "SSGI trace confidence";
     case RenderDebugMode::SsgiFinalContribution:
         return "SSGI final contribution";
     default:

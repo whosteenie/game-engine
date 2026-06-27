@@ -53,6 +53,7 @@ float4 main(PSInput input) : SV_Target
     const float centerDepth = ViewDepth(input.texCoord);
 
     float3 result = 0.0.xxx;
+    float confidenceSum = 0.0;
     float weightSum = 0.0;
 
     [loop]
@@ -70,9 +71,11 @@ float4 main(PSInput input) : SV_Target
         const float3 sampleNormal = normalize(uNormalMap.Sample(uNormalSampler, sampleUv).rgb);
         const float normalWeight = pow(saturate(dot(centerNormal, sampleNormal)), uNormalPower);
 
-        const float weight = kBlurWeights[tap + kBlurRadius] * depthWeight * normalWeight;
-        result += uInput.Sample(uInputSampler, sampleUv).rgb * weight;
-        weightSum += weight;
+        const float kernelWeight = kBlurWeights[tap + kBlurRadius] * depthWeight * normalWeight;
+        const float4 sampleRadiance = uInput.Sample(uInputSampler, sampleUv);
+        result += sampleRadiance.rgb * kernelWeight;
+        confidenceSum += saturate(sampleRadiance.a) * kernelWeight;
+        weightSum += kernelWeight;
     }
 
     if (weightSum <= 1e-5)
@@ -80,5 +83,5 @@ float4 main(PSInput input) : SV_Target
         return centerSample;
     }
 
-    return float4(result / weightSum, centerSample.a);
+    return float4(result / weightSum, saturate(confidenceSum / weightSum));
 }

@@ -1151,6 +1151,21 @@ void LightingPanel::Draw(
                 });
             ImGui::TextDisabled(
                 "Independent of HDR TAA. Validate with Anti-aliasing = None.");
+
+            float giDepthThreshold = screenSpaceEffects.GetGiDepthThreshold();
+            UndoableRendererSliderFloat(
+                "GI depth reject threshold",
+                &giDepthThreshold,
+                0.0005f,
+                0.05f,
+                "%.4f",
+                editContext,
+                [](Scene& target, float giDepthThreshold) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetGiDepthThreshold(giDepthThreshold);
+                    target.MarkDirty();
+                });
+            ImGui::TextDisabled(
+                "Lower rejects more history at geometry changes; higher keeps more accumulation.");
             ImGui::TreePop();
         }
 
@@ -1484,7 +1499,8 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::SsgiTraceHitDistance))
         {
             ImGui::TextWrapped(
-                "Accepted SSGI hit distance normalized by max trace distance. Black means no accepted hit.");
+                "SSGI trace confidence after distance, thickness, facing, diffuse, and screen-edge weighting. "
+                "Black means no useful contribution for reconstruction.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::SsgiDenoiseSpatial))
         {

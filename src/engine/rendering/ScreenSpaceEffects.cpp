@@ -1207,6 +1207,7 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     shader.FlushUniforms();
     DrawFullscreenQuad();
 
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     TransitionResource(
         commandList,
         resource,
@@ -1584,11 +1585,14 @@ void ScreenSpaceEffects::Apply(
         const glm::mat4 viewProjCurr = camera.GetProjectionMatrix() * camera.GetViewMatrix();
         const glm::mat4 invViewProjCurr = glm::inverse(viewProjCurr);
         const float temporalClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+        commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 
         m_temporalReprojectShader->Use(false);
         m_temporalReprojectShader->SetInt("uCurrentRadiance", 0);
         m_temporalReprojectShader->SetInt("uHistoryRadiance", 1);
         m_temporalReprojectShader->SetInt("uDepth", 2);
+        m_temporalReprojectShader->SetInt("uHistoryDepth", 3);
         m_temporalReprojectShader->SetMat4("uInvViewProj", invViewProjCurr);
         m_temporalReprojectShader->SetMat4("uPrevViewProj", m_giPrevViewProjection);
         m_temporalReprojectShader->SetFloat("uBlendFactor", m_giTemporalBlendFactor);
@@ -1597,9 +1601,11 @@ void ScreenSpaceEffects::Apply(
             m_radianceHistoryValid && m_motionVectorFrameState.historyValid ? 1.0f : 0.0f);
         m_temporalReprojectShader->SetFloat("uTexelSizeX", texelSize.x);
         m_temporalReprojectShader->SetFloat("uTexelSizeY", texelSize.y);
+        m_temporalReprojectShader->SetFloat("uDepthRejectThreshold", m_giDepthThreshold);
         m_temporalReprojectShader->BindTextureSlot(0, temporalInputSrv);
         m_temporalReprojectShader->BindTextureSlot(1, m_radianceHistoryTarget.srvCpuHandle);
         m_temporalReprojectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_temporalReprojectShader->BindTextureSlot(3, m_radianceHistoryDepthTarget.srvCpuHandle);
         DrawFullscreenToTarget(
             *m_temporalReprojectShader,
             const_cast<InternalTarget&>(m_radianceTemporalTarget),
@@ -2772,7 +2778,7 @@ float ScreenSpaceEffects::GetGiDepthThreshold() const
 
 void ScreenSpaceEffects::SetGiDepthThreshold(const float threshold)
 {
-    m_giDepthThreshold = std::max(0.001f, threshold);
+    m_giDepthThreshold = std::clamp(threshold, 0.0005f, 0.05f);
 }
 
 bool ScreenSpaceEffects::IsSsgiDenoiseEnabled() const

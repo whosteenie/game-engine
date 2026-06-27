@@ -224,6 +224,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
 
         const bool isSkyBackgroundFragment = fragmentPath.find("sky_background") != std::string::npos;
         const bool isScreenCompositeFragment = fragmentPath.find("screen_composite") != std::string::npos;
+        const bool isTemporalReprojectFragment = fragmentPath.find("temporal_reproject") != std::string::npos;
 
         for (UINT registerIndex = 0; registerIndex <= 8; ++registerIndex)
         {
@@ -232,6 +233,10 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
                 (isSkyBackgroundFragment && registerIndex == 0)
                 || (isScreenCompositeFragment && registerIndex == 5);
             if (registerIndex == 8)
+            {
+                sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+            }
+            else if (isTemporalReprojectFragment && registerIndex == 2)
             {
                 sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
             }
