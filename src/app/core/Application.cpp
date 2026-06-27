@@ -27,6 +27,8 @@
 #include "app/undo/UndoContext.h"
 #include "app/undo/UndoStack.h"
 #include "engine/camera/Camera.h"
+#include "engine/scene/RotationUtils.h"
+#include "engine/scene/SceneObject.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/ShaderCache.h"
@@ -106,12 +108,15 @@ namespace
         }
 
         SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
-        const glm::mat4 cameraWorldMatrix = glm::affineInverse(camera.GetViewMatrix());
+        const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
+        const glm::mat4 cameraWorldMatrix = object.HasCamera()
+            ? RotationUtils::BuildCameraObjectWorldMatrixFromEditorViewInverse(inverseViewMatrix)
+            : inverseViewMatrix;
         glm::mat4 localMatrix = cameraWorldMatrix;
         if (object.GetParentIndex() >= 0)
         {
             const glm::mat4 parentWorldMatrix = scene.GetWorldMatrix(object.GetParentIndex());
-            localMatrix = glm::affineInverse(parentWorldMatrix) * cameraWorldMatrix;
+            localMatrix = glm::inverse(parentWorldMatrix) * cameraWorldMatrix;
         }
 
         ObjectTransformMap before;

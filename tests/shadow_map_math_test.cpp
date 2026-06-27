@@ -16,6 +16,7 @@
 
 void RunIrradianceShTests(int& failures);
 void RunColorSpaceTests(int& failures);
+void RunRotationUtilsTests(int& failures);
 
 namespace
 {
@@ -501,6 +502,7 @@ int main()
     RunExceptionMessageTests();
     RunIrradianceShTests(gFailures);
     RunColorSpaceTests(gFailures);
+    RunRotationUtilsTests(gFailures);
 
     if (gFailures == 0)
     {
