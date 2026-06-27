@@ -482,9 +482,6 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_smaaNeighborShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SmaaNeighborFragmentShader)),
-      m_gridCompositeShader(std::make_unique<Shader>(
-          EngineConstants::FullscreenVertexShader,
-          EngineConstants::GridCompositeFragmentShader)),
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader)),
@@ -526,7 +523,7 @@ ScreenSpaceEffects::ScreenSpaceEffects()
     CreateKernel();
     CreateNoiseTexture();
 
-    // HDR post-processing + SSAO defaults; selection overlay after tonemap (SceneRenderer).
+    // Grid alpha-blends into the resolved scene HDR buffer before bloom; selection overlay after tonemap.
     // Stage 3+: Bloom toggle, depth blit for gizmo occlusion, play-mode parity.
 }
 
@@ -555,7 +552,6 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_smaaOutputTarget);
     DestroyInternalTarget(m_taaHistoryTarget);
     DestroyInternalTarget(m_taaResolveTarget);
-    DestroyInternalTarget(m_gridOverlayTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
 
@@ -893,12 +889,6 @@ void ScreenSpaceEffects::ResizeLdrTonemapTarget(const int width, const int heigh
     ResizeInternalTarget(m_ldrTonemapTarget, width, height, format);
 }
 
-void ScreenSpaceEffects::ResizeGridOverlayTarget(const int width, const int height)
-{
-    const int format = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
-    ResizeInternalTarget(m_gridOverlayTarget, width, height, format);
-}
-
 void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int height)
 {
     const int ldrFormat = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
@@ -975,7 +965,6 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     ResizeBloomTargets(renderWidth, renderHeight);
     ResizeLdrTonemapTarget(renderWidth, renderHeight);
     ResizeAntiAliasingTargets(renderWidth, renderHeight);
-    ResizeGridOverlayTarget(renderWidth, renderHeight);
     m_width = renderWidth;
     m_height = renderHeight;
     ResetTaaHistory();
@@ -1177,53 +1166,19 @@ void ScreenSpaceEffects::EndScenePass() const
     m_sceneFramebuffer->Unbind();
 }
 
-void ScreenSpaceEffects::BeginGridOverlayPass() const
+void ScreenSpaceEffects::BeginSceneGridPass() const
 {
-    if (m_gridOverlayTarget.resource == nullptr || !m_sceneFramebuffer->IsValid())
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid())
     {
         return;
     }
 
-    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-
-    if (m_sceneFramebuffer->UsesMsaa())
-    {
-        m_sceneFramebuffer->PrepareResolvedDepthForDepthTestPass();
-    }
-    else
-    {
-        m_sceneFramebuffer->PrepareDepthForDepthTestPass();
-    }
-
-    TransitionResource(
-        commandList,
-        static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-        D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{
-        GfxContext::Get().GetOffscreenRtvCpuHandle(m_gridOverlayTarget.rtvIndex)};
-    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
-    depthDsv.ptr = m_sceneFramebuffer->UsesMsaa()
-        ? m_sceneFramebuffer->GetResolvedDepthDsvCpuHandle()
-        : m_sceneFramebuffer->GetDepthDsvCpuHandle();
-    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &depthDsv);
-
-    D3D12_VIEWPORT viewport{};
-    viewport.Width = static_cast<float>(m_width);
-    viewport.Height = static_cast<float>(m_height);
-    viewport.MaxDepth = 1.0f;
-    D3D12_RECT scissor{0, 0, m_width, m_height};
-    commandList->RSSetViewports(1, &viewport);
-    commandList->RSSetScissorRects(1, &scissor);
-
-    const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
-    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    m_sceneFramebuffer->BindSplitLightingOverlayDrawTarget();
 }
 
-void ScreenSpaceEffects::EndGridOverlayPass() const
+void ScreenSpaceEffects::EndSceneGridPass() const
 {
-    if (m_gridOverlayTarget.resource == nullptr)
+    if (m_sceneFramebuffer == nullptr)
     {
         return;
     }
@@ -1231,25 +1186,6 @@ void ScreenSpaceEffects::EndGridOverlayPass() const
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     m_sceneFramebuffer->EnsureShaderResourceState();
-    TransitionResource(
-        commandList,
-        static_cast<ID3D12Resource*>(m_gridOverlayTarget.resource),
-        D3D12_RESOURCE_STATE_RENDER_TARGET,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-}
-
-void ScreenSpaceEffects::CompositeGridOverlay() const
-{
-    if (m_gridOverlayTarget.srvCpuHandle == 0 || m_width <= 0 || m_height <= 0)
-    {
-        return;
-    }
-
-    m_gridCompositeShader->Use(false, true);
-    m_gridCompositeShader->SetInt("uGridOverlay", 0);
-    m_gridCompositeShader->BindTextureSlot(0, m_gridOverlayTarget.srvCpuHandle);
-    m_gridCompositeShader->FlushUniforms();
-    DrawFullscreenPass(*m_gridCompositeShader, true);
 }
 
 void ScreenSpaceEffects::DrawFullscreenQuad() const

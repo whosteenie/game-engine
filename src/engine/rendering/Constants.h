@@ -45,7 +45,6 @@ namespace EngineConstants
     inline constexpr const char* SmaaEdgeFragmentShader = "assets/shaders/smaa_edge.ps.hlsl";
     inline constexpr const char* SmaaNeighborFragmentShader = "assets/shaders/smaa_neighbor.ps.hlsl";
     inline constexpr const char* MipmapGenFragmentShader = "assets/shaders/mipmap_gen.ps.hlsl";
-    inline constexpr const char* GridCompositeFragmentShader = "assets/shaders/grid_composite.ps.hlsl";
     inline constexpr const char* DebugChannelFragmentShader = "assets/shaders/debug_channel.ps.hlsl";
     inline constexpr const char* DepthBlitFragmentShader = "assets/shaders/depth_blt.ps.hlsl";
     inline constexpr const char* MsaaDepthResolveFragmentShader =

@@ -522,7 +522,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         blendDesc.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
     };
 
-    // Grid overlay capture stores premultiplied rgb (src.rgb * src.a); composite once onto scene.
+    // Grid alpha-blends into the scene HDR buffer before post-processing.
     auto setupPremultipliedAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
         blendDesc.BlendEnable = TRUE;
         blendDesc.LogicOpEnable = FALSE;

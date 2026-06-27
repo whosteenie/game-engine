@@ -473,17 +473,18 @@ void SceneRenderer::Render(
     if (usePostProcess)
     {
         m_screenSpaceEffects->EndScenePass();
+
+        const bool drawGrid = options.showGrid && scene.GetShowGrid();
+        if (drawGrid)
+        {
+            m_screenSpaceEffects->BeginSceneGridPass();
+            m_grid->Draw(camera, splitLightingMrt);
+            m_screenSpaceEffects->EndSceneGridPass();
+        }
+
         if (target != nullptr)
         {
             GfxContext::Get().SetBoundOutputFramebuffer(target);
-        }
-
-        const bool drawGridOverlay = options.showGrid && scene.GetShowGrid();
-        if (drawGridOverlay)
-        {
-            m_screenSpaceEffects->BeginGridOverlayPass();
-            m_grid->Draw(camera, false);
-            m_screenSpaceEffects->EndGridOverlayPass();
         }
 
         m_screenSpaceEffects->Apply(
@@ -498,11 +499,6 @@ void SceneRenderer::Render(
         if (target != nullptr)
         {
             target->BindDrawTarget(false);
-        }
-
-        if (drawGridOverlay)
-        {
-            m_screenSpaceEffects->CompositeGridOverlay();
         }
 
         if (options.showEditorOverlay)

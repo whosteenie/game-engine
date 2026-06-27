@@ -1118,6 +1118,58 @@ bool Framebuffer::BindGizmoDrawTarget() const
     return true;
 }
 
+bool Framebuffer::BindSplitLightingOverlayDrawTarget() const
+{
+    if (!HasSplitLighting() || m_colorResources[0] == nullptr || m_rtvBaseIndex == UINT32_MAX
+        || m_depthResource == nullptr)
+    {
+        return false;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        TransitionColorAttachment(attachmentIndex, kRenderTargetState);
+    }
+
+    if (UsesMsaa())
+    {
+        PrepareResolvedDepthForDepthTestPass();
+    }
+    else
+    {
+        PrepareDepthForDepthTestPass();
+    }
+
+    std::array<D3D12_CPU_DESCRIPTOR_HANDLE, MaxColorAttachments> rtvs{};
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        rtvs[static_cast<std::size_t>(attachmentIndex)].ptr =
+            GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = UsesMsaa() ? GetResolvedDepthDsvCpuHandle() : GetDepthDsvCpuHandle();
+
+    commandList->OMSetRenderTargets(
+        static_cast<UINT>(m_colorAttachmentCount),
+        rtvs.data(),
+        FALSE,
+        &depthDsv);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_width);
+    viewport.Height = static_cast<float>(m_height);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, m_width, m_height};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    GfxContext::Get().SetBoundOutputFramebuffer(this);
+    return true;
+}
+
 bool Framebuffer::CopyDepthFrom(const Framebuffer& source) const
 {
     if (this == &source || m_depthResource == nullptr || source.m_depthResource == nullptr)

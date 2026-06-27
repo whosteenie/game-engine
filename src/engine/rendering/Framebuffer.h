@@ -29,6 +29,7 @@ public:
     void BindDrawTarget(bool clearAttachments = true, const float clearColor[4] = nullptr) const;
     void BindColorRenderTarget(bool clearAttachments = false, const float clearColor[4] = nullptr) const;
     bool BindGizmoDrawTarget() const;
+    bool BindSplitLightingOverlayDrawTarget() const;
     bool CopyDepthFrom(const Framebuffer& source) const;
     void PrepareDepthForDepthTestPass() const;
     void PrepareResolvedDepthForDepthTestPass() const;

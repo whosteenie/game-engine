@@ -218,9 +218,8 @@ public:
     bool BlitDepthToFramebuffer(const Framebuffer* viewportTarget) const;
     std::uintptr_t GetSceneDepthSrvCpuHandle() const;
 
-    void BeginGridOverlayPass() const;
-    void EndGridOverlayPass() const;
-    void CompositeGridOverlay() const;
+    void BeginSceneGridPass() const;
+    void EndSceneGridPass() const;
 
     const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
 
@@ -249,7 +248,6 @@ private:
     void ResizeBloomTargets(int width, int height);
     void ResizeLdrTonemapTarget(int width, int height);
     void ResizeAntiAliasingTargets(int width, int height);
-    void ResizeGridOverlayTarget(int width, int height);
     float GetActiveRenderScale() const;
     void ResetTaaHistory() const;
     void InvalidateTemporalHistory() const;
@@ -302,8 +300,6 @@ private:
     InternalTarget m_smaaOutputTarget;
     InternalTarget m_taaHistoryTarget;
     InternalTarget m_taaResolveTarget;
-    InternalTarget m_gridOverlayTarget;
-
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
     std::unique_ptr<Shader> m_gtaoShader;
@@ -319,7 +315,6 @@ private:
     std::unique_ptr<Shader> m_taaShader;
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
-    std::unique_ptr<Shader> m_gridCompositeShader;
     std::unique_ptr<Shader> m_msaaDepthResolveShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
