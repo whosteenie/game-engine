@@ -4,6 +4,7 @@ cbuffer PerVertex : register(b0)
     float4x4 uProjection;
     float2 uGridSnapOrigin;
     float uGridHeight;
+    float uDrawHalfExtent;
     float uClipDepthBiasUlp;
 };
 
@@ -21,10 +22,11 @@ struct VSOutput
 VSOutput main(VSInput input)
 {
     VSOutput output;
+    float2 localXZ = input.position.xz * uDrawHalfExtent;
     output.worldPos = float3(
-        input.position.x + uGridSnapOrigin.x,
+        localXZ.x + uGridSnapOrigin.x,
         uGridHeight,
-        input.position.z + uGridSnapOrigin.y);
+        localXZ.y + uGridSnapOrigin.y);
     float4 clipPos = mul(uProjection, mul(uView, float4(output.worldPos, 1.0)));
 
     // Pull the grid slightly toward the near plane in NDC to avoid z-fighting with coplanar floor

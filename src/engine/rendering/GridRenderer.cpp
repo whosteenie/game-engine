@@ -7,14 +7,58 @@
 
 #include <d3d12.h>
 
+#include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
 #include <vector>
 
+namespace
+{
+    struct GridLodSettings
+    {
+        float drawHalfExtent = 80.0f;
+        float fadeStart = 28.0f;
+        float fadeEnd = 72.0f;
+        float maxRenderDistance = 76.0f;
+    };
+
+    GridLodSettings ComputeGridLod(const Camera& camera, const float maxDrawHalfExtent)
+    {
+        const glm::vec3 cameraPosition = camera.GetPosition();
+        const float cameraY = glm::max(cameraPosition.y, 0.5f);
+        const float fovRadians = glm::radians(camera.GetFov());
+        const float tanHalfVertFov = glm::max(std::tan(fovRadians * 0.5f), 0.01f);
+
+        const glm::vec3 front = camera.GetFront();
+        const float horizontalView = glm::clamp(glm::length(glm::vec2(front.x, front.z)), 0.0f, 1.0f);
+
+        // Screen-bottom ground reach plus extra when the view grazes the horizon.
+        const float screenGroundReach =
+            cameraY / glm::max(tanHalfVertFov * 0.26f, 0.04f);
+        const float horizonReach =
+            cameraY / glm::max(std::abs(front.y), 0.025f) * 0.36f;
+        float visibleRange = glm::max(screenGroundReach, horizonReach);
+        visibleRange *= glm::mix(0.92f, 1.42f, horizontalView);
+        visibleRange = glm::clamp(visibleRange, 88.0f, maxDrawHalfExtent);
+
+        const float fadeStart = visibleRange * 0.60f;
+        const float fadeEnd = visibleRange * 0.95f;
+        const float drawHalfExtent = glm::min(visibleRange, maxDrawHalfExtent);
+        const float maxRenderDistance = drawHalfExtent * 0.98f;
+
+        return GridLodSettings{
+            drawHalfExtent,
+            fadeStart,
+            fadeEnd,
+            maxRenderDistance,
+        };
+    }
+}
+
 GridRenderer::GridRenderer()
     : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::GridFragmentShader))
 {
-    BuildGridGeometry(m_halfExtent);
+    BuildGridGeometry();
 }
 
 GridRenderer::~GridRenderer()
@@ -27,12 +71,10 @@ GridRenderer::GridRenderer(GridRenderer&& other) noexcept
       m_vertexBuffer(std::move(other.m_vertexBuffer)),
       m_indexBuffer(std::move(other.m_indexBuffer)),
       m_indexCount(other.m_indexCount),
-      m_halfExtent(other.m_halfExtent),
+      m_maxDrawHalfExtent(other.m_maxDrawHalfExtent),
       m_cellSize(other.m_cellSize),
       m_majorInterval(other.m_majorInterval),
-      m_gridHeight(other.m_gridHeight),
-      m_fadeStartFraction(other.m_fadeStartFraction),
-      m_fadeEndFraction(other.m_fadeEndFraction)
+      m_gridHeight(other.m_gridHeight)
 {
     other.m_indexCount = 0;
 }
@@ -46,12 +88,10 @@ GridRenderer& GridRenderer::operator=(GridRenderer&& other) noexcept
         m_vertexBuffer = std::move(other.m_vertexBuffer);
         m_indexBuffer = std::move(other.m_indexBuffer);
         m_indexCount = other.m_indexCount;
-        m_halfExtent = other.m_halfExtent;
+        m_maxDrawHalfExtent = other.m_maxDrawHalfExtent;
         m_cellSize = other.m_cellSize;
         m_majorInterval = other.m_majorInterval;
         m_gridHeight = other.m_gridHeight;
-        m_fadeStartFraction = other.m_fadeStartFraction;
-        m_fadeEndFraction = other.m_fadeEndFraction;
         other.m_indexCount = 0;
     }
 
@@ -65,13 +105,14 @@ void GridRenderer::ReleaseGpuResources()
     m_indexCount = 0;
 }
 
-void GridRenderer::BuildGridGeometry(float halfExtent)
+void GridRenderer::BuildGridGeometry()
 {
+    // Unit quad; world extent is scaled per frame from camera LOD.
     const std::vector<float> vertices = {
-        -halfExtent, 0.0f, -halfExtent,
-         halfExtent, 0.0f, -halfExtent,
-         halfExtent, 0.0f,  halfExtent,
-        -halfExtent, 0.0f,  halfExtent,
+        -1.0f, 0.0f, -1.0f,
+         1.0f, 0.0f, -1.0f,
+         1.0f, 0.0f,  1.0f,
+        -1.0f, 0.0f,  1.0f,
     };
 
     const std::vector<unsigned int> indices = {
@@ -103,12 +144,11 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
         std::floor(cameraPosition.x / m_cellSize) * m_cellSize,
         std::floor(cameraPosition.z / m_cellSize) * m_cellSize);
 
-    // Lift the grid plane slightly when the camera is high so floor separation survives at distance.
+    const GridLodSettings lod = ComputeGridLod(camera, m_maxDrawHalfExtent);
+
     const float heightBoost = glm::clamp(cameraPosition.y * 0.0015f, 0.0f, 2.0f);
     const float effectiveGridHeight = m_gridHeight + heightBoost;
 
-    // Extra clip-space depth bias when high/far; keeps lines stable over the floor without the
-    // aggressive raster bias that previously drew through objects.
     const float altitudeUlp = glm::clamp((cameraPosition.y - 8.0f) / 40.0f, 0.0f, 48.0f);
     const float clipDepthBiasUlp = 4.0f + altitudeUlp;
 
@@ -117,13 +157,15 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
     m_shader->SetVec2("uGridSnapOrigin", gridSnapOrigin);
     m_shader->SetFloat("uGridHeight", effectiveGridHeight);
+    m_shader->SetFloat("uDrawHalfExtent", lod.drawHalfExtent);
     m_shader->SetFloat("uClipDepthBiasUlp", clipDepthBiasUlp);
     m_shader->SetVec3("uColor", glm::vec3(0.35f, 0.38f, 0.42f));
     m_shader->SetVec3("uCameraPosition", cameraPosition);
     m_shader->SetFloat("uCellSize", m_cellSize);
     m_shader->SetFloat("uMajorInterval", m_majorInterval);
-    m_shader->SetFloat("uFadeStart", m_halfExtent * m_fadeStartFraction);
-    m_shader->SetFloat("uFadeEnd", m_halfExtent * m_fadeEndFraction);
+    m_shader->SetFloat("uFadeStart", lod.fadeStart);
+    m_shader->SetFloat("uFadeEnd", lod.fadeEnd);
+    m_shader->SetFloat("uMaxRenderDistance", lod.maxRenderDistance);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
     m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
     m_shader->FlushUniforms();
