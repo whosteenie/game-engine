@@ -53,6 +53,7 @@ public:
     ScreenSpaceEffects& operator=(const ScreenSpaceEffects&) = delete;
 
     void Resize(int viewportWidth, int viewportHeight);
+    void ReloadGeometryMsaaTargets(int viewportWidth, int viewportHeight);
 
     void PrepareAntiAliasingFrame(Camera& camera, bool freezeJitter = false) const;
     void FinalizeAntiAliasingFrame(const Camera& camera, bool freezeJitter = false) const;
@@ -261,6 +262,8 @@ private:
         const float clearColor[4],
         bool viewportLdr = false) const;
     void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
+    int GetEffectiveGeometryMsaaSampleCount() const;
+    void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
     void CaptureSsaoDiagnosticsCpu(
         const bool runSsao,
@@ -316,6 +319,7 @@ private:
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_gridCompositeShader;
+    std::unique_ptr<Shader> m_msaaDepthResolveShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;

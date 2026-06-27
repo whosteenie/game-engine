@@ -48,44 +48,146 @@ void SceneRenderer::ThrowGpuResourcesUnavailable() const
             : m_gpuResourcesInitError);
 }
 
-void SceneRenderer::EnsureGpuResources() const
+namespace
 {
-    if (m_gpuResourcesInitialized)
+    template<typename Fn>
+    void RunGpuInitStep(const char* stepName, Fn&& fn)
+    {
+        try
+        {
+            fn();
+        }
+        catch (const std::exception& exception)
+        {
+            throw std::runtime_error(
+                std::string("GPU init step '") + stepName + "' failed: " + SafeExceptionMessage(exception));
+        }
+        catch (...)
+        {
+            throw std::runtime_error(std::string("GPU init step '") + stepName + "' failed: unknown error");
+        }
+    }
+}
+
+void SceneRenderer::ResetPartialGpuResources() const
+{
+    SceneRenderer* self = const_cast<SceneRenderer*>(this);
+    self->m_cameraGizmos.reset();
+    self->m_grid.reset();
+    self->m_colliderGizmos.reset();
+    self->m_lightGizmos.reset();
+    self->m_shadowMap.reset();
+    self->m_environmentMap.reset();
+    self->m_screenSpaceEffects.reset();
+    self->m_shadowDepthShader.reset();
+    self->m_gpuResourcesInitialized = false;
+    self->m_gpuResourcesInitInProgress = false;
+}
+
+void SceneRenderer::ResetGpuResourcesIfInitFailed() const
+{
+    if (m_gpuResourcesInitialized || !m_gpuResourcesInitFailed)
     {
         return;
     }
 
-    if (m_gpuResourcesInitFailed)
+    ResetPartialGpuResources();
+    SceneRenderer* self = const_cast<SceneRenderer*>(this);
+    self->m_gpuResourcesInitFailed = false;
+    self->m_gpuResourcesInitError.clear();
+    self->m_gpuResourcesInitInProgress = false;
+}
+
+void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount) const
+{
+    GfxContext::Get().SetActiveMsaaSampleCount(msaaSampleCount);
+    const int activeMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
+
+    if (m_gpuResourcesInitialized)
     {
+        const bool geometryMsaaMatches =
+            m_screenSpaceEffects != nullptr
+            && m_screenSpaceEffects->GetMsaaSampleCount() == activeMsaaSampleCount
+            && !m_screenSpaceEffects->IsMsaaPendingReload();
+        if (geometryMsaaMatches)
+        {
+            return;
+        }
+
+        ShaderCache::Clear();
+        ResetPartialGpuResources();
+        SceneRenderer* self = const_cast<SceneRenderer*>(this);
+        self->m_gpuResourcesInitFailed = false;
+        self->m_gpuResourcesInitError.clear();
+        self->m_gpuResourcesInitInProgress = false;
+    }
+    else
+    {
+        ResetGpuResourcesIfInitFailed();
+        if (activeMsaaSampleCount > 1)
+        {
+            ShaderCache::Clear();
+        }
+    }
+
+    EnsureGpuResources();
+
+    if (m_gpuResourcesInitialized && m_screenSpaceEffects != nullptr
+        && m_screenSpaceEffects->GetMsaaSampleCount() != activeMsaaSampleCount)
+    {
+        const_cast<ScreenSpaceEffects*>(m_screenSpaceEffects.get())->SetMsaaSampleCount(activeMsaaSampleCount);
+    }
+}
+
+void SceneRenderer::EnsureGpuResources() const
+{
+    if (m_gpuResourcesInitialized || m_gpuResourcesInitFailed || m_gpuResourcesInitInProgress)
+    {
+        return;
+    }
+
+    if (!GfxContext::Get().IsInitialized())
+    {
+        m_gpuResourcesInitFailed = true;
+        m_gpuResourcesInitError = "GfxContext is not initialized";
+        EngineLog::Error("scene", "GPU init failed: " + m_gpuResourcesInitError);
         return;
     }
 
     SceneRenderer* self = const_cast<SceneRenderer*>(this);
+    self->m_gpuResourcesInitInProgress = true;
     try
     {
-        self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>();
-        self->m_grid = std::make_unique<GridRenderer>();
-        self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>();
-        self->m_lightGizmos = std::make_unique<LightGizmoRenderer>();
-        self->m_shadowMap = std::make_unique<CascadedShadowMap>();
-        self->m_environmentMap = std::make_unique<EnvironmentMap>();
-        self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
-        self->m_shadowDepthShader = std::make_unique<Shader>(
-            EngineConstants::ShadowDepthVertexShader,
-            EngineConstants::ShadowDepthFragmentShader);
+        RunGpuInitStep("camera gizmos", [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
+        RunGpuInitStep("grid", [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
+        RunGpuInitStep("collider gizmos", [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
+        RunGpuInitStep("light gizmos", [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
+        RunGpuInitStep("shadow map", [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
+        RunGpuInitStep("environment map", [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
+        RunGpuInitStep("screen-space effects", [&]() { self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>(); });
+        RunGpuInitStep("shadow depth shader", [&]() {
+            self->m_shadowDepthShader = std::make_unique<Shader>(
+                EngineConstants::ShadowDepthVertexShader,
+                EngineConstants::ShadowDepthFragmentShader);
+        });
         self->m_gpuResourcesInitialized = true;
+        self->m_gpuResourcesInitInProgress = false;
         GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
         GfxContext::Get().SetMaterialTextureAnisotropy(self->m_textureAnisotropy);
         GfxContext::Get().SetMaterialTextureMipBias(self->m_textureMipBias);
     }
     catch (const std::exception& exception)
     {
+        ResetPartialGpuResources();
+        self->m_gpuResourcesInitInProgress = false;
         self->m_gpuResourcesInitFailed = true;
         self->m_gpuResourcesInitError = SafeExceptionMessage(exception);
         EngineLog::Error("scene", "GPU init failed: " + self->m_gpuResourcesInitError);
     }
     catch (...)
     {
+        ResetPartialGpuResources();
+        self->m_gpuResourcesInitInProgress = false;
         self->m_gpuResourcesInitFailed = true;
         self->m_gpuResourcesInitError = "unknown GPU initialization error";
         EngineLog::Error("scene", self->m_gpuResourcesInitError);
@@ -370,6 +472,12 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
+        m_screenSpaceEffects->EndScenePass();
+        if (target != nullptr)
+        {
+            GfxContext::Get().SetBoundOutputFramebuffer(target);
+        }
+
         const bool drawGridOverlay = options.showGrid && scene.GetShowGrid();
         if (drawGridOverlay)
         {
@@ -378,11 +486,6 @@ void SceneRenderer::Render(
             m_screenSpaceEffects->EndGridOverlayPass();
         }
 
-        m_screenSpaceEffects->EndScenePass();
-        if (target != nullptr)
-        {
-            GfxContext::Get().SetBoundOutputFramebuffer(target);
-        }
         m_screenSpaceEffects->Apply(
             camera,
             viewportWidth,
@@ -662,24 +765,15 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
 
     try
     {
+        GfxContext::Get().CancelFrame();
         GfxContext::Get().WaitForGpuIdle();
+        GfxContext::Get().SetBoundOutputFramebuffer(nullptr);
 
-        std::unique_ptr<ScreenSpaceEffects> previousEffects = std::move(m_screenSpaceEffects);
-        m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
-        try
-        {
-            m_screenSpaceEffects->CopySettingsFrom(*previousEffects);
-            scene.InvalidateAllMaterialCachedShaders();
-            ShaderCache::Clear();
-            GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
-            m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
-            previousEffects.reset();
-        }
-        catch (...)
-        {
-            m_screenSpaceEffects = std::move(previousEffects);
-            throw;
-        }
+        GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
+        ShaderCache::Clear();
+        scene.InvalidateAllMaterialCachedShaders();
+        m_environmentMap->ReloadSkyboxRenderer();
+        m_screenSpaceEffects->ReloadGeometryMsaaTargets(viewportWidth, viewportHeight);
 
         m_gpuResourcesInitFailed = false;
         m_gpuResourcesInitError.clear();

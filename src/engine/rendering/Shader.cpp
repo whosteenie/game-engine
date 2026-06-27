@@ -48,7 +48,19 @@ namespace
 
 Shader::Shader(const char* vertexPath, const char* fragmentPath)
 {
-    BuildFromHlsl(vertexPath, fragmentPath);
+    try
+    {
+        BuildFromHlsl(vertexPath, fragmentPath);
+    }
+    catch (const std::exception& exception)
+    {
+        throw std::runtime_error(
+            std::string("Failed to build shader ") + fragmentPath + ": " + SafeExceptionMessage(exception));
+    }
+    catch (...)
+    {
+        throw std::runtime_error(std::string("Failed to build shader ") + fragmentPath + ": unknown error");
+    }
 }
 
 Shader::~Shader()
@@ -496,6 +508,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isSelectionSharp = fragmentPath.find("selection_sharp") != std::string::npos;
     const bool isGridComposite = fragmentPath.find("grid_composite") != std::string::npos;
     const bool isDepthBlit = fragmentPath.find("depth_blt") != std::string::npos;
+    const bool isMsaaDepthResolve = fragmentPath.find("msaa_depth_resolve") != std::string::npos;
 
     auto setupAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
         blendDesc.BlendEnable = TRUE;
@@ -586,7 +599,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         };
         psoDesc.InputLayout = {shadowLayout, 2};
     }
-    else if (isFullscreen && isDepthBlit)
+    else if (isFullscreen && (isDepthBlit || isMsaaDepthResolve))
     {
         static D3D12_INPUT_ELEMENT_DESC fullscreenLayout[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
@@ -711,8 +724,15 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     }
 
     const bool isPbr = fragmentPath.find("pbr.p") != std::string::npos;
-    const bool supportsMrt = isPbr || (isGridVertex && !isLinePixel) || isSkyboxVertex || isSkyBackground;
+    const bool isSkyGeometryShader = isSkyboxVertex || isSkyBackground;
+    const bool supportsMrt = isPbr || (isGridVertex && !isLinePixel) || isSkyGeometryShader;
+
+    const int geometryMsaaCount = GfxContext::Get().GetActiveMsaaSampleCount();
+    const bool useGeometryMsaa =
+        geometryMsaaCount > 1 && (isPbr || isSkyGeometryShader);
+
     const int mrtCount = isPbr ? 7 : 4;
+    const bool usesExtendedGbufferMrt = isPbr;
 
     auto createPipeline = [&](const D3D12_GRAPHICS_PIPELINE_STATE_DESC& desc) {
         ComPtr<ID3D12PipelineState> pipeline;
@@ -729,14 +749,21 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
 
     if (supportsMrt)
     {
+        if (useGeometryMsaa)
+        {
+            psoDesc.SampleDesc.Count = static_cast<UINT>(geometryMsaaCount);
+            psoDesc.SampleDesc.Quality = 0;
+            psoDesc.RasterizerState.MultisampleEnable = TRUE;
+        }
+
         psoDesc.NumRenderTargets = mrtCount;
         psoDesc.RTVFormats[0] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[1] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[2] = DXGI_FORMAT_R16G16B16A16_FLOAT;
         psoDesc.RTVFormats[3] = DXGI_FORMAT_R16G16B16A16_FLOAT;
-        psoDesc.RTVFormats[4] = isPbr ? DXGI_FORMAT_R16G16_FLOAT : DXGI_FORMAT_UNKNOWN;
-        psoDesc.RTVFormats[5] = isPbr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
-        psoDesc.RTVFormats[6] = isPbr ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
+        psoDesc.RTVFormats[4] = usesExtendedGbufferMrt ? DXGI_FORMAT_R16G16_FLOAT : DXGI_FORMAT_UNKNOWN;
+        psoDesc.RTVFormats[5] = usesExtendedGbufferMrt ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
+        psoDesc.RTVFormats[6] = usesExtendedGbufferMrt ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_UNKNOWN;
         for (UINT targetIndex = 0; targetIndex < static_cast<UINT>(mrtCount); ++targetIndex)
         {
             psoDesc.BlendState.RenderTarget[targetIndex].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
@@ -748,6 +775,12 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
             m_pipelineStateMrtDoubleSided = createPipeline(psoDesc);
             psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+        }
+
+        if (useGeometryMsaa)
+        {
+            psoDesc.SampleDesc.Count = 1;
+            psoDesc.RasterizerState.MultisampleEnable = FALSE;
         }
 
         applySingleRenderTarget(DXGI_FORMAT_R16G16B16A16_FLOAT);
@@ -787,7 +820,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
             m_pipelineStateLdrDoubleSided = createPipeline(psoDesc);
         }
     }
-    else if (isDepthBlit)
+    else if (isDepthBlit || isMsaaDepthResolve)
     {
         m_pipelineState = createPipeline(psoDesc);
         m_pipelineStateLdr = nullptr;

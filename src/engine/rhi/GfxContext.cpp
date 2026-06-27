@@ -532,6 +532,12 @@ void GfxContext::BeginFrame()
         return;
     }
 
+    std::string deviceRemovedReason;
+    if (IsDeviceRemoved(&deviceRemovedReason))
+    {
+        throw std::runtime_error("D3D12 device removed before frame begin: " + deviceRemovedReason);
+    }
+
     if (m_frameRecording)
     {
         CancelFrame();
@@ -542,8 +548,32 @@ void GfxContext::BeginFrame()
     FrameDiagnostics::LogPhase("BeginFrame-wait");
     WaitForFenceValue(frame.FenceValue);
 
-    ThrowIfFailed(frame.CommandAllocator->Reset(), "CommandAllocator reset failed");
-    ThrowIfFailed(m_impl->CommandList->Reset(frame.CommandAllocator.Get(), nullptr), "CommandList reset failed");
+    const HRESULT allocatorResetResult = frame.CommandAllocator->Reset();
+    if (FAILED(allocatorResetResult))
+    {
+        std::string message = "CommandAllocator reset failed (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(allocatorResetResult)) + ")";
+        if (IsDeviceRemoved(&deviceRemovedReason))
+        {
+            message += "; device removed: " + deviceRemovedReason;
+        }
+
+        throw std::runtime_error(message);
+    }
+
+    const HRESULT commandListResetResult =
+        m_impl->CommandList->Reset(frame.CommandAllocator.Get(), nullptr);
+    if (FAILED(commandListResetResult))
+    {
+        std::string message = "CommandList reset failed (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(commandListResetResult)) + ")";
+        if (IsDeviceRemoved(&deviceRemovedReason))
+        {
+            message += "; device removed: " + deviceRemovedReason;
+        }
+
+        throw std::runtime_error(message);
+    }
 
     m_impl->TransientUploadArenas[m_frameIndex].Offset = 0;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
@@ -913,6 +943,22 @@ void GfxContext::CreateSrvForTexture(
     device->CreateShaderResourceView(d3dResource, &srvDesc, cpuHandle);
     (void)width;
     (void)height;
+}
+
+void GfxContext::CreateMsaaDepthSrv(void* resource, const std::uint32_t descriptorIndex) const
+{
+    auto* d3dResource = static_cast<ID3D12Resource*>(resource);
+    auto* device = static_cast<ID3D12Device*>(GetDevice());
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GetSrvHeap());
+
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+    cpuHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * GetSrvDescriptorSize();
+
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    device->CreateShaderResourceView(d3dResource, &srvDesc, cpuHandle);
 }
 
 void GfxContext::ClearOffscreenTarget(

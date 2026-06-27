@@ -60,6 +60,7 @@ public:
     const std::string& GetLoadError() const;
 
     void SyncGpuResources();
+    void ReloadSkyboxRenderer();
     void RenderSkybox(const Camera& camera, bool splitLightingMrt);
 
     IBL& GetIBL();

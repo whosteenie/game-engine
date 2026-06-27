@@ -203,6 +203,11 @@ void EnvironmentMap::SyncGpuResources()
     }
 }
 
+void EnvironmentMap::ReloadSkyboxRenderer()
+{
+    m_skyboxRenderer = std::make_unique<SkyboxRenderer>();
+}
+
 void EnvironmentMap::RenderSkybox(const Camera& camera, const bool splitLightingMrt)
 {
     if (!UsesSkyboxBackground() || m_skyboxRenderer == nullptr)

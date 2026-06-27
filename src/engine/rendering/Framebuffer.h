@@ -17,7 +17,11 @@ public:
     Framebuffer(const Framebuffer&) = delete;
     Framebuffer& operator=(const Framebuffer&) = delete;
 
-    bool Resize(int width, int height, FramebufferColorMode colorMode = FramebufferColorMode::Single);
+    bool Resize(
+        int width,
+        int height,
+        FramebufferColorMode colorMode = FramebufferColorMode::Single,
+        int sampleCount = 1);
     void Bind() const;
     void Unbind() const;
 
@@ -27,6 +31,7 @@ public:
     bool BindGizmoDrawTarget() const;
     bool CopyDepthFrom(const Framebuffer& source) const;
     void PrepareDepthForDepthTestPass() const;
+    void PrepareResolvedDepthForDepthTestPass() const;
     void RestoreDepthShaderResource() const;
     void EnsureShaderResourceState() const;
     std::uintptr_t GetColorSrvCpuHandle(int attachmentIndex = 0) const;
@@ -35,6 +40,13 @@ public:
     void* GetDepthResource() const;
     std::uintptr_t GetColorRtvCpuHandle(int attachmentIndex = 0) const;
     std::uintptr_t GetDepthDsvCpuHandle() const;
+    std::uintptr_t GetResolvedDepthDsvCpuHandle() const;
+    int GetSampleCount() const { return m_sampleCount; }
+    bool UsesMsaa() const { return m_sampleCount > 1; }
+    void ResolveMsaa() const;
+    void BeginMsaaDepthResolvePass() const;
+    void FinishMsaaDepthResolvePass() const;
+    std::uintptr_t GetMsaaDepthSrvCpuHandle() const;
     bool ReadbackColorPixel(int x, int y, float outRgba[4]) const;
 
     std::uintptr_t GetFramebuffer() const;
@@ -60,10 +72,13 @@ private:
 
     void TransitionColorAttachment(int attachmentIndex, std::uint32_t newState) const;
     void TransitionDepth(std::uint32_t newState) const;
+    void TransitionMsaaColorAttachment(int attachmentIndex, std::uint32_t newState) const;
+    void TransitionMsaaDepth(std::uint32_t newState) const;
 
     FramebufferColorMode m_colorMode = FramebufferColorMode::Single;
     int m_width = 0;
     int m_height = 0;
+    int m_sampleCount = 1;
 
     static constexpr int MaxColorAttachments = 7;
 
@@ -80,8 +95,19 @@ private:
     void* m_depthResource = nullptr;
     void* m_depthAllocation = nullptr;
     std::uint32_t m_depthSrvIndex = UINT32_MAX;
+    std::uint32_t m_msaaDepthSrvIndex = UINT32_MAX;
     std::uint32_t m_rtvBaseIndex = UINT32_MAX;
     std::uint32_t m_dsvIndex = UINT32_MAX;
+    std::uint32_t m_resolvedRtvCount = 0;
+
+    void* m_msaaColorResources[MaxColorAttachments] = {};
+    void* m_msaaColorAllocations[MaxColorAttachments] = {};
+    void* m_msaaDepthResource = nullptr;
+    void* m_msaaDepthAllocation = nullptr;
+    std::uint32_t m_msaaRtvBaseIndex = UINT32_MAX;
+    std::uint32_t m_msaaDsvIndex = UINT32_MAX;
+    mutable std::uint32_t m_msaaColorStates[MaxColorAttachments] = {};
+    mutable std::uint32_t m_msaaDepthState = 0;
     int m_colorAttachmentCount = 1;
     mutable std::uint32_t m_colorStates[MaxColorAttachments] = {};
     mutable std::uint32_t m_depthState = 0;

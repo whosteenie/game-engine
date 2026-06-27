@@ -819,6 +819,12 @@ void ScreenSpaceEffects::CreateNoiseTexture()
     m_noiseTexture.width = noiseWidth;
     m_noiseTexture.height = noiseHeight;
     m_noiseTexture.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (m_noiseTexture.srvIndex == UINT32_MAX)
+    {
+        textureAllocation->Release();
+        textureResource->Release();
+        throw std::runtime_error("Failed to allocate SSAO noise SRV descriptor");
+    }
     m_noiseTexture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_noiseTexture.srvIndex);
     CreateTexture2DSrv(device, textureResource, {m_noiseTexture.srvCpuHandle}, format, 1);
 }
@@ -950,14 +956,19 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     const int renderWidth = GetRenderWidth();
     const int renderHeight = GetRenderHeight();
 
-    if (m_width == renderWidth && m_height == renderHeight && m_sceneFramebuffer->IsValid())
+    if (m_width == renderWidth && m_height == renderHeight && m_sceneFramebuffer->IsValid()
+        && m_sceneFramebuffer->GetSampleCount() == GetEffectiveGeometryMsaaSampleCount())
     {
         return;
     }
 
-    if (!m_sceneFramebuffer->Resize(renderWidth, renderHeight, FramebufferColorMode::SplitDirectIndirect))
+    if (!m_sceneFramebuffer->Resize(
+            renderWidth,
+            renderHeight,
+            FramebufferColorMode::SplitDirectIndirect,
+            GetEffectiveGeometryMsaaSampleCount()))
     {
-        return;
+        throw std::runtime_error("Scene framebuffer size is invalid.");
     }
     ResizeSingleChannelTargets(renderWidth, renderHeight);
     ResizeHdrColorTarget(renderWidth, renderHeight);
@@ -969,6 +980,30 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     m_height = renderHeight;
     ResetTaaHistory();
     InvalidateTemporalHistory();
+}
+
+void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, const int viewportHeight)
+{
+    if (viewportWidth <= 0 || viewportHeight <= 0)
+    {
+        throw std::runtime_error("Viewport size is invalid for geometry MSAA reload.");
+    }
+
+    m_viewportWidth = viewportWidth;
+    m_viewportHeight = viewportHeight;
+    m_width = 0;
+    m_height = 0;
+    Resize(viewportWidth, viewportHeight);
+
+    if (!m_sceneFramebuffer->IsValid())
+    {
+        throw std::runtime_error("Scene framebuffer is invalid after geometry MSAA reload.");
+    }
+
+    if (m_sceneFramebuffer->GetSampleCount() != GetEffectiveGeometryMsaaSampleCount())
+    {
+        throw std::runtime_error("Scene framebuffer MSAA sample count does not match the active count.");
+    }
 }
 
 namespace
@@ -1094,8 +1129,51 @@ void ScreenSpaceEffects::BeginScenePass(const EnvironmentMap& environmentMap) co
         nullptr);
 }
 
+int ScreenSpaceEffects::GetEffectiveGeometryMsaaSampleCount() const
+{
+    if (m_msaaSampleCount <= 1 || GfxContext::Get().GetActiveMsaaSampleCount() <= 1)
+    {
+        return 1;
+    }
+
+    return GfxContext::Get().GetActiveMsaaSampleCount();
+}
+
+void ScreenSpaceEffects::EnsureMsaaDepthResolveShader() const
+{
+    if (m_msaaDepthResolveShader != nullptr)
+    {
+        return;
+    }
+
+    const_cast<ScreenSpaceEffects*>(this)->m_msaaDepthResolveShader = std::make_unique<Shader>(
+        EngineConstants::FullscreenVertexShader,
+        EngineConstants::MsaaDepthResolveFragmentShader);
+}
+
 void ScreenSpaceEffects::EndScenePass() const
 {
+    if (m_sceneFramebuffer->UsesMsaa())
+    {
+        m_sceneFramebuffer->ResolveMsaa();
+
+        if (m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle() != 0)
+        {
+            EnsureMsaaDepthResolveShader();
+            m_sceneFramebuffer->BeginMsaaDepthResolvePass();
+            m_msaaDepthResolveShader->Use(false, false);
+            m_msaaDepthResolveShader->SetInt(
+                "uSampleCount",
+                m_sceneFramebuffer->GetSampleCount());
+            m_msaaDepthResolveShader->BindTextureSlot(
+                0,
+                m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle());
+            m_msaaDepthResolveShader->SetInt("uMsaaDepth", 0);
+            DrawFullscreenPass(*m_msaaDepthResolveShader, false);
+            m_sceneFramebuffer->FinishMsaaDepthResolvePass();
+        }
+    }
+
     m_sceneFramebuffer->Unbind();
 }
 
@@ -1116,7 +1194,8 @@ void ScreenSpaceEffects::BeginGridOverlayPass() const
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{
         GfxContext::Get().GetOffscreenRtvCpuHandle(m_gridOverlayTarget.rtvIndex)};
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{m_sceneFramebuffer->GetDepthDsvCpuHandle()};
+    m_sceneFramebuffer->PrepareResolvedDepthForDepthTestPass();
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{m_sceneFramebuffer->GetResolvedDepthDsvCpuHandle()};
 
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 

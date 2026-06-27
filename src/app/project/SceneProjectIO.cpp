@@ -22,6 +22,7 @@
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rendering/ShaderCache.h"
 #include "engine/assets/ModelImporter.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -464,6 +465,47 @@ namespace SceneProjectIODetail
         return AntiAliasingMode::None;
     }
 
+    struct LoadedScreenSpaceAaSettings
+    {
+        AntiAliasingMode antiAliasingMode = AntiAliasingMode::None;
+        int msaaSampleCount = 1;
+    };
+
+    LoadedScreenSpaceAaSettings ResolveLoadedScreenSpaceAaSettings(const json& rendererValue)
+    {
+        LoadedScreenSpaceAaSettings settings{};
+        if (!rendererValue.contains("screenSpaceEffects"))
+        {
+            return settings;
+        }
+
+        const json& effectsValue = rendererValue.at("screenSpaceEffects");
+        AntiAliasingMode loadedAaMode = AntiAliasingModeFromString(effectsValue.value(
+            "antiAliasingMode",
+            AntiAliasingModeToString(AntiAliasingMode::None)));
+        int loadedMsaaSampleCount = effectsValue.value("msaaSampleCount", 1);
+        if (loadedAaMode == AntiAliasingMode::MSAA)
+        {
+            if (loadedMsaaSampleCount <= 1)
+            {
+                loadedMsaaSampleCount = 4;
+            }
+            loadedAaMode = AntiAliasingMode::None;
+        }
+        if (loadedMsaaSampleCount > 1 && loadedAaMode == AntiAliasingMode::TAA)
+        {
+            loadedAaMode = AntiAliasingMode::None;
+        }
+        if (loadedAaMode == AntiAliasingMode::TAA && loadedMsaaSampleCount > 1)
+        {
+            loadedMsaaSampleCount = 1;
+        }
+
+        settings.antiAliasingMode = loadedAaMode;
+        settings.msaaSampleCount = loadedMsaaSampleCount;
+        return settings;
+    }
+
     const char* AmbientOcclusionModeToString(const AmbientOcclusionMode mode)
     {
         switch (mode)
@@ -639,8 +681,18 @@ namespace SceneProjectIODetail
     void DeserializeRenderer(Scene& scene, const json& rendererValue)
     {
         SceneRenderer& renderer = scene.GetRenderer();
-        renderer.PrepareGpuResources();
+        const LoadedScreenSpaceAaSettings loadedAaSettings =
+            ResolveLoadedScreenSpaceAaSettings(rendererValue);
+        if (loadedAaSettings.msaaSampleCount > 1)
+        {
+            ShaderCache::Clear();
+        }
+        renderer.PrepareGpuResourcesForGeometryMsaa(loadedAaSettings.msaaSampleCount);
         const bool gpuReady = renderer.IsGpuResourcesReady();
+        if (gpuReady && loadedAaSettings.msaaSampleCount > 1)
+        {
+            scene.InvalidateAllMaterialCachedShaders();
+        }
 
         if (gpuReady)
         {
@@ -781,28 +833,8 @@ namespace SceneProjectIODetail
         effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
         effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
         effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
-        AntiAliasingMode loadedAaMode = AntiAliasingModeFromString(effectsValue.value(
-            "antiAliasingMode",
-            AntiAliasingModeToString(effects.GetAntiAliasingMode())));
-        int loadedMsaaSampleCount = effectsValue.value("msaaSampleCount", 1);
-        if (loadedAaMode == AntiAliasingMode::MSAA)
-        {
-            if (loadedMsaaSampleCount <= 1)
-            {
-                loadedMsaaSampleCount = 4;
-            }
-            loadedAaMode = AntiAliasingMode::None;
-        }
-        if (loadedMsaaSampleCount > 1 && loadedAaMode == AntiAliasingMode::TAA)
-        {
-            loadedAaMode = AntiAliasingMode::None;
-        }
-        if (loadedAaMode == AntiAliasingMode::TAA && loadedMsaaSampleCount > 1)
-        {
-            loadedMsaaSampleCount = 1;
-        }
-        effects.SetAntiAliasingMode(loadedAaMode);
-        effects.SetMsaaSampleCount(loadedMsaaSampleCount);
+        effects.SetAntiAliasingMode(loadedAaSettings.antiAliasingMode);
+        effects.SetMsaaSampleCount(loadedAaSettings.msaaSampleCount);
         effects.SetFxaaSubpixQuality(
             effectsValue.value("fxaaSubpixQuality", effects.GetFxaaSubpixQuality()));
         effects.SetFxaaEdgeThreshold(

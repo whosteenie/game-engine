@@ -75,11 +75,14 @@ public:
     bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
     const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
     void PrepareGpuResources() const { EnsureGpuResources(); }
+    void PrepareGpuResourcesForGeometryMsaa(int msaaSampleCount) const;
+    void ResetGpuResourcesIfInitFailed() const;
     bool ApplyGeometryMsaaReload(Scene& scene, int viewportWidth, int viewportHeight, std::string* outError = nullptr);
 
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
     void EnsureGpuResources() const;
+    void ResetPartialGpuResources() const;
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass(const Scene& scene, const Camera& camera);
@@ -100,5 +103,6 @@ private:
     mutable std::vector<glm::mat4> m_previousWorldMatrices;
     mutable bool m_gpuResourcesInitialized = false;
     mutable bool m_gpuResourcesInitFailed = false;
+    mutable bool m_gpuResourcesInitInProgress = false;
     mutable std::string m_gpuResourcesInitError;
 };

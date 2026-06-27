@@ -70,10 +70,16 @@ namespace
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_RENDER_TARGET);
     constexpr std::uint32_t kDepthWriteState =
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    constexpr std::uint32_t kDepthReadState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_READ);
     constexpr std::uint32_t kCopySourceState =
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_SOURCE);
     constexpr std::uint32_t kCopyDestState =
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_DEST);
+    constexpr std::uint32_t kResolveSourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+    constexpr std::uint32_t kResolveDestState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_RESOLVE_DEST);
 
     void TransitionResourceState(
         ID3D12GraphicsCommandList* commandList,
@@ -170,6 +176,41 @@ void Framebuffer::Destroy()
 
     }
 
+    for (int attachmentIndex = 0; attachmentIndex < MaxColorAttachments; ++attachmentIndex)
+    {
+        if (m_msaaColorAllocations[attachmentIndex] != nullptr)
+        {
+            static_cast<D3D12MA::Allocation*>(m_msaaColorAllocations[attachmentIndex])->Release();
+            m_msaaColorAllocations[attachmentIndex] = nullptr;
+        }
+
+        m_msaaColorResources[attachmentIndex] = nullptr;
+        m_msaaColorStates[attachmentIndex] = 0;
+    }
+
+    if (m_msaaDepthAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_msaaDepthAllocation)->Release();
+        m_msaaDepthAllocation = nullptr;
+    }
+
+    m_msaaDepthResource = nullptr;
+    m_msaaDepthState = 0;
+
+    if (m_msaaRtvBaseIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenRtvBlock(
+            m_msaaRtvBaseIndex,
+            static_cast<std::uint32_t>(m_colorAttachmentCount));
+        m_msaaRtvBaseIndex = UINT32_MAX;
+    }
+
+    if (m_msaaDsvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenDsv(m_msaaDsvIndex);
+        m_msaaDsvIndex = UINT32_MAX;
+    }
+
 
 
     if (m_depthSrvIndex != UINT32_MAX)
@@ -180,6 +221,12 @@ void Framebuffer::Destroy()
 
         m_depthSrvIndex = UINT32_MAX;
 
+    }
+
+    if (m_msaaDepthSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(m_msaaDepthSrvIndex);
+        m_msaaDepthSrvIndex = UINT32_MAX;
     }
 
 
@@ -204,7 +251,7 @@ void Framebuffer::Destroy()
 
     {
 
-        GfxContext::Get().FreeOffscreenRtvBlock(m_rtvBaseIndex, static_cast<std::uint32_t>(m_colorAttachmentCount));
+        GfxContext::Get().FreeOffscreenRtvBlock(m_rtvBaseIndex, m_resolvedRtvCount);
 
         m_rtvBaseIndex = UINT32_MAX;
 
@@ -232,6 +279,10 @@ void Framebuffer::Destroy()
 
     m_colorAttachmentCount = 1;
 
+    m_sampleCount = 1;
+
+    m_resolvedRtvCount = 0;
+
     for (int attachmentIndex = 0; attachmentIndex < MaxColorAttachments; ++attachmentIndex)
     {
         m_colorStates[attachmentIndex] = 0;
@@ -257,12 +308,38 @@ void Framebuffer::Create(const int width, const int height)
 
     m_colorAttachmentCount = ColorAttachmentCount(m_colorMode);
 
-    m_rtvBaseIndex = GfxContext::Get().AllocateOffscreenRtvBlock(static_cast<std::uint32_t>(m_colorAttachmentCount));
+    if (m_sampleCount <= 1)
+    {
+        m_sampleCount = 1;
+    }
+
+    const bool usesMsaa = m_sampleCount > 1;
+
+    const std::uint32_t resolvedRtvCount =
+        usesMsaa ? 1u : static_cast<std::uint32_t>(m_colorAttachmentCount);
+
+    m_resolvedRtvCount = resolvedRtvCount;
+
+    m_rtvBaseIndex = GfxContext::Get().AllocateOffscreenRtvBlock(resolvedRtvCount);
 
     const bool needsDepth = true;
+
     m_dsvIndex = GfxContext::Get().AllocateOffscreenDsv();
 
-    if (m_rtvBaseIndex == UINT32_MAX || (needsDepth && m_dsvIndex == UINT32_MAX))
+    if (usesMsaa)
+
+    {
+
+        m_msaaRtvBaseIndex =
+            GfxContext::Get().AllocateOffscreenRtvBlock(static_cast<std::uint32_t>(m_colorAttachmentCount));
+
+        m_msaaDsvIndex = GfxContext::Get().AllocateOffscreenDsv();
+
+    }
+
+    if (m_rtvBaseIndex == UINT32_MAX || (needsDepth && m_dsvIndex == UINT32_MAX)
+
+        || (usesMsaa && (m_msaaRtvBaseIndex == UINT32_MAX || m_msaaDsvIndex == UINT32_MAX)))
     {
         const std::string gpuError = GfxContext::GetLastGpuAllocationError();
         throw std::runtime_error(
@@ -376,11 +453,129 @@ void Framebuffer::Create(const int width, const int height)
 
 
 
-        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
+        if (!usesMsaa || attachmentIndex == 0)
 
-        rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+        {
 
-        device->CreateRenderTargetView(resource, nullptr, rtvHandle);
+            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
+
+            rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(
+
+                m_rtvBaseIndex + (usesMsaa ? 0u : static_cast<std::uint32_t>(attachmentIndex)));
+
+            device->CreateRenderTargetView(resource, nullptr, rtvHandle);
+
+        }
+
+    }
+
+
+
+    if (usesMsaa)
+
+    {
+
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+
+        {
+
+            const DXGI_FORMAT format = ColorFormatForAttachment(attachmentIndex, m_colorMode);
+
+
+
+            D3D12_RESOURCE_DESC resourceDesc{};
+
+            resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+            resourceDesc.Width = static_cast<UINT64>(width);
+
+            resourceDesc.Height = static_cast<UINT>(height);
+
+            resourceDesc.DepthOrArraySize = 1;
+
+            resourceDesc.MipLevels = 1;
+
+            resourceDesc.Format = format;
+
+            resourceDesc.SampleDesc.Count = static_cast<UINT>(m_sampleCount);
+
+            resourceDesc.SampleDesc.Quality = 0;
+
+            resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+            resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+
+
+            D3D12_CLEAR_VALUE clearValue{};
+
+            clearValue.Format = format;
+
+            clearValue.Color[0] = 0.08f;
+
+            clearValue.Color[1] = 0.09f;
+
+            clearValue.Color[2] = 0.15f;
+
+            clearValue.Color[3] = 1.0f;
+
+
+
+            D3D12MA::ALLOCATION_DESC allocationDesc{};
+
+            allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+
+
+            ID3D12Resource* resource = nullptr;
+
+            D3D12MA::Allocation* allocation = nullptr;
+
+            const HRESULT createHr = allocator->CreateResource(
+
+                &allocationDesc,
+
+                &resourceDesc,
+
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+
+                &clearValue,
+
+                &allocation,
+
+                IID_PPV_ARGS(&resource));
+
+            if (FAILED(createHr))
+
+            {
+
+                throw std::runtime_error(
+
+                    "Failed to create MSAA framebuffer color attachment (HRESULT=0x" +
+
+                    std::to_string(static_cast<unsigned long>(createHr)) + ")");
+
+            }
+
+
+
+            m_msaaColorResources[attachmentIndex] = resource;
+
+            m_msaaColorAllocations[attachmentIndex] = allocation;
+
+            m_msaaColorStates[attachmentIndex] = kRenderTargetState;
+
+
+
+            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
+
+            rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(
+
+                m_msaaRtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+
+            device->CreateRenderTargetView(resource, nullptr, rtvHandle);
+
+        }
 
     }
 
@@ -489,6 +684,104 @@ void Framebuffer::Create(const int width, const int height)
 
     }
 
+
+
+    if (usesMsaa)
+
+    {
+
+        D3D12_RESOURCE_DESC msaaDepthDesc{};
+
+        msaaDepthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+
+        msaaDepthDesc.Width = static_cast<UINT64>(width);
+
+        msaaDepthDesc.Height = static_cast<UINT>(height);
+
+        msaaDepthDesc.DepthOrArraySize = 1;
+
+        msaaDepthDesc.MipLevels = 1;
+
+        msaaDepthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+        msaaDepthDesc.SampleDesc.Count = static_cast<UINT>(m_sampleCount);
+
+        msaaDepthDesc.SampleDesc.Quality = 0;
+
+        msaaDepthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+
+        msaaDepthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+
+
+        D3D12_CLEAR_VALUE msaaDepthClear{};
+
+        msaaDepthClear.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+
+        msaaDepthClear.DepthStencil.Depth = 1.0f;
+
+        msaaDepthClear.DepthStencil.Stencil = 0;
+
+
+
+        D3D12MA::ALLOCATION_DESC allocationDesc{};
+
+        allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+
+
+        ID3D12Resource* msaaResource = nullptr;
+
+        D3D12MA::Allocation* msaaAllocation = nullptr;
+
+        if (FAILED(allocator->CreateResource(
+
+                &allocationDesc,
+
+                &msaaDepthDesc,
+
+                D3D12_RESOURCE_STATE_DEPTH_WRITE,
+
+                &msaaDepthClear,
+
+                &msaaAllocation,
+
+                IID_PPV_ARGS(&msaaResource))))
+
+        {
+
+            throw std::runtime_error("Failed to create MSAA framebuffer depth attachment");
+
+        }
+
+
+
+        m_msaaDepthResource = msaaResource;
+
+        m_msaaDepthAllocation = msaaAllocation;
+
+        m_msaaDepthState = kDepthWriteState;
+
+
+
+        D3D12_CPU_DESCRIPTOR_HANDLE msaaDsvHandle{};
+
+        msaaDsvHandle.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(m_msaaDsvIndex);
+
+        device->CreateDepthStencilView(msaaResource, nullptr, msaaDsvHandle);
+
+        m_msaaDepthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        if (m_msaaDepthSrvIndex == UINT32_MAX)
+        {
+            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+            throw std::runtime_error(
+                gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
+        }
+
+        GfxContext::Get().CreateMsaaDepthSrv(msaaResource, m_msaaDepthSrvIndex);
+
+    }
+
     }
 
     catch (...)
@@ -505,7 +798,11 @@ void Framebuffer::Create(const int width, const int height)
 
 
 
-bool Framebuffer::Resize(const int width, const int height, const FramebufferColorMode colorMode)
+bool Framebuffer::Resize(
+    const int width,
+    const int height,
+    const FramebufferColorMode colorMode,
+    const int sampleCount)
 {
     if (width <= 0 || height <= 0)
     {
@@ -513,22 +810,45 @@ bool Framebuffer::Resize(const int width, const int height, const FramebufferCol
         return false;
     }
 
-    if (m_width == width && m_height == height && m_colorMode == colorMode && m_colorResources[0] != nullptr)
+    int normalizedSampleCount = sampleCount > 1 ? sampleCount : 1;
+    if (normalizedSampleCount > 1
+        && (!GfxContext::Get().IsInitialized()
+            || !GfxContext::Get().IsMsaaSampleCountSupported(normalizedSampleCount)))
+    {
+        normalizedSampleCount = 1;
+    }
+
+    if (m_width == width && m_height == height && m_colorMode == colorMode
+        && m_sampleCount == normalizedSampleCount && m_colorResources[0] != nullptr)
     {
         return true;
     }
 
     Destroy();
     m_colorMode = colorMode;
+    m_sampleCount = normalizedSampleCount;
 
     try
     {
         Create(width, height);
     }
+    catch (const std::exception& exception)
+    {
+        Destroy();
+        throw std::runtime_error(
+            std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
+            + std::to_string(height) + ", samples=" + std::to_string(normalizedSampleCount)
+            + ", attachments=" + std::to_string(ColorAttachmentCount(colorMode)) + "): "
+            + exception.what());
+    }
     catch (...)
     {
         Destroy();
-        return false;
+        throw std::runtime_error(
+            std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
+            + std::to_string(height) + ", samples=" + std::to_string(normalizedSampleCount)
+            + ", attachments=" + std::to_string(ColorAttachmentCount(colorMode))
+            + "): unknown error");
     }
 
     m_width = width;
@@ -568,6 +888,37 @@ void Framebuffer::TransitionDepth(const std::uint32_t newState) const
         newState);
 }
 
+void Framebuffer::TransitionMsaaColorAttachment(const int attachmentIndex, const std::uint32_t newState) const
+{
+    if (attachmentIndex < 0 || attachmentIndex >= m_colorAttachmentCount
+        || m_msaaColorResources[attachmentIndex] == nullptr)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    TransitionResourceState(
+        commandList,
+        static_cast<ID3D12Resource*>(m_msaaColorResources[attachmentIndex]),
+        const_cast<std::uint32_t&>(m_msaaColorStates[attachmentIndex]),
+        newState);
+}
+
+void Framebuffer::TransitionMsaaDepth(const std::uint32_t newState) const
+{
+    if (m_msaaDepthResource == nullptr)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    TransitionResourceState(
+        commandList,
+        static_cast<ID3D12Resource*>(m_msaaDepthResource),
+        const_cast<std::uint32_t&>(m_msaaDepthState),
+        newState);
+}
+
 void Framebuffer::EnsureShaderResourceState() const
 {
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
@@ -586,10 +937,19 @@ void Framebuffer::ClearRenderTarget() const
     }
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-    TransitionColorAttachment(0, kRenderTargetState);
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
-    rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex);
+    if (UsesMsaa())
+    {
+        TransitionMsaaColorAttachment(0, kRenderTargetState);
+        rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(m_msaaRtvBaseIndex);
+    }
+    else
+    {
+        TransitionColorAttachment(0, kRenderTargetState);
+        rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex);
+    }
+
     commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
     D3D12_VIEWPORT viewport{};
@@ -603,7 +963,14 @@ void Framebuffer::ClearRenderTarget() const
     const float clearColor[] = {0.12f, 0.14f, 0.20f, 1.0f};
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
-    TransitionColorAttachment(0, kShaderResourceState);
+    if (UsesMsaa())
+    {
+        TransitionMsaaColorAttachment(0, kRenderTargetState);
+    }
+    else
+    {
+        TransitionColorAttachment(0, kShaderResourceState);
+    }
 }
 
 void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float clearColor[4]) const
@@ -614,6 +981,52 @@ void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float
     }
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    if (UsesMsaa())
+    {
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            TransitionMsaaColorAttachment(attachmentIndex, kRenderTargetState);
+        }
+
+        std::array<D3D12_CPU_DESCRIPTOR_HANDLE, MaxColorAttachments> rtvs{};
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            rtvs[static_cast<std::size_t>(attachmentIndex)].ptr =
+                GfxContext::Get().GetOffscreenRtvCpuHandle(
+                    m_msaaRtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+        }
+
+        commandList->OMSetRenderTargets(
+            static_cast<UINT>(m_colorAttachmentCount),
+            rtvs.data(),
+            FALSE,
+            nullptr);
+
+        D3D12_VIEWPORT viewport{};
+        viewport.Width = static_cast<float>(m_width);
+        viewport.Height = static_cast<float>(m_height);
+        viewport.MaxDepth = 1.0f;
+        D3D12_RECT scissor{0, 0, m_width, m_height};
+        commandList->RSSetViewports(1, &viewport);
+        commandList->RSSetScissorRects(1, &scissor);
+
+        if (clearAttachments)
+        {
+            const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+            const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
+            for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+            {
+                commandList->ClearRenderTargetView(
+                    rtvs[static_cast<std::size_t>(attachmentIndex)],
+                    resolvedClearColor,
+                    0,
+                    nullptr);
+            }
+        }
+
+        return;
+    }
 
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
     {
@@ -658,6 +1071,18 @@ void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float
 
 void Framebuffer::PrepareDepthForDepthTestPass() const
 {
+    if (UsesMsaa())
+    {
+        TransitionMsaaDepth(kDepthWriteState);
+    }
+    else
+    {
+        TransitionDepth(kDepthWriteState);
+    }
+}
+
+void Framebuffer::PrepareResolvedDepthForDepthTestPass() const
+{
     TransitionDepth(kDepthWriteState);
 }
 
@@ -668,16 +1093,25 @@ bool Framebuffer::BindGizmoDrawTarget() const
         return false;
     }
 
-    BindColorRenderTarget(false, nullptr);
-    PrepareDepthForDepthTestPass();
-
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
+    TransitionColorAttachment(0, kRenderTargetState);
+    if (UsesMsaa())
+    {
+        PrepareResolvedDepthForDepthTestPass();
+    }
+    else
+    {
+        PrepareDepthForDepthTestPass();
+    }
+
     D3D12_CPU_DESCRIPTOR_HANDLE colorRtv{};
-    colorRtv.ptr = GetColorRtvCpuHandle(0);
+    colorRtv.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex);
 
     D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
-    depthDsv.ptr = GetDepthDsvCpuHandle();
+    depthDsv.ptr = UsesMsaa()
+        ? GetResolvedDepthDsvCpuHandle()
+        : GetDepthDsvCpuHandle();
 
     commandList->OMSetRenderTargets(1, &colorRtv, FALSE, &depthDsv);
     GfxContext::Get().SetBoundOutputFramebuffer(this);
@@ -725,6 +1159,76 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearC
     }
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    if (UsesMsaa())
+    {
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            TransitionMsaaColorAttachment(attachmentIndex, kRenderTargetState);
+        }
+
+        if (m_msaaDepthResource != nullptr)
+        {
+            TransitionMsaaDepth(kDepthWriteState);
+        }
+
+        std::array<D3D12_CPU_DESCRIPTOR_HANDLE, MaxColorAttachments> rtvs{};
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            rtvs[static_cast<std::size_t>(attachmentIndex)].ptr =
+                GfxContext::Get().GetOffscreenRtvCpuHandle(
+                    m_msaaRtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+        }
+
+        D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{};
+        const D3D12_CPU_DESCRIPTOR_HANDLE* dsvPointer = nullptr;
+        if (m_msaaDepthResource != nullptr)
+        {
+            dsvHandle.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(m_msaaDsvIndex);
+            dsvPointer = &dsvHandle;
+        }
+
+        commandList->OMSetRenderTargets(
+            static_cast<UINT>(m_colorAttachmentCount),
+            rtvs.data(),
+            FALSE,
+            dsvPointer);
+
+        D3D12_VIEWPORT viewport{};
+        viewport.Width = static_cast<float>(m_width);
+        viewport.Height = static_cast<float>(m_height);
+        viewport.MaxDepth = 1.0f;
+        D3D12_RECT scissor{0, 0, m_width, m_height};
+        commandList->RSSetViewports(1, &viewport);
+        commandList->RSSetScissorRects(1, &scissor);
+
+        if (clearAttachments)
+        {
+            const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+            const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
+            for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+            {
+                commandList->ClearRenderTargetView(
+                    rtvs[static_cast<std::size_t>(attachmentIndex)],
+                    resolvedClearColor,
+                    0,
+                    nullptr);
+            }
+
+            if (dsvPointer != nullptr)
+            {
+                commandList->ClearDepthStencilView(
+                    dsvHandle,
+                    D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+                    1.0f,
+                    0,
+                    0,
+                    nullptr);
+            }
+        }
+
+        return;
+    }
 
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
     {
@@ -802,6 +1306,85 @@ void Framebuffer::Unbind() const
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     EnsureShaderResourceState();
+}
+
+void Framebuffer::ResolveMsaa() const
+{
+    if (!UsesMsaa())
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        if (m_msaaColorResources[attachmentIndex] == nullptr || m_colorResources[attachmentIndex] == nullptr)
+        {
+            continue;
+        }
+
+        TransitionMsaaColorAttachment(attachmentIndex, kResolveSourceState);
+        TransitionColorAttachment(attachmentIndex, kResolveDestState);
+
+        commandList->ResolveSubresource(
+            static_cast<ID3D12Resource*>(m_colorResources[attachmentIndex]),
+            0,
+            static_cast<ID3D12Resource*>(m_msaaColorResources[attachmentIndex]),
+            0,
+            ColorFormatForAttachment(attachmentIndex, m_colorMode));
+
+        TransitionColorAttachment(attachmentIndex, kShaderResourceState);
+        TransitionMsaaColorAttachment(attachmentIndex, kRenderTargetState);
+    }
+}
+
+void Framebuffer::BeginMsaaDepthResolvePass() const
+{
+    if (!UsesMsaa() || m_msaaDepthResource == nullptr || m_depthResource == nullptr)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    TransitionMsaaDepth(kDepthReadState);
+    TransitionDepth(kDepthWriteState);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{};
+    dsvHandle.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(m_dsvIndex);
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, &dsvHandle);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_width);
+    viewport.Height = static_cast<float>(m_height);
+    viewport.MaxDepth = 1.0f;
+    D3D12_RECT scissor{0, 0, m_width, m_height};
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+}
+
+void Framebuffer::FinishMsaaDepthResolvePass() const
+{
+    if (!UsesMsaa() || m_msaaDepthResource == nullptr || m_depthResource == nullptr)
+    {
+        return;
+    }
+
+    TransitionDepth(kShaderResourceState);
+    TransitionMsaaDepth(kDepthWriteState);
+}
+
+std::uintptr_t Framebuffer::GetMsaaDepthSrvCpuHandle() const
+{
+    if (m_msaaDepthSrvIndex == UINT32_MAX)
+    {
+        return 0;
+    }
+
+    return GfxContext::Get().GetSrvCpuHandle(m_msaaDepthSrvIndex);
 }
 
 
@@ -1027,7 +1610,16 @@ std::uintptr_t Framebuffer::GetColorRtvCpuHandle(const int attachmentIndex) cons
 
     }
 
+    if (UsesMsaa())
+    {
+        if (m_msaaRtvBaseIndex == UINT32_MAX)
+        {
+            return 0;
+        }
 
+        return GfxContext::Get().GetOffscreenRtvCpuHandle(
+            m_msaaRtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
+    }
 
     return GfxContext::Get().GetOffscreenRtvCpuHandle(m_rtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
 
@@ -1038,6 +1630,16 @@ std::uintptr_t Framebuffer::GetColorRtvCpuHandle(const int attachmentIndex) cons
 std::uintptr_t Framebuffer::GetDepthDsvCpuHandle() const
 
 {
+
+    if (UsesMsaa())
+    {
+        if (m_msaaDsvIndex == UINT32_MAX)
+        {
+            return 0;
+        }
+
+        return GfxContext::Get().GetOffscreenDsvCpuHandle(m_msaaDsvIndex);
+    }
 
     if (m_dsvIndex == UINT32_MAX)
 
@@ -1051,6 +1653,16 @@ std::uintptr_t Framebuffer::GetDepthDsvCpuHandle() const
 
     return GfxContext::Get().GetOffscreenDsvCpuHandle(m_dsvIndex);
 
+}
+
+std::uintptr_t Framebuffer::GetResolvedDepthDsvCpuHandle() const
+{
+    if (m_dsvIndex == UINT32_MAX)
+    {
+        return 0;
+    }
+
+    return GfxContext::Get().GetOffscreenDsvCpuHandle(m_dsvIndex);
 }
 
 bool Framebuffer::ReadbackColorPixel(const int x, const int y, float outRgba[4]) const

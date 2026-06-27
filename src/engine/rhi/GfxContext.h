@@ -62,6 +62,7 @@ public:
         int width,
         int height,
         std::uint32_t mipLevels = 1) const;
+    void CreateMsaaDepthSrv(void* resource, std::uint32_t descriptorIndex) const;
     void ClearOffscreenTarget(
         void* resource,
         std::uint32_t rtvIndex,
