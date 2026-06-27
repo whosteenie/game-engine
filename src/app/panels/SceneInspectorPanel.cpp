@@ -972,6 +972,44 @@ namespace
             scene.MarkDirty();
         }
         HandleRigidBodyFieldEditEvents(editContext);
+
+        int collisionDetectionIndex = static_cast<int>(rigidBody.collisionDetection);
+        if (ImGui::Combo(
+                "Collision Detection",
+                &collisionDetectionIndex,
+                "Discrete\0Continuous\0",
+                2))
+        {
+            rigidBody.collisionDetection =
+                static_cast<RigidBodyCollisionDetection>(collisionDetectionIndex);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Continuous uses Jolt linear casting to reduce tunneling on fast-moving bodies.");
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f, 10.0f))
+        {
+            rigidBody.linearDamping = std::max(rigidBody.linearDamping, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f, 10.0f))
+        {
+            rigidBody.angularDamping = std::max(rigidBody.angularDamping, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::Checkbox("Allow Sleeping", &rigidBody.allowSleeping))
+        {
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
     }
 
     void DrawColliderSection(Scene& scene, int objectIndex, ColliderEditContext& editContext)
@@ -1042,6 +1080,24 @@ namespace
         if (ImGui::Checkbox("Is Trigger", &collider.isTrigger))
         {
             scene.MarkDirty();
+        }
+        HandleColliderFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Friction", &collider.friction, 0.01f, 0.0f, 1.0f))
+        {
+            collider.friction = std::max(collider.friction, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleColliderFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Restitution", &collider.restitution, 0.01f, 0.0f, 1.0f))
+        {
+            collider.restitution = std::max(collider.restitution, 0.0f);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Bounciness. 0 = inelastic, 1 = fully elastic.");
         }
         HandleColliderFieldEditEvents(editContext);
     }

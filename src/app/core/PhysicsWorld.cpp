@@ -15,6 +15,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/MotionQuality.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -195,6 +196,25 @@ namespace
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z)
             && std::isfinite(value.w);
     }
+
+    EMotionQuality ToJoltMotionQuality(const RigidBodyCollisionDetection mode)
+    {
+        switch (mode)
+        {
+        case RigidBodyCollisionDetection::Continuous:
+            return EMotionQuality::LinearCast;
+        case RigidBodyCollisionDetection::Discrete:
+        default:
+            return EMotionQuality::Discrete;
+        }
+    }
+
+    void ApplyColliderMaterialSettings(BodyCreationSettings& bodySettings, const ColliderComponent& collider)
+    {
+        bodySettings.mFriction = std::max(collider.friction, 0.0f);
+        bodySettings.mRestitution = std::max(collider.restitution, 0.0f);
+        bodySettings.mIsSensor = collider.isTrigger;
+    }
 }
 
 struct PhysicsWorld::Impl
@@ -372,17 +392,22 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             motionType,
             objectLayer);
 
+        ApplyColliderMaterialSettings(bodySettings, collider);
+
         if (object.HasRigidBody())
         {
             const RigidBodyComponent& rigidBody = object.GetRigidBody();
             bodySettings.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
             bodySettings.mMassPropertiesOverride.mMass = std::max(rigidBody.mass, 0.001f);
             bodySettings.mGravityFactor = rigidBody.useGravity ? 1.0f : 0.0f;
-            bodySettings.mIsSensor = collider.isTrigger;
-        }
-        else
-        {
-            bodySettings.mIsSensor = collider.isTrigger;
+            bodySettings.mLinearDamping = std::max(rigidBody.linearDamping, 0.0f);
+            bodySettings.mAngularDamping = std::max(rigidBody.angularDamping, 0.0f);
+            bodySettings.mAllowSleeping = rigidBody.allowSleeping;
+
+            if (motionType == EMotionType::Dynamic)
+            {
+                bodySettings.mMotionQuality = ToJoltMotionQuality(rigidBody.collisionDetection);
+            }
         }
 
         Body* body = bodyInterface.CreateBody(bodySettings);

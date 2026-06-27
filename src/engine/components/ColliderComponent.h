@@ -20,6 +20,8 @@ struct ColliderComponent
     glm::vec3 halfExtents = glm::vec3(0.5f);
     float radius = 0.5f;
     bool isTrigger = false;
+    float friction = 0.2f;
+    float restitution = 0.0f;
 };
 
 bool operator==(const ColliderComponent& left, const ColliderComponent& right);
