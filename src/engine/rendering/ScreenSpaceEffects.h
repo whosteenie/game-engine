@@ -34,6 +34,13 @@ enum class AntiAliasingMode
     SSAA = 5,
 };
 
+enum class AmbientOcclusionMode
+{
+    Off = 0,
+    SSAO = 1,
+    GTAO = 2,
+};
+
 class ScreenSpaceEffects
 {
 public:
@@ -69,6 +76,8 @@ public:
 
     bool IsSsaoEnabled() const;
     void SetSsaoEnabled(bool enabled);
+    AmbientOcclusionMode GetAmbientOcclusionMode() const;
+    void SetAmbientOcclusionMode(AmbientOcclusionMode mode);
 
     float GetSsaoRadius() const;
     void SetSsaoRadius(float radius);
@@ -78,6 +87,27 @@ public:
 
     float GetSsaoPower() const;
     void SetSsaoPower(float power);
+
+    float GetGtaoRadius() const;
+    void SetGtaoRadius(float radius);
+
+    float GetGtaoThickness() const;
+    void SetGtaoThickness(float thickness);
+
+    float GetGtaoFalloff() const;
+    void SetGtaoFalloff(float falloff);
+
+    float GetGtaoPower() const;
+    void SetGtaoPower(float power);
+
+    int GetGtaoDirections() const;
+    void SetGtaoDirections(int directions);
+
+    int GetGtaoSteps() const;
+    void SetGtaoSteps(int steps);
+
+    bool IsGtaoDenoiseEnabled() const;
+    void SetGtaoDenoiseEnabled(bool enabled);
 
     int GetSsaoShaderDebugMode() const;
     void SetSsaoShaderDebugMode(int mode);
@@ -239,6 +269,7 @@ private:
     InternalTarget m_noiseTexture;
     InternalTarget m_ssaoTarget;
     InternalTarget m_ssaoBlurTarget;
+    InternalTarget m_gtaoRawTarget;
     InternalTarget m_shadowBlurTarget;
     InternalTarget m_shadowBlur2Target;
     InternalTarget m_hdrCompositeTarget;
@@ -263,6 +294,7 @@ private:
 
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
+    std::unique_ptr<Shader> m_gtaoShader;
     std::unique_ptr<Shader> m_blurShader;
     std::unique_ptr<Shader> m_compositeShader;
     std::unique_ptr<Shader> m_bloomExtractShader;
@@ -302,9 +334,17 @@ private:
     mutable std::uint64_t m_ssaoDiagnosticsFrame = 0;
     mutable SsaoDiagnosticsSnapshot m_ssaoDiagnostics{};
     bool m_ssaoEnabled = true;
+    AmbientOcclusionMode m_aoMode = AmbientOcclusionMode::SSAO;
     float m_ssaoRadius = 0.6f;
     float m_ssaoBias = 0.012f;
     float m_ssaoPower = 2.2f;
+    float m_gtaoRadius = 1.0f;
+    float m_gtaoThickness = 0.45f;
+    float m_gtaoFalloff = 1.5f;
+    float m_gtaoPower = 1.35f;
+    int m_gtaoDirections = 4;
+    int m_gtaoSteps = 5;
+    bool m_gtaoDenoiseEnabled = true;
     int m_ssaoShaderDebugMode = 0;
     float m_aoStrength = 1.0f;
     float m_exposure = 0.0f;

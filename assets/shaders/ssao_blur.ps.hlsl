@@ -1,8 +1,10 @@
 Texture2D uInput : register(t0);
 Texture2D uDepthMap : register(t1);
+Texture2D uNormalMap : register(t2);
 
 SamplerState uInputSampler : register(s0);
 SamplerState uDepthSampler : register(s1);
+SamplerState uNormalSampler : register(s2);
 
 cbuffer PerPixel : register(b0)
 {
@@ -11,6 +13,8 @@ cbuffer PerPixel : register(b0)
     float2 uBlurDirection;
     float uDepthThreshold;
     float uBlurSpread;
+    float uNormalPower;
+    int uUseNormalWeight;
 };
 
 struct PSInput
@@ -32,9 +36,14 @@ float ViewDepth(float2 texCoord)
 
 float main(PSInput input) : SV_Target
 {
-    const float2 direction = uBlurDirection * uTexelSize * max(uBlurSpread, 1.0);
+    const float2 direction = uBlurDirection * uTexelSize * max(uBlurSpread, 0.25);
     const float centerDepth = ViewDepth(input.texCoord);
     const float centerAo = uInput.Sample(uInputSampler, input.texCoord).r;
+    float3 centerNormal = 0.0.xxx;
+    if (uUseNormalWeight != 0)
+    {
+        centerNormal = normalize(uNormalMap.Sample(uNormalSampler, input.texCoord).rgb);
+    }
 
     float result = 0.0;
     float weightSum = 0.0;
@@ -50,7 +59,13 @@ float main(PSInput input) : SV_Target
             uDepthThreshold * 0.5,
             uDepthThreshold,
             relativeDepthDelta);
-        const float weight = kBlurWeights[tap + kBlurRadius] * depthWeight;
+        float normalWeight = 1.0;
+        if (uUseNormalWeight != 0)
+        {
+            const float3 sampleNormal = normalize(uNormalMap.Sample(uNormalSampler, sampleUv).rgb);
+            normalWeight = pow(saturate(dot(centerNormal, sampleNormal)), max(uNormalPower, 1.0));
+        }
+        const float weight = kBlurWeights[tap + kBlurRadius] * depthWeight * normalWeight;
         result += uInput.Sample(uInputSampler, sampleUv).r * weight;
         weightSum += weight;
     }

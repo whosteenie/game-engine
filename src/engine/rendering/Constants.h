@@ -31,6 +31,7 @@ namespace EngineConstants
 
     inline constexpr const char* FullscreenVertexShader = "assets/shaders/fullscreen.vs.hlsl";
     inline constexpr const char* SsaoFragmentShader = "assets/shaders/ssao.ps.hlsl";
+    inline constexpr const char* GtaoFragmentShader = "assets/shaders/gtao.ps.hlsl";
     inline constexpr const char* SsaoBlurFragmentShader = "assets/shaders/ssao_blur.ps.hlsl";
     inline constexpr const char* ScreenCompositeFragmentShader = "assets/shaders/screen_composite.ps.hlsl";
     inline constexpr const char* BloomExtractFragmentShader = "assets/shaders/bloom_extract.ps.hlsl";

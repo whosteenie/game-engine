@@ -51,6 +51,20 @@ namespace
         }
     }
 
+    const char* AmbientOcclusionModeLabel(AmbientOcclusionMode mode)
+    {
+        switch (mode)
+        {
+        case AmbientOcclusionMode::SSAO:
+            return "SSAO";
+        case AmbientOcclusionMode::GTAO:
+            return "GTAO";
+        case AmbientOcclusionMode::Off:
+        default:
+            return "Off";
+        }
+    }
+
     int IblCubemapResolutionToComboIndex(const EnvironmentIblCubemapResolution resolution)
     {
         switch (resolution)
@@ -697,43 +711,124 @@ void LightingPanel::Draw(
                 });
         }
 
-        bool ssaoEnabled = screenSpaceEffects.IsSsaoEnabled();
-        if (ImGui::Checkbox("SSAO", &ssaoEnabled))
+        AmbientOcclusionMode aoMode = screenSpaceEffects.GetAmbientOcclusionMode();
+        if (ImGui::BeginCombo("AO mode", AmbientOcclusionModeLabel(aoMode)))
         {
-            ApplyRendererChange(
+            const AmbientOcclusionMode modes[] = {
+                AmbientOcclusionMode::Off,
+                AmbientOcclusionMode::SSAO,
+                AmbientOcclusionMode::GTAO,
+            };
+            for (const AmbientOcclusionMode mode : modes)
+            {
+                const bool selected = aoMode == mode;
+                if (ImGui::Selectable(AmbientOcclusionModeLabel(mode), selected) && !selected)
+                {
+                    ApplyRendererChange(
+                        editContext,
+                        scene,
+                        "Ambient occlusion mode",
+                        [mode](Scene& target) {
+                            target.GetRenderer().GetScreenSpaceEffects().SetAmbientOcclusionMode(mode);
+                            target.MarkDirty();
+                        });
+                    ImGui::CloseCurrentPopup();
+                }
+                if (selected)
+                {
+                    ImGui::SetItemDefaultFocus();
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (aoMode == AmbientOcclusionMode::SSAO)
+        {
+            float ssaoRadius = screenSpaceEffects.GetSsaoRadius();
+            if (ImGui::SliderFloat("SSAO radius", &ssaoRadius, 0.1f, 1.5f))
+            {
+                screenSpaceEffects.SetSsaoRadius(ssaoRadius);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+            ImGui::TextDisabled("Radius is view-space units (fixed, not scaled by depth).");
+
+            float ssaoBias = screenSpaceEffects.GetSsaoBias();
+            if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
+            {
+                screenSpaceEffects.SetSsaoBias(ssaoBias);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float ssaoPower = screenSpaceEffects.GetSsaoPower();
+            if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
+            {
+                screenSpaceEffects.SetSsaoPower(ssaoPower);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+        }
+        else if (aoMode == AmbientOcclusionMode::GTAO)
+        {
+            float gtaoRadius = screenSpaceEffects.GetGtaoRadius();
+            if (ImGui::SliderFloat("GTAO radius", &gtaoRadius, 0.1f, 3.0f))
+            {
+                screenSpaceEffects.SetGtaoRadius(gtaoRadius);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float gtaoThickness = screenSpaceEffects.GetGtaoThickness();
+            if (ImGui::SliderFloat("GTAO thickness", &gtaoThickness, 0.02f, 2.0f))
+            {
+                screenSpaceEffects.SetGtaoThickness(gtaoThickness);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float gtaoFalloff = screenSpaceEffects.GetGtaoFalloff();
+            if (ImGui::SliderFloat("GTAO falloff", &gtaoFalloff, 0.25f, 6.0f))
+            {
+                screenSpaceEffects.SetGtaoFalloff(gtaoFalloff);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            float gtaoPower = screenSpaceEffects.GetGtaoPower();
+            if (ImGui::SliderFloat("GTAO intensity", &gtaoPower, 0.25f, 4.0f))
+            {
+                screenSpaceEffects.SetGtaoPower(gtaoPower);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            int gtaoDirections = screenSpaceEffects.GetGtaoDirections();
+            if (ImGui::SliderInt("GTAO directions", &gtaoDirections, 2, 8))
+            {
+                screenSpaceEffects.SetGtaoDirections(gtaoDirections);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            int gtaoSteps = screenSpaceEffects.GetGtaoSteps();
+            if (ImGui::SliderInt("GTAO steps", &gtaoSteps, 2, 12))
+            {
+                screenSpaceEffects.SetGtaoSteps(gtaoSteps);
+                scene.MarkDirty();
+            }
+            HandleRendererFieldEditEvents(editContext);
+
+            bool gtaoDenoise = screenSpaceEffects.IsGtaoDenoiseEnabled();
+            UndoableRendererCheckbox(
+                "GTAO denoise",
+                &gtaoDenoise,
                 editContext,
-                scene,
-                "SSAO",
-                [ssaoEnabled](Scene& target) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetSsaoEnabled(ssaoEnabled);
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetGtaoDenoiseEnabled(enabled);
                     target.MarkDirty();
                 });
         }
-
-        float ssaoRadius = screenSpaceEffects.GetSsaoRadius();
-        if (ImGui::SliderFloat("SSAO radius", &ssaoRadius, 0.1f, 1.5f))
-        {
-            screenSpaceEffects.SetSsaoRadius(ssaoRadius);
-            scene.MarkDirty();
-        }
-        HandleRendererFieldEditEvents(editContext);
-        ImGui::TextDisabled("Radius is view-space units (fixed, not scaled by depth).");
-
-        float ssaoBias = screenSpaceEffects.GetSsaoBias();
-        if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
-        {
-            screenSpaceEffects.SetSsaoBias(ssaoBias);
-            scene.MarkDirty();
-        }
-        HandleRendererFieldEditEvents(editContext);
-
-        float ssaoPower = screenSpaceEffects.GetSsaoPower();
-        if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
-        {
-            screenSpaceEffects.SetSsaoPower(ssaoPower);
-            scene.MarkDirty();
-        }
-        HandleRendererFieldEditEvents(editContext);
 
         float ssaoBlurDepthThreshold = screenSpaceEffects.GetSsaoBlurDepthThreshold();
         if (ImGui::SliderFloat("SSAO blur depth threshold", &ssaoBlurDepthThreshold, 0.001f, 0.25f))
@@ -745,7 +840,7 @@ void LightingPanel::Draw(
         ImGui::TextDisabled("Edge-aware blur: lower = sharper AO edges across depth discontinuities.");
 
         int ssaoShaderDebug = screenSpaceEffects.GetSsaoShaderDebugMode();
-        if (ImGui::Combo(
+        if (aoMode == AmbientOcclusionMode::SSAO && ImGui::Combo(
                 "SSAO shader debug",
                 &ssaoShaderDebug,
                 "AO output\0"
@@ -766,10 +861,10 @@ void LightingPanel::Draw(
         ImGui::TextDisabled(
             "Intensity = pow() on AO in composite (indirect only). Blend = how much AO affects indirect.");
         ImGui::TextDisabled(
-            "Radius/bias affect the SSAO pass; try Composite occlusion debug view for final factor.");
+            "Use AO buffer/debug views for raw or filtered factors; Composite occlusion shows the final factor.");
 
         float aoStrength = screenSpaceEffects.GetAoStrength();
-        if (ImGui::SliderFloat("SSAO blend strength", &aoStrength, 0.0f, 1.0f))
+        if (ImGui::SliderFloat("AO blend strength", &aoStrength, 0.0f, 1.0f))
         {
             screenSpaceEffects.SetAoStrength(aoStrength);
             scene.MarkDirty();
@@ -1193,6 +1288,8 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::ShadowMapStoredDepth),
             RenderDebugModeLabel(RenderDebugMode::ShadowDepthSeparation),
             RenderDebugModeLabel(RenderDebugMode::Ssao),
+            RenderDebugModeLabel(RenderDebugMode::GtaoRaw),
+            RenderDebugModeLabel(RenderDebugMode::GtaoFiltered),
             RenderDebugModeLabel(RenderDebugMode::CompositeOcclusion),
             RenderDebugModeLabel(RenderDebugMode::GeomSunFacing),
             RenderDebugModeLabel(RenderDebugMode::ShadowCompareDepth),
@@ -1302,8 +1399,18 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::Ssao))
         {
             ImGui::TextWrapped(
-                "Blurred SSAO factor (1 = no occlusion). Use SSAO shader debug combo for raw/instrumented views. "
-                "When SSAO is off the pass is skipped and the buffer is stale.");
+                "Current AO target for SSAO mode (1 = no occlusion). Use SSAO shader debug combo for raw/instrumented views. "
+                "When AO is off or GTAO is active, this view may show the active AO target or stale data.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GtaoRaw))
+        {
+            ImGui::TextWrapped(
+                "Raw GTAO visibility before denoise (1 = no occlusion). Use this to judge whether the horizon pass finds crevices.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::GtaoFiltered))
+        {
+            ImGui::TextWrapped(
+                "Filtered GTAO visibility after edge-aware denoise. This is the map composited into indirect lighting.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::MotionVectors))
         {
@@ -1398,8 +1505,8 @@ void LightingPanel::Draw(
         }
 
         static std::string diagnosticStatus;
-        ImGui::TextDisabled("HDR+SSAO on by default; enable Bloom in panel for full post stack.");
-        ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/SSAO/import stderr logs.");
+        ImGui::TextDisabled("HDR+AO on by default; enable Bloom in panel for full post stack.");
+        ImGui::TextDisabled("Set GAME_ENGINE_RENDER_DEBUG=1 for HDR/AO/import stderr logs.");
         if (ImGui::Button("Write diagnostics/render_diagnostics.txt"))
         {
             const ImVec2 viewportSize = ImGui::GetContentRegionAvail();

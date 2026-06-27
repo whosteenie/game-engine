@@ -83,6 +83,8 @@ namespace
     bool IsPostProcessDebugMode(RenderDebugMode mode)
     {
         return mode == RenderDebugMode::Ssao ||
+               mode == RenderDebugMode::GtaoRaw ||
+               mode == RenderDebugMode::GtaoFiltered ||
                mode == RenderDebugMode::CompositeOcclusion ||
                mode == RenderDebugMode::MotionVectors ||
                IsGBufferDebugMode(mode) ||
@@ -428,6 +430,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_ssaoShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsaoFragmentShader)),
+      m_gtaoShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::GtaoFragmentShader)),
       m_blurShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsaoBlurFragmentShader)),
@@ -516,6 +521,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
 {
     DestroyInternalTarget(m_ssaoTarget);
     DestroyInternalTarget(m_ssaoBlurTarget);
+    DestroyInternalTarget(m_gtaoRawTarget);
     DestroyInternalTarget(m_shadowBlurTarget);
     DestroyInternalTarget(m_shadowBlur2Target);
     DestroyInternalTarget(m_hdrCompositeTarget);
@@ -826,6 +832,7 @@ void ScreenSpaceEffects::ResizeSingleChannelTargets(const int width, const int h
     const int format = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     ResizeInternalTarget(m_ssaoTarget, width, height, format);
     ResizeInternalTarget(m_ssaoBlurTarget, width, height, format);
+    ResizeInternalTarget(m_gtaoRawTarget, width, height, format);
     ResizeInternalTarget(m_shadowBlurTarget, width, height, format);
     ResizeInternalTarget(m_shadowBlur2Target, width, height, format);
 }
@@ -1243,8 +1250,11 @@ void ScreenSpaceEffects::Apply(
 
     const Framebuffer* outputTarget = GfxContext::Get().GetBoundOutputFramebuffer();
 
-    const bool runSsao = m_ssaoEnabled && !IsPbrMaterialDebugMode(m_debugMode);
     const bool pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
+    const bool runAo = m_aoMode != AmbientOcclusionMode::Off && !pbrDebugActive;
+    const bool runSsao = runAo && m_aoMode == AmbientOcclusionMode::SSAO;
+    const bool runGtao = runAo && m_aoMode == AmbientOcclusionMode::GTAO;
+    std::uintptr_t aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
 
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 inverseProjectionMatrix = glm::inverse(projectionMatrix);
@@ -1252,69 +1262,116 @@ void ScreenSpaceEffects::Apply(
         1.0f / static_cast<float>(m_width),
         1.0f / static_cast<float>(m_height));
 
-    if (runSsao)
+    if (runSsao || runGtao)
     {
         const float ssaoClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
 
-        glm::vec4 packedKernelSamples[KernelSampleCount];
-        for (int sampleIndex = 0; sampleIndex < KernelSampleCount; ++sampleIndex)
+        if (runSsao)
         {
-            packedKernelSamples[sampleIndex] =
-                glm::vec4(m_kernelSamples[static_cast<std::size_t>(sampleIndex)], 0.0f);
+            glm::vec4 packedKernelSamples[KernelSampleCount];
+            for (int sampleIndex = 0; sampleIndex < KernelSampleCount; ++sampleIndex)
+            {
+                packedKernelSamples[sampleIndex] =
+                    glm::vec4(m_kernelSamples[static_cast<std::size_t>(sampleIndex)], 0.0f);
+            }
+
+            m_ssaoShader->Use(false);
+            m_ssaoShader->SetInt("uDepthMap", 0);
+            m_ssaoShader->SetInt("uNormalMap", 1);
+            m_ssaoShader->SetInt("uNoiseMap", 2);
+            m_ssaoShader->SetInt(
+                "uUseGeometryNormals",
+                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
+            m_ssaoShader->SetMat4("uProjection", projectionMatrix);
+            m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+            m_ssaoShader->SetMat4("uView", camera.GetViewMatrix());
+            m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
+            m_ssaoShader->SetFloat("uBias", m_ssaoBias);
+            m_ssaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
+            m_ssaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
+            m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
+            m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
+            m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
+            m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
+            DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
+        }
+        else
+        {
+            m_gtaoShader->Use(false);
+            m_gtaoShader->SetInt("uDepthMap", 0);
+            m_gtaoShader->SetInt("uNormalMap", 1);
+            m_gtaoShader->SetMat4("uProjection", projectionMatrix);
+            m_gtaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+            m_gtaoShader->SetMat4("uView", camera.GetViewMatrix());
+            m_gtaoShader->SetVec2(
+                "uProjectionScale",
+                glm::vec2(projectionMatrix[0][0], projectionMatrix[1][1]));
+            m_gtaoShader->SetFloat("uRadius", m_gtaoRadius);
+            m_gtaoShader->SetFloat("uThickness", m_gtaoThickness);
+            m_gtaoShader->SetFloat("uFalloff", m_gtaoFalloff);
+            m_gtaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
+            m_gtaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
+            m_gtaoShader->SetInt("uDirections", m_gtaoDirections);
+            m_gtaoShader->SetInt("uSteps", m_gtaoSteps);
+            m_gtaoShader->SetInt(
+                "uUseGeometryNormals",
+                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
+            m_gtaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_gtaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            DrawFullscreenToTarget(
+                *m_gtaoShader,
+                const_cast<InternalTarget&>(m_gtaoRawTarget),
+                m_width,
+                m_height,
+                ssaoClear);
+            aoCompositeSrv = m_gtaoRawTarget.srvCpuHandle;
         }
 
-        m_ssaoShader->Use(false);
-        m_ssaoShader->SetInt("uDepthMap", 0);
-        m_ssaoShader->SetInt("uNormalMap", 1);
-        m_ssaoShader->SetInt("uNoiseMap", 2);
-        m_ssaoShader->SetInt(
-            "uUseGeometryNormals",
-            m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
-        m_ssaoShader->SetMat4("uProjection", projectionMatrix);
-        m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssaoShader->SetMat4("uView", camera.GetViewMatrix());
-        m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
-        m_ssaoShader->SetFloat("uBias", m_ssaoBias);
-        m_ssaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
-        m_ssaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
-        m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
-        m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
-        m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
-        m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
-        DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
-
-        if (m_ssaoShaderDebugMode == 0)
+        if ((runSsao && m_ssaoShaderDebugMode == 0) || (runGtao && m_gtaoDenoiseEnabled))
         {
             m_blurShader->Use(false);
             m_blurShader->SetInt("uInput", 0);
             m_blurShader->SetInt("uDepthMap", 1);
+            m_blurShader->SetInt("uNormalMap", 2);
             m_blurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
             m_blurShader->SetVec2("uTexelSize", texelSize);
             m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);
-            m_blurShader->SetFloat("uBlurSpread", 1.0f);
+            m_blurShader->SetFloat("uBlurSpread", runGtao ? 0.8f : 1.0f);
+            m_blurShader->SetFloat("uNormalPower", runGtao ? 8.0f : 4.0f);
+            m_blurShader->SetInt(
+                "uUseNormalWeight",
+                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
 
             m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
-            m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+            m_blurShader->BindTextureSlot(0, runGtao ? m_gtaoRawTarget.srvCpuHandle : m_ssaoTarget.srvCpuHandle);
             m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
             DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
 
             m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
             m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
             m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
             DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
-            m_blurShader->SetFloat("uBlurSpread", 2.5f);
-            m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
-            m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
-            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
+            if (runSsao)
+            {
+                m_blurShader->SetFloat("uBlurSpread", 2.5f);
+                m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
+                m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
+                m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+                DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
 
-            m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
-            m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
-            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
+                m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
+                m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
+                m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+                DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
+            }
+            aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
         }
     }
 
@@ -1575,7 +1632,7 @@ void ScreenSpaceEffects::Apply(
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
     const char* hdrColorSource = "scene_direct";
     bool compositeRan = false;
-    const bool compositeUsesSsao = runSsao;
+    const bool compositeUsesSsao = runAo;
     const char* ssaoDebugViewSource = "none";
 
     if (m_sceneFramebuffer->HasSplitLighting() && !pbrDebugActive)
@@ -1587,10 +1644,10 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt("uDepthMap", 2);
         m_compositeShader->SetInt("uSsaoMap", 3);
         m_compositeShader->SetInt("uUseSplitLighting", 1);
-        m_compositeShader->SetInt("uUseSsao", runSsao ? 1 : 0);
+        m_compositeShader->SetInt("uUseSsao", runAo ? 1 : 0);
         m_compositeShader->SetInt("uUseShadowFactor", useShadowFactorComposite ? 1 : 0);
         m_compositeShader->SetInt("uShadowFactorMap", 4);
-        m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
+        m_compositeShader->SetFloat("uSsaoPower", runGtao ? m_gtaoPower : m_ssaoPower);
         m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
@@ -1603,7 +1660,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(3, aoCompositeSrv);
         m_compositeShader->BindTextureSlot(4, shadowFactorSrv);
         m_compositeShader->BindTextureSlot(
             6,
@@ -1619,7 +1676,7 @@ void ScreenSpaceEffects::Apply(
         hdrColorSource = "hdr_composite_split";
         compositeRan = true;
     }
-    else if (runSsao)
+    else if (runAo)
     {
         const float compositeClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -1629,14 +1686,14 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt("uSsaoMap", 3);
         m_compositeShader->SetInt("uUseSplitLighting", 0);
         m_compositeShader->SetInt("uUseSsao", 1);
-        m_compositeShader->SetFloat("uSsaoPower", m_ssaoPower);
+        m_compositeShader->SetFloat("uSsaoPower", runGtao ? m_gtaoPower : m_ssaoPower);
         m_compositeShader->SetFloat("uAoStrength", m_aoStrength);
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
         SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
-        m_compositeShader->BindTextureSlot(3, m_ssaoTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(3, aoCompositeSrv);
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
             *m_compositeShader,
@@ -1812,7 +1869,7 @@ void ScreenSpaceEffects::Apply(
         m_debugChannelShader->FlushUniforms();
         DrawFullscreenQuad();
         CaptureSsaoDiagnosticsCpu(
-            runSsao,
+            runAo,
             compositeRan,
             compositeUsesSsao,
             pbrDebugActive,
@@ -1834,11 +1891,21 @@ void ScreenSpaceEffects::Apply(
         if (m_debugMode == RenderDebugMode::Ssao)
         {
             debugSrv = m_ssaoTarget.srvCpuHandle;
-            ssaoDebugViewSource = runSsao
+            ssaoDebugViewSource = runAo
                 ? ((m_ssaoShaderDebugMode != 0) ? "ssao_raw_debug" : "ssao_blur_live")
                 : "ssao_blur_stale_pass_off";
         }
-        else if (m_debugMode == RenderDebugMode::CompositeOcclusion && runSsao)
+        else if (m_debugMode == RenderDebugMode::GtaoRaw)
+        {
+            debugSrv = m_gtaoRawTarget.srvCpuHandle;
+            ssaoDebugViewSource = runGtao ? "gtao_raw" : "gtao_raw_stale_or_inactive";
+        }
+        else if (m_debugMode == RenderDebugMode::GtaoFiltered)
+        {
+            debugSrv = aoCompositeSrv;
+            ssaoDebugViewSource = runGtao ? "gtao_filtered" : "gtao_filtered_stale_or_inactive";
+        }
+        else if (m_debugMode == RenderDebugMode::CompositeOcclusion && runAo)
         {
             debugSrv = m_hdrCompositeTarget.srvCpuHandle;
             ssaoDebugViewSource = "composite_occlusion";
@@ -1854,7 +1921,7 @@ void ScreenSpaceEffects::Apply(
             m_velocityDebugShader->FlushUniforms();
             DrawFullscreenQuad();
             CaptureSsaoDiagnosticsCpu(
-                runSsao,
+                runAo,
                 compositeRan,
                 compositeUsesSsao,
                 pbrDebugActive,
@@ -1882,7 +1949,7 @@ void ScreenSpaceEffects::Apply(
             m_gbufferDebugShader->FlushUniforms();
             DrawFullscreenQuad();
             CaptureSsaoDiagnosticsCpu(
-                runSsao,
+                runAo,
                 compositeRan,
                 compositeUsesSsao,
                 pbrDebugActive,
@@ -1908,7 +1975,7 @@ void ScreenSpaceEffects::Apply(
             m_radianceDebugShader->FlushUniforms();
             DrawFullscreenQuad();
             CaptureSsaoDiagnosticsCpu(
-                runSsao,
+                runAo,
                 compositeRan,
                 compositeUsesSsao,
                 pbrDebugActive,
@@ -1972,7 +2039,7 @@ void ScreenSpaceEffects::Apply(
                 m_ssgiDenoiseDebugShader->FlushUniforms();
                 DrawFullscreenQuad();
                 CaptureSsaoDiagnosticsCpu(
-                    runSsao,
+                    runAo,
                     compositeRan,
                     compositeUsesSsao,
                     pbrDebugActive,
@@ -2006,7 +2073,7 @@ void ScreenSpaceEffects::Apply(
             m_giTemporalDebugShader->FlushUniforms();
             DrawFullscreenQuad();
             CaptureSsaoDiagnosticsCpu(
-                runSsao,
+                runAo,
                 compositeRan,
                 compositeUsesSsao,
                 pbrDebugActive,
@@ -2035,7 +2102,7 @@ void ScreenSpaceEffects::Apply(
             m_debugChannelShader->FlushUniforms();
             DrawFullscreenQuad();
             CaptureSsaoDiagnosticsCpu(
-                runSsao,
+                runAo,
                 compositeRan,
                 compositeUsesSsao,
                 pbrDebugActive,
@@ -2178,7 +2245,7 @@ void ScreenSpaceEffects::Apply(
             viewportHeight,
             m_sceneFramebuffer->IsValid(),
             m_sceneFramebuffer->HasSplitLighting(),
-            runSsao,
+            runAo,
             useShadowFactorComposite,
             outputTarget != nullptr,
             hdrColorSrv,
@@ -2190,7 +2257,7 @@ void ScreenSpaceEffects::Apply(
     }
 
     CaptureSsaoDiagnosticsCpu(
-        runSsao,
+        runAo,
         compositeRan,
         compositeUsesSsao,
         pbrDebugActive,
@@ -2224,18 +2291,37 @@ void ScreenSpaceEffects::SetEnabled(bool enabled)
 
 bool ScreenSpaceEffects::IsSsaoEnabled() const
 {
-    return m_ssaoEnabled;
+    return m_aoMode != AmbientOcclusionMode::Off;
 }
 
 void ScreenSpaceEffects::SetSsaoEnabled(bool enabled)
 {
-    if (m_ssaoEnabled == enabled)
+    if (IsSsaoEnabled() == enabled)
     {
         return;
     }
 
     m_ssaoEnabled = enabled;
+    m_aoMode = enabled ? AmbientOcclusionMode::SSAO : AmbientOcclusionMode::Off;
     RenderPathDiagnostics::LogSsaoToggled(enabled);
+    m_logSsaoApplySnapshot = true;
+}
+
+AmbientOcclusionMode ScreenSpaceEffects::GetAmbientOcclusionMode() const
+{
+    return m_aoMode;
+}
+
+void ScreenSpaceEffects::SetAmbientOcclusionMode(const AmbientOcclusionMode mode)
+{
+    if (m_aoMode == mode)
+    {
+        return;
+    }
+
+    m_aoMode = mode;
+    m_ssaoEnabled = mode != AmbientOcclusionMode::Off;
+    RenderPathDiagnostics::LogSsaoToggled(mode != AmbientOcclusionMode::Off);
     m_logSsaoApplySnapshot = true;
 }
 
@@ -2267,8 +2353,14 @@ void ScreenSpaceEffects::FinalizePendingSsaoGpuReadback() const
     const int centerY = m_height / 2;
     float rgba[4] = {};
 
+    InternalTarget& rawReadbackTarget =
+        m_aoMode == AmbientOcclusionMode::GTAO
+            ? const_cast<InternalTarget&>(m_gtaoRawTarget)
+            : const_cast<InternalTarget&>(m_ssaoTarget);
+    InternalTarget& filteredReadbackTarget = const_cast<InternalTarget&>(m_ssaoTarget);
+
     if (ReadbackTextureCenterRgba16F(
-            m_ssaoTarget.resource,
+            rawReadbackTarget.resource,
             m_width,
             m_height,
             centerX,
@@ -2297,7 +2389,7 @@ void ScreenSpaceEffects::FinalizePendingSsaoGpuReadback() const
     }
 
     if (ReadbackTextureCenterRgba16F(
-            m_ssaoTarget.resource,
+            filteredReadbackTarget.resource,
             m_width,
             m_height,
             centerX,
@@ -2345,7 +2437,7 @@ void ScreenSpaceEffects::CaptureSsaoDiagnosticsCpu(
 {
     ++m_ssaoDiagnosticsFrame;
     m_ssaoDiagnostics.captureFrame = m_ssaoDiagnosticsFrame;
-    m_ssaoDiagnostics.enabled = m_ssaoEnabled;
+    m_ssaoDiagnostics.enabled = m_aoMode != AmbientOcclusionMode::Off;
     m_ssaoDiagnostics.postProcessEnabled = m_enabled;
     m_ssaoDiagnostics.passExecuted = runSsao;
     m_ssaoDiagnostics.compositeUsesSsao = compositeUsesSsao;
@@ -2360,7 +2452,8 @@ void ScreenSpaceEffects::CaptureSsaoDiagnosticsCpu(
     m_ssaoDiagnostics.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
     m_ssaoDiagnostics.normalSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(2);
     m_ssaoDiagnostics.noiseSrv = m_noiseTexture.srvCpuHandle;
-    m_ssaoDiagnostics.ssaoRawSrv = m_ssaoTarget.srvCpuHandle;
+    m_ssaoDiagnostics.ssaoRawSrv =
+        m_aoMode == AmbientOcclusionMode::GTAO ? m_gtaoRawTarget.srvCpuHandle : m_ssaoTarget.srvCpuHandle;
     m_ssaoDiagnostics.ssaoBlurSrv = m_ssaoBlurTarget.srvCpuHandle;
     m_ssaoDiagnostics.hdrColorSrv = hdrColorSrv;
     m_ssaoDiagnostics.shadowFactorSrv = shadowFactorSrv;
@@ -2373,10 +2466,10 @@ void ScreenSpaceEffects::CaptureSsaoDiagnosticsCpu(
         m_ssaoDiagnostics.kernelSample0Y = m_kernelSamples[0].y;
         m_ssaoDiagnostics.kernelSample0Z = m_kernelSamples[0].z;
     }
-    m_ssaoDiagnostics.radius = m_ssaoRadius;
-    m_ssaoDiagnostics.bias = m_ssaoBias;
+    m_ssaoDiagnostics.radius = m_aoMode == AmbientOcclusionMode::GTAO ? m_gtaoRadius : m_ssaoRadius;
+    m_ssaoDiagnostics.bias = m_aoMode == AmbientOcclusionMode::GTAO ? m_gtaoThickness : m_ssaoBias;
     m_ssaoDiagnostics.aoStrength = m_aoStrength;
-    m_ssaoDiagnostics.ssaoPower = m_ssaoPower;
+    m_ssaoDiagnostics.ssaoPower = m_aoMode == AmbientOcclusionMode::GTAO ? m_gtaoPower : m_ssaoPower;
     m_ssaoDiagnostics.hdrColorSource = hdrColorSource != nullptr ? hdrColorSource : "null";
     m_ssaoDiagnostics.ssaoDebugViewSource =
         ssaoDebugViewSource != nullptr ? ssaoDebugViewSource : "null";
@@ -2410,6 +2503,76 @@ float ScreenSpaceEffects::GetSsaoPower() const
 void ScreenSpaceEffects::SetSsaoPower(float power)
 {
     m_ssaoPower = std::max(power, 0.1f);
+}
+
+float ScreenSpaceEffects::GetGtaoRadius() const
+{
+    return m_gtaoRadius;
+}
+
+void ScreenSpaceEffects::SetGtaoRadius(const float radius)
+{
+    m_gtaoRadius = std::clamp(radius, 0.05f, 5.0f);
+}
+
+float ScreenSpaceEffects::GetGtaoThickness() const
+{
+    return m_gtaoThickness;
+}
+
+void ScreenSpaceEffects::SetGtaoThickness(const float thickness)
+{
+    m_gtaoThickness = std::clamp(thickness, 0.02f, 2.0f);
+}
+
+float ScreenSpaceEffects::GetGtaoFalloff() const
+{
+    return m_gtaoFalloff;
+}
+
+void ScreenSpaceEffects::SetGtaoFalloff(const float falloff)
+{
+    m_gtaoFalloff = std::clamp(falloff, 0.25f, 6.0f);
+}
+
+float ScreenSpaceEffects::GetGtaoPower() const
+{
+    return m_gtaoPower;
+}
+
+void ScreenSpaceEffects::SetGtaoPower(const float power)
+{
+    m_gtaoPower = std::clamp(power, 0.25f, 4.0f);
+}
+
+int ScreenSpaceEffects::GetGtaoDirections() const
+{
+    return m_gtaoDirections;
+}
+
+void ScreenSpaceEffects::SetGtaoDirections(const int directions)
+{
+    m_gtaoDirections = std::clamp(directions, 2, 8);
+}
+
+int ScreenSpaceEffects::GetGtaoSteps() const
+{
+    return m_gtaoSteps;
+}
+
+void ScreenSpaceEffects::SetGtaoSteps(const int steps)
+{
+    m_gtaoSteps = std::clamp(steps, 2, 12);
+}
+
+bool ScreenSpaceEffects::IsGtaoDenoiseEnabled() const
+{
+    return m_gtaoDenoiseEnabled;
+}
+
+void ScreenSpaceEffects::SetGtaoDenoiseEnabled(const bool enabled)
+{
+    m_gtaoDenoiseEnabled = enabled;
 }
 
 int ScreenSpaceEffects::GetSsaoShaderDebugMode() const

@@ -42,8 +42,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "Shadow depth separation";
     case RenderDebugMode::Ssao:
         return "SSAO buffer";
+    case RenderDebugMode::GtaoRaw:
+        return "GTAO raw";
+    case RenderDebugMode::GtaoFiltered:
+        return "GTAO filtered";
     case RenderDebugMode::CompositeOcclusion:
-        return "Composite occlusion (SSAO)";
+        return "Composite occlusion (AO)";
     case RenderDebugMode::GeomSunFacing:
         return "Geom sun facing (N·L)";
     case RenderDebugMode::ShadowCompareDepth:

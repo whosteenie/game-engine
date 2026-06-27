@@ -21,6 +21,8 @@ enum class RenderDebugMode
     ShadowMapStoredDepth,
     ShadowDepthSeparation,
     Ssao,
+    GtaoRaw,
+    GtaoFiltered,
     CompositeOcclusion,
     GeomSunFacing,
     ShadowCompareDepth,

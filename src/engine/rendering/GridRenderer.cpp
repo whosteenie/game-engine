@@ -99,10 +99,9 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
     }
 
     const glm::vec3 cameraPosition = camera.GetPosition();
-    const float patchSize = m_halfExtent * 2.0f;
     const glm::vec2 gridSnapOrigin(
-        std::floor(cameraPosition.x / patchSize) * patchSize,
-        std::floor(cameraPosition.z / patchSize) * patchSize);
+        std::floor(cameraPosition.x / m_cellSize) * m_cellSize,
+        std::floor(cameraPosition.z / m_cellSize) * m_cellSize);
 
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uView", camera.GetViewMatrix());

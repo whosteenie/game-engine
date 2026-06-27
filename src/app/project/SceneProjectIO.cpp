@@ -464,6 +464,34 @@ namespace SceneProjectIODetail
         return AntiAliasingMode::None;
     }
 
+    const char* AmbientOcclusionModeToString(const AmbientOcclusionMode mode)
+    {
+        switch (mode)
+        {
+        case AmbientOcclusionMode::SSAO:
+            return "SSAO";
+        case AmbientOcclusionMode::GTAO:
+            return "GTAO";
+        case AmbientOcclusionMode::Off:
+        default:
+            return "Off";
+        }
+    }
+
+    AmbientOcclusionMode AmbientOcclusionModeFromString(const std::string& value)
+    {
+        if (value == "SSAO")
+        {
+            return AmbientOcclusionMode::SSAO;
+        }
+        if (value == "GTAO")
+        {
+            return AmbientOcclusionMode::GTAO;
+        }
+
+        return AmbientOcclusionMode::Off;
+    }
+
     const char* TextureFilterModeToString(TextureFilterMode mode)
     {
         switch (mode)
@@ -562,9 +590,17 @@ namespace SceneProjectIODetail
              json{
                  {"enabled", effects.IsEnabled()},
                  {"ssaoEnabled", effects.IsSsaoEnabled()},
+                 {"aoMode", AmbientOcclusionModeToString(effects.GetAmbientOcclusionMode())},
                  {"ssaoRadius", effects.GetSsaoRadius()},
                  {"ssaoBias", effects.GetSsaoBias()},
                  {"ssaoPower", effects.GetSsaoPower()},
+                 {"gtaoRadius", effects.GetGtaoRadius()},
+                 {"gtaoThickness", effects.GetGtaoThickness()},
+                 {"gtaoFalloff", effects.GetGtaoFalloff()},
+                 {"gtaoPower", effects.GetGtaoPower()},
+                 {"gtaoDirections", effects.GetGtaoDirections()},
+                 {"gtaoSteps", effects.GetGtaoSteps()},
+                 {"gtaoDenoiseEnabled", effects.IsGtaoDenoiseEnabled()},
                  {"aoStrength", effects.GetAoStrength()},
                  {"exposure", effects.GetExposure()},
                  {"tonemapMode", TonemapModeToString(effects.GetTonemapMode())},
@@ -713,10 +749,28 @@ namespace SceneProjectIODetail
         const json& effectsValue = rendererValue.at("screenSpaceEffects");
         ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
         effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
-        effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
+        if (effectsValue.contains("aoMode"))
+        {
+            effects.SetAmbientOcclusionMode(AmbientOcclusionModeFromString(effectsValue.value(
+                "aoMode",
+                AmbientOcclusionModeToString(effects.GetAmbientOcclusionMode()))));
+        }
+        else
+        {
+            effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
+        }
         effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
         effects.SetSsaoBias(effectsValue.value("ssaoBias", effects.GetSsaoBias()));
         effects.SetSsaoPower(effectsValue.value("ssaoPower", effects.GetSsaoPower()));
+        effects.SetGtaoRadius(effectsValue.value("gtaoRadius", effects.GetGtaoRadius()));
+        effects.SetGtaoThickness(effectsValue.value("gtaoThickness", effects.GetGtaoThickness()));
+        effects.SetGtaoFalloff(effectsValue.value("gtaoFalloff", effects.GetGtaoFalloff()));
+        effects.SetGtaoPower(effectsValue.value("gtaoPower", effects.GetGtaoPower()));
+        effects.SetGtaoDirections(effectsValue.value("gtaoDirections", effects.GetGtaoDirections()));
+        effects.SetGtaoSteps(effectsValue.value("gtaoSteps", effects.GetGtaoSteps()));
+        effects.SetGtaoDenoiseEnabled(effectsValue.value(
+            "gtaoDenoiseEnabled",
+            effects.IsGtaoDenoiseEnabled()));
         effects.SetAoStrength(effectsValue.value("aoStrength", effects.GetAoStrength()));
         effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
         effects.SetTonemapMode(
