@@ -932,6 +932,7 @@ void ScreenSpaceEffects::ResetTaaHistory() const
     m_taaHistoryValid = false;
     m_taaFrameIndex = 0;
     m_bloomHistoryValid = false;
+    m_bloomTemporalWarmupFrames = 0;
 }
 
 void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeight)
@@ -1892,6 +1893,9 @@ void ScreenSpaceEffects::Apply(
 
         if (m_sceneFramebuffer->HasVelocity() && m_bloomTemporalTarget.srvCpuHandle != 0)
         {
+            const float bloomWarmupFactor = m_bloomHistoryValid
+                ? std::min(1.0f, static_cast<float>(m_bloomTemporalWarmupFrames) / 4.0f)
+                : 0.0f;
             m_bloomTemporalShader->Use(false, false);
             m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
             m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
@@ -1899,6 +1903,7 @@ void ScreenSpaceEffects::Apply(
             m_bloomTemporalShader->SetFloat("uDepthThreshold", m_bloomDepthThreshold);
             m_bloomTemporalShader->SetFloat("uTexelSizeX", bloomTexelSize.x);
             m_bloomTemporalShader->SetFloat("uTexelSizeY", bloomTexelSize.y);
+            m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
             m_bloomTemporalShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
             m_bloomTemporalShader->BindTextureSlot(1, m_bloomHistoryTarget.srvCpuHandle);
             m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
@@ -1916,6 +1921,7 @@ void ScreenSpaceEffects::Apply(
                 const_cast<InternalTarget&>(m_bloomHistoryTarget),
                 const_cast<InternalTarget&>(m_bloomTemporalTarget));
             m_bloomHistoryValid = true;
+            ++m_bloomTemporalWarmupFrames;
         }
         else
         {

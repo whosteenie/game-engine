@@ -16,7 +16,8 @@ cbuffer PerPixel : register(b0)
     float uDepthThreshold;
     float uTexelSizeX;
     float uTexelSizeY;
-    float2 _pad0;
+    float uWarmupFactor;
+    float _pad0;
 };
 
 struct PSInput
@@ -63,16 +64,12 @@ float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
     return clamp(historyRgb, currentRgb - extent * 1.25, currentRgb + extent * 1.25);
 }
 
-float ComputeHistoryConfidence(float3 current, float3 history, float motion, float depthCoherent)
+// Reject bright bloom history on pixels that are now dark (occlusion / parallax reveal).
+float ComputeGhostRejectConfidence(float3 current, float3 history)
 {
     const float currentMax = BloomMax(current);
     const float historyMax = BloomMax(history);
-
-    // Reject bright bloom history on pixels that are now dark (occlusion / parallax reveal).
-    float confidence = saturate((currentMax + 0.0015) / (historyMax + 0.0015));
-    confidence = min(confidence, saturate(1.0 - motion * 96.0));
-    confidence *= depthCoherent;
-    return confidence;
+    return saturate((currentMax + 0.0015) / (historyMax + 0.0015));
 }
 
 float3 main(PSInput input) : SV_Target
@@ -90,6 +87,7 @@ float3 main(PSInput input) : SV_Target
     const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
     const float motion = length(velocityNdc);
     const float staticWeight = saturate(1.0 - motion * 72.0);
+    const float movingWeight = saturate(motion * 120.0);
 
     const float3 historySameUv = ClipHistory(
         uHistoryBloom.Sample(uHistoryBloomSampler, uv).rgb,
@@ -127,13 +125,30 @@ float3 main(PSInput input) : SV_Target
 
     if (velocityAccepted > 0.01)
     {
-        const float confidence = ComputeHistoryConfidence(current, historyVelocity, motion, depthCoherent);
-        result = lerp(current, historyVelocity, uBlendFactor * velocityAccepted * confidence);
+        const float confidence = ComputeGhostRejectConfidence(current, historyVelocity);
+        if (confidence >= 0.12)
+        {
+            result = lerp(current, historyVelocity, uBlendFactor * velocityAccepted * confidence);
+        }
     }
     else if (staticWeight > 0.05)
     {
-        const float confidence = ComputeHistoryConfidence(current, historySameUv, motion, 1.0);
-        result = lerp(current, historySameUv, uSameUvBlendFactor * staticWeight * confidence);
+        const float blend = uSameUvBlendFactor * staticWeight * uWarmupFactor;
+        const float3 blended = lerp(current, historySameUv, blend);
+
+        // Never let temporal filtering suppress this frame's spatial bloom halo.
+        if (movingWeight > 0.2)
+        {
+            const float confidence = ComputeGhostRejectConfidence(current, historySameUv);
+            if (confidence >= 0.12)
+            {
+                result = max(current, lerp(current, historySameUv, blend * confidence));
+            }
+        }
+        else
+        {
+            result = max(current, blended);
+        }
     }
 
     return result;

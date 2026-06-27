@@ -393,6 +393,7 @@ private:
     mutable bool m_taaHistoryValid = false;
     mutable int m_taaFrameIndex = 0;
     mutable bool m_bloomHistoryValid = false;
+    mutable int m_bloomTemporalWarmupFrames = 0;
     mutable bool m_radianceHistoryValid = false;
     mutable int m_giFrameIndex = 0;
     mutable glm::mat4 m_giPrevViewProjection{1.0f};
