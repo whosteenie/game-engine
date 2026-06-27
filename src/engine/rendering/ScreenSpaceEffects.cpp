@@ -2802,6 +2802,59 @@ bool ScreenSpaceEffects::IsMsaaPendingReload() const
     return m_msaaSampleCount != GfxContext::Get().GetActiveMsaaSampleCount();
 }
 
+void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
+{
+    m_enabled = source.m_enabled;
+    m_ssaoEnabled = source.m_ssaoEnabled;
+    m_aoMode = source.m_aoMode;
+    m_ssaoRadius = source.m_ssaoRadius;
+    m_ssaoBias = source.m_ssaoBias;
+    m_ssaoPower = source.m_ssaoPower;
+    m_gtaoRadius = source.m_gtaoRadius;
+    m_gtaoThickness = source.m_gtaoThickness;
+    m_gtaoFalloff = source.m_gtaoFalloff;
+    m_gtaoPower = source.m_gtaoPower;
+    m_gtaoDirections = source.m_gtaoDirections;
+    m_gtaoSteps = source.m_gtaoSteps;
+    m_gtaoDenoiseEnabled = source.m_gtaoDenoiseEnabled;
+    m_ssaoShaderDebugMode = source.m_ssaoShaderDebugMode;
+    m_aoStrength = source.m_aoStrength;
+    m_exposure = source.m_exposure;
+    m_tonemapMode = source.m_tonemapMode;
+    m_bloomEnabled = source.m_bloomEnabled;
+    m_bloomThreshold = source.m_bloomThreshold;
+    m_bloomSoftKnee = source.m_bloomSoftKnee;
+    m_bloomIntensity = source.m_bloomIntensity;
+    m_bloomBlurRadius = source.m_bloomBlurRadius;
+    m_bloomTemporalBlendFactor = source.m_bloomTemporalBlendFactor;
+    m_bloomSameUvBlendFactor = source.m_bloomSameUvBlendFactor;
+    m_bloomDepthThreshold = source.m_bloomDepthThreshold;
+    m_debugMode = source.m_debugMode;
+    m_antiAliasingMode = source.m_antiAliasingMode;
+    m_msaaSampleCount = source.m_msaaSampleCount;
+    m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
+    m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;
+    m_renderScale = source.m_renderScale;
+    m_taaBlendFactor = source.m_taaBlendFactor;
+    m_giTemporalBlendFactor = source.m_giTemporalBlendFactor;
+    m_giDepthThreshold = source.m_giDepthThreshold;
+    m_ssgiDenoiseEnabled = source.m_ssgiDenoiseEnabled;
+    m_ssgiNoiseInjectionEnabled = source.m_ssgiNoiseInjectionEnabled;
+    m_ssgiNoiseStrength = source.m_ssgiNoiseStrength;
+    m_ssgiSpatialDepthThreshold = source.m_ssgiSpatialDepthThreshold;
+    m_ssgiSpatialBlurSpread = source.m_ssgiSpatialBlurSpread;
+    m_ssgiRoughnessSpreadMin = source.m_ssgiRoughnessSpreadMin;
+    m_ssgiRoughnessSpreadMax = source.m_ssgiRoughnessSpreadMax;
+    m_ssgiEnabled = source.m_ssgiEnabled;
+    m_ssgiStrength = source.m_ssgiStrength;
+    m_ssgiMaxTraceDistance = source.m_ssgiMaxTraceDistance;
+    m_ssgiStepCount = source.m_ssgiStepCount;
+    m_ssgiThickness = source.m_ssgiThickness;
+    m_smaaThreshold = source.m_smaaThreshold;
+    m_smaaSearchSteps = source.m_smaaSearchSteps;
+    m_ssaoBlurDepthThreshold = source.m_ssaoBlurDepthThreshold;
+}
+
 float ScreenSpaceEffects::GetRenderScale() const
 {
     return m_renderScale;

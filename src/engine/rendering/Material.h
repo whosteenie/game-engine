@@ -29,6 +29,7 @@ public:
     ~Material();
 
     static void ReleaseGlobalGpuResources();
+    void InvalidateCachedShader() const;
 
     using TexturePathResolverFn = std::function<std::string(const std::string& storedPath)>;
     static void SetTexturePathResolver(TexturePathResolverFn resolver);

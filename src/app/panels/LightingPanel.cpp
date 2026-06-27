@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/EditorWidgets.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -121,12 +122,17 @@ void LightingPanel::Draw(
     m_rendererEditContext.scene = &scene;
     RendererEditContext& editContext = m_rendererEditContext;
 
-    const glm::vec3 cameraPosition = camera.GetPosition();
-    ImGui::Text("Camera: (%.1f, %.1f, %.1f)", cameraPosition.x, cameraPosition.y, cameraPosition.z);
+    glm::vec3 cameraPosition = camera.GetPosition();
+    EditorWidgets::SanitizeSignedZero(cameraPosition);
+    ImGui::Text(
+        "Camera: (%.1f, %.1f, %.1f)",
+        cameraPosition.x,
+        cameraPosition.y,
+        cameraPosition.z);
 
     SceneRenderer& renderer = scene.GetRenderer();
     renderer.PrepareGpuResources();
-    if (!renderer.IsGpuResourcesReady() || renderer.HasGpuResourcesInitFailed())
+    if (!renderer.IsGpuResourcesReady())
     {
         ImGui::TextUnformatted("Renderer unavailable:");
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
@@ -968,6 +974,12 @@ void LightingPanel::Draw(
         }
 
         const AntiAliasingMode currentAaMode = screenSpaceEffects.GetAntiAliasingMode();
+        const int msaaSampleCount = screenSpaceEffects.GetMsaaSampleCount();
+        const int activeMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
+        const bool geometryMsaaBlocksTaa =
+            msaaSampleCount > 1 || activeMsaaSampleCount > 1;
+        const bool taaBlocksGeometryMsaa = currentAaMode == AntiAliasingMode::TAA;
+
         if (ImGui::BeginCombo("Mode", AntiAliasingModeLabel(currentAaMode)))
         {
             const AntiAliasingMode selectableModes[] = {
@@ -979,8 +991,15 @@ void LightingPanel::Draw(
             };
             for (const AntiAliasingMode mode : selectableModes)
             {
+                const bool disabled =
+                    geometryMsaaBlocksTaa && mode == AntiAliasingMode::TAA;
+                if (disabled)
+                {
+                    ImGui::BeginDisabled();
+                }
+
                 const bool selected = currentAaMode == mode;
-                if (ImGui::Selectable(AntiAliasingModeLabel(mode), selected) && !selected)
+                if (ImGui::Selectable(AntiAliasingModeLabel(mode), selected) && !selected && !disabled)
                 {
                     ApplyRendererChange(
                         editContext,
@@ -996,18 +1015,35 @@ void LightingPanel::Draw(
                 {
                     ImGui::SetItemDefaultFocus();
                 }
+
+                if (disabled)
+                {
+                    ImGui::EndDisabled();
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                    {
+                        ImGui::SetTooltip("Unavailable while geometry MSAA is enabled.");
+                    }
+                }
             }
 
             ImGui::EndCombo();
         }
 
         ImGui::Separator();
-        ImGui::TextDisabled(
-            "Geometry MSAA supersamples the scene G-buffer (Phase 0 — restart to apply). "
-            "Use post AA mode None when comparing MSAA quality.");
+        if (geometryMsaaBlocksTaa || taaBlocksGeometryMsaa)
+        {
+            ImGui::TextDisabled(
+                "Geometry MSAA above 1× and TAA are mutually exclusive. "
+                "Incompatible options are grayed out; choosing MSAA while TAA is active switches post AA to None.");
+        }
+        else
+        {
+            ImGui::TextDisabled(
+                "Geometry MSAA supersamples the scene pass before post AA (FXAA, TAA, etc.). "
+                "Pick 1× for standard single-sample rendering.");
+        }
 
-        const int msaaSampleCount = screenSpaceEffects.GetMsaaSampleCount();
-        const char* msaaPreview = "Not enabled";
+        const char* msaaPreview = "1× (None)";
         if (msaaSampleCount == 2)
         {
             msaaPreview = "2× MSAA";
@@ -1026,6 +1062,7 @@ void LightingPanel::Draw(
             int count;
             const char* label;
         } kMsaaPresets[] = {
+            {1, "1× (None)"},
             {2, "2× MSAA"},
             {4, "4× MSAA"},
             {8, "8× MSAA"},
@@ -1036,13 +1073,15 @@ void LightingPanel::Draw(
             for (const MsaaPreset& preset : kMsaaPresets)
             {
                 const bool supported = GfxContext::Get().IsMsaaSampleCountSupported(preset.count);
-                if (!supported)
+                const bool blockedByTaa = taaBlocksGeometryMsaa && preset.count > 1;
+                const bool disabled = !supported || blockedByTaa;
+                if (disabled)
                 {
                     ImGui::BeginDisabled();
                 }
 
                 const bool selected = msaaSampleCount == preset.count;
-                if (ImGui::Selectable(preset.label, selected) && !selected && supported)
+                if (ImGui::Selectable(preset.label, selected) && !selected && !disabled)
                 {
                     ApplyRendererChange(
                         editContext,
@@ -1059,46 +1098,59 @@ void LightingPanel::Draw(
                     ImGui::SetItemDefaultFocus();
                 }
 
-                if (!supported)
+                if (disabled)
                 {
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     {
-                        ImGui::SetTooltip("Not supported on this GPU for the scene G-buffer formats.");
+                        if (!supported)
+                        {
+                            ImGui::SetTooltip("Not supported on this GPU for the scene G-buffer formats.");
+                        }
+                        else if (blockedByTaa)
+                        {
+                            ImGui::SetTooltip(
+                                "Unavailable while post AA mode is TAA. "
+                                "Switch post AA to None or another mode first.");
+                        }
                     }
                 }
             }
             ImGui::EndCombo();
         }
 
-        if (msaaSampleCount > 1 && ImGui::SmallButton("Disable geometry MSAA"))
-        {
-            ApplyRendererChange(
-                editContext,
-                scene,
-                "Geometry MSAA",
-                [](Scene& target) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetMsaaSampleCount(1);
-                    target.MarkDirty();
-                });
-        }
-
+        static std::string msaaReloadStatus;
         if (screenSpaceEffects.IsMsaaPendingReload())
         {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                "Restart the editor to apply geometry MSAA.");
+            if (ImGui::Button("Apply geometry MSAA"))
+            {
+                msaaReloadStatus.clear();
+                if (!renderer.ApplyGeometryMsaaReload(scene, viewportWidth, viewportHeight, &msaaReloadStatus))
+                {
+                    if (msaaReloadStatus.empty())
+                    {
+                        msaaReloadStatus = "Failed to reload renderer for geometry MSAA.";
+                    }
+                }
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Recreates the scene renderer pipeline (framebuffer, shaders, post targets) "
+                    "for the selected MSAA sample count.");
+            }
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Reload required");
         }
         else if (msaaSampleCount > 1)
         {
-            ImGui::TextDisabled(
-                "Active geometry MSAA: %d× (matches requested setting).",
-                msaaSampleCount);
+            msaaReloadStatus.clear();
+            ImGui::TextDisabled("Geometry MSAA active: %d×", msaaSampleCount);
         }
 
-        if (currentAaMode == AntiAliasingMode::TAA)
+        if (!msaaReloadStatus.empty())
         {
-            ImGui::TextDisabled("TAA and geometry MSAA are mutually exclusive.");
+            ImGui::TextWrapped("%s", msaaReloadStatus.c_str());
         }
 
         if (currentAaMode == AntiAliasingMode::FXAA)

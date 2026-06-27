@@ -109,6 +109,11 @@ void Material::ReleaseGlobalGpuResources()
     defaults.black.reset();
 }
 
+void Material::InvalidateCachedShader() const
+{
+    m_shader.reset();
+}
+
 void Material::SetTexturePathResolver(TexturePathResolverFn resolver)
 {
     g_texturePathResolver = std::move(resolver);

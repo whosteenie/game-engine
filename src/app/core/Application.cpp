@@ -187,12 +187,6 @@ namespace
             return false;
         }
 
-        const int horizontalNavMask = (1 << ImGuiDir_Left) | (1 << ImGuiDir_Right);
-        if ((g.ActiveIdUsingNavDirMask & horizontalNavMask) != horizontalNavMask)
-        {
-            return false;
-        }
-
         return EditorMouseWrapping::IsActiveItemMouseWrapEligible()
             && ImGui::IsMouseDown(ImGuiMouseButton_Left);
     }

@@ -510,6 +510,19 @@ std::vector<SceneObject>& Scene::GetObjects()
     return m_objectStore->Objects();
 }
 
+void Scene::InvalidateAllMaterialCachedShaders()
+{
+    for (SceneObject& object : m_objectStore->Objects())
+    {
+        if (!object.HasMaterial())
+        {
+            continue;
+        }
+
+        object.GetMaterial().InvalidateCachedShader();
+    }
+}
+
 SceneObject& Scene::GetSceneObject(std::size_t index)
 {
     return m_objectStore->At(index);

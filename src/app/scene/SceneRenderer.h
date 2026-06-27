@@ -75,6 +75,7 @@ public:
     bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
     const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
     void PrepareGpuResources() const { EnsureGpuResources(); }
+    bool ApplyGeometryMsaaReload(Scene& scene, int viewportWidth, int viewportHeight, std::string* outError = nullptr);
 
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;

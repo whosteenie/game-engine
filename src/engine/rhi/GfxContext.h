@@ -114,6 +114,7 @@ public:
 
     // Geometry MSAA (Phase 0: capability probe + active count; resolve pass in later phases).
     int GetActiveMsaaSampleCount() const { return m_activeMsaaSampleCount; }
+    void SetActiveMsaaSampleCount(int sampleCount);
     std::uint8_t GetSupportedMsaaSampleCountsMask() const { return m_supportedMsaaSampleCountsMask; }
     bool IsMsaaSampleCountSupported(int sampleCount) const;
 

@@ -29,6 +29,7 @@
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rendering/ShaderCache.h"
 #include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
@@ -624,5 +625,83 @@ void SceneRenderer::SetTextureMipBias(const float mipBias)
     if (GfxContext::Get().IsInitialized())
     {
         GfxContext::Get().SetMaterialTextureMipBias(m_textureMipBias);
+    }
+}
+
+bool SceneRenderer::ApplyGeometryMsaaReload(
+    Scene& scene,
+    const int viewportWidth,
+    const int viewportHeight,
+    std::string* outError)
+{
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    {
+        if (outError != nullptr)
+        {
+            *outError = "GPU resources are not initialized.";
+        }
+        return false;
+    }
+
+    if (!m_screenSpaceEffects->IsMsaaPendingReload())
+    {
+        return true;
+    }
+
+    if (viewportWidth <= 0 || viewportHeight <= 0)
+    {
+        if (outError != nullptr)
+        {
+            *outError = "Viewport size is invalid.";
+        }
+        return false;
+    }
+
+    const int requestedMsaaSampleCount = m_screenSpaceEffects->GetMsaaSampleCount();
+
+    try
+    {
+        GfxContext::Get().WaitForGpuIdle();
+
+        std::unique_ptr<ScreenSpaceEffects> previousEffects = std::move(m_screenSpaceEffects);
+        m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
+        try
+        {
+            m_screenSpaceEffects->CopySettingsFrom(*previousEffects);
+            scene.InvalidateAllMaterialCachedShaders();
+            ShaderCache::Clear();
+            GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
+            m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
+            previousEffects.reset();
+        }
+        catch (...)
+        {
+            m_screenSpaceEffects = std::move(previousEffects);
+            throw;
+        }
+
+        m_gpuResourcesInitFailed = false;
+        m_gpuResourcesInitError.clear();
+        return true;
+    }
+    catch (const std::exception& exception)
+    {
+        const std::string message = SafeExceptionMessage(exception);
+        EngineLog::Error("scene", "MSAA reload failed: " + message);
+        if (outError != nullptr)
+        {
+            *outError = message;
+        }
+        return false;
+    }
+    catch (...)
+    {
+        EngineLog::Error("scene", "MSAA reload failed: unknown error");
+        if (outError != nullptr)
+        {
+            *outError = "unknown MSAA reload error";
+        }
+        return false;
     }
 }

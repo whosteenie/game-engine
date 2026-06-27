@@ -115,7 +115,12 @@ namespace
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
+        value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
         const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        if (dragged)
+        {
+            value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
+        }
         EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         if (editContext != nullptr)
         {
@@ -354,11 +359,14 @@ namespace
         HandleMaterialFieldEditEvents(editContext);
 
         glm::vec3 emissive = material.GetEmissive();
+        EditorWidgets::SanitizeSignedZero(emissive);
         if (ImGui::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))
         {
+            EditorWidgets::SanitizeSignedZero(emissive);
             material.SetEmissive(emissive);
             scene.MarkDirty();
         }
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         HandleMaterialFieldEditEvents(editContext);
         if (ImGui::IsItemHovered())
         {
@@ -1025,6 +1033,7 @@ namespace
 
         if (ImGui::DragFloat3("Offset", &collider.offset.x, 0.01f))
         {
+            EditorWidgets::SanitizeSignedZero(collider.offset);
             scene.MarkDirty();
         }
         EditorMouseWrapping::MarkCurrentItemForMouseWrap();

@@ -1,5 +1,6 @@
 #include "app/inspector/InspectorTransform.h"
 
+#include "app/editor/EditorWidgets.h"
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/scene/Scene.h"
 #include "engine/scene/SceneObject.h"
@@ -31,6 +32,9 @@ WorldTransformState GetObjectWorldTransformState(const Scene& scene, int objectI
     state.position = worldTransform.position;
     state.rotationDegrees = worldTransform.GetRotationDegrees();
     state.scale = worldTransform.scale;
+    EditorWidgets::SanitizeSignedZero(state.position);
+    EditorWidgets::SanitizeSignedZero(state.rotationDegrees);
+    EditorWidgets::SanitizeSignedZero(state.scale);
     return state;
 }
 

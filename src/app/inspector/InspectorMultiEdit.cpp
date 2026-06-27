@@ -1,6 +1,7 @@
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/undo/UndoCommand.h"
 #include "app/editor/EditorMouseWrapping.h"
+#include "app/editor/EditorWidgets.h"
 
 #include <imgui.h>
 
@@ -92,7 +93,12 @@ namespace
         }
         else
         {
+            field.value[axis] = EditorWidgets::SanitizeSignedZero(field.value[axis]);
             changed = ImGui::DragFloat("##value", &field.value[axis], dragSpeed, 0.0f, 0.0f, format);
+            if (changed)
+            {
+                field.value[axis] = EditorWidgets::SanitizeSignedZero(field.value[axis]);
+            }
             EditorMouseWrapping::MarkCurrentItemForMouseWrap();
             if (editContext != nullptr)
             {

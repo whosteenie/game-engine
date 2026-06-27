@@ -146,6 +146,7 @@ public:
     void SetMsaaSampleCount(int sampleCount);
     bool IsMsaaPendingReload() const;
     bool IsMsaaEnabled() const { return GetMsaaSampleCount() > 1; }
+    void CopySettingsFrom(const ScreenSpaceEffects& source);
 
     float GetFxaaSubpixQuality() const;
     void SetFxaaSubpixQuality(float quality);

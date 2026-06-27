@@ -1055,6 +1055,22 @@ bool GfxContext::IsMsaaSampleCountSupported(const int sampleCount) const
     return (m_supportedMsaaSampleCountsMask & static_cast<std::uint8_t>(1u << sampleCount)) != 0;
 }
 
+void GfxContext::SetActiveMsaaSampleCount(const int sampleCount)
+{
+    if (sampleCount <= 1)
+    {
+        m_activeMsaaSampleCount = 1;
+        return;
+    }
+
+    if (!IsMsaaSampleCountSupported(sampleCount))
+    {
+        return;
+    }
+
+    m_activeMsaaSampleCount = sampleCount;
+}
+
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const
 {
     outWidth = m_width;

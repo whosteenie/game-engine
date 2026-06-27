@@ -75,6 +75,7 @@ public:
 
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();
+    void InvalidateAllMaterialCachedShaders();
     SceneObject& GetSceneObject(std::size_t index);
     const SceneObject& GetSceneObject(std::size_t index) const;
     int FindObjectIndex(SceneObjectId id) const;

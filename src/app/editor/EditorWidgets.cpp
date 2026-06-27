@@ -6,11 +6,23 @@ namespace EditorWidgets
 {
     bool ColorEditVec3(const char* label, glm::vec3& value)
     {
-        return ImGui::ColorEdit3(label, &value.x);
+        SanitizeSignedZero(value);
+        const bool changed = ImGui::ColorEdit3(label, &value.x);
+        if (changed)
+        {
+            SanitizeSignedZero(value);
+        }
+        return changed;
     }
 
     bool SliderVec3(const char* label, glm::vec3& value, float min, float max)
     {
-        return ImGui::SliderFloat3(label, &value.x, min, max);
+        SanitizeSignedZero(value);
+        const bool changed = ImGui::SliderFloat3(label, &value.x, min, max);
+        if (changed)
+        {
+            SanitizeSignedZero(value);
+        }
+        return changed;
     }
 }
