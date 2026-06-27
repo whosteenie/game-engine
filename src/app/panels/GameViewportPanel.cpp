@@ -62,9 +62,48 @@ void GameViewportPanel::ClearRenderTarget() const
     }
 }
 
-void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFrame)
+void GameViewportPanel::DrawPlaceholder(const ImVec2& available, const bool hasSceneCamera)
+{
+    ImGui::Dummy(available);
+    const ImVec2 cursor = ImGui::GetItemRectMin();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
+    drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
+
+    const char* primaryLabel = hasSceneCamera ? "Game View" : "No camera in scene";
+    const char* secondaryLabel =
+        hasSceneCamera ? nullptr : "Add a Camera object to preview";
+    const ImVec2 primarySize = ImGui::CalcTextSize(primaryLabel);
+    const float lineSpacing = ImGui::GetTextLineHeightWithSpacing() - ImGui::GetTextLineHeight();
+    float totalHeight = primarySize.y;
+    ImVec2 secondarySize(0.0f, 0.0f);
+    if (secondaryLabel != nullptr)
+    {
+        secondarySize = ImGui::CalcTextSize(secondaryLabel);
+        totalHeight += lineSpacing + secondarySize.y;
+    }
+
+    float textY = cursor.y + (available.y - totalHeight) * 0.5f;
+    drawList->AddText(
+        ImVec2(cursor.x + (available.x - primarySize.x) * 0.5f, textY),
+        IM_COL32(130, 130, 140, 255),
+        primaryLabel);
+
+    if (secondaryLabel != nullptr)
+    {
+        textY += primarySize.y + lineSpacing;
+        drawList->AddText(
+            ImVec2(cursor.x + (available.x - secondarySize.x) * 0.5f, textY),
+            IM_COL32(100, 100, 110, 255),
+            secondaryLabel);
+    }
+}
+
+void GameViewportPanel::Draw(const bool hasSceneCamera)
 {
     m_interactionRect = {};
+    m_compositeDrawList = nullptr;
+    m_hasCompositeTarget = false;
 
     EditorPanelConstraints::ApplySceneViewPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Game View", m_showPanel))
@@ -88,16 +127,10 @@ void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFr
         m_renderHeight = requestedHeight;
     }
 
-    const bool showRenderedFrame =
-        hasSceneCamera && hasRenderedFrame && m_framebuffer.IsValid()
-        && m_framebuffer.GetColorTexture() != 0;
+    const bool canCompositeFrame =
+        hasSceneCamera && m_framebuffer.IsValid() && m_framebuffer.GetColorTexture() != 0;
 
-    if (showRenderedFrame)
-    {
-        const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
-        ImGui::Image(textureId, available);
-    }
-    else
+    if (canCompositeFrame)
     {
         ImGui::Dummy(available);
         const ImVec2 cursor = ImGui::GetItemRectMin();
@@ -105,33 +138,14 @@ void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFr
         const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
         drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
 
-        const char* primaryLabel = hasSceneCamera ? "Game View" : "No camera in scene";
-        const char* secondaryLabel =
-            hasSceneCamera ? nullptr : "Add a Camera object to preview";
-        const ImVec2 primarySize = ImGui::CalcTextSize(primaryLabel);
-        const float lineSpacing = ImGui::GetTextLineHeightWithSpacing() - ImGui::GetTextLineHeight();
-        float totalHeight = primarySize.y;
-        ImVec2 secondarySize(0.0f, 0.0f);
-        if (secondaryLabel != nullptr)
-        {
-            secondarySize = ImGui::CalcTextSize(secondaryLabel);
-            totalHeight += lineSpacing + secondarySize.y;
-        }
-
-        float textY = cursor.y + (available.y - totalHeight) * 0.5f;
-        drawList->AddText(
-            ImVec2(cursor.x + (available.x - primarySize.x) * 0.5f, textY),
-            IM_COL32(130, 130, 140, 255),
-            primaryLabel);
-
-        if (secondaryLabel != nullptr)
-        {
-            textY += primarySize.y + lineSpacing;
-            drawList->AddText(
-                ImVec2(cursor.x + (available.x - secondarySize.x) * 0.5f, textY),
-                IM_COL32(100, 100, 110, 255),
-                secondaryLabel);
-        }
+        m_compositeDrawList = drawList;
+        m_compositeMin = cursor;
+        m_compositeMax = regionMax;
+        m_hasCompositeTarget = true;
+    }
+    else
+    {
+        DrawPlaceholder(available, hasSceneCamera);
     }
 
     const ImVec2 imageMin = ImGui::GetItemRectMin();
@@ -141,4 +155,20 @@ void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFr
     m_interactionRect.hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
 
     ImGui::End();
+}
+
+void GameViewportPanel::CompositeRenderedFrame()
+{
+    if (!m_hasCompositeTarget
+        || m_compositeDrawList == nullptr
+        || !m_framebuffer.IsValid()
+        || m_framebuffer.GetColorTexture() == 0)
+    {
+        return;
+    }
+
+    const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
+    m_compositeDrawList->AddImage(textureId, m_compositeMin, m_compositeMax);
+    m_hasCompositeTarget = false;
+    m_compositeDrawList = nullptr;
 }

@@ -134,6 +134,8 @@ void SceneViewportPanel::DrawViewGizmo(
 void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
 {
     m_interactionRect = {};
+    m_compositeDrawList = nullptr;
+    m_hasCompositeTarget = false;
 
     EditorPanelConstraints::ApplySceneViewPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Scene View", m_showPanel))
@@ -161,8 +163,16 @@ void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
 
     if (m_framebuffer.IsValid() && m_framebuffer.GetColorTexture() != 0)
     {
-        const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
-        ImGui::Image(textureId, available);
+        ImGui::Dummy(available);
+        const ImVec2 cursor = ImGui::GetItemRectMin();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
+        drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
+
+        m_compositeDrawList = drawList;
+        m_compositeMin = cursor;
+        m_compositeMax = regionMax;
+        m_hasCompositeTarget = true;
     }
     else
     {
@@ -191,4 +201,20 @@ void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
     DrawViewGizmo(camera, scene, imageMin, imageMax);
 
     ImGui::End();
+}
+
+void SceneViewportPanel::CompositeRenderedFrame()
+{
+    if (!m_hasCompositeTarget
+        || m_compositeDrawList == nullptr
+        || !m_framebuffer.IsValid()
+        || m_framebuffer.GetColorTexture() == 0)
+    {
+        return;
+    }
+
+    const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
+    m_compositeDrawList->AddImage(textureId, m_compositeMin, m_compositeMax);
+    m_hasCompositeTarget = false;
+    m_compositeDrawList = nullptr;
 }

@@ -4,10 +4,14 @@
 
 #include "engine/rendering/Framebuffer.h"
 
+#include <imgui.h>
+
 class GameViewportPanel
 {
 public:
-    void Draw(bool hasSceneCamera, bool hasRenderedFrame);
+    void Draw(bool hasSceneCamera);
+
+    void CompositeRenderedFrame();
 
     bool& ShowPanel() { return m_showPanel; }
     const bool& ShowPanel() const { return m_showPanel; }
@@ -27,9 +31,15 @@ public:
     void ClearRenderTarget() const;
 
 private:
+    void DrawPlaceholder(const ImVec2& available, bool hasSceneCamera);
+
     bool m_showPanel = true;
     mutable Framebuffer m_framebuffer;
     mutable int m_renderWidth = 0;
     mutable int m_renderHeight = 0;
     mutable EditorViewportRect m_interactionRect{};
+    ImDrawList* m_compositeDrawList = nullptr;
+    ImVec2 m_compositeMin{};
+    ImVec2 m_compositeMax{};
+    bool m_hasCompositeTarget = false;
 };

@@ -5,15 +5,17 @@
 #include "engine/rendering/Framebuffer.h"
 
 #include <glm/glm.hpp>
+#include <imgui.h>
 
 class Camera;
 class Scene;
-struct ImVec2;
 
 class SceneViewportPanel
 {
 public:
     void Draw(Camera& camera, const Scene& scene);
+
+    void CompositeRenderedFrame();
 
     bool& ShowPanel() { return m_showPanel; }
     const bool& ShowPanel() const { return m_showPanel; }
@@ -47,4 +49,8 @@ private:
     bool m_wasUsingViewManipulate = false;
     glm::vec3 m_viewManipulateFocus{0.0f};
     float m_viewManipulateDistance = 8.0f;
+    ImDrawList* m_compositeDrawList = nullptr;
+    ImVec2 m_compositeMin{};
+    ImVec2 m_compositeMax{};
+    bool m_hasCompositeTarget = false;
 };

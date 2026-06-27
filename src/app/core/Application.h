@@ -96,7 +96,6 @@ private:
     PlayModeController m_playModeController;
     UndoStack m_playModeDiscardUndoStack;
     bool m_wasPlayModeActive = false;
-    bool m_gameViewRenderedLastFrame = false;
     bool m_imguiFrameActive = false;
     bool m_gfxFrameActive = false;
     bool m_globalEditorLayoutLoaded = false;

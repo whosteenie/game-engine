@@ -4,6 +4,7 @@
 #include "app/core/Application.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorDockSpace.h"
+#include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorMouseWrapping.h"
 #include "app/editor/EditorTopToolbar.h"
 #include "app/editor/EditorViewportRect.h"
@@ -674,8 +675,6 @@ void Application::Update(double deltaTime)
         const bool deferLayoutBuild = m_editorLayoutRestoredFromDisk && m_pendingEditorLayoutValidation;
         m_editorDockSpace->Begin(m_editorTopToolbar->GetHeight(), deferLayoutBuild);
         m_editorDockSpace->CommitLayout();
-        m_sceneViewportPanel->Draw(*m_camera, *editorScene);
-
         Scene* gameScene = m_scene.get();
         if (m_playModeController.IsActive())
         {
@@ -688,7 +687,8 @@ void Application::Update(double deltaTime)
 
         const bool hasGameSceneCamera =
             gameScene != nullptr && SceneCamera::SceneHasActiveCamera(*gameScene);
-        m_gameViewportPanel->Draw(hasGameSceneCamera, m_gameViewRenderedLastFrame);
+        m_gameViewportPanel->Draw(hasGameSceneCamera);
+        m_sceneViewportPanel->Draw(*m_camera, *editorScene);
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
@@ -833,6 +833,10 @@ void Application::Update(double deltaTime)
             viewportPtr};
 
         m_sceneEditingController->Update(*GetEditorTargetScene(), editorUpdateContext);
+
+        EditorPanelConstraints::SyncViewportDockVisibleWindow("Scene View", "Game View");
+        EditorPanelConstraints::ClearInactiveDockTabDrawList("Scene View");
+        EditorPanelConstraints::ClearInactiveDockTabDrawList("Game View");
     }
 
     m_input->EndFrame();
@@ -1191,8 +1195,6 @@ void Application::Render()
         GfxContext::Get().WaitForSwapchainFrames();
     }
 
-    m_gameViewRenderedLastFrame = false;
-
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
         RunApplicationPhase("scene-view-render", [&]() {
@@ -1209,6 +1211,7 @@ void Application::Render()
                     m_sceneViewportPanel->GetRenderWidth(),
                     m_sceneViewportPanel->GetRenderHeight(),
                     m_sceneViewportPanel->GetFramebuffer());
+                m_sceneViewportPanel->CompositeRenderedFrame();
             }
         });
     }
@@ -1256,7 +1259,7 @@ void Application::Render()
                             gameViewHeight,
                             m_gameViewportPanel->GetFramebuffer(),
                             gameViewOptions);
-                        m_gameViewRenderedLastFrame = true;
+                        m_gameViewportPanel->CompositeRenderedFrame();
                     }
                 }
             }
