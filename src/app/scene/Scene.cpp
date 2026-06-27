@@ -748,5 +748,6 @@ void Scene::Render(
     std::uintptr_t targetFramebuffer,
     const SceneRenderOptions& options) const
 {
-    m_renderer->Render(*this, camera, viewportWidth, viewportHeight, targetFramebuffer, options);
+    const_cast<SceneRenderer&>(GetRenderer()).Render(
+        *this, camera, viewportWidth, viewportHeight, targetFramebuffer, options);
 }
