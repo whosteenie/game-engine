@@ -102,12 +102,17 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
     const glm::vec2 gridSnapOrigin(
         std::floor(cameraPosition.x / m_cellSize) * m_cellSize,
         std::floor(cameraPosition.z / m_cellSize) * m_cellSize);
+    const float distXZ =
+        glm::length(glm::vec2(cameraPosition.x - gridSnapOrigin.x, cameraPosition.z - gridSnapOrigin.y));
+    const float heightBoost =
+        glm::clamp(distXZ / (m_halfExtent * 0.35f), 0.0f, 1.0f) * 0.08f;
+    const float effectiveGridHeight = m_gridHeight + heightBoost;
 
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
     m_shader->SetVec2("uGridSnapOrigin", gridSnapOrigin);
-    m_shader->SetFloat("uGridHeight", m_gridHeight);
+    m_shader->SetFloat("uGridHeight", effectiveGridHeight);
     m_shader->SetVec3("uColor", glm::vec3(0.35f, 0.38f, 0.42f));
     m_shader->SetVec3("uCameraPosition", cameraPosition);
     m_shader->SetFloat("uCellSize", m_cellSize);

@@ -56,9 +56,12 @@ PSOutput main(PSInput input)
     float lineStrength = max(max(minor * 0.45, major * 0.75), axisMask * minor * 0.9);
 
     float3 viewDir = normalize(uCameraPosition - input.worldPos);
-    float grazeFade = smoothstep(0.04, 0.22, abs(viewDir.y));
-
     float distXZ = length(input.worldPos.xz - uCameraPosition.xz);
+    float grazeFadeNear = smoothstep(0.015, 0.12, abs(viewDir.y));
+    // Grazing-angle fade is only needed up close; at distance it erases lines over coplanar floor geometry.
+    float nearGrazeWeight = 1.0 - smoothstep(uFadeStart * 0.2, uFadeStart * 0.75, distXZ);
+    float grazeFade = lerp(1.0, grazeFadeNear, nearGrazeWeight);
+
     float distFade = 1.0 - smoothstep(uFadeStart, uFadeEnd, distXZ);
 
     float alpha = lineStrength * grazeFade * distFade;
