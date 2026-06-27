@@ -1561,28 +1561,30 @@ void ScreenSpaceEffects::Apply(
         m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMin", m_ssgiRoughnessSpreadMin);
         m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMax", m_ssgiRoughnessSpreadMax);
         m_ssgiDenoiseSpatialShader->SetFloat("uNormalPower", 4.0f);
-        m_ssgiDenoiseSpatialShader->BindTextureSlot(0, temporalInputSrv);
-        m_ssgiDenoiseSpatialShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_ssgiDenoiseSpatialShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
-        DrawFullscreenToTarget(
-            *m_ssgiDenoiseSpatialShader,
-            const_cast<InternalTarget&>(m_radianceSpatialBlurTarget),
-            m_width,
-            m_height,
-            radianceClear);
+        static constexpr float kSsgiAtrousStepScales[] = {1.0f, 2.0f, 4.0f, 2.0f};
+        std::uintptr_t atrousInputSrv = temporalInputSrv;
+        bool writeToBlurTarget = true;
+        for (const float stepScale : kSsgiAtrousStepScales)
+        {
+            InternalTarget& outputTarget = writeToBlurTarget
+                ? const_cast<InternalTarget&>(m_radianceSpatialBlurTarget)
+                : const_cast<InternalTarget&>(m_radianceSpatialTarget);
+            m_ssgiDenoiseSpatialShader->SetFloat("uStepScale", stepScale);
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(0, atrousInputSrv);
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+            DrawFullscreenToTarget(
+                *m_ssgiDenoiseSpatialShader,
+                outputTarget,
+                m_width,
+                m_height,
+                radianceClear);
+            atrousInputSrv = outputTarget.srvCpuHandle;
+            writeToBlurTarget = !writeToBlurTarget;
+        }
 
-        m_ssgiDenoiseSpatialShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
-        m_ssgiDenoiseSpatialShader->BindTextureSlot(0, m_radianceSpatialBlurTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_ssgiDenoiseSpatialShader,
-            const_cast<InternalTarget&>(m_radianceSpatialTarget),
-            m_width,
-            m_height,
-            radianceClear);
-
-        temporalInputSrv = m_radianceSpatialTarget.srvCpuHandle;
+        temporalInputSrv = atrousInputSrv;
     }
 
     const bool runGiTemporal =
