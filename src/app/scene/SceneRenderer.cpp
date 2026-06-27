@@ -6,6 +6,8 @@
 
 #include "app/scene/SceneRenderer.h"
 
+#include "app/project/SceneProjectIODetail.h"
+
 #include <imgui.h>
 #include <ImGuizmo.h>
 
@@ -39,6 +41,20 @@
 SceneRenderer::SceneRenderer() = default;
 
 SceneRenderer::~SceneRenderer() = default;
+
+void SceneRenderer::MergePendingRendererSettings(const nlohmann::json& delta)
+{
+    SceneProjectIODetail::MergeRendererSettings(m_pendingRendererSettings, delta);
+    m_hasPendingRendererSettings = true;
+}
+
+nlohmann::json SceneRenderer::TakePendingRendererSettings()
+{
+    nlohmann::json pending = std::move(m_pendingRendererSettings);
+    m_pendingRendererSettings = nlohmann::json::object();
+    m_hasPendingRendererSettings = false;
+    return pending;
+}
 
 void SceneRenderer::ThrowGpuResourcesUnavailable() const
 {
@@ -352,6 +368,8 @@ void SceneRenderer::Render(
     {
         return;
     }
+
+    SceneProjectIODetail::ApplyDeferredRendererSettings(const_cast<Scene&>(scene));
 
     GfxContext::Get().ResetDrawSrvTable();
 

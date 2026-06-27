@@ -6,6 +6,7 @@
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
+#include "app/project/SceneProjectIODetail.h"
 #include "app/undo/UndoCommand.h"
 #include "engine/camera/Camera.h"
 #include "engine/lighting/CascadedShadowMap.h"
@@ -132,6 +133,7 @@ void LightingPanel::Draw(
 
     SceneRenderer& renderer = scene.GetRenderer();
     renderer.PrepareGpuResources();
+    SceneProjectIODetail::ApplyDeferredRendererSettings(scene);
     if (!renderer.IsGpuResourcesReady())
     {
         ImGui::TextUnformatted("Renderer unavailable:");

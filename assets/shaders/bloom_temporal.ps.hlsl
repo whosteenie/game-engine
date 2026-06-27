@@ -30,6 +30,11 @@ float2 VelocityNdcToUvDelta(float2 velocityNdc)
     return float2(velocityNdc.x * 0.5, -velocityNdc.y * 0.5);
 }
 
+float BloomMax(float3 rgb)
+{
+    return max(rgb.r, max(rgb.g, rgb.b));
+}
+
 float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
 {
     const float3 currentRgb = uCurrentBloom.Sample(uCurrentBloomSampler, uv).rgb;
@@ -58,6 +63,18 @@ float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
     return clamp(historyRgb, currentRgb - extent * 1.25, currentRgb + extent * 1.25);
 }
 
+float ComputeHistoryConfidence(float3 current, float3 history, float motion, float depthCoherent)
+{
+    const float currentMax = BloomMax(current);
+    const float historyMax = BloomMax(history);
+
+    // Reject bright bloom history on pixels that are now dark (occlusion / parallax reveal).
+    float confidence = saturate((currentMax + 0.0015) / (historyMax + 0.0015));
+    confidence = min(confidence, saturate(1.0 - motion * 96.0));
+    confidence *= depthCoherent;
+    return confidence;
+}
+
 float3 main(PSInput input) : SV_Target
 {
     const float2 uv = input.texCoord;
@@ -65,44 +82,59 @@ float3 main(PSInput input) : SV_Target
     const float depth = uDepth.Sample(uDepthSampler, uv).r;
     const float3 current = uCurrentBloom.Sample(uCurrentBloomSampler, uv).rgb;
 
-    if (depth >= 0.9999)
+    if (depth >= 0.9999 || uHistoryValid <= 0.5)
     {
         return current;
     }
 
-    float3 history = current;
-    if (uHistoryValid > 0.5)
+    const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
+    const float motion = length(velocityNdc);
+    const float staticWeight = saturate(1.0 - motion * 72.0);
+
+    const float3 historySameUv = ClipHistory(
+        uHistoryBloom.Sample(uHistoryBloomSampler, uv).rgb,
+        uv,
+        texelSize);
+
+    float velocityAccepted = 0.0;
+    float depthCoherent = 0.0;
+    float3 historyVelocity = current;
+
+    const float2 historyUv = uv - VelocityNdcToUvDelta(velocityNdc);
+    if (motion > 1e-6
+        && historyUv.x >= 0.0 && historyUv.x <= 1.0
+        && historyUv.y >= 0.0 && historyUv.y <= 1.0)
     {
-        const float3 historySameUv = ClipHistory(
-            uHistoryBloom.Sample(uHistoryBloomSampler, uv).rgb,
-            uv,
-            texelSize);
+        const float depthAtHistoryUv = uDepth.Sample(uDepthSampler, historyUv).r;
+        const float depthDelta = depthAtHistoryUv - depth;
 
-        float3 historyVelocity = historySameUv;
-        float velocityAccepted = 0.0;
+        // New closer surface at this pixel — do not pull history forward.
+        const float disoccluded = step(uDepthThreshold, depthDelta);
+        depthCoherent = (1.0 - disoccluded)
+            * (1.0 - saturate(abs(depthDelta) / max(uDepthThreshold, 1e-5)));
 
-        const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
-        const float2 historyUv = uv - VelocityNdcToUvDelta(velocityNdc);
-        if (length(velocityNdc) > 1e-6
-            && historyUv.x >= 0.0 && historyUv.x <= 1.0
-            && historyUv.y >= 0.0 && historyUv.y <= 1.0)
+        if (depthCoherent > 0.01)
         {
-            const float historyDepth = uDepth.Sample(uDepthSampler, historyUv).r;
-            if (abs(historyDepth - depth) <= uDepthThreshold)
-            {
-                historyVelocity = ClipHistory(
-                    uHistoryBloom.Sample(uHistoryBloomSampler, historyUv).rgb,
-                    uv,
-                    texelSize);
-                velocityAccepted = saturate(length(velocityNdc) * 48.0);
-            }
+            historyVelocity = ClipHistory(
+                uHistoryBloom.Sample(uHistoryBloomSampler, historyUv).rgb,
+                uv,
+                texelSize);
+            velocityAccepted = saturate(motion * 48.0) * depthCoherent;
         }
-
-        history = lerp(historySameUv, historyVelocity, velocityAccepted);
-        const float3 sameUvResult = lerp(current, historySameUv, uSameUvBlendFactor);
-        const float3 velocityResult = lerp(current, history, uBlendFactor);
-        return lerp(sameUvResult, velocityResult, velocityAccepted);
     }
 
-    return current;
+    float3 result = current;
+
+    if (velocityAccepted > 0.01)
+    {
+        const float confidence = ComputeHistoryConfidence(current, historyVelocity, motion, depthCoherent);
+        result = lerp(current, historyVelocity, uBlendFactor * velocityAccepted * confidence);
+    }
+    else if (staticWeight > 0.05)
+    {
+        const float confidence = ComputeHistoryConfidence(current, historySameUv, motion, 1.0);
+        result = lerp(current, historySameUv, uSameUvBlendFactor * staticWeight * confidence);
+    }
+
+    return result;
 }

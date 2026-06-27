@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -79,6 +80,10 @@ public:
     void ResetGpuResourcesIfInitFailed() const;
     bool ApplyGeometryMsaaReload(Scene& scene, int viewportWidth, int viewportHeight, std::string* outError = nullptr);
 
+    void MergePendingRendererSettings(const nlohmann::json& delta);
+    bool HasPendingRendererSettings() const { return m_hasPendingRendererSettings; }
+    nlohmann::json TakePendingRendererSettings();
+
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
     void EnsureGpuResources() const;
@@ -105,4 +110,6 @@ private:
     mutable bool m_gpuResourcesInitFailed = false;
     mutable bool m_gpuResourcesInitInProgress = false;
     mutable std::string m_gpuResourcesInitError;
+    nlohmann::json m_pendingRendererSettings;
+    bool m_hasPendingRendererSettings = false;
 };

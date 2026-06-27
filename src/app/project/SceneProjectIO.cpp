@@ -34,6 +34,7 @@
 #include "engine/rendering/TextureSamplerSettings.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1012,7 +1013,7 @@ namespace SceneProjectIODetail
         }
     }
 
-    void ApplyRendererSettingsDelta(Scene& scene, const json& delta)
+    void ApplyRendererSettingsDelta(Scene& scene, const json& delta, const bool deferIfGpuNotReady = true)
     {
         if (!delta.is_object())
         {
@@ -1020,37 +1021,74 @@ namespace SceneProjectIODetail
         }
 
         SceneRenderer& renderer = scene.GetRenderer();
-        const bool gpuReady = renderer.IsGpuResourcesReady();
 
+        LoadedScreenSpaceAaSettings aaToApply{};
+        bool applyAaSettings = false;
         if (delta.contains("screenSpaceEffects"))
         {
             const json& effectsValue = delta.at("screenSpaceEffects");
             if (effectsValue.contains("antiAliasingMode") || effectsValue.contains("msaaSampleCount"))
             {
-                const ScreenSpaceEffects& currentEffects = renderer.GetScreenSpaceEffects();
-                const AntiAliasingMode aaMode = effectsValue.contains("antiAliasingMode")
-                    ? AntiAliasingModeFromString(
-                          effectsValue.at("antiAliasingMode").get<std::string>())
-                    : currentEffects.GetAntiAliasingMode();
-                const int msaaSampleCount = effectsValue.contains("msaaSampleCount")
-                    ? effectsValue.at("msaaSampleCount").get<int>()
-                    : currentEffects.GetMsaaSampleCount();
-                const LoadedScreenSpaceAaSettings loadedAaSettings =
-                    NormalizeLoadedScreenSpaceAaSettings(aaMode, msaaSampleCount);
-                if (loadedAaSettings.msaaSampleCount > 1)
+                AntiAliasingMode aaMode = AntiAliasingMode::None;
+                int msaaSampleCount = 1;
+                if (renderer.IsGpuResourcesReady())
+                {
+                    const ScreenSpaceEffects& currentEffects = renderer.GetScreenSpaceEffects();
+                    aaMode = currentEffects.GetAntiAliasingMode();
+                    msaaSampleCount = currentEffects.GetMsaaSampleCount();
+                }
+                if (effectsValue.contains("antiAliasingMode"))
+                {
+                    aaMode = AntiAliasingModeFromString(
+                        effectsValue.at("antiAliasingMode").get<std::string>());
+                }
+                if (effectsValue.contains("msaaSampleCount"))
+                {
+                    msaaSampleCount = effectsValue.at("msaaSampleCount").get<int>();
+                }
+
+                aaToApply = NormalizeLoadedScreenSpaceAaSettings(aaMode, msaaSampleCount);
+                applyAaSettings = true;
+                if (aaToApply.msaaSampleCount > 1)
                 {
                     ShaderCache::Clear();
                 }
-                renderer.PrepareGpuResourcesForGeometryMsaa(loadedAaSettings.msaaSampleCount);
-                if (renderer.IsGpuResourcesReady() && loadedAaSettings.msaaSampleCount > 1)
+                renderer.PrepareGpuResourcesForGeometryMsaa(aaToApply.msaaSampleCount);
+                if (renderer.IsGpuResourcesReady() && aaToApply.msaaSampleCount > 1)
                 {
                     scene.InvalidateAllMaterialCachedShaders();
                 }
-
-                ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
-                effects.SetAntiAliasingMode(loadedAaSettings.antiAliasingMode);
-                effects.SetMsaaSampleCount(loadedAaSettings.msaaSampleCount);
             }
+        }
+
+        if (GfxContext::Get().IsInitialized())
+        {
+            renderer.PrepareGpuResources();
+        }
+
+        const bool gpuReady = renderer.IsGpuResourcesReady();
+        if (!gpuReady)
+        {
+            if (delta.contains("directionalShadow"))
+            {
+                ApplyDirectionalShadowDelta(
+                    renderer.GetDirectionalShadowSettings(),
+                    delta.at("directionalShadow"));
+            }
+
+            if (deferIfGpuNotReady)
+            {
+                renderer.MergePendingRendererSettings(delta);
+                scene.MarkDirty();
+                return;
+            }
+        }
+
+        if (gpuReady && applyAaSettings)
+        {
+            ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+            effects.SetAntiAliasingMode(aaToApply.antiAliasingMode);
+            effects.SetMsaaSampleCount(aaToApply.msaaSampleCount);
         }
 
         if (gpuReady)
@@ -1095,6 +1133,44 @@ namespace SceneProjectIODetail
         }
 
         scene.MarkDirty();
+    }
+
+    void MergeRendererSettings(json& target, const json& delta)
+    {
+        if (!delta.is_object())
+        {
+            target = delta;
+            return;
+        }
+
+        if (!target.is_object())
+        {
+            target = json::object();
+        }
+
+        for (const auto& [key, value] : delta.items())
+        {
+            if (value.is_object() && target.contains(key) && target.at(key).is_object())
+            {
+                MergeRendererSettings(target[key], value);
+            }
+            else
+            {
+                target[key] = value;
+            }
+        }
+    }
+
+    void ApplyDeferredRendererSettings(Scene& scene)
+    {
+        SceneRenderer& renderer = scene.GetRenderer();
+        if (!renderer.HasPendingRendererSettings())
+        {
+            return;
+        }
+
+        const json pending = renderer.TakePendingRendererSettings();
+        ApplyRendererSettingsDelta(scene, pending, false);
     }
 
     void DeserializeRenderer(Scene& scene, const json& rendererValue)

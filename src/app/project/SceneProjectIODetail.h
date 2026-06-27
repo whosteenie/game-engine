@@ -40,5 +40,7 @@ namespace SceneProjectIODetail
 
     nlohmann::json SerializeRenderer(const Scene& scene);
     void DeserializeRenderer(Scene& scene, const nlohmann::json& rendererValue);
-    void ApplyRendererSettingsDelta(Scene& scene, const nlohmann::json& delta);
+    void ApplyRendererSettingsDelta(Scene& scene, const nlohmann::json& delta, bool deferIfGpuNotReady = true);
+    void MergeRendererSettings(nlohmann::json& target, const nlohmann::json& delta);
+    void ApplyDeferredRendererSettings(Scene& scene);
 }
