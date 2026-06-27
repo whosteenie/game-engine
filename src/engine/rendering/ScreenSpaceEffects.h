@@ -226,6 +226,8 @@ private:
         std::uint32_t rtvIndex = UINT32_MAX;
         int width = 0;
         int height = 0;
+        // Tracked D3D12 resource state; 0 means pixel-shader-resource (set in CreateInternalTarget).
+        mutable std::uint32_t resourceState = 0;
     };
 
     void CreateFullscreenQuad();

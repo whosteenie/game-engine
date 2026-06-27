@@ -616,6 +616,7 @@ void ScreenSpaceEffects::CreateInternalTarget(
     target.allocation = allocation;
     target.width = width;
     target.height = height;
+    target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
     target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
     target.rtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
@@ -642,6 +643,8 @@ void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
         target.srvCpuHandle = 0;
         target.width = 0;
         target.height = 0;
+        target.resourceState =
+            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         return;
     }
 
@@ -667,6 +670,8 @@ void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
     target.srvCpuHandle = 0;
     target.width = 0;
     target.height = 0;
+    target.resourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
 
 void ScreenSpaceEffects::ResizeInternalTarget(
@@ -1015,8 +1020,7 @@ void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
     m_motionVectorFrameState.prevUnjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     m_motionVectorFrameState.prevViewProjection =
         m_motionVectorFrameState.prevUnjitteredProjection * m_motionVectorFrameState.prevView;
-    m_giPrevViewProjection =
-        m_motionVectorFrameState.prevProjection * m_motionVectorFrameState.prevView;
+    m_giPrevViewProjection = m_motionVectorFrameState.prevViewProjection;
     m_motionVectorFrameState.historyValid = true;
 }
 
@@ -1184,11 +1188,19 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
     auto* resource = static_cast<ID3D12Resource*>(target.resource);
 
+    const D3D12_RESOURCE_STATES renderTargetState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    const D3D12_RESOURCE_STATES shaderResourceState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    D3D12_RESOURCE_STATES beforeState = static_cast<D3D12_RESOURCE_STATES>(target.resourceState);
+    if (beforeState == D3D12_RESOURCE_STATE_COMMON)
+    {
+        beforeState = shaderResourceState;
+    }
     TransitionResource(
         commandList,
         resource,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-        D3D12_RESOURCE_STATE_RENDER_TARGET);
+        beforeState,
+        renderTargetState);
+    target.resourceState = static_cast<std::uint32_t>(renderTargetState);
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{ GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex) };
 
@@ -1211,8 +1223,9 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     TransitionResource(
         commandList,
         resource,
-        D3D12_RESOURCE_STATE_RENDER_TARGET,
-        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        renderTargetState,
+        shaderResourceState);
+    target.resourceState = static_cast<std::uint32_t>(shaderResourceState);
 }
 
 void ScreenSpaceEffects::BindOutputTarget(
@@ -1582,11 +1595,16 @@ void ScreenSpaceEffects::Apply(
 
     if (runGiTemporal)
     {
-        const glm::mat4 viewProjCurr = camera.GetProjectionMatrix() * camera.GetViewMatrix();
-        const glm::mat4 invViewProjCurr = glm::inverse(viewProjCurr);
+        const glm::mat4 viewMatrix = camera.GetViewMatrix();
+        const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+        const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
+        const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
+            ? m_motionVectorFrameState.prevViewProjection
+            : unjitteredProjection * viewMatrix;
         const float temporalClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
         auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
         commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+        m_sceneFramebuffer->RestoreDepthShaderResource();
 
         m_temporalReprojectShader->Use(false);
         m_temporalReprojectShader->SetInt("uCurrentRadiance", 0);
@@ -1594,7 +1612,7 @@ void ScreenSpaceEffects::Apply(
         m_temporalReprojectShader->SetInt("uDepth", 2);
         m_temporalReprojectShader->SetInt("uHistoryDepth", 3);
         m_temporalReprojectShader->SetMat4("uInvViewProj", invViewProjCurr);
-        m_temporalReprojectShader->SetMat4("uPrevViewProj", m_giPrevViewProjection);
+        m_temporalReprojectShader->SetMat4("uPrevViewProj", prevViewProj);
         m_temporalReprojectShader->SetFloat("uBlendFactor", m_giTemporalBlendFactor);
         m_temporalReprojectShader->SetFloat(
             "uHistoryValid",
