@@ -693,6 +693,7 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
         setupDepthReadOnly(psoDesc.DepthStencilState);
+        psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         for (UINT targetIndex = 0; targetIndex < 4; ++targetIndex)
         {
             setupAlphaBlend(psoDesc.BlendState.RenderTarget[targetIndex]);

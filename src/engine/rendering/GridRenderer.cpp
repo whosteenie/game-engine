@@ -103,11 +103,21 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
         std::floor(cameraPosition.x / m_cellSize) * m_cellSize,
         std::floor(cameraPosition.z / m_cellSize) * m_cellSize);
 
+    // Lift the grid plane slightly when the camera is high so floor separation survives at distance.
+    const float heightBoost = glm::clamp(cameraPosition.y * 0.0015f, 0.0f, 2.0f);
+    const float effectiveGridHeight = m_gridHeight + heightBoost;
+
+    // Extra clip-space depth bias when high/far; keeps lines stable over the floor without the
+    // aggressive raster bias that previously drew through objects.
+    const float altitudeUlp = glm::clamp((cameraPosition.y - 8.0f) / 40.0f, 0.0f, 48.0f);
+    const float clipDepthBiasUlp = 4.0f + altitudeUlp;
+
     m_shader->Use(outputLinear, !outputLinear);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
     m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
     m_shader->SetVec2("uGridSnapOrigin", gridSnapOrigin);
-    m_shader->SetFloat("uGridHeight", m_gridHeight);
+    m_shader->SetFloat("uGridHeight", effectiveGridHeight);
+    m_shader->SetFloat("uClipDepthBiasUlp", clipDepthBiasUlp);
     m_shader->SetVec3("uColor", glm::vec3(0.35f, 0.38f, 0.42f));
     m_shader->SetVec3("uCameraPosition", cameraPosition);
     m_shader->SetFloat("uCellSize", m_cellSize);
