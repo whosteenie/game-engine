@@ -13,6 +13,15 @@ namespace EngineConstants
     inline constexpr const char* SsgiDenoiseSpatialFragmentShader = "assets/shaders/ssgi_denoise_spatial.ps.hlsl";
     inline constexpr const char* SsgiDenoiseDebugFragmentShader = "assets/shaders/ssgi_denoise_debug.ps.hlsl";
     inline constexpr const char* SsgiTraceFragmentShader = "assets/shaders/ssgi_trace.ps.hlsl";
+    inline constexpr const char* SsrSceneColorFragmentShader = "assets/shaders/ssr_scene_color.ps.hlsl";
+    inline constexpr const char* SsrDebugFragmentShader = "assets/shaders/ssr_debug.ps.hlsl";
+    inline constexpr const char* SsrTraceFragmentShader = "assets/shaders/ssr_trace.ps.hlsl";
+    inline constexpr const char* SsrTraceDebugFragmentShader = "assets/shaders/ssr_trace_debug.ps.hlsl";
+    inline constexpr const char* SsrDenoiseSpatialFragmentShader = "assets/shaders/ssr_denoise_spatial.ps.hlsl";
+    inline constexpr const char* SsrDenoiseDebugFragmentShader = "assets/shaders/ssr_denoise_debug.ps.hlsl";
+    inline constexpr const char* SsrTemporalFragmentShader = "assets/shaders/ssr_temporal.ps.hlsl";
+    inline constexpr const char* SsrUpscaleFragmentShader = "assets/shaders/ssr_upscale.ps.hlsl";
+    inline constexpr const char* SsrIndirectFragmentShader = "assets/shaders/ssr_indirect.ps.hlsl";
     inline constexpr const char* LitVertexShader = "assets/shaders/lit.vs.hlsl";
     inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.ps.hlsl";
     inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vs.hlsl";

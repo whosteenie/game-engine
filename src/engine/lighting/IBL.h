@@ -30,6 +30,8 @@ public:
     const std::string& GetHdrPath() const;
     float GetRotationYRadians() const;
     std::uintptr_t GetEnvironmentCubemapSrvCpuHandle() const;
+    std::uintptr_t GetPrefilterMapSrvCpuHandle() const;
+    std::uintptr_t GetBrdfLutSrvCpuHandle() const;
     std::uintptr_t GetHdrEquirectSrvCpuHandle() const;
 
     void ReloadFromHdr(const char* hdrPath, float rotationYRadians = 0.0f);

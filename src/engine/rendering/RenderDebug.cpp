@@ -90,6 +90,24 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSGI trace confidence";
     case RenderDebugMode::SsgiFinalContribution:
         return "SSGI final contribution";
+    case RenderDebugMode::SsrSceneColor:
+        return "SSR scene color";
+    case RenderDebugMode::SsrSceneValidity:
+        return "SSR scene validity";
+    case RenderDebugMode::SsrTraceRaw:
+        return "SSR trace raw";
+    case RenderDebugMode::SsrTraceConfidence:
+        return "SSR trace confidence";
+    case RenderDebugMode::SsrDenoiseSpatial:
+        return "SSR denoise spatial";
+    case RenderDebugMode::SsrDenoiseTemporal:
+        return "SSR denoise temporal";
+    case RenderDebugMode::SsrDenoiseFinal:
+        return "SSR denoise final";
+    case RenderDebugMode::SsrUpscaled:
+        return "SSR upscaled";
+    case RenderDebugMode::SsrSpecReplacement:
+        return "SSR spec replacement";
     default:
         return "Unknown";
     }
@@ -181,4 +199,53 @@ bool IsSsgiDenoiseDebugMode(const RenderDebugMode mode)
     default:
         return false;
     }
+}
+
+bool IsSsrDebugMode(const RenderDebugMode mode)
+{
+    return IsSsrSceneDebugMode(mode) || IsSsrTraceDebugMode(mode) || IsSsrDenoiseDebugMode(mode)
+        || IsSsrCompositeDebugMode(mode);
+}
+
+bool IsSsrSceneDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::SsrSceneColor:
+    case RenderDebugMode::SsrSceneValidity:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSsrTraceDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::SsrTraceRaw:
+    case RenderDebugMode::SsrTraceConfidence:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSsrDenoiseDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::SsrDenoiseSpatial:
+    case RenderDebugMode::SsrDenoiseTemporal:
+    case RenderDebugMode::SsrDenoiseFinal:
+    case RenderDebugMode::SsrUpscaled:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsSsrCompositeDebugMode(const RenderDebugMode mode)
+{
+    return mode == RenderDebugMode::SsrSpecReplacement;
 }

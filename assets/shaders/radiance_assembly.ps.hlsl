@@ -1,4 +1,5 @@
 // SSGI Phase 3 — diffuse-dominant radiance assembly for screen-space trace hits.
+// SSR uses ssr_scene_color.ps.hlsl instead (includes sun direct; excludes IBL).
 //
 //   radiance.rgb = emissive
 //                + diffuse_dominant_indirect

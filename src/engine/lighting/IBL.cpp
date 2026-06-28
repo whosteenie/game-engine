@@ -969,6 +969,16 @@ std::uintptr_t IBL::GetEnvironmentCubemapSrvCpuHandle() const
     return m_environmentCubemapGpu.srvCpuHandle;
 }
 
+std::uintptr_t IBL::GetPrefilterMapSrvCpuHandle() const
+{
+    return m_gpuGenerated ? m_prefilterMapGpu.srvCpuHandle : 0;
+}
+
+std::uintptr_t IBL::GetBrdfLutSrvCpuHandle() const
+{
+    return m_gpuGenerated ? m_brdfLutGpu.srvCpuHandle : 0;
+}
+
 std::uintptr_t IBL::GetHdrEquirectSrvCpuHandle() const
 {
     if (!m_gpuGenerated)

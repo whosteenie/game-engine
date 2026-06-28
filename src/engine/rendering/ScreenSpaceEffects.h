@@ -137,6 +137,40 @@ public:
     float GetBloomBlurRadius() const;
     void SetBloomBlurRadius(float blurRadius);
 
+    bool IsSsrEnabled() const;
+    void SetSsrEnabled(bool enabled);
+
+    float GetSsrMaxTraceDistance() const;
+    void SetSsrMaxTraceDistance(float distance);
+
+    int GetSsrStepCount() const;
+    void SetSsrStepCount(int steps);
+
+    int GetSsrSampleCount() const;
+    void SetSsrSampleCount(int samples);
+
+    float GetSsrThickness() const;
+    void SetSsrThickness(float thickness);
+
+    float GetSsrRoughnessCutoff() const;
+    void SetSsrRoughnessCutoff(float cutoff);
+
+    bool IsSsrDenoiseEnabled() const;
+    void SetSsrDenoiseEnabled(bool enabled);
+
+    float GetSsrTemporalBlendFactor() const;
+    void SetSsrTemporalBlendFactor(float factor);
+
+    float GetSsrStrength() const;
+    void SetSsrStrength(float strength);
+
+    bool GetSsrSceneColorRanLastFrame() const;
+    bool GetSsrTraceRanLastFrame() const;
+    bool GetSsrDenoiseRanLastFrame() const;
+    bool GetSsrTemporalRanLastFrame() const;
+    int GetSsrTraceTargetWidth() const;
+    int GetSsrTraceTargetHeight() const;
+
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
 
@@ -245,6 +279,7 @@ private:
     void ResizeInternalTarget(InternalTarget& target, int width, int height, int format);
     void ResizeSingleChannelTargets(int width, int height);
     void ResizeHdrColorTarget(int width, int height);
+    void ResizeSsrTargets(int width, int height);
     void ResizeBloomTargets(int width, int height);
     void ResizeLdrTonemapTarget(int width, int height);
     void ResizeAntiAliasingTargets(int width, int height);
@@ -290,6 +325,15 @@ private:
     InternalTarget m_radianceHistoryTarget;
     InternalTarget m_radianceTemporalTarget;
     InternalTarget m_radianceHistoryDepthTarget;
+    InternalTarget m_ssrSceneColorTarget;
+    InternalTarget m_ssrTraceTarget;
+    InternalTarget m_ssrSpatialBlurTarget;
+    InternalTarget m_ssrSpatialTarget;
+    InternalTarget m_ssrHistoryTarget;
+    InternalTarget m_ssrTemporalTarget;
+    InternalTarget m_ssrHistoryDepthTarget;
+    InternalTarget m_ssrResolvedTarget;
+    InternalTarget m_ssrIndirectTarget;
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -328,6 +372,15 @@ private:
     std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
     std::unique_ptr<Shader> m_ssgiDenoiseDebugShader;
     std::unique_ptr<Shader> m_ssgiTraceShader;
+    std::unique_ptr<Shader> m_ssrSceneColorShader;
+    std::unique_ptr<Shader> m_ssrDebugShader;
+    std::unique_ptr<Shader> m_ssrTraceShader;
+    std::unique_ptr<Shader> m_ssrTraceDebugShader;
+    std::unique_ptr<Shader> m_ssrDenoiseSpatialShader;
+    std::unique_ptr<Shader> m_ssrDenoiseDebugShader;
+    std::unique_ptr<Shader> m_ssrTemporalShader;
+    std::unique_ptr<Shader> m_ssrUpscaleShader;
+    std::unique_ptr<Shader> m_ssrIndirectShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -366,6 +419,32 @@ private:
     float m_bloomSameUvBlendFactor = 0.82f;
     float m_bloomDepthThreshold = 0.008f;
     float m_bloomOcclusionDepthThreshold = 0.12f;
+    float m_ssrTraceResolutionScale = 1.0f;
+    bool m_ssrEnabled = false;
+    float m_ssrMaxTraceDistance = 25.0f;
+    int m_ssrStepCount = 32;
+    int m_ssrSampleCount = 2;
+    float m_ssrThickness = 0.5f;
+    float m_ssrRoughnessCutoff = 0.6f;
+    float m_ssrStepExponent = 2.0f;
+    bool m_ssrDenoiseEnabled = true;
+    float m_ssrTemporalBlendFactor = 0.90f;
+    float m_ssrSameUvBlendFactor = 0.93f;
+    float m_ssrStrength = 1.0f;
+    float m_ssrSpatialDepthThreshold = 0.010f;
+    float m_ssrSpatialBlurSpread = 0.75f;
+    float m_ssrRoughnessSpreadMin = 0.35f;
+    float m_ssrRoughnessSpreadMax = 1.05f;
+    float m_ssrDepthThreshold = 0.003f;
+    mutable bool m_ssrSceneColorRanLastFrame = false;
+    mutable bool m_ssrTraceRanLastFrame = false;
+    mutable bool m_ssrDenoiseRanLastFrame = false;
+    mutable bool m_ssrTemporalRanLastFrame = false;
+    mutable bool m_ssrHistoryValid = false;
+    mutable int m_ssrFrameIndex = 0;
+    mutable std::uintptr_t m_lastSsrSpatialSrv = 0;
+    mutable std::uintptr_t m_lastSsrDenoiseSrv = 0;
+    mutable std::uintptr_t m_lastSsrResolvedSrv = 0;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     int m_msaaSampleCount = 1;
