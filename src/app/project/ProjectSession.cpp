@@ -7,6 +7,7 @@
 #include "app/project/SceneProjectIO.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadTrace.h"
 #include "engine/rendering/Material.h"
 
 #include <algorithm>
@@ -182,20 +183,27 @@ bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath, co
 bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePath, ProjectEditorState& editorState)
 {
     SetProjectFilePath(projectFilePath);
+    ProjectLoadTrace::Step("project paths resolved");
 
     std::string error;
-    if (!SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
+    ProjectLoadTrace::Scope loadScope("SceneProjectIO::Load");
+    const bool loaded = SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error);
+    if (!loaded)
     {
         const std::string loadError = error.empty() ? "Failed to load project." : error;
         SetStatusMessage(loadError);
+        ProjectLoadTrace::Step("SceneProjectIO::Load returned false");
 
         try
         {
+            ProjectLoadTrace::Step("ResetToDefault after load failure");
             scene.ResetToDefault();
+            ProjectLoadTrace::Step("ResetToDefault after load failure ok");
         }
         catch (const std::exception& exception)
         {
             scene.GetMeshLibrary().InvalidatePrimitives();
+            ProjectLoadTrace::Step("ResetToDefault after load failure exception");
             EngineLog::LogFailure(
                 "project",
                 "ResetToDefault",
@@ -205,6 +213,7 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
         m_hasActiveProject = false;
         return false;
     }
+    loadScope.Success();
 
     MarkClean();
     m_hasActiveProject = true;

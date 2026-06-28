@@ -6,6 +6,7 @@
 #include <d3d12.h>
 
 #include <cstring>
+#include <iomanip>
 #include <sstream>
 #include <stdexcept>
 
@@ -14,7 +15,8 @@ namespace
     std::string FormatHresult(const HRESULT hr)
     {
         std::ostringstream stream;
-        stream << "0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr);
+        stream << "0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
+            << static_cast<unsigned long>(static_cast<LONG>(hr));
         return stream.str();
     }
 
@@ -22,6 +24,7 @@ namespace
     {
         throw std::runtime_error(message);
     }
+
     std::uint64_t AlignBufferSize(const std::uint32_t byteSize)
     {
         return (static_cast<std::uint64_t>(byteSize) + 255ull) & ~255ull;
@@ -33,6 +36,24 @@ namespace
             ? D3D12_RESOURCE_STATE_INDEX_BUFFER
             : D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
     }
+
+    void RecordCopyAndTransition(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* destinationResource,
+        ID3D12Resource* uploadResource,
+        const std::uint64_t copySize,
+        const D3D12_RESOURCE_STATES finalState)
+    {
+        commandList->CopyBufferRegion(destinationResource, 0, uploadResource, 0, copySize);
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = destinationResource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter = finalState;
+        commandList->ResourceBarrier(1, &barrier);
+    }
 }
 
 GpuBuffer::~GpuBuffer()
@@ -43,11 +64,15 @@ GpuBuffer::~GpuBuffer()
 GpuBuffer::GpuBuffer(GpuBuffer&& other) noexcept
     : m_resource(other.m_resource),
       m_allocation(other.m_allocation),
+      m_uploadResource(other.m_uploadResource),
+      m_uploadAllocation(other.m_uploadAllocation),
       m_type(other.m_type),
       m_byteSize(other.m_byteSize)
 {
     other.m_resource = nullptr;
     other.m_allocation = nullptr;
+    other.m_uploadResource = nullptr;
+    other.m_uploadAllocation = nullptr;
     other.m_byteSize = 0;
 }
 
@@ -58,10 +83,14 @@ GpuBuffer& GpuBuffer::operator=(GpuBuffer&& other) noexcept
         Destroy();
         m_resource = other.m_resource;
         m_allocation = other.m_allocation;
+        m_uploadResource = other.m_uploadResource;
+        m_uploadAllocation = other.m_uploadAllocation;
         m_type = other.m_type;
         m_byteSize = other.m_byteSize;
         other.m_resource = nullptr;
         other.m_allocation = nullptr;
+        other.m_uploadResource = nullptr;
+        other.m_uploadAllocation = nullptr;
         other.m_byteSize = 0;
     }
 
@@ -88,7 +117,6 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
             "Failed to create GPU buffer: D3D12 device was removed (" + deviceRemovedReason + ")");
     }
 
-    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
     const std::uint64_t alignedSize = AlignBufferSize(byteSize);
 
@@ -118,7 +146,8 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
     if (FAILED(createDefaultResult))
     {
         ThrowGpuBufferError(
-            "Failed to create GPU buffer (default heap) (HRESULT=" + FormatHresult(createDefaultResult) + ")");
+            "Failed to create GPU buffer (default heap) (HRESULT=" + FormatHresult(createDefaultResult)
+            + ")");
     }
 
     D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};
@@ -136,7 +165,7 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
     {
         allocation->Release();
         resource->Release();
-        throw std::runtime_error("Failed to create GPU buffer (upload staging)");
+        ThrowGpuBufferError("Failed to create GPU buffer (upload staging)");
     }
 
     void* mapped = nullptr;
@@ -146,36 +175,40 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
         uploadResource->Release();
         allocation->Release();
         resource->Release();
-        throw std::runtime_error("Failed to map GPU buffer upload staging");
+        ThrowGpuBufferError("Failed to map GPU buffer upload staging");
     }
 
     std::memcpy(mapped, data, byteSize);
     uploadResource->Unmap(0, nullptr);
 
-    ID3D12Resource* destinationResource = resource;
-    const std::uint64_t copySize = alignedSize;
     const D3D12_RESOURCE_STATES finalState = ResourceStateForType(type);
-    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
-        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
-        commandList->CopyBufferRegion(destinationResource, 0, uploadResource, 0, copySize);
+    if (GfxContext::Get().IsFrameRecording())
+    {
+        auto* commandList =
+            static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+        RecordCopyAndTransition(commandList, resource, uploadResource, alignedSize, finalState);
+        m_uploadResource = uploadResource;
+        m_uploadAllocation = uploadAllocation;
+    }
+    else
+    {
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+            RecordCopyAndTransition(
+                static_cast<ID3D12GraphicsCommandList*>(commandListPointer),
+                resource,
+                uploadResource,
+                alignedSize,
+                finalState);
+        });
 
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = destinationResource;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = finalState;
-        commandList->ResourceBarrier(1, &barrier);
-    });
-
-    uploadAllocation->Release();
-    uploadResource->Release();
+        uploadAllocation->Release();
+        uploadResource->Release();
+    }
 
     m_resource = resource;
     m_allocation = allocation;
     m_type = type;
     m_byteSize = byteSize;
-    (void)device;
 }
 
 void GpuBuffer::CreateUpload(const Type type, const void* data, const std::uint32_t byteSize)
@@ -240,6 +273,14 @@ void GpuBuffer::CreateUpload(const Type type, const void* data, const std::uint3
 
 void GpuBuffer::Destroy()
 {
+    if (m_uploadAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_uploadAllocation)->Release();
+        m_uploadAllocation = nullptr;
+    }
+
+    m_uploadResource = nullptr;
+
     if (m_allocation != nullptr)
     {
         static_cast<D3D12MA::Allocation*>(m_allocation)->Release();

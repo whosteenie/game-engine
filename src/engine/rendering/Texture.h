@@ -54,6 +54,8 @@ private:
 
     void* m_resource = nullptr;
     void* m_allocation = nullptr;
+    void* m_uploadResource = nullptr;
+    void* m_uploadAllocation = nullptr;
     std::uint32_t m_srvDescriptorIndex = UINT32_MAX;
     std::uintptr_t m_srvCpuHandle = 0;
 

@@ -142,6 +142,7 @@ namespace
             else
             {
                 hadNonAscii = true;
+                message.push_back('?');
             }
         }
 

@@ -100,6 +100,12 @@ namespace EngineLog
         WriteLine("error", category, message);
     }
 
+    void Breadcrumb(const char* category, const std::string& message)
+    {
+        EnsureLogDirectoryExists();
+        WriteLine(category != nullptr ? category : "trace", "breadcrumb", message);
+    }
+
     void LogException(const char* category, const char* phase, const std::exception& exception)
     {
         const std::string message = FormatExceptionContext(phase, exception);

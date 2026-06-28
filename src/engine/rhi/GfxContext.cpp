@@ -1147,6 +1147,12 @@ void GfxContext::ExecuteImmediate(const std::function<void(void* commandList)>& 
             "Nested GPU upload (ExecuteImmediate called while another upload is in progress)");
     }
 
+    if (m_frameRecording)
+    {
+        throw std::runtime_error(
+            "ExecuteImmediate called during active frame recording; upload on the current command list instead");
+    }
+
     struct ImmediateUploadScope
     {
         Impl* impl;

@@ -17,6 +17,7 @@
 #include "app/project/ProjectEditorState.h"
 #include "app/panels/ProjectFilesPanel.h"
 #include "app/project/ProjectSession.h"
+#include "app/project/SceneProjectIODetail.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneEditingController.h"
 #include "app/scene/SceneEditorUpdateContext.h"
@@ -47,6 +48,7 @@
 #include "engine/platform/Input.h"
 #include "engine/platform/InputDiagnostics.h"
 #include "engine/platform/FrameDiagnostics.h"
+#include "engine/platform/SceneRenderTrace.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Renderer.h"
 
@@ -93,9 +95,16 @@ namespace
         }
         catch (const std::exception& exception)
         {
+            SceneRenderTrace::Step(std::string("exception in ") + phase);
             const std::string safeMessage = SafeExceptionMessage(exception);
             EngineLog::LogFailure("application", phase, safeMessage);
             throw std::runtime_error(std::string(phase) + ": " + safeMessage);
+        }
+        catch (...)
+        {
+            SceneRenderTrace::Step(std::string("non-std exception in ") + phase);
+            EngineLog::Error("application", std::string(phase) + ": non-standard exception");
+            throw std::runtime_error(std::string(phase) + ": non-standard exception");
         }
     }
 
@@ -1186,14 +1195,25 @@ void Application::Render()
         return;
     }
 
+    const bool editorActive =
+        m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
+
+    if (editorActive)
+    {
+        RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
+            if (Scene* editorScene = GetEditorTargetScene())
+            {
+                SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
+            }
+        });
+    }
+
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {
         FrameDiagnostics::LogPhase("render-begin");
         m_renderer->BeginFrame();
     });
 
-    const bool editorActive =
-        m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
     if (editorActive)
     {
         GfxContext::Get().WaitForSwapchainFrames();
@@ -1203,6 +1223,8 @@ void Application::Render()
     {
         RunApplicationPhase("scene-view-render", [&]() {
             FrameDiagnostics::LogPhase("scene-view-render");
+            SceneRenderTrace::FirstFrameGuard firstFrameGuard;
+            SceneRenderTrace::Scope sceneViewScope("scene-view-render");
             Scene* sceneViewScene = GetEditorTargetScene();
             m_sceneViewportPanel->EnsureFramebufferSized();
             if (m_sceneViewportPanel->HasGpuFramebuffer())
@@ -1217,6 +1239,7 @@ void Application::Render()
                     m_sceneViewportPanel->GetFramebuffer());
                 m_sceneViewportPanel->CompositeRenderedFrame();
             }
+            sceneViewScope.Success();
         });
     }
 

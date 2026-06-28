@@ -37,6 +37,8 @@ public:
 private:
     void* m_resource = nullptr;
     D3D12MA::Allocation* m_allocation = nullptr;
+    void* m_uploadResource = nullptr;
+    D3D12MA::Allocation* m_uploadAllocation = nullptr;
     Type m_type = Type::Vertex;
     std::uint32_t m_byteSize = 0;
 };

@@ -80,6 +80,36 @@ namespace
         commandList->ResourceBarrier(1, &barrier);
     }
 
+    void RecordTextureCopyAndTransition(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* textureResource,
+        ID3D12Resource* uploadResource,
+        const std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT>& uploadLayouts,
+        const std::uint32_t mipLevels)
+    {
+        for (std::uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
+        {
+            D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
+            sourceLocation.pResource = uploadResource;
+            sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            sourceLocation.PlacedFootprint = uploadLayouts[static_cast<std::size_t>(mipLevel)];
+
+            D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
+            destinationLocation.pResource = textureResource;
+            destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            destinationLocation.SubresourceIndex = mipLevel;
+            commandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = textureResource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        commandList->ResourceBarrier(1, &barrier);
+    }
+
     std::uint32_t CalculateMipLevelCount(int width, int height)
     {
         const int largestDimension = std::max(width, height);
@@ -154,6 +184,80 @@ namespace
         return mipChain;
     }
 
+    void RecordGenerateMipmapChain(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Device* device,
+        ID3D12Resource* textureResource,
+        DXGI_FORMAT format,
+        int width,
+        int height,
+        std::uint32_t mipLevels,
+        const D3D12_CPU_DESCRIPTOR_HANDLE tempRtvHandle,
+        const D3D12_CPU_DESCRIPTOR_HANDLE tempSrvHandle,
+        Shader& mipShader,
+        GpuBuffer& quadBuffer)
+    {
+        int sourceWidth = width;
+        int sourceHeight = height;
+
+        for (std::uint32_t mipLevel = 1; mipLevel < mipLevels; ++mipLevel)
+        {
+            const int destWidth = std::max(1, sourceWidth / 2);
+            const int destHeight = std::max(1, sourceHeight / 2);
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC sourceSrvDesc{};
+            sourceSrvDesc.Format = format;
+            sourceSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            sourceSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            sourceSrvDesc.Texture2D.MostDetailedMip = mipLevel - 1;
+            sourceSrvDesc.Texture2D.MipLevels = 1;
+            device->CreateShaderResourceView(textureResource, &sourceSrvDesc, tempSrvHandle);
+
+            D3D12_RENDER_TARGET_VIEW_DESC destRtvDesc{};
+            destRtvDesc.Format = format;
+            destRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+            destRtvDesc.Texture2D.MipSlice = mipLevel;
+            device->CreateRenderTargetView(textureResource, &destRtvDesc, tempRtvHandle);
+
+            TransitionResource(
+                commandList,
+                textureResource,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+            D3D12_VIEWPORT viewport{};
+            viewport.Width = static_cast<float>(destWidth);
+            viewport.Height = static_cast<float>(destHeight);
+            viewport.MaxDepth = 1.0f;
+            D3D12_RECT scissor{0, 0, destWidth, destHeight};
+            commandList->RSSetViewports(1, &viewport);
+            commandList->RSSetScissorRects(1, &scissor);
+            commandList->OMSetRenderTargets(1, &tempRtvHandle, FALSE, nullptr);
+
+            mipShader.BindPipeline(false, true);
+            mipShader.SetFloat("uTexelSizeX", 1.0f / static_cast<float>(sourceWidth));
+            mipShader.SetFloat("uTexelSizeY", 1.0f / static_cast<float>(sourceHeight));
+            mipShader.BindTextureSlot(0, tempSrvHandle.ptr);
+            mipShader.FlushUniforms();
+
+            ID3D12DescriptorHeap* heaps[] = {
+                static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap())};
+            commandList->SetDescriptorHeaps(1, heaps);
+            commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            quadBuffer.BindVertexToCommandList(commandList, 0, 4 * static_cast<std::uint32_t>(sizeof(float)));
+            commandList->DrawInstanced(6, 1, 0, 0);
+
+            TransitionResource(
+                commandList,
+                textureResource,
+                D3D12_RESOURCE_STATE_RENDER_TARGET,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+            sourceWidth = destWidth;
+            sourceHeight = destHeight;
+        }
+    }
+
     void GenerateMipmapChain(
         ID3D12Device* device,
         ID3D12Resource* textureResource,
@@ -188,72 +292,44 @@ namespace
             GfxContext::Get().GetOffscreenRtvCpuHandle(tempRtvIndex)};
         const D3D12_CPU_DESCRIPTOR_HANDLE tempSrvHandle{GfxContext::Get().GetSrvCpuHandle(tempSrvIndex)};
 
-        // Initialize upload resources before ExecuteImmediate — GpuBuffer::Create also uploads.
+        // Initialize upload resources before GPU work — GpuBuffer::Create also uploads.
         Shader& mipShader = GetMipmapGenShader();
         GpuBuffer& quadBuffer = GetMipmapQuadBuffer();
 
-        GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
-            auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
-            int sourceWidth = width;
-            int sourceHeight = height;
-
-            for (std::uint32_t mipLevel = 1; mipLevel < mipLevels; ++mipLevel)
-            {
-                const int destWidth = std::max(1, sourceWidth / 2);
-                const int destHeight = std::max(1, sourceHeight / 2);
-
-                D3D12_SHADER_RESOURCE_VIEW_DESC sourceSrvDesc{};
-                sourceSrvDesc.Format = format;
-                sourceSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                sourceSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                sourceSrvDesc.Texture2D.MostDetailedMip = mipLevel - 1;
-                sourceSrvDesc.Texture2D.MipLevels = 1;
-                device->CreateShaderResourceView(textureResource, &sourceSrvDesc, tempSrvHandle);
-
-                D3D12_RENDER_TARGET_VIEW_DESC destRtvDesc{};
-                destRtvDesc.Format = format;
-                destRtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
-                destRtvDesc.Texture2D.MipSlice = mipLevel;
-                device->CreateRenderTargetView(textureResource, &destRtvDesc, tempRtvHandle);
-
-                TransitionResource(
-                    commandList,
+        if (GfxContext::Get().IsFrameRecording())
+        {
+            auto* commandList =
+                static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+            RecordGenerateMipmapChain(
+                commandList,
+                device,
+                textureResource,
+                format,
+                width,
+                height,
+                mipLevels,
+                tempRtvHandle,
+                tempSrvHandle,
+                mipShader,
+                quadBuffer);
+        }
+        else
+        {
+            GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+                RecordGenerateMipmapChain(
+                    static_cast<ID3D12GraphicsCommandList*>(commandListPointer),
+                    device,
                     textureResource,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-                D3D12_VIEWPORT viewport{};
-                viewport.Width = static_cast<float>(destWidth);
-                viewport.Height = static_cast<float>(destHeight);
-                viewport.MaxDepth = 1.0f;
-                D3D12_RECT scissor{0, 0, destWidth, destHeight};
-                commandList->RSSetViewports(1, &viewport);
-                commandList->RSSetScissorRects(1, &scissor);
-                commandList->OMSetRenderTargets(1, &tempRtvHandle, FALSE, nullptr);
-
-                mipShader.BindPipeline(false, true);
-                mipShader.SetFloat("uTexelSizeX", 1.0f / static_cast<float>(sourceWidth));
-                mipShader.SetFloat("uTexelSizeY", 1.0f / static_cast<float>(sourceHeight));
-                mipShader.BindTextureSlot(0, tempSrvHandle.ptr);
-                mipShader.FlushUniforms();
-
-                ID3D12DescriptorHeap* heaps[] = {
-                    static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap())};
-                commandList->SetDescriptorHeaps(1, heaps);
-                commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-                quadBuffer.BindVertexToCommandList(commandList, 0, 4 * static_cast<std::uint32_t>(sizeof(float)));
-                commandList->DrawInstanced(6, 1, 0, 0);
-
-                TransitionResource(
-                    commandList,
-                    textureResource,
-                    D3D12_RESOURCE_STATE_RENDER_TARGET,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-                sourceWidth = destWidth;
-                sourceHeight = destHeight;
-            }
-        });
+                    format,
+                    width,
+                    height,
+                    mipLevels,
+                    tempRtvHandle,
+                    tempSrvHandle,
+                    mipShader,
+                    quadBuffer);
+            });
+        }
 
         GfxContext::Get().FreeOffscreenSrv(tempSrvIndex);
         GfxContext::Get().FreeOffscreenRtvBlock(tempRtvIndex, 1);
@@ -388,6 +464,14 @@ Texture::~Texture()
         m_srvDescriptorIndex = UINT32_MAX;
     }
 
+    if (m_uploadAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_uploadAllocation)->Release();
+        m_uploadAllocation = nullptr;
+    }
+
+    m_uploadResource = nullptr;
+
     if (m_allocation != nullptr)
     {
         static_cast<D3D12MA::Allocation*>(m_allocation)->Release();
@@ -511,35 +595,33 @@ void Texture::UploadPixels(
     }
     uploadResource->Unmap(0, nullptr);
 
-    ID3D12Resource* textureResourcePtr = textureResource;
-    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
-        auto* uploadCommandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+    if (GfxContext::Get().IsFrameRecording())
+    {
+        auto* commandList =
+            static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+        RecordTextureCopyAndTransition(
+            commandList,
+            textureResource,
+            uploadResource,
+            uploadLayouts,
+            mipLevels);
+        m_uploadResource = uploadResource;
+        m_uploadAllocation = uploadAllocation;
+    }
+    else
+    {
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+            RecordTextureCopyAndTransition(
+                static_cast<ID3D12GraphicsCommandList*>(commandListPointer),
+                textureResource,
+                uploadResource,
+                uploadLayouts,
+                mipLevels);
+        });
 
-        for (std::uint32_t mipLevel = 0; mipLevel < mipLevels; ++mipLevel)
-        {
-            D3D12_TEXTURE_COPY_LOCATION sourceLocation{};
-            sourceLocation.pResource = uploadResource;
-            sourceLocation.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-            sourceLocation.PlacedFootprint = uploadLayouts[static_cast<std::size_t>(mipLevel)];
-
-            D3D12_TEXTURE_COPY_LOCATION destinationLocation{};
-            destinationLocation.pResource = textureResourcePtr;
-            destinationLocation.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-            destinationLocation.SubresourceIndex = mipLevel;
-            uploadCommandList->CopyTextureRegion(&destinationLocation, 0, 0, 0, &sourceLocation, nullptr);
-        }
-
-        D3D12_RESOURCE_BARRIER barrier{};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Transition.pResource = textureResourcePtr;
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        uploadCommandList->ResourceBarrier(1, &barrier);
-    });
-
-    uploadAllocation->Release();
-    uploadResource->Release();
+        uploadAllocation->Release();
+        uploadResource->Release();
+    }
 
     m_resource = textureResource;
     m_allocation = textureAllocation;

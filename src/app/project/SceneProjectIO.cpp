@@ -26,6 +26,8 @@
 #include "engine/assets/ModelImporter.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadTrace.h"
+#include "engine/platform/SceneRenderTrace.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"
 #include "engine/scene/ScenePrimitive.h"
@@ -1079,6 +1081,7 @@ namespace SceneProjectIODetail
             if (deferIfGpuNotReady)
             {
                 renderer.MergePendingRendererSettings(delta);
+                ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
                 scene.MarkDirty();
                 return;
             }
@@ -1169,13 +1172,21 @@ namespace SceneProjectIODetail
             return;
         }
 
+        SceneRenderTrace::Scope applyScope("ApplyDeferredRendererSettings");
         const json pending = renderer.TakePendingRendererSettings();
         ApplyRendererSettingsDelta(scene, pending, false);
+        applyScope.Success();
     }
 
     void DeserializeRenderer(Scene& scene, const json& rendererValue)
     {
+        ProjectLoadTrace::Scope rendererScope("deserialize renderer settings");
         ApplyRendererSettingsDelta(scene, rendererValue);
+        if (scene.GetRenderer().HasPendingRendererSettings())
+        {
+            ProjectLoadTrace::Step("renderer settings pending until first GPU frame");
+        }
+        rendererScope.Success();
     }
 
     json SerializeProjectFilesFolderOpenStates(
@@ -1475,6 +1486,8 @@ namespace SceneProjectIODetail
         }
 
         const std::size_t objectCount = objectValues.size();
+        ProjectLoadTrace::Step(
+            "deserialize scene objects (count=" + std::to_string(objectCount) + ")");
         std::unique_ptr<ScopedNativeProgress> loadProgress;
         if (showProgress && objectCount > 0)
         {
@@ -1621,6 +1634,7 @@ namespace SceneProjectIODetail
             {
                 const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
                 outError = FormatExceptionContext(context.c_str(), exception);
+                ProjectLoadTrace::Step("deserialize scene objects exception");
                 EngineLog::LogException("project-io", "DeserializeObjects", exception);
                 EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
                 return false;
@@ -1653,6 +1667,7 @@ namespace SceneProjectIODetail
             }
         }
 
+        ProjectLoadTrace::Step("deserialize scene objects ok");
         return true;
     }
 
@@ -1773,6 +1788,7 @@ bool SceneProjectIO::DeserializeScene(
     const std::string& projectRoot,
     std::string& outError)
     {
+        ProjectLoadTrace::Scope deserializeScope("DeserializeScene");
         if (root.value("format", "") != SceneProjectIODetail::kFormatId)
         {
             outError = "Unrecognized project file format.";
@@ -1801,6 +1817,7 @@ bool SceneProjectIO::DeserializeScene(
 
         scene.GetObjectStore().Clear();
         scene.GetMeshLibrary().ClearImportedMeshes();
+        ProjectLoadTrace::Step("scene stores cleared");
 
         if (!SceneProjectIODetail::DeserializeObjects(
                 scene,
@@ -1819,6 +1836,7 @@ bool SceneProjectIO::DeserializeScene(
 
         if (sceneValue.contains("editor"))
         {
+            ProjectLoadTrace::Step("deserialize editor state");
             const json& editor = sceneValue.at("editor");
             scene.ClearSelection();
             scene.SetShowGrid(editor.value("showGrid", true));
@@ -1835,9 +1853,14 @@ bool SceneProjectIO::DeserializeScene(
         {
             SceneProjectIODetail::DeserializeRenderer(scene, sceneValue.at("renderer"));
         }
+        else
+        {
+            ProjectLoadTrace::Step("no renderer block in project file");
+        }
 
         if (sceneValue.contains("spawnCounters"))
         {
+            ProjectLoadTrace::Step("deserialize spawn counters");
             SceneProjectIODetail::DeserializeSpawnCounters(scene, sceneValue.at("spawnCounters"));
         }
 
@@ -1850,6 +1873,7 @@ bool SceneProjectIO::DeserializeScene(
             SceneProjectIODetail::EnsureNextObjectId(scene);
         }
 
+        deserializeScope.Success();
         return true;
     }
 
@@ -1903,22 +1927,27 @@ bool SceneProjectIO::Load(
 
     try
     {
+        ProjectLoadTrace::Step("set material texture resolver");
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
         progress.SetProgress(0.04f);
 
+        ProjectLoadTrace::Step("open project file");
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
         {
             outError = "Failed to open project file for reading.";
+            ProjectLoadTrace::Step("open project file failed");
             return false;
         }
 
         json root;
         progress.SetMessage("Parsing project file...");
         progress.SetProgress(0.10f);
+        ProjectLoadTrace::Step("parse project json");
         input >> root;
+        ProjectLoadTrace::Step("parse project json ok");
 
         progress.SetMessage("Loading scene...");
         progress.SetProgress(SceneProjectIODetail::kProjectObjectLoadProgressStart);
@@ -1926,6 +1955,7 @@ bool SceneProjectIO::Load(
     }
     catch (const std::exception& exception)
     {
+        ProjectLoadTrace::Step("SceneProjectIO::Load exception");
         outError = FormatExceptionContext("Failed to load project file", exception);
         EngineLog::LogFailure("project-io", "Load", outError);
         return false;

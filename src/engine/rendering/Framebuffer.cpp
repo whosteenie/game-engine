@@ -2,6 +2,8 @@
 
 
 
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rhi/GfxContext.h"
 
 
@@ -21,7 +23,8 @@
 #include <algorithm>
 
 #include <cstring>
-
+#include <iomanip>
+#include <sstream>
 #include <stdexcept>
 
 #include <string>
@@ -31,6 +34,7 @@
 namespace
 
 {
+    thread_local std::string g_lastFramebufferError;
 
     DXGI_FORMAT ColorFormatForAttachment(int attachmentIndex, FramebufferColorMode colorMode)
 
@@ -62,6 +66,52 @@ namespace
     int ColorAttachmentCount(FramebufferColorMode colorMode)
     {
         return colorMode == FramebufferColorMode::SplitDirectIndirect ? 7 : 1;
+    }
+
+    std::string FormatHresult(const HRESULT hr)
+    {
+        std::ostringstream stream;
+        stream << "0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
+            << static_cast<unsigned long>(static_cast<LONG>(hr));
+        return stream.str();
+    }
+
+    std::string DescribeHresult(const HRESULT hr)
+    {
+        switch (hr)
+        {
+        case static_cast<HRESULT>(0x887A0005):
+            return "DXGI_ERROR_DEVICE_REMOVED";
+        case static_cast<HRESULT>(0x887A0006):
+            return "DXGI_ERROR_DEVICE_HUNG";
+        case static_cast<HRESULT>(0x887A0007):
+            return "DXGI_ERROR_DEVICE_RESET";
+        case static_cast<HRESULT>(0x8007000E):
+            return "E_OUTOFMEMORY";
+        default:
+            return {};
+        }
+    }
+
+    std::string FormatDescriptorUsageContext()
+    {
+        std::uint32_t srvUsed = 0;
+        std::uint32_t srvCapacity = 0;
+        GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
+        return " (SRV " + std::to_string(srvUsed) + "/" + std::to_string(srvCapacity) + ", last GPU error: "
+            + GfxContext::GetLastGpuAllocationError() + ")";
+    }
+
+    [[noreturn]] void ThrowFramebufferError(const std::string& message)
+    {
+        g_lastFramebufferError = message;
+        EngineLog::Error("framebuffer", message);
+        throw std::runtime_error(g_lastFramebufferError);
+    }
+
+    void FramebufferTraceStep(const std::string& message)
+    {
+        EngineLog::Breadcrumb("framebuffer", message);
     }
 
     constexpr std::uint32_t kShaderResourceState =
@@ -302,6 +352,15 @@ void Framebuffer::Create(const int width, const int height)
 
     {
 
+    g_lastFramebufferError.clear();
+
+    std::string deviceRemovedReason;
+    if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+    {
+        ThrowFramebufferError(
+            "D3D12 device already removed before framebuffer create: " + deviceRemovedReason);
+    }
+
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
@@ -314,6 +373,11 @@ void Framebuffer::Create(const int width, const int height)
     }
 
     const bool usesMsaa = m_sampleCount > 1;
+
+    FramebufferTraceStep(
+        std::string("framebuffer create ") + std::to_string(width) + "x" + std::to_string(height)
+        + " attachments=" + std::to_string(m_colorAttachmentCount)
+        + " samples=" + std::to_string(m_sampleCount));
 
     const std::uint32_t resolvedRtvCount =
         usesMsaa ? 1u : static_cast<std::uint32_t>(m_colorAttachmentCount);
@@ -342,9 +406,13 @@ void Framebuffer::Create(const int width, const int height)
         || (usesMsaa && (m_msaaRtvBaseIndex == UINT32_MAX || m_msaaDsvIndex == UINT32_MAX)))
     {
         const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(
-            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
+        ThrowFramebufferError(
+            (gpuError.empty() ? std::string("GPU descriptor allocation failed for framebuffer")
+                              : gpuError)
+            + FormatDescriptorUsageContext());
     }
+
+    FramebufferTraceStep("framebuffer descriptors allocated");
     for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
 
     {
@@ -417,9 +485,12 @@ void Framebuffer::Create(const int width, const int height)
 
         {
 
-            throw std::runtime_error(
-                "Failed to create framebuffer color attachment (HRESULT=0x" +
-                std::to_string(static_cast<unsigned long>(createHr)) + ")");
+            const std::string hresultText = FormatHresult(createHr);
+            const std::string hresultName = DescribeHresult(createHr);
+            ThrowFramebufferError(
+                "Failed to create framebuffer color attachment " + std::to_string(attachmentIndex)
+                + " (HRESULT=" + hresultText
+                + (hresultName.empty() ? "" : ", " + hresultName) + ")");
 
         }
 
@@ -434,9 +505,9 @@ void Framebuffer::Create(const int width, const int height)
         m_colorSrvIndices[attachmentIndex] = GfxContext::Get().AllocateOffscreenSrv();
         if (m_colorSrvIndices[attachmentIndex] == UINT32_MAX)
         {
-            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(
-            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
+            ThrowFramebufferError(
+                "Failed to allocate SRV for framebuffer color attachment "
+                + std::to_string(attachmentIndex) + FormatDescriptorUsageContext());
         }
 
         GfxContext::Get().CreateSrvForTexture(
@@ -470,6 +541,8 @@ void Framebuffer::Create(const int width, const int height)
     }
 
 
+
+    FramebufferTraceStep("framebuffer resolve color attachments created");
 
     if (usesMsaa)
 
@@ -549,11 +622,11 @@ void Framebuffer::Create(const int width, const int height)
 
             {
 
-                throw std::runtime_error(
-
-                    "Failed to create MSAA framebuffer color attachment (HRESULT=0x" +
-
-                    std::to_string(static_cast<unsigned long>(createHr)) + ")");
+                ThrowFramebufferError(
+                    "Failed to create MSAA framebuffer color attachment "
+                    + std::to_string(attachmentIndex) + " (HRESULT=" + FormatHresult(createHr)
+                    + (DescribeHresult(createHr).empty() ? "" : ", " + DescribeHresult(createHr))
+                    + ")");
 
             }
 
@@ -580,6 +653,8 @@ void Framebuffer::Create(const int width, const int height)
     }
 
 
+
+    FramebufferTraceStep("framebuffer msaa color attachments created");
 
     if (needsDepth)
     {
@@ -642,7 +717,7 @@ void Framebuffer::Create(const int width, const int height)
 
         {
 
-            throw std::runtime_error("Failed to create framebuffer depth attachment");
+            ThrowFramebufferError("Failed to create framebuffer depth attachment");
 
         }
 
@@ -657,9 +732,8 @@ void Framebuffer::Create(const int width, const int height)
         m_depthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         if (m_depthSrvIndex == UINT32_MAX)
         {
-            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-        throw std::runtime_error(
-            gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
+            ThrowFramebufferError(
+                "Failed to allocate SRV for framebuffer depth" + FormatDescriptorUsageContext());
         }
 
         GfxContext::Get().CreateSrvForTexture(
@@ -750,7 +824,7 @@ void Framebuffer::Create(const int width, const int height)
 
         {
 
-            throw std::runtime_error("Failed to create MSAA framebuffer depth attachment");
+            ThrowFramebufferError("Failed to create MSAA framebuffer depth attachment");
 
         }
 
@@ -773,14 +847,27 @@ void Framebuffer::Create(const int width, const int height)
         m_msaaDepthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         if (m_msaaDepthSrvIndex == UINT32_MAX)
         {
-            const std::string gpuError = GfxContext::GetLastGpuAllocationError();
-            throw std::runtime_error(
-                gpuError.empty() ? std::string("GPU descriptor/SRV allocation failed") : gpuError);
+            ThrowFramebufferError(
+                "Failed to allocate SRV for MSAA depth" + FormatDescriptorUsageContext());
         }
 
         GfxContext::Get().CreateMsaaDepthSrv(msaaResource, m_msaaDepthSrvIndex);
 
     }
+
+    FramebufferTraceStep("framebuffer create ok");
+
+    }
+
+    catch (const std::exception& exception)
+
+    {
+
+        const std::string detail = !g_lastFramebufferError.empty()
+            ? g_lastFramebufferError
+            : SafeExceptionMessage(exception);
+        Destroy();
+        throw std::runtime_error(std::string("Framebuffer create failed: ") + detail);
 
     }
 
@@ -790,7 +877,7 @@ void Framebuffer::Create(const int width, const int height)
 
         Destroy();
 
-        throw;
+        throw std::runtime_error("Framebuffer create failed: unknown error");
 
     }
 
@@ -834,21 +921,26 @@ bool Framebuffer::Resize(
     }
     catch (const std::exception& exception)
     {
+        const std::string detail = !g_lastFramebufferError.empty()
+            ? g_lastFramebufferError
+            : SafeExceptionMessage(exception);
         Destroy();
-        throw std::runtime_error(
-            std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
+        const std::string message = std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
             + std::to_string(height) + ", samples=" + std::to_string(normalizedSampleCount)
             + ", attachments=" + std::to_string(ColorAttachmentCount(colorMode)) + "): "
-            + exception.what());
+            + detail;
+        EngineLog::Error("framebuffer", message);
+        throw std::runtime_error(message);
     }
     catch (...)
     {
         Destroy();
-        throw std::runtime_error(
-            std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
+        const std::string message = std::string("Framebuffer resize failed (") + std::to_string(width) + "x"
             + std::to_string(height) + ", samples=" + std::to_string(normalizedSampleCount)
             + ", attachments=" + std::to_string(ColorAttachmentCount(colorMode))
-            + "): unknown error");
+            + "): unknown error";
+        EngineLog::Error("framebuffer", message);
+        throw std::runtime_error(message);
     }
 
     m_width = width;

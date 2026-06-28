@@ -692,6 +692,9 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.InputLayout = {positionLayout, 1};
         psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
         psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        // Depth read only: grid must not write depth or tonemap bloom occlusion treats line
+        // pixels as occluding nearby emissive bloom. Open-ground visibility is handled in
+        // screen_composite when fill-direct is present at background depth.
         setupDepthReadOnly(psoDesc.DepthStencilState);
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
         for (UINT targetIndex = 0; targetIndex < 4; ++targetIndex)
@@ -1000,6 +1003,12 @@ void Shader::BindPipeline(
     {
         pipeline = m_pipelineStateLdr;
     }
+
+    if (pipeline == nullptr)
+    {
+        throw std::runtime_error("Shader pipeline state is null");
+    }
+
     d3dCommandList->SetPipelineState(static_cast<ID3D12PipelineState*>(pipeline));
     d3dCommandList->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(m_rootSignature));
 }

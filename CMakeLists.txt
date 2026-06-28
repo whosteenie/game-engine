@@ -324,6 +324,8 @@ add_executable(game-engine
     src/engine/platform/EngineDiagnostics.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/FrameDiagnostics.cpp
+    src/engine/platform/ProjectLoadTrace.cpp
+    src/engine/platform/SceneRenderTrace.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
 
     src/engine/rhi/GfxContext.cpp

@@ -1,7 +1,10 @@
 #include "engine/rendering/ScreenSpaceEffects.h"
 
 #include "engine/camera/Camera.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/RenderPathDiagnostics.h"
+#include "engine/platform/SceneRenderTrace.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 #include "engine/rendering/Constants.h"
@@ -436,6 +439,19 @@ namespace
         srvDesc.Texture2D.MipLevels = mipLevels;
         device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
     }
+
+    [[noreturn]] void ThrowPostProcessTargetError(const char* phase)
+    {
+        const std::string gpuError = GfxContext::GetLastGpuAllocationError();
+        std::string message = phase;
+        if (!gpuError.empty())
+        {
+            message += ": ";
+            message += gpuError;
+        }
+
+        throw std::runtime_error(message);
+    }
 }
 
 ScreenSpaceEffects::ScreenSpaceEffects()
@@ -519,9 +535,23 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsgiTraceFragmentShader))
 {
-    CreateFullscreenQuad();
-    CreateKernel();
-    CreateNoiseTexture();
+    SceneRenderTrace::Section initSection("sse-init");
+    {
+        SceneRenderTrace::Scope quadScope("CreateFullscreenQuad");
+        CreateFullscreenQuad();
+        quadScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope kernelScope("CreateKernel");
+        CreateKernel();
+        kernelScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope noiseScope("CreateNoiseTexture");
+        CreateNoiseTexture();
+        noiseScope.Success();
+    }
+    initSection.Success();
 
     // Grid alpha-blends into the resolved scene HDR buffer before bloom; selection overlay after tonemap.
     // Stage 3+: Bloom toggle, depth blit for gizmo occlusion, play-mode parity.
@@ -605,7 +635,7 @@ void ScreenSpaceEffects::CreateInternalTarget(
             &allocation,
             IID_PPV_ARGS(&resource))))
     {
-        throw std::runtime_error("Failed to create post-process render target");
+        ThrowPostProcessTargetError("Failed to create post-process render target");
     }
 
     target.resource = resource;
@@ -614,8 +644,19 @@ void ScreenSpaceEffects::CreateInternalTarget(
     target.height = height;
     target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (target.srvIndex == UINT32_MAX)
+    {
+        DestroyInternalTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate post-process SRV descriptor");
+    }
+
     target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
     target.rtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
+    if (target.rtvIndex == UINT32_MAX)
+    {
+        DestroyInternalTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate post-process RTV descriptor");
+    }
 
     CreateTexture2DSrv(
         device,
@@ -953,19 +994,44 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
         return;
     }
 
-    if (!m_sceneFramebuffer->Resize(
-            renderWidth,
-            renderHeight,
-            FramebufferColorMode::SplitDirectIndirect,
-            GetEffectiveGeometryMsaaSampleCount()))
     {
-        throw std::runtime_error("Scene framebuffer size is invalid.");
+        SceneRenderTrace::Scope sceneFbScope("resize scene framebuffer");
+        if (!m_sceneFramebuffer->Resize(
+                renderWidth,
+                renderHeight,
+                FramebufferColorMode::SplitDirectIndirect,
+                GetEffectiveGeometryMsaaSampleCount()))
+        {
+            throw std::runtime_error("Scene framebuffer size is invalid.");
+        }
+
+        sceneFbScope.Success();
     }
-    ResizeSingleChannelTargets(renderWidth, renderHeight);
-    ResizeHdrColorTarget(renderWidth, renderHeight);
-    ResizeBloomTargets(renderWidth, renderHeight);
-    ResizeLdrTonemapTarget(renderWidth, renderHeight);
-    ResizeAntiAliasingTargets(renderWidth, renderHeight);
+    {
+        SceneRenderTrace::Scope singleChannelScope("resize single-channel targets");
+        ResizeSingleChannelTargets(renderWidth, renderHeight);
+        singleChannelScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope hdrScope("resize hdr targets");
+        ResizeHdrColorTarget(renderWidth, renderHeight);
+        hdrScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope bloomScope("resize bloom targets");
+        ResizeBloomTargets(renderWidth, renderHeight);
+        bloomScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope ldrScope("resize ldr tonemap target");
+        ResizeLdrTonemapTarget(renderWidth, renderHeight);
+        ldrScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope aaTargetsScope("resize aa targets");
+        ResizeAntiAliasingTargets(renderWidth, renderHeight);
+        aaTargetsScope.Success();
+    }
     m_width = renderWidth;
     m_height = renderHeight;
     ResetTaaHistory();
@@ -974,6 +1040,7 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
 
 void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, const int viewportHeight)
 {
+    SceneRenderTrace::Scope reloadScope("ReloadGeometryMsaaTargets");
     if (viewportWidth <= 0 || viewportHeight <= 0)
     {
         throw std::runtime_error("Viewport size is invalid for geometry MSAA reload.");
@@ -994,6 +1061,8 @@ void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, cons
     {
         throw std::runtime_error("Scene framebuffer MSAA sample count does not match the active count.");
     }
+
+    reloadScope.Success();
 }
 
 namespace
@@ -1136,9 +1205,11 @@ void ScreenSpaceEffects::EnsureMsaaDepthResolveShader() const
         return;
     }
 
+    SceneRenderTrace::Scope shaderScope("EnsureMsaaDepthResolveShader");
     const_cast<ScreenSpaceEffects*>(this)->m_msaaDepthResolveShader = std::make_unique<Shader>(
         EngineConstants::FullscreenVertexShader,
         EngineConstants::MsaaDepthResolveFragmentShader);
+    shaderScope.Success();
 }
 
 void ScreenSpaceEffects::EndScenePass() const
@@ -1485,6 +1556,7 @@ void ScreenSpaceEffects::Apply(
 
     if (runRadianceAssembly)
     {
+        SceneRenderTrace::Scope radianceScope("radiance assembly");
         m_radianceAssemblyShader->Use(false);
         m_radianceAssemblyShader->SetInt("uDirectLighting", 0);
         m_radianceAssemblyShader->SetInt("uIndirectLighting", 1);
@@ -1503,6 +1575,7 @@ void ScreenSpaceEffects::Apply(
             m_width,
             m_height,
             radianceClear);
+        radianceScope.Success();
     }
 
     std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
@@ -1515,6 +1588,8 @@ void ScreenSpaceEffects::Apply(
 
     if (runSsgiTrace)
     {
+        SceneRenderTrace::Section ssgiSection("ssgi");
+        SceneRenderTrace::Scope traceScope("ssgi trace");
         m_ssgiTraceShader->Use(false);
         m_ssgiTraceShader->SetInt("uDepthMap", 0);
         m_ssgiTraceShader->SetInt("uNormalMap", 1);
@@ -1541,6 +1616,8 @@ void ScreenSpaceEffects::Apply(
             m_height,
             radianceClear);
         temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
+        traceScope.Success();
+        ssgiSection.Success();
     }
 
     const bool runSsgiDenoise =
@@ -1554,6 +1631,8 @@ void ScreenSpaceEffects::Apply(
 
     if (runRadianceAssembly && !runSsgiTrace && m_ssgiNoiseInjectionEnabled)
     {
+        SceneRenderTrace::Section ssgiSection("ssgi");
+        SceneRenderTrace::Scope noiseScope("ssgi noise inject");
         const float noiseStrength =
             m_ssgiNoiseInjectionEnabled ? m_ssgiNoiseStrength : 0.0f;
         m_ssgiNoiseInjectShader->Use(false);
@@ -1572,10 +1651,14 @@ void ScreenSpaceEffects::Apply(
             m_height,
             radianceClear);
         temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
+        noiseScope.Success();
+        ssgiSection.Success();
     }
 
     if (runSsgiDenoise)
     {
+        SceneRenderTrace::Section ssgiSection("ssgi");
+        SceneRenderTrace::Scope denoiseScope("ssgi denoise spatial");
         m_ssgiDenoiseSpatialShader->Use(false);
         m_ssgiDenoiseSpatialShader->SetInt("uInput", 0);
         m_ssgiDenoiseSpatialShader->SetInt("uDepthMap", 1);
@@ -1612,6 +1695,8 @@ void ScreenSpaceEffects::Apply(
         }
 
         temporalInputSrv = atrousInputSrv;
+        denoiseScope.Success();
+        ssgiSection.Success();
     }
 
     const bool runGiTemporal =
@@ -1624,6 +1709,8 @@ void ScreenSpaceEffects::Apply(
 
     if (runGiTemporal)
     {
+        SceneRenderTrace::Section ssgiSection("ssgi");
+        SceneRenderTrace::Scope temporalScope("gi temporal reproject");
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
         const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
@@ -1676,6 +1763,8 @@ void ScreenSpaceEffects::Apply(
             const_cast<InternalTarget&>(m_radianceTemporalTarget));
         m_radianceHistoryValid = true;
         ++m_giFrameIndex;
+        temporalScope.Success();
+        ssgiSection.Success();
     }
 
     m_lastSsgiInjectSrv = 0;
@@ -1776,6 +1865,8 @@ void ScreenSpaceEffects::Apply(
     const bool useTaa = m_antiAliasingMode == AntiAliasingMode::TAA;
     if (useTaa && m_taaResolveTarget.srvCpuHandle != 0 && m_sceneFramebuffer->HasVelocity())
     {
+        SceneRenderTrace::Section taaSection("aa-taa");
+        SceneRenderTrace::Scope taaScope("taa resolve");
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
         const glm::mat4 invViewProjection = glm::inverse(unjitteredProjection * viewMatrix);
@@ -1810,11 +1901,15 @@ void ScreenSpaceEffects::Apply(
             const_cast<InternalTarget&>(m_taaHistoryTarget),
             const_cast<InternalTarget&>(m_taaResolveTarget));
         m_taaHistoryValid = true;
+        taaScope.Success();
+        taaSection.Success();
     }
 
     std::uintptr_t bloomSrv = 0;
     if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode))
     {
+        SceneRenderTrace::Section bloomSection("bloom");
+        SceneRenderTrace::Scope bloomExtractScope("bloom extract");
         const int bloomWidth = std::max(1, m_width / 2);
         const int bloomHeight = std::max(1, m_height / 2);
         const glm::vec2 bloomTexelSize(
@@ -1842,57 +1937,50 @@ void ScreenSpaceEffects::Apply(
             bloomWidth,
             bloomHeight,
             bloomClear);
+        bloomExtractScope.Success();
 
-        m_bloomBlurShader->SetInt("uInput", 0);
-        m_bloomBlurShader->SetFloat("uDirectionX", bloomTexelSize.x);
-        m_bloomBlurShader->SetFloat("uDirectionY", 0.0f);
-        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        m_bloomBlurShader->BindTextureSlot(0, m_bloomExtractTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_bloomBlurShader,
+        SceneRenderTrace::Scope bloomBlurScope("bloom blur");
+        const auto drawBloomBlurPass =
+            [&](InternalTarget& target, const std::uintptr_t inputSrv, const float dirX, const float dirY)
+        {
+            m_bloomBlurShader->Use(false, false);
+            m_bloomBlurShader->SetFloat("uDirectionX", dirX);
+            m_bloomBlurShader->SetFloat("uDirectionY", dirY);
+            m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+            m_bloomBlurShader->BindTextureSlot(0, inputSrv);
+            DrawFullscreenToTarget(
+                *m_bloomBlurShader,
+                const_cast<InternalTarget&>(target),
+                bloomWidth,
+                bloomHeight,
+                bloomClear);
+        };
+
+        drawBloomBlurPass(
             const_cast<InternalTarget&>(m_bloomBlurTarget),
-            bloomWidth,
-            bloomHeight,
-            bloomClear);
-
-        m_bloomBlurShader->SetInt("uInput", 0);
-        m_bloomBlurShader->SetFloat("uDirectionX", 0.0f);
-        m_bloomBlurShader->SetFloat("uDirectionY", bloomTexelSize.y);
-        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlurTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_bloomBlurShader,
+            m_bloomExtractTarget.srvCpuHandle,
+            bloomTexelSize.x,
+            0.0f);
+        drawBloomBlurPass(
             const_cast<InternalTarget&>(m_bloomBlur2Target),
-            bloomWidth,
-            bloomHeight,
-            bloomClear);
-
-        m_bloomBlurShader->SetInt("uInput", 0);
-        m_bloomBlurShader->SetFloat("uDirectionX", bloomTexelSize.x);
-        m_bloomBlurShader->SetFloat("uDirectionY", 0.0f);
-        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_bloomBlurShader,
+            m_bloomBlurTarget.srvCpuHandle,
+            0.0f,
+            bloomTexelSize.y);
+        drawBloomBlurPass(
             const_cast<InternalTarget&>(m_bloomBlurTarget),
-            bloomWidth,
-            bloomHeight,
-            bloomClear);
-
-        m_bloomBlurShader->SetInt("uInput", 0);
-        m_bloomBlurShader->SetFloat("uDirectionX", 0.0f);
-        m_bloomBlurShader->SetFloat("uDirectionY", bloomTexelSize.y);
-        m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-        m_bloomBlurShader->BindTextureSlot(0, m_bloomBlurTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_bloomBlurShader,
+            m_bloomBlur2Target.srvCpuHandle,
+            bloomTexelSize.x,
+            0.0f);
+        drawBloomBlurPass(
             const_cast<InternalTarget&>(m_bloomBlur2Target),
-            bloomWidth,
-            bloomHeight,
-            bloomClear);
+            m_bloomBlurTarget.srvCpuHandle,
+            0.0f,
+            bloomTexelSize.y);
+        bloomBlurScope.Success();
 
         if (m_sceneFramebuffer->HasVelocity() && m_bloomTemporalTarget.srvCpuHandle != 0)
         {
+            SceneRenderTrace::Scope bloomTemporalScope("bloom temporal");
             const float bloomWarmupFactor = m_bloomHistoryValid
                 ? std::min(1.0f, static_cast<float>(m_bloomTemporalWarmupFrames) / 4.0f)
                 : 0.0f;
@@ -1922,11 +2010,14 @@ void ScreenSpaceEffects::Apply(
                 const_cast<InternalTarget&>(m_bloomTemporalTarget));
             m_bloomHistoryValid = true;
             ++m_bloomTemporalWarmupFrames;
+            bloomTemporalScope.Success();
         }
         else
         {
             bloomSrv = m_bloomBlur2Target.srvCpuHandle;
         }
+
+        bloomSection.Success();
     }
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
@@ -2259,10 +2350,17 @@ void ScreenSpaceEffects::Apply(
 
     if (needsLdrIntermediate && ldrTargetReady)
     {
-        runTonemapPass(true);
+        SceneRenderTrace::Section tonemapSection("tonemap");
+        {
+            SceneRenderTrace::Scope tonemapScope("tonemap to ldr");
+            runTonemapPass(true);
+            tonemapScope.Success();
+        }
 
         if (useFxaa)
         {
+            SceneRenderTrace::Section aaOutputSection("aa-output");
+            SceneRenderTrace::Scope fxaaScope("fxaa");
             BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
             m_fxaaShader->Use(false, true);
             m_fxaaShader->SetFloat("uTexelSizeX", texelSize.x);
@@ -2271,9 +2369,13 @@ void ScreenSpaceEffects::Apply(
             m_fxaaShader->SetFloat("uEdgeThreshold", m_fxaaEdgeThreshold);
             m_fxaaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
             DrawFullscreenPass(*m_fxaaShader, true);
+            fxaaScope.Success();
+            aaOutputSection.Success();
         }
         else if (useSmaa)
         {
+            SceneRenderTrace::Section aaOutputSection("aa-output");
+            SceneRenderTrace::Scope smaaScope("smaa");
             m_smaaEdgeShader->Use(false, true);
             m_smaaEdgeShader->SetFloat("uTexelSizeX", texelSize.x);
             m_smaaEdgeShader->SetFloat("uTexelSizeY", texelSize.y);
@@ -2302,23 +2404,37 @@ void ScreenSpaceEffects::Apply(
                 true);
 
             blitLdrToViewport(m_smaaOutputTarget.srvCpuHandle);
+            smaaScope.Success();
+            aaOutputSection.Success();
         }
         else if (useSsaa && (m_width != viewportWidth || m_height != viewportHeight))
         {
+            SceneRenderTrace::Section aaOutputSection("aa-output");
+            SceneRenderTrace::Scope ssaaScope("ssaa blit");
             blitLdrToViewport(m_ldrTonemapTarget.srvCpuHandle);
+            ssaaScope.Success();
+            aaOutputSection.Success();
         }
         else
         {
+            SceneRenderTrace::Scope blitScope("ldr blit to viewport");
             BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
             m_downsampleShader->Use(false, true);
             m_downsampleShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
             DrawFullscreenPass(*m_downsampleShader, true);
+            blitScope.Success();
         }
+
+        tonemapSection.Success();
     }
     else
     {
+        SceneRenderTrace::Section tonemapSection("tonemap");
+        SceneRenderTrace::Scope tonemapScope("tonemap direct");
         BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
         runTonemapPass(false);
+        tonemapScope.Success();
+        tonemapSection.Success();
     }
 
     if (m_logHdrApplySnapshot)

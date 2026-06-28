@@ -118,6 +118,7 @@ public:
     void SetActiveMsaaSampleCount(int sampleCount);
     std::uint8_t GetSupportedMsaaSampleCountsMask() const { return m_supportedMsaaSampleCountsMask; }
     bool IsMsaaSampleCountSupported(int sampleCount) const;
+    bool IsFrameRecording() const { return m_frameRecording; }
 
 private:
     GfxContext() = default;

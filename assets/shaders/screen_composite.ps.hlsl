@@ -60,6 +60,36 @@ float4 main(PSInput input) : SV_Target
 
     if (IsBackgroundDepth(depth))
     {
+        if (uUseSplitLighting != 0)
+        {
+            // Grid (and any other fill-direct overlay) alpha-blends into RT0 without touching
+            // depth, so open-ground lines stay at background depth and still receive bloom.
+            const float3 fillDirect = uDirectLighting.Sample(uDirectLightingSampler, uv).rgb;
+            const float fillDirectPeak = max(fillDirect.r, max(fillDirect.g, fillDirect.b));
+            if (fillDirectPeak > 1e-5)
+            {
+                float3 indirect = uIndirectLighting.Sample(uIndirectLightingSampler, uv).rgb;
+                if (uUseSsgi != 0)
+                {
+                    indirect += uSsgiStrength * uSsgiMap.Sample(uSsgiSampler, uv).rgb;
+                }
+
+                float indirectOcclusion = 1.0;
+                if (uUseSsao != 0)
+                {
+                    const float ssao = pow(uSsaoMap.Sample(uSsaoSampler, uv).r, uSsaoPower);
+                    indirectOcclusion *= lerp(1.0, ssao, uAoStrength);
+                }
+
+                if (uDebugOcclusionOnly != 0)
+                {
+                    return float4(indirectOcclusion.xxx, 1.0);
+                }
+
+                return float4(fillDirect + indirect * indirectOcclusion, 1.0);
+            }
+        }
+
         if (uBackgroundMode == 0)
         {
             float3 worldDir = ViewRayFromUv(uv);

@@ -13,6 +13,7 @@
 
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/SceneRenderTrace.h"
 
 #include "app/scene/SceneEditor.h"
 #include "engine/camera/Camera.h"
@@ -69,9 +70,11 @@ namespace
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, Fn&& fn)
     {
+        SceneRenderTrace::Scope initScope(stepName);
         try
         {
             fn();
+            initScope.Success();
         }
         catch (const std::exception& exception)
         {
@@ -172,6 +175,7 @@ void SceneRenderer::EnsureGpuResources() const
 
     SceneRenderer* self = const_cast<SceneRenderer*>(this);
     self->m_gpuResourcesInitInProgress = true;
+    SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
         RunGpuInitStep("camera gizmos", [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
@@ -191,6 +195,7 @@ void SceneRenderer::EnsureGpuResources() const
         GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
         GfxContext::Get().SetMaterialTextureAnisotropy(self->m_textureAnisotropy);
         GfxContext::Get().SetMaterialTextureMipBias(self->m_textureMipBias);
+        gpuInitScope.Success();
     }
     catch (const std::exception& exception)
     {
@@ -300,6 +305,8 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
         return;
     }
 
+    try
+    {
     glm::vec3 casterBoundsMin;
     glm::vec3 casterBoundsMax;
     const bool hasCasterBounds = ComputeShadowCasterBounds(scene, casterBoundsMin, casterBoundsMax);
@@ -353,6 +360,16 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
             object.GetMesh()->Draw();
         }
     }
+    }
+    catch (const std::exception& exception)
+    {
+        throw std::runtime_error(
+            std::string("RenderShadowPass failed: ") + SafeExceptionMessage(exception));
+    }
+    catch (...)
+    {
+        throw std::runtime_error("RenderShadowPass failed: unknown error");
+    }
 }
 
 void SceneRenderer::Render(
@@ -363,13 +380,13 @@ void SceneRenderer::Render(
     std::uintptr_t targetFramebuffer,
     const SceneRenderOptions& options)
 {
+    SceneRenderTrace::Scope renderScope("SceneRenderer::Render");
     EnsureGpuResources();
     if (!m_gpuResourcesInitialized)
     {
+        renderScope.Success();
         return;
     }
-
-    SceneProjectIODetail::ApplyDeferredRendererSettings(const_cast<Scene&>(scene));
 
     GfxContext::Get().ResetDrawSrvTable();
 
@@ -383,18 +400,33 @@ void SceneRenderer::Render(
     const bool freezeTemporalJitter =
         ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
 
+    SceneRenderTrace::Step(
+        std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
+        + " shadowPass=" + (options.enableShadowPass ? "1" : "0"));
+
     if (target != nullptr)
     {
         GfxContext::Get().SetBoundOutputFramebuffer(target);
     }
 
-    m_environmentMap->SyncGpuResources();
+    {
+        SceneRenderTrace::Scope envScope("SyncGpuResources");
+        m_environmentMap->SyncGpuResources();
+        envScope.Success();
+    }
 
-    SyncLighting(scene);
+    {
+        SceneRenderTrace::Scope lightingScope("SyncLighting");
+        SyncLighting(scene);
+        lightingScope.Success();
+    }
+
     if (options.enableShadowPass)
     {
+        SceneRenderTrace::Scope shadowScope("RenderShadowPass");
         RenderShadowPass(scene, camera);
         m_shadowMap->EndFrame();
+        shadowScope.Success();
     }
 
     RenderDebugMode materialDebugMode = RenderDebugMode::None;
@@ -406,13 +438,27 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
+        SceneRenderTrace::Section aaSection("aa");
         Camera& antiAliasCamera = const_cast<Camera&>(camera);
-        m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
+        {
+            SceneRenderTrace::Scope resizeScope("ScreenSpaceEffects::Resize");
+            m_screenSpaceEffects->Resize(viewportWidth, viewportHeight);
+            resizeScope.Success();
+        }
         antiAliasCamera.SetAspectFromFramebuffer(
             m_screenSpaceEffects->GetRenderWidth(),
             m_screenSpaceEffects->GetRenderHeight());
-        m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera, freezeTemporalJitter);
-        m_screenSpaceEffects->BeginScenePass(*m_environmentMap);
+        {
+            SceneRenderTrace::Scope prepareAaScope("PrepareAntiAliasingFrame");
+            m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera, freezeTemporalJitter);
+            prepareAaScope.Success();
+        }
+        {
+            SceneRenderTrace::Scope beginPassScope("BeginScenePass");
+            m_screenSpaceEffects->BeginScenePass(*m_environmentMap);
+            beginPassScope.Success();
+        }
+        aaSection.Success();
     }
     else if (target != nullptr)
     {
@@ -439,7 +485,11 @@ void SceneRenderer::Render(
         splitLightingMrt = target->HasSplitLighting();
     }
 
-    m_environmentMap->RenderSkybox(camera, splitLightingMrt);
+    {
+        SceneRenderTrace::Scope skyboxScope("RenderSkybox");
+        m_environmentMap->RenderSkybox(camera, splitLightingMrt);
+        skyboxScope.Success();
+    }
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
     if (m_previousWorldMatrices.size() != objects.size())
@@ -455,28 +505,33 @@ void SceneRenderer::Render(
     const MotionVectorFrameState motionFrameState =
         usePostProcess ? m_screenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
 
-    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
     {
-        const SceneObject& object = objects[objectIndex];
-        if (!object.IsRenderable())
+        SceneRenderTrace::Scope drawScope("draw scene objects");
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {
-            continue;
+            const SceneObject& object = objects[objectIndex];
+            if (!object.IsRenderable())
+            {
+                continue;
+            }
+
+            const glm::mat4 modelMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+            object.GetMaterial().Apply(
+                camera,
+                m_lighting,
+                m_environmentMap->GetIBL(),
+                modelMatrix,
+                m_shadowMap.get(),
+                object.ReceivesShadow(),
+                splitLightingMrt,
+                materialDebugMode,
+                m_directionalShadowSettings,
+                motionFrameState,
+                m_previousWorldMatrices[objectIndex]);
+            object.GetMesh()->Draw();
         }
 
-        const glm::mat4 modelMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
-        object.GetMaterial().Apply(
-            camera,
-            m_lighting,
-            m_environmentMap->GetIBL(),
-            modelMatrix,
-            m_shadowMap.get(),
-            object.ReceivesShadow(),
-            splitLightingMrt,
-            materialDebugMode,
-            m_directionalShadowSettings,
-            motionFrameState,
-            m_previousWorldMatrices[objectIndex]);
-        object.GetMesh()->Draw();
+        drawScope.Success();
     }
 
     if (usePostProcess)
@@ -490,14 +545,20 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
-        m_screenSpaceEffects->EndScenePass();
+        {
+            SceneRenderTrace::Scope endPassScope("EndScenePass");
+            m_screenSpaceEffects->EndScenePass();
+            endPassScope.Success();
+        }
 
         const bool drawGrid = options.showGrid && scene.GetShowGrid();
         if (drawGrid)
         {
+            SceneRenderTrace::Scope gridScope("scene grid pass");
             m_screenSpaceEffects->BeginSceneGridPass();
             m_grid->Draw(camera, splitLightingMrt);
             m_screenSpaceEffects->EndSceneGridPass();
+            gridScope.Success();
         }
 
         if (target != nullptr)
@@ -505,14 +566,26 @@ void SceneRenderer::Render(
             GfxContext::Get().SetBoundOutputFramebuffer(target);
         }
 
-        m_screenSpaceEffects->Apply(
-            camera,
-            viewportWidth,
-            viewportHeight,
-            m_directionalShadowSettings,
-            *m_environmentMap);
-        m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera, freezeTemporalJitter);
-        m_screenSpaceEffects->AdvanceTemporalFrame(camera);
+        {
+            SceneRenderTrace::Scope applyScope("ScreenSpaceEffects::Apply");
+            m_screenSpaceEffects->Apply(
+                camera,
+                viewportWidth,
+                viewportHeight,
+                m_directionalShadowSettings,
+                *m_environmentMap);
+            applyScope.Success();
+        }
+        {
+            SceneRenderTrace::Scope finalizeAaScope("FinalizeAntiAliasingFrame");
+            m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera, freezeTemporalJitter);
+            finalizeAaScope.Success();
+        }
+        {
+            SceneRenderTrace::Scope advanceTemporalScope("AdvanceTemporalFrame");
+            m_screenSpaceEffects->AdvanceTemporalFrame(camera);
+            advanceTemporalScope.Success();
+        }
 
         if (target != nullptr)
         {
@@ -619,6 +692,7 @@ void SceneRenderer::Render(
 
     (void)viewportWidth;
     (void)viewportHeight;
+    renderScope.Success();
 }
 
 const SceneLighting& SceneRenderer::GetLighting() const

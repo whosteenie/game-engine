@@ -12,6 +12,9 @@ namespace EngineLog
     void Warn(const char* category, const std::string& message);
     void Error(const char* category, const std::string& message);
 
+    // Always logged (load/render breadcrumbs). Not gated by GAME_ENGINE_LOG.
+    void Breadcrumb(const char* category, const std::string& message);
+
     void LogException(const char* category, const char* phase, const std::exception& exception);
 
     // Logs phase + message without throwing. Use at catch sites before returning errors to UI.

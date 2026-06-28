@@ -365,6 +365,7 @@ private:
     float m_bloomTemporalBlendFactor = 0.88f;
     float m_bloomSameUvBlendFactor = 0.82f;
     float m_bloomDepthThreshold = 0.008f;
+    float m_bloomOcclusionDepthThreshold = 0.12f;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     int m_msaaSampleCount = 1;
