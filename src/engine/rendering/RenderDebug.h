@@ -52,6 +52,7 @@ enum class RenderDebugMode
     SsrDenoiseSpatial,
     SsrDenoiseTemporal,
     SsrDenoiseFinal,
+    SsrSvgfVariance,
     SsrUpscaled,
     SsrSpecReplacement,
 };

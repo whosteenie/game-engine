@@ -683,6 +683,15 @@ namespace SceneProjectIODetail
                  {"ssgiMaxTraceDistance", effects.GetSsgiMaxTraceDistance()},
                  {"ssgiStepCount", effects.GetSsgiStepCount()},
                  {"ssgiThickness", effects.GetSsgiThickness()},
+                 {"ssrEnabled", effects.IsSsrEnabled()},
+                 {"ssrMaxTraceDistance", effects.GetSsrMaxTraceDistance()},
+                 {"ssrStepCount", effects.GetSsrStepCount()},
+                 {"ssrSampleCount", effects.GetSsrSampleCount()},
+                 {"ssrThickness", effects.GetSsrThickness()},
+                 {"ssrRoughnessCutoff", effects.GetSsrRoughnessCutoff()},
+                 {"ssrStrength", effects.GetSsrStrength()},
+                 {"ssrDenoiseEnabled", effects.IsSsrDenoiseEnabled()},
+                 {"ssrTemporalBlendFactor", effects.GetSsrTemporalBlendFactor()},
                  {"smaaThreshold", effects.GetSmaaThreshold()},
                  {"smaaSearchSteps", effects.GetSmaaSearchSteps()},
                  {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
@@ -851,6 +860,43 @@ namespace SceneProjectIODetail
         if (effectsValue.contains("ssgiThickness"))
         {
             effects.SetSsgiThickness(effectsValue.at("ssgiThickness").get<float>());
+        }
+        if (effectsValue.contains("ssrEnabled"))
+        {
+            effects.SetSsrEnabled(effectsValue.at("ssrEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssrMaxTraceDistance"))
+        {
+            effects.SetSsrMaxTraceDistance(effectsValue.at("ssrMaxTraceDistance").get<float>());
+        }
+        if (effectsValue.contains("ssrStepCount"))
+        {
+            effects.SetSsrStepCount(effectsValue.at("ssrStepCount").get<int>());
+        }
+        if (effectsValue.contains("ssrSampleCount"))
+        {
+            effects.SetSsrSampleCount(effectsValue.at("ssrSampleCount").get<int>());
+        }
+        if (effectsValue.contains("ssrThickness"))
+        {
+            effects.SetSsrThickness(effectsValue.at("ssrThickness").get<float>());
+        }
+        if (effectsValue.contains("ssrRoughnessCutoff"))
+        {
+            effects.SetSsrRoughnessCutoff(effectsValue.at("ssrRoughnessCutoff").get<float>());
+        }
+        if (effectsValue.contains("ssrStrength"))
+        {
+            effects.SetSsrStrength(effectsValue.at("ssrStrength").get<float>());
+        }
+        if (effectsValue.contains("ssrDenoiseEnabled"))
+        {
+            effects.SetSsrDenoiseEnabled(effectsValue.at("ssrDenoiseEnabled").get<bool>());
+        }
+        if (effectsValue.contains("ssrTemporalBlendFactor"))
+        {
+            effects.SetSsrTemporalBlendFactor(
+                effectsValue.at("ssrTemporalBlendFactor").get<float>());
         }
         if (effectsValue.contains("smaaThreshold"))
         {

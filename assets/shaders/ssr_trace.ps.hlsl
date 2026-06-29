@@ -34,7 +34,7 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
-static const int kMaxSamples = 4;
+static const int kMaxSamples = 8;
 static const int kRefineSteps = 6;
 static const float kMaxSsrRadiance = 32.0;
 static const float kMaxReflectionSpread = 0.14;

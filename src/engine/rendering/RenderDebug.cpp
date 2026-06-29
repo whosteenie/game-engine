@@ -104,6 +104,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSR denoise temporal";
     case RenderDebugMode::SsrDenoiseFinal:
         return "SSR denoise final";
+    case RenderDebugMode::SsrSvgfVariance:
+        return "SSR SVGF variance";
     case RenderDebugMode::SsrUpscaled:
         return "SSR upscaled";
     case RenderDebugMode::SsrSpecReplacement:
@@ -238,6 +240,7 @@ bool IsSsrDenoiseDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::SsrDenoiseSpatial:
     case RenderDebugMode::SsrDenoiseTemporal:
     case RenderDebugMode::SsrDenoiseFinal:
+    case RenderDebugMode::SsrSvgfVariance:
     case RenderDebugMode::SsrUpscaled:
         return true;
     default:

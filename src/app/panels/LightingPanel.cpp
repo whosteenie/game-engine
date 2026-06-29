@@ -1494,7 +1494,7 @@ void LightingPanel::Draw(
             "Trace samples",
             &ssrSampleCount,
             1,
-            4,
+            8,
             editContext,
             [](Scene& target, int ssrSampleCount) {
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrSampleCount(ssrSampleCount);
@@ -1576,7 +1576,7 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
         ImGui::TextDisabled(
-            "Spatial + temporal denoise after trace. Enable SSR and set debug to None to see composite (Phase S4).");
+            "SVGF denoise: temporal variance accumulation + 4-pass à-trous. Enable SSR and set debug to None for composite.");
 
         const bool sceneColorRan = screenSpaceEffects.GetSsrSceneColorRanLastFrame();
         const bool traceRan = screenSpaceEffects.GetSsrTraceRanLastFrame();
@@ -1650,6 +1650,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SsrDenoiseSpatial),
             RenderDebugModeLabel(RenderDebugMode::SsrDenoiseTemporal),
             RenderDebugModeLabel(RenderDebugMode::SsrDenoiseFinal),
+            RenderDebugModeLabel(RenderDebugMode::SsrSvgfVariance),
             RenderDebugModeLabel(RenderDebugMode::SsrUpscaled),
             RenderDebugModeLabel(RenderDebugMode::SsrSpecReplacement),
         };
@@ -1878,18 +1879,22 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::SsrDenoiseSpatial))
         {
             ImGui::TextWrapped(
-                "SSR after spatial à-trous (2 passes, tuned for step banding). Compare with SSR trace raw — stripes should soften.");
+                "SSR after first SVGF à-trous pass (variance-guided). Compare with trace raw — speckle should soften.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::SsrDenoiseTemporal))
         {
             ImGui::TextWrapped(
-                "SSR after temporal reprojection (separate history from SSGI). Hold camera still ~8 frames to judge stability.");
+                "SSR after SVGF temporal accumulation (color only). Hold camera still ~8 frames to judge stability.");
+        }
+        else if (debugMode == static_cast<int>(RenderDebugMode::SsrSvgfVariance))
+        {
+            ImGui::TextWrapped(
+                "SVGF luminance variance (grayscale). Bright = noisy / still converging; dark = stable, minimal filter.");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::SsrDenoiseFinal))
         {
             ImGui::TextWrapped(
-                "Final denoised SSR at trace resolution (light spatial + motion-vector temporal). "
-                "Hold camera still; needs temporal blend > 0.");
+                "Final SVGF output: temporal color + 4-pass variance-guided à-trous (steps 1/2/4/8).");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::SsrUpscaled))
         {

@@ -17,7 +17,7 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
-// 0 = rgb, 1 = confidence (alpha)
+// 0 = rgb, 1 = confidence (alpha), 2 = final/atrous, 3 = SVGF variance (luma variance in .r)
 float4 main(PSInput input) : SV_Target
 {
     const float depth = uDepthMap.Sample(uDepthSampler, input.texCoord).r;
@@ -31,6 +31,13 @@ float4 main(PSInput input) : SV_Target
     {
         const float confidence = saturate(trace.a);
         return float4(confidence, confidence, confidence, 1.0);
+    }
+
+    if (uDebugMode == 3)
+    {
+        const float variance = max(trace.r, 0.0);
+        const float display = saturate(sqrt(variance) * uDebugScale);
+        return float4(display, display, display, 1.0);
     }
 
     return float4(max(trace.rgb * uDebugScale, 0.0.xxx), 1.0);

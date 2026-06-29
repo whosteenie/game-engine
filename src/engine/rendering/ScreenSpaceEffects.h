@@ -331,6 +331,8 @@ private:
     InternalTarget m_ssrSpatialTarget;
     InternalTarget m_ssrHistoryTarget;
     InternalTarget m_ssrTemporalTarget;
+    InternalTarget m_ssrVarianceHistoryTarget;
+    InternalTarget m_ssrVarianceTemporalTarget;
     InternalTarget m_ssrHistoryDepthTarget;
     InternalTarget m_ssrResolvedTarget;
     InternalTarget m_ssrIndirectTarget;
@@ -376,9 +378,10 @@ private:
     std::unique_ptr<Shader> m_ssrDebugShader;
     std::unique_ptr<Shader> m_ssrTraceShader;
     std::unique_ptr<Shader> m_ssrTraceDebugShader;
-    std::unique_ptr<Shader> m_ssrDenoiseSpatialShader;
     std::unique_ptr<Shader> m_ssrDenoiseDebugShader;
-    std::unique_ptr<Shader> m_ssrTemporalShader;
+    std::unique_ptr<Shader> m_ssrSvgfTemporalShader;
+    std::unique_ptr<Shader> m_ssrSvgfVarianceTemporalShader;
+    std::unique_ptr<Shader> m_ssrSvgfAtrousShader;
     std::unique_ptr<Shader> m_ssrUpscaleShader;
     std::unique_ptr<Shader> m_ssrIndirectShader;
 
@@ -436,6 +439,8 @@ private:
     float m_ssrRoughnessSpreadMin = 0.35f;
     float m_ssrRoughnessSpreadMax = 1.05f;
     float m_ssrDepthThreshold = 0.003f;
+    float m_ssrSvgfPhiEpsilon = 0.002f;
+    float m_ssrSvgfFilterStrength = 1.0f;
     mutable bool m_ssrSceneColorRanLastFrame = false;
     mutable bool m_ssrTraceRanLastFrame = false;
     mutable bool m_ssrDenoiseRanLastFrame = false;
@@ -443,6 +448,8 @@ private:
     mutable bool m_ssrHistoryValid = false;
     mutable int m_ssrFrameIndex = 0;
     mutable std::uintptr_t m_lastSsrSpatialSrv = 0;
+    mutable std::uintptr_t m_lastSsrTemporalSrv = 0;
+    mutable std::uintptr_t m_lastSsrVarianceSrv = 0;
     mutable std::uintptr_t m_lastSsrDenoiseSrv = 0;
     mutable std::uintptr_t m_lastSsrResolvedSrv = 0;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
