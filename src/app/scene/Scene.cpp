@@ -20,6 +20,7 @@
 #include "engine/scene/SceneObjectComponents.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 
@@ -79,6 +80,8 @@ namespace
         destinationRenderer.SetTextureMipBias(sourceRenderer.GetTextureMipBias());
         destinationRenderer.GetDirectionalShadowSettings() =
             sourceRenderer.GetDirectionalShadowSettings();
+
+        destinationRenderer.GetDxrSettings().CopySettingsFrom(sourceRenderer.GetDxrSettings());
     }
 }
 

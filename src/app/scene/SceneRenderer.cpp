@@ -31,6 +31,7 @@
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rendering/ShaderCache.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -769,6 +770,16 @@ const ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects() const
     }
 
     return *m_screenSpaceEffects;
+}
+
+DxrSettings& SceneRenderer::GetDxrSettings()
+{
+    return m_dxrSettings;
+}
+
+const DxrSettings& SceneRenderer::GetDxrSettings() const
+{
+    return m_dxrSettings;
 }
 
 const DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings() const

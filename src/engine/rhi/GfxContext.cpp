@@ -3,6 +3,7 @@
 #include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/EngineDiagnostics.h"
 #include "engine/platform/EngineLog.h"
+#include "engine/rendering/DxrCapabilities.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
@@ -80,6 +81,40 @@ namespace GfxContextDetail
         char buffer[16];
         std::snprintf(buffer, sizeof(buffer), "0x%08X", static_cast<unsigned>(hr));
         return buffer;
+    }
+
+    std::string WideToUtf8(const wchar_t* wideText)
+    {
+        if (wideText == nullptr || wideText[0] == L'\0')
+        {
+            return {};
+        }
+
+        const int requiredSize = WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wideText,
+            -1,
+            nullptr,
+            0,
+            nullptr,
+            nullptr);
+        if (requiredSize <= 0)
+        {
+            return {};
+        }
+
+        std::string utf8(static_cast<std::size_t>(requiredSize - 1), '\0');
+        WideCharToMultiByte(
+            CP_UTF8,
+            0,
+            wideText,
+            -1,
+            utf8.data(),
+            requiredSize,
+            nullptr,
+            nullptr);
+        return utf8;
     }
 }
 
@@ -184,9 +219,21 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
             continue;
         }
 
-        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_impl->Device))))
+        const D3D_FEATURE_LEVEL featureLevels[] = {
+            D3D_FEATURE_LEVEL_12_1,
+            D3D_FEATURE_LEVEL_11_0,
+        };
+        for (const D3D_FEATURE_LEVEL featureLevel : featureLevels)
         {
-            m_impl->Adapter = adapter;
+            if (SUCCEEDED(D3D12CreateDevice(
+                    adapter.Get(), featureLevel, IID_PPV_ARGS(&m_impl->Device))))
+            {
+                m_impl->Adapter = adapter;
+                break;
+            }
+        }
+        if (m_impl->Device != nullptr)
+        {
             break;
         }
     }
@@ -194,9 +241,21 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     if (m_impl->Device == nullptr)
     {
         ThrowIfFailed(m_impl->Factory->EnumAdapters1(0, &adapter), "EnumAdapters1 failed");
-        ThrowIfFailed(
-            D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&m_impl->Device)),
-            "D3D12CreateDevice failed");
+        const D3D_FEATURE_LEVEL featureLevels[] = {
+            D3D_FEATURE_LEVEL_12_1,
+            D3D_FEATURE_LEVEL_11_0,
+        };
+        HRESULT createResult = E_FAIL;
+        for (const D3D_FEATURE_LEVEL featureLevel : featureLevels)
+        {
+            createResult =
+                D3D12CreateDevice(adapter.Get(), featureLevel, IID_PPV_ARGS(&m_impl->Device));
+            if (SUCCEEDED(createResult))
+            {
+                break;
+            }
+        }
+        ThrowIfFailed(createResult, "D3D12CreateDevice failed");
         m_impl->Adapter = adapter;
     }
 
@@ -236,6 +295,36 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         }
     }
     m_activeMsaaSampleCount = 1;
+
+    {
+        DXGI_ADAPTER_DESC1 adapterDesc{};
+        m_impl->Adapter->GetDesc1(&adapterDesc);
+        m_adapterDescription = GfxContextDetail::WideToUtf8(adapterDesc.Description);
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
+        if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS5,
+                &options5,
+                sizeof(options5))))
+        {
+            m_raytracingTier = static_cast<int>(options5.RaytracingTier);
+        }
+        else
+        {
+            m_raytracingTier = 0;
+        }
+
+        EngineLog::Info(
+            "gfx",
+            "Adapter: " + m_adapterDescription + " | Ray tracing tier: "
+                + GetRaytracingTierLabel(m_raytracingTier));
+        if (m_raytracingTier == 0)
+        {
+            EngineLog::Warn(
+                "gfx",
+                "Ray tracing is not supported on this GPU or driver. DXR features will be disabled.");
+        }
+    }
 
     D3D12MA::ALLOCATOR_DESC allocatorDesc{};
     allocatorDesc.pAdapter = m_impl->Adapter.Get();
@@ -1115,6 +1204,11 @@ void GfxContext::SetActiveMsaaSampleCount(const int sampleCount)
     }
 
     m_activeMsaaSampleCount = sampleCount;
+}
+
+bool GfxContext::IsRaytracingSupported() const
+{
+    return m_raytracingTier >= static_cast<int>(D3D12_RAYTRACING_TIER_1_0);
 }
 
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const

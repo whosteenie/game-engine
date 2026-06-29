@@ -410,6 +410,8 @@ add_executable(game-engine
 
     src/engine/rendering/ScreenSpaceEffects.cpp
 
+    src/engine/rendering/DxrSettings.cpp
+
     src/engine/rendering/Shader.cpp
 
     src/engine/rendering/ShaderCache.cpp
@@ -540,6 +542,7 @@ add_executable(engine-tests
     tests/irradiance_sh_test.cpp
     tests/color_space_test.cpp
     tests/rotation_utils_test.cpp
+    tests/dxr_settings_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
     src/engine/lighting/IrradianceSh.cpp
@@ -547,6 +550,7 @@ add_executable(engine-tests
     src/engine/scene/Transform.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/EngineDiagnostics.cpp
+    src/engine/rendering/DxrSettings.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src)

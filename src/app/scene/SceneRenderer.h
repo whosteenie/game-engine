@@ -6,6 +6,8 @@
 
 #include "engine/rendering/TextureSamplerSettings.h"
 
+#include "engine/rendering/DxrSettings.h"
+
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
@@ -52,6 +54,9 @@ public:
 
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
+
+    DxrSettings& GetDxrSettings();
+    const DxrSettings& GetDxrSettings() const;
 
     bool ComputeShadowCasterBounds(
         const Scene& scene,
@@ -100,6 +105,7 @@ private:
     std::unique_ptr<CascadedShadowMap> m_shadowMap;
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
+    DxrSettings m_dxrSettings;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;
     std::uint32_t m_textureAnisotropy = 8;

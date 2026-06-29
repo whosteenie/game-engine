@@ -33,6 +33,7 @@
 #include "engine/scene/ScenePrimitive.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/TextureSamplerSettings.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
@@ -593,6 +594,7 @@ namespace SceneProjectIODetail
     {
         const ScreenSpaceEffects& effects = scene.GetRenderer().GetScreenSpaceEffects();
         const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
+        const DxrSettings& dxrSettings = scene.GetRenderer().GetDxrSettings();
         return json{
             {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
             {"skybox",
@@ -696,7 +698,61 @@ namespace SceneProjectIODetail
                  {"smaaSearchSteps", effects.GetSmaaSearchSteps()},
                  {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
              }},
+            {"dxr",
+             json{
+                 {"enabled", dxrSettings.IsEnabled()},
+                 {"reflectionsEnabled", dxrSettings.IsReflectionsEnabled()},
+                 {"reflectionsQuality",
+                  DxrSettings::ReflectionsQualityToString(dxrSettings.GetReflectionsQuality())},
+                 {"reflectionsSamplesPerPixel", dxrSettings.GetReflectionsSamplesPerPixel()},
+                 {"maxTraceDistance", dxrSettings.GetMaxTraceDistance()},
+                 {"denoiseEnabled", dxrSettings.IsDenoiseEnabled()},
+                 {"temporalBlend", dxrSettings.GetTemporalBlend()},
+             }},
         };
+    }
+
+    void ApplyDxrSettingsDelta(DxrSettings& dxrSettings, const json& dxrValue)
+    {
+        if (dxrValue.contains("enabled"))
+        {
+            dxrSettings.SetEnabled(dxrValue.at("enabled").get<bool>());
+        }
+        if (dxrValue.contains("reflectionsEnabled"))
+        {
+            dxrSettings.SetReflectionsEnabled(dxrValue.at("reflectionsEnabled").get<bool>());
+        }
+        if (dxrValue.contains("reflectionsQuality"))
+        {
+            dxrSettings.SetReflectionsQuality(DxrSettings::ReflectionsQualityFromString(
+                dxrValue.at("reflectionsQuality").get<std::string>()));
+        }
+        if (dxrValue.contains("reflectionsSamplesPerPixel"))
+        {
+            dxrSettings.SetReflectionsSamplesPerPixel(dxrValue.at("reflectionsSamplesPerPixel").get<int>());
+        }
+        if (dxrValue.contains("maxTraceDistance"))
+        {
+            dxrSettings.SetMaxTraceDistance(dxrValue.at("maxTraceDistance").get<float>());
+        }
+        if (dxrValue.contains("denoiseEnabled"))
+        {
+            dxrSettings.SetDenoiseEnabled(dxrValue.at("denoiseEnabled").get<bool>());
+        }
+        if (dxrValue.contains("temporalBlend"))
+        {
+            dxrSettings.SetTemporalBlend(dxrValue.at("temporalBlend").get<float>());
+        }
+    }
+
+    void ClampDxrSettingsToHardware(DxrSettings& dxrSettings)
+    {
+        if (!GfxContext::Get().IsInitialized())
+        {
+            return;
+        }
+
+        dxrSettings.ClampToHardwareCapabilities(GfxContext::Get().IsRaytracingSupported());
     }
 
     void ApplyScreenSpaceEffectsDelta(ScreenSpaceEffects& effects, const json& effectsValue)
@@ -1112,6 +1168,12 @@ namespace SceneProjectIODetail
         if (GfxContext::Get().IsInitialized())
         {
             renderer.PrepareGpuResources();
+        }
+
+        if (delta.contains("dxr"))
+        {
+            ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
+            ClampDxrSettingsToHardware(renderer.GetDxrSettings());
         }
 
         const bool gpuReady = renderer.IsGpuResourcesReady();

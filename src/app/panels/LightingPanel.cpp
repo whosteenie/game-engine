@@ -19,6 +19,8 @@
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/DxrCapabilities.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 
@@ -1590,6 +1592,131 @@ void LightingPanel::Draw(
             temporalRan ? "ran" : "skip",
             screenSpaceEffects.GetSsrTraceTargetWidth(),
             screenSpaceEffects.GetSsrTraceTargetHeight());
+    }
+
+    if (ImGui::CollapsingHeader("Ray tracing"))
+    {
+        const GfxContext& gfx = GfxContext::Get();
+        const bool raytracingSupported = gfx.IsInitialized() && gfx.IsRaytracingSupported();
+        const int raytracingTier = gfx.IsInitialized() ? gfx.GetRaytracingTier() : 0;
+        const std::string& adapterName =
+            gfx.IsInitialized() ? gfx.GetAdapterDescription() : std::string("(GPU not initialized)");
+
+        ImGui::Text("Adapter: %s", adapterName.c_str());
+        ImGui::Text("Ray tracing tier: %s", GetRaytracingTierLabel(raytracingTier));
+
+        if (!raytracingSupported)
+        {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.55f, 0.2f, 1.0f),
+                "Ray tracing requires a DXR Tier 1.0+ GPU and up-to-date driver.");
+            if (raytracingTier == 0 && gfx.IsInitialized())
+            {
+                ImGui::TextDisabled(
+                    "Update your graphics driver (NVIDIA 531+ class recommended) if you expect RTX support.");
+            }
+        }
+
+        DxrSettings& dxrSettings = renderer.GetDxrSettings();
+
+        if (!raytracingSupported)
+        {
+            ImGui::BeginDisabled();
+        }
+
+        ImGui::PushID("RayTracing");
+        bool dxrEnabled = dxrSettings.IsEnabled();
+        UndoableRendererCheckbox(
+            "Enable ray tracing",
+            &dxrEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetEnabled(enabled);
+                target.MarkDirty();
+            });
+
+        bool reflectionsEnabled = dxrSettings.IsReflectionsEnabled();
+        UndoableRendererCheckbox(
+            "Enable RT reflections",
+            &reflectionsEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetReflectionsEnabled(enabled);
+                target.MarkDirty();
+            });
+
+        int qualityIndex = static_cast<int>(dxrSettings.GetReflectionsQuality());
+        const char* qualityLabels[] = {"Low", "Medium", "High"};
+        if (ImGui::Combo("Reflections quality", &qualityIndex, qualityLabels, IM_ARRAYSIZE(qualityLabels)))
+        {
+            const auto quality = static_cast<DxrReflectionsQuality>(qualityIndex);
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "RT reflections quality",
+                [quality](Scene& target) {
+                    target.GetRenderer().GetDxrSettings().SetReflectionsQuality(quality);
+                    target.MarkDirty();
+                });
+        }
+
+        int samplesPerPixel = dxrSettings.GetReflectionsSamplesPerPixel();
+        UndoableRendererSliderInt(
+            "Reflection samples / pixel",
+            &samplesPerPixel,
+            1,
+            16,
+            editContext,
+            [](Scene& target, int samples) {
+                target.GetRenderer().GetDxrSettings().SetReflectionsSamplesPerPixel(samples);
+                target.MarkDirty();
+            });
+
+        float maxTraceDistance = dxrSettings.GetMaxTraceDistance();
+        UndoableRendererSliderFloat(
+            "Max trace distance",
+            &maxTraceDistance,
+            1.0f,
+            500.0f,
+            "%.1f m",
+            editContext,
+            [](Scene& target, float distance) {
+                target.GetRenderer().GetDxrSettings().SetMaxTraceDistance(distance);
+                target.MarkDirty();
+            });
+
+        bool denoiseEnabled = dxrSettings.IsDenoiseEnabled();
+        UndoableRendererCheckbox(
+            "Denoise enabled",
+            &denoiseEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetDenoiseEnabled(enabled);
+                target.MarkDirty();
+            });
+
+        float temporalBlend = dxrSettings.GetTemporalBlend();
+        UndoableRendererSliderFloat(
+            "Temporal blend",
+            &temporalBlend,
+            0.0f,
+            0.99f,
+            "%.2f",
+            editContext,
+            [](Scene& target, float blend) {
+                target.GetRenderer().GetDxrSettings().SetTemporalBlend(blend);
+                target.MarkDirty();
+            });
+
+        ImGui::PopID();
+
+        if (!raytracingSupported)
+        {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::TextDisabled(
+            "Settings are saved with the project. RT render passes are not active until a later DXR phase.");
     }
 
     if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))

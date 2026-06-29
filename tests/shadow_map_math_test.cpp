@@ -17,6 +17,7 @@
 void RunIrradianceShTests(int& failures);
 void RunColorSpaceTests(int& failures);
 void RunRotationUtilsTests(int& failures);
+void RunDxrSettingsTests(int& failures);
 
 namespace
 {
@@ -503,6 +504,7 @@ int main()
     RunIrradianceShTests(gFailures);
     RunColorSpaceTests(gFailures);
     RunRotationUtilsTests(gFailures);
+    RunDxrSettingsTests(gFailures);
 
     if (gFailures == 0)
     {

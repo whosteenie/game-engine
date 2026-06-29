@@ -120,6 +120,11 @@ public:
     bool IsMsaaSampleCountSupported(int sampleCount) const;
     bool IsFrameRecording() const { return m_frameRecording; }
 
+    // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
+    bool IsRaytracingSupported() const;
+    int GetRaytracingTier() const { return m_raytracingTier; }
+    const std::string& GetAdapterDescription() const { return m_adapterDescription; }
+
 private:
     GfxContext() = default;
 
@@ -156,4 +161,6 @@ private:
     float m_materialTextureMipBias = 0.0f;
     int m_activeMsaaSampleCount = 1;
     std::uint8_t m_supportedMsaaSampleCountsMask = 0;
+    int m_raytracingTier = 0;
+    std::string m_adapterDescription;
 };
