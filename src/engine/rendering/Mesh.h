@@ -37,8 +37,12 @@ public:
     const std::vector<glm::vec3>& GetPositions() const;
     const std::vector<unsigned int>& GetIndices() const;
 
-private:
     void EnsureGpuResources() const;
+    const GpuBuffer& GetVertexBuffer() const { return m_vertexBuffer; }
+    const GpuBuffer& GetIndexBuffer() const { return m_indexBuffer; }
+    unsigned int GetFloatsPerVertex() const { return m_floatsPerVertex; }
+
+private:
     void ReleaseGpuResources();
 
     unsigned int m_indexCount = 0;

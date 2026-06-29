@@ -99,6 +99,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_shadowMap.reset();
     self->m_environmentMap.reset();
     self->m_screenSpaceEffects.reset();
+    self->m_dxrAccelerationStructures.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -535,6 +536,16 @@ void SceneRenderer::Render(
         drawScope.Success();
     }
 
+    if (m_dxrAccelerationStructures == nullptr)
+    {
+        m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
+    }
+
+    m_dxrAccelerationStructures->EnsureScene(
+        scene,
+        m_dxrSettings.IsEnabled(),
+        GfxContext::Get().GetCommandList());
+
     if (usePostProcess)
     {
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
@@ -780,6 +791,17 @@ DxrSettings& SceneRenderer::GetDxrSettings()
 const DxrSettings& SceneRenderer::GetDxrSettings() const
 {
     return m_dxrSettings;
+}
+
+const DxrDiagnostics& SceneRenderer::GetDxrDiagnostics() const
+{
+    static const DxrDiagnostics kEmptyDiagnostics{};
+    if (m_dxrAccelerationStructures == nullptr)
+    {
+        return kEmptyDiagnostics;
+    }
+
+    return m_dxrAccelerationStructures->GetDiagnostics();
 }
 
 const DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings() const

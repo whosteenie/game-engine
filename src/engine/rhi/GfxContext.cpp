@@ -314,6 +314,32 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
             m_raytracingTier = 0;
         }
 
+        // Some drivers report tier 0 on ID3D12Device even when ID3D12Device5 + AS builds work.
+        if (m_raytracingTier < static_cast<int>(D3D12_RAYTRACING_TIER_1_0))
+        {
+            Microsoft::WRL::ComPtr<ID3D12Device5> device5;
+            if (SUCCEEDED(m_impl->Device->QueryInterface(IID_PPV_ARGS(&device5))) && device5 != nullptr)
+            {
+                D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5OnDevice5{};
+                if (SUCCEEDED(device5->CheckFeatureSupport(
+                        D3D12_FEATURE_D3D12_OPTIONS5,
+                        &options5OnDevice5,
+                        sizeof(options5OnDevice5))))
+                {
+                    m_raytracingTier = static_cast<int>(options5OnDevice5.RaytracingTier);
+                }
+
+                if (m_raytracingTier < static_cast<int>(D3D12_RAYTRACING_TIER_1_0))
+                {
+                    m_raytracingTier = static_cast<int>(D3D12_RAYTRACING_TIER_1_0);
+                    EngineLog::Warn(
+                        "gfx",
+                        "D3D12_OPTIONS5 reported no ray tracing tier; ID3D12Device5 is available — "
+                        "assuming Tier 1.0+.");
+                }
+            }
+        }
+
         EngineLog::Info(
             "gfx",
             "Adapter: " + m_adapterDescription + " | Ray tracing tier: "

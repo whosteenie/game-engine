@@ -34,6 +34,10 @@ public:
 
     bool IsValid() const { return m_resource != nullptr; }
 
+    void* GetResource() const { return m_resource; }
+    std::uint64_t GetGpuVirtualAddress() const;
+    std::uint32_t GetByteSize() const { return m_byteSize; }
+
 private:
     void* m_resource = nullptr;
     D3D12MA::Allocation* m_allocation = nullptr;

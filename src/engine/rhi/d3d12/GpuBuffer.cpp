@@ -291,6 +291,16 @@ void GpuBuffer::Destroy()
     m_byteSize = 0;
 }
 
+std::uint64_t GpuBuffer::GetGpuVirtualAddress() const
+{
+    if (m_resource == nullptr)
+    {
+        return 0;
+    }
+
+    return static_cast<ID3D12Resource*>(m_resource)->GetGPUVirtualAddress();
+}
+
 void GpuBuffer::BindVertex(const std::uint32_t slot, const std::uint32_t stride) const
 {
     BindVertexToCommandList(GfxContext::Get().GetCommandList(), slot, stride);

@@ -8,6 +8,9 @@
 
 #include "engine/rendering/DxrSettings.h"
 
+#include "engine/raytracing/DxrAccelerationStructures.h"
+#include "engine/raytracing/DxrDiagnostics.h"
+
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
@@ -58,6 +61,8 @@ public:
     DxrSettings& GetDxrSettings();
     const DxrSettings& GetDxrSettings() const;
 
+    const DxrDiagnostics& GetDxrDiagnostics() const;
+
     bool ComputeShadowCasterBounds(
         const Scene& scene,
         glm::vec3& boundsMin,
@@ -105,6 +110,7 @@ private:
     std::unique_ptr<CascadedShadowMap> m_shadowMap;
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
+    std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
     DxrSettings m_dxrSettings;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;

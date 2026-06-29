@@ -412,6 +412,13 @@ add_executable(game-engine
 
     src/engine/rendering/DxrSettings.cpp
 
+    src/engine/raytracing/DxrContext.cpp
+    src/engine/raytracing/DxrGpuResource.cpp
+    src/engine/raytracing/Blas.cpp
+    src/engine/raytracing/BlasCache.cpp
+    src/engine/raytracing/Tlas.cpp
+    src/engine/raytracing/DxrAccelerationStructures.cpp
+
     src/engine/rendering/Shader.cpp
 
     src/engine/rendering/ShaderCache.cpp
@@ -543,6 +550,7 @@ add_executable(engine-tests
     tests/color_space_test.cpp
     tests/rotation_utils_test.cpp
     tests/dxr_settings_test.cpp
+    tests/dxr_acceleration_structure_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
     src/engine/lighting/IrradianceSh.cpp
@@ -582,6 +590,11 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
         src/engine/rhi/d3d12/GpuBuffer.cpp
     src/engine/rhi/d3d12/HlslCompiler.cpp
+        src/engine/raytracing/DxrContext.cpp
+        src/engine/raytracing/DxrGpuResource.cpp
+        src/engine/raytracing/Blas.cpp
+        src/engine/raytracing/BlasCache.cpp
+        src/engine/raytracing/Tlas.cpp
         src/engine/rendering/Framebuffer.cpp
         src/engine/rendering/Shader.cpp
         src/engine/rendering/ShaderCache.cpp
@@ -611,6 +624,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
     src/engine/platform/RenderPathDiagnostics.cpp
         src/engine/rendering/RenderDebug.cpp
         src/primitives/Cube.cpp
+        src/primitives/Plane.cpp
         src/primitives/Sphere.cpp
         src/primitives/PrimitiveMeshUtils.cpp
     )

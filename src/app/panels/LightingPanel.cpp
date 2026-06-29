@@ -21,6 +21,7 @@
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/DxrCapabilities.h"
 #include "engine/rendering/DxrSettings.h"
+#include "engine/raytracing/DxrDiagnostics.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 
@@ -1603,7 +1604,9 @@ void LightingPanel::Draw(
             gfx.IsInitialized() ? gfx.GetAdapterDescription() : std::string("(GPU not initialized)");
 
         ImGui::Text("Adapter: %s", adapterName.c_str());
-        ImGui::Text("Ray tracing tier: %s", GetRaytracingTierLabel(raytracingTier));
+        char tierText[64]{};
+        FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
+        ImGui::Text("Ray tracing tier: %s", tierText);
 
         if (!raytracingSupported)
         {
@@ -1710,13 +1713,33 @@ void LightingPanel::Draw(
 
         ImGui::PopID();
 
+        const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();
+        ImGui::Separator();
+        ImGui::Text("BLAS count: %u", dxrDiagnostics.blasCount);
+        ImGui::Text("TLAS instances: %u", dxrDiagnostics.tlasInstanceCount);
+        ImGui::Text("RT triangles (unique): %llu", static_cast<unsigned long long>(dxrDiagnostics.totalRtTriangles));
+        const double asMemoryMb =
+            static_cast<double>(dxrDiagnostics.asGpuMemoryBytes) / (1024.0 * 1024.0);
+        if (asMemoryMb >= 1.0)
+        {
+            ImGui::Text("AS GPU memory: %.2f MB", asMemoryMb);
+        }
+        else
+        {
+            ImGui::Text(
+                "AS GPU memory: %.1f KB",
+                static_cast<double>(dxrDiagnostics.asGpuMemoryBytes) / 1024.0);
+        }
+        ImGui::Text("Last build status: %s", dxrDiagnostics.buildStatus.c_str());
+        ImGui::Text("Last build time: %.3f ms", dxrDiagnostics.lastBuildTimeMs);
+
         if (!raytracingSupported)
         {
             ImGui::EndDisabled();
         }
 
         ImGui::TextDisabled(
-            "Settings are saved with the project. RT render passes are not active until a later DXR phase.");
+            "Acceleration structures build when ray tracing is enabled. DispatchRays arrives in a later DXR phase.");
     }
 
     if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))

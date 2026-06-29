@@ -30,8 +30,14 @@
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
+#include "engine/raytracing/Blas.h"
+#include "engine/raytracing/DxrContext.h"
+#include "engine/raytracing/DxrGpuResource.h"
+#include "engine/raytracing/DxrInstanceTransform.h"
+#include "engine/raytracing/Tlas.h"
 
 #include "primitives/Cube.h"
+#include "primitives/Plane.h"
 #include "primitives/Sphere.h"
 
 #include <imgui.h>
@@ -1686,6 +1692,72 @@ namespace
 
         context.Shutdown();
     }
+
+    void TestDxrAccelerationStructuresSmoke()
+    {
+        D3d12TestContext context;
+        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
+
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: DXR acceleration structure smoke (no RTX tier)\n";
+            context.Shutdown();
+            return;
+        }
+
+        std::unique_ptr<Mesh> plane = CreatePlaneMesh(2.0f);
+        std::unique_ptr<Mesh> cube = CreateCubeMesh();
+        test::ExpectTrue(plane != nullptr && cube != nullptr, "Primitive meshes should be created");
+
+        plane->EnsureGpuResources();
+        cube->EnsureGpuResources();
+        test::ExpectTrue(plane->GetVertexBuffer().IsValid(), "Plane VB should be valid");
+        test::ExpectTrue(cube->GetVertexBuffer().IsValid(), "Cube VB should be valid");
+
+        Framebuffer framebuffer;
+        test::ExpectTrue(framebuffer.Resize(64, 64), "Framebuffer resize should succeed");
+        BeginOffscreenPass(framebuffer, false);
+
+        auto* commandList4 = DxrContext::Get().QueryCommandList4(GfxContext::Get().GetCommandList());
+        test::ExpectTrue(commandList4 != nullptr, "Command list 4 should be available");
+
+        DxrGpuResource scratch{};
+        test::ExpectTrue(CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch), "Scratch buffer alloc");
+
+        Blas planeBlas;
+        Blas cubeBlas;
+        std::string buildError;
+        test::ExpectTrue(planeBlas.Build(commandList4, plane.get(), scratch, buildError), buildError.c_str());
+        test::ExpectTrue(cubeBlas.Build(commandList4, cube.get(), scratch, buildError), buildError.c_str());
+        test::ExpectTrue(planeBlas.GetGpuVirtualAddress() != 0, "Plane BLAS GPU VA");
+        test::ExpectTrue(cubeBlas.GetGpuVirtualAddress() != 0, "Cube BLAS GPU VA");
+
+        std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances(2);
+        WriteD3D12InstanceTransform(glm::mat4(1.0f), reinterpret_cast<float*>(instances[0].Transform));
+        instances[0].InstanceID = 0;
+        instances[0].InstanceMask = 0xFF;
+        instances[0].AccelerationStructure = planeBlas.GetGpuVirtualAddress();
+
+        const glm::mat4 cubeTransform = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        WriteD3D12InstanceTransform(cubeTransform, reinterpret_cast<float*>(instances[1].Transform));
+        instances[1].InstanceID = 1;
+        instances[1].InstanceMask = 0xFF;
+        instances[1].AccelerationStructure = cubeBlas.GetGpuVirtualAddress();
+
+        Tlas tlas;
+        test::ExpectTrue(tlas.Build(commandList4, instances, scratch, buildError), buildError.c_str());
+        test::ExpectTrue(tlas.GetGpuVirtualAddress() != 0, "TLAS GPU VA");
+
+        const std::uint64_t expectedTriangles =
+            static_cast<std::uint64_t>(plane->GetIndices().size() + cube->GetIndices().size()) / 3u;
+        test::ExpectTrue(
+            planeBlas.GetTriangleCount() + cubeBlas.GetTriangleCount() == expectedTriangles,
+            "BLAS triangle counts should match CPU index counts");
+
+        EndOffscreenPass();
+        (void)framebuffer.Resize(0, 0);
+        context.Shutdown();
+    }
 }
 
 int main()
@@ -1717,6 +1789,7 @@ int main()
     TestSwapchainPresentLoopStability();
     TestResizeDuringSwapchainPresentLoop();
     TestImGuiMouseTracksGlfwCursor();
+    TestDxrAccelerationStructuresSmoke();
 
     if (test::FailureCount() == 0)
     {
