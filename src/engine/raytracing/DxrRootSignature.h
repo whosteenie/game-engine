@@ -12,6 +12,8 @@ struct DispatchConstants
 {
     std::uint32_t outputWidth = 0;
     std::uint32_t outputHeight = 0;
+    std::uint32_t _padding0 = 0;
+    std::uint32_t _padding1 = 0;
     float clearColor[4] = {1.0f, 0.0f, 1.0f, 1.0f};
 };
 

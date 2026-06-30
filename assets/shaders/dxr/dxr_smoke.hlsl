@@ -1,6 +1,7 @@
 cbuffer DispatchConstants : register(b0)
 {
     uint2 g_OutputSize;
+    uint2 _Padding0;
     float4 g_ClearColor;
 };
 
