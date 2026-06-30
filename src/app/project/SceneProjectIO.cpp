@@ -22,8 +22,7 @@
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/assets/ModelImporter.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -1132,6 +1131,13 @@ namespace SceneProjectIODetail
 
         SceneRenderer& renderer = scene.GetRenderer();
 
+        if (delta.contains("directionalShadow"))
+        {
+            ApplyDirectionalShadowDelta(
+                renderer.GetDirectionalShadowSettings(),
+                delta.at("directionalShadow"));
+        }
+
         // During project load the GPU path is not ready yet; never touch D3D12 resources here.
         if (deferIfGpuNotReady && !renderer.IsGpuResourcesReady())
         {
@@ -1139,12 +1145,6 @@ namespace SceneProjectIODetail
             {
                 ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
                 ClampDxrSettingsToHardware(renderer.GetDxrSettings());
-            }
-            if (delta.contains("directionalShadow"))
-            {
-                ApplyDirectionalShadowDelta(
-                    renderer.GetDirectionalShadowSettings(),
-                    delta.at("directionalShadow"));
             }
 
             // Geometry MSAA must be on GfxContext before the first EnsureGpuResources so we
@@ -1188,8 +1188,7 @@ namespace SceneProjectIODetail
                 applyAaSettings = true;
                 if (aaToApply.msaaSampleCount > 1)
                 {
-                    ShaderCache::Clear();
-                    DxrShaderCache::Clear();
+                    RenderingPipelineCache::InvalidateAll();
                 }
                 renderer.PrepareGpuResourcesForGeometryMsaa(aaToApply.msaaSampleCount);
                 if (renderer.IsGpuResourcesReady() && aaToApply.msaaSampleCount > 1)
@@ -1213,13 +1212,6 @@ namespace SceneProjectIODetail
         const bool gpuReady = renderer.IsGpuResourcesReady();
         if (!gpuReady)
         {
-            if (delta.contains("directionalShadow"))
-            {
-                ApplyDirectionalShadowDelta(
-                    renderer.GetDirectionalShadowSettings(),
-                    delta.at("directionalShadow"));
-            }
-
             if (deferIfGpuNotReady)
             {
                 renderer.MergePendingRendererSettings(delta);
@@ -1261,13 +1253,6 @@ namespace SceneProjectIODetail
             {
                 renderer.SetTextureMipBias(delta.at("textureMipBias").get<float>());
             }
-        }
-
-        if (delta.contains("directionalShadow"))
-        {
-            ApplyDirectionalShadowDelta(
-                renderer.GetDirectionalShadowSettings(),
-                delta.at("directionalShadow"));
         }
 
         if (gpuReady && delta.contains("screenSpaceEffects"))

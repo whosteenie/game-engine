@@ -2,8 +2,15 @@
 
 #include <glm/glm.hpp>
 
+#include <imgui.h>
+
+#include <string>
+
 namespace EditorWidgets
 {
+    ImVec4 ErrorTextColor();
+    void DrawErrorText(const std::string& message);
+    void TextColoredError(const char* fmt, ...) IM_FMTARGS(1);
     // ImGui and printf can display "-0" for negative zero; normalize for UI.
     inline float SanitizeSignedZero(float value)
     {

@@ -33,10 +33,8 @@
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Shader.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/raytracing/DxrTrace.h"
-#include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
 #include <cmath>
@@ -139,8 +137,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
             return;
         }
 
-        ShaderCache::Clear();
-        DxrShaderCache::Clear();
+        RenderingPipelineCache::InvalidateAll();
         ResetPartialGpuResources();
         SceneRenderer* self = const_cast<SceneRenderer*>(this);
         self->m_gpuResourcesInitFailed = false;
@@ -152,8 +149,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
         ResetGpuResourcesIfInitFailed();
         if (activeMsaaSampleCount > 1)
         {
-            ShaderCache::Clear();
-            DxrShaderCache::Clear();
+            RenderingPipelineCache::InvalidateAll();
         }
     }
 
@@ -1087,8 +1083,7 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
         GfxContext::Get().SetBoundOutputFramebuffer(nullptr);
 
         GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
-        ShaderCache::Clear();
-        DxrShaderCache::Clear();
+        RenderingPipelineCache::InvalidateAll();
         scene.InvalidateAllMaterialCachedShaders();
         m_environmentMap->ReloadSkyboxRenderer();
         m_screenSpaceEffects->ReloadGeometryMsaaTargets(viewportWidth, viewportHeight);

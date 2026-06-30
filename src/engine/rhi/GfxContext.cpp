@@ -1,5 +1,7 @@
 #include "engine/rhi/GfxContext.h"
 
+#include "engine/rhi/HresultFormat.h"
+
 #include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/EngineDiagnostics.h"
 #include "engine/platform/EngineLog.h"
@@ -75,13 +77,6 @@ namespace GfxContextDetail
     {
         EngineDiagnostics::SetLastGpuAllocationError(
             message != nullptr ? message : "unknown GPU allocation error");
-    }
-
-    std::string FormatHresult(const HRESULT hr)
-    {
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "0x%08X", static_cast<unsigned>(hr));
-        return buffer;
     }
 
     std::string WideToUtf8(const wchar_t* wideText)
@@ -662,7 +657,9 @@ void GfxContext::BeginFrame()
     ProcessPendingResize();
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     FrameDiagnostics::LogPhase("BeginFrame-wait");
-    WaitForFenceValue(frame.FenceValue);
+    const std::uint64_t frameWaitFence =
+        std::max({frame.FenceValue, m_submissionFenceValue, m_fenceValues[m_frameIndex]});
+    WaitForFenceValue(frameWaitFence);
 
     const HRESULT allocatorResetResult = frame.CommandAllocator->Reset();
     if (FAILED(allocatorResetResult))
@@ -691,6 +688,7 @@ void GfxContext::BeginFrame()
         throw std::runtime_error(message);
     }
 
+    m_frameRecording = true;
     m_impl->TransientUploadArenas[m_frameIndex].Offset = 0;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
     EngineDiagnostics::ClearLastGpuAllocationError();
@@ -718,7 +716,6 @@ void GfxContext::BeginFrame()
 
     ID3D12DescriptorHeap* heaps[] = {m_impl->SrvHeap.Get()};
     m_impl->CommandList->SetDescriptorHeaps(1, heaps);
-    m_frameRecording = true;
 }
 
 void GfxContext::CancelFrame()
@@ -839,7 +836,7 @@ void GfxContext::EndFrame()
     if (FAILED(presentResult))
     {
         std::string message =
-            "Present failed (HRESULT=" + GfxContextDetail::FormatHresult(presentResult) + ")";
+            "Present failed (HRESULT=" + HresultFormat::Format(presentResult) + ")";
         std::string deviceRemovedReason;
         if (IsDeviceRemoved(&deviceRemovedReason))
         {
@@ -1459,7 +1456,7 @@ bool GfxContext::IsDeviceRemoved(std::string* outReason) const
 
     if (outReason != nullptr)
     {
-        *outReason = "HRESULT=" + GfxContextDetail::FormatHresult(removedReason);
+        *outReason = "HRESULT=" + HresultFormat::Format(removedReason);
     }
 
     return true;

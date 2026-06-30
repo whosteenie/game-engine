@@ -276,6 +276,7 @@ add_executable(game-engine
     src/app/scene/RenderDiagnostics.cpp
 
     src/app/editor/EditorWidgets.cpp
+    src/app/editor/OffscreenViewportPanel.cpp
 
     src/app/panels/SceneHierarchyPanel.cpp
 
@@ -329,6 +330,7 @@ add_executable(game-engine
     src/engine/platform/RenderPathDiagnostics.cpp
 
     src/engine/rhi/GfxContext.cpp
+    src/engine/rhi/HresultFormat.cpp
 
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
 

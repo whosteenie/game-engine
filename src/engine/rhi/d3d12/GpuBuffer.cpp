@@ -1,25 +1,16 @@
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
 
 #include <cstring>
-#include <iomanip>
-#include <sstream>
 #include <stdexcept>
 
 namespace
 {
-    std::string FormatHresult(const HRESULT hr)
-    {
-        std::ostringstream stream;
-        stream << "0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
-            << static_cast<unsigned long>(static_cast<LONG>(hr));
-        return stream.str();
-    }
-
     [[noreturn]] void ThrowGpuBufferError(const std::string& message)
     {
         throw std::runtime_error(message);
@@ -114,7 +105,7 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
     if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
     {
         ThrowGpuBufferError(
-            "Failed to create GPU buffer: D3D12 device was removed (" + deviceRemovedReason + ")");
+            "Failed to create GPU buffer: " + HresultFormat::DeviceRemovedMessage(deviceRemovedReason));
     }
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
@@ -146,7 +137,7 @@ void GpuBuffer::Create(const Type type, const void* data, const std::uint32_t by
     if (FAILED(createDefaultResult))
     {
         ThrowGpuBufferError(
-            "Failed to create GPU buffer (default heap) (HRESULT=" + FormatHresult(createDefaultResult)
+            "Failed to create GPU buffer (default heap) (HRESULT=" + HresultFormat::Format(createDefaultResult)
             + ")");
     }
 

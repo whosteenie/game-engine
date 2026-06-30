@@ -109,5 +109,4 @@ private:
     bool m_projectLoadInProgress = false;
     bool m_finishPresentationAfterPresent = false;
     bool m_lastOpenFailedDueToDeviceRemoved = false;
-    int m_projectLoadFrames = 0;
 };

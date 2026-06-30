@@ -5,6 +5,7 @@
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 
 
 
@@ -17,8 +18,6 @@
 
 
 #include <array>
-
-#include <algorithm>
 
 #include <algorithm>
 
@@ -66,31 +65,6 @@ namespace
     int ColorAttachmentCount(FramebufferColorMode colorMode)
     {
         return colorMode == FramebufferColorMode::SplitDirectIndirect ? 7 : 1;
-    }
-
-    std::string FormatHresult(const HRESULT hr)
-    {
-        std::ostringstream stream;
-        stream << "0x" << std::hex << std::uppercase << std::setw(8) << std::setfill('0')
-            << static_cast<unsigned long>(static_cast<LONG>(hr));
-        return stream.str();
-    }
-
-    std::string DescribeHresult(const HRESULT hr)
-    {
-        switch (hr)
-        {
-        case static_cast<HRESULT>(0x887A0005):
-            return "DXGI_ERROR_DEVICE_REMOVED";
-        case static_cast<HRESULT>(0x887A0006):
-            return "DXGI_ERROR_DEVICE_HUNG";
-        case static_cast<HRESULT>(0x887A0007):
-            return "DXGI_ERROR_DEVICE_RESET";
-        case static_cast<HRESULT>(0x8007000E):
-            return "E_OUTOFMEMORY";
-        default:
-            return {};
-        }
     }
 
     std::string FormatDescriptorUsageContext()
@@ -484,8 +458,8 @@ void Framebuffer::Create(const int width, const int height)
 
         {
 
-            const std::string hresultText = FormatHresult(createHr);
-            const std::string hresultName = DescribeHresult(createHr);
+            const std::string hresultText = HresultFormat::Format(createHr);
+            const std::string hresultName = HresultFormat::Describe(createHr);
             ThrowFramebufferError(
                 "Failed to create framebuffer color attachment " + std::to_string(attachmentIndex)
                 + " (HRESULT=" + hresultText
@@ -616,8 +590,8 @@ void Framebuffer::Create(const int width, const int height)
 
                 ThrowFramebufferError(
                     "Failed to create MSAA framebuffer color attachment "
-                    + std::to_string(attachmentIndex) + " (HRESULT=" + FormatHresult(createHr)
-                    + (DescribeHresult(createHr).empty() ? "" : ", " + DescribeHresult(createHr))
+                    + std::to_string(attachmentIndex) + " (HRESULT=" + HresultFormat::Format(createHr)
+                    + (HresultFormat::Describe(createHr).empty() ? "" : ", " + HresultFormat::Describe(createHr))
                     + ")");
 
             }

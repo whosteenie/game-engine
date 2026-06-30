@@ -34,8 +34,7 @@
 #include "engine/scene/SceneObject.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/platform/ImGuiLayer.h"
@@ -44,6 +43,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 
 #include <ImGuizmo.h>
 #include "engine/platform/NativeProgressWindow.h"
@@ -54,7 +54,6 @@
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Renderer.h"
 
-#include <imgui.h>
 #include <imgui_impl_glfw.h>
 
 #include <algorithm>
@@ -381,8 +380,7 @@ Application::~Application()
         m_scene.reset();
         m_renderer.reset();
         TextureCache::Get().Clear();
-        ShaderCache::Clear();
-        DxrShaderCache::Clear();
+        RenderingPipelineCache::InvalidateAll();
         Material::ReleaseGlobalGpuResources();
         Texture::ReleaseUploadResources();
     }
@@ -487,13 +485,12 @@ void Application::Run()
 
 void Application::HandleFatalGpuDeviceLoss(const std::string& reason)
 {
-    static bool handled = false;
-    if (handled)
+    if (m_fatalGpuLossHandled)
     {
         return;
     }
 
-    handled = true;
+    m_fatalGpuLossHandled = true;
     EngineLog::Error("application", reason);
     std::cerr << reason << "\n";
 
@@ -577,11 +574,6 @@ void Application::InitGLFW()
 #endif
 }
 
-void Application::InitGLAD()
-{
-    // OpenGL path removed on D3D12 branch; kept for API compatibility.
-}
-
 void Application::Update(double deltaTime)
 {
     m_performancePanel->OnFrame(deltaTime);
@@ -594,8 +586,7 @@ void Application::Update(double deltaTime)
         std::string deviceRemovedReason;
         if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
         {
-            HandleFatalGpuDeviceLoss(
-                "D3D12 device was removed (" + deviceRemovedReason + "). Restart the editor.");
+            HandleFatalGpuDeviceLoss(HresultFormat::FatalDeviceRemovedMessage(deviceRemovedReason));
             return;
         }
     }
@@ -749,6 +740,9 @@ void Application::Update(double deltaTime)
 
         const bool hasGameSceneCamera =
             gameScene != nullptr && SceneCamera::SceneHasActiveCamera(*gameScene);
+
+        EditorPanelConstraints::SyncViewportDockVisibleWindow("Scene View", "Game View");
+
         m_gameViewportPanel->Draw(hasGameSceneCamera);
         m_sceneViewportPanel->Draw(*m_camera, *editorScene);
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
@@ -899,10 +893,6 @@ void Application::Update(double deltaTime)
             viewportPtr};
 
         m_sceneEditingController->Update(*GetEditorTargetScene(), editorUpdateContext);
-
-        EditorPanelConstraints::SyncViewportDockVisibleWindow("Scene View", "Game View");
-        EditorPanelConstraints::ClearInactiveDockTabDrawList("Scene View");
-        EditorPanelConstraints::ClearInactiveDockTabDrawList("Game View");
     }
 
     m_input->EndFrame();
@@ -1243,8 +1233,7 @@ void Application::Render()
     {
         std::string deviceRemovedReason;
         (void)GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason);
-        HandleFatalGpuDeviceLoss(
-            "D3D12 device was removed (" + deviceRemovedReason + "). Restart the editor.");
+        HandleFatalGpuDeviceLoss(HresultFormat::FatalDeviceRemovedMessage(deviceRemovedReason));
         return;
     }
 
@@ -1254,6 +1243,8 @@ void Application::Render()
 
     if (editorActive || presentingProjectLoad)
     {
+        GfxContext::Get().WaitForSwapchainFrames();
+
         if (Scene* editorScene = GetEditorTargetScene())
         {
             RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
@@ -1262,11 +1253,6 @@ void Application::Render()
             RunApplicationPhase("prepare-frame-gpu", [&]() {
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
-        }
-
-        if (editorActive)
-        {
-            GfxContext::Get().WaitForSwapchainFrames();
         }
     }
 
@@ -1277,7 +1263,9 @@ void Application::Render()
     });
 
     bool sceneFramePresented = false;
-    if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
+    if (editorActive
+        && EditorPanelConstraints::IsViewportTabSelected("Scene View")
+        && m_sceneViewportPanel->HasValidRenderTarget())
     {
         RunApplicationPhase("scene-view-render", [&]() {
             FrameDiagnostics::LogPhase("scene-view-render");
@@ -1307,7 +1295,9 @@ void Application::Render()
         });
     }
 
-    if (editorActive && m_gameViewportPanel->HasValidRenderTarget())
+    if (editorActive
+        && EditorPanelConstraints::IsViewportTabSelected("Game View")
+        && m_gameViewportPanel->HasValidRenderTarget())
     {
         RunApplicationPhase("game-view-render", [&]() {
             Scene* gameScene = m_scene.get();
@@ -1338,6 +1328,7 @@ void Application::Render()
                     {
                         const Camera renderCamera = sceneCamera->ToRenderCamera();
                         const SceneRenderOptions gameViewOptions{
+                            false,
                             false,
                             false,
                             false,

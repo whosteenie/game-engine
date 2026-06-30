@@ -76,7 +76,7 @@ float3 ExtractBrightColor(float3 color, float threshold, float knee)
     return color * contribution;
 }
 
-float3 main(PSInput input) : SV_Target
+float4 main(PSInput input) : SV_Target
 {
     const float2 fullTexelSize = float2(uFullTexelSizeX, uFullTexelSizeY);
     const float2 uv = input.texCoord;
@@ -94,5 +94,5 @@ float3 main(PSInput input) : SV_Target
         hdr = max(hdr, emissive * exp2(uExposure));
     }
 
-    return ExtractBrightColor(hdr, uThreshold, uSoftKnee);
+    return float4(ExtractBrightColor(hdr, uThreshold, uSoftKnee), 1.0);
 }

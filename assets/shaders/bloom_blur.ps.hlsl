@@ -15,7 +15,7 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
-float3 main(PSInput input) : SV_Target
+float4 main(PSInput input) : SV_Target
 {
     float2 direction = float2(uDirectionX, uDirectionY) * uBlurRadius;
     float3 result = uInput.Sample(uInputSampler, input.texCoord).rgb * 0.227027;
@@ -27,5 +27,5 @@ float3 main(PSInput input) : SV_Target
     result += uInput.Sample(uInputSampler, input.texCoord - direction * 3.0).rgb * 0.054054;
     result += uInput.Sample(uInputSampler, input.texCoord + direction * 4.0).rgb * 0.016216;
     result += uInput.Sample(uInputSampler, input.texCoord - direction * 4.0).rgb * 0.016216;
-    return result;
+    return float4(result, 1.0);
 }

@@ -6,65 +6,34 @@
 
 #include <ImGuizmo.h>
 #include <imgui.h>
-#include <imgui_internal.h>
 
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
 
-namespace
-{
-    void UpdateInteractionRect(
-        EditorViewportRect& interactionRect,
-        const ImVec2& imageMin,
-        const ImVec2& imageSize,
-        int renderWidth,
-        int renderHeight)
-    {
-        const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
-        interactionRect.valid = renderWidth > 0 && renderHeight > 0;
-        interactionRect.screenX = imageMin.x;
-        interactionRect.screenY = imageMin.y;
-        interactionRect.screenWidth = imageSize.x;
-        interactionRect.screenHeight = imageSize.y;
-        interactionRect.framebufferX = static_cast<int>(imageMin.x * framebufferScale.x);
-        interactionRect.framebufferY = static_cast<int>(imageMin.y * framebufferScale.y);
-        interactionRect.width = renderWidth;
-        interactionRect.height = renderHeight;
-    }
-}
-
 bool SceneViewportPanel::HasValidRenderTarget() const
 {
-    return m_showPanel && m_renderWidth > 0 && m_renderHeight > 0;
+    return OffscreenViewportPanel::HasValidRenderTarget(m_viewport);
 }
 
 std::uintptr_t SceneViewportPanel::GetFramebuffer() const
 {
-    return m_framebuffer.GetFramebuffer();
+    return OffscreenViewportPanel::GetFramebuffer(m_viewport);
 }
 
 std::uintptr_t SceneViewportPanel::GetColorTexture() const
 {
-    return m_framebuffer.GetColorTexture();
+    return OffscreenViewportPanel::GetColorTexture(m_viewport);
 }
 
 void SceneViewportPanel::EnsureFramebufferSized() const
 {
-    if (!HasValidRenderTarget())
-    {
-        return;
-    }
-
-    (void)m_framebuffer.Resize(m_renderWidth, m_renderHeight);
+    OffscreenViewportPanel::EnsureFramebufferSized(m_viewport);
 }
 
 void SceneViewportPanel::ClearRenderTarget() const
 {
-    if (m_framebuffer.IsValid())
-    {
-        m_framebuffer.ClearRenderTarget();
-    }
+    OffscreenViewportPanel::ClearRenderTarget(m_viewport);
 }
 
 void SceneViewportPanel::DrawViewGizmo(
@@ -73,7 +42,7 @@ void SceneViewportPanel::DrawViewGizmo(
     const ImVec2& imageMin,
     const ImVec2& imageMax)
 {
-    if (!m_interactionRect.valid || m_interactionRect.imguiWindow == nullptr)
+    if (!m_viewport.interactionRect.valid || m_viewport.interactionRect.imguiWindow == nullptr)
     {
         return;
     }
@@ -85,12 +54,12 @@ void SceneViewportPanel::DrawViewGizmo(
         imageMin.y + kMargin);
     const ImVec2 gizmoSize(kGizmoSize, kGizmoSize);
 
-    ImGuizmo::SetAlternativeWindow(m_interactionRect.imguiWindow);
+    ImGuizmo::SetAlternativeWindow(m_viewport.interactionRect.imguiWindow);
     ImGuizmo::SetRect(
-        m_interactionRect.screenX,
-        m_interactionRect.screenY,
-        m_interactionRect.screenWidth,
-        m_interactionRect.screenHeight);
+        m_viewport.interactionRect.screenX,
+        m_viewport.interactionRect.screenY,
+        m_viewport.interactionRect.screenWidth,
+        m_viewport.interactionRect.screenHeight);
 
     glm::vec3 focus(0.0f);
     float focusRadius = 0.5f;
@@ -133,88 +102,36 @@ void SceneViewportPanel::DrawViewGizmo(
 
 void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
 {
-    m_interactionRect = {};
-    m_compositeDrawList = nullptr;
-    m_hasCompositeTarget = false;
+    OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
-    if (!EditorPanelConstraints::BeginDockedPanel("Scene View", m_showPanel))
+    if (!EditorPanelConstraints::BeginDockedPanel("Scene View", m_viewport.showPanel))
     {
-        m_renderWidth = 0;
-        m_renderHeight = 0;
+        OffscreenViewportPanel::OnPanelHidden(m_viewport);
         m_wasUsingViewManipulate = false;
         return;
     }
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
-    const int requestedWidth = std::max(1, static_cast<int>(available.x * framebufferScale.x + 0.5f));
-    const int requestedHeight = std::max(1, static_cast<int>(available.y * framebufferScale.y + 0.5f));
+    OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
 
-    // Avoid recreating GPU resources when ImGui layout jitters by a pixel.
-    if (m_renderWidth <= 0
-        || m_renderHeight <= 0
-        || std::abs(requestedWidth - m_renderWidth) > 1
-        || std::abs(requestedHeight - m_renderHeight) > 1)
+    const bool canCompositeFrame =
+        m_viewport.framebuffer.IsValid() && m_viewport.framebuffer.GetColorTexture() != 0;
+    const OffscreenViewportPanel::ViewportRegion region =
+        OffscreenViewportPanel::DrawViewportRegion(m_viewport, available, canCompositeFrame);
+    if (!canCompositeFrame)
     {
-        m_renderWidth = requestedWidth;
-        m_renderHeight = requestedHeight;
+        OffscreenViewportPanel::DrawCenteredPlaceholder(region.imageMin, available, "Scene View");
     }
 
-    if (m_framebuffer.IsValid() && m_framebuffer.GetColorTexture() != 0)
-    {
-        ImGui::Dummy(available);
-        const ImVec2 cursor = ImGui::GetItemRectMin();
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
-        drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
-
-        m_compositeDrawList = drawList;
-        m_compositeMin = cursor;
-        m_compositeMax = regionMax;
-        m_hasCompositeTarget = true;
-    }
-    else
-    {
-        ImGui::Dummy(available);
-        const ImVec2 cursor = ImGui::GetItemRectMin();
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
-        drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
-
-        constexpr const char* kPlaceholderLabel = "Scene View";
-        const ImVec2 textSize = ImGui::CalcTextSize(kPlaceholderLabel);
-        drawList->AddText(
-            ImVec2(cursor.x + (available.x - textSize.x) * 0.5f, cursor.y + (available.y - textSize.y) * 0.5f),
-            IM_COL32(130, 130, 140, 255),
-            kPlaceholderLabel);
-    }
-
-    const ImVec2 imageMin = ImGui::GetItemRectMin();
-    const ImVec2 imageMax = ImGui::GetItemRectMax();
-    const ImVec2 imageSize(imageMax.x - imageMin.x, imageMax.y - imageMin.y);
-    m_interactionRect.hovered =
-        ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup)
-        && ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup | ImGuiHoveredFlags_RootWindow);
-    m_interactionRect.imguiWindow = ImGui::GetCurrentWindow();
-    UpdateInteractionRect(m_interactionRect, imageMin, imageSize, m_renderWidth, m_renderHeight);
-    DrawViewGizmo(camera, scene, imageMin, imageMax);
+    OffscreenViewportPanel::UpdateInteractionRect(
+        m_viewport, region.imageMin, region.imageSize, true);
+    DrawViewGizmo(camera, scene, region.imageMin, region.imageMax);
 
     ImGui::End();
 }
 
 void SceneViewportPanel::CompositeRenderedFrame()
 {
-    if (!m_hasCompositeTarget
-        || m_compositeDrawList == nullptr
-        || !m_framebuffer.IsValid()
-        || m_framebuffer.GetColorTexture() == 0)
-    {
-        return;
-    }
-
-    const ImTextureID textureId = static_cast<ImTextureID>(m_framebuffer.GetColorTexture());
-    m_compositeDrawList->AddImage(textureId, m_compositeMin, m_compositeMax);
-    m_hasCompositeTarget = false;
-    m_compositeDrawList = nullptr;
+    OffscreenViewportPanel::CompositeRenderedFrame(m_viewport);
 }

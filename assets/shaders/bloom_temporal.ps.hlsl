@@ -72,7 +72,7 @@ float ComputeGhostRejectConfidence(float3 current, float3 history)
     return saturate((currentMax + 0.0015) / (historyMax + 0.0015));
 }
 
-float3 main(PSInput input) : SV_Target
+float4 main(PSInput input) : SV_Target
 {
     const float2 uv = input.texCoord;
     const float2 texelSize = float2(uTexelSizeX, uTexelSizeY);
@@ -81,7 +81,7 @@ float3 main(PSInput input) : SV_Target
 
     if (depth >= 0.9999 || uHistoryValid <= 0.5)
     {
-        return current;
+        return float4(current, 1.0);
     }
 
     const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
@@ -151,5 +151,5 @@ float3 main(PSInput input) : SV_Target
         }
     }
 
-    return result;
+    return float4(result, 1.0);
 }

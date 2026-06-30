@@ -148,9 +148,7 @@ void LightingPanel::Draw(
     if (!renderer.IsGpuResourcesReady())
     {
         ImGui::TextUnformatted("Renderer unavailable:");
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextWrapped("%s", renderer.GetGpuResourcesInitError().c_str());
-        ImGui::PopStyleColor();
+        EditorWidgets::DrawErrorText(renderer.GetGpuResourcesInitError());
         ImGui::End();
         return;
     }
@@ -326,7 +324,7 @@ void LightingPanel::Draw(
         }
         else if (!environmentMap.GetLoadError().empty())
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "Status: failed");
+            EditorWidgets::TextColoredError("Status: failed");
             ImGui::TextWrapped("%s", environmentMap.GetLoadError().c_str());
         }
         else
@@ -972,14 +970,12 @@ void LightingPanel::Draw(
             }
             if (ssaoDiag.normalSrv == 0)
             {
-                ImGui::TextColored(
-                    ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                EditorWidgets::TextColoredError(
                     "normalSrv is null — geometry-normal G-buffer missing");
             }
             if (ssaoDiag.shadowFactorSrv != 0 && ssaoDiag.normalSrv == ssaoDiag.shadowFactorSrv)
             {
-                ImGui::TextColored(
-                    ImVec4(1.0f, 0.45f, 0.45f, 1.0f),
+                EditorWidgets::TextColoredError(
                     "normalSrv == shadowFactorSrv — bindings swapped?");
             }
             ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");

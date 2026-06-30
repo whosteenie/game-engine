@@ -2,6 +2,7 @@
 
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "primitives/Capsule.h"
@@ -52,7 +53,7 @@ void SceneMeshLibrary::EnsurePrimitives() const
     if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
     {
         throw std::runtime_error(
-            "Failed to create primitive meshes: D3D12 device was removed (" + deviceRemovedReason + ")");
+            "Failed to create primitive meshes: " + HresultFormat::DeviceRemovedMessage(deviceRemovedReason));
     }
 
     auto createPrimitive =

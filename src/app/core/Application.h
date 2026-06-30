@@ -40,7 +40,6 @@ public:
 
 private:
     void InitGLFW();
-    void InitGLAD();
 
     void Update(double deltaTime);
     void Render();
@@ -68,6 +67,7 @@ private:
 
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
+    bool m_fatalGpuLossHandled = false;
 
     int m_width;
     int m_height;

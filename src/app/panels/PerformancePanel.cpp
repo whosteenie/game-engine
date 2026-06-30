@@ -1,6 +1,7 @@
 #include "app/panels/PerformancePanel.h"
 
 #include "app/editor/EditorPanelConstraints.h"
+#include "app/editor/EditorWidgets.h"
 #include "app/scene/Scene.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
@@ -47,7 +48,7 @@ namespace
         {
             return ImVec4(1.0f, 0.85f, 0.35f, 1.0f);
         }
-        return ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+        return EditorWidgets::ErrorTextColor();
     }
 
     float MsToFps(const float frameMs)
@@ -197,9 +198,7 @@ void PerformancePanel::Draw(
         const std::string& gpuError = GfxContext::GetLastGpuAllocationError();
         if (!gpuError.empty())
         {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-            ImGui::TextWrapped("Last GPU alloc error: %s", gpuError.c_str());
-            ImGui::PopStyleColor();
+            EditorWidgets::TextColoredError("Last GPU alloc error: %s", gpuError.c_str());
         }
     }
 

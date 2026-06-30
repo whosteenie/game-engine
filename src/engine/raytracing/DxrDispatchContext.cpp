@@ -6,22 +6,15 @@
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
 
 #include <cstring>
-#include <sstream>
-#include <iomanip>
 
 namespace
 {
-    std::string FormatHresult(const HRESULT hr)
-    {
-        std::ostringstream stream;
-        stream << "0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr);
-        return stream.str();
-    }
     std::uint64_t AlignConstantBufferSize(const std::uint64_t byteSize)
     {
         return (byteSize + 255ull) & ~255ull;
@@ -277,7 +270,7 @@ bool DxrDispatchContext::EnsureOutput(const int width, const int height, std::st
     {
         outError = "failed to allocate DXR dispatch output texture ("
             + std::to_string(width) + "x" + std::to_string(height)
-            + ", HRESULT=" + FormatHresult(createResult) + ")";
+            + ", HRESULT=" + HresultFormat::Format(createResult) + ")";
         return false;
     }
 

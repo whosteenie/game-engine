@@ -2,8 +2,30 @@
 
 #include <imgui.h>
 
+#include <cstdarg>
+
 namespace EditorWidgets
 {
+    ImVec4 ErrorTextColor()
+    {
+        return ImVec4(1.0f, 0.45f, 0.45f, 1.0f);
+    }
+
+    void DrawErrorText(const std::string& message)
+    {
+        ImGui::PushStyleColor(ImGuiCol_Text, ErrorTextColor());
+        ImGui::TextWrapped("%s", message.c_str());
+        ImGui::PopStyleColor();
+    }
+
+    void TextColoredError(const char* fmt, ...)
+    {
+        va_list args;
+        va_start(args, fmt);
+        ImGui::TextColoredV(ErrorTextColor(), fmt, args);
+        va_end(args);
+    }
+
     bool ColorEditVec3(const char* label, glm::vec3& value)
     {
         SanitizeSignedZero(value);

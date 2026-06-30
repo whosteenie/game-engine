@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorClipboard.h"
 #include "app/editor/EditorSettings.h"
+#include "app/editor/EditorWidgets.h"
 #include "app/project/ProjectSession.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneMeshLibrary.h"
@@ -14,6 +15,7 @@
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 
 #include <imgui.h>
 
@@ -22,16 +24,6 @@
 #include <filesystem>
 
 namespace fs = std::filesystem;
-
-namespace
-{
-    void DrawErrorText(const std::string& message)
-    {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextWrapped("%s", message.c_str());
-        ImGui::PopStyleColor();
-    }
-}
 
 void ProjectChooser::OpenNewProjectForm(EditorSettings& settings)
 {
@@ -66,7 +58,6 @@ void ProjectChooser::ClearProjectLoadPresentation()
     m_showNewProjectForm = false;
     m_projectLoadInProgress = false;
     m_finishPresentationAfterPresent = false;
-    m_projectLoadFrames = 0;
 }
 
 void ProjectChooser::ReturnToStartupWithError(
@@ -131,8 +122,7 @@ bool ProjectChooser::OpenProjectAtPath(
         std::string deviceRemovedReason;
         if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
         {
-            outError = "Cannot open project: D3D12 device was removed (" + deviceRemovedReason
-                + "). Restart the editor.";
+            outError = HresultFormat::DeviceRemovedOpenProjectMessage(deviceRemovedReason);
             EngineLog::LogFailure("project", "OpenProject", outError);
             ProjectLoadTrace::Step("device removed — aborting open");
             ReturnToStartupWithError(project, scene, outError);
@@ -158,8 +148,7 @@ bool ProjectChooser::OpenProjectAtPath(
             std::string deviceRemovedReason;
             if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
             {
-                outError = "Cannot open project: D3D12 device was removed (" + deviceRemovedReason
-                    + "). Restart the editor.";
+                outError = HresultFormat::DeviceRemovedOpenProjectMessage(deviceRemovedReason);
                 EngineLog::LogFailure("project", "OpenProject", outError);
                 ProjectLoadTrace::Step("device removed — aborting open");
                 ReturnToStartupWithError(project, scene, outError);
@@ -229,7 +218,6 @@ bool ProjectChooser::OpenProjectAtPath(
         m_startupMode = false;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
-        m_projectLoadFrames = 0;
         keepProgressOpenForFirstFrame = true;
         ProjectLoadTrace::Step("=== project load complete (awaiting first frame) ===");
         SceneRenderTrace::Reset();
@@ -290,10 +278,7 @@ void ProjectChooser::TickProjectLoadTimeout(const bool gpuResourcesFailed)
         return;
     }
 
-    ++m_projectLoadFrames;
-
-    constexpr int kForceCloseAfterFrames = 300;
-    if (gpuResourcesFailed || m_projectLoadFrames >= kForceCloseAfterFrames)
+    if (gpuResourcesFailed)
     {
         FinishProjectLoadPresentation(false);
     }
@@ -308,7 +293,6 @@ void ProjectChooser::FinishProjectLoadPresentation(const bool firstFrameReady)
     m_showNewProjectForm = false;
     m_projectLoadInProgress = false;
     m_finishPresentationAfterPresent = false;
-    m_projectLoadFrames = 0;
 }
 
 bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
@@ -434,7 +418,7 @@ bool ProjectChooser::DrawNewProjectForm(
     if (!m_errorMessage.empty())
     {
         ImGui::Spacing();
-        DrawErrorText(m_errorMessage);
+        EditorWidgets::DrawErrorText(m_errorMessage);
     }
 
     ImGui::Spacing();
@@ -667,7 +651,7 @@ bool ProjectChooser::DrawStartupScreen(
             ImGuiChildFlags_Borders);
         ImGui::TextUnformatted("Last error");
         ImGui::Separator();
-        DrawErrorText(m_errorMessage);
+        EditorWidgets::DrawErrorText(m_errorMessage);
         ImGui::EndChild();
     }
 

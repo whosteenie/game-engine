@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/editor/OffscreenViewportPanel.h"
+
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -13,6 +15,22 @@ namespace EditorPanelConstraints
         if (window == nullptr || !window->DockIsActive || window->DockNode == nullptr)
         {
             return true;
+        }
+
+        return window->DockNode->SelectedTabId == window->TabId;
+    }
+
+    inline bool IsViewportTabSelected(const char* windowName)
+    {
+        ImGuiWindow* window = ImGui::FindWindowByName(windowName);
+        if (window == nullptr)
+        {
+            return false;
+        }
+
+        if (!window->DockIsActive || window->DockNode == nullptr)
+        {
+            return !window->Collapsed;
         }
 
         return window->DockNode->SelectedTabId == window->TabId;
@@ -39,29 +57,6 @@ namespace EditorPanelConstraints
         {
             node->VisibleWindow = firstWindow;
         }
-    }
-
-    inline void ClearInactiveDockTabDrawList(const char* windowName)
-    {
-        ImGuiWindow* window = ImGui::FindWindowByName(windowName);
-        if (window == nullptr || window->DockNode == nullptr)
-        {
-            return;
-        }
-
-        if (window->DockNode->SelectedTabId == window->TabId)
-        {
-            return;
-        }
-
-        ImDrawList* drawList = window->DrawList;
-        drawList->_ResetForNewFrame();
-        drawList->PushClipRect(window->InnerRect.Min, window->InnerRect.Max, true);
-        drawList->AddRectFilled(
-            window->InnerRect.Min,
-            window->InnerRect.Max,
-            IM_COL32(34, 34, 38, 255));
-        drawList->PopClipRect();
     }
 
     inline void ApplySideColumnPanel()
@@ -94,6 +89,13 @@ namespace EditorPanelConstraints
 
         if (!IsSelectedDockTab())
         {
+            const ImVec2 contentMin = ImGui::GetWindowContentRegionMin();
+            const ImVec2 contentMax = ImGui::GetWindowContentRegionMax();
+            const ImVec2 windowPos = ImGui::GetWindowPos();
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                windowPos + contentMin,
+                windowPos + contentMax,
+                OffscreenViewportPanel::kBackgroundColor);
             ImGui::End();
             return false;
         }
