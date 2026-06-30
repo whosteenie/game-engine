@@ -411,7 +411,7 @@ void Application::Run()
                      [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
                      m_undoStack,
                      m_editorClipboard,
-                     [this]() { EnsureEditorLayoutLoaded(); },
+                     [this]() { ResetEditorLayoutLoadState(); },
                      error))
         {
             m_projectChooser->SetErrorMessage(error.empty() ? "Failed to open project." : error);
@@ -483,6 +483,38 @@ void Application::Run()
             RecoverInterruptedFrame();
         }
     }
+}
+
+void Application::HandleFatalGpuDeviceLoss(const std::string& reason)
+{
+    static bool handled = false;
+    if (handled)
+    {
+        return;
+    }
+
+    handled = true;
+    EngineLog::Error("application", reason);
+    std::cerr << reason << "\n";
+
+    NativeProgressWindow::Instance().End();
+    if (m_projectChooser != nullptr)
+    {
+        m_projectChooser->ClearProjectLoadPresentation();
+    }
+
+    if (m_projectSession != nullptr)
+    {
+        if (m_projectSession->HasActiveProject())
+        {
+            m_projectSession->CloseProject();
+        }
+
+        m_projectSession->SetStatusMessage(reason);
+    }
+
+    RecoverInterruptedFrame();
+    glfwSetWindowShouldClose(m_window, GLFW_TRUE);
 }
 
 void Application::RecoverInterruptedFrame()
@@ -557,6 +589,17 @@ void Application::Update(double deltaTime)
     glfwPollEvents();
     InputDiagnostics::LogFrame(m_window, "after-poll");
 
+    if (GfxContext::Get().IsInitialized())
+    {
+        std::string deviceRemovedReason;
+        if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+        {
+            HandleFatalGpuDeviceLoss(
+                "D3D12 device was removed (" + deviceRemovedReason + "). Restart the editor.");
+            return;
+        }
+    }
+
     std::string pendingProjectError;
     const bool openedProject = m_projectChooser->ProcessPendingProjectOpen(
         *m_projectSession,
@@ -566,10 +609,16 @@ void Application::Update(double deltaTime)
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
         m_undoStack,
         m_editorClipboard,
-        [this]() { EnsureEditorLayoutLoaded(); },
+        [this]() { ResetEditorLayoutLoadState(); },
         pendingProjectError);
     if (!openedProject && !pendingProjectError.empty())
     {
+        if (m_projectChooser->LastOpenFailedDueToDeviceRemoved())
+        {
+            HandleFatalGpuDeviceLoss(pendingProjectError);
+            return;
+        }
+
         m_projectChooser->SetErrorMessage(pendingProjectError);
     }
 
@@ -588,6 +637,7 @@ void Application::Update(double deltaTime)
         m_projectEditorState,
         [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
         [this]() { RequestClose(); },
+        [this]() { ResetEditorLayoutLoadState(); },
         m_undoStack,
         m_editorClipboard);
 
@@ -678,11 +728,6 @@ void Application::Update(double deltaTime)
 
         Scene* editorScene = GetEditorTargetScene();
         UndoStack* editorUndoStack = GetEditorUndoStack();
-
-        // Apply project renderer settings before editor panels touch GPU resources.
-        RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
-            SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
-        });
 
         if (!m_globalEditorLayoutLoaded)
         {
@@ -1040,6 +1085,14 @@ void Application::ResetEditorLayout()
     m_pendingEditorLayoutValidation = false;
 }
 
+void Application::ResetEditorLayoutLoadState()
+{
+    m_globalEditorLayoutLoaded = false;
+    m_editorLayoutRestoredFromDisk = false;
+    m_pendingEditorLayoutValidation = false;
+    m_editorDockSpace->InvalidateBuiltLayout();
+}
+
 void Application::EnsureEditorLayoutLoaded()
 {
     if (m_globalEditorLayoutLoaded)
@@ -1050,6 +1103,7 @@ void Application::EnsureEditorLayoutLoaded()
     try
     {
         ImGui::ClearIniSettings();
+        m_editorDockSpace->InvalidateBuiltLayout();
         m_editorLayoutRestoredFromDisk = EditorSettings::LoadGlobalEditorLayout();
         if (!m_editorLayoutRestoredFromDisk
             && m_projectSession->HasActiveProject()
@@ -1187,35 +1241,33 @@ void Application::Render()
 {
     if (GfxContext::Get().IsDeviceRemoved())
     {
-        if (m_imguiFrameActive)
-        {
-            try
-            {
-                m_imguiLayer->CancelInterruptedFrame();
-            }
-            catch (...)
-            {
-            }
-
-            m_imguiFrameActive = false;
-        }
-
+        std::string deviceRemovedReason;
+        (void)GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason);
+        HandleFatalGpuDeviceLoss(
+            "D3D12 device was removed (" + deviceRemovedReason + "). Restart the editor.");
         return;
     }
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
+    const bool presentingProjectLoad = m_projectChooser->IsPresentingProjectLoad();
 
-    if (editorActive)
+    if (editorActive || presentingProjectLoad)
     {
         if (Scene* editorScene = GetEditorTargetScene())
         {
+            RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
+                SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
+            });
             RunApplicationPhase("prepare-frame-gpu", [&]() {
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
         }
 
-        GfxContext::Get().WaitForSwapchainFrames();
+        if (editorActive)
+        {
+            GfxContext::Get().WaitForSwapchainFrames();
+        }
     }
 
     m_gfxFrameActive = true;
@@ -1224,16 +1276,18 @@ void Application::Render()
         m_renderer->BeginFrame();
     });
 
+    bool sceneFramePresented = false;
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {
         RunApplicationPhase("scene-view-render", [&]() {
             FrameDiagnostics::LogPhase("scene-view-render");
-            SceneRenderTrace::FirstFrameGuard firstFrameGuard;
             SceneRenderTrace::Scope sceneViewScope("scene-view-render");
             Scene* sceneViewScene = GetEditorTargetScene();
             m_sceneViewportPanel->EnsureFramebufferSized();
-            if (m_sceneViewportPanel->HasGpuFramebuffer())
+            if (sceneViewScene != nullptr && m_sceneViewportPanel->HasGpuFramebuffer()
+                && sceneViewScene->GetRenderer().IsGpuResourcesReady())
             {
+                SceneRenderTrace::FirstFrameGuard firstFrameGuard;
                 m_camera->SetAspectFromFramebuffer(
                     m_sceneViewportPanel->GetRenderWidth(),
                     m_sceneViewportPanel->GetRenderHeight());
@@ -1243,6 +1297,11 @@ void Application::Render()
                     m_sceneViewportPanel->GetRenderHeight(),
                     m_sceneViewportPanel->GetFramebuffer());
                 m_sceneViewportPanel->CompositeRenderedFrame();
+                sceneFramePresented = true;
+                if (presentingProjectLoad)
+                {
+                    m_projectChooser->NotifyEditorCompositeReady();
+                }
             }
             sceneViewScope.Success();
         });
@@ -1298,6 +1357,14 @@ void Application::Render()
         });
     }
 
+    if (presentingProjectLoad)
+    {
+        const Scene* editorScene = GetEditorTargetScene();
+        const bool gpuResourcesFailed =
+            editorScene != nullptr && editorScene->GetRenderer().HasGpuResourcesInitFailed();
+        m_projectChooser->TickProjectLoadTimeout(gpuResourcesFailed);
+    }
+
     RunApplicationPhase("imgui-end", [&]() {
         FrameDiagnostics::LogPhase("imgui-end");
         m_imguiLayer->EndFrame();
@@ -1306,10 +1373,7 @@ void Application::Render()
         FrameDiagnostics::LogPhase("present");
         m_renderer->EndFrame(m_window);
     });
-    if (editorActive)
-    {
-        m_projectChooser->CompleteDeferredProjectLoadProgress();
-    }
+    m_projectChooser->FinishScheduledPresentation();
     m_imguiFrameActive = false;
     m_gfxFrameActive = false;
 }

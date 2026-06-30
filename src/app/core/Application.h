@@ -53,8 +53,10 @@ private:
     bool TrySaveProject();
     bool IsEditorUndoRedoBlocked() const;
     void ResetEditorLayout();
+    void ResetEditorLayoutLoadState();
     void RecoverInterruptedFrame();
     void EnsureEditorLayoutLoaded();
+    void HandleFatalGpuDeviceLoss(const std::string& reason);
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;

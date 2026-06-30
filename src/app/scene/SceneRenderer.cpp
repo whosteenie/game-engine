@@ -568,7 +568,6 @@ void SceneRenderer::Render(
     if (!m_gpuResourcesInitialized)
     {
         renderScope.Success();
-        SceneRenderTrace::CompleteFirstFrame();
         return;
     }
 

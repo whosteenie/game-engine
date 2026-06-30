@@ -11,6 +11,7 @@ public:
 
     bool IsLayoutBuilt() const { return m_layoutBuilt; }
     void RequestLayoutRebuild() { m_layoutBuilt = false; m_forceDefaultLayout = true; }
+    void InvalidateBuiltLayout() { m_layoutBuilt = false; m_forceDefaultLayout = false; }
     void ResetLayout();
 
 private:

@@ -31,7 +31,7 @@ public:
     bool IsInitialized() const { return m_impl != nullptr; }
     void WaitForGpuIdle();
     // Waits for submitted swapchain frames without stalling on upload/readback fences.
-    void WaitForSwapchainFrames();
+    void WaitForSwapchainFrames(bool pumpWindowEvents = true);
 
     void Resize(int width, int height);
     void BeginFrame();
@@ -131,7 +131,7 @@ private:
     GfxContext() = default;
 
     void WaitForGpu();
-    void WaitForFenceValue(std::uint64_t fenceValue);
+    void WaitForFenceValue(std::uint64_t fenceValue, bool pumpWindowEvents = true);
     std::uint64_t AllocateNextFenceValue(std::uint64_t frameFenceValue) const;
     void SignalFrameSubmission();
     void AdvanceSwapchainFrameIndex();

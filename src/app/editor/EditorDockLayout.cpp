@@ -84,6 +84,13 @@ void EditorDockLayout::RepairLayout(const ImGuiID dockspaceId)
     ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
     if (dockNode == nullptr || !dockNode->IsSplitNode())
     {
+        // Dock ini may not be applied until editor panels register on the first frame.
+        if (ImGui::FindWindowByName("Scene View") == nullptr
+            && ImGui::FindWindowByName("Hierarchy") == nullptr)
+        {
+            return;
+        }
+
         BuildDefaultLayout(dockspaceId);
         return;
     }

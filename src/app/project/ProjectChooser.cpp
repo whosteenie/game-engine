@@ -60,14 +60,36 @@ bool ProjectChooser::IsBlockingEditor() const
     return m_showNewProjectForm || m_startupMode;
 }
 
+void ProjectChooser::ClearProjectLoadPresentation()
+{
+    m_startupMode = true;
+    m_showNewProjectForm = false;
+    m_projectLoadInProgress = false;
+    m_finishPresentationAfterPresent = false;
+    m_projectLoadFrames = 0;
+}
+
 void ProjectChooser::ReturnToStartupWithError(
     ProjectSession& project,
     Scene& scene,
     const std::string& message)
 {
+    m_lastOpenFailedDueToDeviceRemoved = false;
+
     if (project.HasActiveProject())
     {
         project.CloseProject();
+    }
+
+    std::string deviceRemovedReason;
+    const bool deviceRemoved =
+        GfxContext::Get().IsInitialized() && GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason);
+    if (deviceRemoved)
+    {
+        m_lastOpenFailedDueToDeviceRemoved = true;
+        ClearProjectLoadPresentation();
+        m_errorMessage = SanitizeLogText(message, "Project operation failed.");
+        return;
     }
 
     try
@@ -83,8 +105,7 @@ void ProjectChooser::ReturnToStartupWithError(
             FormatExceptionContext("Failed to reset scene after project error", exception));
     }
 
-    m_startupMode = true;
-    m_showNewProjectForm = false;
+    ClearProjectLoadPresentation();
     m_errorMessage = SanitizeLogText(message, "Project operation failed.");
 }
 
@@ -101,8 +122,23 @@ bool ProjectChooser::OpenProjectAtPath(
     std::string& outError)
 {
     outError.clear();
+    m_lastOpenFailedDueToDeviceRemoved = false;
     ProjectLoadTrace::Reset();
     ProjectLoadTrace::Step("OpenProjectAtPath");
+
+    if (GfxContext::Get().IsInitialized())
+    {
+        std::string deviceRemovedReason;
+        if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+        {
+            outError = "Cannot open project: D3D12 device was removed (" + deviceRemovedReason
+                + "). Restart the editor.";
+            EngineLog::LogFailure("project", "OpenProject", outError);
+            ProjectLoadTrace::Step("device removed — aborting open");
+            ReturnToStartupWithError(project, scene, outError);
+            return false;
+        }
+    }
 
     NativeProgressWindow::Instance().Begin("Loading Project", "Opening project...");
     NativeProgressWindow::Instance().SetProgress(0.02f);
@@ -115,7 +151,9 @@ bool ProjectChooser::OpenProjectAtPath(
             ProjectLoadTrace::Step("wait for GPU before open");
             NativeProgressWindow::Instance().SetMessage("Finishing previous GPU work...");
             NativeProgressWindow::Instance().SetProgress(0.05f);
-            GfxContext::Get().WaitForSwapchainFrames();
+            // Do not pump GLFW events here: OpenProjectAtPath runs during Update before
+            // the current frame's ImGui NewFrame and resize callbacks can corrupt GPU state.
+            GfxContext::Get().WaitForSwapchainFrames(false);
 
             std::string deviceRemovedReason;
             if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
@@ -177,19 +215,21 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().SetMessage("Restoring editor layout...");
+            NativeProgressWindow::Instance().SetMessage("Preparing editor...");
             NativeProgressWindow::Instance().SetProgress(0.90f);
-            ProjectLoadTrace::Scope layoutScope("restore editor layout");
+            ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
         }
 
-        m_startupMode = false;
         m_showNewProjectForm = false;
         m_errorMessage.clear();
         NativeProgressWindow::Instance().SetMessage("Preparing first frame...");
         NativeProgressWindow::Instance().SetProgress(0.96f);
-        m_deferredProjectLoadProgress = true;
+        m_startupMode = false;
+        m_projectLoadInProgress = true;
+        m_finishPresentationAfterPresent = false;
+        m_projectLoadFrames = 0;
         keepProgressOpenForFirstFrame = true;
         ProjectLoadTrace::Step("=== project load complete (awaiting first frame) ===");
         SceneRenderTrace::Reset();
@@ -222,17 +262,53 @@ bool ProjectChooser::OpenProjectAtPath(
     }
 }
 
-void ProjectChooser::CompleteDeferredProjectLoadProgress()
+void ProjectChooser::NotifyEditorCompositeReady()
 {
-    if (!m_deferredProjectLoadProgress)
+    if (!m_projectLoadInProgress)
     {
         return;
     }
 
-    NativeProgressWindow::Instance().SetMessage("Project ready.");
+    m_finishPresentationAfterPresent = true;
+}
+
+void ProjectChooser::FinishScheduledPresentation()
+{
+    if (!m_finishPresentationAfterPresent)
+    {
+        return;
+    }
+
+    m_finishPresentationAfterPresent = false;
+    FinishProjectLoadPresentation(true);
+}
+
+void ProjectChooser::TickProjectLoadTimeout(const bool gpuResourcesFailed)
+{
+    if (!m_projectLoadInProgress)
+    {
+        return;
+    }
+
+    ++m_projectLoadFrames;
+
+    constexpr int kForceCloseAfterFrames = 300;
+    if (gpuResourcesFailed || m_projectLoadFrames >= kForceCloseAfterFrames)
+    {
+        FinishProjectLoadPresentation(false);
+    }
+}
+
+void ProjectChooser::FinishProjectLoadPresentation(const bool firstFrameReady)
+{
+    NativeProgressWindow::Instance().SetMessage(firstFrameReady ? "Project ready." : "Project opened.");
     NativeProgressWindow::Instance().SetProgress(1.0f);
     NativeProgressWindow::Instance().End();
-    m_deferredProjectLoadProgress = false;
+    m_startupMode = false;
+    m_showNewProjectForm = false;
+    m_projectLoadInProgress = false;
+    m_finishPresentationAfterPresent = false;
+    m_projectLoadFrames = 0;
 }
 
 bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
@@ -312,6 +388,7 @@ bool ProjectChooser::DrawNewProjectForm(
     Scene& scene,
     EditorSettings& settings,
     const ApplyEditorStateFn& applyEditorState,
+    const FinalizeEditorOpenFn& prepareEditorOpen,
     UndoStack& undoStack,
     EditorClipboard& clipboard)
 {
@@ -431,6 +508,11 @@ bool ProjectChooser::DrawNewProjectForm(
         }
     }
 
+    if (prepareEditorOpen)
+    {
+        prepareEditorOpen();
+    }
+
     m_startupMode = false;
     m_showNewProjectForm = false;
     m_errorMessage.clear();
@@ -445,6 +527,7 @@ bool ProjectChooser::DrawStartupScreen(
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose,
+    const FinalizeEditorOpenFn& prepareEditorOpen,
     UndoStack& undoStack,
     EditorClipboard& clipboard)
 {
@@ -593,7 +676,14 @@ bool ProjectChooser::DrawStartupScreen(
 
     if (m_showNewProjectForm)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack, clipboard);
+        return DrawNewProjectForm(
+            project,
+            scene,
+            settings,
+            applyEditorState,
+            prepareEditorOpen,
+            undoStack,
+            clipboard);
     }
 
     return false;
@@ -606,6 +696,7 @@ bool ProjectChooser::Draw(
     ProjectEditorState& editorState,
     const ApplyEditorStateFn& applyEditorState,
     const RequestCloseCallback& requestClose,
+    const FinalizeEditorOpenFn& prepareEditorOpen,
     UndoStack& undoStack,
     EditorClipboard& clipboard)
 {
@@ -621,7 +712,14 @@ bool ProjectChooser::Draw(
 
     if (m_showNewProjectForm && !m_startupMode)
     {
-        return DrawNewProjectForm(project, scene, settings, applyEditorState, undoStack, clipboard);
+        return DrawNewProjectForm(
+            project,
+            scene,
+            settings,
+            applyEditorState,
+            prepareEditorOpen,
+            undoStack,
+            clipboard);
     }
 
     return DrawStartupScreen(
@@ -631,6 +729,7 @@ bool ProjectChooser::Draw(
         editorState,
         applyEditorState,
         requestClose,
+        prepareEditorOpen,
         undoStack,
         clipboard);
 }

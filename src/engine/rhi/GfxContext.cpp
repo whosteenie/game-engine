@@ -1383,7 +1383,7 @@ GfxContext::TransientUploadAllocation GfxContext::AllocateTransientUpload(
     return allocation;
 }
 
-void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue)
+void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue, const bool pumpWindowEvents)
 {
     if (m_impl == nullptr || fenceValue == 0)
     {
@@ -1395,7 +1395,10 @@ void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue)
 
     while (m_impl->Fence->GetCompletedValue() < fenceValue)
     {
-        PumpWindowEvents(m_window);
+        if (pumpWindowEvents)
+        {
+            PumpWindowEvents(m_window);
+        }
 
         const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - waitStart)
@@ -1467,7 +1470,7 @@ void GfxContext::WaitForGpuIdle()
     WaitForGpu();
 }
 
-void GfxContext::WaitForSwapchainFrames()
+void GfxContext::WaitForSwapchainFrames(const bool pumpWindowEvents)
 {
     if (m_impl == nullptr)
     {
@@ -1481,7 +1484,7 @@ void GfxContext::WaitForSwapchainFrames()
     }
 
     FrameDiagnostics::LogPhase("WaitForSwapchainFrames");
-    WaitForFenceValue(maxFenceValue);
+    WaitForFenceValue(maxFenceValue, pumpWindowEvents);
 }
 
 void GfxContext::WaitForGpu()
