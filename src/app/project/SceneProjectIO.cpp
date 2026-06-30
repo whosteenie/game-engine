@@ -1131,6 +1131,7 @@ namespace SceneProjectIODetail
 
         SceneRenderer& renderer = scene.GetRenderer();
 
+        // CPU-safe settings: no D3D12 resources required (applied even when deferring).
         if (delta.contains("directionalShadow"))
         {
             ApplyDirectionalShadowDelta(
@@ -1138,24 +1139,29 @@ namespace SceneProjectIODetail
                 delta.at("directionalShadow"));
         }
 
+        if (delta.contains("dxr"))
+        {
+            ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
+            ClampDxrSettingsToHardware(renderer.GetDxrSettings());
+        }
+
+        const auto deferPendingRendererSettings = [&]()
+        {
+            renderer.MergePendingRendererSettings(delta);
+            ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
+            scene.MarkDirty();
+        };
+
         // During project load the GPU path is not ready yet; never touch D3D12 resources here.
         if (deferIfGpuNotReady && !renderer.IsGpuResourcesReady())
         {
-            if (delta.contains("dxr"))
-            {
-                ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
-                ClampDxrSettingsToHardware(renderer.GetDxrSettings());
-            }
-
             // Geometry MSAA must be on GfxContext before the first EnsureGpuResources so we
             // don't init at 1x and immediately tear down/reinit when deferred settings apply.
             const LoadedScreenSpaceAaSettings pendingAaSettings =
                 ResolveLoadedScreenSpaceAaSettings(delta);
             GfxContext::Get().SetActiveMsaaSampleCount(pendingAaSettings.msaaSampleCount);
 
-            renderer.MergePendingRendererSettings(delta);
-            ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
-            scene.MarkDirty();
+            deferPendingRendererSettings();
             return;
         }
 
@@ -1203,33 +1209,22 @@ namespace SceneProjectIODetail
             renderer.PrepareGpuResources();
         }
 
-        if (delta.contains("dxr"))
-        {
-            ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
-            ClampDxrSettingsToHardware(renderer.GetDxrSettings());
-        }
-
         const bool gpuReady = renderer.IsGpuResourcesReady();
-        if (!gpuReady)
+        if (deferIfGpuNotReady && !gpuReady)
         {
-            if (deferIfGpuNotReady)
-            {
-                renderer.MergePendingRendererSettings(delta);
-                ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
-                scene.MarkDirty();
-                return;
-            }
-        }
-
-        if (gpuReady && applyAaSettings)
-        {
-            ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
-            effects.SetAntiAliasingMode(aaToApply.antiAliasingMode);
-            effects.SetMsaaSampleCount(aaToApply.msaaSampleCount);
+            deferPendingRendererSettings();
+            return;
         }
 
         if (gpuReady)
         {
+            if (applyAaSettings)
+            {
+                ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+                effects.SetAntiAliasingMode(aaToApply.antiAliasingMode);
+                effects.SetMsaaSampleCount(aaToApply.msaaSampleCount);
+            }
+
             if (delta.contains("environmentIntensity"))
             {
                 renderer.GetIBL().SetEnvironmentIntensity(delta.at("environmentIntensity").get<float>());
@@ -1253,13 +1248,13 @@ namespace SceneProjectIODetail
             {
                 renderer.SetTextureMipBias(delta.at("textureMipBias").get<float>());
             }
-        }
 
-        if (gpuReady && delta.contains("screenSpaceEffects"))
-        {
-            ApplyScreenSpaceEffectsDelta(
-                renderer.GetScreenSpaceEffects(),
-                delta.at("screenSpaceEffects"));
+            if (delta.contains("screenSpaceEffects"))
+            {
+                ApplyScreenSpaceEffectsDelta(
+                    renderer.GetScreenSpaceEffects(),
+                    delta.at("screenSpaceEffects"));
+            }
         }
 
         scene.MarkDirty();
