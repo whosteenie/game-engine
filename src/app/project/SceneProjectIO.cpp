@@ -23,6 +23,7 @@
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/rendering/ShaderCache.h"
+#include "engine/raytracing/DxrShaderCache.h"
 #include "engine/assets/ModelImporter.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -1126,6 +1127,33 @@ namespace SceneProjectIODetail
 
         SceneRenderer& renderer = scene.GetRenderer();
 
+        // During project load the GPU path is not ready yet; never touch D3D12 resources here.
+        if (deferIfGpuNotReady && !renderer.IsGpuResourcesReady())
+        {
+            if (delta.contains("dxr"))
+            {
+                ApplyDxrSettingsDelta(renderer.GetDxrSettings(), delta.at("dxr"));
+                ClampDxrSettingsToHardware(renderer.GetDxrSettings());
+            }
+            if (delta.contains("directionalShadow"))
+            {
+                ApplyDirectionalShadowDelta(
+                    renderer.GetDirectionalShadowSettings(),
+                    delta.at("directionalShadow"));
+            }
+
+            // Geometry MSAA must be on GfxContext before the first EnsureGpuResources so we
+            // don't init at 1x and immediately tear down/reinit when deferred settings apply.
+            const LoadedScreenSpaceAaSettings pendingAaSettings =
+                ResolveLoadedScreenSpaceAaSettings(delta);
+            GfxContext::Get().SetActiveMsaaSampleCount(pendingAaSettings.msaaSampleCount);
+
+            renderer.MergePendingRendererSettings(delta);
+            ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
+            scene.MarkDirty();
+            return;
+        }
+
         LoadedScreenSpaceAaSettings aaToApply{};
         bool applyAaSettings = false;
         if (delta.contains("screenSpaceEffects"))
@@ -1156,6 +1184,7 @@ namespace SceneProjectIODetail
                 if (aaToApply.msaaSampleCount > 1)
                 {
                     ShaderCache::Clear();
+                    DxrShaderCache::Clear();
                 }
                 renderer.PrepareGpuResourcesForGeometryMsaa(aaToApply.msaaSampleCount);
                 if (renderer.IsGpuResourcesReady() && aaToApply.msaaSampleCount > 1)
@@ -1281,20 +1310,40 @@ namespace SceneProjectIODetail
         }
 
         SceneRenderTrace::Scope applyScope("ApplyDeferredRendererSettings");
-        const json pending = renderer.TakePendingRendererSettings();
-        ApplyRendererSettingsDelta(scene, pending, false);
-        applyScope.Success();
+        try
+        {
+            const json pending = renderer.TakePendingRendererSettings();
+            ApplyRendererSettingsDelta(scene, pending, false);
+            applyScope.Success();
+        }
+        catch (const std::exception& exception)
+        {
+            EngineLog::Error(
+                "load",
+                std::string("ApplyDeferredRendererSettings failed: ") + exception.what());
+            throw;
+        }
     }
 
     void DeserializeRenderer(Scene& scene, const json& rendererValue)
     {
         ProjectLoadTrace::Scope rendererScope("deserialize renderer settings");
-        ApplyRendererSettingsDelta(scene, rendererValue);
-        if (scene.GetRenderer().HasPendingRendererSettings())
+        try
         {
-            ProjectLoadTrace::Step("renderer settings pending until first GPU frame");
+            ApplyRendererSettingsDelta(scene, rendererValue);
+            if (scene.GetRenderer().HasPendingRendererSettings())
+            {
+                ProjectLoadTrace::Step("renderer settings pending until first GPU frame");
+            }
+            rendererScope.Success();
         }
-        rendererScope.Success();
+        catch (const std::exception& exception)
+        {
+            EngineLog::Error(
+                "load",
+                std::string("deserialize renderer settings failed: ") + exception.what());
+            throw;
+        }
     }
 
     json SerializeProjectFilesFolderOpenStates(

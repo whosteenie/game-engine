@@ -94,7 +94,8 @@ namespace
                IsRadianceDebugMode(mode) ||
                IsGiTemporalDebugMode(mode) ||
                IsSsgiDenoiseDebugMode(mode) ||
-               IsSsrDebugMode(mode);
+               IsSsrDebugMode(mode) ||
+               IsDxrDebugMode(mode);
     }
 
     int SsrDebugModeIndex(RenderDebugMode mode)
@@ -2567,7 +2568,12 @@ void ScreenSpaceEffects::Apply(
     if (IsPostProcessDebugMode(m_debugMode))
     {
         std::uintptr_t debugSrv = 0;
-        if (m_debugMode == RenderDebugMode::Ssao)
+        if (m_debugMode == RenderDebugMode::RtDispatchSmoke && m_dxrSmokeDebugSrv != 0)
+        {
+            debugSrv = m_dxrSmokeDebugSrv;
+            ssaoDebugViewSource = "rt_dispatch_smoke";
+        }
+        else if (m_debugMode == RenderDebugMode::Ssao)
         {
             debugSrv = m_ssaoTarget.srvCpuHandle;
             ssaoDebugViewSource = runAo
@@ -2936,7 +2942,10 @@ void ScreenSpaceEffects::Apply(
         if (debugSrv != 0)
         {
             m_debugChannelShader->Use(false, true);
-            m_debugChannelShader->SetInt("uOutputRgb", 0);
+            // RT smoke output is RGB (magenta); other single-channel debug textures use R-only.
+            m_debugChannelShader->SetInt(
+                "uOutputRgb",
+                m_debugMode == RenderDebugMode::RtDispatchSmoke ? 1 : 0);
             m_debugChannelShader->SetInt("uInput", 0);
             m_debugChannelShader->BindTextureSlot(0, debugSrv);
             m_debugChannelShader->FlushUniforms();
@@ -3538,6 +3547,11 @@ RenderDebugMode ScreenSpaceEffects::GetDebugMode() const
 void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 {
     m_debugMode = mode;
+}
+
+void ScreenSpaceEffects::SetDxrSmokeDebugSrv(const std::uintptr_t srvCpuHandle)
+{
+    m_dxrSmokeDebugSrv = srvCpuHandle;
 }
 
 AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const

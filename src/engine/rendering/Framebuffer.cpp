@@ -379,8 +379,7 @@ void Framebuffer::Create(const int width, const int height)
         + " attachments=" + std::to_string(m_colorAttachmentCount)
         + " samples=" + std::to_string(m_sampleCount));
 
-    const std::uint32_t resolvedRtvCount =
-        usesMsaa ? 1u : static_cast<std::uint32_t>(m_colorAttachmentCount);
+    const std::uint32_t resolvedRtvCount = static_cast<std::uint32_t>(m_colorAttachmentCount);
 
     m_resolvedRtvCount = resolvedRtvCount;
 
@@ -524,19 +523,12 @@ void Framebuffer::Create(const int width, const int height)
 
 
 
-        if (!usesMsaa || attachmentIndex == 0)
+        D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
 
-        {
+        rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(
+            m_rtvBaseIndex + static_cast<std::uint32_t>(attachmentIndex));
 
-            D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{};
-
-            rtvHandle.ptr = GfxContext::Get().GetOffscreenRtvCpuHandle(
-
-                m_rtvBaseIndex + (usesMsaa ? 0u : static_cast<std::uint32_t>(attachmentIndex)));
-
-            device->CreateRenderTargetView(resource, nullptr, rtvHandle);
-
-        }
+        device->CreateRenderTargetView(resource, nullptr, rtvHandle);
 
     }
 

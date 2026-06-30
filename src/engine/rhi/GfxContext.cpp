@@ -17,6 +17,7 @@
 
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
 
 #include <wrl/client.h>
@@ -843,6 +844,7 @@ void GfxContext::EndFrame()
         if (IsDeviceRemoved(&deviceRemovedReason))
         {
             message += "; device removed: " + deviceRemovedReason;
+            LogD3D12InfoQueueMessages("present-device-removed");
         }
         GfxContextDetail::SetGpuAllocationError(message.c_str());
         EngineLog::Error("gfx", message);
@@ -1689,4 +1691,60 @@ void GfxContext::GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& ou
 
     outUsed = m_impl->SrvAllocator.UsedCount();
     outCapacity = m_impl->SrvAllocator.Capacity();
+}
+
+void GfxContext::LogD3D12InfoQueueMessages(const char* context)
+{
+    if (m_impl == nullptr || m_impl->Device == nullptr || context == nullptr)
+    {
+        return;
+    }
+
+    ComPtr<ID3D12InfoQueue> infoQueue;
+    if (FAILED(m_impl->Device.As(&infoQueue)))
+    {
+        return;
+    }
+
+    const UINT64 messageCount = infoQueue->GetNumStoredMessages();
+    if (messageCount == 0)
+    {
+        return;
+    }
+
+    EngineLog::Info("d3d12-info-queue", std::string(context) + ": draining " + std::to_string(messageCount) + " message(s)");
+    for (UINT64 messageIndex = 0; messageIndex < messageCount; ++messageIndex)
+    {
+        SIZE_T messageLength = 0;
+        if (FAILED(infoQueue->GetMessage(static_cast<UINT>(messageIndex), nullptr, &messageLength))
+            || messageLength == 0)
+        {
+            continue;
+        }
+
+        std::vector<std::uint8_t> messageBuffer(messageLength);
+        auto* message = reinterpret_cast<D3D12_MESSAGE*>(messageBuffer.data());
+        if (FAILED(infoQueue->GetMessage(static_cast<UINT>(messageIndex), message, &messageLength)))
+        {
+            continue;
+        }
+
+        const char* description = message->pDescription != nullptr ? message->pDescription : "(no description)";
+        const std::string logLine =
+            std::string(context) + " [" + std::to_string(message->Severity) + "]: " + description;
+        if (message->Severity >= D3D12_MESSAGE_SEVERITY_ERROR)
+        {
+            EngineLog::Error("d3d12-info-queue", logLine);
+        }
+        else if (message->Severity >= D3D12_MESSAGE_SEVERITY_WARNING)
+        {
+            EngineLog::Warn("d3d12-info-queue", logLine);
+        }
+        else
+        {
+            EngineLog::Info("d3d12-info-queue", logLine);
+        }
+    }
+
+    infoQueue->ClearStoredMessages();
 }

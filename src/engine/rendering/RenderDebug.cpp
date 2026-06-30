@@ -110,6 +110,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSR upscaled";
     case RenderDebugMode::SsrSpecReplacement:
         return "SSR spec replacement";
+    case RenderDebugMode::RtDispatchSmoke:
+        return "RT dispatch smoke";
     default:
         return "Unknown";
     }
@@ -251,4 +253,9 @@ bool IsSsrDenoiseDebugMode(const RenderDebugMode mode)
 bool IsSsrCompositeDebugMode(const RenderDebugMode mode)
 {
     return mode == RenderDebugMode::SsrSpecReplacement;
+}
+
+bool IsDxrDebugMode(const RenderDebugMode mode)
+{
+    return mode == RenderDebugMode::RtDispatchSmoke;
 }

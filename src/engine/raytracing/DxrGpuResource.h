@@ -24,7 +24,10 @@ struct DxrGpuResource
 bool CreateDxrDefaultBuffer(
     std::uint64_t sizeInBytes,
     bool allowUnorderedAccess,
-    DxrGpuResource& outResource);
+    DxrGpuResource& outResource,
+    D3D12_RESOURCE_STATES initialState = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE);
+
+bool CreateDxrScratchBuffer(std::uint64_t sizeInBytes, DxrGpuResource& outResource);
 
 bool CreateDxrUploadBuffer(std::uint64_t sizeInBytes, DxrGpuResource& outResource);
 

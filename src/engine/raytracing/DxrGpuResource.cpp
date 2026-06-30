@@ -33,7 +33,8 @@ std::uint64_t DxrGpuResource::GetGpuVirtualAddress() const
 bool CreateDxrDefaultBuffer(
     const std::uint64_t sizeInBytes,
     const bool allowUnorderedAccess,
-    DxrGpuResource& outResource)
+    DxrGpuResource& outResource,
+    const D3D12_RESOURCE_STATES initialState)
 {
     outResource.Release();
     if (sizeInBytes == 0 || !GfxContext::Get().IsInitialized())
@@ -69,7 +70,7 @@ bool CreateDxrDefaultBuffer(
     const HRESULT createResult = allocator->CreateResource(
         &allocationDesc,
         &resourceDesc,
-        D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE,
+        initialState,
         nullptr,
         &allocation,
         IID_PPV_ARGS(&resource));
@@ -82,6 +83,15 @@ bool CreateDxrDefaultBuffer(
     outResource.allocation = allocation;
     outResource.sizeInBytes = alignedSize;
     return true;
+}
+
+bool CreateDxrScratchBuffer(const std::uint64_t sizeInBytes, DxrGpuResource& outResource)
+{
+    return CreateDxrDefaultBuffer(
+        sizeInBytes,
+        true,
+        outResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 }
 
 bool CreateDxrUploadBuffer(const std::uint64_t sizeInBytes, DxrGpuResource& outResource)

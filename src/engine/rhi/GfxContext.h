@@ -125,6 +125,8 @@ public:
     int GetRaytracingTier() const { return m_raytracingTier; }
     const std::string& GetAdapterDescription() const { return m_adapterDescription; }
 
+    void LogD3D12InfoQueueMessages(const char* context);
+
 private:
     GfxContext() = default;
 

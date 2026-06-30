@@ -19,6 +19,7 @@
 #include "app/project/ProjectSession.h"
 #include "app/project/SceneProjectIODetail.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneRenderer.h"
 #include "app/scene/SceneEditingController.h"
 #include "app/scene/SceneEditorUpdateContext.h"
 #include "app/panels/SceneHierarchyPanel.h"
@@ -34,6 +35,7 @@
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/ShaderCache.h"
+#include "engine/raytracing/DxrShaderCache.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/platform/ImGuiLayer.h"
@@ -380,6 +382,7 @@ Application::~Application()
         m_renderer.reset();
         TextureCache::Get().Clear();
         ShaderCache::Clear();
+        DxrShaderCache::Clear();
         Material::ReleaseGlobalGpuResources();
         Texture::ReleaseUploadResources();
     }
@@ -675,6 +678,13 @@ void Application::Update(double deltaTime)
 
         Scene* editorScene = GetEditorTargetScene();
         UndoStack* editorUndoStack = GetEditorUndoStack();
+
+        // Apply project renderer settings before editor panels touch GPU resources
+        // (LightingPanel calls PrepareGpuResources/GetIBL during ImGui draw in Update).
+        RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
+            SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
+            editorScene->GetRenderer().WarmUpDxrPipelineIfNeeded();
+        });
 
         if (!m_globalEditorLayoutLoaded)
         {
@@ -1197,16 +1207,6 @@ void Application::Render()
 
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
-
-    if (editorActive)
-    {
-        RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
-            if (Scene* editorScene = GetEditorTargetScene())
-            {
-                SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
-            }
-        });
-    }
 
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {

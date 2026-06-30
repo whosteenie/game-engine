@@ -13,7 +13,7 @@ if(MSVC)
     add_compile_options(/FS)
 endif()
 
-option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only)" OFF)
+option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr-shader-infrastructure.md)" OFF)
 
 
 
@@ -418,6 +418,12 @@ add_executable(game-engine
     src/engine/raytracing/BlasCache.cpp
     src/engine/raytracing/Tlas.cpp
     src/engine/raytracing/DxrAccelerationStructures.cpp
+    src/engine/raytracing/DxrShaderCache.cpp
+    src/engine/raytracing/DxrRootSignature.cpp
+    src/engine/raytracing/DxrPipeline.cpp
+    src/engine/raytracing/ShaderBindingTable.cpp
+    src/engine/raytracing/DxrDispatchContext.cpp
+    src/engine/raytracing/DxrSmokeDispatch.cpp
 
     src/engine/rendering/Shader.cpp
 
@@ -551,6 +557,7 @@ add_executable(engine-tests
     tests/rotation_utils_test.cpp
     tests/dxr_settings_test.cpp
     tests/dxr_acceleration_structure_test.cpp
+    tests/dxr_shader_infrastructure_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
     src/engine/lighting/IrradianceSh.cpp
@@ -595,6 +602,11 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         src/engine/raytracing/Blas.cpp
         src/engine/raytracing/BlasCache.cpp
         src/engine/raytracing/Tlas.cpp
+        src/engine/raytracing/DxrShaderCache.cpp
+        src/engine/raytracing/DxrRootSignature.cpp
+        src/engine/raytracing/DxrPipeline.cpp
+        src/engine/raytracing/ShaderBindingTable.cpp
+        src/engine/raytracing/DxrDispatchContext.cpp
         src/engine/rendering/Framebuffer.cpp
         src/engine/rendering/Shader.cpp
         src/engine/rendering/ShaderCache.cpp
@@ -645,6 +657,9 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         dxcompiler
     )
     target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX)
+    if(GAME_ENGINE_D3D12_DEBUG_LAYER)
+        target_compile_definitions(d3d12-render-tests PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
+    endif()
     game_engine_copy_dxc_runtime(d3d12-render-tests)
 
     add_custom_command(TARGET d3d12-render-tests POST_BUILD

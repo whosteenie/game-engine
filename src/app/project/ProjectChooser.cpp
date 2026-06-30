@@ -12,6 +12,7 @@
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadTrace.h"
 #include "engine/platform/SceneRenderTrace.h"
+#include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
@@ -192,6 +193,7 @@ bool ProjectChooser::OpenProjectAtPath(
         keepProgressOpenForFirstFrame = true;
         ProjectLoadTrace::Step("=== project load complete (awaiting first frame) ===");
         SceneRenderTrace::Reset();
+        ResetDxrBreadcrumbOnceFlags();
         return true;
     }
     catch (const std::exception& exception)

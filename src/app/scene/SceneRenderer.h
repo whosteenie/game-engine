@@ -10,6 +10,7 @@
 
 #include "engine/raytracing/DxrAccelerationStructures.h"
 #include "engine/raytracing/DxrDiagnostics.h"
+#include "engine/raytracing/DxrSmokeDispatch.h"
 
 #include <glm/glm.hpp>
 #include <cstdint>
@@ -94,6 +95,8 @@ public:
     bool HasPendingRendererSettings() const { return m_hasPendingRendererSettings; }
     nlohmann::json TakePendingRendererSettings();
 
+    void WarmUpDxrPipelineIfNeeded();
+
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
     void EnsureGpuResources() const;
@@ -101,6 +104,11 @@ private:
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass(const Scene& scene, const Camera& camera);
+    void RecordDxrPass(
+        const Scene& scene,
+        int dispatchWidth,
+        int dispatchHeight,
+        bool usePostProcess);
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
@@ -111,6 +119,7 @@ private:
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
+    std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
     DxrSettings m_dxrSettings;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;

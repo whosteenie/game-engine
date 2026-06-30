@@ -16,12 +16,14 @@
 #include "engine/lighting/EnvironmentPresets.h"
 #include "engine/lighting/IBL.h"
 #include "engine/lighting/ShadowMapMath.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/DxrCapabilities.h"
 #include "engine/rendering/DxrSettings.h"
 #include "engine/raytracing/DxrDiagnostics.h"
+#include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 
@@ -135,8 +137,14 @@ void LightingPanel::Draw(
         cameraPosition.z);
 
     SceneRenderer& renderer = scene.GetRenderer();
+    if (renderer.HasPendingRendererSettings())
+    {
+        ImGui::TextDisabled("Applying project renderer settings...");
+        ImGui::End();
+        return;
+    }
+
     renderer.PrepareGpuResources();
-    SceneProjectIODetail::ApplyDeferredRendererSettings(scene);
     if (!renderer.IsGpuResourcesReady())
     {
         ImGui::TextUnformatted("Renderer unavailable:");
@@ -1634,7 +1642,18 @@ void LightingPanel::Draw(
             &dxrEnabled,
             editContext,
             [](Scene& target, bool enabled) {
+                EngineLog::Breadcrumb(
+                    "dxr",
+                    std::string("editor: Enable ray tracing -> ") + (enabled ? "on" : "off"));
+                if (enabled)
+                {
+                    ResetDxrBreadcrumbOnceFlags();
+                }
                 target.GetRenderer().GetDxrSettings().SetEnabled(enabled);
+                if (enabled && !GfxContext::Get().IsFrameRecording())
+                {
+                    target.GetRenderer().WarmUpDxrPipelineIfNeeded();
+                }
                 target.MarkDirty();
             });
 
@@ -1803,6 +1822,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SsrSvgfVariance),
             RenderDebugModeLabel(RenderDebugMode::SsrUpscaled),
             RenderDebugModeLabel(RenderDebugMode::SsrSpecReplacement),
+            RenderDebugModeLabel(RenderDebugMode::RtDispatchSmoke),
         };
 
         if (ImGui::Combo(

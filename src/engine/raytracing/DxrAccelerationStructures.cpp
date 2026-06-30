@@ -5,6 +5,7 @@
 #include "engine/raytracing/Blas.h"
 #include "engine/raytracing/DxrContext.h"
 #include "engine/raytracing/DxrInstanceTransform.h"
+#include "engine/raytracing/DxrTrace.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/rhi/GfxContext.h"
@@ -28,7 +29,30 @@ void DxrAccelerationStructures::Release()
     m_tlas.Release();
     m_scratchBuffer.Release();
     m_scratchHighWaterMark = 0;
+    m_scratchResourceState = 0;
     m_anyBlasBuiltThisFrame = false;
+}
+
+void DxrAccelerationStructures::EnsureScratchBufferReadyForBuild(
+    ID3D12GraphicsCommandList* commandList)
+{
+    if (commandList == nullptr || m_scratchBuffer.resource == nullptr)
+    {
+        return;
+    }
+
+    const auto targetState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    if (m_scratchResourceState == targetState)
+    {
+        return;
+    }
+
+    TransitionResource(
+        commandList,
+        m_scratchBuffer.resource,
+        static_cast<D3D12_RESOURCE_STATES>(m_scratchResourceState),
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    m_scratchResourceState = targetState;
 }
 
 bool DxrAccelerationStructures::EnsureScratchBuffer(
@@ -47,11 +71,13 @@ bool DxrAccelerationStructures::EnsureScratchBuffer(
     }
 
     m_scratchBuffer.Release();
-    if (!CreateDxrDefaultBuffer(requiredBytes, true, m_scratchBuffer))
+    if (!CreateDxrScratchBuffer(requiredBytes, m_scratchBuffer))
     {
         outError = "failed to allocate DXR scratch buffer";
         return false;
     }
+    m_scratchResourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     if (requiredBytes > m_scratchHighWaterMark)
     {
@@ -71,6 +97,7 @@ void DxrAccelerationStructures::EnsureScene(
 
     if (!GfxContext::Get().IsInitialized())
     {
+        DxrBreadcrumb("AS skipped: GfxContext not initialized");
         m_diagnostics = DxrDiagnostics{};
         m_diagnostics.buildStatus = "SKIPPED (RT off)";
         return;
@@ -86,6 +113,7 @@ void DxrAccelerationStructures::EnsureScene(
 
     if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled)
     {
+        DxrBreadcrumbOnce("as-skipped", "AS skipped: RT off or unsupported");
         m_diagnostics.blasCount = 0;
         m_diagnostics.tlasInstanceCount = 0;
         m_diagnostics.totalRtTriangles = 0;
@@ -95,9 +123,11 @@ void DxrAccelerationStructures::EnsureScene(
         return;
     }
 
+    DxrBreadcrumb("AS begin");
     ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
     if (commandList4 == nullptr)
     {
+        DxrBreadcrumb("AS failed: CommandList4 unavailable");
         m_diagnostics.buildStatus = "FAILED: ID3D12GraphicsCommandList4 unavailable";
         return;
     }
@@ -121,6 +151,7 @@ void DxrAccelerationStructures::EnsureScene(
     }
 
     std::uint64_t maxScratchBytes = 0;
+    DxrBreadcrumb("AS prebuild scratch sizing");
     ID3D12Device5* device5 = DxrContext::Get().GetDevice5();
     if (device5 != nullptr)
     {
@@ -192,8 +223,12 @@ void DxrAccelerationStructures::EnsureScene(
         return;
     }
 
+    EnsureScratchBufferReadyForBuild(
+        static_cast<ID3D12GraphicsCommandList*>(commandList4));
+
     {
         SceneRenderTrace::Scope blasScope("dxr-blas-ensure");
+        DxrBreadcrumb("AS blas-ensure begin");
         for (Mesh* mesh : uniqueMeshes)
         {
             Blas* existing = m_blasCache.Find(mesh);
@@ -210,6 +245,7 @@ void DxrAccelerationStructures::EnsureScene(
 
             m_anyBlasBuiltThisFrame = true;
         }
+        DxrBreadcrumb("AS blas-ensure end");
         blasScope.Success();
     }
 
@@ -272,15 +308,19 @@ void DxrAccelerationStructures::EnsureScene(
 
     {
         SceneRenderTrace::Scope tlasScope("dxr-tlas-build");
+        DxrBreadcrumb("AS tlas-build begin");
         if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
         {
+            DxrBreadcrumb("AS tlas-build failed");
             m_diagnostics.buildStatus = "FAILED: " + error;
             return;
         }
+        DxrBreadcrumb("AS tlas-build end");
         tlasScope.Success();
     }
 
     const auto buildEnd = std::chrono::steady_clock::now();
+    DxrBreadcrumb("AS complete ok");
     m_diagnostics.blasCount = m_blasCache.GetCount();
     m_diagnostics.tlasInstanceCount = static_cast<std::uint32_t>(instances.size());
     m_diagnostics.totalRtTriangles = referencedTriangles;

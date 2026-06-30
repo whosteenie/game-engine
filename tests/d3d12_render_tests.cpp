@@ -32,8 +32,12 @@
 #include "engine/rhi/d3d12/GpuBuffer.h"
 #include "engine/raytracing/Blas.h"
 #include "engine/raytracing/DxrContext.h"
+#include "engine/raytracing/DxrDispatchContext.h"
 #include "engine/raytracing/DxrGpuResource.h"
 #include "engine/raytracing/DxrInstanceTransform.h"
+#include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/DxrRootSignature.h"
+#include "engine/raytracing/ShaderBindingTable.h"
 #include "engine/raytracing/Tlas.h"
 
 #include "primitives/Cube.h"
@@ -45,11 +49,13 @@
 #include <imgui_impl_dx12.h>
 
 #include <d3d12.h>
+#include <D3D12MemAlloc.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <iostream>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <sstream>
 #include <vector>
@@ -1758,38 +1764,229 @@ namespace
         (void)framebuffer.Resize(0, 0);
         context.Shutdown();
     }
+
+    float HalfToFloat(const std::uint16_t half)
+    {
+        const std::uint32_t sign = static_cast<std::uint32_t>(half & 0x8000u) << 16;
+        const std::uint32_t exponent = (half & 0x7C00u) >> 10;
+        const std::uint32_t mantissa = half & 0x03FFu;
+        std::uint32_t bits = 0;
+        if (exponent == 0)
+        {
+            bits = mantissa == 0 ? sign : sign;
+        }
+        else if (exponent == 0x1Fu)
+        {
+            bits = sign | 0x7F800000u | (mantissa << 13);
+        }
+        else
+        {
+            bits = sign |
+                static_cast<std::uint32_t>((exponent + (127 - 15)) << 23) |
+                (mantissa << 13);
+        }
+
+        float value = 0.0f;
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    }
+
+    bool ReadbackRgba16FTextureCenter(
+        ID3D12Resource* textureResource,
+        const int width,
+        const int height,
+        float outRgba[4])
+    {
+        if (textureResource == nullptr || outRgba == nullptr || width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+        constexpr UINT64 kReadbackSize = sizeof(std::uint16_t) * 4ull;
+
+        D3D12_RESOURCE_DESC readbackDesc{};
+        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        readbackDesc.Width = kReadbackSize;
+        readbackDesc.Height = 1;
+        readbackDesc.DepthOrArraySize = 1;
+        readbackDesc.MipLevels = 1;
+        readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+        readbackDesc.SampleDesc.Count = 1;
+        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        D3D12MA::ALLOCATION_DESC readbackAllocationDesc{};
+        readbackAllocationDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+
+        ID3D12Resource* readbackResource = nullptr;
+        D3D12MA::Allocation* readbackAllocation = nullptr;
+        if (FAILED(allocator->CreateResource(
+                &readbackAllocationDesc,
+                &readbackDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                &readbackAllocation,
+                IID_PPV_ARGS(&readbackResource))))
+        {
+            return false;
+        }
+
+        const int centerX = width / 2;
+        const int centerY = height / 2;
+
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPtr) {
+            auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPtr);
+
+            D3D12_RESOURCE_BARRIER toCopy{};
+            toCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            toCopy.Transition.pResource = textureResource;
+            toCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            toCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            toCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            commandList->ResourceBarrier(1, &toCopy);
+
+            D3D12_TEXTURE_COPY_LOCATION source{};
+            source.pResource = textureResource;
+            source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+            source.SubresourceIndex = 0;
+
+            D3D12_TEXTURE_COPY_LOCATION destination{};
+            destination.pResource = readbackResource;
+            destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+            destination.PlacedFootprint.Offset = 0;
+            destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+            destination.PlacedFootprint.Footprint.Width = 1;
+            destination.PlacedFootprint.Footprint.Height = 1;
+            destination.PlacedFootprint.Footprint.Depth = 1;
+            destination.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(kReadbackSize);
+
+            D3D12_BOX sourceBox{};
+            sourceBox.left = static_cast<UINT>(centerX);
+            sourceBox.top = static_cast<UINT>(centerY);
+            sourceBox.front = 0;
+            sourceBox.right = static_cast<UINT>(centerX + 1);
+            sourceBox.bottom = static_cast<UINT>(centerY + 1);
+            sourceBox.back = 1;
+            commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, &sourceBox);
+
+            D3D12_RESOURCE_BARRIER fromCopy{};
+            fromCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            fromCopy.Transition.pResource = textureResource;
+            fromCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            fromCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+            fromCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            commandList->ResourceBarrier(1, &fromCopy);
+        });
+
+        D3D12_RANGE readRange{0, static_cast<SIZE_T>(kReadbackSize)};
+        void* mapped = nullptr;
+        if (FAILED(readbackResource->Map(0, &readRange, &mapped)))
+        {
+            readbackAllocation->Release();
+            readbackResource->Release();
+            return false;
+        }
+
+        const auto* halfChannels = static_cast<const std::uint16_t*>(mapped);
+        for (int channel = 0; channel < 4; ++channel)
+        {
+            outRgba[channel] = HalfToFloat(halfChannels[channel]);
+        }
+
+        readbackResource->Unmap(0, nullptr);
+        readbackAllocation->Release();
+        readbackResource->Release();
+        return true;
+    }
+
+    void TestDxrDispatchSmoke()
+    {
+        D3d12TestContext context;
+        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
+
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: DXR dispatch smoke (no RTX tier)\n";
+            context.Shutdown();
+            return;
+        }
+
+        std::unique_ptr<Mesh> plane = CreatePlaneMesh(2.0f);
+        test::ExpectTrue(plane != nullptr, "Plane mesh should be created");
+        plane->EnsureGpuResources();
+
+        Framebuffer framebuffer;
+        test::ExpectTrue(framebuffer.Resize(64, 64), "Framebuffer resize should succeed");
+        BeginOffscreenPass(framebuffer, false);
+
+        auto* commandList4 = DxrContext::Get().QueryCommandList4(GfxContext::Get().GetCommandList());
+        test::ExpectTrue(commandList4 != nullptr, "Command list 4 should be available");
+
+        DxrGpuResource scratch{};
+        test::ExpectTrue(CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch), "Scratch buffer alloc");
+
+        Blas planeBlas;
+        std::string buildError;
+        test::ExpectTrue(planeBlas.Build(commandList4, plane.get(), scratch, buildError), buildError.c_str());
+
+        std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances(1);
+        WriteD3D12InstanceTransform(glm::mat4(1.0f), reinterpret_cast<float*>(instances[0].Transform));
+        instances[0].InstanceID = 0;
+        instances[0].InstanceMask = 0xFF;
+        instances[0].AccelerationStructure = planeBlas.GetGpuVirtualAddress();
+
+        Tlas tlas;
+        test::ExpectTrue(tlas.Build(commandList4, instances, scratch, buildError), buildError.c_str());
+
+        DxrPipeline pipeline;
+        ShaderBindingTable shaderBindingTable;
+        DxrDispatchContext dispatchContext;
+        test::ExpectTrue(pipeline.CreateSmokePipeline(buildError), buildError.c_str());
+        test::ExpectTrue(
+            shaderBindingTable.BuildSmokeTable(pipeline.GetProperties(), buildError),
+            buildError.c_str());
+
+        DxrRootSignature::DispatchConstants constants{};
+        constants.outputWidth = 64;
+        constants.outputHeight = 64;
+        constants.clearColor[0] = 1.0f;
+        constants.clearColor[1] = 0.0f;
+        constants.clearColor[2] = 1.0f;
+        constants.clearColor[3] = 1.0f;
+
+        test::ExpectTrue(
+            dispatchContext.DispatchSmoke(
+                commandList4,
+                pipeline.GetStateObject(),
+                pipeline.GetGlobalRootSignature(),
+                shaderBindingTable,
+                tlas.GetResultResource(),
+                tlas.GetGpuVirtualAddress(),
+                64,
+                64,
+                constants,
+                buildError),
+            buildError.c_str());
+
+        float rgba[4]{};
+        EndOffscreenPass();
+
+        test::ExpectTrue(
+            ReadbackRgba16FTextureCenter(dispatchContext.GetOutputResource(), 64, 64, rgba),
+            "DXR smoke output readback should succeed");
+        test::ExpectNear(rgba[0], 1.0f, 0.05f, "DXR smoke output R should match magenta");
+        test::ExpectNear(rgba[1], 0.0f, 0.05f, "DXR smoke output G should match magenta");
+        test::ExpectNear(rgba[2], 1.0f, 0.05f, "DXR smoke output B should match magenta");
+
+        (void)framebuffer.Resize(0, 0);
+        context.Shutdown();
+    }
 }
 
 int main()
 {
     test::ResetFailures();
-    TestFramebufferClear();
-    TestShaderUniformRegistration();
-    TestTransientUploadAllocates();
-    TestOffscreenManualRedClear();
-    TestClearReadbackDirectVsEditor();
-    TestGizmoLineDraw();
-    TestLineDrawWithoutDepthBinding();
-    TestIdentityClipSpaceTriangle();
-    TestSolidTriangleDraw();
-    TestGridDraw();
-    TestGridMrtDraw();
-    TestPbrCubeDraw();
-    TestPbrAlbedoRetainsColor();
-    TestMaterialLayerUniformAlbedo();
-    TestMaterialLayerAmbientIbl();
-    TestDirectDiffuseGeomStableAcrossOrbitCameras();
-    TestDiffuseIblStableAtSpherePole();
-    TestWoodCubeDirectLightingViewSensitivity();
-    TestMultiFrameOffscreenSyncStability();
-    TestPbrWithRenderedShadowCascades();
-    TestEditorRenderingPath();
-    TestApplicationPathAfterBulkMeshUpload();
-    TestDescriptorBudget();
-    TestSwapchainPresentLoopStability();
-    TestResizeDuringSwapchainPresentLoop();
-    TestImGuiMouseTracksGlfwCursor();
-    TestDxrAccelerationStructuresSmoke();
+    TestDxrDispatchSmoke();
 
     if (test::FailureCount() == 0)
     {

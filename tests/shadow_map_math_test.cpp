@@ -19,6 +19,7 @@ void RunColorSpaceTests(int& failures);
 void RunRotationUtilsTests(int& failures);
 void RunDxrSettingsTests(int& failures);
 void RunDxrAccelerationStructureTests(int& failures);
+void RunDxrShaderInfrastructureTests(int& failures);
 
 namespace
 {
@@ -507,6 +508,7 @@ int main()
     RunRotationUtilsTests(gFailures);
     RunDxrSettingsTests(gFailures);
     RunDxrAccelerationStructureTests(gFailures);
+    RunDxrShaderInfrastructureTests(gFailures);
 
     if (gFailures == 0)
     {

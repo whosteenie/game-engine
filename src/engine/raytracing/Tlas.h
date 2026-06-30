@@ -8,6 +8,7 @@
 #include <vector>
 
 struct ID3D12GraphicsCommandList4;
+struct ID3D12Resource;
 class Tlas
 {
 public:
@@ -21,6 +22,7 @@ public:
     std::uint64_t GetGpuVirtualAddress() const;
     std::uint64_t GetSizeInBytes() const { return m_result.sizeInBytes; }
     std::uint32_t GetInstanceCount() const { return m_instanceCount; }
+    ID3D12Resource* GetResultResource() const { return m_result.resource; }
 
     bool Build(
         ID3D12GraphicsCommandList4* commandList,

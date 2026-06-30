@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cstdio>
 
 using Microsoft::WRL::ComPtr;
 
@@ -144,6 +145,41 @@ namespace
 
 namespace
 {
+    bool IsDxbcContainer(const void* data, const std::size_t size)
+    {
+        if (data == nullptr || size < 4)
+        {
+            return false;
+        }
+
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        return bytes[0] == 'D' && bytes[1] == 'X' && bytes[2] == 'B' && bytes[3] == 'C';
+    }
+
+    void LogDxilHeaderFourCC(const char* label, const void* data, const std::size_t size)
+    {
+        if (data == nullptr || size < 4)
+        {
+            EngineLog::Info("hlsl", std::string(label) + ": missing or too small");
+            return;
+        }
+
+        const auto* bytes = static_cast<const unsigned char*>(data);
+        char header[16];
+        std::snprintf(
+            header,
+            sizeof(header),
+            "%02X%02X%02X%02X",
+            bytes[0],
+            bytes[1],
+            bytes[2],
+            bytes[3]);
+
+        EngineLog::Info(
+            "hlsl",
+            std::string(label) + ": bytes=" + std::to_string(size) + " header=0x" + header);
+    }
+
     [[noreturn]] void ThrowShaderCompileError(const std::string& message)
     {
         EngineLog::Warn("hlsl", message);
@@ -286,6 +322,143 @@ HlslCompileResult CompileHlsl(
         ThrowShaderCompileError(
             std::string("CreateReflection failed for ") + sourcePath + " (" + targetProfile + ") (HRESULT=0x"
             + std::to_string(static_cast<unsigned long>(createReflectionHr)) + ")");
+    }
+
+    return result;
+}
+
+DxilLibraryBytecode PrepareDxilLibraryBytecode(ComPtr<IDxcBlob> dxcOutput)
+{
+    if (dxcOutput == nullptr)
+    {
+        throw std::runtime_error("PrepareDxilLibraryBytecode: DXC output blob missing");
+    }
+
+    DxilLibraryBytecode result{};
+    result.containerByteCount = dxcOutput->GetBufferSize();
+
+    const void* containerData = dxcOutput->GetBufferPointer();
+    if (!IsDxbcContainer(containerData, result.containerByteCount))
+    {
+        result.bytecode = dxcOutput;
+        result.extractedFromDxbcContainer = false;
+        LogDxilHeaderFourCC("dxil-library prepare: using raw blob", containerData, result.containerByteCount);
+        return result;
+    }
+
+    ComPtr<IDxcUtils> utils;
+    ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)), "DxcCreateInstance(DxcUtils)");
+
+    DxcBuffer containerBuffer{};
+    containerBuffer.Ptr = containerData;
+    containerBuffer.Size = static_cast<UINT32>(result.containerByteCount);
+    containerBuffer.Encoding = DXC_CP_ACP;
+
+    void* partData = nullptr;
+    UINT32 partSize = 0;
+    const HRESULT extractHr =
+        utils->GetDxilContainerPart(&containerBuffer, DXC_PART_DXIL, &partData, &partSize);
+    if (FAILED(extractHr) || partData == nullptr || partSize == 0)
+    {
+        throw std::runtime_error(
+            std::string("GetDxilContainerPart(DXC_PART_DXIL) failed (HRESULT=0x")
+            + std::to_string(static_cast<unsigned long>(extractHr)) + ")");
+    }
+
+    ComPtr<IDxcBlobEncoding> dxilBlob;
+    ThrowIfFailed(
+        utils->CreateBlob(partData, partSize, DXC_CP_ACP, &dxilBlob),
+        "CreateBlob(DXIL part)");
+
+    result.bytecode = dxilBlob;
+    result.extractedFromDxbcContainer = true;
+
+    LogDxilHeaderFourCC("dxil-library prepare: container", containerData, result.containerByteCount);
+    LogDxilHeaderFourCC("dxil-library prepare: extracted dxil", partData, partSize);
+    EngineLog::Info(
+        "hlsl",
+        std::string("dxil-library prepare: extracted=")
+            + (result.extractedFromDxbcContainer ? "yes" : "no") + " containerBytes="
+            + std::to_string(result.containerByteCount) + " dxilBytes=" + std::to_string(partSize));
+
+    return result;
+}
+
+HlslCompileResult CompileHlslLibrary(const std::string& source, const std::string& sourcePath)
+{
+    ComPtr<IDxcUtils> utils;
+    ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)), "DxcCreateInstance(DxcUtils)");
+
+    ComPtr<IDxcCompiler3> compiler;
+    ThrowIfFailed(
+        DxcCreateInstance(CLSID_DxcCompiler, IID_PPV_ARGS(&compiler)),
+        "DxcCreateInstance(DxcCompiler)");
+
+    ComPtr<IDxcBlobEncoding> sourceBlob;
+    ThrowIfFailed(
+        utils->CreateBlob(source.c_str(), source.size(), DXC_CP_UTF8, &sourceBlob),
+        "CreateBlob(shader source)");
+
+    const std::wstring wideSourcePath = Utf8ToWide(sourcePath);
+
+    const wchar_t* compilerArgs[] = {
+        wideSourcePath.c_str(),
+        L"-T",
+        L"lib_6_3",
+        L"-Zi",
+    };
+
+    DxcBuffer sourceBuffer{};
+    sourceBuffer.Ptr = sourceBlob->GetBufferPointer();
+    sourceBuffer.Size = sourceBlob->GetBufferSize();
+    sourceBuffer.Encoding = DXC_CP_UTF8;
+
+    IncludeHandler includeHandler(utils.Get());
+    includeHandler.AddRef();
+
+    ComPtr<IDxcResult> compileResult;
+    const HRESULT compileHr = compiler->Compile(
+        &sourceBuffer,
+        compilerArgs,
+        static_cast<UINT32>(sizeof(compilerArgs) / sizeof(compilerArgs[0])),
+        &includeHandler,
+        IID_PPV_ARGS(&compileResult));
+    includeHandler.Release();
+
+    if (FAILED(compileHr))
+    {
+        ThrowShaderCompileError(
+            std::string("DXC Compile call failed for library ") + sourcePath);
+    }
+
+    HRESULT status = S_OK;
+    compileResult->GetStatus(&status);
+
+    ComPtr<IDxcBlobUtf8> errors;
+    compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
+    if (FAILED(status))
+    {
+        std::string message = "Shader library compile failed: " + sourcePath;
+        if (errors != nullptr && errors->GetStringLength() > 0)
+        {
+            message.append("\n");
+            AppendUtf8Blob(message, errors.Get());
+        }
+        ThrowShaderCompileError(message);
+    }
+
+    if (errors != nullptr && errors->GetStringLength() > 0)
+    {
+        OutputDebugStringA(errors->GetStringPointer());
+    }
+
+    HlslCompileResult result{};
+    const HRESULT objectHr = compileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(&result.shader), nullptr);
+    if (FAILED(objectHr))
+    {
+        ThrowShaderCompileError(
+            std::string("DXC_OUT_OBJECT failed for library ") + sourcePath + " (HRESULT=0x"
+            + std::to_string(static_cast<unsigned long>(objectHr)) + ")");
     }
 
     return result;

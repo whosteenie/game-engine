@@ -34,6 +34,8 @@
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rendering/ShaderCache.h"
+#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/raytracing/DxrTrace.h"
 #include "engine/platform/ExceptionMessage.h"
 
 #include <algorithm>
@@ -100,6 +102,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_environmentMap.reset();
     self->m_screenSpaceEffects.reset();
     self->m_dxrAccelerationStructures.reset();
+    self->m_dxrSmokeDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -136,6 +139,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
         }
 
         ShaderCache::Clear();
+        DxrShaderCache::Clear();
         ResetPartialGpuResources();
         SceneRenderer* self = const_cast<SceneRenderer*>(this);
         self->m_gpuResourcesInitFailed = false;
@@ -148,6 +152,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
         if (activeMsaaSampleCount > 1)
         {
             ShaderCache::Clear();
+            DxrShaderCache::Clear();
         }
     }
 
@@ -186,7 +191,14 @@ void SceneRenderer::EnsureGpuResources() const
         RunGpuInitStep("light gizmos", [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
         RunGpuInitStep("shadow map", [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
         RunGpuInitStep("environment map", [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
-        RunGpuInitStep("screen-space effects", [&]() { self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>(); });
+        RunGpuInitStep("screen-space effects", [&]() {
+            self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
+            const int geometryMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
+            if (geometryMsaaSampleCount > 1)
+            {
+                self->m_screenSpaceEffects->SetMsaaSampleCount(geometryMsaaSampleCount);
+            }
+        });
         RunGpuInitStep("shadow depth shader", [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
                 EngineConstants::ShadowDepthVertexShader,
@@ -374,6 +386,75 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
     }
 }
 
+void SceneRenderer::WarmUpDxrPipelineIfNeeded()
+{
+    if (!m_dxrSettings.IsEnabled() || !GfxContext::Get().IsRaytracingSupported())
+    {
+        return;
+    }
+
+    if (m_dxrSmokeDispatch == nullptr)
+    {
+        m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
+    }
+
+    if (m_dxrSmokeDispatch->IsPipelineReady())
+    {
+        return;
+    }
+
+    DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
+    m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
+    DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
+}
+
+void SceneRenderer::RecordDxrPass(
+    const Scene& scene,
+    const int dispatchWidth,
+    const int dispatchHeight,
+    const bool usePostProcess)
+{
+    if (!m_dxrSettings.IsEnabled() || !GfxContext::Get().IsRaytracingSupported())
+    {
+        return;
+    }
+
+    DxrBreadcrumb("render: EnsureScene begin");
+    if (m_dxrAccelerationStructures == nullptr)
+    {
+        m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
+    }
+
+    m_dxrAccelerationStructures->EnsureScene(
+        scene,
+        true,
+        GfxContext::Get().GetCommandList());
+    DxrBreadcrumb("render: EnsureScene end");
+
+    if (m_dxrSmokeDispatch == nullptr)
+    {
+        m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
+    }
+
+    DxrBreadcrumb("render: smoke DispatchIfEnabled begin");
+    m_dxrSmokeDispatch->DispatchIfEnabled(
+        *m_dxrAccelerationStructures,
+        true,
+        GfxContext::Get().GetCommandList(),
+        dispatchWidth,
+        dispatchHeight);
+    DxrBreadcrumb("render: smoke DispatchIfEnabled end");
+
+    if (usePostProcess && m_screenSpaceEffects != nullptr)
+    {
+        DxrBreadcrumb("render: SetDxrSmokeDebugSrv");
+        m_screenSpaceEffects->SetDxrSmokeDebugSrv(
+            m_dxrSmokeDispatch->HasValidOutput() ? m_dxrSmokeDispatch->GetOutputSrvCpuHandle() : 0);
+    }
+
+    GfxContext::Get().ResetDrawSrvTable();
+}
+
 void SceneRenderer::Render(
     const Scene& scene,
     const Camera& camera,
@@ -387,7 +468,25 @@ void SceneRenderer::Render(
     if (!m_gpuResourcesInitialized)
     {
         renderScope.Success();
+        SceneRenderTrace::CompleteFirstFrame();
         return;
+    }
+
+    if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
+    {
+        const bool pipelineReady =
+            m_dxrSmokeDispatch != nullptr && m_dxrSmokeDispatch->IsPipelineReady();
+        if (!pipelineReady)
+        {
+            if (GfxContext::Get().IsFrameRecording())
+            {
+                DxrBreadcrumb("render: WarmUpDxrPipeline skipped (frame recording)");
+            }
+            else
+            {
+                WarmUpDxrPipelineIfNeeded();
+            }
+        }
     }
 
     GfxContext::Get().ResetDrawSrvTable();
@@ -536,16 +635,6 @@ void SceneRenderer::Render(
         drawScope.Success();
     }
 
-    if (m_dxrAccelerationStructures == nullptr)
-    {
-        m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
-    }
-
-    m_dxrAccelerationStructures->EnsureScene(
-        scene,
-        m_dxrSettings.IsEnabled(),
-        GfxContext::Get().GetCommandList());
-
     if (usePostProcess)
     {
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
@@ -553,6 +642,10 @@ void SceneRenderer::Render(
             m_previousWorldMatrices[objectIndex] =
                 scene.GetWorldMatrix(static_cast<int>(objectIndex));
         }
+    }
+    else if (target != nullptr)
+    {
+        target->Unbind();
     }
 
     if (usePostProcess)
@@ -572,6 +665,12 @@ void SceneRenderer::Render(
             m_screenSpaceEffects->EndSceneGridPass();
             gridScope.Success();
         }
+
+        RecordDxrPass(
+            scene,
+            m_screenSpaceEffects->GetRenderWidth(),
+            m_screenSpaceEffects->GetRenderHeight(),
+            true);
 
         if (target != nullptr)
         {
@@ -614,7 +713,12 @@ void SceneRenderer::Render(
     }
     else if (options.showGrid && scene.GetShowGrid())
     {
+        RecordDxrPass(scene, viewportWidth, viewportHeight, false);
         m_grid->Draw(camera, false);
+    }
+    else if (!usePostProcess)
+    {
+        RecordDxrPass(scene, viewportWidth, viewportHeight, false);
     }
 
     if (!usePostProcess && options.showEditorOverlay)
@@ -705,6 +809,7 @@ void SceneRenderer::Render(
     (void)viewportWidth;
     (void)viewportHeight;
     renderScope.Success();
+    SceneRenderTrace::CompleteFirstFrame();
 }
 
 const SceneLighting& SceneRenderer::GetLighting() const
@@ -892,6 +997,7 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
 
         GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
         ShaderCache::Clear();
+        DxrShaderCache::Clear();
         scene.InvalidateAllMaterialCachedShaders();
         m_environmentMap->ReloadSkyboxRenderer();
         m_screenSpaceEffects->ReloadGeometryMsaaTargets(viewportWidth, viewportHeight);

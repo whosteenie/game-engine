@@ -55,6 +55,7 @@ enum class RenderDebugMode
     SsrSvgfVariance,
     SsrUpscaled,
     SsrSpecReplacement,
+    RtDispatchSmoke,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -67,5 +68,6 @@ bool IsSsrSceneDebugMode(RenderDebugMode mode);
 bool IsSsrTraceDebugMode(RenderDebugMode mode);
 bool IsSsrDenoiseDebugMode(RenderDebugMode mode);
 bool IsSsrCompositeDebugMode(RenderDebugMode mode);
+bool IsDxrDebugMode(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

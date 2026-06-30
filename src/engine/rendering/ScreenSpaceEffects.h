@@ -173,6 +173,7 @@ public:
 
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
+    void SetDxrSmokeDebugSrv(std::uintptr_t srvCpuHandle);
 
     AntiAliasingMode GetAntiAliasingMode() const;
     void SetAntiAliasingMode(AntiAliasingMode mode);
@@ -453,6 +454,7 @@ private:
     mutable std::uintptr_t m_lastSsrDenoiseSrv = 0;
     mutable std::uintptr_t m_lastSsrResolvedSrv = 0;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
+    std::uintptr_t m_dxrSmokeDebugSrv = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     int m_msaaSampleCount = 1;
     float m_fxaaSubpixQuality = 0.75f;
