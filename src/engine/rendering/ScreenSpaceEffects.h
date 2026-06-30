@@ -62,6 +62,10 @@ public:
 
     void BeginScenePass(const EnvironmentMap& environmentMap) const;
     void EndScenePass() const;
+    void BlitRtDispatchSmokeDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
 
     void Apply(
         const Camera& camera,
@@ -139,6 +143,7 @@ public:
 
     bool IsSsrEnabled() const;
     void SetSsrEnabled(bool enabled);
+    void InvalidateSsrHistory();
 
     float GetSsrMaxTraceDistance() const;
     void SetSsrMaxTraceDistance(float distance);

@@ -451,8 +451,6 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetDxrSmokeDebugSrv(
             m_dxrSmokeDispatch->HasValidOutput() ? m_dxrSmokeDispatch->GetOutputSrvCpuHandle() : 0);
     }
-
-    GfxContext::Get().ResetDrawSrvTable();
 }
 
 void SceneRenderer::Render(
@@ -666,12 +664,6 @@ void SceneRenderer::Render(
             gridScope.Success();
         }
 
-        RecordDxrPass(
-            scene,
-            m_screenSpaceEffects->GetRenderWidth(),
-            m_screenSpaceEffects->GetRenderHeight(),
-            true);
-
         if (target != nullptr)
         {
             GfxContext::Get().SetBoundOutputFramebuffer(target);
@@ -696,6 +688,20 @@ void SceneRenderer::Render(
             SceneRenderTrace::Scope advanceTemporalScope("AdvanceTemporalFrame");
             m_screenSpaceEffects->AdvanceTemporalFrame(camera);
             advanceTemporalScope.Success();
+        }
+
+        RecordDxrPass(
+            scene,
+            m_screenSpaceEffects->GetRenderWidth(),
+            m_screenSpaceEffects->GetRenderHeight(),
+            true);
+
+        if (target != nullptr)
+        {
+            m_screenSpaceEffects->BlitRtDispatchSmokeDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight);
         }
 
         if (target != nullptr)

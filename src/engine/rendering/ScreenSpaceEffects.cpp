@@ -1363,6 +1363,26 @@ void ScreenSpaceEffects::EndSceneGridPass() const
     m_sceneFramebuffer->EnsureShaderResourceState();
 }
 
+void ScreenSpaceEffects::BlitRtDispatchSmokeDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (m_debugMode != RenderDebugMode::RtDispatchSmoke || m_dxrSmokeDebugSrv == 0
+        || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_debugChannelShader->Use(false, true);
+    m_debugChannelShader->SetInt("uOutputRgb", 1);
+    m_debugChannelShader->SetInt("uInput", 0);
+    m_debugChannelShader->BindTextureSlot(0, m_dxrSmokeDebugSrv);
+    m_debugChannelShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
 void ScreenSpaceEffects::DrawFullscreenQuad() const
 {
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
@@ -2568,12 +2588,7 @@ void ScreenSpaceEffects::Apply(
     if (IsPostProcessDebugMode(m_debugMode))
     {
         std::uintptr_t debugSrv = 0;
-        if (m_debugMode == RenderDebugMode::RtDispatchSmoke && m_dxrSmokeDebugSrv != 0)
-        {
-            debugSrv = m_dxrSmokeDebugSrv;
-            ssaoDebugViewSource = "rt_dispatch_smoke";
-        }
-        else if (m_debugMode == RenderDebugMode::Ssao)
+        if (m_debugMode == RenderDebugMode::Ssao)
         {
             debugSrv = m_ssaoTarget.srvCpuHandle;
             ssaoDebugViewSource = runAo
@@ -2942,10 +2957,7 @@ void ScreenSpaceEffects::Apply(
         if (debugSrv != 0)
         {
             m_debugChannelShader->Use(false, true);
-            // RT smoke output is RGB (magenta); other single-channel debug textures use R-only.
-            m_debugChannelShader->SetInt(
-                "uOutputRgb",
-                m_debugMode == RenderDebugMode::RtDispatchSmoke ? 1 : 0);
+            m_debugChannelShader->SetInt("uOutputRgb", 0);
             m_debugChannelShader->SetInt("uInput", 0);
             m_debugChannelShader->BindTextureSlot(0, debugSrv);
             m_debugChannelShader->FlushUniforms();
@@ -3866,7 +3878,17 @@ bool ScreenSpaceEffects::IsSsrEnabled() const
 
 void ScreenSpaceEffects::SetSsrEnabled(const bool enabled)
 {
+    if (m_ssrEnabled != enabled)
+    {
+        InvalidateSsrHistory();
+    }
     m_ssrEnabled = enabled;
+}
+
+void ScreenSpaceEffects::InvalidateSsrHistory()
+{
+    m_ssrHistoryValid = false;
+    m_ssrFrameIndex = 0;
 }
 
 float ScreenSpaceEffects::GetSsrMaxTraceDistance() const

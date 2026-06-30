@@ -1654,6 +1654,7 @@ void LightingPanel::Draw(
                 {
                     target.GetRenderer().WarmUpDxrPipelineIfNeeded();
                 }
+                target.GetRenderer().GetScreenSpaceEffects().InvalidateSsrHistory();
                 target.MarkDirty();
             });
 
