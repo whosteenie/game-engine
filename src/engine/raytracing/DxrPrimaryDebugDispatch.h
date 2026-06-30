@@ -7,31 +7,38 @@
 #include <cstdint>
 #include <string>
 
+class Camera;
 class DxrAccelerationStructures;
 
-class DxrSmokeDispatch
+class DxrPrimaryDebugDispatch
 {
 public:
-    DxrSmokeDispatch() = default;
-    ~DxrSmokeDispatch();
+    DxrPrimaryDebugDispatch() = default;
+    ~DxrPrimaryDebugDispatch();
 
-    DxrSmokeDispatch(const DxrSmokeDispatch&) = delete;
-    DxrSmokeDispatch& operator=(const DxrSmokeDispatch&) = delete;
+    DxrPrimaryDebugDispatch(const DxrPrimaryDebugDispatch&) = delete;
+    DxrPrimaryDebugDispatch& operator=(const DxrPrimaryDebugDispatch&) = delete;
 
-    void DispatchIfEnabled(
+    bool DispatchIfEnabled(
         const DxrAccelerationStructures& accelerationStructures,
+        const Camera& camera,
         bool dxrEnabled,
-        bool smokeDebugMode,
+        bool debugTraceEnabled,
+        bool primaryDebugViewActive,
         void* commandList,
+        std::uintptr_t depthSrvCpuHandle,
         int width,
-        int height);
+        int height,
+        float maxTraceDistance);
 
     void Release();
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const { return m_pipelineReady; }
+    bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
 
-    std::uintptr_t GetOutputSrvCpuHandle() const;
+    std::uintptr_t GetPrimaryOutputSrvCpuHandle() const;
+    std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const;
     bool HasValidOutput() const;
 
 private:
@@ -41,4 +48,5 @@ private:
     ShaderBindingTable m_shaderBindingTable;
     DxrDispatchContext m_dispatchContext;
     bool m_pipelineReady = false;
+    bool m_dispatchedThisFrame = false;
 };

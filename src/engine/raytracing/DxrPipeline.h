@@ -17,6 +17,7 @@ public:
     DxrPipeline& operator=(const DxrPipeline&) = delete;
 
     bool CreateSmokePipeline(std::string& outError);
+    bool CreatePrimaryDebugPipeline(std::string& outError);
     void Release();
 
     ID3D12StateObject* GetStateObject() const { return m_stateObject; }

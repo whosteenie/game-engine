@@ -76,6 +76,8 @@ namespace EngineConstants
     inline constexpr const char* SkyBackgroundFragmentShader = "assets/shaders/sky_background.ps.hlsl";
 
     inline constexpr const char* DxrSmokeLibraryShader = "assets/shaders/dxr/dxr_smoke.hlsl";
+    inline constexpr const char* DxrPrimaryDebugLibraryShader = "assets/shaders/dxr/primary_debug.hlsl";
+    inline constexpr const char* DxrPrimaryDebugFragmentShader = "assets/shaders/dxr_primary_debug.ps.hlsl";
 
     inline constexpr float BackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
 

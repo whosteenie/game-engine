@@ -4,6 +4,7 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -30,7 +31,9 @@ std::string DxrShaderCache::ReadShaderSource(const char* libraryPath)
 
 std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(const char* libraryPath)
 {
-    const std::string cacheKey = libraryPath;
+    const std::string source = ReadShaderSource(libraryPath);
+    const std::size_t sourceHash = std::hash<std::string>{}(source);
+    const std::string cacheKey = std::string(libraryPath) + "#" + std::to_string(sourceHash);
 
     std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
 
@@ -43,7 +46,6 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(const char* libraryPath
         }
     }
 
-    const std::string source = ReadShaderSource(libraryPath);
     DxrBreadcrumb(std::string("shader compile begin: ") + libraryPath);
     const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath);
     DxrBreadcrumb(std::string("shader compile ok: ") + libraryPath);

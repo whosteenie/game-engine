@@ -679,11 +679,9 @@ void Application::Update(double deltaTime)
         Scene* editorScene = GetEditorTargetScene();
         UndoStack* editorUndoStack = GetEditorUndoStack();
 
-        // Apply project renderer settings before editor panels touch GPU resources
-        // (LightingPanel calls PrepareGpuResources/GetIBL during ImGui draw in Update).
+        // Apply project renderer settings before editor panels touch GPU resources.
         RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
             SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
-            editorScene->GetRenderer().WarmUpDxrPipelineIfNeeded();
         });
 
         if (!m_globalEditorLayoutLoaded)
@@ -1208,16 +1206,23 @@ void Application::Render()
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
 
+    if (editorActive)
+    {
+        if (Scene* editorScene = GetEditorTargetScene())
+        {
+            RunApplicationPhase("prepare-frame-gpu", [&]() {
+                editorScene->GetRenderer().PrepareFrameGpuResources();
+            });
+        }
+
+        GfxContext::Get().WaitForSwapchainFrames();
+    }
+
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {
         FrameDiagnostics::LogPhase("render-begin");
         m_renderer->BeginFrame();
     });
-
-    if (editorActive)
-    {
-        GfxContext::Get().WaitForSwapchainFrames();
-    }
 
     if (editorActive && m_sceneViewportPanel->HasValidRenderTarget())
     {

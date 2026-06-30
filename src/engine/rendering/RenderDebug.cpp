@@ -112,6 +112,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "SSR spec replacement";
     case RenderDebugMode::RtDispatchSmoke:
         return "RT dispatch smoke";
+    case RenderDebugMode::RtPrimaryHit:
+        return "RT primary hit";
+    case RenderDebugMode::RtPrimaryDepth:
+        return "RT primary depth";
+    case RenderDebugMode::RtPrimaryNormal:
+        return "RT primary normal";
     default:
         return "Unknown";
     }
@@ -257,5 +263,18 @@ bool IsSsrCompositeDebugMode(const RenderDebugMode mode)
 
 bool IsDxrDebugMode(const RenderDebugMode mode)
 {
-    return mode == RenderDebugMode::RtDispatchSmoke;
+    return mode == RenderDebugMode::RtDispatchSmoke || IsRtPrimaryDebugMode(mode);
+}
+
+bool IsRtPrimaryDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RtPrimaryHit:
+    case RenderDebugMode::RtPrimaryDepth:
+    case RenderDebugMode::RtPrimaryNormal:
+        return true;
+    default:
+        return false;
+    }
 }

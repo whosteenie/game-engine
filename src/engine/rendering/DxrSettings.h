@@ -33,6 +33,9 @@ public:
     bool IsDenoiseEnabled() const { return m_denoiseEnabled; }
     void SetDenoiseEnabled(const bool enabled) { m_denoiseEnabled = enabled; }
 
+    bool IsDebugTraceEnabled() const { return m_debugTraceEnabled; }
+    void SetDebugTraceEnabled(const bool enabled) { m_debugTraceEnabled = enabled; }
+
     float GetTemporalBlend() const { return m_temporalBlend; }
     void SetTemporalBlend(const float blend);
 
@@ -46,5 +49,6 @@ private:
     int m_reflectionsSamplesPerPixel = 1;
     float m_maxTraceDistance = 100.0f;
     bool m_denoiseEnabled = true;
+    bool m_debugTraceEnabled = false;
     float m_temporalBlend = 0.95f;
 };

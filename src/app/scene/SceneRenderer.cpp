@@ -103,6 +103,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_screenSpaceEffects.reset();
     self->m_dxrAccelerationStructures.reset();
     self->m_dxrSmokeDispatch.reset();
+    self->m_dxrPrimaryDebugDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -393,25 +394,84 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         return;
     }
 
-    if (m_dxrSmokeDispatch == nullptr)
+    if (GfxContext::Get().IsFrameRecording())
     {
-        m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
+        DxrBreadcrumb("render: WarmUpDxrPipeline skipped (frame recording)");
+        return;
     }
 
-    if (m_dxrSmokeDispatch->IsPipelineReady())
+    try
+    {
+        if (m_dxrSmokeDispatch == nullptr)
+        {
+            m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
+        }
+
+        if (m_dxrPrimaryDebugDispatch == nullptr)
+        {
+            m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
+        }
+
+        const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
+        const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
+        if (smokeReady && primaryReady)
+        {
+            return;
+        }
+
+        DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
+        if (!smokeReady)
+        {
+            m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!primaryReady)
+        {
+            m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded();
+        }
+        DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
+    }
+    catch (const std::exception& exception)
+    {
+        EngineLog::Error(
+            "dxr",
+            std::string("WarmUpDxrPipelineIfNeeded failed: ") + SafeExceptionMessage(exception));
+        DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded failed");
+    }
+}
+
+void SceneRenderer::PrepareFrameGpuResources()
+{
+    EnsureGpuResources();
+    if (!m_gpuResourcesInitialized || GfxContext::Get().IsFrameRecording())
     {
         return;
     }
 
-    DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
-    m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
-    DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
+    if (m_environmentMap != nullptr)
+    {
+        SceneRenderTrace::Scope envScope("SyncGpuResources");
+        try
+        {
+            m_environmentMap->SyncGpuResources();
+            envScope.Success();
+        }
+        catch (const std::exception& exception)
+        {
+            EngineLog::Error(
+                "scene",
+                std::string("SyncGpuResources failed: ") + SafeExceptionMessage(exception));
+        }
+    }
+
+    WarmUpDxrPipelineIfNeeded();
 }
 
 void SceneRenderer::RecordDxrPass(
     const Scene& scene,
+    const Camera& camera,
     const int dispatchWidth,
     const int dispatchHeight,
+    const std::uintptr_t depthSrvCpuHandle,
     const bool usePostProcess)
 {
     if (!m_dxrSettings.IsEnabled() || !GfxContext::Get().IsRaytracingSupported())
@@ -431,6 +491,14 @@ void SceneRenderer::RecordDxrPass(
         GfxContext::Get().GetCommandList());
     DxrBreadcrumb("render: EnsureScene end");
 
+    const RenderDebugMode debugMode =
+        usePostProcess && m_screenSpaceEffects != nullptr ? m_screenSpaceEffects->GetDebugMode()
+                                                          : RenderDebugMode::None;
+    const bool smokeDebugMode = debugMode == RenderDebugMode::RtDispatchSmoke;
+    const bool primaryDebugViewActive = IsRtPrimaryDebugMode(debugMode);
+    const bool primaryTraceEnabled =
+        m_dxrSettings.IsDebugTraceEnabled() || primaryDebugViewActive;
+
     if (m_dxrSmokeDispatch == nullptr)
     {
         m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
@@ -440,16 +508,50 @@ void SceneRenderer::RecordDxrPass(
     m_dxrSmokeDispatch->DispatchIfEnabled(
         *m_dxrAccelerationStructures,
         true,
+        smokeDebugMode,
         GfxContext::Get().GetCommandList(),
         dispatchWidth,
         dispatchHeight);
     DxrBreadcrumb("render: smoke DispatchIfEnabled end");
 
+    if (m_dxrPrimaryDebugDispatch == nullptr)
+    {
+        m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
+    }
+
+    DxrBreadcrumb("render: primary-debug DispatchIfEnabled begin");
+    const bool primaryDebugDispatched = m_dxrPrimaryDebugDispatch->DispatchIfEnabled(
+        *m_dxrAccelerationStructures,
+        camera,
+        true,
+        m_dxrSettings.IsDebugTraceEnabled(),
+        primaryDebugViewActive,
+        GfxContext::Get().GetCommandList(),
+        depthSrvCpuHandle,
+        dispatchWidth,
+        dispatchHeight,
+        m_dxrSettings.GetMaxTraceDistance());
+    DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
+
     if (usePostProcess && m_screenSpaceEffects != nullptr)
     {
-        DxrBreadcrumb("render: SetDxrSmokeDebugSrv");
+        DxrBreadcrumb("render: SetDxrDebugSrvs");
         m_screenSpaceEffects->SetDxrSmokeDebugSrv(
             m_dxrSmokeDispatch->HasValidOutput() ? m_dxrSmokeDispatch->GetOutputSrvCpuHandle() : 0);
+        const bool hasFreshPrimaryOutput =
+            primaryDebugDispatched && m_dxrPrimaryDebugDispatch->HasValidOutput();
+        if (hasFreshPrimaryOutput)
+        {
+            m_screenSpaceEffects->NotifyRtPrimaryDebugDispatched();
+        }
+
+        m_screenSpaceEffects->SetDxrPrimaryDebugSrvs(
+            primaryTraceEnabled && hasFreshPrimaryOutput
+                ? m_dxrPrimaryDebugDispatch->GetPrimaryOutputSrvCpuHandle()
+                : 0,
+            primaryTraceEnabled && hasFreshPrimaryOutput
+                ? m_dxrPrimaryDebugDispatch->GetPrimaryMetadataSrvCpuHandle()
+                : 0);
     }
 }
 
@@ -468,23 +570,6 @@ void SceneRenderer::Render(
         renderScope.Success();
         SceneRenderTrace::CompleteFirstFrame();
         return;
-    }
-
-    if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
-    {
-        const bool pipelineReady =
-            m_dxrSmokeDispatch != nullptr && m_dxrSmokeDispatch->IsPipelineReady();
-        if (!pipelineReady)
-        {
-            if (GfxContext::Get().IsFrameRecording())
-            {
-                DxrBreadcrumb("render: WarmUpDxrPipeline skipped (frame recording)");
-            }
-            else
-            {
-                WarmUpDxrPipelineIfNeeded();
-            }
-        }
     }
 
     GfxContext::Get().ResetDrawSrvTable();
@@ -506,12 +591,6 @@ void SceneRenderer::Render(
     if (target != nullptr)
     {
         GfxContext::Get().SetBoundOutputFramebuffer(target);
-    }
-
-    {
-        SceneRenderTrace::Scope envScope("SyncGpuResources");
-        m_environmentMap->SyncGpuResources();
-        envScope.Success();
     }
 
     {
@@ -692,8 +771,10 @@ void SceneRenderer::Render(
 
         RecordDxrPass(
             scene,
+            camera,
             m_screenSpaceEffects->GetRenderWidth(),
             m_screenSpaceEffects->GetRenderHeight(),
+            m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
             true);
 
         if (target != nullptr)
@@ -702,6 +783,11 @@ void SceneRenderer::Render(
                 reinterpret_cast<Framebuffer*>(targetFramebuffer),
                 viewportWidth,
                 viewportHeight);
+            m_screenSpaceEffects->BlitRtPrimaryDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight,
+                m_dxrSettings.GetMaxTraceDistance());
         }
 
         if (target != nullptr)
@@ -719,12 +805,12 @@ void SceneRenderer::Render(
     }
     else if (options.showGrid && scene.GetShowGrid())
     {
-        RecordDxrPass(scene, viewportWidth, viewportHeight, false);
+        RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
         m_grid->Draw(camera, false);
     }
     else if (!usePostProcess)
     {
-        RecordDxrPass(scene, viewportWidth, viewportHeight, false);
+        RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
     }
 
     if (!usePostProcess && options.showEditorOverlay)

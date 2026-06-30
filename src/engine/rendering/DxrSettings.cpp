@@ -53,6 +53,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
     m_maxTraceDistance = source.m_maxTraceDistance;
     m_denoiseEnabled = source.m_denoiseEnabled;
+    m_debugTraceEnabled = source.m_debugTraceEnabled;
     m_temporalBlend = source.m_temporalBlend;
 }
 

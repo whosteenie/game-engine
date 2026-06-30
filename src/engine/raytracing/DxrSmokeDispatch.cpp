@@ -56,11 +56,12 @@ bool DxrSmokeDispatch::EnsurePipeline(std::string& outError)
 void DxrSmokeDispatch::DispatchIfEnabled(
     const DxrAccelerationStructures& accelerationStructures,
     const bool dxrEnabled,
+    const bool smokeDebugMode,
     void* commandList,
     const int width,
     const int height)
 {
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || width <= 0 || height <= 0)
+    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || !smokeDebugMode || width <= 0 || height <= 0)
     {
         return;
     }

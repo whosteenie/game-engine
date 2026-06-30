@@ -83,6 +83,34 @@ void DxrDispatchContext::Release()
     m_outputHeight = 0;
     m_outputResourceState = 0;
 
+    ReleaseRetiredPrimaryOutputs();
+    for (RetiredOutput& retired : m_retiredPrimaryMetadata)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+    m_retiredPrimaryMetadata.clear();
+
+    DestroyOutputResource(
+        m_primaryOutputResource,
+        m_primaryOutputAllocation,
+        m_primaryOutputSrvIndex,
+        m_primaryOutputUavIndex);
+    DestroyOutputResource(
+        m_primaryMetadataResource,
+        m_primaryMetadataAllocation,
+        m_primaryMetadataSrvIndex,
+        m_primaryMetadataUavIndex);
+    m_primaryOutputSrvCpuHandle = 0;
+    m_primaryMetadataSrvCpuHandle = 0;
+    m_primaryOutputWidth = 0;
+    m_primaryOutputHeight = 0;
+    m_primaryOutputResourceState = 0;
+    m_primaryMetadataResourceState = 0;
+
     if (m_tlasSrvIndex != UINT32_MAX)
     {
         GfxContext::Get().FreeOffscreenSrv(m_tlasSrvIndex);
@@ -96,6 +124,14 @@ void DxrDispatchContext::Release()
     }
 
     m_constantBufferResource = nullptr;
+
+    if (m_primaryConstantBufferAllocation != nullptr)
+    {
+        m_primaryConstantBufferAllocation->Release();
+        m_primaryConstantBufferAllocation = nullptr;
+    }
+
+    m_primaryConstantBufferResource = nullptr;
 }
 
 bool DxrDispatchContext::EnsureConstantBuffer(std::string& outError)
@@ -447,5 +483,425 @@ bool DxrDispatchContext::DispatchSmoke(
     m_outputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
     DxrBreadcrumb("dispatch DispatchSmoke ok");
+    return true;
+}
+
+void DxrDispatchContext::ReleaseRetiredPrimaryOutputs()
+{
+    for (RetiredOutput& retired : m_retiredPrimaryOutputs)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+
+    m_retiredPrimaryOutputs.clear();
+}
+
+bool DxrDispatchContext::EnsurePrimaryConstantBuffer(std::string& outError)
+{
+    outError.clear();
+    if (m_primaryConstantBufferResource != nullptr)
+    {
+        return true;
+    }
+
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+    if (allocator == nullptr)
+    {
+        outError = "memory allocator unavailable";
+        return false;
+    }
+
+    const std::uint64_t bufferSize =
+        AlignConstantBufferSize(sizeof(DxrRootSignature::PrimaryDispatchConstants));
+
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    resourceDesc.Width = bufferSize;
+    resourceDesc.Height = 1;
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            &m_primaryConstantBufferAllocation,
+            IID_PPV_ARGS(&m_primaryConstantBufferResource))))
+    {
+        outError = "failed to allocate DXR primary debug constant buffer";
+        return false;
+    }
+
+    return true;
+}
+
+void DxrDispatchContext::WritePrimaryConstantBuffer(
+    const DxrRootSignature::PrimaryDispatchConstants& constants)
+{
+    if (m_primaryConstantBufferResource == nullptr)
+    {
+        return;
+    }
+
+    void* mapped = nullptr;
+    if (SUCCEEDED(m_primaryConstantBufferResource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, &constants, sizeof(constants));
+        m_primaryConstantBufferResource->Unmap(0, nullptr);
+    }
+}
+
+void DxrDispatchContext::CreatePrimaryOutputDescriptors()
+{
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr || m_primaryOutputResource == nullptr || m_primaryMetadataResource == nullptr)
+    {
+        return;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE outputSrvHandle{};
+    outputSrvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryOutputSrvIndex);
+    D3D12_SHADER_RESOURCE_VIEW_DESC outputSrvDesc{};
+    outputSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    outputSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    outputSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    outputSrvDesc.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_primaryOutputResource, &outputSrvDesc, outputSrvHandle);
+    m_primaryOutputSrvCpuHandle = outputSrvHandle.ptr;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE outputUavHandle{};
+    outputUavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryOutputUavIndex);
+    D3D12_UNORDERED_ACCESS_VIEW_DESC outputUavDesc{};
+    outputUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    outputUavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    device->CreateUnorderedAccessView(m_primaryOutputResource, nullptr, &outputUavDesc, outputUavHandle);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE metadataSrvHandle{};
+    metadataSrvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryMetadataSrvIndex);
+    D3D12_SHADER_RESOURCE_VIEW_DESC metadataSrvDesc{};
+    metadataSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    metadataSrvDesc.Format = DXGI_FORMAT_R32G32_UINT;
+    metadataSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    metadataSrvDesc.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(m_primaryMetadataResource, &metadataSrvDesc, metadataSrvHandle);
+    m_primaryMetadataSrvCpuHandle = metadataSrvHandle.ptr;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE metadataUavHandle{};
+    metadataUavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryMetadataUavIndex);
+    D3D12_UNORDERED_ACCESS_VIEW_DESC metadataUavDesc{};
+    metadataUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    metadataUavDesc.Format = DXGI_FORMAT_R32G32_UINT;
+    device->CreateUnorderedAccessView(m_primaryMetadataResource, nullptr, &metadataUavDesc, metadataUavHandle);
+}
+
+bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid primary debug output dimensions";
+        return false;
+    }
+
+    ReleaseRetiredPrimaryOutputs();
+    for (RetiredOutput& retired : m_retiredPrimaryMetadata)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+    m_retiredPrimaryMetadata.clear();
+
+    if (m_primaryOutputResource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
+    {
+        return EnsurePrimaryConstantBuffer(outError);
+    }
+
+    if (m_primaryOutputResource != nullptr)
+    {
+        RetiredOutput retiredOutput{};
+        retiredOutput.resource = m_primaryOutputResource;
+        retiredOutput.allocation = m_primaryOutputAllocation;
+        retiredOutput.srvIndex = m_primaryOutputSrvIndex;
+        retiredOutput.uavIndex = m_primaryOutputUavIndex;
+        m_retiredPrimaryOutputs.push_back(retiredOutput);
+
+        RetiredOutput retiredMetadata{};
+        retiredMetadata.resource = m_primaryMetadataResource;
+        retiredMetadata.allocation = m_primaryMetadataAllocation;
+        retiredMetadata.srvIndex = m_primaryMetadataSrvIndex;
+        retiredMetadata.uavIndex = m_primaryMetadataUavIndex;
+        m_retiredPrimaryMetadata.push_back(retiredMetadata);
+
+        m_primaryOutputResource = nullptr;
+        m_primaryOutputAllocation = nullptr;
+        m_primaryMetadataResource = nullptr;
+        m_primaryMetadataAllocation = nullptr;
+        m_primaryOutputSrvIndex = UINT32_MAX;
+        m_primaryOutputUavIndex = UINT32_MAX;
+        m_primaryMetadataSrvIndex = UINT32_MAX;
+        m_primaryMetadataUavIndex = UINT32_MAX;
+        m_primaryOutputSrvCpuHandle = 0;
+        m_primaryMetadataSrvCpuHandle = 0;
+        m_primaryOutputWidth = 0;
+        m_primaryOutputHeight = 0;
+        m_primaryOutputResourceState = 0;
+        m_primaryMetadataResourceState = 0;
+    }
+
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (allocator == nullptr || device == nullptr)
+    {
+        outError = "GfxContext unavailable for DXR primary debug output textures";
+        return false;
+    }
+
+    D3D12_RESOURCE_DESC outputDesc{};
+    outputDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    outputDesc.Width = static_cast<UINT64>(width);
+    outputDesc.Height = static_cast<UINT>(height);
+    outputDesc.DepthOrArraySize = 1;
+    outputDesc.MipLevels = 1;
+    outputDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    outputDesc.SampleDesc.Count = 1;
+    outputDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    outputDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &outputDesc,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            &m_primaryOutputAllocation,
+            IID_PPV_ARGS(&m_primaryOutputResource))))
+    {
+        outError = "failed to allocate DXR primary debug output texture";
+        return false;
+    }
+
+    D3D12_RESOURCE_DESC metadataDesc = outputDesc;
+    metadataDesc.Format = DXGI_FORMAT_R32G32_UINT;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &metadataDesc,
+            D3D12_RESOURCE_STATE_COMMON,
+            nullptr,
+            &m_primaryMetadataAllocation,
+            IID_PPV_ARGS(&m_primaryMetadataResource))))
+    {
+        outError = "failed to allocate DXR primary debug metadata texture";
+        DestroyOutputResource(
+            m_primaryOutputResource,
+            m_primaryOutputAllocation,
+            m_primaryOutputSrvIndex,
+            m_primaryOutputUavIndex);
+        return false;
+    }
+
+    m_primaryOutputWidth = width;
+    m_primaryOutputHeight = height;
+    m_primaryOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COMMON);
+    m_primaryMetadataResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COMMON);
+
+    m_primaryOutputSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_primaryOutputUavIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_primaryMetadataSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    m_primaryMetadataUavIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (m_primaryOutputSrvIndex == UINT32_MAX || m_primaryOutputUavIndex == UINT32_MAX
+        || m_primaryMetadataSrvIndex == UINT32_MAX || m_primaryMetadataUavIndex == UINT32_MAX)
+    {
+        outError = "failed to allocate DXR primary debug output descriptors";
+        DestroyOutputResource(
+            m_primaryOutputResource,
+            m_primaryOutputAllocation,
+            m_primaryOutputSrvIndex,
+            m_primaryOutputUavIndex);
+        DestroyOutputResource(
+            m_primaryMetadataResource,
+            m_primaryMetadataAllocation,
+            m_primaryMetadataSrvIndex,
+            m_primaryMetadataUavIndex);
+        return false;
+    }
+
+    CreatePrimaryOutputDescriptors();
+    return EnsurePrimaryConstantBuffer(outError);
+}
+
+std::uint32_t DxrDispatchContext::DepthSrvIndexFromCpuHandle(
+    const std::uintptr_t depthSrvCpuHandle) const
+{
+    if (depthSrvCpuHandle == 0)
+    {
+        return UINT32_MAX;
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    if (srvHeap == nullptr)
+    {
+        return UINT32_MAX;
+    }
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE heapStart = srvHeap->GetCPUDescriptorHandleForHeapStart();
+    const std::uint32_t descriptorSize = GfxContext::Get().GetSrvDescriptorSize();
+    return static_cast<std::uint32_t>((depthSrvCpuHandle - heapStart.ptr) / descriptorSize);
+}
+
+bool DxrDispatchContext::DispatchPrimaryDebug(
+    ID3D12GraphicsCommandList4* commandList,
+    ID3D12StateObject* stateObject,
+    ID3D12RootSignature* rootSignature,
+    const ShaderBindingTable& shaderBindingTable,
+    ID3D12Resource* tlasResource,
+    const std::uint64_t tlasGpuVirtualAddress,
+    const std::uintptr_t depthSrvCpuHandle,
+    const std::uint32_t geometryLookupSrvIndex,
+    const std::uint32_t sceneVertexFloatsSrvIndex,
+    const std::uint32_t sceneIndicesSrvIndex,
+    const int width,
+    const int height,
+    const DxrRootSignature::PrimaryDispatchConstants& constants,
+    std::string& outError)
+{
+    outError.clear();
+    if (commandList == nullptr || stateObject == nullptr || rootSignature == nullptr)
+    {
+        outError = "invalid DXR primary debug dispatch arguments";
+        return false;
+    }
+
+    const std::uint32_t depthSrvIndex = DepthSrvIndexFromCpuHandle(depthSrvCpuHandle);
+    if (depthSrvIndex == UINT32_MAX || geometryLookupSrvIndex == UINT32_MAX
+        || sceneVertexFloatsSrvIndex == UINT32_MAX || sceneIndicesSrvIndex == UINT32_MAX)
+    {
+        outError = "DXR primary debug SRV bindings unavailable";
+        return false;
+    }
+
+    if (!EnsurePrimaryOutput(width, height, outError))
+    {
+        return false;
+    }
+
+    if (!CreateTlasSrv(tlasResource, tlasGpuVirtualAddress, outError))
+    {
+        return false;
+    }
+
+    WritePrimaryConstantBuffer(constants);
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    if (m_primaryOutputResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_primaryOutputResource,
+            static_cast<D3D12_RESOURCE_STATES>(m_primaryOutputResourceState),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_primaryOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    if (m_primaryMetadataResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_primaryMetadataResource,
+            static_cast<D3D12_RESOURCE_STATES>(m_primaryMetadataResourceState),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_primaryMetadataResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
+    commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+    commandList->SetPipelineState1(stateObject);
+    commandList->SetComputeRootSignature(rootSignature);
+    commandList->SetComputeRootConstantBufferView(
+        0,
+        m_primaryConstantBufferResource->GetGPUVirtualAddress());
+
+    const std::uint32_t srvIndices[5] = {
+        m_tlasSrvIndex,
+        depthSrvIndex,
+        geometryLookupSrvIndex,
+        sceneVertexFloatsSrvIndex,
+        sceneIndicesSrvIndex};
+
+    for (std::uint32_t rootIndex = 0; rootIndex < 5; ++rootIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
+        tableHandle.ptr =
+            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvIndices[rootIndex]));
+        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
+    }
+
+    D3D12_GPU_DESCRIPTOR_HANDLE outputUavHandle{};
+    outputUavHandle.ptr =
+        reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_primaryOutputUavIndex));
+    commandList->SetComputeRootDescriptorTable(6, outputUavHandle);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE metadataUavHandle{};
+    metadataUavHandle.ptr =
+        reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_primaryMetadataUavIndex));
+    commandList->SetComputeRootDescriptorTable(7, metadataUavHandle);
+
+    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
+    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
+    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
+    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.Width = static_cast<UINT>(width);
+    dispatchDesc.Height = static_cast<UINT>(height);
+    dispatchDesc.Depth = 1;
+
+    if (tlasResource != nullptr)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
+    }
+
+    commandList->DispatchRays(&dispatchDesc);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
+
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_primaryOutputResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    m_primaryOutputResourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_primaryMetadataResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    m_primaryMetadataResourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+
+    DxrBreadcrumb("dispatch DispatchPrimaryDebug ok");
     return true;
 }

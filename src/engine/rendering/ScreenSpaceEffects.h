@@ -66,6 +66,11 @@ public:
         const Framebuffer* outputTarget,
         int viewportWidth,
         int viewportHeight) const;
+    void BlitRtPrimaryDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight,
+        float maxTraceDistance) const;
 
     void Apply(
         const Camera& camera,
@@ -178,7 +183,13 @@ public:
 
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
+    void ResetRtPrimaryDebugBlitSettle();
+    void NotifyRtPrimaryDebugDispatched();
+    bool IsRtPrimaryDebugBlitReady() const;
     void SetDxrSmokeDebugSrv(std::uintptr_t srvCpuHandle);
+    void SetDxrPrimaryDebugSrvs(
+        std::uintptr_t primaryOutputSrvCpuHandle,
+        std::uintptr_t primaryMetadataSrvCpuHandle);
 
     AntiAliasingMode GetAntiAliasingMode() const;
     void SetAntiAliasingMode(AntiAliasingMode mode);
@@ -369,6 +380,7 @@ private:
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_msaaDepthResolveShader;
     std::unique_ptr<Shader> m_debugChannelShader;
+    std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
     std::unique_ptr<Shader> m_radianceAssemblyShader;
@@ -460,6 +472,9 @@ private:
     mutable std::uintptr_t m_lastSsrResolvedSrv = 0;
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     std::uintptr_t m_dxrSmokeDebugSrv = 0;
+    std::uintptr_t m_dxrPrimaryOutputSrv = 0;
+    std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
+    int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;
     int m_msaaSampleCount = 1;
     float m_fxaaSubpixQuality = 0.75f;

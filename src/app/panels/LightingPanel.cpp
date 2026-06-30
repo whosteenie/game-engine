@@ -304,7 +304,6 @@ void LightingPanel::Draw(
             "Sky background uses the HDR file at full resolution. IBL cubemap resolution "
             "affects reflections only.");
 
-        environmentMap.SyncGpuResources();
         if (environmentMap.IsLoaded())
         {
             ImGui::TextColored(ImVec4(0.45f, 1.0f, 0.55f, 1.0f), "Status: loaded");
@@ -1658,6 +1657,20 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        bool debugTraceEnabled = dxrSettings.IsDebugTraceEnabled();
+        UndoableRendererCheckbox(
+            "Enable RT debug trace",
+            &debugTraceEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetDebugTraceEnabled(enabled);
+                if (enabled && !GfxContext::Get().IsFrameRecording())
+                {
+                    target.GetRenderer().WarmUpDxrPipelineIfNeeded();
+                }
+                target.MarkDirty();
+            });
+
         bool reflectionsEnabled = dxrSettings.IsReflectionsEnabled();
         UndoableRendererCheckbox(
             "Enable RT reflections",
@@ -1824,6 +1837,9 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::SsrUpscaled),
             RenderDebugModeLabel(RenderDebugMode::SsrSpecReplacement),
             RenderDebugModeLabel(RenderDebugMode::RtDispatchSmoke),
+            RenderDebugModeLabel(RenderDebugMode::RtPrimaryHit),
+            RenderDebugModeLabel(RenderDebugMode::RtPrimaryDepth),
+            RenderDebugModeLabel(RenderDebugMode::RtPrimaryNormal),
         };
 
         if (ImGui::Combo(
@@ -1832,7 +1848,14 @@ void LightingPanel::Draw(
                 debugModeLabels,
                 IM_ARRAYSIZE(debugModeLabels)))
         {
-            screenSpaceEffects.SetDebugMode(static_cast<RenderDebugMode>(debugMode));
+            const auto selectedMode = static_cast<RenderDebugMode>(debugMode);
+            screenSpaceEffects.SetDebugMode(selectedMode);
+            if (IsRtPrimaryDebugMode(selectedMode) && renderer.GetDxrSettings().IsEnabled()
+                && !GfxContext::Get().IsFrameRecording())
+            {
+                renderer.WarmUpDxrPipelineIfNeeded();
+                screenSpaceEffects.ResetRtPrimaryDebugBlitSettle();
+            }
         }
 
         if (debugMode == static_cast<int>(RenderDebugMode::LightSpaceUv))

@@ -225,7 +225,6 @@ IBL& EnvironmentMap::GetIBL()
         throw std::runtime_error("Environment map IBL is not initialized");
     }
 
-    SyncGpuResources();
     return *m_ibl;
 }
 
@@ -236,6 +235,5 @@ const IBL& EnvironmentMap::GetIBL() const
         throw std::runtime_error("Environment map IBL is not initialized");
     }
 
-    const_cast<EnvironmentMap*>(this)->SyncGpuResources();
     return *m_ibl;
 }

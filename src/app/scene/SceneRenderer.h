@@ -10,6 +10,7 @@
 
 #include "engine/raytracing/DxrAccelerationStructures.h"
 #include "engine/raytracing/DxrDiagnostics.h"
+#include "engine/raytracing/DxrPrimaryDebugDispatch.h"
 #include "engine/raytracing/DxrSmokeDispatch.h"
 
 #include <glm/glm.hpp>
@@ -96,6 +97,7 @@ public:
     nlohmann::json TakePendingRendererSettings();
 
     void WarmUpDxrPipelineIfNeeded();
+    void PrepareFrameGpuResources();
 
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
@@ -106,8 +108,10 @@ private:
     void RenderShadowPass(const Scene& scene, const Camera& camera);
     void RecordDxrPass(
         const Scene& scene,
+        const Camera& camera,
         int dispatchWidth,
         int dispatchHeight,
+        std::uintptr_t depthSrvCpuHandle,
         bool usePostProcess);
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
@@ -120,6 +124,7 @@ private:
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
     std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
+    std::unique_ptr<DxrPrimaryDebugDispatch> m_dxrPrimaryDebugDispatch;
     DxrSettings m_dxrSettings;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;

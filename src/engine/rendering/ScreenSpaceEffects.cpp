@@ -529,6 +529,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader)),
+      m_dxrPrimaryDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DxrPrimaryDebugFragmentShader)),
       m_velocityDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::VelocityDebugFragmentShader)),
@@ -1380,6 +1383,47 @@ void ScreenSpaceEffects::BlitRtDispatchSmokeDebug(
     m_debugChannelShader->SetInt("uInput", 0);
     m_debugChannelShader->BindTextureSlot(0, m_dxrSmokeDebugSrv);
     m_debugChannelShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::BlitRtPrimaryDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight,
+    const float maxTraceDistance) const
+{
+    if (!IsRtPrimaryDebugMode(m_debugMode) || !IsRtPrimaryDebugBlitReady()
+        || m_dxrPrimaryOutputSrv == 0 || m_dxrPrimaryMetadataSrv == 0
+        || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    int viewMode = 0;
+    switch (m_debugMode)
+    {
+    case RenderDebugMode::RtPrimaryHit:
+        viewMode = 0;
+        break;
+    case RenderDebugMode::RtPrimaryDepth:
+        viewMode = 1;
+        break;
+    case RenderDebugMode::RtPrimaryNormal:
+        viewMode = 2;
+        break;
+    default:
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_dxrPrimaryDebugShader->Use(false, true);
+    m_dxrPrimaryDebugShader->SetInt("uViewMode", viewMode);
+    m_dxrPrimaryDebugShader->SetFloat("uMaxTraceDistance", maxTraceDistance);
+    m_dxrPrimaryDebugShader->SetInt("uPrimaryOutput", 0);
+    m_dxrPrimaryDebugShader->SetInt("uPrimaryMetadata", 1);
+    m_dxrPrimaryDebugShader->BindTextureSlot(0, m_dxrPrimaryOutputSrv);
+    m_dxrPrimaryDebugShader->BindTextureSlot(1, m_dxrPrimaryMetadataSrv);
+    m_dxrPrimaryDebugShader->FlushUniforms();
     DrawFullscreenQuad();
 }
 
@@ -3558,12 +3602,53 @@ RenderDebugMode ScreenSpaceEffects::GetDebugMode() const
 
 void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 {
+    if (IsRtPrimaryDebugMode(mode) && !IsRtPrimaryDebugMode(m_debugMode))
+    {
+        m_rtPrimaryDebugSettleFrames = 0;
+    }
+
     m_debugMode = mode;
+}
+
+void ScreenSpaceEffects::ResetRtPrimaryDebugBlitSettle()
+{
+    m_rtPrimaryDebugSettleFrames = 0;
+}
+
+void ScreenSpaceEffects::NotifyRtPrimaryDebugDispatched()
+{
+    if (!IsRtPrimaryDebugMode(m_debugMode))
+    {
+        return;
+    }
+
+    if (m_rtPrimaryDebugSettleFrames < 3)
+    {
+        ++m_rtPrimaryDebugSettleFrames;
+    }
+}
+
+bool ScreenSpaceEffects::IsRtPrimaryDebugBlitReady() const
+{
+    if (!IsRtPrimaryDebugMode(m_debugMode))
+    {
+        return false;
+    }
+
+    return m_rtPrimaryDebugSettleFrames >= 2;
 }
 
 void ScreenSpaceEffects::SetDxrSmokeDebugSrv(const std::uintptr_t srvCpuHandle)
 {
     m_dxrSmokeDebugSrv = srvCpuHandle;
+}
+
+void ScreenSpaceEffects::SetDxrPrimaryDebugSrvs(
+    const std::uintptr_t primaryOutputSrvCpuHandle,
+    const std::uintptr_t primaryMetadataSrvCpuHandle)
+{
+    m_dxrPrimaryOutputSrv = primaryOutputSrvCpuHandle;
+    m_dxrPrimaryMetadataSrv = primaryMetadataSrvCpuHandle;
 }
 
 AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const

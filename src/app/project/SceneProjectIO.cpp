@@ -708,6 +708,7 @@ namespace SceneProjectIODetail
                  {"reflectionsSamplesPerPixel", dxrSettings.GetReflectionsSamplesPerPixel()},
                  {"maxTraceDistance", dxrSettings.GetMaxTraceDistance()},
                  {"denoiseEnabled", dxrSettings.IsDenoiseEnabled()},
+                 {"debugTraceEnabled", dxrSettings.IsDebugTraceEnabled()},
                  {"temporalBlend", dxrSettings.GetTemporalBlend()},
              }},
         };
@@ -739,6 +740,10 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("denoiseEnabled"))
         {
             dxrSettings.SetDenoiseEnabled(dxrValue.at("denoiseEnabled").get<bool>());
+        }
+        if (dxrValue.contains("debugTraceEnabled"))
+        {
+            dxrSettings.SetDebugTraceEnabled(dxrValue.at("debugTraceEnabled").get<bool>());
         }
         if (dxrValue.contains("temporalBlend"))
         {

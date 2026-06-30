@@ -16,11 +16,40 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <unordered_set>
+
+#include <glm/glm.hpp>
 
 DxrAccelerationStructures::~DxrAccelerationStructures()
 {
     Release();
+}
+
+void DxrAccelerationStructures::ReleaseGeometryBuffers()
+{
+    if (m_geometryLookupSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(m_geometryLookupSrvIndex);
+        m_geometryLookupSrvIndex = UINT32_MAX;
+    }
+
+    if (m_sceneVertexFloatsSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(m_sceneVertexFloatsSrvIndex);
+        m_sceneVertexFloatsSrvIndex = UINT32_MAX;
+    }
+
+    if (m_sceneIndicesSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(m_sceneIndicesSrvIndex);
+        m_sceneIndicesSrvIndex = UINT32_MAX;
+    }
+
+    m_geometryLookupBuffer.Release();
+    m_sceneVertexFloatsBuffer.Release();
+    m_sceneIndicesBuffer.Release();
+    m_geometryObjectCount = 0;
 }
 
 void DxrAccelerationStructures::Release()
@@ -28,6 +57,7 @@ void DxrAccelerationStructures::Release()
     m_blasCache.Release();
     m_tlas.Release();
     m_scratchBuffer.Release();
+    ReleaseGeometryBuffers();
     m_scratchHighWaterMark = 0;
     m_scratchResourceState = 0;
     m_anyBlasBuiltThisFrame = false;
@@ -82,6 +112,169 @@ bool DxrAccelerationStructures::EnsureScratchBuffer(
     if (requiredBytes > m_scratchHighWaterMark)
     {
         m_scratchHighWaterMark = requiredBytes;
+    }
+
+    return true;
+}
+
+bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::string& outError)
+{
+    outError.clear();
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+    if (objects.empty())
+    {
+        ReleaseGeometryBuffers();
+        return true;
+    }
+
+    std::vector<DxrGeometryLookupEntry> lookupEntries(objects.size());
+    std::vector<float> vertexFloats;
+    std::vector<std::uint32_t> indices;
+    vertexFloats.reserve(1024);
+    indices.reserve(1024);
+
+    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    {
+        const SceneObject& object = objects[objectIndex];
+        if (!object.IsRenderable())
+        {
+            continue;
+        }
+
+        Mesh* mesh = object.GetMesh();
+        if (mesh == nullptr)
+        {
+            continue;
+        }
+
+        mesh->EnsureGpuResources();
+        const std::uint32_t vertexStrideFloats = mesh->GetFloatsPerVertex();
+        if (vertexStrideFloats < 3)
+        {
+            continue;
+        }
+
+        DxrGeometryLookupEntry& entry = lookupEntries[objectIndex];
+        entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
+        entry.vertexStrideFloats = vertexStrideFloats;
+        entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
+
+        const std::vector<glm::vec3>& positions = mesh->GetPositions();
+        const std::size_t vertexCount = positions.size();
+        vertexFloats.resize(vertexFloats.size() + vertexCount * vertexStrideFloats, 0.0f);
+        for (std::size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        {
+            const std::size_t base =
+                static_cast<std::size_t>(entry.vertexFloatOffset) + vertexIndex * vertexStrideFloats;
+            vertexFloats[base + 0] = positions[vertexIndex].x;
+            vertexFloats[base + 1] = positions[vertexIndex].y;
+            vertexFloats[base + 2] = positions[vertexIndex].z;
+        }
+
+        const std::vector<unsigned int>& meshIndices = mesh->GetIndices();
+        indices.insert(indices.end(), meshIndices.begin(), meshIndices.end());
+    }
+
+    if (vertexFloats.empty() || indices.empty())
+    {
+        ReleaseGeometryBuffers();
+        return true;
+    }
+
+    const bool sameLayout =
+        m_geometryObjectCount == objects.size()
+        && m_geometryLookupBuffer.sizeInBytes
+            >= sizeof(DxrGeometryLookupEntry) * objects.size()
+        && m_sceneVertexFloatsBuffer.sizeInBytes >= vertexFloats.size() * sizeof(float)
+        && m_sceneIndicesBuffer.sizeInBytes >= indices.size() * sizeof(std::uint32_t);
+
+    if (!sameLayout)
+    {
+        ReleaseGeometryBuffers();
+
+        const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * objects.size();
+        const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
+        const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
+
+        if (!CreateDxrUploadBuffer(lookupBytes, m_geometryLookupBuffer)
+            || !CreateDxrUploadBuffer(vertexBytes, m_sceneVertexFloatsBuffer)
+            || !CreateDxrUploadBuffer(indexBytes, m_sceneIndicesBuffer))
+        {
+            outError = "failed to allocate DXR geometry lookup buffers";
+            ReleaseGeometryBuffers();
+            return false;
+        }
+
+        m_geometryLookupSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        m_sceneVertexFloatsSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        m_sceneIndicesSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        if (m_geometryLookupSrvIndex == UINT32_MAX || m_sceneVertexFloatsSrvIndex == UINT32_MAX
+            || m_sceneIndicesSrvIndex == UINT32_MAX)
+        {
+            outError = "failed to allocate DXR geometry lookup SRV descriptors";
+            ReleaseGeometryBuffers();
+            return false;
+        }
+
+        auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+        if (device == nullptr)
+        {
+            outError = "GfxContext unavailable for DXR geometry lookup SRV creation";
+            ReleaseGeometryBuffers();
+            return false;
+        }
+
+        D3D12_CPU_DESCRIPTOR_HANDLE lookupHandle{};
+        lookupHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_geometryLookupSrvIndex);
+        D3D12_SHADER_RESOURCE_VIEW_DESC lookupSrvDesc{};
+        lookupSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        lookupSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        lookupSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        lookupSrvDesc.Buffer.FirstElement = 0;
+        lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+        lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
+        device->CreateShaderResourceView(m_geometryLookupBuffer.resource, &lookupSrvDesc, lookupHandle);
+
+        D3D12_CPU_DESCRIPTOR_HANDLE vertexHandle{};
+        vertexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneVertexFloatsSrvIndex);
+        D3D12_SHADER_RESOURCE_VIEW_DESC vertexSrvDesc{};
+        vertexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        vertexSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        vertexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        vertexSrvDesc.Buffer.FirstElement = 0;
+        vertexSrvDesc.Buffer.NumElements = static_cast<UINT>(vertexFloats.size());
+        device->CreateShaderResourceView(m_sceneVertexFloatsBuffer.resource, &vertexSrvDesc, vertexHandle);
+
+        D3D12_CPU_DESCRIPTOR_HANDLE indexHandle{};
+        indexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneIndicesSrvIndex);
+        D3D12_SHADER_RESOURCE_VIEW_DESC indexSrvDesc{};
+        indexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        indexSrvDesc.Format = DXGI_FORMAT_R32_UINT;
+        indexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        indexSrvDesc.Buffer.FirstElement = 0;
+        indexSrvDesc.Buffer.NumElements = static_cast<UINT>(indices.size());
+        device->CreateShaderResourceView(m_sceneIndicesBuffer.resource, &indexSrvDesc, indexHandle);
+
+        m_geometryObjectCount = objects.size();
+    }
+
+    void* mapped = nullptr;
+    if (SUCCEEDED(m_geometryLookupBuffer.resource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, lookupEntries.data(), lookupEntries.size() * sizeof(DxrGeometryLookupEntry));
+        m_geometryLookupBuffer.resource->Unmap(0, nullptr);
+    }
+
+    if (SUCCEEDED(m_sceneVertexFloatsBuffer.resource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, vertexFloats.data(), vertexFloats.size() * sizeof(float));
+        m_sceneVertexFloatsBuffer.resource->Unmap(0, nullptr);
+    }
+
+    if (SUCCEEDED(m_sceneIndicesBuffer.resource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, indices.data(), indices.size() * sizeof(std::uint32_t));
+        m_sceneIndicesBuffer.resource->Unmap(0, nullptr);
     }
 
     return true;
@@ -279,14 +472,20 @@ void DxrAccelerationStructures::EnsureScene(
         }
 
         D3D12_RAYTRACING_INSTANCE_DESC instanceDesc{};
+        const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
         WriteD3D12InstanceTransform(
-            scene.GetWorldMatrix(static_cast<int>(objectIndex)),
+            worldMatrix,
             reinterpret_cast<float*>(instanceDesc.Transform));
         instanceDesc.InstanceID = static_cast<UINT>(objectIndex);
         instanceDesc.InstanceMask = 0xFF;
         instanceDesc.InstanceContributionToHitGroupIndex = 0;
-        instanceDesc.Flags = object.GetMaterial().IsDoubleSided()
-            ? D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_CULL_DISABLE
+        bool flipWinding = glm::determinant(glm::mat3(worldMatrix)) < 0.0f;
+        if (object.GetMaterial().IsDoubleSided())
+        {
+            flipWinding = !flipWinding;
+        }
+        instanceDesc.Flags = flipWinding
+            ? D3D12_RAYTRACING_INSTANCE_FLAG_TRIANGLE_FRONT_COUNTERCLOCKWISE
             : D3D12_RAYTRACING_INSTANCE_FLAG_NONE;
         instanceDesc.AccelerationStructure = blas->GetGpuVirtualAddress();
         instances.push_back(instanceDesc);
@@ -329,4 +528,10 @@ void DxrAccelerationStructures::EnsureScene(
     m_diagnostics.buildStatus = "OK";
     m_diagnostics.lastBuildTimeMs =
         std::chrono::duration<double, std::milli>(buildEnd - buildStart).count();
+
+    if (!EnsureGeometryBuffers(scene, error))
+    {
+        m_diagnostics.buildStatus = "FAILED: " + error;
+        return;
+    }
 }
