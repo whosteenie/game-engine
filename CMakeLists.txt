@@ -99,6 +99,30 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(json)
 
+# NVIDIA NRD (DXR Phase D5, devdoc/dxr-nrd-integration.md). Pinned to the release whose API
+# the integration was written against (v4.17). NRD fetches its own dependencies (ShaderMake,
+# MathLib) and compiles its internal shaders at build time; DXIL blobs are embedded in the
+# static lib. If the build cannot locate a dxc.exe for ShaderMake, set SHADERMAKE_DXC_PATH.
+set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
+# Guide-buffer encoding contract — must match assets/shaders/dxr/reflections.hlsl:
+#   NRD_NORMAL_ENCODING 0 = RGBA8_UNORM: rgb = worldNormal * 0.5 + 0.5, a = roughness
+#   NRD_ROUGHNESS_ENCODING 1 = linear roughness
+set(NRD_NORMAL_ENCODING "0" CACHE STRING "" FORCE)
+set(NRD_ROUGHNESS_ENCODING "1" CACHE STRING "" FORCE)
+set(NRD_EMBEDS_SPIRV_SHADERS OFF CACHE BOOL "" FORCE) # D3D12-only engine
+set(NRD_EMBEDS_DXBC_SHADERS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+
+    nrd
+
+    GIT_REPOSITORY https://github.com/NVIDIA-RTX/NRD.git
+
+    GIT_TAG v4.17.3 # latest tagged release; master reports 4.17.4 but is untagged
+
+)
+
+FetchContent_MakeAvailable(nrd)
+
 
 
 FetchContent_Declare(
@@ -428,6 +452,7 @@ add_executable(game-engine
     src/engine/raytracing/DxrSmokeDispatch.cpp
     src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
     src/engine/raytracing/DxrReflectionsDispatch.cpp
+    src/engine/raytracing/NrdDenoiser.cpp
 
     src/engine/rendering/Shader.cpp
 
@@ -462,6 +487,7 @@ target_link_libraries(game-engine PRIVATE
     Jolt
     D3D12MemoryAllocator
     mikktspace
+    NRD
     d3d12
     dxgi
     dxguid

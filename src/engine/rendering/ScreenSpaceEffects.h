@@ -197,7 +197,9 @@ public:
     void SetDxrReflectionSrv(
         std::uintptr_t reflectionSrvCpuHandle,
         float uvScaleX = 1.0f,
-        float uvScaleY = 1.0f);
+        float uvScaleY = 1.0f,
+        std::uintptr_t denoisedSrvCpuHandle = 0,
+        float maxTraceDistance = 0.0f);
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
     std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
     // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
@@ -487,8 +489,10 @@ private:
     std::uintptr_t m_dxrSmokeDebugSrv = 0;
     std::uintptr_t m_dxrPrimaryOutputSrv = 0;
     std::uintptr_t m_dxrReflectionSrv = 0;
+    std::uintptr_t m_dxrReflectionDenoisedSrv = 0;
     float m_dxrReflectionUvScaleX = 1.0f;
     float m_dxrReflectionUvScaleY = 1.0f;
+    float m_dxrReflectionMaxTraceDistance = 0.0f;
     std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
     int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;

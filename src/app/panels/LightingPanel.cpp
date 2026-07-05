@@ -1838,6 +1838,7 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RtPrimaryNormal),
             RenderDebugModeLabel(RenderDebugMode::RtReflectionRaw),
             RenderDebugModeLabel(RenderDebugMode::RtReflectionConfidence),
+            RenderDebugModeLabel(RenderDebugMode::RtReflectionDenoised),
         };
 
         if (ImGui::Combo(

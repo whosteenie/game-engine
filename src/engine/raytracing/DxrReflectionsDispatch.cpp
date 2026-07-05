@@ -9,6 +9,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <cstring>
 
 DxrReflectionsDispatch::~DxrReflectionsDispatch()
@@ -18,9 +19,11 @@ DxrReflectionsDispatch::~DxrReflectionsDispatch()
 
 void DxrReflectionsDispatch::Release()
 {
+    m_denoiser.Release();
     m_shaderBindingTable.Release();
     m_pipeline.Release();
     m_dispatchContext.Release();
+    m_nrdHistoryValid = false;
     m_pipelineReady = false;
 }
 
@@ -70,9 +73,12 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     const int gbufferWidth,
     const int gbufferHeight,
     const float maxTraceDistance,
-    const int samplesPerPixel)
+    const int samplesPerPixel,
+    const bool denoiseEnabled,
+    const float temporalBlend)
 {
     m_dispatchedThisFrame = false;
+    m_denoisedThisFrame = false;
 
     if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled
         || outputWidth <= 0 || outputHeight <= 0 || gbufferWidth <= 0 || gbufferHeight <= 0)
@@ -94,7 +100,7 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     if (frameInputs.depthSrvCpuHandle == 0 || frameInputs.normalSrvCpuHandle == 0
         || frameInputs.material0SrvCpuHandle == 0 || frameInputs.directSrvCpuHandle == 0
         || frameInputs.sunShadowSrvCpuHandle == 0 || frameInputs.indirectSrvCpuHandle == 0
-        || frameInputs.prefilterSrvCpuHandle == 0)
+        || frameInputs.prefilterSrvCpuHandle == 0 || frameInputs.velocitySrvCpuHandle == 0)
     {
         DxrBreadcrumb("reflections skipped: frame inputs unavailable");
         return false;
@@ -159,6 +165,7 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     dispatchInputs.sunShadowSrvCpuHandle = frameInputs.sunShadowSrvCpuHandle;
     dispatchInputs.indirectSrvCpuHandle = frameInputs.indirectSrvCpuHandle;
     dispatchInputs.prefilterSrvCpuHandle = frameInputs.prefilterSrvCpuHandle;
+    dispatchInputs.velocitySrvCpuHandle = frameInputs.velocitySrvCpuHandle;
 
     if (!m_dispatchContext.DispatchReflections(
             commandList4,
@@ -181,9 +188,64 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
 
     DxrBreadcrumb("reflections dispatch ok");
     dispatchScope.Success();
-    ++m_frameIndex;
     m_dispatchedThisFrame = true;
+
+    // Phase D5 — NRD RELAX_SPECULAR over the freshly traced buffer.
+    if (denoiseEnabled)
+    {
+        const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+        const glm::vec2 jitterNdc = camera.GetProjectionJitter();
+        // NRD cameraJitter is in pixels, [-0.5; 0.5]: sampleUv = pixelUv + jitter/rectSize.
+        const glm::vec2 jitterPixels(
+            jitterNdc.x * 0.5f * static_cast<float>(outputWidth),
+            -jitterNdc.y * 0.5f * static_cast<float>(outputHeight));
+
+        NrdDenoiser::FrameParameters frameParameters{};
+        frameParameters.viewToClip = unjitteredProjection;
+        frameParameters.worldToView = viewMatrix;
+        frameParameters.viewToClipPrev = m_nrdHistoryValid ? m_prevViewToClip : unjitteredProjection;
+        frameParameters.worldToViewPrev = m_nrdHistoryValid ? m_prevWorldToView : viewMatrix;
+        frameParameters.cameraJitterUv = jitterPixels;
+        frameParameters.cameraJitterUvPrev = m_nrdHistoryValid ? m_prevJitterUv : jitterPixels;
+        frameParameters.frameIndex = m_frameIndex;
+        frameParameters.denoisingRange = std::max(maxTraceDistance * 2.0f, 100.0f);
+        frameParameters.temporalBlend = temporalBlend;
+        frameParameters.resetHistory = !m_nrdHistoryValid;
+
+        std::string denoiseError;
+        DxrDispatchContext::ReflectionNrdResources nrdResources =
+            m_dispatchContext.GetReflectionNrdResources();
+        if (m_denoiser.Denoise(
+                static_cast<ID3D12GraphicsCommandList*>(commandList),
+                nrdResources,
+                frameParameters,
+                denoiseError))
+        {
+            m_denoisedThisFrame = true;
+            m_nrdHistoryValid = true;
+        }
+        else
+        {
+            DxrLogErrorOnce("nrd-denoise-failure", std::string("NRD denoise failed: ") + denoiseError);
+            m_nrdHistoryValid = false;
+        }
+
+        m_prevViewToClip = unjitteredProjection;
+        m_prevWorldToView = viewMatrix;
+        m_prevJitterUv = jitterPixels;
+    }
+    else
+    {
+        m_nrdHistoryValid = false;
+    }
+
+    ++m_frameIndex;
     return true;
+}
+
+std::uintptr_t DxrReflectionsDispatch::GetDenoisedSrvCpuHandle() const
+{
+    return m_denoisedThisFrame ? m_dispatchContext.GetReflectionDenoisedSrvCpuHandle() : 0;
 }
 
 std::uintptr_t DxrReflectionsDispatch::GetReflectionOutputSrvCpuHandle() const

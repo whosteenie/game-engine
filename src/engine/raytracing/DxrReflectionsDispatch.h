@@ -2,10 +2,13 @@
 
 #include "engine/raytracing/DxrDispatchContext.h"
 #include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/NrdDenoiser.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 
 #include <cstdint>
 #include <string>
+
+#include <glm/glm.hpp>
 
 class Camera;
 class DxrAccelerationStructures;
@@ -25,6 +28,7 @@ public:
         std::uintptr_t sunShadowSrvCpuHandle = 0; // RT3 sun + shadow factor
         std::uintptr_t indirectSrvCpuHandle = 0;  // RT1 indirect
         std::uintptr_t prefilterSrvCpuHandle = 0; // IBL prefiltered env cube
+        std::uintptr_t velocitySrvCpuHandle = 0;  // RT4 motion NDC (NRD guide source)
         float environmentIntensity = 1.0f;
         float maxReflectionLod = 4.0f;
     };
@@ -48,7 +52,9 @@ public:
         int gbufferWidth,
         int gbufferHeight,
         float maxTraceDistance,
-        int samplesPerPixel);
+        int samplesPerPixel,
+        bool denoiseEnabled,
+        float temporalBlend);
 
     void Release();
 
@@ -57,7 +63,10 @@ public:
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
 
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const;
+    // D5: NRD-denoised output; 0 until the denoiser has run this frame.
+    std::uintptr_t GetDenoisedSrvCpuHandle() const;
     bool HasValidOutput() const;
+    bool DenoisedThisFrame() const { return m_denoisedThisFrame; }
     // dispatchSize / textureSize — consumers must scale UVs by this (the texture can be
     // larger than the last dispatch when quality shrinks or viewport sizes differ).
     float GetOutputUvScaleX() const;
@@ -69,7 +78,13 @@ private:
     DxrPipeline m_pipeline;
     ShaderBindingTable m_shaderBindingTable;
     DxrDispatchContext m_dispatchContext;
+    NrdDenoiser m_denoiser;
+    glm::mat4 m_prevViewToClip{1.0f};
+    glm::mat4 m_prevWorldToView{1.0f};
+    glm::vec2 m_prevJitterUv{0.0f};
     std::uint32_t m_frameIndex = 0;
+    bool m_nrdHistoryValid = false;
     bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
+    bool m_denoisedThisFrame = false;
 };

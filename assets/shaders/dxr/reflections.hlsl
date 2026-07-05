@@ -1,14 +1,21 @@
-// DXR Phase D4 — specular reflection trace (see devdoc/dxr-reflections.md).
-// Output: RGBA16F radiance (rgb) + confidence (a) at quality-scaled resolution.
+// DXR Phase D4/D5 — specular reflection trace + NRD guide buffers
+// (see devdoc/dxr-reflections.md and devdoc/dxr-nrd-integration.md).
+// u0: RGBA16F radiance (rgb) + HIT DISTANCE (a) — RELAX_FrontEnd_PackRadianceAndHitDist
+//     convention (raw world units; miss = maxTraceDistance).
+// u1: R32F linear viewZ (sky = large value beyond the denoising range)
+// u2: RGBA8 normal+roughness — MUST match the NRD compile options set in CMakeLists
+//     (NRD_NORMAL_ENCODING=0: rgb = N*0.5+0.5; NRD_ROUGHNESS_ENCODING=1: a = linear roughness)
+// u3: RG16F screen-space motion, NRD convention mv = uvPrev - uvCurr (motionVectorScale {1,1})
 // Hit shading v1: screen-radiance reuse (RT0 + RT3*shadow + RT1) when the hit point is
-// visible on screen; env-cube approximation otherwise. Miss: prefiltered env, confidence 0.
+// visible on screen; env-cube approximation otherwise. Miss: prefiltered env.
 
 cbuffer ReflectionDispatchConstants : register(b0)
 {
     uint2 g_OutputSize;
     uint2 g_GBufferSize;
-    float4x4 g_InvViewProj; // jittered, matches the depth buffer
-    float4x4 g_ViewProj;    // jittered, for hit -> screen reprojection
+    float4x4 g_InvViewProj;  // jittered, matches the depth buffer
+    float4x4 g_ViewProj;     // jittered, for hit -> screen reprojection
+    float4x4 g_WorldToView;  // for linear viewZ (NRD guide)
     float3 g_CameraPos;
     float g_MaxTraceDistance;
     float g_EnvironmentIntensity;
@@ -18,6 +25,9 @@ cbuffer ReflectionDispatchConstants : register(b0)
 };
 
 RWTexture2D<float4> g_ReflectionOutput : register(u0);
+RWTexture2D<float> g_ViewZOutput : register(u1);
+RWTexture2D<float4> g_NormalRoughnessOutput : register(u2);
+RWTexture2D<float2> g_MotionOutput : register(u3);
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
 Texture2D<float> g_DepthMap : register(t1);
@@ -40,6 +50,7 @@ Texture2D<float4> g_DirectMap : register(t7);    // RT0 fill direct + emissive
 Texture2D<float4> g_SunShadowMap : register(t8); // RT3 sun rgb + shadow factor a
 Texture2D<float4> g_IndirectMap : register(t9);  // RT1 indirect/ambient
 TextureCube<float4> g_PrefilterMap : register(t10);
+Texture2D<float4> g_VelocityMap : register(t11); // RT4 motion NDC (curr - prev)
 
 SamplerState g_LinearClampSampler : register(s0);
 
@@ -166,13 +177,19 @@ void ReflectionRayGen()
     const int2 gbufferPixel = int2(uv * float2(g_GBufferSize));
     const float depth = g_DepthMap.Load(int3(gbufferPixel, 0)).r;
 
-    // Sky: show env in the raw view, confidence 0 so composite/denoise ignore it.
+    // NRD motion guide: engine velocity is NDC (curr - prev); NRD wants uvPrev - uvCurr.
+    const float2 velocityNdc = g_VelocityMap.Load(int3(gbufferPixel, 0)).rg;
+    g_MotionOutput[pixel] = float2(-0.5 * velocityNdc.x, 0.5 * velocityNdc.y);
+
+    // Sky: env in the raw view; viewZ pushed beyond the denoising range so NRD ignores it.
     const float2 clipXY = DepthUvToClipXY(uv);
     if (depth >= 0.9999)
     {
         const float4 farH = mul(g_InvViewProj, float4(clipXY, 1.0, 1.0));
         const float3 viewDir = normalize(farH.xyz / farH.w - g_CameraPos);
-        g_ReflectionOutput[pixel] = float4(SampleEnvironment(viewDir, 0.0), 0.0);
+        g_ReflectionOutput[pixel] = float4(SampleEnvironment(viewDir, 0.0), g_MaxTraceDistance);
+        g_ViewZOutput[pixel] = 1e6;
+        g_NormalRoughnessOutput[pixel] = float4(0.5, 0.5, 1.0, 1.0);
         return;
     }
 
@@ -180,6 +197,10 @@ void ReflectionRayGen()
     const float3 worldPos = worldH.xyz / worldH.w;
     const float3 shadingNormal = normalize(g_NormalMap.Load(int3(gbufferPixel, 0)).xyz);
     const float roughness = g_Material0Map.Load(int3(gbufferPixel, 0)).a;
+
+    // NRD guides (encoding contract documented at the top of this file).
+    g_ViewZOutput[pixel] = mul(g_WorldToView, float4(worldPos, 1.0)).z;
+    g_NormalRoughnessOutput[pixel] = float4(shadingNormal * 0.5 + 0.5, roughness);
 
     const float3 viewVec = normalize(worldPos - g_CameraPos); // camera -> surface
     const float3 mirrorDir = reflect(viewVec, shadingNormal);
@@ -190,7 +211,7 @@ void ReflectionRayGen()
 
     const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 4u);
     float3 radianceSum = 0.0.xxx;
-    float confidenceSum = 0.0;
+    float hitDistSum = 0.0;
     float weightSum = 0.0;
 
     [loop]
@@ -230,23 +251,24 @@ void ReflectionRayGen()
         TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, payload);
 
         radianceSum += ClampRadiance(payload.radiance);
-        confidenceSum += payload.confidence;
+        hitDistSum += payload.hitDistance;
         weightSum += 1.0;
     }
 
+    // RELAX packing: radiance + raw hit distance in world units (miss = maxTraceDistance).
     const float invSamples = 1.0 / max(weightSum, 1.0);
-    g_ReflectionOutput[pixel] =
-        float4(radianceSum * invSamples, saturate(confidenceSum * invSamples));
+    g_ReflectionOutput[pixel] = float4(radianceSum * invSamples, hitDistSum * invSamples);
 }
 
 [shader("miss")]
 void ReflectionMiss(inout Payload payload)
 {
-    // Ray left the scene: prefiltered environment IS the correct radiance, but confidence 0
-    // tells the D6 composite to keep its own (BRDF-weighted) IBL term instead.
+    // Ray left the scene: prefiltered environment IS the correct radiance. Hit distance is
+    // reported as the trace range ("hit at infinity") — NRD uses it for reprojection and the
+    // D6 composite will treat far hits as IBL-equivalent.
     payload.radiance = SampleEnvironment(WorldRayDirection(), payload.surfaceRoughness);
     payload.confidence = 0.0;
-    payload.hitDistance = 0.0;
+    payload.hitDistance = g_MaxTraceDistance;
     payload.hit = 0;
 }
 

@@ -121,7 +121,9 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::RtReflectionRaw:
         return "RT reflection raw";
     case RenderDebugMode::RtReflectionConfidence:
-        return "RT reflection confidence";
+        return "RT reflection hit distance";
+    case RenderDebugMode::RtReflectionDenoised:
+        return "RT reflection denoised";
     default:
         return "Unknown";
     }
@@ -290,6 +292,7 @@ bool IsRtReflectionDebugMode(const RenderDebugMode mode)
     {
     case RenderDebugMode::RtReflectionRaw:
     case RenderDebugMode::RtReflectionConfidence:
+    case RenderDebugMode::RtReflectionDenoised:
         return true;
     default:
         return false;

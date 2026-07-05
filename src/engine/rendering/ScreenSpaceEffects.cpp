@@ -1481,19 +1481,26 @@ void ScreenSpaceEffects::BlitRtReflectionDebug(
         return;
     }
 
-    const bool showConfidence = m_debugMode == RenderDebugMode::RtReflectionConfidence;
+    const bool showHitDistance = m_debugMode == RenderDebugMode::RtReflectionConfidence;
+    const bool showDenoised = m_debugMode == RenderDebugMode::RtReflectionDenoised;
+    const std::uintptr_t sourceSrv =
+        showDenoised && m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv;
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
     m_debugChannelShader->Use(false, true);
     m_debugChannelShader->SetInt("uInput", 0);
-    m_debugChannelShader->SetInt("uOutputRgb", showConfidence ? 0 : 1);
-    m_debugChannelShader->SetInt("uOutputAlpha", showConfidence ? 1 : 0);
+    m_debugChannelShader->SetInt("uOutputRgb", showHitDistance ? 0 : 1);
+    m_debugChannelShader->SetInt("uOutputAlpha", showHitDistance ? 1 : 0);
+    // Alpha now carries raw hit distance (RELAX packing); normalize for display.
+    m_debugChannelShader->SetFloat(
+        "uAlphaScale",
+        m_dxrReflectionMaxTraceDistance > 0.0f ? 1.0f / m_dxrReflectionMaxTraceDistance : 1.0f);
     // The reflection texture can be larger than the last dispatch (quality shrink keeps the
     // bigger allocation); sample only the freshly written region.
     m_debugChannelShader->SetVec2(
         "uUvScale",
         glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
-    m_debugChannelShader->BindTextureSlot(0, m_dxrReflectionSrv);
+    m_debugChannelShader->BindTextureSlot(0, sourceSrv);
     m_debugChannelShader->FlushUniforms();
     DrawFullscreenQuad();
 }
@@ -3780,11 +3787,15 @@ void ScreenSpaceEffects::SetDxrPrimaryDebugSrvs(
 void ScreenSpaceEffects::SetDxrReflectionSrv(
     const std::uintptr_t reflectionSrvCpuHandle,
     const float uvScaleX,
-    const float uvScaleY)
+    const float uvScaleY,
+    const std::uintptr_t denoisedSrvCpuHandle,
+    const float maxTraceDistance)
 {
     m_dxrReflectionSrv = reflectionSrvCpuHandle;
+    m_dxrReflectionDenoisedSrv = denoisedSrvCpuHandle;
     m_dxrReflectionUvScaleX = uvScaleX;
     m_dxrReflectionUvScaleY = uvScaleY;
+    m_dxrReflectionMaxTraceDistance = maxTraceDistance;
 }
 
 std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const int attachmentIndex) const

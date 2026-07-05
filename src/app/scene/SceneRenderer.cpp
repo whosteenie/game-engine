@@ -587,6 +587,7 @@ void SceneRenderer::RecordDxrPass(
         frameInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
         frameInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
         frameInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
+        frameInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
         frameInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
         frameInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
 
@@ -607,7 +608,9 @@ void SceneRenderer::RecordDxrPass(
             dispatchWidth,
             dispatchHeight,
             m_dxrSettings.GetMaxTraceDistance(),
-            m_dxrSettings.GetReflectionsSamplesPerPixel());
+            m_dxrSettings.GetReflectionsSamplesPerPixel(),
+            m_dxrSettings.IsDenoiseEnabled(),
+            m_dxrSettings.GetTemporalBlend());
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 
@@ -636,7 +639,9 @@ void SceneRenderer::RecordDxrPass(
                 ? m_dxrReflectionsDispatch->GetReflectionOutputSrvCpuHandle()
                 : 0,
             m_dxrReflectionsDispatch->GetOutputUvScaleX(),
-            m_dxrReflectionsDispatch->GetOutputUvScaleY());
+            m_dxrReflectionsDispatch->GetOutputUvScaleY(),
+            reflectionsDispatched ? m_dxrReflectionsDispatch->GetDenoisedSrvCpuHandle() : 0,
+            m_dxrSettings.GetMaxTraceDistance());
     }
 }
 

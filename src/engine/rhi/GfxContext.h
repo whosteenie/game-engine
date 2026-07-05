@@ -101,6 +101,18 @@ public:
     std::uint32_t AllocateDrawSrvTable();
     void ResetDrawSrvTable();
 
+    // Arbitrary-size transient shader-visible descriptor range, valid for the current frame
+    // only (the region is reset in BeginFrame). Used by the NRD backend, which creates SRV/UAV
+    // descriptors directly into the range per dispatch (no cross-heap copies needed).
+    struct TransientDescriptorRange
+    {
+        std::uint32_t baseIndex = UINT32_MAX;
+        std::uintptr_t cpuHandle = 0;   // write descriptors here (CreateShaderResourceView etc.)
+        std::uint64_t gpuHandle = 0;    // bind this as the table base
+        std::uint32_t descriptorSize = 0;
+    };
+    TransientDescriptorRange AllocateTransientSrvRange(std::uint32_t count);
+
     void AllocSrvDescriptorForImGui(void* out_cpu_handle, void* out_gpu_handle);
     void FreeSrvDescriptorFromCpuHandle(std::uintptr_t cpu_handle_ptr);
 

@@ -310,11 +310,13 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
     return g_primaryDebugLocalRootSignature;
 }
 
-// Phase D4 reflections: CBV b0, SRV tables t0-t10, UAV table u0, static linear-clamp s0.
+// Phase D4/D5 reflections: CBV b0, SRV tables t0-t11, UAV tables u0-u3 (radiance+hitDist,
+// viewZ, normal+roughness, motion — NRD guide outputs), static linear-clamp s0.
 // See devdoc/dxr-reflections.md for the binding table.
 void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
-    constexpr std::uint32_t kSrvCount = 11;
+    constexpr std::uint32_t kSrvCount = 12;
+    constexpr std::uint32_t kUavCount = 4;
 
     D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
     for (std::uint32_t registerIndex = 0; registerIndex < kSrvCount; ++registerIndex)
@@ -327,15 +329,18 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
         srvRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
     }
 
-    D3D12_DESCRIPTOR_RANGE1 uavRange{};
-    uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-    uavRange.NumDescriptors = 1;
-    uavRange.BaseShaderRegister = 0;
-    uavRange.RegisterSpace = 0;
-    uavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-    uavRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    D3D12_DESCRIPTOR_RANGE1 uavRanges[kUavCount]{};
+    for (std::uint32_t registerIndex = 0; registerIndex < kUavCount; ++registerIndex)
+    {
+        uavRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        uavRanges[registerIndex].NumDescriptors = 1;
+        uavRanges[registerIndex].BaseShaderRegister = registerIndex;
+        uavRanges[registerIndex].RegisterSpace = 0;
+        uavRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    }
 
-    D3D12_ROOT_PARAMETER1 rootParams[1 + kSrvCount + 1]{};
+    D3D12_ROOT_PARAMETER1 rootParams[1 + kSrvCount + kUavCount]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].Descriptor.ShaderRegister = 0;
     rootParams[0].Descriptor.RegisterSpace = 0;
@@ -349,10 +354,13 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
         rootParams[1 + srvIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
-    rootParams[1 + kSrvCount].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    rootParams[1 + kSrvCount].DescriptorTable.NumDescriptorRanges = 1;
-    rootParams[1 + kSrvCount].DescriptorTable.pDescriptorRanges = &uavRange;
-    rootParams[1 + kSrvCount].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    for (std::uint32_t uavIndex = 0; uavIndex < kUavCount; ++uavIndex)
+    {
+        rootParams[1 + kSrvCount + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[1 + kSrvCount + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[1 + kSrvCount + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
+        rootParams[1 + kSrvCount + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
 
     D3D12_STATIC_SAMPLER_DESC linearClampSampler{};
     linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
@@ -366,7 +374,7 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
     linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
-    rootDesc.NumParameters = 1 + kSrvCount + 1;
+    rootDesc.NumParameters = 1 + kSrvCount + kUavCount;
     rootDesc.pParameters = rootParams;
     rootDesc.NumStaticSamplers = 1;
     rootDesc.pStaticSamplers = &linearClampSampler;

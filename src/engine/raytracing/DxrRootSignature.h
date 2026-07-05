@@ -43,6 +43,7 @@ struct ReflectionDispatchConstants
     std::uint32_t gbufferHeight = 0;
     float invViewProj[16] = {};
     float viewProj[16] = {};
+    float worldToView[16] = {};
     float cameraPos[3] = {};
     float maxTraceDistance = 100.0f;
     float environmentIntensity = 1.0f;

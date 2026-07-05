@@ -75,7 +75,33 @@ public:
         std::uintptr_t sunShadowSrvCpuHandle = 0;
         std::uintptr_t indirectSrvCpuHandle = 0;
         std::uintptr_t prefilterSrvCpuHandle = 0;
+        std::uintptr_t velocitySrvCpuHandle = 0; // RT4, NRD motion guide source
     };
+
+    // Phase D5 (devdoc/dxr-nrd-integration.md): everything the NRD backend needs to denoise
+    // this frame's reflection trace. States are D3D12_RESOURCE_STATES of each resource as
+    // left by DispatchReflections; the denoiser transitions internally and reports back.
+    struct ReflectionNrdResources
+    {
+        ID3D12Resource* radianceHitDist = nullptr;  // IN_SPEC_RADIANCE_HITDIST (RGBA16F)
+        ID3D12Resource* viewZ = nullptr;            // IN_VIEWZ (R32F)
+        ID3D12Resource* normalRoughness = nullptr;  // IN_NORMAL_ROUGHNESS (RGBA8)
+        ID3D12Resource* motion = nullptr;           // IN_MV (RG16F)
+        ID3D12Resource* denoisedOutput = nullptr;   // OUT_SPEC_RADIANCE_HITDIST (RGBA16F)
+        std::uint32_t* radianceState = nullptr;
+        std::uint32_t* viewZState = nullptr;
+        std::uint32_t* normalRoughnessState = nullptr;
+        std::uint32_t* motionState = nullptr;
+        std::uint32_t* denoisedState = nullptr;
+        int textureWidth = 0;
+        int textureHeight = 0;
+        int dispatchWidth = 0;
+        int dispatchHeight = 0;
+    };
+
+    // Valid after a successful DispatchReflections this frame.
+    ReflectionNrdResources GetReflectionNrdResources();
+    std::uintptr_t GetReflectionDenoisedSrvCpuHandle() const { return m_reflectionDenoisedSrvCpuHandle; }
 
     bool DispatchReflections(
         ID3D12GraphicsCommandList4* commandList,
@@ -112,7 +138,6 @@ private:
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
-    void CreateReflectionOutputDescriptors();
     void ReleaseRetiredOutputs();
     void ReleaseRetiredPrimaryOutputs();
     void ReleaseRetiredReflectionOutputs();
@@ -158,12 +183,30 @@ private:
     std::vector<RetiredOutput> m_retiredPrimaryOutputs;
     std::vector<RetiredOutput> m_retiredPrimaryMetadata;
 
-    ID3D12Resource* m_reflectionOutputResource = nullptr;
-    D3D12MA::Allocation* m_reflectionOutputAllocation = nullptr;
-    std::uint32_t m_reflectionOutputSrvIndex = UINT32_MAX;
-    std::uint32_t m_reflectionOutputUavIndex = UINT32_MAX;
-    std::uintptr_t m_reflectionOutputSrvCpuHandle = 0;
-    std::uint32_t m_reflectionOutputResourceState = 0;
+    // One quality-scaled texture in the reflection set (trace output, NRD guides, denoised).
+    struct ReflectionTexture
+    {
+        ID3D12Resource* resource = nullptr;
+        D3D12MA::Allocation* allocation = nullptr;
+        std::uint32_t srvIndex = UINT32_MAX;
+        std::uint32_t uavIndex = UINT32_MAX;
+        std::uintptr_t srvCpuHandle = 0;
+        std::uint32_t state = 0;
+    };
+
+    bool CreateReflectionTexture(
+        int width,
+        int height,
+        std::uint32_t dxgiFormat,
+        ReflectionTexture& outTexture,
+        std::string& outError);
+    void RetireOrDestroyReflectionTexture(ReflectionTexture& texture);
+
+    static constexpr int kReflectionTextureCount = 5;
+    // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised
+    ReflectionTexture m_reflectionTextures[kReflectionTextureCount]{};
+    std::uintptr_t m_reflectionOutputSrvCpuHandle = 0;  // alias of [0]
+    std::uintptr_t m_reflectionDenoisedSrvCpuHandle = 0; // alias of [4]
     int m_reflectionOutputWidth = 0;
     int m_reflectionOutputHeight = 0;
     int m_reflectionDispatchWidth = 0;

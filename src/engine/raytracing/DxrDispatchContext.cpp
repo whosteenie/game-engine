@@ -102,15 +102,18 @@ void DxrDispatchContext::Release()
     m_primaryMetadataResourceState = 0;
 
     ReleaseRetiredReflectionOutputs();
-    DestroyOutputResource(
-        m_reflectionOutputResource,
-        m_reflectionOutputAllocation,
-        m_reflectionOutputSrvIndex,
-        m_reflectionOutputUavIndex);
+    for (ReflectionTexture& texture : m_reflectionTextures)
+    {
+        DestroyOutputResource(texture.resource, texture.allocation, texture.srvIndex, texture.uavIndex);
+        texture.srvCpuHandle = 0;
+        texture.state = 0;
+    }
     m_reflectionOutputSrvCpuHandle = 0;
+    m_reflectionDenoisedSrvCpuHandle = 0;
     m_reflectionOutputWidth = 0;
     m_reflectionOutputHeight = 0;
-    m_reflectionOutputResourceState = 0;
+    m_reflectionDispatchWidth = 0;
+    m_reflectionDispatchHeight = 0;
 
     if (m_tlasSrvIndex != UINT32_MAX)
     {
@@ -647,65 +650,20 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     return true;
 }
 
-bool DxrDispatchContext::EnsureReflectionOutput(const int width, const int height, std::string& outError)
+bool DxrDispatchContext::CreateReflectionTexture(
+    const int width,
+    const int height,
+    const std::uint32_t dxgiFormat,
+    ReflectionTexture& outTexture,
+    std::string& outError)
 {
     outError.clear();
-    if (width <= 0 || height <= 0)
-    {
-        outError = "invalid reflection output dimensions";
-        return false;
-    }
-
-    ReleaseRetiredReflectionOutputs();
-
-    if (m_reflectionOutputResource != nullptr
-        && m_reflectionOutputWidth == width && m_reflectionOutputHeight == height)
-    {
-        return true;
-    }
-
-    if (m_reflectionOutputResource != nullptr && GfxContext::Get().IsFrameRecording())
-    {
-        // Same command list may already reference the current output (scene view then game view).
-        if (m_reflectionOutputWidth >= width && m_reflectionOutputHeight >= height)
-        {
-            return true;
-        }
-
-        RetiredOutput retired{};
-        retired.resource = m_reflectionOutputResource;
-        retired.allocation = m_reflectionOutputAllocation;
-        retired.srvIndex = m_reflectionOutputSrvIndex;
-        retired.uavIndex = m_reflectionOutputUavIndex;
-        m_retiredReflectionOutputs.push_back(retired);
-
-        m_reflectionOutputResource = nullptr;
-        m_reflectionOutputAllocation = nullptr;
-        m_reflectionOutputSrvIndex = UINT32_MAX;
-        m_reflectionOutputUavIndex = UINT32_MAX;
-        m_reflectionOutputSrvCpuHandle = 0;
-        m_reflectionOutputWidth = 0;
-        m_reflectionOutputHeight = 0;
-        m_reflectionOutputResourceState = 0;
-    }
-    else if (m_reflectionOutputResource != nullptr)
-    {
-        DestroyOutputResource(
-            m_reflectionOutputResource,
-            m_reflectionOutputAllocation,
-            m_reflectionOutputSrvIndex,
-            m_reflectionOutputUavIndex);
-        m_reflectionOutputSrvCpuHandle = 0;
-        m_reflectionOutputWidth = 0;
-        m_reflectionOutputHeight = 0;
-        m_reflectionOutputResourceState = 0;
-    }
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
     if (allocator == nullptr || device == nullptr)
     {
-        outError = "GfxContext unavailable for DXR reflection output texture";
+        outError = "GfxContext unavailable for DXR reflection texture";
         return false;
     }
 
@@ -715,7 +673,7 @@ bool DxrDispatchContext::EnsureReflectionOutput(const int width, const int heigh
     resourceDesc.Height = static_cast<UINT>(height);
     resourceDesc.DepthOrArraySize = 1;
     resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    resourceDesc.Format = static_cast<DXGI_FORMAT>(dxgiFormat);
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
@@ -728,61 +686,158 @@ bool DxrDispatchContext::EnsureReflectionOutput(const int width, const int heigh
         &resourceDesc,
         D3D12_RESOURCE_STATE_COMMON,
         nullptr,
-        &m_reflectionOutputAllocation,
-        IID_PPV_ARGS(&m_reflectionOutputResource));
+        &outTexture.allocation,
+        IID_PPV_ARGS(&outTexture.resource));
     if (FAILED(createResult))
     {
-        outError = "failed to allocate DXR reflection output texture ("
+        outError = "failed to allocate DXR reflection texture ("
             + std::to_string(width) + "x" + std::to_string(height)
             + ", HRESULT=" + HresultFormat::Format(createResult) + ")";
         return false;
     }
 
-    m_reflectionOutputWidth = width;
-    m_reflectionOutputHeight = height;
-    m_reflectionOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COMMON);
+    outTexture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COMMON);
 
-    m_reflectionOutputSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-    m_reflectionOutputUavIndex = GfxContext::Get().AllocateOffscreenSrv();
-    if (m_reflectionOutputSrvIndex == UINT32_MAX || m_reflectionOutputUavIndex == UINT32_MAX)
+    outTexture.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    outTexture.uavIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (outTexture.srvIndex == UINT32_MAX || outTexture.uavIndex == UINT32_MAX)
     {
-        outError = "failed to allocate DXR reflection output descriptors";
+        outError = "failed to allocate DXR reflection texture descriptors";
         DestroyOutputResource(
-            m_reflectionOutputResource,
-            m_reflectionOutputAllocation,
-            m_reflectionOutputSrvIndex,
-            m_reflectionOutputUavIndex);
+            outTexture.resource, outTexture.allocation, outTexture.srvIndex, outTexture.uavIndex);
         return false;
     }
 
-    CreateReflectionOutputDescriptors();
+    D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
+    srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(outTexture.srvIndex);
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Format = static_cast<DXGI_FORMAT>(dxgiFormat);
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MipLevels = 1;
+    device->CreateShaderResourceView(outTexture.resource, &srvDesc, srvHandle);
+    outTexture.srvCpuHandle = srvHandle.ptr;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
+    uavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(outTexture.uavIndex);
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    uavDesc.Format = static_cast<DXGI_FORMAT>(dxgiFormat);
+    device->CreateUnorderedAccessView(outTexture.resource, nullptr, &uavDesc, uavHandle);
     return true;
 }
 
-void DxrDispatchContext::CreateReflectionOutputDescriptors()
+void DxrDispatchContext::RetireOrDestroyReflectionTexture(ReflectionTexture& texture)
 {
-    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
-    if (device == nullptr || m_reflectionOutputResource == nullptr)
+    if (texture.resource == nullptr)
     {
         return;
     }
 
-    D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
-    srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_reflectionOutputSrvIndex);
-    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-    srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    srvDesc.Texture2D.MipLevels = 1;
-    device->CreateShaderResourceView(m_reflectionOutputResource, &srvDesc, srvHandle);
-    m_reflectionOutputSrvCpuHandle = srvHandle.ptr;
+    if (GfxContext::Get().IsFrameRecording())
+    {
+        RetiredOutput retired{};
+        retired.resource = texture.resource;
+        retired.allocation = texture.allocation;
+        retired.srvIndex = texture.srvIndex;
+        retired.uavIndex = texture.uavIndex;
+        m_retiredReflectionOutputs.push_back(retired);
+    }
+    else
+    {
+        DestroyOutputResource(texture.resource, texture.allocation, texture.srvIndex, texture.uavIndex);
+    }
 
-    D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
-    uavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_reflectionOutputUavIndex);
-    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
-    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-    uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    device->CreateUnorderedAccessView(m_reflectionOutputResource, nullptr, &uavDesc, uavHandle);
+    texture = ReflectionTexture{};
+}
+
+bool DxrDispatchContext::EnsureReflectionOutput(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid reflection output dimensions";
+        return false;
+    }
+
+    ReleaseRetiredReflectionOutputs();
+
+    const bool haveTextures = m_reflectionTextures[0].resource != nullptr;
+    if (haveTextures && m_reflectionOutputWidth == width && m_reflectionOutputHeight == height)
+    {
+        return true;
+    }
+
+    // Keep a larger allocation alive (avoids churn when quality shrinks or viewports differ);
+    // consumers must respect the dispatch/texture UV-scale contract (dxr-reflections.md).
+    if (haveTextures && GfxContext::Get().IsFrameRecording()
+        && m_reflectionOutputWidth >= width && m_reflectionOutputHeight >= height)
+    {
+        return true;
+    }
+
+    if (haveTextures && m_reflectionOutputWidth >= width && m_reflectionOutputHeight >= height
+        && !GfxContext::Get().IsFrameRecording())
+    {
+        return true;
+    }
+
+    for (ReflectionTexture& texture : m_reflectionTextures)
+    {
+        RetireOrDestroyReflectionTexture(texture);
+    }
+    m_reflectionOutputSrvCpuHandle = 0;
+    m_reflectionDenoisedSrvCpuHandle = 0;
+    m_reflectionOutputWidth = 0;
+    m_reflectionOutputHeight = 0;
+
+    // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised.
+    // Formats must satisfy NRD minimums: RGBA16f+, R16f+, RGBA8+, RG16f+ respectively.
+    const std::uint32_t formats[kReflectionTextureCount] = {
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R8G8B8A8_UNORM),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT)};
+
+    for (int textureIndex = 0; textureIndex < kReflectionTextureCount; ++textureIndex)
+    {
+        if (!CreateReflectionTexture(
+                width, height, formats[textureIndex], m_reflectionTextures[textureIndex], outError))
+        {
+            for (ReflectionTexture& texture : m_reflectionTextures)
+            {
+                RetireOrDestroyReflectionTexture(texture);
+            }
+            return false;
+        }
+    }
+
+    m_reflectionOutputSrvCpuHandle = m_reflectionTextures[0].srvCpuHandle;
+    m_reflectionDenoisedSrvCpuHandle = m_reflectionTextures[4].srvCpuHandle;
+    m_reflectionOutputWidth = width;
+    m_reflectionOutputHeight = height;
+    return true;
+}
+
+DxrDispatchContext::ReflectionNrdResources DxrDispatchContext::GetReflectionNrdResources()
+{
+    ReflectionNrdResources resources{};
+    resources.radianceHitDist = m_reflectionTextures[0].resource;
+    resources.viewZ = m_reflectionTextures[1].resource;
+    resources.normalRoughness = m_reflectionTextures[2].resource;
+    resources.motion = m_reflectionTextures[3].resource;
+    resources.denoisedOutput = m_reflectionTextures[4].resource;
+    resources.radianceState = &m_reflectionTextures[0].state;
+    resources.viewZState = &m_reflectionTextures[1].state;
+    resources.normalRoughnessState = &m_reflectionTextures[2].state;
+    resources.motionState = &m_reflectionTextures[3].state;
+    resources.denoisedState = &m_reflectionTextures[4].state;
+    resources.textureWidth = m_reflectionOutputWidth;
+    resources.textureHeight = m_reflectionOutputHeight;
+    resources.dispatchWidth = m_reflectionDispatchWidth;
+    resources.dispatchHeight = m_reflectionDispatchHeight;
+    return resources;
 }
 
 bool DxrDispatchContext::DispatchReflections(
@@ -803,14 +858,15 @@ bool DxrDispatchContext::DispatchReflections(
         return false;
     }
 
-    const std::uint32_t srvIndicesFromHandles[7] = {
+    const std::uint32_t srvIndicesFromHandles[8] = {
         DepthSrvIndexFromCpuHandle(inputs.depthSrvCpuHandle),
         DepthSrvIndexFromCpuHandle(inputs.normalSrvCpuHandle),
         DepthSrvIndexFromCpuHandle(inputs.material0SrvCpuHandle),
         DepthSrvIndexFromCpuHandle(inputs.directSrvCpuHandle),
         DepthSrvIndexFromCpuHandle(inputs.sunShadowSrvCpuHandle),
         DepthSrvIndexFromCpuHandle(inputs.indirectSrvCpuHandle),
-        DepthSrvIndexFromCpuHandle(inputs.prefilterSrvCpuHandle)};
+        DepthSrvIndexFromCpuHandle(inputs.prefilterSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.velocitySrvCpuHandle)};
     for (const std::uint32_t index : srvIndicesFromHandles)
     {
         if (index == UINT32_MAX)
@@ -847,14 +903,19 @@ bool DxrDispatchContext::DispatchReflections(
 
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 
-    if (m_reflectionOutputResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    // Trace writes textures [0..3] (radiance, viewZ, normal+roughness, motion).
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
     {
-        TransitionResource(
-            static_cast<ID3D12GraphicsCommandList*>(commandList),
-            m_reflectionOutputResource,
-            static_cast<D3D12_RESOURCE_STATES>(m_reflectionOutputResourceState),
-            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        m_reflectionOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        ReflectionTexture& texture = m_reflectionTextures[textureIndex];
+        if (texture.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        {
+            TransitionResource(
+                static_cast<ID3D12GraphicsCommandList*>(commandList),
+                texture.resource,
+                static_cast<D3D12_RESOURCE_STATES>(texture.state),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            texture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
     }
 
     auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
@@ -865,8 +926,8 @@ bool DxrDispatchContext::DispatchReflections(
     commandList->SetComputeRootSignature(rootSignature);
     commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
-    // Root params 1..11 = SRV tables t0..t10 (see SerializeReflectionGlobalRootSignature).
-    const std::uint32_t srvHeapIndices[11] = {
+    // Root params 1..12 = SRV tables t0..t11 (see SerializeReflectionGlobalRootSignature).
+    const std::uint32_t srvHeapIndices[12] = {
         m_tlasSrvIndex,                     // t0 TLAS
         srvIndicesFromHandles[0],           // t1 depth
         srvIndicesFromHandles[1],           // t2 shading normal
@@ -877,9 +938,10 @@ bool DxrDispatchContext::DispatchReflections(
         srvIndicesFromHandles[3],           // t7 direct RT0
         srvIndicesFromHandles[4],           // t8 sun shadow RT3
         srvIndicesFromHandles[5],           // t9 indirect RT1
-        srvIndicesFromHandles[6]};          // t10 prefiltered env cube
+        srvIndicesFromHandles[6],           // t10 prefiltered env cube
+        srvIndicesFromHandles[7]};          // t11 velocity RT4
 
-    for (std::uint32_t rootIndex = 0; rootIndex < 11; ++rootIndex)
+    for (std::uint32_t rootIndex = 0; rootIndex < 12; ++rootIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
         tableHandle.ptr =
@@ -887,10 +949,14 @@ bool DxrDispatchContext::DispatchReflections(
         commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
     }
 
-    D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
-    uavTableHandle.ptr =
-        reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_reflectionOutputUavIndex));
-    commandList->SetComputeRootDescriptorTable(12, uavTableHandle);
+    // Root params 13..16 = UAV tables u0..u3.
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+        uavTableHandle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(m_reflectionTextures[textureIndex].uavIndex));
+        commandList->SetComputeRootDescriptorTable(13 + textureIndex, uavTableHandle);
+    }
 
     D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
     dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
@@ -911,17 +977,21 @@ bool DxrDispatchContext::DispatchReflections(
     }
 
     commandList->DispatchRays(&dispatchDesc);
-    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_reflectionOutputResource);
 
-    // Combined read state: pixel-shader debug blit + future D5/D6 consumers.
+    // Combined read state: pixel-shader debug blit + NRD compute reads (D5).
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    TransitionResource(
-        static_cast<ID3D12GraphicsCommandList*>(commandList),
-        m_reflectionOutputResource,
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-        kAllShaderRead);
-    m_reflectionOutputResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        ReflectionTexture& texture = m_reflectionTextures[textureIndex];
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), texture.resource);
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            texture.resource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            kAllShaderRead);
+        texture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
 
     m_reflectionDispatchWidth = width;
     m_reflectionDispatchHeight = height;

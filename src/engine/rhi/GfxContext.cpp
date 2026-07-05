@@ -1490,6 +1490,33 @@ std::uint32_t GfxContext::AllocateDrawSrvTable()
     return tableStart;
 }
 
+GfxContext::TransientDescriptorRange GfxContext::AllocateTransientSrvRange(const std::uint32_t count)
+{
+    TransientDescriptorRange range{};
+    if (m_impl == nullptr || count == 0)
+    {
+        return range;
+    }
+
+    const std::uint32_t baseIndex = m_impl->DrawSrvTableNextIndex;
+    const std::uint32_t nextIndex = baseIndex + count;
+    if (nextIndex > OffscreenSrvDescriptorStart)
+    {
+        GfxContextDetail::SetGpuAllocationError("Transient SRV descriptor region exhausted");
+        return range;
+    }
+
+    m_impl->DrawSrvTableNextIndex = nextIndex;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuStart = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuStart = m_impl->SrvHeap->GetGPUDescriptorHandleForHeapStart();
+    range.baseIndex = baseIndex;
+    range.descriptorSize = m_impl->SrvDescriptorSize;
+    range.cpuHandle = cpuStart.ptr + static_cast<SIZE_T>(baseIndex) * m_impl->SrvDescriptorSize;
+    range.gpuHandle = gpuStart.ptr + static_cast<UINT64>(baseIndex) * m_impl->SrvDescriptorSize;
+    return range;
+}
+
 GfxContext::TransientUploadAllocation GfxContext::AllocateTransientUpload(
     const void* data,
     const std::uint32_t byteSize)
