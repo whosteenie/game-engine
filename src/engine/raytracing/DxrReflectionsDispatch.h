@@ -1,0 +1,75 @@
+#pragma once
+
+#include "engine/raytracing/DxrDispatchContext.h"
+#include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/ShaderBindingTable.h"
+
+#include <cstdint>
+#include <string>
+
+class Camera;
+class DxrAccelerationStructures;
+
+// Phase D4 — RT specular reflection trace (devdoc/dxr-reflections.md).
+// Owns the reflections RTPSO, SBT, and quality-scaled RGBA16F radiance+confidence output.
+class DxrReflectionsDispatch
+{
+public:
+    // G-buffer / environment SRV CPU handles (shader-visible SRV heap).
+    struct FrameInputs
+    {
+        std::uintptr_t depthSrvCpuHandle = 0;
+        std::uintptr_t normalSrvCpuHandle = 0;    // RT2 shading normal
+        std::uintptr_t material0SrvCpuHandle = 0; // RT5 albedo+roughness
+        std::uintptr_t directSrvCpuHandle = 0;    // RT0 fill direct + emissive
+        std::uintptr_t sunShadowSrvCpuHandle = 0; // RT3 sun + shadow factor
+        std::uintptr_t indirectSrvCpuHandle = 0;  // RT1 indirect
+        std::uintptr_t prefilterSrvCpuHandle = 0; // IBL prefiltered env cube
+        float environmentIntensity = 1.0f;
+        float maxReflectionLod = 4.0f;
+    };
+
+    DxrReflectionsDispatch() = default;
+    ~DxrReflectionsDispatch();
+
+    DxrReflectionsDispatch(const DxrReflectionsDispatch&) = delete;
+    DxrReflectionsDispatch& operator=(const DxrReflectionsDispatch&) = delete;
+
+    bool DispatchIfEnabled(
+        const DxrAccelerationStructures& accelerationStructures,
+        const Camera& camera,
+        bool dxrEnabled,
+        bool reflectionsEnabled,
+        bool reflectionDebugViewActive,
+        void* commandList,
+        const FrameInputs& frameInputs,
+        int outputWidth,
+        int outputHeight,
+        int gbufferWidth,
+        int gbufferHeight,
+        float maxTraceDistance,
+        int samplesPerPixel);
+
+    void Release();
+
+    bool WarmUpPipelineIfNeeded();
+    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
+
+    std::uintptr_t GetReflectionOutputSrvCpuHandle() const;
+    bool HasValidOutput() const;
+    // dispatchSize / textureSize — consumers must scale UVs by this (the texture can be
+    // larger than the last dispatch when quality shrinks or viewport sizes differ).
+    float GetOutputUvScaleX() const;
+    float GetOutputUvScaleY() const;
+
+private:
+    bool EnsurePipeline(std::string& outError);
+
+    DxrPipeline m_pipeline;
+    ShaderBindingTable m_shaderBindingTable;
+    DxrDispatchContext m_dispatchContext;
+    std::uint32_t m_frameIndex = 0;
+    bool m_pipelineReady = false;
+    bool m_dispatchedThisFrame = false;
+};

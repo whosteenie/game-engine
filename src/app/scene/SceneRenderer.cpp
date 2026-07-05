@@ -21,6 +21,7 @@
 #include "engine/components/LightComponent.h"
 #include "engine/lighting/CascadedShadowMap.h"
 #include "engine/lighting/EnvironmentMap.h"
+#include "engine/lighting/IBL.h"
 #include "engine/lighting/Light.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/lighting/ShadowMapMath.h"
@@ -102,6 +103,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_dxrAccelerationStructures.reset();
     self->m_dxrSmokeDispatch.reset();
     self->m_dxrPrimaryDebugDispatch.reset();
+    self->m_dxrReflectionsDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -408,9 +410,15 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
         }
 
+        if (m_dxrReflectionsDispatch == nullptr)
+        {
+            m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
+        }
+
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
         const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
-        if (smokeReady && primaryReady)
+        const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
+        if (smokeReady && primaryReady && reflectionsReady)
         {
             return;
         }
@@ -423,6 +431,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (!primaryReady)
         {
             m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!reflectionsReady)
+        {
+            m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
@@ -529,6 +541,76 @@ void SceneRenderer::RecordDxrPass(
         m_dxrSettings.GetMaxTraceDistance());
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
 
+    // Phase D4 — reflection trace (devdoc/dxr-reflections.md). Requires the scene MRTs, so
+    // only runs on the post-process path.
+    const bool reflectionDebugViewActive = IsRtReflectionDebugMode(debugMode);
+    const bool reflectionsWanted =
+        m_dxrSettings.IsReflectionsEnabled() || reflectionDebugViewActive;
+    bool reflectionsDispatched = false;
+
+    if (m_dxrReflectionsDispatch == nullptr)
+    {
+        m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
+    }
+
+    if (reflectionsWanted && usePostProcess && m_screenSpaceEffects != nullptr
+        && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
+    {
+        DxrBreadcrumb("render: reflections DispatchIfEnabled begin");
+
+        float qualityScale = 0.75f; // Medium
+        switch (m_dxrSettings.GetReflectionsQuality())
+        {
+        case DxrReflectionsQuality::Low:
+            qualityScale = 0.5f;
+            break;
+        case DxrReflectionsQuality::High:
+            qualityScale = 1.0f;
+            break;
+        case DxrReflectionsQuality::Medium:
+        default:
+            qualityScale = 0.75f;
+            break;
+        }
+
+        const int reflectionWidth =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchWidth) * qualityScale));
+        const int reflectionHeight =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchHeight) * qualityScale));
+
+        const IBL& ibl = m_environmentMap->GetIBL();
+        DxrReflectionsDispatch::FrameInputs frameInputs{};
+        frameInputs.depthSrvCpuHandle = depthSrvCpuHandle;
+        frameInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
+        frameInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
+        frameInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
+        frameInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
+        frameInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        frameInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
+        frameInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
+        frameInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
+
+        // DispatchRays samples the MRTs from non-pixel shaders; move them (tracked) to a
+        // combined read state first.
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+
+        reflectionsDispatched = m_dxrReflectionsDispatch->DispatchIfEnabled(
+            *m_dxrAccelerationStructures,
+            camera,
+            true,
+            m_dxrSettings.IsReflectionsEnabled(),
+            reflectionDebugViewActive,
+            GfxContext::Get().GetCommandList(),
+            frameInputs,
+            reflectionWidth,
+            reflectionHeight,
+            dispatchWidth,
+            dispatchHeight,
+            m_dxrSettings.GetMaxTraceDistance(),
+            m_dxrSettings.GetReflectionsSamplesPerPixel());
+        DxrBreadcrumb("render: reflections DispatchIfEnabled end");
+    }
+
     if (usePostProcess && m_screenSpaceEffects != nullptr)
     {
         DxrBreadcrumb("render: SetDxrDebugSrvs");
@@ -548,6 +630,13 @@ void SceneRenderer::RecordDxrPass(
             primaryTraceEnabled && hasFreshPrimaryOutput
                 ? m_dxrPrimaryDebugDispatch->GetPrimaryMetadataSrvCpuHandle()
                 : 0);
+
+        m_screenSpaceEffects->SetDxrReflectionSrv(
+            reflectionsDispatched && m_dxrReflectionsDispatch->HasValidOutput()
+                ? m_dxrReflectionsDispatch->GetReflectionOutputSrvCpuHandle()
+                : 0,
+            m_dxrReflectionsDispatch->GetOutputUvScaleX(),
+            m_dxrReflectionsDispatch->GetOutputUvScaleY());
     }
 }
 
@@ -783,6 +872,10 @@ void SceneRenderer::Render(
                 viewportWidth,
                 viewportHeight,
                 m_dxrSettings.GetMaxTraceDistance());
+            m_screenSpaceEffects->BlitRtReflectionDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight);
         }
 
         if (target != nullptr)

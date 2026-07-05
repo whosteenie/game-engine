@@ -59,9 +59,46 @@ public:
         const DxrRootSignature::PrimaryDispatchConstants& constants,
         std::string& outError);
 
+    // Phase D4 reflections (devdoc/dxr-reflections.md). SRV CPU handles must live in the
+    // shader-visible SRV heap (same contract as depthSrvCpuHandle above).
+    struct ReflectionDispatchInputs
+    {
+        ID3D12Resource* tlasResource = nullptr;
+        std::uint64_t tlasGpuVirtualAddress = 0;
+        std::uintptr_t depthSrvCpuHandle = 0;
+        std::uintptr_t normalSrvCpuHandle = 0;
+        std::uintptr_t material0SrvCpuHandle = 0;
+        std::uint32_t geometryLookupSrvIndex = UINT32_MAX;
+        std::uint32_t sceneVertexFloatsSrvIndex = UINT32_MAX;
+        std::uint32_t sceneIndicesSrvIndex = UINT32_MAX;
+        std::uintptr_t directSrvCpuHandle = 0;
+        std::uintptr_t sunShadowSrvCpuHandle = 0;
+        std::uintptr_t indirectSrvCpuHandle = 0;
+        std::uintptr_t prefilterSrvCpuHandle = 0;
+    };
+
+    bool DispatchReflections(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        const ReflectionDispatchInputs& inputs,
+        int width,
+        int height,
+        const DxrRootSignature::ReflectionDispatchConstants& constants,
+        std::string& outError);
+
     std::uintptr_t GetOutputSrvCpuHandle() const { return m_outputSrvCpuHandle; }
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const { return m_primaryOutputSrvCpuHandle; }
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
+    std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
+    int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
+    int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }
+    // Last DispatchRays grid size — may be smaller than the texture when a larger output is
+    // kept alive (quality shrink / mixed viewport sizes). Consumers must scale UVs by
+    // dispatch/texture size or they read stale texels (picture-in-picture artifact).
+    int GetReflectionDispatchWidth() const { return m_reflectionDispatchWidth; }
+    int GetReflectionDispatchHeight() const { return m_reflectionDispatchHeight; }
     int GetOutputWidth() const { return m_outputWidth; }
     int GetOutputHeight() const { return m_outputHeight; }
     ID3D12Resource* GetOutputResource() const { return m_outputResource; }
@@ -74,8 +111,11 @@ private:
     void CreateOutputDescriptors();
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
     void CreatePrimaryOutputDescriptors();
+    bool EnsureReflectionOutput(int width, int height, std::string& outError);
+    void CreateReflectionOutputDescriptors();
     void ReleaseRetiredOutputs();
     void ReleaseRetiredPrimaryOutputs();
+    void ReleaseRetiredReflectionOutputs();
     std::uint32_t DepthSrvIndexFromCpuHandle(std::uintptr_t depthSrvCpuHandle) const;
 
     struct RetiredOutput
@@ -117,4 +157,16 @@ private:
 
     std::vector<RetiredOutput> m_retiredPrimaryOutputs;
     std::vector<RetiredOutput> m_retiredPrimaryMetadata;
+
+    ID3D12Resource* m_reflectionOutputResource = nullptr;
+    D3D12MA::Allocation* m_reflectionOutputAllocation = nullptr;
+    std::uint32_t m_reflectionOutputSrvIndex = UINT32_MAX;
+    std::uint32_t m_reflectionOutputUavIndex = UINT32_MAX;
+    std::uintptr_t m_reflectionOutputSrvCpuHandle = 0;
+    std::uint32_t m_reflectionOutputResourceState = 0;
+    int m_reflectionOutputWidth = 0;
+    int m_reflectionOutputHeight = 0;
+    int m_reflectionDispatchWidth = 0;
+    int m_reflectionDispatchHeight = 0;
+    std::vector<RetiredOutput> m_retiredReflectionOutputs;
 };

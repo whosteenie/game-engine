@@ -118,6 +118,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RT primary depth";
     case RenderDebugMode::RtPrimaryNormal:
         return "RT primary normal";
+    case RenderDebugMode::RtReflectionRaw:
+        return "RT reflection raw";
+    case RenderDebugMode::RtReflectionConfidence:
+        return "RT reflection confidence";
     default:
         return "Unknown";
     }
@@ -263,7 +267,8 @@ bool IsSsrCompositeDebugMode(const RenderDebugMode mode)
 
 bool IsDxrDebugMode(const RenderDebugMode mode)
 {
-    return mode == RenderDebugMode::RtDispatchSmoke || IsRtPrimaryDebugMode(mode);
+    return mode == RenderDebugMode::RtDispatchSmoke || IsRtPrimaryDebugMode(mode)
+        || IsRtReflectionDebugMode(mode);
 }
 
 bool IsRtPrimaryDebugMode(const RenderDebugMode mode)
@@ -273,6 +278,18 @@ bool IsRtPrimaryDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::RtPrimaryHit:
     case RenderDebugMode::RtPrimaryDepth:
     case RenderDebugMode::RtPrimaryNormal:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsRtReflectionDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RtReflectionRaw:
+    case RenderDebugMode::RtReflectionConfidence:
         return true;
     default:
         return false;

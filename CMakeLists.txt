@@ -427,6 +427,7 @@ add_executable(game-engine
     src/engine/raytracing/DxrDispatchContext.cpp
     src/engine/raytracing/DxrSmokeDispatch.cpp
     src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
+    src/engine/raytracing/DxrReflectionsDispatch.cpp
 
     src/engine/rendering/Shader.cpp
 

@@ -1836,6 +1836,8 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RtPrimaryHit),
             RenderDebugModeLabel(RenderDebugMode::RtPrimaryDepth),
             RenderDebugModeLabel(RenderDebugMode::RtPrimaryNormal),
+            RenderDebugModeLabel(RenderDebugMode::RtReflectionRaw),
+            RenderDebugModeLabel(RenderDebugMode::RtReflectionConfidence),
         };
 
         if (ImGui::Combo(
@@ -1846,7 +1848,8 @@ void LightingPanel::Draw(
         {
             const auto selectedMode = static_cast<RenderDebugMode>(debugMode);
             screenSpaceEffects.SetDebugMode(selectedMode);
-            if (IsRtPrimaryDebugMode(selectedMode) && renderer.GetDxrSettings().IsEnabled()
+            if ((IsRtPrimaryDebugMode(selectedMode) || IsRtReflectionDebugMode(selectedMode))
+                && renderer.GetDxrSettings().IsEnabled()
                 && !GfxContext::Get().IsFrameRecording())
             {
                 renderer.WarmUpDxrPipelineIfNeeded();

@@ -1422,6 +1422,8 @@ void ScreenSpaceEffects::BlitRtDispatchSmokeDebug(
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
     m_debugChannelShader->Use(false, true);
     m_debugChannelShader->SetInt("uOutputRgb", 1);
+    m_debugChannelShader->SetInt("uOutputAlpha", 0);
+    m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
     m_debugChannelShader->SetInt("uInput", 0);
     m_debugChannelShader->BindTextureSlot(0, m_dxrSmokeDebugSrv);
     m_debugChannelShader->FlushUniforms();
@@ -1466,6 +1468,33 @@ void ScreenSpaceEffects::BlitRtPrimaryDebug(
     m_dxrPrimaryDebugShader->BindTextureSlot(0, m_dxrPrimaryOutputSrv);
     m_dxrPrimaryDebugShader->BindTextureSlot(1, m_dxrPrimaryMetadataSrv);
     m_dxrPrimaryDebugShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::BlitRtReflectionDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (!IsRtReflectionDebugMode(m_debugMode) || m_dxrReflectionSrv == 0 || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    const bool showConfidence = m_debugMode == RenderDebugMode::RtReflectionConfidence;
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_debugChannelShader->Use(false, true);
+    m_debugChannelShader->SetInt("uInput", 0);
+    m_debugChannelShader->SetInt("uOutputRgb", showConfidence ? 0 : 1);
+    m_debugChannelShader->SetInt("uOutputAlpha", showConfidence ? 1 : 0);
+    // The reflection texture can be larger than the last dispatch (quality shrink keeps the
+    // bigger allocation); sample only the freshly written region.
+    m_debugChannelShader->SetVec2(
+        "uUvScale",
+        glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
+    m_debugChannelShader->BindTextureSlot(0, m_dxrReflectionSrv);
+    m_debugChannelShader->FlushUniforms();
     DrawFullscreenQuad();
 }
 
@@ -2701,6 +2730,8 @@ void ScreenSpaceEffects::Apply(
     {
         m_debugChannelShader->Use(false, true);
         m_debugChannelShader->SetInt("uOutputRgb", 1);
+        m_debugChannelShader->SetInt("uOutputAlpha", 0);
+        m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
         m_debugChannelShader->SetInt("uInput", 0);
         m_debugChannelShader->BindTextureSlot(0, hdrColorSrv);
         m_debugChannelShader->FlushUniforms();
@@ -3095,6 +3126,8 @@ void ScreenSpaceEffects::Apply(
         {
             m_debugChannelShader->Use(false, true);
             m_debugChannelShader->SetInt("uOutputRgb", 0);
+            m_debugChannelShader->SetInt("uOutputAlpha", 0);
+            m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
             m_debugChannelShader->SetInt("uInput", 0);
             m_debugChannelShader->BindTextureSlot(0, debugSrv);
             m_debugChannelShader->FlushUniforms();
@@ -3742,6 +3775,44 @@ void ScreenSpaceEffects::SetDxrPrimaryDebugSrvs(
 {
     m_dxrPrimaryOutputSrv = primaryOutputSrvCpuHandle;
     m_dxrPrimaryMetadataSrv = primaryMetadataSrvCpuHandle;
+}
+
+void ScreenSpaceEffects::SetDxrReflectionSrv(
+    const std::uintptr_t reflectionSrvCpuHandle,
+    const float uvScaleX,
+    const float uvScaleY)
+{
+    m_dxrReflectionSrv = reflectionSrvCpuHandle;
+    m_dxrReflectionUvScaleX = uvScaleX;
+    m_dxrReflectionUvScaleY = uvScaleY;
+}
+
+std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const int attachmentIndex) const
+{
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid())
+    {
+        return 0;
+    }
+
+    return m_sceneFramebuffer->GetColorSrvCpuHandle(attachmentIndex);
+}
+
+void ScreenSpaceEffects::PrepareSceneColorForDxrRead() const
+{
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid())
+    {
+        return;
+    }
+
+    constexpr std::uint32_t kAllShaderRead = static_cast<std::uint32_t>(
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    // RT0 direct, RT1 indirect, RT2 shading normal, RT3 sun shadow, RT5 material0
+    // (see devdoc/dxr-reflections.md binding table).
+    m_sceneFramebuffer->TransitionColorAttachment(0, kAllShaderRead);
+    m_sceneFramebuffer->TransitionColorAttachment(1, kAllShaderRead);
+    m_sceneFramebuffer->TransitionColorAttachment(2, kAllShaderRead);
+    m_sceneFramebuffer->TransitionColorAttachment(3, kAllShaderRead);
+    m_sceneFramebuffer->TransitionColorAttachment(5, kAllShaderRead);
 }
 
 AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const

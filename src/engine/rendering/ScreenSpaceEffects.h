@@ -71,6 +71,10 @@ public:
         int viewportWidth,
         int viewportHeight,
         float maxTraceDistance) const;
+    void BlitRtReflectionDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
 
     void Apply(
         const Camera& camera,
@@ -190,6 +194,15 @@ public:
     void SetDxrPrimaryDebugSrvs(
         std::uintptr_t primaryOutputSrvCpuHandle,
         std::uintptr_t primaryMetadataSrvCpuHandle);
+    void SetDxrReflectionSrv(
+        std::uintptr_t reflectionSrvCpuHandle,
+        float uvScaleX = 1.0f,
+        float uvScaleY = 1.0f);
+    // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
+    std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
+    // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
+    // pixel + non-pixel shader-read state so DispatchRays can sample them legally.
+    void PrepareSceneColorForDxrRead() const;
 
     AntiAliasingMode GetAntiAliasingMode() const;
     void SetAntiAliasingMode(AntiAliasingMode mode);
@@ -473,6 +486,9 @@ private:
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     std::uintptr_t m_dxrSmokeDebugSrv = 0;
     std::uintptr_t m_dxrPrimaryOutputSrv = 0;
+    std::uintptr_t m_dxrReflectionSrv = 0;
+    float m_dxrReflectionUvScaleX = 1.0f;
+    float m_dxrReflectionUvScaleY = 1.0f;
     std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
     int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;

@@ -14,6 +14,8 @@ namespace
     ID3D12RootSignature* g_smokeLocalRootSignature = nullptr;
     ID3D12RootSignature* g_primaryDebugRootSignature = nullptr;
     ID3D12RootSignature* g_primaryDebugLocalRootSignature = nullptr;
+    ID3D12RootSignature* g_reflectionRootSignature = nullptr;
+    ID3D12RootSignature* g_reflectionLocalRootSignature = nullptr;
 
     void SerializeSmokeGlobalRootSignatureBlob(ComPtr<ID3DBlob>& outBlob)
     {
@@ -306,6 +308,163 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
     g_primaryDebugLocalRootSignature = rootSignature.Detach();
     g_primaryDebugLocalRootSignature->AddRef();
     return g_primaryDebugLocalRootSignature;
+}
+
+// Phase D4 reflections: CBV b0, SRV tables t0-t10, UAV table u0, static linear-clamp s0.
+// See devdoc/dxr-reflections.md for the binding table.
+void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
+{
+    constexpr std::uint32_t kSrvCount = 11;
+
+    D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
+    for (std::uint32_t registerIndex = 0; registerIndex < kSrvCount; ++registerIndex)
+    {
+        srvRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRanges[registerIndex].NumDescriptors = 1;
+        srvRanges[registerIndex].BaseShaderRegister = registerIndex;
+        srvRanges[registerIndex].RegisterSpace = 0;
+        srvRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        srvRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    }
+
+    D3D12_DESCRIPTOR_RANGE1 uavRange{};
+    uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    uavRange.NumDescriptors = 1;
+    uavRange.BaseShaderRegister = 0;
+    uavRange.RegisterSpace = 0;
+    uavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    uavRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+
+    D3D12_ROOT_PARAMETER1 rootParams[1 + kSrvCount + 1]{};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[0].Descriptor.ShaderRegister = 0;
+    rootParams[0].Descriptor.RegisterSpace = 0;
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    for (std::uint32_t srvIndex = 0; srvIndex < kSrvCount; ++srvIndex)
+    {
+        rootParams[1 + srvIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[1 + srvIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[1 + srvIndex].DescriptorTable.pDescriptorRanges = &srvRanges[srvIndex];
+        rootParams[1 + srvIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
+    rootParams[1 + kSrvCount].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[1 + kSrvCount].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[1 + kSrvCount].DescriptorTable.pDescriptorRanges = &uavRange;
+    rootParams[1 + kSrvCount].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_STATIC_SAMPLER_DESC linearClampSampler{};
+    linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    linearClampSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.MaxAnisotropy = 1;
+    linearClampSampler.MaxLOD = D3D12_FLOAT32_MAX;
+    linearClampSampler.ShaderRegister = 0;
+    linearClampSampler.RegisterSpace = 0;
+    linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
+    rootDesc.NumParameters = 1 + kSrvCount + 1;
+    rootDesc.pParameters = rootParams;
+    rootDesc.NumStaticSamplers = 1;
+    rootDesc.pStaticSamplers = &linearClampSampler;
+    rootDesc.Flags =
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc{};
+    versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    versionedDesc.Desc_1_1 = rootDesc;
+
+    ComPtr<ID3DBlob> signatureError;
+    ThrowIfFailed(
+        D3D12SerializeVersionedRootSignature(&versionedDesc, &outBlob, &signatureError),
+        "D3D12SerializeVersionedRootSignature failed for DXR reflections");
+}
+
+ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()
+{
+    if (g_reflectionRootSignature != nullptr)
+    {
+        g_reflectionRootSignature->AddRef();
+        return g_reflectionRootSignature;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr)
+    {
+        throw std::runtime_error("CreateReflectionGlobalRootSignature: GfxContext not initialized");
+    }
+
+    ComPtr<ID3DBlob> signatureBlob;
+    SerializeReflectionGlobalRootSignature(signatureBlob);
+
+    ComPtr<ID3D12RootSignature> rootSignature;
+    ThrowIfFailed(
+        device->CreateRootSignature(
+            0,
+            signatureBlob->GetBufferPointer(),
+            signatureBlob->GetBufferSize(),
+            IID_PPV_ARGS(&rootSignature)),
+        "CreateRootSignature failed for DXR reflections");
+
+    g_reflectionRootSignature = rootSignature.Detach();
+    g_reflectionRootSignature->AddRef();
+    return g_reflectionRootSignature;
+}
+
+ID3D12RootSignature* DxrRootSignature::CreateReflectionLocalRootSignature()
+{
+    if (g_reflectionLocalRootSignature != nullptr)
+    {
+        g_reflectionLocalRootSignature->AddRef();
+        return g_reflectionLocalRootSignature;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr)
+    {
+        throw std::runtime_error("CreateReflectionLocalRootSignature: GfxContext not initialized");
+    }
+
+    ComPtr<ID3DBlob> signatureBlob;
+    SerializeSmokeLocalRootSignatureBlob(signatureBlob);
+
+    ComPtr<ID3D12RootSignature> rootSignature;
+    ThrowIfFailed(
+        device->CreateRootSignature(
+            0,
+            signatureBlob->GetBufferPointer(),
+            signatureBlob->GetBufferSize(),
+            IID_PPV_ARGS(&rootSignature)),
+        "CreateRootSignature failed for DXR reflections local root signature");
+
+    g_reflectionLocalRootSignature = rootSignature.Detach();
+    g_reflectionLocalRootSignature->AddRef();
+    return g_reflectionLocalRootSignature;
+}
+
+void DxrRootSignature::ReleaseReflectionGlobalRootSignature()
+{
+    if (g_reflectionRootSignature != nullptr)
+    {
+        g_reflectionRootSignature->Release();
+        g_reflectionRootSignature = nullptr;
+    }
+}
+
+void DxrRootSignature::ReleaseReflectionLocalRootSignature()
+{
+    if (g_reflectionLocalRootSignature != nullptr)
+    {
+        g_reflectionLocalRootSignature->Release();
+        g_reflectionLocalRootSignature = nullptr;
+    }
 }
 
 void DxrRootSignature::ReleasePrimaryDebugGlobalRootSignature()

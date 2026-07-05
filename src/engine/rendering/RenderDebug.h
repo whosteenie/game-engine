@@ -59,6 +59,8 @@ enum class RenderDebugMode
     RtPrimaryHit,
     RtPrimaryDepth,
     RtPrimaryNormal,
+    RtReflectionRaw,
+    RtReflectionConfidence,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -73,5 +75,6 @@ bool IsSsrDenoiseDebugMode(RenderDebugMode mode);
 bool IsSsrCompositeDebugMode(RenderDebugMode mode);
 bool IsDxrDebugMode(RenderDebugMode mode);
 bool IsRtPrimaryDebugMode(RenderDebugMode mode);
+bool IsRtReflectionDebugMode(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

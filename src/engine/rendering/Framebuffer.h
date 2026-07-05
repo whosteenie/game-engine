@@ -67,11 +67,14 @@ public:
 
     std::uintptr_t GetVelocityTexture() const;
 
+    // Public for DXR passes: DispatchRays reads the resolved MRTs from non-pixel shaders, so
+    // callers move attachments to a combined shader-read state first (tracked transitions).
+    void TransitionColorAttachment(int attachmentIndex, std::uint32_t newState) const;
+
 private:
     void Destroy();
     void Create(int width, int height);
 
-    void TransitionColorAttachment(int attachmentIndex, std::uint32_t newState) const;
     void TransitionDepth(std::uint32_t newState) const;
     void TransitionMsaaColorAttachment(int attachmentIndex, std::uint32_t newState) const;
     void TransitionMsaaDepth(std::uint32_t newState) const;
