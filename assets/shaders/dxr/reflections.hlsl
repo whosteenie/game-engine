@@ -177,10 +177,6 @@ void ReflectionRayGen()
     const int2 gbufferPixel = int2(uv * float2(g_GBufferSize));
     const float depth = g_DepthMap.Load(int3(gbufferPixel, 0)).r;
 
-    // NRD motion guide: engine velocity is NDC (curr - prev); NRD wants uvPrev - uvCurr.
-    const float2 velocityNdc = g_VelocityMap.Load(int3(gbufferPixel, 0)).rg;
-    g_MotionOutput[pixel] = float2(-0.5 * velocityNdc.x, 0.5 * velocityNdc.y);
-
     // Sky: env in the raw view; viewZ pushed beyond the denoising range so NRD ignores it.
     const float2 clipXY = DepthUvToClipXY(uv);
     if (depth >= 0.9999)
@@ -190,8 +186,14 @@ void ReflectionRayGen()
         g_ReflectionOutput[pixel] = float4(SampleEnvironment(viewDir, 0.0), g_MaxTraceDistance);
         g_ViewZOutput[pixel] = 1e6;
         g_NormalRoughnessOutput[pixel] = float4(0.5, 0.5, 1.0, 1.0);
+        // Sky has no surface motion — zero MV avoids spurious history reprojection streaks.
+        g_MotionOutput[pixel] = 0.0.xx;
         return;
     }
+
+    // NRD motion guide: engine velocity is NDC (curr - prev); NRD wants uvPrev - uvCurr.
+    const float2 velocityNdc = g_VelocityMap.Load(int3(gbufferPixel, 0)).rg;
+    g_MotionOutput[pixel] = float2(-0.5 * velocityNdc.x, 0.5 * velocityNdc.y);
 
     const float4 worldH = mul(g_InvViewProj, float4(clipXY, depth, 1.0));
     const float3 worldPos = worldH.xyz / worldH.w;
@@ -217,11 +219,9 @@ void ReflectionRayGen()
     [loop]
     for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
     {
+        // Per-pixel stable RNG — temporal convergence comes from NRD history, not frame-varying noise.
         const float2 xi = Hash2(
-            uv * 913.7
-            + float2(
-                (float)g_FrameIndex * 0.6180 + (float)sampleIndex * 2.71,
-                (float)g_FrameIndex * 0.7548 + (float)sampleIndex * 5.13));
+            uv * 913.7 + float2((float)sampleIndex * 2.71, (float)sampleIndex * 5.13));
 
         float3 rayDir = mirrorDir;
         if (roughness > 0.03)

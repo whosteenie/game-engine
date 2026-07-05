@@ -142,6 +142,7 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     constants.gbufferHeight = static_cast<std::uint32_t>(gbufferHeight);
     std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
     std::memcpy(constants.viewProj, glm::value_ptr(viewProj), sizeof(constants.viewProj));
+    std::memcpy(constants.worldToView, glm::value_ptr(viewMatrix), sizeof(constants.worldToView));
     constants.cameraPos[0] = cameraPos.x;
     constants.cameraPos[1] = cameraPos.y;
     constants.cameraPos[2] = cameraPos.z;

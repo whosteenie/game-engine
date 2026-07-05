@@ -530,6 +530,9 @@ bool NrdDenoiser::Denoise(
     relaxSettings.specularMaxFastAccumulatedFrameNum = std::max(accumulatedFrames / 5u, 1u);
     relaxSettings.hitDistanceReconstructionMode = nrd::HitDistanceReconstructionMode::OFF;
     relaxSettings.enableAntiFirefly = true;
+    // Explicit NRD defaults — brace-init would zero these and disable the prepass spatial reuse.
+    relaxSettings.specularPrepassBlurRadius = 50.0f;
+    relaxSettings.diffusePrepassBlurRadius = 30.0f;
 
     if (nrd::SetDenoiserSettings(*m_instance, kSpecularIdentifier, &relaxSettings) != nrd::Result::SUCCESS)
     {
@@ -665,10 +668,13 @@ bool NrdDenoiser::Denoise(
         }
     }
 
-    // Leave the denoised output readable for the debug blit / D6 composite.
+    // Leave the denoised output AND the raw radiance buffer readable for the pixel-shader
+    // debug blit / D6 resolve. NRD read the raw buffer as a compute (NON_PIXEL) SRV, so it
+    // must be returned to the combined read state or the resolve pass sees a stale state.
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     TransitionTracked(commandList, resources.denoisedOutput, *resources.denoisedState, kAllShaderRead);
+    TransitionTracked(commandList, resources.radianceHitDist, *resources.radianceState, kAllShaderRead);
 
     nrdScope.Success();
     return true;

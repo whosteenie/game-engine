@@ -540,6 +540,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_debugChannelShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DebugChannelFragmentShader)),
+      m_rtReflectionResolveShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RtReflectionResolveFragmentShader)),
       m_dxrPrimaryDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrPrimaryDebugFragmentShader)),
@@ -1483,8 +1486,28 @@ void ScreenSpaceEffects::BlitRtReflectionDebug(
 
     const bool showHitDistance = m_debugMode == RenderDebugMode::RtReflectionConfidence;
     const bool showDenoised = m_debugMode == RenderDebugMode::RtReflectionDenoised;
-    const std::uintptr_t sourceSrv =
-        showDenoised && m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv;
+
+    // Denoised view = the D6 resolve preview: denoised radiance on hits, fresh env from the
+    // raw buffer on miss/sky pixels (NRD leaves stale reprojected history there, which smears
+    // the skybox under camera motion). Falls back to the raw buffer if no denoised output.
+    if (showDenoised && m_dxrReflectionDenoisedSrv != 0)
+    {
+        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+        m_rtReflectionResolveShader->Use(false, true);
+        m_rtReflectionResolveShader->SetInt("uDenoised", 0);
+        m_rtReflectionResolveShader->SetInt("uRaw", 1);
+        m_rtReflectionResolveShader->SetVec2(
+            "uUvScale",
+            glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
+        m_rtReflectionResolveShader->SetFloat("uMaxTraceDistance", m_dxrReflectionMaxTraceDistance);
+        m_rtReflectionResolveShader->BindTextureSlot(0, m_dxrReflectionDenoisedSrv);
+        m_rtReflectionResolveShader->BindTextureSlot(1, m_dxrReflectionSrv);
+        m_rtReflectionResolveShader->FlushUniforms();
+        DrawFullscreenQuad();
+        return;
+    }
+
+    const std::uintptr_t sourceSrv = m_dxrReflectionSrv;
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
     m_debugChannelShader->Use(false, true);

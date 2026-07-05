@@ -395,6 +395,7 @@ private:
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_msaaDepthResolveShader;
     std::unique_ptr<Shader> m_debugChannelShader;
+    std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
