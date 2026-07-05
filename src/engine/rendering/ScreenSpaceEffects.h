@@ -503,6 +503,9 @@ private:
     mutable int m_taaFrameIndex = 0;
     mutable bool m_bloomHistoryValid = false;
     mutable int m_bloomTemporalWarmupFrames = 0;
+    // Last frame's final bloom SRV, fed into ssr_scene_color so reflections carry bloom
+    // halos (bloom runs after SSR each frame). Reset whenever bloom targets are recreated.
+    mutable std::uintptr_t m_prevFrameBloomSrv = 0;
     mutable bool m_radianceHistoryValid = false;
     mutable int m_giFrameIndex = 0;
     mutable glm::mat4 m_giPrevViewProjection{1.0f};

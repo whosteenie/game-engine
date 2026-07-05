@@ -134,6 +134,10 @@ bool Blas::Build(
 
     commandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_result.resource);
+    // DXR-02: consecutive builds reuse the same scratch buffer in one command list. Per spec,
+    // scratch reuse requires a UAV barrier covering the scratch between builds — the barrier on
+    // the result above does not order scratch access and builds may otherwise overlap on the GPU.
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), scratchBuffer.resource);
 
     TransitionResource(
         static_cast<ID3D12GraphicsCommandList*>(commandList),

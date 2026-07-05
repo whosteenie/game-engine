@@ -43,6 +43,19 @@ public:
     void FreeOffscreenSrv(std::uint32_t descriptorIndex);
     void* GetSrvHeapGpuHandle(std::uint32_t descriptorIndex) const;
 
+    // CRASH-01/CRASH-03: deferred destruction. GPU resources and descriptor slots must not be
+    // destroyed/recycled while a submitted — or currently recording — command list can still
+    // reference them (the GPU dereferences descriptors and memory at execution time, not at
+    // record time). These enqueue the release against the fence value that covers all work
+    // that could reference the resource; the queue is drained in BeginFrame/WaitForGpuIdle
+    // once the fence has completed, and flushed unconditionally in Shutdown after a full wait.
+    // Takes ownership of one resource reference (the one returned by D3D12MA::CreateResource,
+    // which call sites previously leaked) and of the allocation reference.
+    void DeferredReleaseResource(void* d3d12maAllocation, void* d3d12Resource);
+    void DeferredFreeOffscreenSrv(std::uint32_t descriptorIndex);
+    void DeferredFreeOffscreenRtvBlock(std::uint32_t baseIndex, std::uint32_t count);
+    void DeferredFreeOffscreenDsv(std::uint32_t descriptorIndex);
+
     void* GetDevice() const;
     void* GetCommandList() const;
     void* GetSrvHeap() const;
@@ -131,6 +144,8 @@ private:
     GfxContext() = default;
 
     void WaitForGpu();
+    void ProcessDeferredDestroys(bool flushAll);
+    std::uint64_t DeferredDestroyFenceValue() const;
     void WaitForFenceValue(std::uint64_t fenceValue, bool pumpWindowEvents = true);
     std::uint64_t AllocateNextFenceValue(std::uint64_t frameFenceValue) const;
     void SignalFrameSubmission();

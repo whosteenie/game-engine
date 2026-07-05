@@ -147,6 +147,19 @@ struct GfxContext::Impl
     int ImmediateUploadDepth = 0;
 
     std::uint32_t DrawSrvTableNextIndex = GfxContext::DrawTextureDescriptorStart;
+
+    // CRASH-01/CRASH-03: releases queued until the covering fence value has completed.
+    struct DeferredDestroy
+    {
+        std::uint64_t FenceValue = 0;
+        D3D12MA::Allocation* Allocation = nullptr;
+        ID3D12Resource* Resource = nullptr;
+        std::uint32_t SrvIndex = UINT32_MAX;
+        std::uint32_t RtvBaseIndex = UINT32_MAX;
+        std::uint32_t RtvCount = 0;
+        std::uint32_t DsvIndex = UINT32_MAX;
+    };
+    std::vector<DeferredDestroy> DeferredDestroys;
 };
 
 static void ImGuiAllocSrvDescriptor(
@@ -519,6 +532,8 @@ void GfxContext::Shutdown()
     }
 
     WaitForGpu();
+    // GPU is idle and no further submissions will happen: flush everything unconditionally.
+    ProcessDeferredDestroys(true);
     ReleaseRenderTargets();
 
     for (TransientUploadArena& arena : m_impl->TransientUploadArenas)
@@ -660,6 +675,9 @@ void GfxContext::BeginFrame()
     const std::uint64_t frameWaitFence =
         std::max({frame.FenceValue, m_submissionFenceValue, m_fenceValues[m_frameIndex]});
     WaitForFenceValue(frameWaitFence);
+
+    // Drain deferred destroys whose covering fence has completed (CRASH-01/CRASH-03).
+    ProcessDeferredDestroys(false);
 
     const HRESULT allocatorResetResult = frame.CommandAllocator->Reset();
     if (FAILED(allocatorResetResult))
@@ -1006,6 +1024,130 @@ void GfxContext::FreeOffscreenSrv(std::uint32_t descriptorIndex)
     }
 
     m_impl->SrvAllocator.FreeOne(descriptorIndex);
+}
+
+std::uint64_t GfxContext::DeferredDestroyFenceValue() const
+{
+    // While recording, the next signal (>= m_submissionFenceValue + 1) covers the command list
+    // currently being built; otherwise everything that can reference the resource has already
+    // been submitted and is covered by the last signaled value.
+    return m_frameRecording ? m_submissionFenceValue + 1 : m_submissionFenceValue;
+}
+
+void GfxContext::DeferredReleaseResource(void* d3d12maAllocation, void* d3d12Resource)
+{
+    auto* allocation = static_cast<D3D12MA::Allocation*>(d3d12maAllocation);
+    auto* resource = static_cast<ID3D12Resource*>(d3d12Resource);
+    if (allocation == nullptr && resource == nullptr)
+    {
+        return;
+    }
+
+    if (m_impl == nullptr)
+    {
+        // Context already shut down: nothing can be in flight, release immediately.
+        if (resource != nullptr)
+        {
+            resource->Release();
+        }
+        if (allocation != nullptr)
+        {
+            allocation->Release();
+        }
+        return;
+    }
+
+    Impl::DeferredDestroy entry{};
+    entry.FenceValue = DeferredDestroyFenceValue();
+    entry.Allocation = allocation;
+    entry.Resource = resource;
+    m_impl->DeferredDestroys.push_back(entry);
+}
+
+void GfxContext::DeferredFreeOffscreenSrv(const std::uint32_t descriptorIndex)
+{
+    if (m_impl == nullptr || descriptorIndex == UINT32_MAX)
+    {
+        return;
+    }
+
+    Impl::DeferredDestroy entry{};
+    entry.FenceValue = DeferredDestroyFenceValue();
+    entry.SrvIndex = descriptorIndex;
+    m_impl->DeferredDestroys.push_back(entry);
+}
+
+void GfxContext::DeferredFreeOffscreenRtvBlock(const std::uint32_t baseIndex, const std::uint32_t count)
+{
+    if (m_impl == nullptr || baseIndex == UINT32_MAX || count == 0)
+    {
+        return;
+    }
+
+    Impl::DeferredDestroy entry{};
+    entry.FenceValue = DeferredDestroyFenceValue();
+    entry.RtvBaseIndex = baseIndex;
+    entry.RtvCount = count;
+    m_impl->DeferredDestroys.push_back(entry);
+}
+
+void GfxContext::DeferredFreeOffscreenDsv(const std::uint32_t descriptorIndex)
+{
+    if (m_impl == nullptr || descriptorIndex == UINT32_MAX)
+    {
+        return;
+    }
+
+    Impl::DeferredDestroy entry{};
+    entry.FenceValue = DeferredDestroyFenceValue();
+    entry.DsvIndex = descriptorIndex;
+    m_impl->DeferredDestroys.push_back(entry);
+}
+
+void GfxContext::ProcessDeferredDestroys(const bool flushAll)
+{
+    if (m_impl == nullptr || m_impl->DeferredDestroys.empty())
+    {
+        return;
+    }
+
+    const std::uint64_t completedValue =
+        m_impl->Fence != nullptr ? m_impl->Fence->GetCompletedValue() : 0;
+
+    std::vector<Impl::DeferredDestroy>& pending = m_impl->DeferredDestroys;
+    std::size_t writeIndex = 0;
+    for (std::size_t readIndex = 0; readIndex < pending.size(); ++readIndex)
+    {
+        Impl::DeferredDestroy& entry = pending[readIndex];
+        if (!flushAll && entry.FenceValue > completedValue)
+        {
+            pending[writeIndex++] = entry;
+            continue;
+        }
+
+        if (entry.Resource != nullptr)
+        {
+            entry.Resource->Release();
+        }
+        if (entry.Allocation != nullptr)
+        {
+            entry.Allocation->Release();
+        }
+        if (entry.SrvIndex != UINT32_MAX)
+        {
+            m_impl->SrvAllocator.FreeOne(entry.SrvIndex);
+        }
+        if (entry.RtvBaseIndex != UINT32_MAX && entry.RtvCount > 0)
+        {
+            m_impl->OffscreenRtvAllocator.FreeBlock(entry.RtvBaseIndex, entry.RtvCount);
+        }
+        if (entry.DsvIndex != UINT32_MAX)
+        {
+            m_impl->OffscreenDsvAllocator.FreeOne(entry.DsvIndex);
+        }
+    }
+
+    pending.resize(writeIndex);
 }
 
 void GfxContext::AllocSrvDescriptorForImGui(void* out_cpu_handle, void* out_gpu_handle)
@@ -1465,6 +1607,7 @@ bool GfxContext::IsDeviceRemoved(std::string* outReason) const
 void GfxContext::WaitForGpuIdle()
 {
     WaitForGpu();
+    ProcessDeferredDestroys(false);
 }
 
 void GfxContext::WaitForSwapchainFrames(const bool pumpWindowEvents)

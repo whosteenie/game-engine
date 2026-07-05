@@ -15,12 +15,14 @@ namespace
 
 void DxrGpuResource::Release()
 {
-    if (allocation != nullptr)
+    // CRASH-01: BLAS/TLAS results, scratch, and upload buffers are released on growth mid-frame
+    // while a recording or in-flight command list may still reference them; defer to the fence.
+    if (allocation != nullptr || resource != nullptr)
     {
-        allocation->Release();
-        allocation = nullptr;
+        GfxContext::Get().DeferredReleaseResource(allocation, resource);
     }
 
+    allocation = nullptr;
     resource = nullptr;
     sizeInBytes = 0;
 }

@@ -15,32 +15,29 @@
 
 namespace
 {
-    std::uint64_t AlignConstantBufferSize(const std::uint64_t byteSize)
-    {
-        return (byteSize + 255ull) & ~255ull;
-    }
-
     void DestroyOutputResource(
         ID3D12Resource*& resource,
         D3D12MA::Allocation*& allocation,
         std::uint32_t& srvIndex,
         std::uint32_t& uavIndex)
     {
+        // CRASH-01/CRASH-03: defer release + descriptor recycling until the covering fence
+        // completes; an in-flight or currently recording command list may still reference them.
         if (srvIndex != UINT32_MAX)
         {
-            GfxContext::Get().FreeOffscreenSrv(srvIndex);
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
             srvIndex = UINT32_MAX;
         }
 
         if (uavIndex != UINT32_MAX)
         {
-            GfxContext::Get().FreeOffscreenSrv(uavIndex);
+            GfxContext::Get().DeferredFreeOffscreenSrv(uavIndex);
             uavIndex = UINT32_MAX;
         }
 
-        if (allocation != nullptr)
+        if (allocation != nullptr || resource != nullptr)
         {
-            allocation->Release();
+            GfxContext::Get().DeferredReleaseResource(allocation, resource);
             allocation = nullptr;
         }
 
@@ -110,80 +107,20 @@ void DxrDispatchContext::Release()
         m_tlasSrvIndex = UINT32_MAX;
     }
 
-    if (m_constantBufferAllocation != nullptr)
-    {
-        m_constantBufferAllocation->Release();
-        m_constantBufferAllocation = nullptr;
-    }
-
-    m_constantBufferResource = nullptr;
-
-    if (m_primaryConstantBufferAllocation != nullptr)
-    {
-        m_primaryConstantBufferAllocation->Release();
-        m_primaryConstantBufferAllocation = nullptr;
-    }
-
-    m_primaryConstantBufferResource = nullptr;
 }
 
-bool DxrDispatchContext::EnsureConstantBuffer(std::string& outError)
+// DXR-03: dispatch constants are allocated per dispatch from the per-frame transient upload
+// arena (256-byte aligned). A single persistent CB was previously overwritten by each dispatch,
+// so with Scene View + Game View both dispatching in one frame, the GPU executed *both*
+// DispatchRays with the last-written constants (wrong camera for the first view).
+namespace
 {
-    outError.clear();
-    if (m_constantBufferResource != nullptr)
+    template <typename TConstants>
+    std::uint64_t AllocateDispatchConstants(const TConstants& constants)
     {
-        return true;
-    }
-
-    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
-    if (allocator == nullptr)
-    {
-        outError = "memory allocator unavailable";
-        return false;
-    }
-
-    const std::uint64_t bufferSize = AlignConstantBufferSize(sizeof(DxrRootSignature::DispatchConstants));
-
-    D3D12_RESOURCE_DESC resourceDesc{};
-    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    resourceDesc.Width = bufferSize;
-    resourceDesc.Height = 1;
-    resourceDesc.DepthOrArraySize = 1;
-    resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
-    resourceDesc.SampleDesc.Count = 1;
-    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    D3D12MA::ALLOCATION_DESC allocationDesc{};
-    allocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
-
-    if (FAILED(allocator->CreateResource(
-            &allocationDesc,
-            &resourceDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            &m_constantBufferAllocation,
-            IID_PPV_ARGS(&m_constantBufferResource))))
-    {
-        outError = "failed to allocate DXR dispatch constant buffer";
-        return false;
-    }
-
-    return true;
-}
-
-void DxrDispatchContext::WriteConstantBuffer(const DxrRootSignature::DispatchConstants& constants)
-{
-    if (m_constantBufferResource == nullptr)
-    {
-        return;
-    }
-
-    void* mapped = nullptr;
-    if (SUCCEEDED(m_constantBufferResource->Map(0, nullptr, &mapped)))
-    {
-        std::memcpy(mapped, &constants, sizeof(constants));
-        m_constantBufferResource->Unmap(0, nullptr);
+        const GfxContext::TransientUploadAllocation allocation =
+            GfxContext::Get().AllocateTransientUpload(&constants, sizeof(TConstants));
+        return allocation.gpuAddress;
     }
 }
 
@@ -201,7 +138,7 @@ bool DxrDispatchContext::EnsureOutput(const int width, const int height, std::st
 
     if (m_outputResource != nullptr && m_outputWidth == width && m_outputHeight == height)
     {
-        return EnsureConstantBuffer(outError);
+        return true;
     }
 
     if (m_outputResource != nullptr && GfxContext::Get().IsFrameRecording())
@@ -209,7 +146,7 @@ bool DxrDispatchContext::EnsureOutput(const int width, const int height, std::st
         // Same command list may already reference the current output (e.g. scene view then game view).
         if (m_outputWidth >= width && m_outputHeight >= height)
         {
-            return EnsureConstantBuffer(outError);
+            return true;
         }
 
         RetiredOutput retired{};
@@ -288,7 +225,7 @@ bool DxrDispatchContext::EnsureOutput(const int width, const int height, std::st
     }
 
     CreateOutputDescriptors();
-    return EnsureConstantBuffer(outError);
+    return true;
 }
 
 void DxrDispatchContext::CreateOutputDescriptors()
@@ -411,15 +348,22 @@ bool DxrDispatchContext::DispatchSmoke(
         return false;
     }
 
-    if (m_outputUavIndex == UINT32_MAX || m_constantBufferResource == nullptr)
+    if (m_outputUavIndex == UINT32_MAX)
     {
-        outError = "DXR dispatch output UAV or constant buffer unavailable";
+        outError = "DXR dispatch output UAV unavailable";
         DxrLogErrorOnce("dispatch-smoke-failure", outError);
         DxrBreadcrumbOnce("dispatch-smoke-failure", std::string("dispatch failed: ") + outError);
         return false;
     }
 
-    WriteConstantBuffer(constants);
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate transient DXR dispatch constants";
+        DxrLogErrorOnce("dispatch-smoke-failure", outError);
+        DxrBreadcrumbOnce("dispatch-smoke-failure", std::string("dispatch failed: ") + outError);
+        return false;
+    }
 
     DxrBreadcrumb("dispatch bind + DispatchRays begin");
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
@@ -439,9 +383,7 @@ bool DxrDispatchContext::DispatchSmoke(
 
     commandList->SetPipelineState1(stateObject);
     commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(
-        0,
-        m_constantBufferResource->GetGPUVirtualAddress());
+    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
     D3D12_GPU_DESCRIPTOR_HANDLE srvTableHandle{};
     srvTableHandle.ptr = reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_tlasSrvIndex));
@@ -491,68 +433,6 @@ void DxrDispatchContext::ReleaseRetiredPrimaryOutputs()
     }
 
     m_retiredPrimaryOutputs.clear();
-}
-
-bool DxrDispatchContext::EnsurePrimaryConstantBuffer(std::string& outError)
-{
-    outError.clear();
-    if (m_primaryConstantBufferResource != nullptr)
-    {
-        return true;
-    }
-
-    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
-    if (allocator == nullptr)
-    {
-        outError = "memory allocator unavailable";
-        return false;
-    }
-
-    const std::uint64_t bufferSize =
-        AlignConstantBufferSize(sizeof(DxrRootSignature::PrimaryDispatchConstants));
-
-    D3D12_RESOURCE_DESC resourceDesc{};
-    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    resourceDesc.Width = bufferSize;
-    resourceDesc.Height = 1;
-    resourceDesc.DepthOrArraySize = 1;
-    resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_UNKNOWN;
-    resourceDesc.SampleDesc.Count = 1;
-    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-
-    D3D12MA::ALLOCATION_DESC allocationDesc{};
-    allocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
-
-    if (FAILED(allocator->CreateResource(
-            &allocationDesc,
-            &resourceDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            &m_primaryConstantBufferAllocation,
-            IID_PPV_ARGS(&m_primaryConstantBufferResource))))
-    {
-        outError = "failed to allocate DXR primary debug constant buffer";
-        return false;
-    }
-
-    return true;
-}
-
-void DxrDispatchContext::WritePrimaryConstantBuffer(
-    const DxrRootSignature::PrimaryDispatchConstants& constants)
-{
-    if (m_primaryConstantBufferResource == nullptr)
-    {
-        return;
-    }
-
-    void* mapped = nullptr;
-    if (SUCCEEDED(m_primaryConstantBufferResource->Map(0, nullptr, &mapped)))
-    {
-        std::memcpy(mapped, &constants, sizeof(constants));
-        m_primaryConstantBufferResource->Unmap(0, nullptr);
-    }
 }
 
 void DxrDispatchContext::CreatePrimaryOutputDescriptors()
@@ -620,7 +500,7 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
 
     if (m_primaryOutputResource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
-        return EnsurePrimaryConstantBuffer(outError);
+        return true;
     }
 
     if (m_primaryOutputResource != nullptr)
@@ -735,7 +615,7 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     }
 
     CreatePrimaryOutputDescriptors();
-    return EnsurePrimaryConstantBuffer(outError);
+    return true;
 }
 
 std::uint32_t DxrDispatchContext::DepthSrvIndexFromCpuHandle(
@@ -798,7 +678,12 @@ bool DxrDispatchContext::DispatchPrimaryDebug(
         return false;
     }
 
-    WritePrimaryConstantBuffer(constants);
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate transient DXR primary debug constants";
+        return false;
+    }
 
     commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 
@@ -828,9 +713,7 @@ bool DxrDispatchContext::DispatchPrimaryDebug(
 
     commandList->SetPipelineState1(stateObject);
     commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(
-        0,
-        m_primaryConstantBufferResource->GetGPUVirtualAddress());
+    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
     const std::uint32_t srvIndices[5] = {
         m_tlasSrvIndex,

@@ -168,43 +168,35 @@ void Framebuffer::Destroy()
 
 
 
+    // CRASH-01: a framebuffer can be resized/destroyed while a recorded-but-unsubmitted (or
+    // in-flight) command list still references its textures and descriptor slots. All releases
+    // and descriptor-slot frees are deferred until the covering fence completes.
     for (int attachmentIndex = 0; attachmentIndex < MaxColorAttachments; ++attachmentIndex)
-
     {
-
         if (m_colorSrvIndices[attachmentIndex] != UINT32_MAX)
-
         {
-
-            GfxContext::Get().FreeOffscreenSrv(m_colorSrvIndices[attachmentIndex]);
-
+            GfxContext::Get().DeferredFreeOffscreenSrv(m_colorSrvIndices[attachmentIndex]);
             m_colorSrvIndices[attachmentIndex] = UINT32_MAX;
-
         }
 
-
-
-        if (m_colorAllocations[attachmentIndex] != nullptr)
-
+        if (m_colorAllocations[attachmentIndex] != nullptr || m_colorResources[attachmentIndex] != nullptr)
         {
-
-            static_cast<D3D12MA::Allocation*>(m_colorAllocations[attachmentIndex])->Release();
-
+            GfxContext::Get().DeferredReleaseResource(
+                m_colorAllocations[attachmentIndex],
+                m_colorResources[attachmentIndex]);
             m_colorAllocations[attachmentIndex] = nullptr;
-
         }
-
-
 
         m_colorResources[attachmentIndex] = nullptr;
-
     }
 
     for (int attachmentIndex = 0; attachmentIndex < MaxColorAttachments; ++attachmentIndex)
     {
-        if (m_msaaColorAllocations[attachmentIndex] != nullptr)
+        if (m_msaaColorAllocations[attachmentIndex] != nullptr || m_msaaColorResources[attachmentIndex] != nullptr)
         {
-            static_cast<D3D12MA::Allocation*>(m_msaaColorAllocations[attachmentIndex])->Release();
+            GfxContext::Get().DeferredReleaseResource(
+                m_msaaColorAllocations[attachmentIndex],
+                m_msaaColorResources[attachmentIndex]);
             m_msaaColorAllocations[attachmentIndex] = nullptr;
         }
 
@@ -212,9 +204,9 @@ void Framebuffer::Destroy()
         m_msaaColorStates[attachmentIndex] = 0;
     }
 
-    if (m_msaaDepthAllocation != nullptr)
+    if (m_msaaDepthAllocation != nullptr || m_msaaDepthResource != nullptr)
     {
-        static_cast<D3D12MA::Allocation*>(m_msaaDepthAllocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(m_msaaDepthAllocation, m_msaaDepthResource);
         m_msaaDepthAllocation = nullptr;
     }
 
@@ -223,7 +215,7 @@ void Framebuffer::Destroy()
 
     if (m_msaaRtvBaseIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenRtvBlock(
+        GfxContext::Get().DeferredFreeOffscreenRtvBlock(
             m_msaaRtvBaseIndex,
             static_cast<std::uint32_t>(m_colorAttachmentCount));
         m_msaaRtvBaseIndex = UINT32_MAX;
@@ -231,66 +223,40 @@ void Framebuffer::Destroy()
 
     if (m_msaaDsvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenDsv(m_msaaDsvIndex);
+        GfxContext::Get().DeferredFreeOffscreenDsv(m_msaaDsvIndex);
         m_msaaDsvIndex = UINT32_MAX;
     }
 
-
-
     if (m_depthSrvIndex != UINT32_MAX)
-
     {
-
-        GfxContext::Get().FreeOffscreenSrv(m_depthSrvIndex);
-
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_depthSrvIndex);
         m_depthSrvIndex = UINT32_MAX;
-
     }
 
     if (m_msaaDepthSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_msaaDepthSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_msaaDepthSrvIndex);
         m_msaaDepthSrvIndex = UINT32_MAX;
     }
 
-
-
-    if (m_depthAllocation != nullptr)
-
+    if (m_depthAllocation != nullptr || m_depthResource != nullptr)
     {
-
-        static_cast<D3D12MA::Allocation*>(m_depthAllocation)->Release();
-
+        GfxContext::Get().DeferredReleaseResource(m_depthAllocation, m_depthResource);
         m_depthAllocation = nullptr;
-
     }
-
-
 
     m_depthResource = nullptr;
 
-
-
     if (m_rtvBaseIndex != UINT32_MAX)
-
     {
-
-        GfxContext::Get().FreeOffscreenRtvBlock(m_rtvBaseIndex, m_resolvedRtvCount);
-
+        GfxContext::Get().DeferredFreeOffscreenRtvBlock(m_rtvBaseIndex, m_resolvedRtvCount);
         m_rtvBaseIndex = UINT32_MAX;
-
     }
 
-
-
     if (m_dsvIndex != UINT32_MAX)
-
     {
-
-        GfxContext::Get().FreeOffscreenDsv(m_dsvIndex);
-
+        GfxContext::Get().DeferredFreeOffscreenDsv(m_dsvIndex);
         m_dsvIndex = UINT32_MAX;
-
     }
 
 

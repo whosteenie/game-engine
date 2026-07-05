@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <glm/glm.hpp>
 #include <string>
 #include <unordered_map>
@@ -8,10 +9,26 @@
 struct ID3D12PipelineState;
 struct ID3D12RootSignature;
 
+// Per-shader static-sampler overrides for the shared root signature (SSR-07 / REF-04).
+// The default sampler table is built from the *material* texture filter settings with WRAP
+// addressing on s4-s7 — correct for mesh materials, wrong for post-process passes that read
+// depth/normal/velocity G-buffers or LUTs. Passes opt in to explicit sampler behavior here
+// instead of relying on shader-filename sniffing.
+struct ShaderSamplerOverrides
+{
+    // Bit N forces sampler register sN to point filtering (depth, normals, velocity,
+    // variance — anything where bilinear blending across texels produces invalid values).
+    std::uint32_t pointSampleRegisterMask = 0;
+    // Forces CLAMP addressing on every register (post-process reads must not wrap across
+    // screen or LUT edges).
+    bool clampAllRegisters = false;
+};
+
 class Shader
 {
 public:
     Shader(const char* vertexPath, const char* fragmentPath);
+    Shader(const char* vertexPath, const char* fragmentPath, const ShaderSamplerOverrides& samplerOverrides);
     ~Shader();
 
     Shader(const Shader&) = delete;
@@ -91,5 +108,6 @@ private:
     void* m_vertexShader = nullptr;
     void* m_pixelShader = nullptr;
     std::vector<std::uintptr_t> m_textureSlots;
+    ShaderSamplerOverrides m_samplerOverrides{};
     bool m_isLinked = false;
 };

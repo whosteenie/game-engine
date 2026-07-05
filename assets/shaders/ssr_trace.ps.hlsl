@@ -37,7 +37,7 @@ struct PSInput
 static const int kMaxSamples = 8;
 static const int kRefineSteps = 6;
 static const float kMaxSsrRadiance = 32.0;
-static const float kMaxReflectionSpread = 0.14;
+static const float kPi = 3.14159265;
 
 float Hash21(float2 p)
 {
@@ -94,20 +94,43 @@ void BuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent)
     bitangent = cross(normal, tangent);
 }
 
-float3 PerturbReflection(float3 reflectDir, float3 viewNormal, float roughness, float2 xi, float spreadScale)
+// SSR-05: GGX NDF importance sampling of the half-vector, replacing the previous ad-hoc
+// square-disk perturbation (which capped the lobe at a fixed spread and shrank it with
+// rsqrt(sampleCount), biasing the result by the quality setting). Averaging trace hits from
+// GGX-sampled directions is the standard prefiltered-importance-sampling approximation.
+float3 SampleGgxHalfVector(float3 viewNormal, float roughness, float2 xi)
 {
-    const float spread = kMaxReflectionSpread * roughness * roughness * spreadScale;
-    if (spread <= 1e-5)
-    {
-        return reflectDir;
-    }
+    const float alpha = max(roughness * roughness, 1e-3);
+    const float phi = 2.0 * kPi * xi.x;
+    const float cosTheta = sqrt(saturate((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y)));
+    const float sinTheta = sqrt(saturate(1.0 - cosTheta * cosTheta));
 
     float3 tangent;
     float3 bitangent;
     BuildTangentFrame(viewNormal, tangent, bitangent);
 
-    const float2 disk = (xi * 2.0 - 1.0) * spread;
-    return normalize(reflectDir + tangent * disk.x + bitangent * disk.y);
+    return normalize(
+        tangent * (sinTheta * cos(phi))
+        + bitangent * (sinTheta * sin(phi))
+        + viewNormal * cosTheta);
+}
+
+float3 SampleReflectionDirection(float3 viewVec, float3 baseRayDir, float3 viewNormal, float roughness, float2 xi)
+{
+    if (roughness <= 0.03)
+    {
+        return baseRayDir;
+    }
+
+    const float3 halfVector = SampleGgxHalfVector(viewNormal, roughness, xi);
+    const float3 rayDir = reflect(viewVec, halfVector);
+    // Reject directions sampled below the surface; fall back to the mirror direction.
+    if (dot(rayDir, viewNormal) <= 1e-4)
+    {
+        return baseRayDir;
+    }
+
+    return normalize(rayDir);
 }
 
 float RayDistanceForBoundary(int stepBoundary, int stepCount, float maxDist, float exponent)
@@ -373,7 +396,7 @@ float4 main(PSInput input) : SV_Target
     const float stepExponent = max(uStepExponent, 1.05);
     const int sampleCount = clamp(uSampleCount, 1, kMaxSamples);
     const float frameJitter = uFrameIndex + InterleavedGradientNoise(input.position.xy + 0.5) * 13.0;
-    const float spreadScale = rsqrt((float)sampleCount);
+    const float3 viewVec = -viewDir; // camera->surface, incident direction for reflect()
 
     float3 radianceSum = 0.0.xxx;
     float confidenceWeightSum = 0.0;
@@ -390,7 +413,7 @@ float4 main(PSInput input) : SV_Target
         const float sampleSeed = (float)sampleIndex + 1.0;
         const float2 reflectXi = Hash22(
             uv + float2(frameJitter * 0.017 + sampleSeed * 2.71, frameJitter * 0.031 + sampleSeed * 5.13));
-        const float3 rayDir = PerturbReflection(baseRayDir, viewNormal, roughness, reflectXi, spreadScale);
+        const float3 rayDir = SampleReflectionDirection(viewVec, baseRayDir, viewNormal, roughness, reflectXi);
 
         float3 hitRadiance;
         float hitConfidence;

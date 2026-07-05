@@ -484,15 +484,24 @@ namespace
 
 ScreenSpaceEffects::ScreenSpaceEffects()
     : m_sceneFramebuffer(std::make_unique<Framebuffer>()),
+      // SSR-07 rollout: depth/normal/velocity registers point-sampled in every screen-space
+      // pass (bilinear depth at silhouettes produced streaks/halos). Address modes preserved
+      // where a pass relies on them (SSAO noise tiling keeps its defaults).
       m_ssaoShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsaoFragmentShader)),
+          EngineConstants::SsaoFragmentShader,
+          // s0 = depth, s1 = normals; s2 (tiled noise) keeps default addressing
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1), false})),
       m_gtaoShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::GtaoFragmentShader)),
+          EngineConstants::GtaoFragmentShader,
+          // s0 = depth, s1 = normals
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
       m_blurShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsaoBlurFragmentShader)),
+          EngineConstants::SsaoBlurFragmentShader,
+          // s1 = depth, s2 = normals; s0 (AO input) stays linear
+          ShaderSamplerOverrides{(1u << 1) | (1u << 2), true})),
       m_compositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::ScreenCompositeFragmentShader)),
@@ -519,7 +528,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::DownsampleFragmentShader)),
       m_taaShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::TaaFragmentShader)),
+          EngineConstants::TaaFragmentShader,
+          // s2 = depth, s3 = velocity; s0/s1 (color/history) stay linear
+          ShaderSamplerOverrides{(1u << 2) | (1u << 3), true})),
       m_smaaEdgeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SmaaEdgeFragmentShader)),
@@ -555,25 +566,38 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::GiTemporalDebugFragmentShader)),
       m_ssgiNoiseInjectShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsgiNoiseInjectFragmentShader)),
+          EngineConstants::SsgiNoiseInjectFragmentShader,
+          // s1 = depth; s0 (radiance) stays linear
+          ShaderSamplerOverrides{(1u << 1), true})),
       m_ssgiDenoiseSpatialShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsgiDenoiseSpatialFragmentShader)),
+          EngineConstants::SsgiDenoiseSpatialFragmentShader,
+          // s1 = depth, s2 = normals, s3 = material0; s0 (input) stays linear
+          ShaderSamplerOverrides{(1u << 1) | (1u << 2) | (1u << 3), true})),
       m_ssgiDenoiseDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsgiDenoiseDebugFragmentShader)),
       m_ssgiTraceShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsgiTraceFragmentShader)),
+          EngineConstants::SsgiTraceFragmentShader,
+          // s0 = depth, s1 = normals, s2/s3 = materials; s4 (radiance) stays linear but clamps
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2) | (1u << 3), true})),
+      // SSR-07: SSR passes opt in to explicit samplers. pointSampleRegisterMask bits follow
+      // each shader's register(sN) declarations; clampAllRegisters stops the default WRAP on
+      // s4-s7 from wrapping G-buffer/LUT reads across screen edges.
       m_ssrSceneColorShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrSceneColorFragmentShader)),
+          EngineConstants::SsrSceneColorFragmentShader,
+          // s2 = depth
+          ShaderSamplerOverrides{(1u << 2), true})),
       m_ssrDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsrDebugFragmentShader)),
       m_ssrTraceShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrTraceFragmentShader)),
+          EngineConstants::SsrTraceFragmentShader,
+          // s0 = depth, s1 = normals, s2 = material0; s3 (scene color) stays linear
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true})),
       m_ssrTraceDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::SsrTraceDebugFragmentShader)),
@@ -582,19 +606,31 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::SsrDenoiseDebugFragmentShader)),
       m_ssrSvgfTemporalShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrSvgfTemporalFragmentShader)),
+          EngineConstants::SsrSvgfTemporalFragmentShader,
+          // s2 = velocity, s3 = depth, s4 = normals, s5 = history depth;
+          // s0/s1 (color/history) stay linear
+          ShaderSamplerOverrides{(1u << 2) | (1u << 3) | (1u << 4) | (1u << 5), true})),
       m_ssrSvgfVarianceTemporalShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrSvgfVarianceTemporalFragmentShader)),
+          EngineConstants::SsrSvgfVarianceTemporalFragmentShader,
+          // s3 = velocity, s4 = depth
+          ShaderSamplerOverrides{(1u << 3) | (1u << 4), true})),
       m_ssrSvgfAtrousShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrSvgfAtrousFragmentShader)),
+          EngineConstants::SsrSvgfAtrousFragmentShader,
+          // s1 = variance, s2 = depth, s3 = normals, s4 = material0
+          ShaderSamplerOverrides{(1u << 1) | (1u << 2) | (1u << 3) | (1u << 4), true})),
       m_ssrUpscaleShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrUpscaleFragmentShader)),
+          EngineConstants::SsrUpscaleFragmentShader,
+          // s1 = depth, s2 = normals, s3 = material0; s0 (trace color) stays linear
+          ShaderSamplerOverrides{(1u << 1) | (1u << 2) | (1u << 3), true})),
       m_ssrIndirectShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SsrIndirectFragmentShader))
+          EngineConstants::SsrIndirectFragmentShader,
+          // s2 = depth, s3 = normals, s4/s5 = materials; s6 (prefilter cube) and
+          // s7 (BRDF LUT) stay linear but now CLAMP instead of wrapping at grazing angles
+          ShaderSamplerOverrides{(1u << 2) | (1u << 3) | (1u << 4) | (1u << 5), true}))
 {
     SceneRenderTrace::Section initSection("sse-init");
     {
@@ -757,21 +793,24 @@ void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
         return;
     }
 
+    // CRASH-01: targets can be destroyed mid-frame (e.g. Resize between Scene View and Game
+    // View renders) while the current command list already references them. Defer the release
+    // and the descriptor-slot recycling until the covering fence has completed.
     if (target.srvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(target.srvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(target.srvIndex);
         target.srvIndex = UINT32_MAX;
     }
 
     if (target.rtvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenRtvBlock(target.rtvIndex, 1);
+        GfxContext::Get().DeferredFreeOffscreenRtvBlock(target.rtvIndex, 1);
         target.rtvIndex = UINT32_MAX;
     }
 
-    if (target.allocation != nullptr)
+    if (target.allocation != nullptr || target.resource != nullptr)
     {
-        static_cast<D3D12MA::Allocation*>(target.allocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(target.allocation, target.resource);
         target.allocation = nullptr;
     }
 
@@ -1021,6 +1060,8 @@ void ScreenSpaceEffects::ResizeBloomTargets(const int width, const int height)
     ResizeInternalTarget(m_bloomBlur2Target, bloomWidth, bloomHeight, format);
     ResizeInternalTarget(m_bloomHistoryTarget, bloomWidth, bloomHeight, format);
     ResizeInternalTarget(m_bloomTemporalTarget, bloomWidth, bloomHeight, format);
+    // Targets were recreated: last frame's bloom SRV handle is stale.
+    m_prevFrameBloomSrv = 0;
 }
 
 void ScreenSpaceEffects::ResizeLdrTonemapTarget(const int width, const int height)
@@ -1067,6 +1108,7 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_giPrevViewProjection = glm::mat4(1.0f);
     m_ssrHistoryValid = false;
     m_ssrFrameIndex = 0;
+    m_prevFrameBloomSrv = 0;
 }
 
 void ScreenSpaceEffects::ResetTaaHistory() const
@@ -1763,16 +1805,33 @@ void ScreenSpaceEffects::Apply(
     if (runSsrSceneColorAssembly)
     {
         SceneRenderTrace::Scope ssrSceneColorScope("ssr scene color");
+        // Bloom halos in reflections: use LAST frame's bloom output (bloom runs after SSR).
+        // m_prevFrameBloomSrv is reset whenever bloom targets are recreated, so a zero value
+        // means "no valid bloom yet" and disables the term.
+        const bool useBloomInReflections =
+            m_bloomEnabled && m_prevFrameBloomSrv != 0;
         m_ssrSceneColorShader->Use(false);
         m_ssrSceneColorShader->SetInt("uDirectLighting", 0);
         m_ssrSceneColorShader->SetInt("uSunShadowMap", 1);
         m_ssrSceneColorShader->SetInt("uDepthMap", 2);
+        m_ssrSceneColorShader->SetInt("uIndirectLighting", 3);
+        m_ssrSceneColorShader->SetInt("uPrevBloom", 4);
         m_ssrSceneColorShader->SetInt(
             "uUseShadowFactor",
             useShadowFactorComposite ? 1 : 0);
+        // SSR-11: reflect indirect/ambient too (RT1 is same-frame data at this point).
+        m_ssrSceneColorShader->SetInt("uUseIndirect", 1);
+        m_ssrSceneColorShader->SetFloat(
+            "uBloomIntensity",
+            useBloomInReflections ? m_bloomIntensity : 0.0f);
         m_ssrSceneColorShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_ssrSceneColorShader->BindTextureSlot(1, shadowFactorSrv);
         m_ssrSceneColorShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_ssrSceneColorShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_ssrSceneColorShader->BindTextureSlot(
+            4,
+            useBloomInReflections ? m_prevFrameBloomSrv
+                                  : m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         DrawFullscreenToTarget(
             *m_ssrSceneColorShader,
             const_cast<InternalTarget&>(m_ssrSceneColorTarget),
@@ -1818,11 +1877,14 @@ void ScreenSpaceEffects::Apply(
         m_ssrTraceShader->SetFloat("uFrameIndex", static_cast<float>(m_ssrFrameIndex));
         m_ssrTraceShader->SetFloat("uStepExponent", m_ssrStepExponent);
         m_ssrTraceShader->SetInt("uSampleCount", m_ssrSampleCount);
+        // SSR-08: the trace target and its scene-color input run at trace resolution
+        // (m_ssrTraceResolutionScale), so the manual bilinear/edge-penalty footprints in
+        // ssr_trace.ps.hlsl need the trace-res texel size, not the full render-res one.
         m_ssrTraceShader->SetVec2(
             "uTexelSize",
             glm::vec2(
-                1.0f / static_cast<float>(m_width),
-                1.0f / static_cast<float>(m_height)));
+                1.0f / static_cast<float>(std::max(m_ssrTraceTarget.width, 1)),
+                1.0f / static_cast<float>(std::max(m_ssrTraceTarget.height, 1))));
         m_ssrTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_ssrTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
         m_ssrTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
@@ -1869,13 +1931,23 @@ void ScreenSpaceEffects::Apply(
         if (runSsrTemporal && useMotionVectors)
         {
             SceneRenderTrace::Scope ssrTemporalScope("ssr svgf temporal color");
+            const glm::mat4 viewMatrix = camera.GetViewMatrix();
+            const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+            const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
+            const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
+                ? m_motionVectorFrameState.prevViewProjection
+                : unjitteredProjection * viewMatrix;
+
             m_ssrSvgfTemporalShader->Use(false);
             m_ssrSvgfTemporalShader->SetInt("uCurrentTrace", 0);
             m_ssrSvgfTemporalShader->SetInt("uHistoryTrace", 1);
             m_ssrSvgfTemporalShader->SetInt("uVelocity", 2);
             m_ssrSvgfTemporalShader->SetInt("uDepth", 3);
             m_ssrSvgfTemporalShader->SetInt("uNormalMap", 4);
+            m_ssrSvgfTemporalShader->SetInt("uHistoryDepth", 5);
             m_ssrSvgfTemporalShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+            m_ssrSvgfTemporalShader->SetMat4("uInvViewProj", invViewProjCurr);
+            m_ssrSvgfTemporalShader->SetMat4("uPrevViewProj", prevViewProj);
             m_ssrSvgfTemporalShader->SetFloat("uBlendFactor", m_ssrTemporalBlendFactor);
             m_ssrSvgfTemporalShader->SetFloat("uSameUvBlendFactor", m_ssrSameUvBlendFactor);
             m_ssrSvgfTemporalShader->SetFloat("uHistoryValid", m_ssrHistoryValid ? 1.0f : 0.0f);
@@ -1887,9 +1959,24 @@ void ScreenSpaceEffects::Apply(
             m_ssrSvgfTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
             m_ssrSvgfTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
             m_ssrSvgfTemporalShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_ssrSvgfTemporalShader->BindTextureSlot(5, m_ssrHistoryDepthTarget.srvCpuHandle);
             DrawFullscreenToTarget(
                 *m_ssrSvgfTemporalShader,
                 const_cast<InternalTarget&>(m_ssrTemporalTarget),
+                m_ssrTraceTarget.width,
+                m_ssrTraceTarget.height,
+                temporalClear);
+
+            // SSR-06 follow-up: maintain the depth history in the motion-vector path too
+            // (previously only the fallback path wrote it, so the MV path had nothing valid
+            // to test disocclusion against). Runs AFTER the temporal draw so the pass above
+            // reads last frame's depth before it is overwritten with this frame's.
+            m_giDepthHistoryShader->Use(false);
+            m_giDepthHistoryShader->SetInt("uDepth", 0);
+            m_giDepthHistoryShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+            DrawFullscreenToTarget(
+                *m_giDepthHistoryShader,
+                const_cast<InternalTarget&>(m_ssrHistoryDepthTarget),
                 m_ssrTraceTarget.width,
                 m_ssrTraceTarget.height,
                 temporalClear);
@@ -2600,6 +2687,12 @@ void ScreenSpaceEffects::Apply(
         }
 
         bloomSection.Success();
+        // Remember this frame's final bloom for next frame's ssr_scene_color (halo term).
+        const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = bloomSrv;
+    }
+    else
+    {
+        const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = 0;
     }
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);

@@ -67,10 +67,6 @@ public:
     ID3D12Resource* GetOutputResource() const { return m_outputResource; }
 
 private:
-    bool EnsureConstantBuffer(std::string& outError);
-    bool EnsurePrimaryConstantBuffer(std::string& outError);
-    void WriteConstantBuffer(const DxrRootSignature::DispatchConstants& constants);
-    void WritePrimaryConstantBuffer(const DxrRootSignature::PrimaryDispatchConstants& constants);
     bool CreateTlasSrv(
         ID3D12Resource* tlasResource,
         std::uint64_t tlasGpuVirtualAddress,
@@ -92,8 +88,6 @@ private:
 
     ID3D12Resource* m_outputResource = nullptr;
     D3D12MA::Allocation* m_outputAllocation = nullptr;
-    ID3D12Resource* m_constantBufferResource = nullptr;
-    D3D12MA::Allocation* m_constantBufferAllocation = nullptr;
 
     std::uint32_t m_tlasSrvIndex = UINT32_MAX;
     std::uint32_t m_outputUavIndex = UINT32_MAX;
@@ -109,8 +103,6 @@ private:
     D3D12MA::Allocation* m_primaryOutputAllocation = nullptr;
     ID3D12Resource* m_primaryMetadataResource = nullptr;
     D3D12MA::Allocation* m_primaryMetadataAllocation = nullptr;
-    ID3D12Resource* m_primaryConstantBufferResource = nullptr;
-    D3D12MA::Allocation* m_primaryConstantBufferAllocation = nullptr;
 
     std::uint32_t m_primaryOutputUavIndex = UINT32_MAX;
     std::uint32_t m_primaryOutputSrvIndex = UINT32_MAX;

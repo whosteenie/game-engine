@@ -264,17 +264,19 @@ void GpuBuffer::CreateUpload(const Type type, const void* data, const std::uint3
 
 void GpuBuffer::Destroy()
 {
-    if (m_uploadAllocation != nullptr)
+    // CRASH-01: mesh buffers can be destroyed (object deleted, mesh reimported) while a
+    // recording or in-flight command list still references them; defer to the fence.
+    if (m_uploadAllocation != nullptr || m_uploadResource != nullptr)
     {
-        static_cast<D3D12MA::Allocation*>(m_uploadAllocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(m_uploadAllocation, m_uploadResource);
         m_uploadAllocation = nullptr;
     }
 
     m_uploadResource = nullptr;
 
-    if (m_allocation != nullptr)
+    if (m_allocation != nullptr || m_resource != nullptr)
     {
-        static_cast<D3D12MA::Allocation*>(m_allocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(m_allocation, m_resource);
         m_allocation = nullptr;
     }
 

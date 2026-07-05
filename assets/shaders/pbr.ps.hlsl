@@ -789,18 +789,15 @@ PSOutput main(PSInput input)
     float3 irradiance = EvaluateDiffuseIrradianceSh(normal);
     float3 diffuseIbl = irradiance * albedo / PI;
 
-    float sunGeomFacing = 1.0;
-    if (uShadowLightIndex >= 0 && uLightTypes[uShadowLightIndex] == LIGHT_TYPE_DIRECTIONAL)
-    {
-        sunGeomFacing = max(dot(geomNormalNorm, normalize(uLightDirections[uShadowLightIndex].xyz)), 0.0);
-    }
-
     float3 reflection = reflect(-viewDir, normal);
     float3 prefilteredColor = uPrefilterMap.SampleLevel(uPrefilterSampler, reflection, roughness * uMaxReflectionLod).rgb;
     float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(max(dot(normal, viewDir), 0.0), roughness)).rg;
-    float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
+    // SSR-03: env specular IBL must NOT be gated by sun facing; image-based reflections
+    // do not depend on the shadow light's direction, and the gate made the SSR composite's
+    // spec-IBL reconstruction (ssr_indirect.ps.hlsl) impossible to match.
+    float3 specularIbl = prefilteredColor * (f0 * envBrdf.x + envBrdf.y);
 
-    // Indirect: clamp mapped roughness for Fresnel stability; spec IBL gated by geom sun-facing.
+    // Indirect: clamp mapped roughness for Fresnel stability.
     // Do not boost diffuse IBL on back faces — that removes the direct/indirect terminator.
     float nDotVGeom = max(dot(geomNormalNorm, viewDir), 0.0);
     float roughnessForIndirectEnergy = max(roughness, 0.55);
@@ -979,7 +976,7 @@ PSOutput main(PSInput input)
                 uPrefilterSampler, reflectionDebug, roughness * uMaxReflectionLod).rgb;
             float2 envBrdf = uBrdfLut.Sample(
                 uBrdfLutSampler, float2(max(dot(worldNormal, viewDir), 0.0), roughness)).rg;
-            float3 specularOnly = prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * sunGeomFacing;
+            float3 specularOnly = prefilteredColor * (f0 * envBrdf.x + envBrdf.y);
             debugColor = specularOnly / (specularOnly + 0.25.xxx);
         }
         else if (uDebugMode == 13)
@@ -1114,7 +1111,9 @@ PSOutput main(PSInput input)
         output.oDirect = float4(debugColor, 1.0);
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
         output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
-        output.oNormal = float4(normalize(geomNormal), 1.0);
+        // SSR-02: shading normal (normal-mapped) so the SSR composite's spec-IBL recompute
+        // matches the lighting above and traces pick up normal-map detail.
+        output.oNormal = float4(normalize(normal), 1.0);
         output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
         WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
         return output;
@@ -1125,7 +1124,9 @@ PSOutput main(PSInput input)
         output.oDirect = float4(directFillUnshadowed + emissiveLinear, 1.0);
         output.oIndirect = float4(ambient, 1.0);
         output.oSunShadow = float4(directSunUnshadowed, shadowFactor);
-        output.oNormal = float4(normalize(geomNormal), 1.0);
+        // SSR-02: shading normal (normal-mapped) so the SSR composite's spec-IBL recompute
+        // matches the lighting above and traces pick up normal-map detail.
+        output.oNormal = float4(normalize(normal), 1.0);
         output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
         WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
         return output;
@@ -1142,7 +1143,9 @@ PSOutput main(PSInput input)
         output.oIndirect = float4(0.0, 0.0, 0.0, 0.0);
     }
     output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
-    output.oNormal = float4(normalize(geomNormal), 1.0);
+    // SSR-02: shading normal (normal-mapped) so the SSR composite's spec-IBL recompute
+    // matches the lighting above and traces pick up normal-map detail.
+    output.oNormal = float4(normalize(normal), 1.0);
     output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
     WriteGBufferMaterials(output, albedo, roughness, metallic, emissiveLinear);
     return output;

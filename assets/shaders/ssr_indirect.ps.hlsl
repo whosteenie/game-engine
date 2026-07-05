@@ -44,30 +44,37 @@ float3 FresnelSchlickRoughness(float cosineTheta, float3 f0, float roughness)
     return f0 + (maxReflection - f0) * pow(saturate(1.0 - cosineTheta), 5.0);
 }
 
+// Returns the direction from the surface toward the camera (V in BRDF convention).
+// SSR-01: this previously returned the camera->surface direction, which clamped nDotV to 0
+// (BRDF LUT permanently sampled at grazing) and negated the reflection vector below.
 float3 ViewDirectionWorld(float2 texCoord)
 {
     const float2 clipXY = DepthUvToClipXY(texCoord);
     float4 viewFar = mul(uInvProjection, float4(clipXY, 1.0, 1.0));
-    const float3 viewDir = normalize(viewFar.xyz / viewFar.w);
-    return normalize(mul((float3x3)uInvView, viewDir));
+    const float3 towardScene = normalize(viewFar.xyz / viewFar.w);
+    return -normalize(mul((float3x3)uInvView, towardScene));
+}
+
+// Split-sum environment BRDF term (f0 * A + B). Shared by the recomputed spec IBL and the
+// SSR radiance weighting (SSR-04) so replacing one with the other conserves energy.
+float3 EnvironmentBrdf(float3 f0, float nDotV, float roughness)
+{
+    const float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(nDotV, roughness)).rg;
+    return f0 * envBrdf.x + envBrdf.y;
 }
 
 float3 RecomputeSpecularIbl(
     float3 worldNormal,
     float3 viewDir,
-    float3 albedo,
-    float roughness,
-    float metallic)
+    float3 environmentBrdf,
+    float roughness)
 {
-    const float3 f0 = lerp(0.04.xxx, albedo, metallic);
     const float3 reflection = reflect(-viewDir, worldNormal);
     const float3 prefilteredColor = uPrefilterMap.SampleLevel(
         uPrefilterSampler,
         reflection,
         roughness * uMaxReflectionLod).rgb;
-    const float nDotV = max(dot(worldNormal, viewDir), 0.0);
-    const float2 envBrdf = uBrdfLut.Sample(uBrdfLutSampler, float2(nDotV, roughness)).rg;
-    return prefilteredColor * (f0 * envBrdf.x + envBrdf.y) * uEnvironmentIntensity;
+    return prefilteredColor * environmentBrdf * uEnvironmentIntensity;
 }
 
 float4 main(PSInput input) : SV_Target
@@ -89,15 +96,24 @@ float4 main(PSInput input) : SV_Target
     const float metallic = material1.r;
 
     const float3 viewDir = ViewDirectionWorld(uv);
-    const float3 specIbl = RecomputeSpecularIbl(worldNormal, viewDir, albedo, roughness, metallic);
-    const float smoothnessWeight = pow(saturate(1.0 - roughness), 2.0);
-    const float replacementWeight = saturate(ssr.a * smoothnessWeight * uSsrStrength);
+    const float3 f0 = lerp(0.04.xxx, albedo, metallic);
+    const float nDotV = max(dot(worldNormal, viewDir), 0.0);
+    const float3 environmentBrdf = EnvironmentBrdf(f0, nDotV, roughness);
+    const float3 specIbl = RecomputeSpecularIbl(worldNormal, viewDir, environmentBrdf, roughness);
+
+    // SSR-05: the trace output alpha already carries the roughness fade (SpecularTraceWeight);
+    // the old extra (1-roughness)^2 here double-faded rough receivers to nearly nothing.
+    const float replacementWeight = saturate(ssr.a * uSsrStrength);
 
     if (uDebugSpecReplacement != 0)
     {
         return float4(replacementWeight.xxx, 1.0);
     }
 
-    const float3 specFinal = lerp(specIbl, ssr.rgb, replacementWeight);
-    return float4(indirect - specIbl + specFinal, 1.0);
+    // SSR-04: traced radiance must be weighted by the same split-sum BRDF as the IBL it
+    // replaces — otherwise dielectrics get mirror-strength reflections (no Fresnel) and
+    // metals lose their F0 tint.
+    const float3 ssrSpecular = ssr.rgb * environmentBrdf;
+    const float3 specFinal = lerp(specIbl, ssrSpecular, replacementWeight);
+    return float4(max(indirect - specIbl + specFinal, 0.0.xxx), 1.0);
 }

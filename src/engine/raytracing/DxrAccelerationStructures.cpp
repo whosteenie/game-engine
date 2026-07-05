@@ -28,21 +28,22 @@ DxrAccelerationStructures::~DxrAccelerationStructures()
 
 void DxrAccelerationStructures::ReleaseGeometryBuffers()
 {
+    // CRASH-03: defer descriptor-slot recycling — in-flight rays may still read these.
     if (m_geometryLookupSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_geometryLookupSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_geometryLookupSrvIndex);
         m_geometryLookupSrvIndex = UINT32_MAX;
     }
 
     if (m_sceneVertexFloatsSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_sceneVertexFloatsSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_sceneVertexFloatsSrvIndex);
         m_sceneVertexFloatsSrvIndex = UINT32_MAX;
     }
 
     if (m_sceneIndicesSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_sceneIndicesSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_sceneIndicesSrvIndex);
         m_sceneIndicesSrvIndex = UINT32_MAX;
     }
 

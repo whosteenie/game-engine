@@ -47,6 +47,15 @@ namespace
 }
 
 Shader::Shader(const char* vertexPath, const char* fragmentPath)
+    : Shader(vertexPath, fragmentPath, ShaderSamplerOverrides{})
+{
+}
+
+Shader::Shader(
+    const char* vertexPath,
+    const char* fragmentPath,
+    const ShaderSamplerOverrides& samplerOverrides)
+    : m_samplerOverrides(samplerOverrides)
 {
     try
     {
@@ -123,6 +132,7 @@ Shader::Shader(Shader&& other) noexcept
       m_vertexShader(other.m_vertexShader),
       m_pixelShader(other.m_pixelShader),
       m_textureSlots(std::move(other.m_textureSlots)),
+      m_samplerOverrides(other.m_samplerOverrides),
       m_isLinked(other.m_isLinked)
 {
     other.m_rootSignature = nullptr;
@@ -156,6 +166,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         m_vertexShader = other.m_vertexShader;
         m_pixelShader = other.m_pixelShader;
         m_textureSlots = std::move(other.m_textureSlots);
+        m_samplerOverrides = other.m_samplerOverrides;
         m_isLinked = other.m_isLinked;
         other.m_rootSignature = nullptr;
         other.m_pipelineState = nullptr;
@@ -288,6 +299,23 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
                 sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
                 sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
             }
+            // SSR-07: per-shader overrides take precedence over the material-derived defaults.
+            // Depth/normal/velocity/variance reads must be point-sampled (bilinear filtering of
+            // nonlinear depth produces invalid values at silhouettes), and post-process passes
+            // must clamp instead of wrapping across screen/LUT edges.
+            if ((m_samplerOverrides.pointSampleRegisterMask & (1u << registerIndex)) != 0)
+            {
+                sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+                sampler.MaxAnisotropy = 1;
+                sampler.MipLODBias = 0.0f;
+            }
+            if (m_samplerOverrides.clampAllRegisters)
+            {
+                sampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                sampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+                sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+            }
+
             sampler.ShaderRegister = registerIndex;
             sampler.RegisterSpace = 0;
             sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
