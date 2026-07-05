@@ -45,6 +45,11 @@ void DxrSettings::SetTemporalBlend(const float blend)
     m_temporalBlend = std::clamp(blend, 0.0f, 0.99f);
 }
 
+void DxrSettings::SetReflectionAtrousIterations(const int iterations)
+{
+    m_reflectionAtrousIterations = std::clamp(iterations, 2, 8);
+}
+
 void DxrSettings::CopySettingsFrom(const DxrSettings& source)
 {
     m_enabled = source.m_enabled;
@@ -55,6 +60,8 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_denoiseEnabled = source.m_denoiseEnabled;
     m_debugTraceEnabled = source.m_debugTraceEnabled;
     m_temporalBlend = source.m_temporalBlend;
+    m_reflectionAtrousIterations = source.m_reflectionAtrousIterations;
+    m_reflectionAntiFirefly = source.m_reflectionAntiFirefly;
 }
 
 void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
@@ -68,4 +75,5 @@ void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
     SetReflectionsSamplesPerPixel(m_reflectionsSamplesPerPixel);
     SetMaxTraceDistance(m_maxTraceDistance);
     SetTemporalBlend(m_temporalBlend);
+    SetReflectionAtrousIterations(m_reflectionAtrousIterations);
 }

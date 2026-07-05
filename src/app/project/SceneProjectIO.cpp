@@ -709,6 +709,8 @@ namespace SceneProjectIODetail
                  {"denoiseEnabled", dxrSettings.IsDenoiseEnabled()},
                  {"debugTraceEnabled", dxrSettings.IsDebugTraceEnabled()},
                  {"temporalBlend", dxrSettings.GetTemporalBlend()},
+                 {"reflectionAtrousIterations", dxrSettings.GetReflectionAtrousIterations()},
+                 {"reflectionAntiFirefly", dxrSettings.IsReflectionAntiFireflyEnabled()},
              }},
         };
     }
@@ -747,6 +749,16 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("temporalBlend"))
         {
             dxrSettings.SetTemporalBlend(dxrValue.at("temporalBlend").get<float>());
+        }
+        if (dxrValue.contains("reflectionAtrousIterations"))
+        {
+            dxrSettings.SetReflectionAtrousIterations(
+                dxrValue.at("reflectionAtrousIterations").get<int>());
+        }
+        if (dxrValue.contains("reflectionAntiFirefly"))
+        {
+            dxrSettings.SetReflectionAntiFireflyEnabled(
+                dxrValue.at("reflectionAntiFirefly").get<bool>());
         }
     }
 

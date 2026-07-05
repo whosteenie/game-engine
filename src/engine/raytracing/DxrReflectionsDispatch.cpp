@@ -75,7 +75,9 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     const float maxTraceDistance,
     const int samplesPerPixel,
     const bool denoiseEnabled,
-    const float temporalBlend)
+    const float temporalBlend,
+    const int atrousIterations,
+    const bool antiFirefly)
 {
     m_dispatchedThisFrame = false;
     m_denoisedThisFrame = false;
@@ -151,7 +153,7 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     constants.maxReflectionLod = frameInputs.maxReflectionLod;
     constants.frameIndex = m_frameIndex;
     constants.samplesPerPixel =
-        static_cast<std::uint32_t>(samplesPerPixel < 1 ? 1 : (samplesPerPixel > 4 ? 4 : samplesPerPixel));
+        static_cast<std::uint32_t>(samplesPerPixel < 1 ? 1 : (samplesPerPixel > 16 ? 16 : samplesPerPixel));
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
@@ -211,6 +213,8 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
         frameParameters.frameIndex = m_frameIndex;
         frameParameters.denoisingRange = std::max(maxTraceDistance * 2.0f, 100.0f);
         frameParameters.temporalBlend = temporalBlend;
+        frameParameters.atrousIterations = atrousIterations;
+        frameParameters.antiFirefly = antiFirefly;
         frameParameters.resetHistory = !m_nrdHistoryValid;
 
         std::string denoiseError;

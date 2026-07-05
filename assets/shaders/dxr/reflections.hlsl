@@ -211,7 +211,7 @@ void ReflectionRayGen()
     const float3 rayOrigin =
         worldPos + shadingNormal * max(surfaceDistance * 0.0015, 0.01);
 
-    const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 4u);
+    const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 16u);
     float3 radianceSum = 0.0.xxx;
     float hitDistSum = 0.0;
     float weightSum = 0.0;

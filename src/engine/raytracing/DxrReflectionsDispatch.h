@@ -54,7 +54,9 @@ public:
         float maxTraceDistance,
         int samplesPerPixel,
         bool denoiseEnabled,
-        float temporalBlend);
+        float temporalBlend,
+        int atrousIterations,
+        bool antiFirefly);
 
     void Release();
 

@@ -1740,6 +1740,28 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        int atrousIterations = dxrSettings.GetReflectionAtrousIterations();
+        UndoableRendererSliderInt(
+            "Denoiser smoothing (A-trous)",
+            &atrousIterations,
+            2,
+            8,
+            editContext,
+            [](Scene& target, int iterations) {
+                target.GetRenderer().GetDxrSettings().SetReflectionAtrousIterations(iterations);
+                target.MarkDirty();
+            });
+
+        bool antiFirefly = dxrSettings.IsReflectionAntiFireflyEnabled();
+        UndoableRendererCheckbox(
+            "Denoiser anti-firefly",
+            &antiFirefly,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetReflectionAntiFireflyEnabled(enabled);
+                target.MarkDirty();
+            });
+
         ImGui::PopID();
 
         const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();

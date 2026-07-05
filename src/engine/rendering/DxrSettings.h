@@ -39,6 +39,15 @@ public:
     float GetTemporalBlend() const { return m_temporalBlend; }
     void SetTemporalBlend(const float blend);
 
+    // NRD RELAX spatial A-trous iterations — higher = smoother reflections / fewer edge
+    // speckles at the cost of detail (NRD range [2; 8]).
+    int GetReflectionAtrousIterations() const { return m_reflectionAtrousIterations; }
+    void SetReflectionAtrousIterations(const int iterations);
+
+    // NRD anti-firefly spatial pass — suppresses isolated bright specular samples at edges.
+    bool IsReflectionAntiFireflyEnabled() const { return m_reflectionAntiFirefly; }
+    void SetReflectionAntiFireflyEnabled(const bool enabled) { m_reflectionAntiFirefly = enabled; }
+
     void CopySettingsFrom(const DxrSettings& source);
     void ClampToHardwareCapabilities(bool raytracingSupported);
 
@@ -51,4 +60,6 @@ private:
     bool m_denoiseEnabled = true;
     bool m_debugTraceEnabled = false;
     float m_temporalBlend = 0.95f;
+    int m_reflectionAtrousIterations = 5;
+    bool m_reflectionAntiFirefly = true;
 };

@@ -610,7 +610,9 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetMaxTraceDistance(),
             m_dxrSettings.GetReflectionsSamplesPerPixel(),
             m_dxrSettings.IsDenoiseEnabled(),
-            m_dxrSettings.GetTemporalBlend());
+            m_dxrSettings.GetTemporalBlend(),
+            m_dxrSettings.GetReflectionAtrousIterations(),
+            m_dxrSettings.IsReflectionAntiFireflyEnabled());
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 

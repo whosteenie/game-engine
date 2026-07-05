@@ -42,6 +42,8 @@ public:
         std::uint32_t frameIndex = 0;
         float denoisingRange = 500.0f;    // world units; sky viewZ must exceed this
         float temporalBlend = 0.95f;      // engine setting, mapped to accumulated frames
+        int atrousIterations = 5;         // RELAX spatial A-trous passes [2; 8]
+        bool antiFirefly = true;          // RELAX anti-firefly spatial suppression
         bool resetHistory = false;
     };
 
