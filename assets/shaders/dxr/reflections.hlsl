@@ -6,9 +6,11 @@
 // u2: RGBA8 normal+roughness — MUST match the NRD compile options set in CMakeLists
 //     (NRD_NORMAL_ENCODING=0: rgb = N*0.5+0.5; NRD_ROUGHNESS_ENCODING=1: a = linear roughness)
 // u3: RG16F screen-space motion, NRD convention mv = uvPrev - uvCurr (motionVectorScale {1,1})
-// Hit shading v2: in-hit analytic material shading — albedo x (sun NdotL + SH9 ambient) +
-// emissive, using a per-object material table (t12) and smooth vertex normals. Diffuse only
-// (no reflected sun shadow). Miss: prefiltered environment.
+// Hit shading v3: in-hit analytic material shading — albedo x (sun NdotL + SH9 ambient) +
+// specular env IBL + emissive, using a per-object material table (t12) and smooth vertex
+// normals. Diffuse direct is gated by a traced sun-visibility ray and the SH ambient by traced
+// ambient occlusion (needs MaxTraceRecursionDepth >= 2) so reflected surfaces get the same
+// contact darkening the primary view gets from screen-space AO/shadows. Miss: prefiltered env.
 
 cbuffer ReflectionDispatchConstants : register(b0)
 {
@@ -354,6 +356,44 @@ float3 EnvBrdfApprox(float3 f0, float roughness, float nDotV)
     return f0 * ab.x + ab.y;
 }
 
+// Cosine-weighted hemisphere direction about a normal (Malley's method) for ambient occlusion.
+float3 CosineSampleHemisphere(float3 normal, float2 xi)
+{
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(normal, tangent, bitangent);
+    const float radius = sqrt(saturate(xi.x));
+    const float phi = 2.0 * kPi * xi.y;
+    const float z = sqrt(max(1.0 - xi.x, 0.0));
+    return normalize(tangent * (radius * cos(phi)) + bitangent * (radius * sin(phi)) + normal * z);
+}
+
+// Binary visibility along a ray. The probe SKIPS the closest-hit shader and ends at the first
+// hit, so it never re-enters ReflectionClosestHit (recursion stays <= 2, matching the RTPSO's
+// MaxTraceRecursionDepth) and costs only a traversal. Returns 1.0 when the ray reaches the miss
+// shader (unoccluded), 0.0 when anything is hit. Requires MaxTraceRecursionDepth >= 2.
+float TraceVisibility(float3 origin, float3 direction, float tMax)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = 0.001;
+    ray.TMax = tMax;
+
+    Payload probe;
+    probe.radiance = 0.0.xxx;
+    probe.confidence = 0.0;
+    probe.hitDistance = 0.0;
+    probe.surfaceRoughness = 0.0;
+    probe.hit = 1; // assume occluded; ReflectionMiss clears this to 0 when the ray escapes
+    probe._pad = 0;
+
+    const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+        | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
+    TraceRay(g_SceneTlas, occlusionFlags, 0xFF, 0, 0, 0, ray, probe);
+    return probe.hit == 0 ? 1.0 : 0.0;
+}
+
 [shader("raygeneration")]
 void ReflectionRayGen()
 {
@@ -577,13 +617,39 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     }
     const float3 diffuseAlbedo = albedo * (1.0 - material.metallic);
 
+    // Occlusion at the hit. The primary view darkens contact crevices via screen-space AO and
+    // cascade shadows; neither is available for an off-screen reflection hit, so without tracing
+    // it here the reflected copy of an object stays fully lit where its primary copy is dark —
+    // the object-colored halo seen where geometry clips into a mirror. Origin is pushed off the
+    // surface along the geometric-ish shading normal to avoid self-intersection.
+    const float3 hitPos = WorldRayOrigin() + rayDir * hitT;
+    const float3 occlusionOrigin = hitPos + hitNormal * max(hitT * 0.001, 0.002);
+    const uint2 dispatchPixel = DispatchRaysIndex().xy;
+
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi;
+    // Only pay for the shadow ray where the sun actually contributes (front-facing to the sun).
+    const float sunVisibility =
+        ndotl > 0.0 ? TraceVisibility(occlusionOrigin, sunL, g_MaxTraceDistance) : 1.0;
+    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * sunVisibility;
+
+    // Cosine-weighted ambient occlusion over a bounded radius (contact-scale). Noisy at a few
+    // rays, but it modulates the radiance the RELAX specular denoiser already smooths.
+    const float aoRadius = max(g_MaxTraceDistance * 0.05, 0.5);
+    const uint kAoRays = 4u;
+    float aoVisibility = 0.0;
+    [loop]
+    for (uint aoIndex = 0u; aoIndex < kAoRays; ++aoIndex)
+    {
+        const float2 aoXi = RandomXi(dispatchPixel, g_FrameIndex, aoIndex + 8u);
+        const float3 aoDir = CosineSampleHemisphere(hitNormal, aoXi);
+        aoVisibility += TraceVisibility(occlusionOrigin, aoDir, aoRadius);
+    }
+    aoVisibility *= 1.0 / float(kAoRays);
 
     const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
-    const float3 ambient = diffuseAlbedo * irradiance / kPi;
+    const float3 ambient = diffuseAlbedo * irradiance / kPi * aoVisibility;
 
     // Specular environment IBL at the hit (multi-bounce v1). Reflect the incoming ray about the hit
     // normal, sample the prefiltered environment at the surface's roughness, and weight it by
