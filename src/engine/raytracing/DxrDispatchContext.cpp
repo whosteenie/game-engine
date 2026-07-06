@@ -129,6 +129,20 @@ void DxrDispatchContext::Release()
     m_shadowDispatchWidth = 0;
     m_shadowDispatchHeight = 0;
 
+    ReleaseRetiredGiOutputs();
+    for (ReflectionTexture& texture : m_giTextures)
+    {
+        DestroyOutputResource(texture.resource, texture.allocation, texture.srvIndex, texture.uavIndex);
+        texture.srvCpuHandle = 0;
+        texture.state = 0;
+    }
+    m_giOutputSrvCpuHandle = 0;
+    m_giDenoisedSrvCpuHandle = 0;
+    m_giOutputWidth = 0;
+    m_giOutputHeight = 0;
+    m_giDispatchWidth = 0;
+    m_giDispatchHeight = 0;
+
     if (m_tlasSrvIndex != UINT32_MAX)
     {
         GfxContext::Get().FreeOffscreenSrv(m_tlasSrvIndex);
@@ -163,6 +177,20 @@ void DxrDispatchContext::ReleaseRetiredShadowOutputs()
     }
 
     m_retiredShadowOutputs.clear();
+}
+
+void DxrDispatchContext::ReleaseRetiredGiOutputs()
+{
+    for (RetiredOutput& retired : m_retiredGiOutputs)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+
+    m_retiredGiOutputs.clear();
 }
 
 // DXR-03: dispatch constants are allocated per dispatch from the per-frame transient upload
@@ -1266,6 +1294,259 @@ bool DxrDispatchContext::DispatchShadows(
     m_shadowDispatchHeight = height;
 
     DxrBreadcrumb("dispatch DispatchShadows ok");
+    return true;
+}
+
+bool DxrDispatchContext::EnsureGiOutput(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid GI output dimensions";
+        return false;
+    }
+
+    ReleaseRetiredGiOutputs();
+
+    const bool haveTextures = m_giTextures[0].resource != nullptr;
+    if (haveTextures && m_giOutputWidth == width && m_giOutputHeight == height)
+    {
+        return true;
+    }
+
+    // Keep a larger allocation alive (avoids churn when quality shrinks / viewports differ);
+    // consumers respect the dispatch/texture UV-scale contract.
+    if (haveTextures && m_giOutputWidth >= width && m_giOutputHeight >= height)
+    {
+        return true;
+    }
+
+    for (ReflectionTexture& texture : m_giTextures)
+    {
+        RetireOrDestroyReflectionTexture(texture);
+    }
+    m_giOutputSrvCpuHandle = 0;
+    m_giDenoisedSrvCpuHandle = 0;
+    m_giOutputWidth = 0;
+    m_giOutputHeight = 0;
+
+    // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised.
+    // [2] must match NRD_NORMAL_ENCODING=3 (RGBA16_UNORM), same as the reflection set.
+    const std::uint32_t formats[kGiTextureCount] = {
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_UNORM),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT)};
+
+    for (int textureIndex = 0; textureIndex < kGiTextureCount; ++textureIndex)
+    {
+        if (!CreateReflectionTexture(
+                width, height, formats[textureIndex], m_giTextures[textureIndex], outError))
+        {
+            for (ReflectionTexture& texture : m_giTextures)
+            {
+                RetireOrDestroyReflectionTexture(texture);
+            }
+            return false;
+        }
+    }
+
+    m_giOutputSrvCpuHandle = m_giTextures[0].srvCpuHandle;
+    m_giDenoisedSrvCpuHandle = m_giTextures[4].srvCpuHandle;
+    m_giOutputWidth = width;
+    m_giOutputHeight = height;
+    return true;
+}
+
+DxrDispatchContext::ReflectionNrdResources DxrDispatchContext::GetGiNrdResources()
+{
+    ReflectionNrdResources resources{};
+    resources.radianceHitDist = m_giTextures[0].resource;
+    resources.viewZ = m_giTextures[1].resource;
+    resources.normalRoughness = m_giTextures[2].resource;
+    resources.motion = m_giTextures[3].resource;
+    resources.denoisedOutput = m_giTextures[4].resource;
+    resources.radianceState = &m_giTextures[0].state;
+    resources.viewZState = &m_giTextures[1].state;
+    resources.normalRoughnessState = &m_giTextures[2].state;
+    resources.motionState = &m_giTextures[3].state;
+    resources.denoisedState = &m_giTextures[4].state;
+    resources.textureWidth = m_giOutputWidth;
+    resources.textureHeight = m_giOutputHeight;
+    resources.dispatchWidth = m_giDispatchWidth;
+    resources.dispatchHeight = m_giDispatchHeight;
+    return resources;
+}
+
+bool DxrDispatchContext::DispatchGi(
+    ID3D12GraphicsCommandList4* commandList,
+    ID3D12StateObject* stateObject,
+    ID3D12RootSignature* rootSignature,
+    const ShaderBindingTable& shaderBindingTable,
+    const ReflectionDispatchInputs& inputs,
+    const int width,
+    const int height,
+    const DxrRootSignature::ReflectionDispatchConstants& constants,
+    std::string& outError)
+{
+    outError.clear();
+    if (commandList == nullptr || stateObject == nullptr || rootSignature == nullptr)
+    {
+        outError = "invalid DXR GI dispatch arguments";
+        return false;
+    }
+
+    const std::uint32_t srvIndicesFromHandles[8] = {
+        DepthSrvIndexFromCpuHandle(inputs.depthSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.normalSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.material0SrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.directSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.sunShadowSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.indirectSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.prefilterSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.velocitySrvCpuHandle)};
+    for (const std::uint32_t index : srvIndicesFromHandles)
+    {
+        if (index == UINT32_MAX)
+        {
+            outError = "DXR GI SRV bindings unavailable";
+            return false;
+        }
+    }
+
+    if (inputs.geometryLookupSrvIndex == UINT32_MAX
+        || inputs.sceneVertexFloatsSrvIndex == UINT32_MAX
+        || inputs.sceneIndicesSrvIndex == UINT32_MAX
+        || inputs.materialSrvIndex == UINT32_MAX)
+    {
+        outError = "DXR GI geometry lookup SRVs unavailable";
+        return false;
+    }
+
+    if (!EnsureGiOutput(width, height, outError))
+    {
+        return false;
+    }
+
+    if (!CreateTlasSrv(inputs.tlasResource, inputs.tlasGpuVirtualAddress, outError))
+    {
+        return false;
+    }
+
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate transient DXR GI constants";
+        return false;
+    }
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    // Trace writes textures [0..3] (radiance, viewZ, normal+roughness, motion).
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        ReflectionTexture& texture = m_giTextures[textureIndex];
+        if (texture.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        {
+            TransitionResource(
+                static_cast<ID3D12GraphicsCommandList*>(commandList),
+                texture.resource,
+                static_cast<D3D12_RESOURCE_STATES>(texture.state),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            texture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
+    commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+    commandList->SetPipelineState1(stateObject);
+    commandList->SetComputeRootSignature(rootSignature);
+    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+
+    // Root params 1..13 = SRV tables t0..t12 (reflection global root signature layout).
+    constexpr std::uint32_t kGiSrvCount = 13;
+    const std::uint32_t srvHeapIndices[kGiSrvCount] = {
+        m_tlasSrvIndex,                     // t0 TLAS
+        srvIndicesFromHandles[0],           // t1 depth
+        srvIndicesFromHandles[1],           // t2 shading normal
+        srvIndicesFromHandles[2],           // t3 material0
+        inputs.geometryLookupSrvIndex,      // t4
+        inputs.sceneVertexFloatsSrvIndex,   // t5
+        inputs.sceneIndicesSrvIndex,        // t6
+        srvIndicesFromHandles[3],           // t7 direct RT0 (unused by GI shader; bound for parity)
+        srvIndicesFromHandles[4],           // t8 sun shadow RT3 (unused)
+        srvIndicesFromHandles[5],           // t9 indirect RT1 (unused)
+        srvIndicesFromHandles[6],           // t10 prefiltered env cube
+        srvIndicesFromHandles[7],           // t11 velocity RT4
+        inputs.materialSrvIndex};           // t12 per-object material table
+
+    for (std::uint32_t rootIndex = 0; rootIndex < kGiSrvCount; ++rootIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
+        tableHandle.ptr =
+            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
+        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
+    }
+
+    // Root params 14..17 = UAV tables u0..u3 (GI texture set).
+    constexpr std::uint32_t kGiUavCount = 4;
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+        uavTableHandle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(m_giTextures[textureIndex].uavIndex));
+        commandList->SetComputeRootDescriptorTable(1 + kGiSrvCount + textureIndex, uavTableHandle);
+    }
+
+    // Root param 18 = bindless SRV table (space1) over the whole heap (physical heap start).
+    {
+        const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
+            srvHeap->GetGPUDescriptorHandleForHeapStart();
+        commandList->SetComputeRootDescriptorTable(
+            1 + kGiSrvCount + kGiUavCount, bindlessHandle);
+    }
+
+    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
+    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
+    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
+    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.Width = static_cast<UINT>(width);
+    dispatchDesc.Height = static_cast<UINT>(height);
+    dispatchDesc.Depth = 1;
+
+    if (inputs.tlasResource != nullptr)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
+    }
+
+    commandList->DispatchRays(&dispatchDesc);
+
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        ReflectionTexture& texture = m_giTextures[textureIndex];
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), texture.resource);
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            texture.resource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            kAllShaderRead);
+        texture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+
+    m_giDispatchWidth = width;
+    m_giDispatchHeight = height;
+
+    DxrBreadcrumb("dispatch DispatchGi ok");
     return true;
 }
 

@@ -130,6 +130,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RT shadow raw";
     case RenderDebugMode::RtShadowDenoised:
         return "RT shadow denoised";
+    case RenderDebugMode::RtGiRaw:
+        return "RT GI raw";
+    case RenderDebugMode::RtGiDenoised:
+        return "RT GI denoised";
+    case RenderDebugMode::RtGiInject:
+        return "RT GI inject";
     default:
         return "Unknown";
     }
@@ -276,7 +282,20 @@ bool IsSsrCompositeDebugMode(const RenderDebugMode mode)
 bool IsDxrDebugMode(const RenderDebugMode mode)
 {
     return mode == RenderDebugMode::RtDispatchSmoke || IsRtPrimaryDebugMode(mode)
-        || IsRtReflectionDebugMode(mode) || IsRtShadowDebugMode(mode);
+        || IsRtReflectionDebugMode(mode) || IsRtShadowDebugMode(mode) || IsRtGiDebugMode(mode);
+}
+
+bool IsRtGiDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RtGiRaw:
+    case RenderDebugMode::RtGiDenoised:
+    case RenderDebugMode::RtGiInject:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool IsRtShadowDebugMode(const RenderDebugMode mode)

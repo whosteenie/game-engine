@@ -24,13 +24,22 @@ namespace nrd
 struct Instance;
 }
 
-// Phase D5 — NVIDIA NRD (RELAX_SPECULAR) manual D3D12 backend, no NRI
+// Phase D5 — NVIDIA NRD (RELAX_SPECULAR / RELAX_DIFFUSE) manual D3D12 backend, no NRI
 // (devdoc/dxr-nrd-integration.md). NRD is API-agnostic: it hands us compute-shader DXIL,
 // resource pool descriptions, and per-frame dispatch lists; we own PSOs, pool textures,
 // barriers, and descriptor binding. Written against NRD v4.17 (pinned in CMakeLists.txt).
+//
+// One instance hosts ONE denoiser (identifier 0). Reflections use RELAX_SPECULAR; Phase D9
+// diffuse GI runs a SEPARATE instance configured for RELAX_DIFFUSE (SetSignal before first use).
 class NrdDenoiser
 {
 public:
+    enum class Signal
+    {
+        Specular, // RELAX_SPECULAR, IN/OUT_SPEC_RADIANCE_HITDIST
+        Diffuse,  // RELAX_DIFFUSE, IN/OUT_DIFF_RADIANCE_HITDIST
+    };
+
     struct FrameParameters
     {
         glm::mat4 viewToClip{1.0f};       // non-jittered projection
@@ -53,7 +62,11 @@ public:
     NrdDenoiser(const NrdDenoiser&) = delete;
     NrdDenoiser& operator=(const NrdDenoiser&) = delete;
 
-    // Records the full RELAX_SPECULAR dispatch chain onto the command list.
+    // Selects the denoiser flavor. Must be called before the first Denoise; changing it after an
+    // instance exists forces a rebuild on the next Denoise.
+    void SetSignal(Signal signal);
+
+    // Records the full RELAX dispatch chain (specular or diffuse) onto the command list.
     // Resource states in "resources" are transitioned as needed and written back.
     bool Denoise(
         ID3D12GraphicsCommandList* commandList,
@@ -110,4 +123,5 @@ private:
     std::uint32_t m_resourcesSpace = 0;
     std::string m_lastError;
     bool m_creationFailed = false; // don't retry every frame after a hard failure
+    Signal m_signal = Signal::Specular;
 };

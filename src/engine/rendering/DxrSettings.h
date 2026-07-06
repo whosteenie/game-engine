@@ -60,6 +60,18 @@ public:
     bool IsShadowDenoiseEnabled() const { return m_shadowDenoiseEnabled; }
     void SetShadowDenoiseEnabled(const bool enabled) { m_shadowDenoiseEnabled = enabled; }
 
+    // Phase D9 — one-bounce RT diffuse GI (devdoc/dxr-diffuse-gi.md). Adds ray-traced diffuse
+    // bounce light into RT1 (indirect); mutually exclusive with SSGI inject.
+    bool IsGiEnabled() const { return m_giEnabled; }
+    void SetGiEnabled(const bool enabled) { m_giEnabled = enabled; }
+
+    // Inject strength multiplier on the diffuse bounce contribution. Range 0-2.
+    float GetGiStrength() const { return m_giStrength; }
+    void SetGiStrength(float strength);
+
+    bool IsGiDenoiseEnabled() const { return m_giDenoiseEnabled; }
+    void SetGiDenoiseEnabled(const bool enabled) { m_giDenoiseEnabled = enabled; }
+
     void CopySettingsFrom(const DxrSettings& source);
     void ClampToHardwareCapabilities(bool raytracingSupported);
 
@@ -77,4 +89,7 @@ private:
     bool m_shadowsEnabled = false;
     float m_sunAngularRadiusDegrees = 0.27f;
     bool m_shadowDenoiseEnabled = true;
+    bool m_giEnabled = false;
+    float m_giStrength = 1.0f;
+    bool m_giDenoiseEnabled = true;
 };

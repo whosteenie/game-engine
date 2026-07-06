@@ -79,6 +79,10 @@ public:
         const Framebuffer* outputTarget,
         int viewportWidth,
         int viewportHeight) const;
+    void BlitRtGiDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
 
     void Apply(
         const Camera& camera,
@@ -217,6 +221,17 @@ public:
     // When true (and the denoised shadow SRV is set), the composite replaces the CSM sun shadow
     // factor with the RT mask. CSM stays default; RT shadows are a supplemental tier.
     void SetDxrShadowCompositeEnabled(bool enabled) { m_dxrShadowCompositeEnabled = enabled; }
+    // D9: RT diffuse GI. rawSrv drives the raw debug view; denoisedSrv is the RELAX_DIFFUSE
+    // output consumed by the inject pass (falls back to raw when denoise is off). 0 disables.
+    void SetDxrGiSrv(
+        std::uintptr_t giRawSrvCpuHandle,
+        std::uintptr_t giDenoisedSrvCpuHandle = 0,
+        float uvScaleX = 1.0f,
+        float uvScaleY = 1.0f);
+    // When true (and a GI SRV is set), Apply() runs the GI inject pass (adds diffuse bounce into
+    // the indirect chain) and the composite skips the SSGI inject (mutually exclusive).
+    void SetDxrGiCompositeEnabled(bool enabled) { m_dxrGiCompositeEnabled = enabled; }
+    void SetDxrGiStrength(float strength) { m_dxrGiStrength = strength; }
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
     std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
     // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
@@ -386,6 +401,7 @@ private:
     InternalTarget m_ssrResolvedTarget;
     InternalTarget m_ssrIndirectTarget;
     InternalTarget m_rtIndirectTarget; // D6 RT specular composite (mutually exclusive with SSR)
+    InternalTarget m_rtGiInjectTarget; // D9 RT diffuse GI inject (additive into the indirect chain)
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -438,6 +454,7 @@ private:
     std::unique_ptr<Shader> m_ssrUpscaleShader;
     std::unique_ptr<Shader> m_ssrIndirectShader;
     std::unique_ptr<Shader> m_dxrIndirectShader;
+    std::unique_ptr<Shader> m_dxrGiInjectShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -520,6 +537,12 @@ private:
     float m_dxrShadowUvScaleX = 1.0f;
     float m_dxrShadowUvScaleY = 1.0f;
     bool m_dxrShadowCompositeEnabled = false;
+    std::uintptr_t m_dxrGiRawSrv = 0;
+    std::uintptr_t m_dxrGiDenoisedSrv = 0;
+    float m_dxrGiUvScaleX = 1.0f;
+    float m_dxrGiUvScaleY = 1.0f;
+    bool m_dxrGiCompositeEnabled = false;
+    float m_dxrGiStrength = 1.0f;
     std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
     int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;

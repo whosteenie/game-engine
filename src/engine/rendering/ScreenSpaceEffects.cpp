@@ -641,6 +641,11 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrIndirectFragmentShader,
           // s0 = linear clamp (colors/env/LUT), s1 = point clamp (G-buffer + raw hitDist)
+          ShaderSamplerOverrides{(1u << 1), true})),
+      m_dxrGiInjectShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DxrGiInjectFragmentShader,
+          // s0 = linear clamp (colors/GI radiance), s1 = point clamp (G-buffer)
           ShaderSamplerOverrides{(1u << 1), true}))
 {
     SceneRenderTrace::Section initSection("sse-init");
@@ -692,6 +697,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ssrResolvedTarget);
     DestroyInternalTarget(m_ssrIndirectTarget);
     DestroyInternalTarget(m_rtIndirectTarget);
+    DestroyInternalTarget(m_rtGiInjectTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -1034,6 +1040,7 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_radianceHistoryDepthTarget, width, height, format);
     ResizeInternalTarget(m_ssrIndirectTarget, width, height, format);
     ResizeInternalTarget(m_rtIndirectTarget, width, height, format);
+    ResizeInternalTarget(m_rtGiInjectTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1572,6 +1579,69 @@ void ScreenSpaceEffects::BlitRtShadowDebug(
         "uUvScale", glm::vec2(m_dxrShadowUvScaleX, m_dxrShadowUvScaleY));
     m_dxrShadowDebugShader->BindTextureSlot(0, sourceSrv);
     m_dxrShadowDebugShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::BlitRtGiDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (!IsRtGiDebugMode(m_debugMode) || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    // RtGiInject visualizes the injected delta (albedo * gi * strength): re-run the inject shader
+    // in debug mode straight to the output. Requires the scene MRTs.
+    if (m_debugMode == RenderDebugMode::RtGiInject)
+    {
+        const std::uintptr_t giInjectSrv =
+            m_dxrGiDenoisedSrv != 0 ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
+        if (giInjectSrv == 0 || m_sceneFramebuffer == nullptr
+            || !m_sceneFramebuffer->HasMaterialGbuffer())
+        {
+            return;
+        }
+
+        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+        m_dxrGiInjectShader->Use(false, true);
+        m_dxrGiInjectShader->SetInt("uIndirectMap", 0);
+        m_dxrGiInjectShader->SetInt("uGiDenoisedMap", 1);
+        m_dxrGiInjectShader->SetInt("uDepthMap", 2);
+        m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
+        m_dxrGiInjectShader->SetVec2(
+            "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
+        m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
+        m_dxrGiInjectShader->SetInt("uDebugGiInject", 1);
+        m_dxrGiInjectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
+        m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_dxrGiInjectShader->FlushUniforms();
+        DrawFullscreenQuad();
+        return;
+    }
+
+    // RtGiRaw / RtGiDenoised: straight rgb visualization of the GI radiance buffer.
+    const bool wantDenoised = m_debugMode == RenderDebugMode::RtGiDenoised;
+    const std::uintptr_t sourceSrv =
+        (wantDenoised && m_dxrGiDenoisedSrv != 0) ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
+    if (sourceSrv == 0)
+    {
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_debugChannelShader->Use(false, true);
+    m_debugChannelShader->SetInt("uInput", 0);
+    m_debugChannelShader->SetInt("uOutputRgb", 1);
+    m_debugChannelShader->SetInt("uOutputAlpha", 0);
+    m_debugChannelShader->SetFloat("uAlphaScale", 1.0f);
+    m_debugChannelShader->SetVec2(
+        "uUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
+    m_debugChannelShader->BindTextureSlot(0, sourceSrv);
+    m_debugChannelShader->FlushUniforms();
     DrawFullscreenQuad();
 }
 
@@ -2430,6 +2500,46 @@ void ScreenSpaceEffects::Apply(
         rtIndirectScope.Success();
     }
 
+    // D9 — RT diffuse GI inject: add the denoised one-bounce diffuse radiance into the current
+    // indirect chain (post spec-replacement, so spec + GI stack). Reads whatever indirectCompositeSrv
+    // currently is (NOT raw RT1). Mutually exclusive with SSGI inject (gated in the composite below).
+    const std::uintptr_t giInjectSrv =
+        m_dxrGiDenoisedSrv != 0 ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
+    const bool runRtGiInject =
+        m_dxrGiCompositeEnabled && giInjectSrv != 0 &&
+        !pbrDebugActive &&
+        m_sceneFramebuffer->HasSplitLighting() &&
+        m_sceneFramebuffer->HasMaterialGbuffer() &&
+        m_rtGiInjectTarget.resource != nullptr;
+
+    if (runRtGiInject)
+    {
+        SceneRenderTrace::Scope rtGiInjectScope("dxr gi inject");
+        const float injectClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+        m_dxrGiInjectShader->Use(false);
+        m_dxrGiInjectShader->SetInt("uIndirectMap", 0);
+        m_dxrGiInjectShader->SetInt("uGiDenoisedMap", 1);
+        m_dxrGiInjectShader->SetInt("uDepthMap", 2);
+        m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
+        m_dxrGiInjectShader->SetVec2(
+            "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
+        m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
+        m_dxrGiInjectShader->SetInt("uDebugGiInject", 0);
+        m_dxrGiInjectShader->BindTextureSlot(0, indirectCompositeSrv);
+        m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
+        m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        DrawFullscreenToTarget(
+            *m_dxrGiInjectShader,
+            const_cast<InternalTarget&>(m_rtGiInjectTarget),
+            m_width,
+            m_height,
+            injectClear);
+        indirectCompositeSrv = m_rtGiInjectTarget.srvCpuHandle;
+        rtGiInjectScope.Success();
+    }
+
     std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
 
     const bool runSsgiTrace =
@@ -2659,7 +2769,10 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
-        const bool useSsgiInject = runSsgiTrace && m_lastSsgiInjectSrv != 0;
+        // D9: RT GI and SSGI inject are mutually exclusive — RT GI (already added into the
+        // indirect chain above) takes priority, so drop SSGI's composite contribution.
+        const bool useSsgiInject =
+            runSsgiTrace && m_lastSsgiInjectSrv != 0 && !runRtGiInject;
         m_compositeShader->SetInt("uUseSsgi", useSsgiInject ? 1 : 0);
         m_compositeShader->SetFloat("uSsgiStrength", m_ssgiStrength);
         m_compositeShader->SetInt("uSsgiMap", 6);
@@ -3978,6 +4091,18 @@ void ScreenSpaceEffects::SetDxrShadowSrv(
     m_dxrShadowDenoisedSrv = denoisedSrvCpuHandle;
     m_dxrShadowUvScaleX = uvScaleX;
     m_dxrShadowUvScaleY = uvScaleY;
+}
+
+void ScreenSpaceEffects::SetDxrGiSrv(
+    const std::uintptr_t giRawSrvCpuHandle,
+    const std::uintptr_t giDenoisedSrvCpuHandle,
+    const float uvScaleX,
+    const float uvScaleY)
+{
+    m_dxrGiRawSrv = giRawSrvCpuHandle;
+    m_dxrGiDenoisedSrv = giDenoisedSrvCpuHandle;
+    m_dxrGiUvScaleX = uvScaleX;
+    m_dxrGiUvScaleY = uvScaleY;
 }
 
 std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const int attachmentIndex) const

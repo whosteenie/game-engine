@@ -166,6 +166,27 @@ public:
         const DxrRootSignature::ShadowDispatchConstants& constants,
         std::string& outError);
 
+    // Phase D9 diffuse GI (devdoc/dxr-diffuse-gi.md). Reuses the reflection inputs/root signature
+    // and the ReflectionNrdResources layout (RELAX_DIFFUSE denoiser, separate instance).
+    ReflectionNrdResources GetGiNrdResources();
+    std::uintptr_t GetGiOutputSrvCpuHandle() const { return m_giOutputSrvCpuHandle; }
+    std::uintptr_t GetGiDenoisedSrvCpuHandle() const { return m_giDenoisedSrvCpuHandle; }
+    int GetGiOutputWidth() const { return m_giOutputWidth; }
+    int GetGiOutputHeight() const { return m_giOutputHeight; }
+    int GetGiDispatchWidth() const { return m_giDispatchWidth; }
+    int GetGiDispatchHeight() const { return m_giDispatchHeight; }
+
+    bool DispatchGi(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        const ReflectionDispatchInputs& inputs,
+        int width,
+        int height,
+        const DxrRootSignature::ReflectionDispatchConstants& constants,
+        std::string& outError);
+
     std::uintptr_t GetOutputSrvCpuHandle() const { return m_outputSrvCpuHandle; }
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const { return m_primaryOutputSrvCpuHandle; }
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
@@ -191,10 +212,12 @@ private:
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
     bool EnsureShadowOutput(int width, int height, std::string& outError);
+    bool EnsureGiOutput(int width, int height, std::string& outError);
     void ReleaseRetiredOutputs();
     void ReleaseRetiredPrimaryOutputs();
     void ReleaseRetiredReflectionOutputs();
     void ReleaseRetiredShadowOutputs();
+    void ReleaseRetiredGiOutputs();
     std::uint32_t DepthSrvIndexFromCpuHandle(std::uintptr_t depthSrvCpuHandle) const;
 
     struct RetiredOutput
@@ -278,4 +301,16 @@ private:
     int m_shadowDispatchWidth = 0;
     int m_shadowDispatchHeight = 0;
     std::vector<RetiredOutput> m_retiredShadowOutputs;
+
+    // Phase D9 diffuse-GI texture set (reuses ReflectionTexture + create/retire helpers).
+    // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised.
+    static constexpr int kGiTextureCount = 5;
+    ReflectionTexture m_giTextures[kGiTextureCount]{};
+    std::uintptr_t m_giOutputSrvCpuHandle = 0;   // alias of [0]
+    std::uintptr_t m_giDenoisedSrvCpuHandle = 0; // alias of [4]
+    int m_giOutputWidth = 0;
+    int m_giOutputHeight = 0;
+    int m_giDispatchWidth = 0;
+    int m_giDispatchHeight = 0;
+    std::vector<RetiredOutput> m_retiredGiOutputs;
 };

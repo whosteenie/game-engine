@@ -20,6 +20,7 @@ public:
     bool CreatePrimaryDebugPipeline(std::string& outError);
     bool CreateReflectionsPipeline(std::string& outError);
     bool CreateShadowsPipeline(std::string& outError);
+    bool CreateGiPipeline(std::string& outError);
     void Release();
 
     ID3D12StateObject* GetStateObject() const { return m_stateObject; }

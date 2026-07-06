@@ -455,6 +455,7 @@ add_executable(game-engine
     src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
     src/engine/raytracing/DxrReflectionsDispatch.cpp
     src/engine/raytracing/DxrShadowsDispatch.cpp
+    src/engine/raytracing/DxrGiDispatch.cpp
     src/engine/raytracing/NrdDenoiser.cpp
     src/engine/raytracing/NrdShadowDenoiser.cpp
 

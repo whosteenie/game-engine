@@ -714,6 +714,9 @@ namespace SceneProjectIODetail
                  {"shadowsEnabled", dxrSettings.IsShadowsEnabled()},
                  {"sunAngularRadiusDegrees", dxrSettings.GetSunAngularRadiusDegrees()},
                  {"shadowDenoiseEnabled", dxrSettings.IsShadowDenoiseEnabled()},
+                 {"giEnabled", dxrSettings.IsGiEnabled()},
+                 {"giStrength", dxrSettings.GetGiStrength()},
+                 {"giDenoiseEnabled", dxrSettings.IsGiDenoiseEnabled()},
              }},
         };
     }
@@ -775,6 +778,18 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("shadowDenoiseEnabled"))
         {
             dxrSettings.SetShadowDenoiseEnabled(dxrValue.at("shadowDenoiseEnabled").get<bool>());
+        }
+        if (dxrValue.contains("giEnabled"))
+        {
+            dxrSettings.SetGiEnabled(dxrValue.at("giEnabled").get<bool>());
+        }
+        if (dxrValue.contains("giStrength"))
+        {
+            dxrSettings.SetGiStrength(dxrValue.at("giStrength").get<float>());
+        }
+        if (dxrValue.contains("giDenoiseEnabled"))
+        {
+            dxrSettings.SetGiDenoiseEnabled(dxrValue.at("giDenoiseEnabled").get<bool>());
         }
     }
 

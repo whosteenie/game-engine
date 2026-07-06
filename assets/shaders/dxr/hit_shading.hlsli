@@ -1,0 +1,283 @@
+// DXR shared hit-shading core (Phase D9, devdoc/dxr-diffuse-gi.md).
+// Self-contained shared portion for the diffuse-GI trace: the same analytic material shading the
+// reflection closest-hit uses (material table + bindless albedo + sun N·L + SH ambient + emissive),
+// plus the geometry accessors, RNG, and environment sampling both raygens share.
+//
+// NOTE: reflections.hlsl keeps its OWN copy of these helpers (it is validated and left untouched);
+// this header is the single source only for the GI pass. The cbuffer layout here MUST stay
+// byte-identical to DxrRootSignature::ReflectionDispatchConstants (GI reuses that root signature
+// and constants struct wholesale — the GGX-specific fields simply go unused for diffuse GI).
+
+#ifndef DXR_HIT_SHADING_HLSLI
+#define DXR_HIT_SHADING_HLSLI
+
+cbuffer ReflectionDispatchConstants : register(b0)
+{
+    uint2 g_OutputSize;
+    uint2 g_GBufferSize;
+    float4x4 g_InvViewProj;  // jittered, matches the depth buffer
+    float4x4 g_ViewProj;     // jittered (unused by GI; kept for layout parity)
+    float4x4 g_WorldToView;  // for linear viewZ (NRD guide)
+    float3 g_CameraPos;
+    float g_MaxTraceDistance;
+    float g_EnvironmentIntensity;
+    float g_MaxReflectionLod;
+    uint g_FrameIndex;
+    uint g_SamplesPerPixel;
+    float3 g_SunDirection;
+    float g_SunIntensity;
+    float3 g_SunColor;
+    float _padSun;
+    float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
+};
+
+RaytracingAccelerationStructure g_SceneTlas : register(t0);
+Texture2D<float> g_DepthMap : register(t1);
+Texture2D<float4> g_NormalMap : register(t2);    // shading normal (RT2)
+Texture2D<float4> g_Material0Map : register(t3); // albedo.rgb + roughness.a (RT5)
+
+struct GeometryLookupEntry
+{
+    uint vertexFloatOffset;
+    uint vertexStrideFloats;
+    uint indexUintOffset;
+    uint _pad0;
+};
+
+StructuredBuffer<GeometryLookupEntry> g_GeometryLookup : register(t4);
+StructuredBuffer<float> g_SceneVertexFloats : register(t5);
+StructuredBuffer<uint> g_SceneIndices : register(t6);
+
+TextureCube<float4> g_PrefilterMap : register(t10);
+Texture2D<float4> g_VelocityMap : register(t11); // RT4 motion NDC (curr - prev)
+
+// Per-object material constants (indexed by InstanceID). Layout mirrors DxrMaterialEntry.
+struct MaterialEntry
+{
+    float3 albedo;
+    float metallic;
+    float3 emissive;
+    float roughness;
+    uint albedoTexIndex;        // absolute bindless SRV heap index; 0xFFFFFFFF = none
+    uint albedoUvOffsetFloats;  // UV0 float offset within the vertex stride
+    uint _pad0;
+    uint _pad1;
+};
+
+StructuredBuffer<MaterialEntry> g_Materials : register(t12);
+
+// Bindless: the whole shader-visible SRV heap, indexed by absolute descriptor index (space1).
+Texture2D<float4> g_BindlessTextures[] : register(t0, space1);
+
+SamplerState g_LinearClampSampler : register(s0);
+SamplerState g_LinearWrapSampler : register(s1); // tiling albedo UVs
+
+static const float kPi = 3.14159265;
+static const uint kHitKindTriangleBackFace = 255u;
+static const float kMaxRadiance = 64.0;
+
+float2 DepthUvToClipXY(float2 texCoord)
+{
+    return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+}
+
+// Integer PCG hash (pcg3d, Jarzynski & Olano). Frame-varying — a static per-pixel sequence
+// makes the temporal denoiser converge TO the noise (RTQ-01).
+uint3 Pcg3d(uint3 v)
+{
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
+}
+
+// Four decorrelated randoms per sample: xy = lobe sample, zw = sub-pixel ray-setup jitter.
+float4 RandomXi4(uint2 pixel, uint frameIndex, uint sampleIndex)
+{
+    const uint3 hashA = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
+    const uint3 hashB = Pcg3d(uint3(pixel.y ^ 0x9E3779B9u, pixel.x, frameIndex * 64u + sampleIndex + 32u));
+    return float4(
+        float2(hashA.xy & 0x00FFFFFFu) * (1.0 / 16777216.0),
+        float2(hashB.xy & 0x00FFFFFFu) * (1.0 / 16777216.0));
+}
+
+float Luminance(float3 color)
+{
+    return dot(color, float3(0.2126, 0.7152, 0.0722));
+}
+
+void BuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent)
+{
+    const float3 up = abs(normal.z) < 0.999 ? float3(0.0, 0.0, 1.0) : float3(1.0, 0.0, 0.0);
+    tangent = normalize(cross(up, normal));
+    bitangent = cross(normal, tangent);
+}
+
+float3 ClampRadiance(float3 radiance)
+{
+    radiance = max(radiance, 0.0.xxx);
+    const float luminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
+    if (luminance <= kMaxRadiance)
+    {
+        return radiance;
+    }
+
+    return radiance * (kMaxRadiance / max(luminance, 1e-4));
+}
+
+float3 SampleEnvironment(float3 direction, float roughness)
+{
+    return g_PrefilterMap.SampleLevel(
+        g_LinearClampSampler,
+        direction,
+        roughness * g_MaxReflectionLod).rgb * g_EnvironmentIntensity;
+}
+
+float3 LoadObjectPosition(GeometryLookupEntry geo, uint vertexIndex)
+{
+    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats;
+    return float3(
+        g_SceneVertexFloats[base + 0],
+        g_SceneVertexFloats[base + 1],
+        g_SceneVertexFloats[base + 2]);
+}
+
+float3 ComputeWorldGeometricNormal(GeometryLookupEntry geo, uint primitiveIndex)
+{
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+
+    const float3 p0 = LoadObjectPosition(geo, i0);
+    const float3 p1 = LoadObjectPosition(geo, i1);
+    const float3 p2 = LoadObjectPosition(geo, i2);
+
+    const float3x4 objectToWorld = ObjectToWorld3x4();
+    const float3 w0 = mul(objectToWorld, float4(p0, 1.0)).xyz;
+    const float3 w1 = mul(objectToWorld, float4(p1, 1.0)).xyz;
+    const float3 w2 = mul(objectToWorld, float4(p2, 1.0)).xyz;
+
+    return normalize(cross(w1 - w0, w2 - w0));
+}
+
+float3 LoadObjectNormal(GeometryLookupEntry geo, uint vertexIndex)
+{
+    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats;
+    return float3(
+        g_SceneVertexFloats[base + 3],
+        g_SceneVertexFloats[base + 4],
+        g_SceneVertexFloats[base + 5]);
+}
+
+float2 LoadObjectUv(GeometryLookupEntry geo, uint vertexIndex, uint uvOffsetFloats)
+{
+    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats + uvOffsetFloats;
+    return float2(g_SceneVertexFloats[base + 0], g_SceneVertexFloats[base + 1]);
+}
+
+float2 ComputeHitUv(GeometryLookupEntry geo, uint primitiveIndex, uint uvOffsetFloats, float2 bary)
+{
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+
+    const float2 uv0 = LoadObjectUv(geo, i0, uvOffsetFloats);
+    const float2 uv1 = LoadObjectUv(geo, i1, uvOffsetFloats);
+    const float2 uv2 = LoadObjectUv(geo, i2, uvOffsetFloats);
+
+    const float w = 1.0 - bary.x - bary.y;
+    return uv0 * w + uv1 * bary.x + uv2 * bary.y;
+}
+
+float3 ComputeWorldShadingNormal(GeometryLookupEntry geo, uint primitiveIndex, float2 barycentrics)
+{
+    if (geo.vertexStrideFloats < 6u)
+    {
+        return ComputeWorldGeometricNormal(geo, primitiveIndex);
+    }
+
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+
+    const float3 n0 = LoadObjectNormal(geo, i0);
+    const float3 n1 = LoadObjectNormal(geo, i1);
+    const float3 n2 = LoadObjectNormal(geo, i2);
+
+    const float w = 1.0 - barycentrics.x - barycentrics.y;
+    const float3 objectNormal = n0 * w + n1 * barycentrics.x + n2 * barycentrics.y;
+    if (dot(objectNormal, objectNormal) < 1e-8)
+    {
+        return ComputeWorldGeometricNormal(geo, primitiveIndex);
+    }
+
+    const float3x4 objectToWorld = ObjectToWorld3x4();
+    const float3 worldNormal = mul((float3x3)objectToWorld, objectNormal);
+    return normalize(worldNormal);
+}
+
+float3 SrgbToLinear(float3 c)
+{
+    return pow(max(c, 0.0.xxx), 2.2.xxx);
+}
+
+// L2 SH diffuse irradiance evaluation. Matches EvaluateDiffuseIrradianceSh in pbr.ps.hlsl.
+float3 EvaluateDiffuseIrradianceSh(float3 normal)
+{
+    const float3 n = normalize(normal);
+    const float x = n.x;
+    const float y = n.y;
+    const float z = n.z;
+
+    float3 irradiance = g_IrradianceSh9[0].rgb * 0.282095;
+    irradiance += g_IrradianceSh9[1].rgb * (0.488603 * y);
+    irradiance += g_IrradianceSh9[2].rgb * (0.488603 * z);
+    irradiance += g_IrradianceSh9[3].rgb * (0.488603 * x);
+    irradiance += g_IrradianceSh9[4].rgb * (1.092548 * x * y);
+    irradiance += g_IrradianceSh9[5].rgb * (1.092548 * y * z);
+    irradiance += g_IrradianceSh9[6].rgb * (0.315392 * (3.0 * z * z - 1.0));
+    irradiance += g_IrradianceSh9[7].rgb * (1.092548 * z * x);
+    irradiance += g_IrradianceSh9[8].rgb * (0.546274 * (x * x - y * y));
+    return max(irradiance, 0.0.xxx);
+}
+
+// Analytic diffuse response at a ray hit (one bounce): albedo x (sun N·L + SH ambient) + emissive.
+// Identical math to reflections.hlsl's ReflectionClosestHit, so RT GI bounce light matches the
+// surface's own screen-space shading. Diffuse only (no reflected sun shadow) in v1.
+float3 ShadeHitDiffuse(uint instanceId, uint primitiveIndex, float2 barycentrics, float3 hitNormal)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const MaterialEntry material = g_Materials[instanceId];
+
+    float3 albedo = material.albedo;
+    if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
+        const float3 texel =
+            g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
+                .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
+        albedo *= texel;
+    }
+    const float3 diffuseAlbedo = albedo * (1.0 - material.metallic);
+
+    const float3 sunL = normalize(g_SunDirection);
+    const float ndotl = saturate(dot(hitNormal, sunL));
+    const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
+    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi;
+
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
+    const float3 ambient = diffuseAlbedo * irradiance / kPi;
+
+    return max(direct + ambient + material.emissive, 0.0.xxx);
+}
+
+#endif // DXR_HIT_SHADING_HLSLI

@@ -65,6 +65,9 @@ enum class RenderDebugMode
     RtSpecReplacement,
     RtShadowRaw,
     RtShadowDenoised,
+    RtGiRaw,
+    RtGiDenoised,
+    RtGiInject,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -81,5 +84,6 @@ bool IsDxrDebugMode(RenderDebugMode mode);
 bool IsRtPrimaryDebugMode(RenderDebugMode mode);
 bool IsRtReflectionDebugMode(RenderDebugMode mode);
 bool IsRtShadowDebugMode(RenderDebugMode mode);
+bool IsRtGiDebugMode(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

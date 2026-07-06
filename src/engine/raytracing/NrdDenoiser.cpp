@@ -21,6 +21,8 @@
 
 namespace
 {
+    // One denoiser per instance; identifier 0 addresses whichever flavor the instance was
+    // created with (RELAX_SPECULAR for reflections, RELAX_DIFFUSE for the separate GI instance).
     constexpr nrd::Identifier kSpecularIdentifier = 0;
 
     DXGI_FORMAT NrdFormatToDxgi(const nrd::Format format)
@@ -95,6 +97,22 @@ namespace
 NrdDenoiser::~NrdDenoiser()
 {
     Release();
+}
+
+void NrdDenoiser::SetSignal(const Signal signal)
+{
+    if (m_signal == signal)
+    {
+        return;
+    }
+
+    m_signal = signal;
+    // A live instance is bound to the previous denoiser flavor; drop it so the next Denoise
+    // rebuilds against the new one.
+    if (m_instance != nullptr)
+    {
+        Release();
+    }
 }
 
 void NrdDenoiser::Release()
@@ -173,7 +191,8 @@ bool NrdDenoiser::EnsureInstance(const int resourceWidth, const int resourceHeig
 
     nrd::DenoiserDesc denoiserDesc{};
     denoiserDesc.identifier = kSpecularIdentifier;
-    denoiserDesc.denoiser = nrd::Denoiser::RELAX_SPECULAR;
+    denoiserDesc.denoiser =
+        m_signal == Signal::Diffuse ? nrd::Denoiser::RELAX_DIFFUSE : nrd::Denoiser::RELAX_SPECULAR;
 
     nrd::InstanceCreationDesc creationDesc{};
     creationDesc.denoisers = &denoiserDesc;
@@ -201,9 +220,9 @@ bool NrdDenoiser::EnsureInstance(const int resourceWidth, const int resourceHeig
     m_resourceHeight = resourceHeight;
     EngineLog::Info(
         "nrd",
-        "NRD RELAX_SPECULAR ready (" + std::to_string(resourceWidth) + "x"
-            + std::to_string(resourceHeight) + ", " + std::to_string(m_pipelines.size())
-            + " pipelines)");
+        std::string(m_signal == Signal::Diffuse ? "NRD RELAX_DIFFUSE" : "NRD RELAX_SPECULAR")
+            + " ready (" + std::to_string(resourceWidth) + "x" + std::to_string(resourceHeight)
+            + ", " + std::to_string(m_pipelines.size()) + " pipelines)");
     DxrBreadcrumb("nrd EnsureInstance ok");
     return true;
 }
@@ -459,6 +478,16 @@ bool NrdDenoiser::ResolveResource(
         outState = resources.denoisedState;
         outDxgiFormat = static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT);
         return true;
+    case nrd::ResourceType::IN_DIFF_RADIANCE_HITDIST:
+        outResource = resources.radianceHitDist;
+        outState = resources.radianceState;
+        outDxgiFormat = static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+        return true;
+    case nrd::ResourceType::OUT_DIFF_RADIANCE_HITDIST:
+        outResource = resources.denoisedOutput;
+        outState = resources.denoisedState;
+        outDxgiFormat = static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+        return true;
     default:
         return false;
     }
@@ -484,7 +513,8 @@ bool NrdDenoiser::Denoise(
         return false;
     }
 
-    SceneRenderTrace::Scope nrdScope("dxr-nrd-relax-specular");
+    SceneRenderTrace::Scope nrdScope(
+        m_signal == Signal::Diffuse ? "dxr-nrd-relax-diffuse" : "dxr-nrd-relax-specular");
 
     // Common settings. Matrices: glm is column-major with column vectors — NRD's exact
     // expectation, so a straight memcpy is correct.
@@ -528,17 +558,21 @@ bool NrdDenoiser::Denoise(
         std::clamp(blend / std::max(1.0f - blend, 0.01f), 0.0f, 240.0f));
 
     nrd::RelaxSettings relaxSettings{};
-    relaxSettings.specularMaxAccumulatedFrameNum = std::max(accumulatedFrames, 1u);
     // Fast history clamps the main history each frame — if it's too short it re-injects
     // noise every frame ("shimmer that never settles"). Keep it >= 4 frames.
-    relaxSettings.specularMaxFastAccumulatedFrameNum = std::max(accumulatedFrames / 5u, 4u);
+    const std::uint32_t fastAccumulatedFrames = std::max(accumulatedFrames / 5u, 4u);
+    relaxSettings.specularMaxAccumulatedFrameNum = std::max(accumulatedFrames, 1u);
+    relaxSettings.specularMaxFastAccumulatedFrameNum = fastAccumulatedFrames;
+    relaxSettings.diffuseMaxAccumulatedFrameNum = std::max(accumulatedFrames, 1u);
+    relaxSettings.diffuseMaxFastAccumulatedFrameNum = fastAccumulatedFrames;
     relaxSettings.hitDistanceReconstructionMode = nrd::HitDistanceReconstructionMode::OFF;
     relaxSettings.enableAntiFirefly = frame.antiFirefly;
     relaxSettings.atrousIterationNum =
         static_cast<std::uint32_t>(std::clamp(frame.atrousIterations, 2, 8));
-    // Prepass blur exists to spread SPARSE samples (1 spp probabilistic pipelines). Our trace
-    // provides dense, Karis-weighted, sub-pixel-jittered samples (up to 16 spp), so NRD's
-    // 50 px default massively over-blurs — it was the main "smudged mirror" contributor.
+    // Prepass blur exists to spread SPARSE samples (1 spp probabilistic pipelines). Our specular
+    // trace provides dense, Karis-weighted, sub-pixel-jittered samples (up to 16 spp), so NRD's
+    // 50 px default massively over-blurs — it was the main "smudged mirror" contributor. The
+    // diffuse prepass default (30 px) is fine for the broader GI signal, so leave it alone.
     relaxSettings.specularPrepassBlurRadius = 12.0f;
     relaxSettings.diffusePrepassBlurRadius = 30.0f;
 

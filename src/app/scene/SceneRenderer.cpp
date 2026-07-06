@@ -105,6 +105,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_dxrPrimaryDebugDispatch.reset();
     self->m_dxrReflectionsDispatch.reset();
     self->m_dxrShadowsDispatch.reset();
+    self->m_dxrGiDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -421,11 +422,17 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
         }
 
+        if (m_dxrGiDispatch == nullptr)
+        {
+            m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
+        }
+
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
         const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
         const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
         const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
-        if (smokeReady && primaryReady && reflectionsReady && shadowsReady)
+        const bool giReady = m_dxrGiDispatch->IsPipelineReady();
+        if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady)
         {
             return;
         }
@@ -446,6 +453,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (!shadowsReady)
         {
             m_dxrShadowsDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!giReady)
+        {
+            m_dxrGiDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
@@ -708,6 +719,116 @@ void SceneRenderer::RecordDxrPass(
         DxrBreadcrumb("render: shadows DispatchIfEnabled end");
     }
 
+    // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Quality-scaled like reflections;
+    // needs the scene MRTs + IBL, so only runs on the post-process path.
+    const bool giDebugViewActive = IsRtGiDebugMode(debugMode);
+    const bool giWanted = m_dxrSettings.IsGiEnabled() || giDebugViewActive;
+    bool giDispatched = false;
+
+    if (m_dxrGiDispatch == nullptr)
+    {
+        m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
+    }
+
+    if (giWanted && usePostProcess && m_screenSpaceEffects != nullptr
+        && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
+    {
+        DxrBreadcrumb("render: gi DispatchIfEnabled begin");
+
+        float giQualityScale = 0.75f; // Medium
+        switch (m_dxrSettings.GetReflectionsQuality())
+        {
+        case DxrReflectionsQuality::Low:
+            giQualityScale = 0.5f;
+            break;
+        case DxrReflectionsQuality::High:
+            giQualityScale = 1.0f;
+            break;
+        case DxrReflectionsQuality::Medium:
+        default:
+            giQualityScale = 0.75f;
+            break;
+        }
+
+        const int giWidth =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchWidth) * giQualityScale));
+        const int giHeight =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchHeight) * giQualityScale));
+
+        const IBL& ibl = m_environmentMap->GetIBL();
+        DxrGiDispatch::FrameInputs giInputs{};
+        giInputs.depthSrvCpuHandle = depthSrvCpuHandle;
+        giInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
+        giInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
+        giInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
+        giInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
+        giInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        giInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
+        giInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        giInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
+        giInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
+
+        // In-hit analytic shading inputs (shared hit_shading.hlsli — identical to reflections).
+        giInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
+        giInputs.sunDirection = glm::normalize(GetSunDirection());
+        {
+            const std::vector<Light>& lights = m_lighting.GetLights();
+            const int shadowLightIndex = m_lighting.GetShadowLightIndex();
+            const Light* sun = nullptr;
+            if (shadowLightIndex >= 0
+                && static_cast<std::size_t>(shadowLightIndex) < lights.size()
+                && lights[static_cast<std::size_t>(shadowLightIndex)].GetType() == LightType::Directional)
+            {
+                sun = &lights[static_cast<std::size_t>(shadowLightIndex)];
+            }
+            else
+            {
+                for (const Light& light : lights)
+                {
+                    if (light.GetType() == LightType::Directional)
+                    {
+                        sun = &light;
+                        break;
+                    }
+                }
+            }
+            if (sun != nullptr)
+            {
+                giInputs.sunColor = sun->GetColor();
+                giInputs.sunIntensity = sun->GetIntensity();
+            }
+        }
+        const IrradianceSh9& sh9 = ibl.GetIrradianceSh9();
+        for (std::size_t i = 0; i < sh9.coefficients.size() && i < giInputs.irradianceSh9.size(); ++i)
+        {
+            giInputs.irradianceSh9[i] = sh9.coefficients[i];
+        }
+
+        // DispatchRays samples the MRTs from non-pixel shaders; idempotent with the reflection /
+        // shadow passes' transitions.
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+
+        giDispatched = m_dxrGiDispatch->DispatchIfEnabled(
+            *m_dxrAccelerationStructures,
+            camera,
+            true,
+            m_dxrSettings.IsGiEnabled(),
+            giDebugViewActive,
+            GfxContext::Get().GetCommandList(),
+            giInputs,
+            giWidth,
+            giHeight,
+            dispatchWidth,
+            dispatchHeight,
+            m_dxrSettings.GetMaxTraceDistance(),
+            1, // RELAX_DIFFUSE is designed for 1 spp
+            m_dxrSettings.IsGiDenoiseEnabled(),
+            m_dxrSettings.GetTemporalBlend(),
+            m_dxrSettings.GetReflectionAtrousIterations(),
+            m_dxrSettings.IsReflectionAntiFireflyEnabled());
+        DxrBreadcrumb("render: gi DispatchIfEnabled end");
+    }
+
     if (usePostProcess && m_screenSpaceEffects != nullptr)
     {
         DxrBreadcrumb("render: SetDxrDebugSrvs");
@@ -757,6 +878,21 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetDxrShadowCompositeEnabled(
             m_dxrSettings.IsShadowsEnabled() && shadowsDispatched
             && m_dxrShadowsDispatch->DenoisedThisFrame());
+
+        // D9: RT diffuse GI (raw drives the raw debug view, denoised feeds the inject pass).
+        m_screenSpaceEffects->SetDxrGiSrv(
+            giDispatched && m_dxrGiDispatch->HasValidOutput()
+                ? m_dxrGiDispatch->GetGiOutputSrvCpuHandle()
+                : 0,
+            giDispatched ? m_dxrGiDispatch->GetDenoisedSrvCpuHandle() : 0,
+            m_dxrGiDispatch->GetOutputUvScaleX(),
+            m_dxrGiDispatch->GetOutputUvScaleY());
+        m_screenSpaceEffects->SetDxrGiStrength(m_dxrSettings.GetGiStrength());
+
+        // Inject the diffuse bounce into the indirect chain (and skip SSGI inject) only when the
+        // user enabled RT GI AND a fresh trace exists this frame.
+        m_screenSpaceEffects->SetDxrGiCompositeEnabled(
+            m_dxrSettings.IsGiEnabled() && giDispatched && m_dxrGiDispatch->HasValidOutput());
     }
 }
 
@@ -1000,6 +1136,10 @@ void SceneRenderer::Render(
                 viewportWidth,
                 viewportHeight);
             m_screenSpaceEffects->BlitRtShadowDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight);
+            m_screenSpaceEffects->BlitRtGiDebug(
                 reinterpret_cast<Framebuffer*>(targetFramebuffer),
                 viewportWidth,
                 viewportHeight);

@@ -1802,6 +1802,51 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        // Phase D9 — RT diffuse GI (devdoc/dxr-diffuse-gi.md). One-bounce diffuse bounce light
+        // added into the indirect buffer; mutually exclusive with SSGI inject.
+        ImGui::SeparatorText("RT diffuse GI");
+
+        bool giEnabled = dxrSettings.IsGiEnabled();
+        UndoableRendererCheckbox(
+            "Enable RT GI",
+            &giEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetGiEnabled(enabled);
+                if (enabled && !GfxContext::Get().IsFrameRecording())
+                {
+                    target.GetRenderer().WarmUpDxrPipelineIfNeeded();
+                }
+                target.MarkDirty();
+            });
+
+        float giStrength = dxrSettings.GetGiStrength();
+        UndoableRendererSliderFloat(
+            "GI strength",
+            &giStrength,
+            0.0f,
+            2.0f,
+            "%.2f",
+            editContext,
+            [](Scene& target, float strength) {
+                target.GetRenderer().GetDxrSettings().SetGiStrength(strength);
+                target.MarkDirty();
+            });
+
+        bool giDenoise = dxrSettings.IsGiDenoiseEnabled();
+        UndoableRendererCheckbox(
+            "GI denoise (RELAX)",
+            &giDenoise,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetGiDenoiseEnabled(enabled);
+                target.MarkDirty();
+            });
+
+        ImGui::TextDisabled(
+            "Additive over ambient; reduces to an ambient boost at v1. Lower Environment\n"
+            "Intensity if the scene washes out. Overrides SSGI inject when enabled.");
+
         ImGui::PopID();
 
         const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();
@@ -1904,6 +1949,9 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RtSpecReplacement),
             RenderDebugModeLabel(RenderDebugMode::RtShadowRaw),
             RenderDebugModeLabel(RenderDebugMode::RtShadowDenoised),
+            RenderDebugModeLabel(RenderDebugMode::RtGiRaw),
+            RenderDebugModeLabel(RenderDebugMode::RtGiDenoised),
+            RenderDebugModeLabel(RenderDebugMode::RtGiInject),
         };
 
         if (ImGui::Combo(
@@ -1915,7 +1963,7 @@ void LightingPanel::Draw(
             const auto selectedMode = static_cast<RenderDebugMode>(debugMode);
             screenSpaceEffects.SetDebugMode(selectedMode);
             if ((IsRtPrimaryDebugMode(selectedMode) || IsRtReflectionDebugMode(selectedMode)
-                 || IsRtShadowDebugMode(selectedMode))
+                 || IsRtShadowDebugMode(selectedMode) || IsRtGiDebugMode(selectedMode))
                 && renderer.GetDxrSettings().IsEnabled()
                 && !GfxContext::Get().IsFrameRecording())
             {
