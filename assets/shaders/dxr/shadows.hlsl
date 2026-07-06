@@ -111,12 +111,11 @@ void ShadowRayGen()
 
     const float2 uv = (float2(pixel) + 0.5) / float2(g_OutputSize);
     const int2 gbufferPixel = int2(uv * float2(g_GBufferSize));
-    const float depth = g_DepthMap.Load(int3(gbufferPixel, 0)).r;
-    const float2 clipXY = DepthUvToClipXY(uv);
+    const float centerDepth = g_DepthMap.Load(int3(gbufferPixel, 0)).r;
 
     // Sky: no surface, must read as fully LIT (penumbra = NRD_FP16_MAX). DO NOT zero background
     // (dxr-shadows.md DO-NOT #2) — a 0 here would paint the sky black in the composite.
-    if (depth >= 0.9999)
+    if (centerDepth >= 0.9999)
     {
         g_PenumbraOutput[pixel] = NRD_FP16_MAX;
         g_ViewZOutput[pixel] = 1e6;
@@ -125,26 +124,55 @@ void ShadowRayGen()
         return;
     }
 
-    // NRD motion guide: engine velocity is NDC (curr - prev); NRD wants uvPrev - uvCurr.
+    // NRD motion guide (center pixel): engine velocity is NDC (curr - prev); NRD wants uvPrev - uvCurr.
     const float2 velocityNdc = g_VelocityMap.Load(int3(gbufferPixel, 0)).rg;
     g_MotionOutput[pixel] = float2(-0.5 * velocityNdc.x, 0.5 * velocityNdc.y);
 
-    const float4 worldH = mul(g_InvViewProj, float4(clipXY, depth, 1.0));
+    // Foreground dilation at MSAA silhouettes: the resolved center normal is a blend of two
+    // surfaces (length < 1) and the resolved depth floats between them, so a trace from the
+    // reconstructed position leaks light (bright rim) or self-shadows (dark rim). Adopt the
+    // nearest CLEAN neighbor (highest normal length = most fully covered = foreground) and shade
+    // THAT surface so the shadow-mask edge lines up with the object silhouette.
+    int2 shadePixel = gbufferPixel;
+    float3 rawNormal = g_NormalMap.Load(int3(gbufferPixel, 0)).xyz;
+    float rawNormalLength = length(rawNormal);
+    if (rawNormalLength < 0.9)
+    {
+        const int2 maxPixel = int2(g_GBufferSize) - 1;
+        [unroll]
+        for (int dy = -1; dy <= 1; ++dy)
+        {
+            [unroll]
+            for (int dx = -1; dx <= 1; ++dx)
+            {
+                const int2 p = clamp(gbufferPixel + int2(dx, dy), int2(0, 0), maxPixel);
+                const float3 n = g_NormalMap.Load(int3(p, 0)).xyz;
+                const float len = length(n);
+                if (len > rawNormalLength)
+                {
+                    rawNormalLength = len;
+                    rawNormal = n;
+                    shadePixel = p;
+                }
+            }
+        }
+    }
+
+    // Reconstruct the (foreground) surface from the chosen pixel.
+    const float2 shadeUv = (float2(shadePixel) + 0.5) / float2(g_GBufferSize);
+    const float2 shadeClipXY = DepthUvToClipXY(shadeUv);
+    const float shadeDepth = g_DepthMap.Load(int3(shadePixel, 0)).r;
+    const float4 worldH = mul(g_InvViewProj, float4(shadeClipXY, shadeDepth, 1.0));
     const float3 worldPos = worldH.xyz / worldH.w;
-    const float3 rawNormal = g_NormalMap.Load(int3(gbufferPixel, 0)).xyz;
-    const float rawNormalLength = length(rawNormal);
-    const float roughness = g_Material0Map.Load(int3(gbufferPixel, 0)).a;
+    const float roughness = g_Material0Map.Load(int3(shadePixel, 0)).a;
     const float3 shadingNormal = rawNormal / max(rawNormalLength, 1e-4);
 
-    // Guides (encoding contract matches reflections.hlsl / NRD_NORMAL_ENCODING=3). Written for
-    // every non-sky pixel, including the early-out cases below, so SIGMA always has valid guides.
+    // Guides (encoding contract matches reflections.hlsl / NRD_NORMAL_ENCODING=3).
     g_ViewZOutput[pixel] = mul(g_WorldToView, float4(worldPos, 1.0)).z;
     g_NormalRoughnessOutput[pixel] = float4(shadingNormal * 0.5 + 0.5, roughness);
 
-    // Broken (MSAA-averaged) silhouette texel: the resolved normal is a blend of two surfaces and
-    // the reconstructed position floats between them, so an occlusion trace here is unreliable.
-    // Mark LIT (neutral), NOT shadowed — writing penumbra 0 paints a hard black outline around
-    // every object edge (the aliased silhouette rim). SIGMA fills these thin edges from neighbors.
+    // No clean surface anywhere in the 3x3 (isolated thin geometry): mark LIT; SIGMA fills the
+    // thin edge from neighbors. Never write penumbra 0 here (that was the black-outline bug).
     if (rawNormalLength < 0.9)
     {
         g_PenumbraOutput[pixel] = NRD_FP16_MAX;
