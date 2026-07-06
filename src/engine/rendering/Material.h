@@ -5,6 +5,7 @@
 #include "engine/rendering/RenderDebug.h"
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -58,6 +59,10 @@ public:
 
     const glm::vec3& GetEmissive() const;
     void SetEmissive(const glm::vec3& emissive);
+
+    // Absolute shader-visible SRV heap index of the albedo texture (for DXR bindless sampling).
+    // Ensures the map is loaded; returns UINT32_MAX when there is no albedo texture.
+    std::uint32_t GetAlbedoMapSrvIndex() const;
 
     void SetAlbedoMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetNormalMap(std::shared_ptr<Texture> texture, std::string path = {});

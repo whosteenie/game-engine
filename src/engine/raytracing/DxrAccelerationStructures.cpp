@@ -47,7 +47,14 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
         m_sceneIndicesSrvIndex = UINT32_MAX;
     }
 
+    if (m_materialSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_materialSrvIndex);
+        m_materialSrvIndex = UINT32_MAX;
+    }
+
     m_geometryLookupBuffer.Release();
+    m_materialBuffer.Release();
     m_sceneVertexFloatsBuffer.Release();
     m_sceneIndicesBuffer.Release();
     m_geometryObjectCount = 0;
@@ -129,6 +136,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
     }
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(objects.size());
+    std::vector<DxrMaterialEntry> materialEntries(objects.size());
     std::vector<float> vertexFloats;
     std::vector<std::uint32_t> indices;
     vertexFloats.reserve(1024);
@@ -160,16 +168,52 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         entry.vertexStrideFloats = vertexStrideFloats;
         entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
 
+        // Upload the FULL interleaved vertex stride (position + normal + ...) so the reflection
+        // closest-hit can read smooth vertex normals at float offset 3, not just positions.
         const std::vector<glm::vec3>& positions = mesh->GetPositions();
+        const std::vector<float>& meshVertexData = mesh->GetVertexData();
         const std::size_t vertexCount = positions.size();
-        vertexFloats.resize(vertexFloats.size() + vertexCount * vertexStrideFloats, 0.0f);
-        for (std::size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+        const std::size_t vertexFloatCount = vertexCount * vertexStrideFloats;
+        vertexFloats.resize(vertexFloats.size() + vertexFloatCount, 0.0f);
+        if (meshVertexData.size() >= vertexFloatCount)
         {
-            const std::size_t base =
-                static_cast<std::size_t>(entry.vertexFloatOffset) + vertexIndex * vertexStrideFloats;
-            vertexFloats[base + 0] = positions[vertexIndex].x;
-            vertexFloats[base + 1] = positions[vertexIndex].y;
-            vertexFloats[base + 2] = positions[vertexIndex].z;
+            std::memcpy(
+                vertexFloats.data() + entry.vertexFloatOffset,
+                meshVertexData.data(),
+                vertexFloatCount * sizeof(float));
+        }
+        else
+        {
+            for (std::size_t vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
+            {
+                const std::size_t base =
+                    static_cast<std::size_t>(entry.vertexFloatOffset) + vertexIndex * vertexStrideFloats;
+                vertexFloats[base + 0] = positions[vertexIndex].x;
+                vertexFloats[base + 1] = positions[vertexIndex].y;
+                vertexFloats[base + 2] = positions[vertexIndex].z;
+            }
+        }
+
+        const Material& material = object.GetMaterial();
+        DxrMaterialEntry& materialEntry = materialEntries[objectIndex];
+        const glm::vec3 albedo = material.GetAlbedo();
+        const glm::vec3 emissive = material.GetEmissive();
+        materialEntry.albedo[0] = albedo.x;
+        materialEntry.albedo[1] = albedo.y;
+        materialEntry.albedo[2] = albedo.z;
+        materialEntry.metallic = material.GetMetallic();
+        materialEntry.emissive[0] = emissive.x;
+        materialEntry.emissive[1] = emissive.y;
+        materialEntry.emissive[2] = emissive.z;
+        materialEntry.roughness = material.GetRoughness();
+
+        // Bindless albedo texture: textured meshes carry their color in the albedo map, not the
+        // constant. UV0 sits at float offset 6 in the interleaved stride (pos3 + normal3 + uv0).
+        const std::uint32_t albedoTexIndex = material.GetAlbedoMapSrvIndex();
+        if (albedoTexIndex != UINT32_MAX && vertexStrideFloats >= 8)
+        {
+            materialEntry.albedoTexIndex = albedoTexIndex;
+            materialEntry.albedoUvOffsetFloats = 6;
         }
 
         const std::vector<unsigned int>& meshIndices = mesh->GetIndices();
@@ -186,6 +230,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         m_geometryObjectCount == objects.size()
         && m_geometryLookupBuffer.sizeInBytes
             >= sizeof(DxrGeometryLookupEntry) * objects.size()
+        && m_materialBuffer.sizeInBytes >= sizeof(DxrMaterialEntry) * objects.size()
         && m_sceneVertexFloatsBuffer.sizeInBytes >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesBuffer.sizeInBytes >= indices.size() * sizeof(std::uint32_t);
 
@@ -194,10 +239,12 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         ReleaseGeometryBuffers();
 
         const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * objects.size();
+        const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * objects.size();
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
         if (!CreateDxrUploadBuffer(lookupBytes, m_geometryLookupBuffer)
+            || !CreateDxrUploadBuffer(materialBytes, m_materialBuffer)
             || !CreateDxrUploadBuffer(vertexBytes, m_sceneVertexFloatsBuffer)
             || !CreateDxrUploadBuffer(indexBytes, m_sceneIndicesBuffer))
         {
@@ -207,9 +254,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         }
 
         m_geometryLookupSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        m_materialSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         m_sceneVertexFloatsSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         m_sceneIndicesSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-        if (m_geometryLookupSrvIndex == UINT32_MAX || m_sceneVertexFloatsSrvIndex == UINT32_MAX
+        if (m_geometryLookupSrvIndex == UINT32_MAX || m_materialSrvIndex == UINT32_MAX
+            || m_sceneVertexFloatsSrvIndex == UINT32_MAX
             || m_sceneIndicesSrvIndex == UINT32_MAX)
         {
             outError = "failed to allocate DXR geometry lookup SRV descriptors";
@@ -235,6 +284,17 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
         lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
         device->CreateShaderResourceView(m_geometryLookupBuffer.resource, &lookupSrvDesc, lookupHandle);
+
+        D3D12_CPU_DESCRIPTOR_HANDLE materialHandle{};
+        materialHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_materialSrvIndex);
+        D3D12_SHADER_RESOURCE_VIEW_DESC materialSrvDesc{};
+        materialSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        materialSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+        materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        materialSrvDesc.Buffer.FirstElement = 0;
+        materialSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+        materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
+        device->CreateShaderResourceView(m_materialBuffer.resource, &materialSrvDesc, materialHandle);
 
         D3D12_CPU_DESCRIPTOR_HANDLE vertexHandle{};
         vertexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneVertexFloatsSrvIndex);
@@ -264,6 +324,12 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
     {
         std::memcpy(mapped, lookupEntries.data(), lookupEntries.size() * sizeof(DxrGeometryLookupEntry));
         m_geometryLookupBuffer.resource->Unmap(0, nullptr);
+    }
+
+    if (SUCCEEDED(m_materialBuffer.resource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, materialEntries.data(), materialEntries.size() * sizeof(DxrMaterialEntry));
+        m_materialBuffer.resource->Unmap(0, nullptr);
     }
 
     if (SUCCEEDED(m_sceneVertexFloatsBuffer.resource->Map(0, nullptr, &mapped)))

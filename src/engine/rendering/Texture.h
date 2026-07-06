@@ -41,6 +41,7 @@ public:
     bool IsValid() const;
 
     std::uintptr_t GetSrvCpuHandle() const { return m_srvCpuHandle; }
+    std::uint32_t GetSrvDescriptorIndex() const { return m_srvDescriptorIndex; }
 
 private:
     Texture() = default;

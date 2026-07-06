@@ -315,7 +315,7 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
 // See devdoc/dxr-reflections.md for the binding table.
 void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
-    constexpr std::uint32_t kSrvCount = 12;
+    constexpr std::uint32_t kSrvCount = 13;
     constexpr std::uint32_t kUavCount = 4;
 
     D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
@@ -340,7 +340,19 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
         uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
     }
 
-    D3D12_ROOT_PARAMETER1 rootParams[1 + kSrvCount + kUavCount]{};
+    // Bindless: unbounded SRV array over the whole shader-visible heap (space1), for per-object
+    // albedo texture sampling in the closest-hit. g_BindlessTextures[] in reflections.hlsl.
+    D3D12_DESCRIPTOR_RANGE1 bindlessRange{};
+    bindlessRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    bindlessRange.NumDescriptors = UINT_MAX; // unbounded
+    bindlessRange.BaseShaderRegister = 0;
+    bindlessRange.RegisterSpace = 1;
+    bindlessRange.OffsetInDescriptorsFromTableStart = 0;
+    bindlessRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
+
+    constexpr std::uint32_t kParamCount = 1 + kSrvCount + kUavCount + 1;
+    constexpr std::uint32_t kBindlessParam = 1 + kSrvCount + kUavCount;
+    D3D12_ROOT_PARAMETER1 rootParams[kParamCount]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].Descriptor.ShaderRegister = 0;
     rootParams[0].Descriptor.RegisterSpace = 0;
@@ -362,7 +374,13 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
         rootParams[1 + kSrvCount + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
-    D3D12_STATIC_SAMPLER_DESC linearClampSampler{};
+    rootParams[kBindlessParam].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[kBindlessParam].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[kBindlessParam].DescriptorTable.pDescriptorRanges = &bindlessRange;
+    rootParams[kBindlessParam].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[2]{};
+    D3D12_STATIC_SAMPLER_DESC& linearClampSampler = staticSamplers[0];
     linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     linearClampSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
     linearClampSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
@@ -373,11 +391,22 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
     linearClampSampler.RegisterSpace = 0;
     linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    D3D12_STATIC_SAMPLER_DESC& linearWrapSampler = staticSamplers[1];
+    linearWrapSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    linearWrapSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.MaxAnisotropy = 1;
+    linearWrapSampler.MaxLOD = D3D12_FLOAT32_MAX;
+    linearWrapSampler.ShaderRegister = 1;
+    linearWrapSampler.RegisterSpace = 0;
+    linearWrapSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
     D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
-    rootDesc.NumParameters = 1 + kSrvCount + kUavCount;
+    rootDesc.NumParameters = kParamCount;
     rootDesc.pParameters = rootParams;
-    rootDesc.NumStaticSamplers = 1;
-    rootDesc.pStaticSamplers = &linearClampSampler;
+    rootDesc.NumStaticSamplers = 2;
+    rootDesc.pStaticSamplers = staticSamplers;
     rootDesc.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS |

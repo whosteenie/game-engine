@@ -5,6 +5,7 @@
 #include "engine/raytracing/NrdDenoiser.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -31,6 +32,12 @@ public:
         std::uintptr_t velocitySrvCpuHandle = 0;  // RT4 motion NDC (NRD guide source)
         float environmentIntensity = 1.0f;
         float maxReflectionLod = 4.0f;
+        // In-hit analytic shading inputs.
+        std::uint32_t materialSrvIndex = UINT32_MAX; // per-object material table (t12)
+        glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+        glm::vec3 sunColor = glm::vec3(1.0f);
+        float sunIntensity = 0.0f;
+        std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse irradiance
     };
 
     DxrReflectionsDispatch() = default;

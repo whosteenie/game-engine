@@ -878,7 +878,8 @@ bool DxrDispatchContext::DispatchReflections(
 
     if (inputs.geometryLookupSrvIndex == UINT32_MAX
         || inputs.sceneVertexFloatsSrvIndex == UINT32_MAX
-        || inputs.sceneIndicesSrvIndex == UINT32_MAX)
+        || inputs.sceneIndicesSrvIndex == UINT32_MAX
+        || inputs.materialSrvIndex == UINT32_MAX)
     {
         outError = "DXR reflection geometry lookup SRVs unavailable";
         return false;
@@ -926,8 +927,9 @@ bool DxrDispatchContext::DispatchReflections(
     commandList->SetComputeRootSignature(rootSignature);
     commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
-    // Root params 1..12 = SRV tables t0..t11 (see SerializeReflectionGlobalRootSignature).
-    const std::uint32_t srvHeapIndices[12] = {
+    // Root params 1..13 = SRV tables t0..t12 (see SerializeReflectionGlobalRootSignature).
+    constexpr std::uint32_t kReflectionSrvCount = 13;
+    const std::uint32_t srvHeapIndices[kReflectionSrvCount] = {
         m_tlasSrvIndex,                     // t0 TLAS
         srvIndicesFromHandles[0],           // t1 depth
         srvIndicesFromHandles[1],           // t2 shading normal
@@ -939,9 +941,10 @@ bool DxrDispatchContext::DispatchReflections(
         srvIndicesFromHandles[4],           // t8 sun shadow RT3
         srvIndicesFromHandles[5],           // t9 indirect RT1
         srvIndicesFromHandles[6],           // t10 prefiltered env cube
-        srvIndicesFromHandles[7]};          // t11 velocity RT4
+        srvIndicesFromHandles[7],           // t11 velocity RT4
+        inputs.materialSrvIndex};           // t12 per-object material table
 
-    for (std::uint32_t rootIndex = 0; rootIndex < 12; ++rootIndex)
+    for (std::uint32_t rootIndex = 0; rootIndex < kReflectionSrvCount; ++rootIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
         tableHandle.ptr =
@@ -949,13 +952,25 @@ bool DxrDispatchContext::DispatchReflections(
         commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
     }
 
-    // Root params 13..16 = UAV tables u0..u3.
+    // Root params 14..17 = UAV tables u0..u3 (base = 1 + kReflectionSrvCount).
+    constexpr std::uint32_t kReflectionUavCount = 4;
     for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(m_reflectionTextures[textureIndex].uavIndex));
-        commandList->SetComputeRootDescriptorTable(13 + textureIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(1 + kReflectionSrvCount + textureIndex, uavTableHandle);
+    }
+
+    // Root param 18 = bindless SRV table (space1) over the whole heap. The base must be the
+    // PHYSICAL heap start (descriptor 0) so g_BindlessTextures[absoluteHeapIndex] resolves
+    // correctly. GetSrvHeapGpuHandle(0) can't be used: the SRV allocator reserves the first
+    // descriptors (index offset), so index 0 is "invalid" and would return null.
+    {
+        const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
+            srvHeap->GetGPUDescriptorHandleForHeapStart();
+        commandList->SetComputeRootDescriptorTable(
+            1 + kReflectionSrvCount + kReflectionUavCount, bindlessHandle);
     }
 
     D3D12_DISPATCH_RAYS_DESC dispatchDesc{};

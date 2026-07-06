@@ -50,6 +50,12 @@ struct ReflectionDispatchConstants
     float maxReflectionLod = 4.0f;
     std::uint32_t frameIndex = 0;
     std::uint32_t samplesPerPixel = 1;
+    // In-hit analytic shading inputs (see assets/shaders/dxr/reflections.hlsl).
+    float sunDirection[3] = {0.0f, -1.0f, 0.0f};
+    float sunIntensity = 0.0f;
+    float sunColor[3] = {1.0f, 1.0f, 1.0f};
+    float _padSun = 0.0f;
+    float irradianceSh9[9][4] = {}; // L2 SH diffuse irradiance (9 x float4)
 };
 
 void SerializeSmokeGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);

@@ -591,6 +591,43 @@ void SceneRenderer::RecordDxrPass(
         frameInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
         frameInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
 
+        // In-hit analytic shading inputs. Sun matches the primary directional light used by the
+        // raster PBR pass (uLightDirections = normalize(GetDirection()); color is sRGB).
+        frameInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
+        frameInputs.sunDirection = glm::normalize(GetSunDirection());
+        {
+            const std::vector<Light>& lights = m_lighting.GetLights();
+            const int shadowLightIndex = m_lighting.GetShadowLightIndex();
+            const Light* sun = nullptr;
+            if (shadowLightIndex >= 0
+                && static_cast<std::size_t>(shadowLightIndex) < lights.size()
+                && lights[static_cast<std::size_t>(shadowLightIndex)].GetType() == LightType::Directional)
+            {
+                sun = &lights[static_cast<std::size_t>(shadowLightIndex)];
+            }
+            else
+            {
+                for (const Light& light : lights)
+                {
+                    if (light.GetType() == LightType::Directional)
+                    {
+                        sun = &light;
+                        break;
+                    }
+                }
+            }
+            if (sun != nullptr)
+            {
+                frameInputs.sunColor = sun->GetColor();
+                frameInputs.sunIntensity = sun->GetIntensity();
+            }
+        }
+        const IrradianceSh9& sh9 = ibl.GetIrradianceSh9();
+        for (std::size_t i = 0; i < sh9.coefficients.size() && i < frameInputs.irradianceSh9.size(); ++i)
+        {
+            frameInputs.irradianceSh9[i] = sh9.coefficients[i];
+        }
+
         // DispatchRays samples the MRTs from non-pixel shaders; move them (tracked) to a
         // combined read state first.
         m_screenSpaceEffects->PrepareSceneColorForDxrRead();

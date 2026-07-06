@@ -20,6 +20,22 @@ struct DxrGeometryLookupEntry
     std::uint32_t pad0 = 0;
 };
 
+// Per-object material constants for in-hit reflection shading. Indexed by TLAS InstanceID
+// (== scene object index). Layout must match MaterialEntry in assets/shaders/dxr/reflections.hlsl.
+struct DxrMaterialEntry
+{
+    float albedo[3] = {0.5f, 0.5f, 0.5f};
+    float metallic = 0.0f;
+    float emissive[3] = {0.0f, 0.0f, 0.0f};
+    float roughness = 1.0f;
+    // Bindless albedo texture (absolute SRV heap index; UINT32_MAX = none) + its UV float offset
+    // within the interleaved vertex stride.
+    std::uint32_t albedoTexIndex = UINT32_MAX;
+    std::uint32_t albedoUvOffsetFloats = UINT32_MAX;
+    std::uint32_t pad0 = 0;
+    std::uint32_t pad1 = 0;
+};
+
 class DxrAccelerationStructures
 {
 public:
@@ -39,6 +55,7 @@ public:
     std::uint32_t GetGeometryLookupSrvIndex() const { return m_geometryLookupSrvIndex; }
     std::uint32_t GetSceneVertexFloatsSrvIndex() const { return m_sceneVertexFloatsSrvIndex; }
     std::uint32_t GetSceneIndicesSrvIndex() const { return m_sceneIndicesSrvIndex; }
+    std::uint32_t GetMaterialSrvIndex() const { return m_materialSrvIndex; }
     bool HasGeometryLookup() const { return m_geometryLookupSrvIndex != UINT32_MAX; }
 
     void Release();
@@ -59,9 +76,11 @@ private:
     DxrGpuResource m_geometryLookupBuffer{};
     DxrGpuResource m_sceneVertexFloatsBuffer{};
     DxrGpuResource m_sceneIndicesBuffer{};
+    DxrGpuResource m_materialBuffer{};
     std::uint32_t m_geometryLookupSrvIndex = UINT32_MAX;
     std::uint32_t m_sceneVertexFloatsSrvIndex = UINT32_MAX;
     std::uint32_t m_sceneIndicesSrvIndex = UINT32_MAX;
+    std::uint32_t m_materialSrvIndex = UINT32_MAX;
     std::size_t m_geometryObjectCount = 0;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);

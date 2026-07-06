@@ -24,6 +24,7 @@ public:
     float GetMaxReflectionLod() const;
     float GetEnvironmentIntensity() const;
     void SetEnvironmentIntensity(float intensity);
+    const IrradianceSh9& GetIrradianceSh9() const { return m_irradianceSh; }
 
     bool IsReady() const;
     const std::string& GetLoadError() const;

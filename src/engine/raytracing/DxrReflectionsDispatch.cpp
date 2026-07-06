@@ -155,6 +155,22 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     constants.samplesPerPixel =
         static_cast<std::uint32_t>(samplesPerPixel < 1 ? 1 : (samplesPerPixel > 16 ? 16 : samplesPerPixel));
 
+    // In-hit analytic shading inputs.
+    constants.sunDirection[0] = frameInputs.sunDirection.x;
+    constants.sunDirection[1] = frameInputs.sunDirection.y;
+    constants.sunDirection[2] = frameInputs.sunDirection.z;
+    constants.sunIntensity = frameInputs.sunIntensity;
+    constants.sunColor[0] = frameInputs.sunColor.x;
+    constants.sunColor[1] = frameInputs.sunColor.y;
+    constants.sunColor[2] = frameInputs.sunColor.z;
+    for (std::size_t i = 0; i < frameInputs.irradianceSh9.size(); ++i)
+    {
+        constants.irradianceSh9[i][0] = frameInputs.irradianceSh9[i].x;
+        constants.irradianceSh9[i][1] = frameInputs.irradianceSh9[i].y;
+        constants.irradianceSh9[i][2] = frameInputs.irradianceSh9[i].z;
+        constants.irradianceSh9[i][3] = frameInputs.irradianceSh9[i].w;
+    }
+
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
     dispatchInputs.tlasGpuVirtualAddress = accelerationStructures.GetTlasGpuVirtualAddress();
@@ -164,6 +180,7 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     dispatchInputs.geometryLookupSrvIndex = accelerationStructures.GetGeometryLookupSrvIndex();
     dispatchInputs.sceneVertexFloatsSrvIndex = accelerationStructures.GetSceneVertexFloatsSrvIndex();
     dispatchInputs.sceneIndicesSrvIndex = accelerationStructures.GetSceneIndicesSrvIndex();
+    dispatchInputs.materialSrvIndex = accelerationStructures.GetMaterialSrvIndex();
     dispatchInputs.directSrvCpuHandle = frameInputs.directSrvCpuHandle;
     dispatchInputs.sunShadowSrvCpuHandle = frameInputs.sunShadowSrvCpuHandle;
     dispatchInputs.indirectSrvCpuHandle = frameInputs.indirectSrvCpuHandle;

@@ -71,6 +71,7 @@ public:
         std::uint32_t geometryLookupSrvIndex = UINT32_MAX;
         std::uint32_t sceneVertexFloatsSrvIndex = UINT32_MAX;
         std::uint32_t sceneIndicesSrvIndex = UINT32_MAX;
+        std::uint32_t materialSrvIndex = UINT32_MAX; // per-object material table (t12)
         std::uintptr_t directSrvCpuHandle = 0;
         std::uintptr_t sunShadowSrvCpuHandle = 0;
         std::uintptr_t indirectSrvCpuHandle = 0;

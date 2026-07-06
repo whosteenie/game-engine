@@ -36,6 +36,7 @@ public:
 
     const std::vector<glm::vec3>& GetPositions() const;
     const std::vector<unsigned int>& GetIndices() const;
+    const std::vector<float>& GetVertexData() const { return m_vertices; }
 
     void EnsureGpuResources() const;
     const GpuBuffer& GetVertexBuffer() const { return m_vertexBuffer; }

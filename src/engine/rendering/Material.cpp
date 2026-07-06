@@ -439,6 +439,16 @@ const glm::vec3& Material::GetEmissive() const
     return m_emissive;
 }
 
+std::uint32_t Material::GetAlbedoMapSrvIndex() const
+{
+    EnsureMapsLoaded();
+    if (m_albedoMap != nullptr && m_albedoMap->IsValid())
+    {
+        return m_albedoMap->GetSrvDescriptorIndex();
+    }
+    return UINT32_MAX;
+}
+
 void Material::SetEmissive(const glm::vec3& emissive)
 {
     m_emissive = glm::max(emissive, glm::vec3(0.0f));
