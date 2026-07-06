@@ -62,6 +62,7 @@ enum class RenderDebugMode
     RtReflectionRaw,
     RtReflectionConfidence,
     RtReflectionDenoised,
+    RtSpecReplacement,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);

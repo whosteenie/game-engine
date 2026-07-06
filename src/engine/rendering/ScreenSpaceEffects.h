@@ -200,6 +200,9 @@ public:
         float uvScaleY = 1.0f,
         std::uintptr_t denoisedSrvCpuHandle = 0,
         float maxTraceDistance = 0.0f);
+    // D6: when true (and reflection SRVs are set), Apply() runs the RT specular composite
+    // and SKIPS the SSR indirect composite — the two are mutually exclusive per plan.
+    void SetDxrReflectionCompositeEnabled(bool enabled) { m_dxrReflectionCompositeEnabled = enabled; }
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
     std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
     // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
@@ -368,6 +371,7 @@ private:
     InternalTarget m_ssrHistoryDepthTarget;
     InternalTarget m_ssrResolvedTarget;
     InternalTarget m_ssrIndirectTarget;
+    InternalTarget m_rtIndirectTarget; // D6 RT specular composite (mutually exclusive with SSR)
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -418,6 +422,7 @@ private:
     std::unique_ptr<Shader> m_ssrSvgfAtrousShader;
     std::unique_ptr<Shader> m_ssrUpscaleShader;
     std::unique_ptr<Shader> m_ssrIndirectShader;
+    std::unique_ptr<Shader> m_dxrIndirectShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -494,6 +499,7 @@ private:
     float m_dxrReflectionUvScaleX = 1.0f;
     float m_dxrReflectionUvScaleY = 1.0f;
     float m_dxrReflectionMaxTraceDistance = 0.0f;
+    bool m_dxrReflectionCompositeEnabled = false;
     std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
     int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;

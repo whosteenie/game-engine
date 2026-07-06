@@ -633,7 +633,12 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::SsrIndirectFragmentShader,
           // s2 = depth, s3 = normals, s4/s5 = materials; s6 (prefilter cube) and
           // s7 (BRDF LUT) stay linear but now CLAMP instead of wrapping at grazing angles
-          ShaderSamplerOverrides{(1u << 2) | (1u << 3) | (1u << 4) | (1u << 5), true}))
+          ShaderSamplerOverrides{(1u << 2) | (1u << 3) | (1u << 4) | (1u << 5), true})),
+      m_dxrIndirectShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DxrIndirectFragmentShader,
+          // s0 = linear clamp (colors/env/LUT), s1 = point clamp (G-buffer + raw hitDist)
+          ShaderSamplerOverrides{(1u << 1), true}))
 {
     SceneRenderTrace::Section initSection("sse-init");
     {
@@ -683,6 +688,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ssrHistoryDepthTarget);
     DestroyInternalTarget(m_ssrResolvedTarget);
     DestroyInternalTarget(m_ssrIndirectTarget);
+    DestroyInternalTarget(m_rtIndirectTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -1024,6 +1030,7 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_radianceTemporalTarget, width, height, format);
     ResizeInternalTarget(m_radianceHistoryDepthTarget, width, height, format);
     ResizeInternalTarget(m_ssrIndirectTarget, width, height, format);
+    ResizeInternalTarget(m_rtIndirectTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1480,6 +1487,12 @@ void ScreenSpaceEffects::BlitRtReflectionDebug(
     const int viewportHeight) const
 {
     if (!IsRtReflectionDebugMode(m_debugMode) || m_dxrReflectionSrv == 0 || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    // RtSpecReplacement is rendered by the composite debug branch inside Apply(), not here.
+    if (m_debugMode == RenderDebugMode::RtSpecReplacement)
     {
         return;
     }
@@ -2250,8 +2263,17 @@ void ScreenSpaceEffects::Apply(
         const_cast<ScreenSpaceEffects*>(this)->m_lastSsrResolvedSrv = m_ssrTraceTarget.srvCpuHandle;
     }
 
+    // D6: RT specular composite and SSR spec composite are mutually exclusive — only one
+    // may adjust spec IBL in RT1 per frame (dxr-groundwork.md pipeline rule).
+    const bool rtCompositeWanted =
+        m_dxrReflectionCompositeEnabled && m_dxrReflectionSrv != 0;
+    const bool rtCompositeDebugOnly =
+        !rtCompositeWanted && m_debugMode == RenderDebugMode::RtSpecReplacement
+        && m_dxrReflectionSrv != 0;
+
     const bool runSsrIndirect =
         !pbrDebugActive &&
+        !rtCompositeWanted &&
         m_sceneFramebuffer->HasSplitLighting() &&
         m_sceneFramebuffer->HasMaterialGbuffer() &&
         m_ssrIndirectTarget.resource != nullptr &&
@@ -2282,6 +2304,7 @@ void ScreenSpaceEffects::Apply(
         m_ssrIndirectShader->SetFloat("uEnvironmentIntensity", ibl.GetEnvironmentIntensity());
         m_ssrIndirectShader->SetFloat("uMaxReflectionLod", ibl.GetMaxReflectionLod());
         m_ssrIndirectShader->SetFloat("uSsrStrength", m_ssrStrength);
+        m_ssrIndirectShader->SetFloat("uReceiverFadeDistance", m_ssrMaxTraceDistance);
         m_ssrIndirectShader->SetInt(
             "uDebugSpecReplacement",
             (!m_ssrEnabled && m_debugMode == RenderDebugMode::SsrSpecReplacement) ? 1 : 0);
@@ -2304,6 +2327,73 @@ void ScreenSpaceEffects::Apply(
             indirectCompositeSrv = m_ssrIndirectTarget.srvCpuHandle;
         }
         ssrIndirectScope.Success();
+    }
+
+    // D6 — RT specular composite: replace the recomputed spec IBL in RT1 with the denoised
+    // RT reflection wherever the raw trace has a valid (non-miss) hit distance. Standalone
+    // RT pass: no SSR buffer reads (dxr-groundwork.md Phase D6).
+    const bool runRtIndirect =
+        (rtCompositeWanted || rtCompositeDebugOnly) &&
+        !pbrDebugActive &&
+        m_sceneFramebuffer->HasSplitLighting() &&
+        m_sceneFramebuffer->HasMaterialGbuffer() &&
+        m_rtIndirectTarget.resource != nullptr &&
+        environmentMap.GetIBL().IsReady();
+
+    if (runRtIndirect)
+    {
+        SceneRenderTrace::Scope rtIndirectScope("dxr indirect composite");
+        const float indirectClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const glm::mat4 viewMatrix = camera.GetViewMatrix();
+        const glm::mat4 invView = glm::inverse(viewMatrix);
+        const IBL& ibl = environmentMap.GetIBL();
+        const std::uintptr_t denoisedSrv =
+            m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv;
+
+        m_dxrIndirectShader->Use(false);
+        m_dxrIndirectShader->SetInt("uIndirectMap", 0);
+        m_dxrIndirectShader->SetInt("uRtDenoisedMap", 1);
+        m_dxrIndirectShader->SetInt("uRtRawMap", 2);
+        m_dxrIndirectShader->SetInt("uDepthMap", 3);
+        m_dxrIndirectShader->SetInt("uNormalMap", 4);
+        m_dxrIndirectShader->SetInt("uMaterial0Map", 5);
+        m_dxrIndirectShader->SetInt("uMaterial1Map", 6);
+        m_dxrIndirectShader->SetInt("uPrefilterMap", 7);
+        m_dxrIndirectShader->SetInt("uBrdfLut", 8);
+        m_dxrIndirectShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_dxrIndirectShader->SetMat4("uInvView", invView);
+        m_dxrIndirectShader->SetFloat("uEnvironmentIntensity", ibl.GetEnvironmentIntensity());
+        m_dxrIndirectShader->SetFloat("uMaxReflectionLod", ibl.GetMaxReflectionLod());
+        m_dxrIndirectShader->SetFloat("uStrength", 1.0f);
+        m_dxrIndirectShader->SetFloat(
+            "uMaxTraceDistance",
+            m_dxrReflectionMaxTraceDistance > 0.0f ? m_dxrReflectionMaxTraceDistance : 100.0f);
+        m_dxrIndirectShader->SetVec2(
+            "uRtUvScale",
+            glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
+        m_dxrIndirectShader->SetInt(
+            "uDebugSpecReplacement",
+            rtCompositeDebugOnly ? 1 : 0);
+        m_dxrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_dxrIndirectShader->BindTextureSlot(1, denoisedSrv);
+        m_dxrIndirectShader->BindTextureSlot(2, m_dxrReflectionSrv);
+        m_dxrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+        m_dxrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_dxrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_dxrIndirectShader->BindTextureSlot(6, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_dxrIndirectShader->BindTextureSlot(7, environmentMap.GetIBL().GetPrefilterMapSrvCpuHandle());
+        m_dxrIndirectShader->BindTextureSlot(8, environmentMap.GetIBL().GetBrdfLutSrvCpuHandle());
+        DrawFullscreenToTarget(
+            *m_dxrIndirectShader,
+            const_cast<InternalTarget&>(m_rtIndirectTarget),
+            m_width,
+            m_height,
+            indirectClear);
+        if (rtCompositeWanted)
+        {
+            indirectCompositeSrv = m_rtIndirectTarget.srvCpuHandle;
+        }
+        rtIndirectScope.Success();
     }
 
     std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
@@ -3003,6 +3093,21 @@ void ScreenSpaceEffects::Apply(
                 }
                 return;
             }
+        }
+        else if (m_debugMode == RenderDebugMode::RtSpecReplacement && runRtIndirect
+                 && m_rtIndirectTarget.srvCpuHandle != 0)
+        {
+            // The composite pass wrote the replacement weight (debug) or the composited
+            // indirect (composite active) into the RT indirect target — show it directly.
+            m_debugChannelShader->Use(false, true);
+            m_debugChannelShader->SetInt("uOutputRgb", 1);
+            m_debugChannelShader->SetInt("uOutputAlpha", 0);
+            m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
+            m_debugChannelShader->SetInt("uInput", 0);
+            m_debugChannelShader->BindTextureSlot(0, m_rtIndirectTarget.srvCpuHandle);
+            m_debugChannelShader->FlushUniforms();
+            DrawFullscreenQuad();
+            return;
         }
         else if (IsSsrCompositeDebugMode(m_debugMode) && runSsrIndirect && m_ssrIndirectTarget.srvCpuHandle != 0)
         {

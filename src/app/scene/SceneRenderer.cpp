@@ -681,6 +681,12 @@ void SceneRenderer::RecordDxrPass(
             m_dxrReflectionsDispatch->GetOutputUvScaleY(),
             reflectionsDispatched ? m_dxrReflectionsDispatch->GetDenoisedSrvCpuHandle() : 0,
             m_dxrSettings.GetMaxTraceDistance());
+
+        // D6: run the RT specular composite in Apply (and skip SSR's) only when the user
+        // enabled RT reflections AND this frame actually produced a fresh trace.
+        m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(
+            m_dxrSettings.IsReflectionsEnabled() && reflectionsDispatched
+            && m_dxrReflectionsDispatch->HasValidOutput());
     }
 }
 
@@ -871,6 +877,17 @@ void SceneRenderer::Render(
             gridScope.Success();
         }
 
+        // D6: the DXR pass records BEFORE Apply so the same-frame RT reflection buffers are
+        // ready when Apply's RT specular composite runs. All DXR inputs (scene MRTs, depth)
+        // are complete at this point (EndScenePass + grid have run).
+        RecordDxrPass(
+            scene,
+            camera,
+            m_screenSpaceEffects->GetRenderWidth(),
+            m_screenSpaceEffects->GetRenderHeight(),
+            m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
+            true);
+
         if (target != nullptr)
         {
             GfxContext::Get().SetBoundOutputFramebuffer(target);
@@ -896,14 +913,6 @@ void SceneRenderer::Render(
             m_screenSpaceEffects->AdvanceTemporalFrame(camera);
             advanceTemporalScope.Success();
         }
-
-        RecordDxrPass(
-            scene,
-            camera,
-            m_screenSpaceEffects->GetRenderWidth(),
-            m_screenSpaceEffects->GetRenderHeight(),
-            m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
-            true);
 
         if (target != nullptr)
         {

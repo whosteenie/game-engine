@@ -29,7 +29,10 @@ cbuffer PerPixel : register(b0)
     float uMaxReflectionLod;
     float uSsrStrength;
     int uDebugSpecReplacement;
-    float _pad0;
+    // Receiver-distance fade: beyond this view depth the replacement falls back to IBL.
+    // Distant/grazing receivers only produce degenerate screen-space hits (horizon rows,
+    // reflected grid moire, dark self-reflections) — the data is unusable there.
+    float uReceiverFadeDistance;
 };
 
 struct PSInput
@@ -83,7 +86,10 @@ float4 main(PSInput input) : SV_Target
     const float depth = uDepthMap.Sample(uDepthSampler, uv).r;
     if (depth >= 0.9999)
     {
-        return float4(0.0, 0.0, 0.0, 0.0);
+        // Background: RT1 carries the SKY (sky_background.ps writes oIndirect, and the
+        // screen composite's grid-over-sky branch reads it). Pass it through unchanged —
+        // returning 0 here black-outlined every grid line drawn over the skybox.
+        return float4(uIndirectMap.Sample(uIndirectSampler, uv).rgb, 1.0);
     }
 
     const float3 indirect = uIndirectMap.Sample(uIndirectSampler, uv).rgb;
@@ -103,7 +109,12 @@ float4 main(PSInput input) : SV_Target
 
     // SSR-05: the trace output alpha already carries the roughness fade (SpecularTraceWeight);
     // the old extra (1-roughness)^2 here double-faded rough receivers to nearly nothing.
-    const float replacementWeight = saturate(ssr.a * uSsrStrength);
+    const float2 clipXY = DepthUvToClipXY(uv);
+    const float4 viewH = mul(uInvProjection, float4(clipXY, depth, 1.0));
+    const float receiverViewZ = viewH.z / viewH.w;
+    const float fadeDistance = max(uReceiverFadeDistance, 1e-3);
+    const float receiverFade = 1.0 - smoothstep(fadeDistance * 0.5, fadeDistance, receiverViewZ);
+    const float replacementWeight = saturate(ssr.a * uSsrStrength * receiverFade);
 
     if (uDebugSpecReplacement != 0)
     {
