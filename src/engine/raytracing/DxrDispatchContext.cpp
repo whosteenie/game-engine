@@ -115,6 +115,20 @@ void DxrDispatchContext::Release()
     m_reflectionDispatchWidth = 0;
     m_reflectionDispatchHeight = 0;
 
+    ReleaseRetiredShadowOutputs();
+    for (ReflectionTexture& texture : m_shadowTextures)
+    {
+        DestroyOutputResource(texture.resource, texture.allocation, texture.srvIndex, texture.uavIndex);
+        texture.srvCpuHandle = 0;
+        texture.state = 0;
+    }
+    m_shadowPenumbraSrvCpuHandle = 0;
+    m_shadowDenoisedSrvCpuHandle = 0;
+    m_shadowOutputWidth = 0;
+    m_shadowOutputHeight = 0;
+    m_shadowDispatchWidth = 0;
+    m_shadowDispatchHeight = 0;
+
     if (m_tlasSrvIndex != UINT32_MAX)
     {
         GfxContext::Get().FreeOffscreenSrv(m_tlasSrvIndex);
@@ -135,6 +149,20 @@ void DxrDispatchContext::ReleaseRetiredReflectionOutputs()
     }
 
     m_retiredReflectionOutputs.clear();
+}
+
+void DxrDispatchContext::ReleaseRetiredShadowOutputs()
+{
+    for (RetiredOutput& retired : m_retiredShadowOutputs)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+
+    m_retiredShadowOutputs.clear();
 }
 
 // DXR-03: dispatch constants are allocated per dispatch from the per-frame transient upload
@@ -1013,6 +1041,231 @@ bool DxrDispatchContext::DispatchReflections(
     m_reflectionDispatchHeight = height;
 
     DxrBreadcrumb("dispatch DispatchReflections ok");
+    return true;
+}
+
+bool DxrDispatchContext::EnsureShadowOutput(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid shadow output dimensions";
+        return false;
+    }
+
+    ReleaseRetiredShadowOutputs();
+
+    const bool haveTextures = m_shadowTextures[0].resource != nullptr;
+    if (haveTextures && m_shadowOutputWidth == width && m_shadowOutputHeight == height)
+    {
+        return true;
+    }
+
+    // Keep a larger allocation alive (avoids churn when viewports differ); the shadow pass runs
+    // at full render resolution so the dispatch/texture UV scale is normally 1.
+    if (haveTextures && m_shadowOutputWidth >= width && m_shadowOutputHeight >= height)
+    {
+        return true;
+    }
+
+    for (ReflectionTexture& texture : m_shadowTextures)
+    {
+        RetireOrDestroyReflectionTexture(texture);
+    }
+    m_shadowPenumbraSrvCpuHandle = 0;
+    m_shadowDenoisedSrvCpuHandle = 0;
+    m_shadowOutputWidth = 0;
+    m_shadowOutputHeight = 0;
+
+    // [0] penumbra, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised.
+    // [2] must match NRD_NORMAL_ENCODING=3 (RGBA16_UNORM). [4] OUT_SHADOW_TRANSLUCENCY is R8+;
+    // R16F keeps precision for the squared-shadow unpack and doubles as SIGMA's history buffer.
+    const std::uint32_t formats[kShadowTextureCount] = {
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_UNORM),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16_FLOAT),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16_FLOAT)};
+
+    for (int textureIndex = 0; textureIndex < kShadowTextureCount; ++textureIndex)
+    {
+        if (!CreateReflectionTexture(
+                width, height, formats[textureIndex], m_shadowTextures[textureIndex], outError))
+        {
+            for (ReflectionTexture& texture : m_shadowTextures)
+            {
+                RetireOrDestroyReflectionTexture(texture);
+            }
+            return false;
+        }
+    }
+
+    m_shadowPenumbraSrvCpuHandle = m_shadowTextures[0].srvCpuHandle;
+    m_shadowDenoisedSrvCpuHandle = m_shadowTextures[4].srvCpuHandle;
+    m_shadowOutputWidth = width;
+    m_shadowOutputHeight = height;
+    return true;
+}
+
+DxrDispatchContext::ShadowNrdResources DxrDispatchContext::GetShadowNrdResources()
+{
+    ShadowNrdResources resources{};
+    resources.penumbra = m_shadowTextures[0].resource;
+    resources.viewZ = m_shadowTextures[1].resource;
+    resources.normalRoughness = m_shadowTextures[2].resource;
+    resources.motion = m_shadowTextures[3].resource;
+    resources.denoisedOutput = m_shadowTextures[4].resource;
+    resources.penumbraState = &m_shadowTextures[0].state;
+    resources.viewZState = &m_shadowTextures[1].state;
+    resources.normalRoughnessState = &m_shadowTextures[2].state;
+    resources.motionState = &m_shadowTextures[3].state;
+    resources.denoisedState = &m_shadowTextures[4].state;
+    resources.textureWidth = m_shadowOutputWidth;
+    resources.textureHeight = m_shadowOutputHeight;
+    resources.dispatchWidth = m_shadowDispatchWidth;
+    resources.dispatchHeight = m_shadowDispatchHeight;
+    return resources;
+}
+
+bool DxrDispatchContext::DispatchShadows(
+    ID3D12GraphicsCommandList4* commandList,
+    ID3D12StateObject* stateObject,
+    ID3D12RootSignature* rootSignature,
+    const ShaderBindingTable& shaderBindingTable,
+    const ShadowDispatchInputs& inputs,
+    const int width,
+    const int height,
+    const DxrRootSignature::ShadowDispatchConstants& constants,
+    std::string& outError)
+{
+    outError.clear();
+    if (commandList == nullptr || stateObject == nullptr || rootSignature == nullptr)
+    {
+        outError = "invalid DXR shadow dispatch arguments";
+        return false;
+    }
+
+    const std::uint32_t srvIndicesFromHandles[4] = {
+        DepthSrvIndexFromCpuHandle(inputs.depthSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.normalSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.material0SrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.velocitySrvCpuHandle)};
+    for (const std::uint32_t index : srvIndicesFromHandles)
+    {
+        if (index == UINT32_MAX)
+        {
+            outError = "DXR shadow SRV bindings unavailable";
+            return false;
+        }
+    }
+
+    if (!EnsureShadowOutput(width, height, outError))
+    {
+        return false;
+    }
+
+    if (!CreateTlasSrv(inputs.tlasResource, inputs.tlasGpuVirtualAddress, outError))
+    {
+        return false;
+    }
+
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate transient DXR shadow constants";
+        return false;
+    }
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    // Raygen writes textures [0..3] (penumbra, viewZ, normal+roughness, motion).
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        ReflectionTexture& texture = m_shadowTextures[textureIndex];
+        if (texture.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        {
+            TransitionResource(
+                static_cast<ID3D12GraphicsCommandList*>(commandList),
+                texture.resource,
+                static_cast<D3D12_RESOURCE_STATES>(texture.state),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            texture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
+    commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+    commandList->SetPipelineState1(stateObject);
+    commandList->SetComputeRootSignature(rootSignature);
+    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+
+    // Root params 1..5 = SRV tables t0..t4 (see SerializeShadowGlobalRootSignature).
+    constexpr std::uint32_t kShadowSrvCount = 5;
+    const std::uint32_t srvHeapIndices[kShadowSrvCount] = {
+        m_tlasSrvIndex,           // t0 TLAS
+        srvIndicesFromHandles[0], // t1 depth
+        srvIndicesFromHandles[1], // t2 shading normal
+        srvIndicesFromHandles[2], // t3 material0 (roughness)
+        srvIndicesFromHandles[3]};// t4 velocity
+
+    for (std::uint32_t rootIndex = 0; rootIndex < kShadowSrvCount; ++rootIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
+        tableHandle.ptr =
+            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
+        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
+    }
+
+    // Root params 6..9 = UAV tables u0..u3 (base = 1 + kShadowSrvCount).
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+        uavTableHandle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(m_shadowTextures[textureIndex].uavIndex));
+        commandList->SetComputeRootDescriptorTable(1 + kShadowSrvCount + textureIndex, uavTableHandle);
+    }
+
+    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
+    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
+    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
+    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.Width = static_cast<UINT>(width);
+    dispatchDesc.Height = static_cast<UINT>(height);
+    dispatchDesc.Depth = 1;
+
+    if (inputs.tlasResource != nullptr)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
+    }
+
+    commandList->DispatchRays(&dispatchDesc);
+
+    // Combined read state: pixel-shader debug blit + NRD compute reads.
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
+    {
+        ReflectionTexture& texture = m_shadowTextures[textureIndex];
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), texture.resource);
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            texture.resource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            kAllShaderRead);
+        texture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+
+    m_shadowDispatchWidth = width;
+    m_shadowDispatchHeight = height;
+
+    DxrBreadcrumb("dispatch DispatchShadows ok");
     return true;
 }
 

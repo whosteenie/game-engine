@@ -115,6 +115,57 @@ public:
         const DxrRootSignature::ReflectionDispatchConstants& constants,
         std::string& outError);
 
+    // Phase D8 shadows (devdoc/dxr-shadows.md). SRV CPU handles must live in the shader-visible
+    // SRV heap (same contract as the reflection inputs).
+    struct ShadowDispatchInputs
+    {
+        ID3D12Resource* tlasResource = nullptr;
+        std::uint64_t tlasGpuVirtualAddress = 0;
+        std::uintptr_t depthSrvCpuHandle = 0;
+        std::uintptr_t normalSrvCpuHandle = 0;    // RT2 shading normal
+        std::uintptr_t material0SrvCpuHandle = 0; // RT5 roughness in .a (normal-roughness guide)
+        std::uintptr_t velocitySrvCpuHandle = 0;  // RT4, NRD motion guide source
+    };
+
+    // Everything the NRD SIGMA_SHADOW backend needs to denoise this frame's penumbra buffer.
+    struct ShadowNrdResources
+    {
+        ID3D12Resource* penumbra = nullptr;        // IN_PENUMBRA (R16F)
+        ID3D12Resource* viewZ = nullptr;           // IN_VIEWZ (R32F)
+        ID3D12Resource* normalRoughness = nullptr; // IN_NORMAL_ROUGHNESS (RGBA16_UNORM)
+        ID3D12Resource* motion = nullptr;          // IN_MV (RG16F)
+        ID3D12Resource* denoisedOutput = nullptr;  // OUT_SHADOW_TRANSLUCENCY (R16F, also history)
+        std::uint32_t* penumbraState = nullptr;
+        std::uint32_t* viewZState = nullptr;
+        std::uint32_t* normalRoughnessState = nullptr;
+        std::uint32_t* motionState = nullptr;
+        std::uint32_t* denoisedState = nullptr;
+        int textureWidth = 0;
+        int textureHeight = 0;
+        int dispatchWidth = 0;
+        int dispatchHeight = 0;
+    };
+
+    // Valid after a successful DispatchShadows this frame.
+    ShadowNrdResources GetShadowNrdResources();
+    std::uintptr_t GetShadowPenumbraSrvCpuHandle() const { return m_shadowPenumbraSrvCpuHandle; }
+    std::uintptr_t GetShadowDenoisedSrvCpuHandle() const { return m_shadowDenoisedSrvCpuHandle; }
+    int GetShadowOutputWidth() const { return m_shadowOutputWidth; }
+    int GetShadowOutputHeight() const { return m_shadowOutputHeight; }
+    int GetShadowDispatchWidth() const { return m_shadowDispatchWidth; }
+    int GetShadowDispatchHeight() const { return m_shadowDispatchHeight; }
+
+    bool DispatchShadows(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        const ShadowDispatchInputs& inputs,
+        int width,
+        int height,
+        const DxrRootSignature::ShadowDispatchConstants& constants,
+        std::string& outError);
+
     std::uintptr_t GetOutputSrvCpuHandle() const { return m_outputSrvCpuHandle; }
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const { return m_primaryOutputSrvCpuHandle; }
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
@@ -139,9 +190,11 @@ private:
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
+    bool EnsureShadowOutput(int width, int height, std::string& outError);
     void ReleaseRetiredOutputs();
     void ReleaseRetiredPrimaryOutputs();
     void ReleaseRetiredReflectionOutputs();
+    void ReleaseRetiredShadowOutputs();
     std::uint32_t DepthSrvIndexFromCpuHandle(std::uintptr_t depthSrvCpuHandle) const;
 
     struct RetiredOutput
@@ -213,4 +266,16 @@ private:
     int m_reflectionDispatchWidth = 0;
     int m_reflectionDispatchHeight = 0;
     std::vector<RetiredOutput> m_retiredReflectionOutputs;
+
+    // Phase D8 shadow texture set (reuses the ReflectionTexture struct + create/retire helpers).
+    // [0] penumbra, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised (OUT_SHADOW_TRANSLUCENCY).
+    static constexpr int kShadowTextureCount = 5;
+    ReflectionTexture m_shadowTextures[kShadowTextureCount]{};
+    std::uintptr_t m_shadowPenumbraSrvCpuHandle = 0;  // alias of [0]
+    std::uintptr_t m_shadowDenoisedSrvCpuHandle = 0;  // alias of [4]
+    int m_shadowOutputWidth = 0;
+    int m_shadowOutputHeight = 0;
+    int m_shadowDispatchWidth = 0;
+    int m_shadowDispatchHeight = 0;
+    std::vector<RetiredOutput> m_retiredShadowOutputs;
 };

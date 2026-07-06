@@ -58,22 +58,48 @@ struct ReflectionDispatchConstants
     float irradianceSh9[9][4] = {}; // L2 SH diffuse irradiance (9 x float4)
 };
 
+// Phase D8 shadows (see devdoc/dxr-shadows.md). Layout mirrors the cbuffer in
+// assets/shaders/dxr/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then
+// float3+float pairs, then scalars in multiples of 4).
+struct ShadowDispatchConstants
+{
+    std::uint32_t outputWidth = 0;
+    std::uint32_t outputHeight = 0;
+    std::uint32_t gbufferWidth = 0;
+    std::uint32_t gbufferHeight = 0;
+    float invViewProj[16] = {};
+    float worldToView[16] = {};
+    float cameraPos[3] = {};
+    float sunAngularTanRadius = 0.0f;
+    float sunDirection[3] = {0.0f, 1.0f, 0.0f};
+    float maxTraceDistance = 100.0f;
+    std::uint32_t frameIndex = 0;
+    std::uint32_t _pad0 = 0;
+    std::uint32_t _pad1 = 0;
+    std::uint32_t _pad2 = 0;
+};
+
 void SerializeSmokeGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializeSmokeLocalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializePrimaryDebugGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializePrimaryDebugLocalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializeReflectionGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
+void SerializeShadowGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 ID3D12RootSignature* CreateSmokeGlobalRootSignature();
 ID3D12RootSignature* CreateSmokeLocalRootSignature();
 ID3D12RootSignature* CreatePrimaryDebugGlobalRootSignature();
 ID3D12RootSignature* CreatePrimaryDebugLocalRootSignature();
 ID3D12RootSignature* CreateReflectionGlobalRootSignature();
 ID3D12RootSignature* CreateReflectionLocalRootSignature();
+ID3D12RootSignature* CreateShadowGlobalRootSignature();
+ID3D12RootSignature* CreateShadowLocalRootSignature();
 void ReleaseSmokeGlobalRootSignature();
 void ReleaseSmokeLocalRootSignature();
 void ReleasePrimaryDebugGlobalRootSignature();
 void ReleasePrimaryDebugLocalRootSignature();
 void ReleaseReflectionGlobalRootSignature();
 void ReleaseReflectionLocalRootSignature();
+void ReleaseShadowGlobalRootSignature();
+void ReleaseShadowLocalRootSignature();
 
 } // namespace DxrRootSignature

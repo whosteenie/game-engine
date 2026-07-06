@@ -12,6 +12,7 @@
 #include "engine/raytracing/DxrDiagnostics.h"
 #include "engine/raytracing/DxrPrimaryDebugDispatch.h"
 #include "engine/raytracing/DxrReflectionsDispatch.h"
+#include "engine/raytracing/DxrShadowsDispatch.h"
 #include "engine/raytracing/DxrSmokeDispatch.h"
 
 #include <glm/glm.hpp>
@@ -127,6 +128,7 @@ private:
     std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
     std::unique_ptr<DxrPrimaryDebugDispatch> m_dxrPrimaryDebugDispatch;
     std::unique_ptr<DxrReflectionsDispatch> m_dxrReflectionsDispatch;
+    std::unique_ptr<DxrShadowsDispatch> m_dxrShadowsDispatch;
     DxrSettings m_dxrSettings;
     DirectionalShadowSettings m_directionalShadowSettings;
     TextureFilterMode m_textureFilterMode = TextureFilterMode::Trilinear;

@@ -75,6 +75,10 @@ public:
         const Framebuffer* outputTarget,
         int viewportWidth,
         int viewportHeight) const;
+    void BlitRtShadowDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
 
     void Apply(
         const Camera& camera,
@@ -203,6 +207,16 @@ public:
     // D6: when true (and reflection SRVs are set), Apply() runs the RT specular composite
     // and SKIPS the SSR indirect composite — the two are mutually exclusive per plan.
     void SetDxrReflectionCompositeEnabled(bool enabled) { m_dxrReflectionCompositeEnabled = enabled; }
+    // D8: RT sun shadow mask. penumbraSrv drives the raw debug view; denoisedSrv is the
+    // SIGMA-denoised mask consumed by the composite. 0 disables.
+    void SetDxrShadowSrv(
+        std::uintptr_t penumbraSrvCpuHandle,
+        std::uintptr_t denoisedSrvCpuHandle = 0,
+        float uvScaleX = 1.0f,
+        float uvScaleY = 1.0f);
+    // When true (and the denoised shadow SRV is set), the composite replaces the CSM sun shadow
+    // factor with the RT mask. CSM stays default; RT shadows are a supplemental tier.
+    void SetDxrShadowCompositeEnabled(bool enabled) { m_dxrShadowCompositeEnabled = enabled; }
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
     std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
     // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
@@ -401,6 +415,7 @@ private:
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
+    std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
     std::unique_ptr<Shader> m_radianceAssemblyShader;
@@ -500,6 +515,11 @@ private:
     float m_dxrReflectionUvScaleY = 1.0f;
     float m_dxrReflectionMaxTraceDistance = 0.0f;
     bool m_dxrReflectionCompositeEnabled = false;
+    std::uintptr_t m_dxrShadowPenumbraSrv = 0;
+    std::uintptr_t m_dxrShadowDenoisedSrv = 0;
+    float m_dxrShadowUvScaleX = 1.0f;
+    float m_dxrShadowUvScaleY = 1.0f;
+    bool m_dxrShadowCompositeEnabled = false;
     std::uintptr_t m_dxrPrimaryMetadataSrv = 0;
     int m_rtPrimaryDebugSettleFrames = 0;
     AntiAliasingMode m_antiAliasingMode = AntiAliasingMode::None;

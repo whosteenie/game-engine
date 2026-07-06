@@ -19,6 +19,7 @@ public:
     bool CreateSmokePipeline(std::string& outError);
     bool CreatePrimaryDebugPipeline(std::string& outError);
     bool CreateReflectionsPipeline(std::string& outError);
+    bool CreateShadowsPipeline(std::string& outError);
     void Release();
 
     ID3D12StateObject* GetStateObject() const { return m_stateObject; }

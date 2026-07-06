@@ -546,6 +546,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_dxrPrimaryDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrPrimaryDebugFragmentShader)),
+      m_dxrShadowDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DxrShadowDebugFragmentShader)),
       m_velocityDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::VelocityDebugFragmentShader)),
@@ -1538,6 +1541,37 @@ void ScreenSpaceEffects::BlitRtReflectionDebug(
         glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
     m_debugChannelShader->BindTextureSlot(0, sourceSrv);
     m_debugChannelShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::BlitRtShadowDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (!IsRtShadowDebugMode(m_debugMode) || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    // Denoised view uses the SIGMA output (square-unpacked); raw view uses the 1-spp penumbra
+    // buffer mapped to a binary mask. Denoised falls back to raw when the denoiser is off.
+    const bool wantDenoised = m_debugMode == RenderDebugMode::RtShadowDenoised;
+    const bool useDenoised = wantDenoised && m_dxrShadowDenoisedSrv != 0;
+    const std::uintptr_t sourceSrv = useDenoised ? m_dxrShadowDenoisedSrv : m_dxrShadowPenumbraSrv;
+    if (sourceSrv == 0)
+    {
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_dxrShadowDebugShader->Use(false, true);
+    m_dxrShadowDebugShader->SetInt("uInput", 0);
+    m_dxrShadowDebugShader->SetInt("uRawPenumbra", useDenoised ? 0 : 1);
+    m_dxrShadowDebugShader->SetVec2(
+        "uUvScale", glm::vec2(m_dxrShadowUvScaleX, m_dxrShadowUvScaleY));
+    m_dxrShadowDebugShader->BindTextureSlot(0, sourceSrv);
+    m_dxrShadowDebugShader->FlushUniforms();
     DrawFullscreenQuad();
 }
 
@@ -2629,6 +2663,13 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetInt("uUseSsgi", useSsgiInject ? 1 : 0);
         m_compositeShader->SetFloat("uSsgiStrength", m_ssgiStrength);
         m_compositeShader->SetInt("uSsgiMap", 6);
+        // D8: replace the CSM sun shadow factor with the SIGMA-denoised RT mask when enabled and
+        // fresh this frame. t7 must always bind a valid texture (fall back to shadowFactorSrv).
+        const bool useRtShadow = m_dxrShadowCompositeEnabled && m_dxrShadowDenoisedSrv != 0;
+        m_compositeShader->SetInt("uUseRtShadow", useRtShadow ? 1 : 0);
+        m_compositeShader->SetInt("uRtShadowMap", 7);
+        m_compositeShader->SetVec2(
+            "uRtShadowUvScale", glm::vec2(m_dxrShadowUvScaleX, m_dxrShadowUvScaleY));
         SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
         m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
         m_compositeShader->BindTextureSlot(1, indirectCompositeSrv);
@@ -2638,6 +2679,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->BindTextureSlot(
             6,
             useSsgiInject ? m_lastSsgiInjectSrv : m_radianceTarget.srvCpuHandle);
+        m_compositeShader->BindTextureSlot(7, useRtShadow ? m_dxrShadowDenoisedSrv : shadowFactorSrv);
         DrawFullscreenToTarget(
             *m_compositeShader,
             const_cast<InternalTarget&>(m_hdrCompositeTarget),
@@ -3924,6 +3966,18 @@ void ScreenSpaceEffects::SetDxrReflectionSrv(
     m_dxrReflectionUvScaleX = uvScaleX;
     m_dxrReflectionUvScaleY = uvScaleY;
     m_dxrReflectionMaxTraceDistance = maxTraceDistance;
+}
+
+void ScreenSpaceEffects::SetDxrShadowSrv(
+    const std::uintptr_t penumbraSrvCpuHandle,
+    const std::uintptr_t denoisedSrvCpuHandle,
+    const float uvScaleX,
+    const float uvScaleY)
+{
+    m_dxrShadowPenumbraSrv = penumbraSrvCpuHandle;
+    m_dxrShadowDenoisedSrv = denoisedSrvCpuHandle;
+    m_dxrShadowUvScaleX = uvScaleX;
+    m_dxrShadowUvScaleY = uvScaleY;
 }
 
 std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const int attachmentIndex) const

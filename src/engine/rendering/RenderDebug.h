@@ -63,6 +63,8 @@ enum class RenderDebugMode
     RtReflectionConfidence,
     RtReflectionDenoised,
     RtSpecReplacement,
+    RtShadowRaw,
+    RtShadowDenoised,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -78,5 +80,6 @@ bool IsSsrCompositeDebugMode(RenderDebugMode mode);
 bool IsDxrDebugMode(RenderDebugMode mode);
 bool IsRtPrimaryDebugMode(RenderDebugMode mode);
 bool IsRtReflectionDebugMode(RenderDebugMode mode);
+bool IsRtShadowDebugMode(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

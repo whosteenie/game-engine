@@ -1762,6 +1762,46 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        // Phase D8 — RT soft sun shadows (devdoc/dxr-shadows.md). Supplemental over CSM.
+        ImGui::SeparatorText("RT shadows");
+
+        bool shadowsEnabled = dxrSettings.IsShadowsEnabled();
+        UndoableRendererCheckbox(
+            "Enable RT shadows",
+            &shadowsEnabled,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetShadowsEnabled(enabled);
+                if (enabled && !GfxContext::Get().IsFrameRecording())
+                {
+                    target.GetRenderer().WarmUpDxrPipelineIfNeeded();
+                }
+                target.MarkDirty();
+            });
+
+        float sunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
+        UndoableRendererSliderFloat(
+            "Sun angular radius",
+            &sunAngularRadius,
+            0.05f,
+            2.0f,
+            "%.2f deg",
+            editContext,
+            [](Scene& target, float degrees) {
+                target.GetRenderer().GetDxrSettings().SetSunAngularRadiusDegrees(degrees);
+                target.MarkDirty();
+            });
+
+        bool shadowDenoise = dxrSettings.IsShadowDenoiseEnabled();
+        UndoableRendererCheckbox(
+            "Shadow denoise (SIGMA)",
+            &shadowDenoise,
+            editContext,
+            [](Scene& target, bool enabled) {
+                target.GetRenderer().GetDxrSettings().SetShadowDenoiseEnabled(enabled);
+                target.MarkDirty();
+            });
+
         ImGui::PopID();
 
         const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();
@@ -1862,6 +1902,8 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RtReflectionConfidence),
             RenderDebugModeLabel(RenderDebugMode::RtReflectionDenoised),
             RenderDebugModeLabel(RenderDebugMode::RtSpecReplacement),
+            RenderDebugModeLabel(RenderDebugMode::RtShadowRaw),
+            RenderDebugModeLabel(RenderDebugMode::RtShadowDenoised),
         };
 
         if (ImGui::Combo(
@@ -1872,7 +1914,8 @@ void LightingPanel::Draw(
         {
             const auto selectedMode = static_cast<RenderDebugMode>(debugMode);
             screenSpaceEffects.SetDebugMode(selectedMode);
-            if ((IsRtPrimaryDebugMode(selectedMode) || IsRtReflectionDebugMode(selectedMode))
+            if ((IsRtPrimaryDebugMode(selectedMode) || IsRtReflectionDebugMode(selectedMode)
+                 || IsRtShadowDebugMode(selectedMode))
                 && renderer.GetDxrSettings().IsEnabled()
                 && !GfxContext::Get().IsFrameRecording())
             {

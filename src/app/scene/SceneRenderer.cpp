@@ -104,6 +104,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_dxrSmokeDispatch.reset();
     self->m_dxrPrimaryDebugDispatch.reset();
     self->m_dxrReflectionsDispatch.reset();
+    self->m_dxrShadowsDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourcesInitialized = false;
     self->m_gpuResourcesInitInProgress = false;
@@ -415,10 +416,16 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
         }
 
+        if (m_dxrShadowsDispatch == nullptr)
+        {
+            m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
+        }
+
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
         const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
         const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
-        if (smokeReady && primaryReady && reflectionsReady)
+        const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
+        if (smokeReady && primaryReady && reflectionsReady && shadowsReady)
         {
             return;
         }
@@ -435,6 +442,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (!reflectionsReady)
         {
             m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!shadowsReady)
+        {
+            m_dxrShadowsDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
@@ -653,6 +664,50 @@ void SceneRenderer::RecordDxrPass(
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 
+    // Phase D8 — RT sun shadow trace (devdoc/dxr-shadows.md). Full render resolution; needs the
+    // scene MRTs (depth, RT2 normal, RT5 roughness, RT4 velocity) so only runs on post-process.
+    const bool shadowDebugViewActive = IsRtShadowDebugMode(debugMode);
+    const bool shadowsWanted = m_dxrSettings.IsShadowsEnabled() || shadowDebugViewActive;
+    bool shadowsDispatched = false;
+
+    if (m_dxrShadowsDispatch == nullptr)
+    {
+        m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
+    }
+
+    if (shadowsWanted && usePostProcess && m_screenSpaceEffects != nullptr)
+    {
+        DxrBreadcrumb("render: shadows DispatchIfEnabled begin");
+
+        DxrShadowsDispatch::FrameInputs shadowInputs{};
+        shadowInputs.depthSrvCpuHandle = depthSrvCpuHandle;
+        shadowInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
+        shadowInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
+        shadowInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        shadowInputs.sunDirection = glm::normalize(GetSunDirection());
+        shadowInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
+
+        // DispatchRays samples the MRTs from non-pixel shaders; move them (tracked) to a combined
+        // read state first. Idempotent with the reflection pass's transition.
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+
+        shadowsDispatched = m_dxrShadowsDispatch->DispatchIfEnabled(
+            *m_dxrAccelerationStructures,
+            camera,
+            true,
+            m_dxrSettings.IsShadowsEnabled(),
+            shadowDebugViewActive,
+            GfxContext::Get().GetCommandList(),
+            shadowInputs,
+            dispatchWidth,
+            dispatchHeight,
+            dispatchWidth,
+            dispatchHeight,
+            m_dxrSettings.GetMaxTraceDistance(),
+            m_dxrSettings.IsShadowDenoiseEnabled());
+        DxrBreadcrumb("render: shadows DispatchIfEnabled end");
+    }
+
     if (usePostProcess && m_screenSpaceEffects != nullptr)
     {
         DxrBreadcrumb("render: SetDxrDebugSrvs");
@@ -687,6 +742,21 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(
             m_dxrSettings.IsReflectionsEnabled() && reflectionsDispatched
             && m_dxrReflectionsDispatch->HasValidOutput());
+
+        // D8: RT sun shadow mask (penumbra drives the raw debug view, denoised feeds composite).
+        m_screenSpaceEffects->SetDxrShadowSrv(
+            shadowsDispatched && m_dxrShadowsDispatch->HasValidOutput()
+                ? m_dxrShadowsDispatch->GetPenumbraSrvCpuHandle()
+                : 0,
+            shadowsDispatched ? m_dxrShadowsDispatch->GetDenoisedSrvCpuHandle() : 0,
+            m_dxrShadowsDispatch->GetOutputUvScaleX(),
+            m_dxrShadowsDispatch->GetOutputUvScaleY());
+
+        // Replace the CSM sun shadow factor with the RT mask only when the user enabled RT
+        // shadows AND a fresh denoised mask exists this frame.
+        m_screenSpaceEffects->SetDxrShadowCompositeEnabled(
+            m_dxrSettings.IsShadowsEnabled() && shadowsDispatched
+            && m_dxrShadowsDispatch->DenoisedThisFrame());
     }
 }
 
@@ -926,6 +996,10 @@ void SceneRenderer::Render(
                 viewportHeight,
                 m_dxrSettings.GetMaxTraceDistance());
             m_screenSpaceEffects->BlitRtReflectionDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight);
+            m_screenSpaceEffects->BlitRtShadowDebug(
                 reinterpret_cast<Framebuffer*>(targetFramebuffer),
                 viewportWidth,
                 viewportHeight);

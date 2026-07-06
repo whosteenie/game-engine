@@ -48,6 +48,18 @@ public:
     bool IsReflectionAntiFireflyEnabled() const { return m_reflectionAntiFirefly; }
     void SetReflectionAntiFireflyEnabled(const bool enabled) { m_reflectionAntiFirefly = enabled; }
 
+    // Phase D8 — RT soft directional (sun) shadows (devdoc/dxr-shadows.md). Supplemental quality
+    // tier over CSM; replaces the CSM shadow factor at composite time when enabled.
+    bool IsShadowsEnabled() const { return m_shadowsEnabled; }
+    void SetShadowsEnabled(const bool enabled) { m_shadowsEnabled = enabled; }
+
+    // Sun angular radius in degrees — drives penumbra width (0.27 ~ real sun). Range 0.05-2.0.
+    float GetSunAngularRadiusDegrees() const { return m_sunAngularRadiusDegrees; }
+    void SetSunAngularRadiusDegrees(float degrees);
+
+    bool IsShadowDenoiseEnabled() const { return m_shadowDenoiseEnabled; }
+    void SetShadowDenoiseEnabled(const bool enabled) { m_shadowDenoiseEnabled = enabled; }
+
     void CopySettingsFrom(const DxrSettings& source);
     void ClampToHardwareCapabilities(bool raytracingSupported);
 
@@ -62,4 +74,7 @@ private:
     float m_temporalBlend = 0.95f;
     int m_reflectionAtrousIterations = 5;
     bool m_reflectionAntiFirefly = true;
+    bool m_shadowsEnabled = false;
+    float m_sunAngularRadiusDegrees = 0.27f;
+    bool m_shadowDenoiseEnabled = true;
 };

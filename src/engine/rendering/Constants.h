@@ -82,6 +82,8 @@ namespace EngineConstants
     inline constexpr const char* DxrPrimaryDebugFragmentShader = "assets/shaders/dxr_primary_debug.ps.hlsl";
     inline constexpr const char* DxrReflectionsLibraryShader = "assets/shaders/dxr/reflections.hlsl";
     inline constexpr const char* DxrIndirectFragmentShader = "assets/shaders/dxr_indirect.ps.hlsl";
+    inline constexpr const char* DxrShadowsLibraryShader = "assets/shaders/dxr/shadows.hlsl";
+    inline constexpr const char* DxrShadowDebugFragmentShader = "assets/shaders/dxr_shadow_debug.ps.hlsl";
 
     inline constexpr float BackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
 

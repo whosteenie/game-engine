@@ -7,6 +7,7 @@ Texture2D uSsaoMap : register(t3);
 Texture2D uShadowFactorMap : register(t4);
 Texture2D uEquirectMap : register(t5);
 Texture2D uSsgiMap : register(t6);
+Texture2D uRtShadowMap : register(t7); // DXR SIGMA-denoised sun shadow (OUT_SHADOW_TRANSLUCENCY)
 
 SamplerState uDirectLightingSampler : register(s0);
 SamplerState uIndirectLightingSampler : register(s1);
@@ -15,6 +16,7 @@ SamplerState uSsaoSampler : register(s3);
 SamplerState uShadowFactorSampler : register(s4);
 SamplerState uEquirectSampler : register(s5);
 SamplerState uSsgiSampler : register(s6);
+SamplerState uRtShadowSampler : register(s7);
 
 cbuffer PerPixel : register(b0)
 {
@@ -32,7 +34,20 @@ cbuffer PerPixel : register(b0)
     float3 uSolidBackgroundColor;
     float4x4 uInvProjection;
     float4x4 uInvView;
+    // DXR RT shadows (Phase D8): when uUseRtShadow != 0, replace the CSM sun shadow factor with
+    // the SIGMA-denoised mask. uRtShadowUvScale handles kept-alive larger allocations.
+    int uUseRtShadow;
+    float2 uRtShadowUvScale;
+    float _padRtShadow;
 };
+
+// SIGMA_BackEnd_UnpackShadow (NRD v4.17.3): OUT_SHADOW_TRANSLUCENCY stores sqrt(shadow).
+float UnpackRtShadow(float2 uv)
+{
+    const float2 scale = uRtShadowUvScale.x <= 0.0 ? float2(1.0, 1.0) : uRtShadowUvScale;
+    const float packed = uRtShadowMap.Sample(uRtShadowSampler, uv * scale).r;
+    return packed * packed;
+}
 
 struct PSInput
 {
@@ -118,7 +133,14 @@ float4 main(PSInput input) : SV_Target
             indirect += uSsgiStrength * uSsgiMap.Sample(uSsgiSampler, uv).rgb;
         }
         float4 sunShadow = uShadowFactorMap.Sample(uShadowFactorSampler, uv);
-        float3 sunDirect = sunShadow.rgb * (uUseShadowFactor != 0 ? sunShadow.a : 1.0);
+        // RT shadows replace the CSM shadow factor when enabled (mutually exclusive); otherwise
+        // the CSM factor in sunShadow.a is used exactly as before (toggle-off = bit-identical).
+        float shadowFactor = uUseShadowFactor != 0 ? sunShadow.a : 1.0;
+        if (uUseRtShadow != 0)
+        {
+            shadowFactor = UnpackRtShadow(uv);
+        }
+        float3 sunDirect = sunShadow.rgb * shadowFactor;
         direct = fillDirect + sunDirect;
     }
     else
