@@ -375,7 +375,17 @@ float4 main(PSInput input) : SV_Target
         return float4(0.0, 0.0, 0.0, 0.0);
     }
 
-    const float3 worldNormal = normalize(uNormalMap.Sample(uNormalSampler, uv).rgb);
+    // MSAA-resolved silhouette rejection (RTQ-01, same guard as the DXR raygen): partially
+    // covered pixels average two surfaces' normals — the blended normal shrinks below unit
+    // length and the reconstructed position floats between surfaces. Tracing from them
+    // produces consistent false hits; fall back to IBL (confidence 0) instead.
+    const float3 rawNormal = uNormalMap.Sample(uNormalSampler, uv).rgb;
+    if (length(rawNormal) < 0.9)
+    {
+        return float4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    const float3 worldNormal = normalize(rawNormal);
     float3 viewNormal = mul((float3x3)uView, worldNormal);
     viewNormal = normalize(viewNormal);
 

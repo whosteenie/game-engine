@@ -105,16 +105,33 @@ float2 ClipXYToDepthUv(float2 clipXY)
     return float2(clipXY.x * 0.5 + 0.5, (1.0 - clipXY.y) * 0.5);
 }
 
-float Hash1(float2 p)
+// Integer PCG hash (pcg3d, Jarzynski & Olano). The previous frac()-based float hash lost
+// precision as frameIndex grew and was strongly correlated: many pixels received a nearly
+// STATIC sample sequence, permanently latching onto bright hits — the temporal denoiser
+// then converged to a stable speckle pattern instead of averaging the noise away.
+uint3 Pcg3d(uint3 v)
 {
-    p = frac(p * float2(123.34, 456.21));
-    p += dot(p, p + 34.345);
-    return frac(p.x * p.y);
+    v = v * 1664525u + 1013904223u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    v ^= v >> 16u;
+    v.x += v.y * v.z;
+    v.y += v.z * v.x;
+    v.z += v.x * v.y;
+    return v;
 }
 
-float2 Hash2(float2 p)
+// Decorrelated per pixel, per frame, per sample. [0; 1).
+float2 RandomXi(uint2 pixel, uint frameIndex, uint sampleIndex)
 {
-    return float2(Hash1(p), Hash1(p.yx + 19.19));
+    const uint3 hash = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
+    return float2(hash.xy & 0x00FFFFFFu) * (1.0 / 16777216.0);
+}
+
+float Luminance(float3 color)
+{
+    return dot(color, float3(0.2126, 0.7152, 0.0722));
 }
 
 void BuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent)
@@ -313,8 +330,26 @@ void ReflectionRayGen()
 
     const float4 worldH = mul(g_InvViewProj, float4(clipXY, depth, 1.0));
     const float3 worldPos = worldH.xyz / worldH.w;
-    const float3 shadingNormal = normalize(g_NormalMap.Load(int3(gbufferPixel, 0)).xyz);
+    const float3 rawNormal = g_NormalMap.Load(int3(gbufferPixel, 0)).xyz;
+    const float rawNormalLength = length(rawNormal);
     const float roughness = g_Material0Map.Load(int3(gbufferPixel, 0)).a;
+
+    // MSAA-resolved silhouette rejection (RTQ-01): at partially covered pixels the resolved
+    // G-buffer averages TWO surfaces — the depth reconstructs a position floating in space
+    // and the normal is a blend of disagreeing directions (its length shrinks below 1).
+    // Rays launched from such pixels hit random geometry (bright emissives especially) and
+    // the bias is CONSISTENT, so temporal accumulation converges to speckle instead of
+    // averaging it away. Hand these pixels to the IBL fallback (hitDist = miss).
+    const float3 shadingNormal = rawNormal / max(rawNormalLength, 1e-4);
+    if (rawNormalLength < 0.9)
+    {
+        const float3 mirrorFallback = reflect(normalize(worldPos - g_CameraPos), shadingNormal);
+        g_ReflectionOutput[pixel] =
+            float4(SampleEnvironment(mirrorFallback, roughness), g_MaxTraceDistance);
+        g_ViewZOutput[pixel] = mul(g_WorldToView, float4(worldPos, 1.0)).z;
+        g_NormalRoughnessOutput[pixel] = float4(shadingNormal * 0.5 + 0.5, roughness);
+        return;
+    }
 
     // NRD guides (encoding contract documented at the top of this file).
     g_ViewZOutput[pixel] = mul(g_WorldToView, float4(worldPos, 1.0)).z;
@@ -330,14 +365,17 @@ void ReflectionRayGen()
     const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 16u);
     float3 radianceSum = 0.0.xxx;
     float hitDistSum = 0.0;
-    float weightSum = 0.0;
+    float radianceWeightSum = 0.0;
+    float sampleCountF = 0.0;
 
     [loop]
     for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
     {
-        // Per-pixel stable RNG — temporal convergence comes from NRD history, not frame-varying noise.
-        const float2 xi = Hash2(
-            uv * 913.7 + float2((float)sampleIndex * 2.71, (float)sampleIndex * 5.13));
+        // IMPORTANT: the sequence MUST vary per frame. NRD's temporal accumulation converges
+        // frame-varying noise toward the true mean; a static per-pixel sequence latches pixels
+        // onto whatever their fixed directions hit (bright emissives!) every single frame, so
+        // the denoiser converges TO the speckle instead of averaging it away.
+        const float2 xi = RandomXi(pixel, g_FrameIndex, sampleIndex);
 
         float3 rayDir = mirrorDir;
         if (roughness > 0.03)
@@ -366,14 +404,22 @@ void ReflectionRayGen()
 
         TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, payload);
 
-        radianceSum += ClampRadiance(payload.radiance);
+        // Karis firefly-weighted accumulation: a plain arithmetic mean lets a single very
+        // bright sample (emissive hit) dominate the pixel forever — one 50-luminance hit in
+        // 16 samples leaves a mean of ~3 on a 0.05-luminance surface, i.e. a permanent dot.
+        // Weighting each sample by 1/(1+luma) forms a robust mean with negligible bias.
+        const float3 sampleRadiance = ClampRadiance(payload.radiance);
+        const float sampleWeight = 1.0 / (1.0 + Luminance(sampleRadiance));
+        radianceSum += sampleRadiance * sampleWeight;
+        radianceWeightSum += sampleWeight;
         hitDistSum += payload.hitDistance;
-        weightSum += 1.0;
+        sampleCountF += 1.0;
     }
 
     // RELAX packing: radiance + raw hit distance in world units (miss = maxTraceDistance).
-    const float invSamples = 1.0 / max(weightSum, 1.0);
-    g_ReflectionOutput[pixel] = float4(radianceSum * invSamples, hitDistSum * invSamples);
+    g_ReflectionOutput[pixel] = float4(
+        radianceSum / max(radianceWeightSum, 1e-4),
+        hitDistSum / max(sampleCountF, 1.0));
 }
 
 [shader("miss")]
