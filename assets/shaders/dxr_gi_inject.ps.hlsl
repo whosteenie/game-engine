@@ -1,19 +1,22 @@
 // DXR Phase D9 — RT diffuse GI composite (devdoc/dxr-diffuse-gi.md).
 // Adds one-bounce ray-traced diffuse GI into RT1 (indirect). Mirrors dxr_indirect.ps.hlsl's
-// binding/uv-scale/background contract, but the diffuse response is simply albedo * radiance:
-// the cosine pdf already folded the cosine into the trace average, and the 1/pi (Lambertian
-// BRDF) and pi (pdf) cancel — so no extra factors here.
+// binding/uv-scale/background contract. The diffuse response is the Lambertian diffuse albedo
+// times the incoming radiance: the cosine pdf already folded the cosine into the trace average,
+// and the 1/pi (BRDF) and pi (pdf) cancel — so no extra factors beyond the albedo.
 //
-//   indirect_out = RT1 + albedo * giRadiance * uStrength
+//   indirect_out = RT1 + albedo * (1 - metallic) * giRadiance * uStrength
 //
-// Additive-with-strength (same policy as SSGI inject). RT1 already carries the SH-ambient
-// diffuse term, so this reduces to an ambient boost at v1 — lower Environment Intensity if the
-// scene washes out. Mutually exclusive with SSGI inject (SceneRenderer gates one at a time).
+// The (1 - metallic) factor is critical: metals have NO diffuse lobe (their indirect light comes
+// from the specular reflection path, not diffuse GI), so a mirror/metal must receive ~0 here.
+// Additive-with-strength (same policy as SSGI inject). RT1 already carries the SH-ambient diffuse
+// term, so this reduces to an ambient boost at v1 — lower Environment Intensity if the scene
+// washes out. Mutually exclusive with SSGI inject (SceneRenderer gates one at a time).
 
 Texture2D uIndirectMap : register(t0);   // RT1 indirect (also carries the sky at background)
 Texture2D uGiDenoisedMap : register(t1); // NRD RELAX_DIFFUSE output (or raw when denoise off)
 Texture2D uDepthMap : register(t2);
 Texture2D uMaterial0Map : register(t3);  // albedo.rgb + roughness.a (RT5)
+Texture2D uMaterial1Map : register(t4);  // metallic.r + emissive.gba (RT6)
 
 // s0: linear clamp (colors, GI radiance). s1: point clamp (G-buffer).
 SamplerState uLinearSampler : register(s0);
@@ -46,12 +49,15 @@ float4 main(PSInput input) : SV_Target
     }
 
     const float3 albedo = uMaterial0Map.Sample(uPointSampler, uv).rgb;
+    const float metallic = uMaterial1Map.Sample(uPointSampler, uv).r;
+    // Metals have no diffuse lobe — kill their diffuse GI (they get indirect from reflections).
+    const float3 diffuseAlbedo = albedo * (1.0 - metallic);
 
     // GI buffers only cover the top-left dispatch region of their allocation.
     const float2 giUv = uv * uGiUvScale;
     const float3 giRadiance = uGiDenoisedMap.Sample(uLinearSampler, giUv).rgb;
 
-    const float3 injected = albedo * giRadiance * uStrength;
+    const float3 injected = diffuseAlbedo * giRadiance * uStrength;
 
     if (uDebugGiInject != 0)
     {

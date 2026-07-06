@@ -1610,6 +1610,7 @@ void ScreenSpaceEffects::BlitRtGiDebug(
         m_dxrGiInjectShader->SetInt("uGiDenoisedMap", 1);
         m_dxrGiInjectShader->SetInt("uDepthMap", 2);
         m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
+        m_dxrGiInjectShader->SetInt("uMaterial1Map", 4);
         m_dxrGiInjectShader->SetVec2(
             "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
         m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
@@ -1618,6 +1619,7 @@ void ScreenSpaceEffects::BlitRtGiDebug(
         m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
         m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
         m_dxrGiInjectShader->FlushUniforms();
         DrawFullscreenQuad();
         return;
@@ -2522,6 +2524,7 @@ void ScreenSpaceEffects::Apply(
         m_dxrGiInjectShader->SetInt("uGiDenoisedMap", 1);
         m_dxrGiInjectShader->SetInt("uDepthMap", 2);
         m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
+        m_dxrGiInjectShader->SetInt("uMaterial1Map", 4);
         m_dxrGiInjectShader->SetVec2(
             "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
         m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
@@ -2530,6 +2533,7 @@ void ScreenSpaceEffects::Apply(
         m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
         m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
         DrawFullscreenToTarget(
             *m_dxrGiInjectShader,
             const_cast<InternalTarget&>(m_rtGiInjectTarget),
