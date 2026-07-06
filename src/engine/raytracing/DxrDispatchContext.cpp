@@ -792,11 +792,12 @@ bool DxrDispatchContext::EnsureReflectionOutput(const int width, const int heigh
     m_reflectionOutputHeight = 0;
 
     // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised.
-    // Formats must satisfy NRD minimums: RGBA16f+, R16f+, RGBA8+, RG16f+ respectively.
+    // [2] must match NRD_NORMAL_ENCODING in CMakeLists (3 = RGBA16_UNORM: 8-bit normals
+    // quantize on curved surfaces and defeat RELAX's normal edge-stopping).
     const std::uint32_t formats[kReflectionTextureCount] = {
         static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT),
         static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
-        static_cast<std::uint32_t>(DXGI_FORMAT_R8G8B8A8_UNORM),
+        static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_UNORM),
         static_cast<std::uint32_t>(DXGI_FORMAT_R16G16_FLOAT),
         static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT)};
 

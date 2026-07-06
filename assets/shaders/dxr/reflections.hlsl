@@ -129,6 +129,16 @@ float2 RandomXi(uint2 pixel, uint frameIndex, uint sampleIndex)
     return float2(hash.xy & 0x00FFFFFFu) * (1.0 / 16777216.0);
 }
 
+// Four decorrelated randoms per sample: xy = GGX lobe, zw = sub-pixel ray-setup jitter.
+float4 RandomXi4(uint2 pixel, uint frameIndex, uint sampleIndex)
+{
+    const uint3 hashA = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
+    const uint3 hashB = Pcg3d(uint3(pixel.y ^ 0x9E3779B9u, pixel.x, frameIndex * 64u + sampleIndex + 32u));
+    return float4(
+        float2(hashA.xy & 0x00FFFFFFu) * (1.0 / 16777216.0),
+        float2(hashB.xy & 0x00FFFFFFu) * (1.0 / 16777216.0));
+}
+
 float Luminance(float3 color)
 {
     return dot(color, float3(0.2126, 0.7152, 0.0722));
@@ -141,22 +151,56 @@ void BuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent)
     bitangent = cross(normal, tangent);
 }
 
-// GGX NDF half-vector importance sample (same math as ssr_trace.ps.hlsl).
-float3 SampleGgxHalfVector(float3 normal, float roughness, float2 xi)
+// GGX VNDF half-vector sampling (Heitz 2018, "Sampling the GGX Distribution of Visible
+// Normals"). Generates only half-vectors VISIBLE from the view direction — unlike plain NDF
+// sampling this (a) almost never produces below-surface reflection directions (our previous
+// mirror-direction fallback for those was a bias/variance source right at grazing edges) and
+// (b) has substantially lower variance at grazing incidence, where the shimmer lived.
+// viewWorld: direction from surface toward the camera (unit). Returns a world-space half-vector.
+float3 SampleGgxVndfHalfVector(float3 normal, float3 viewWorld, float roughness, float2 xi)
 {
     const float alpha = max(roughness * roughness, 1e-3);
-    const float phi = 2.0 * kPi * xi.x;
-    const float cosTheta = sqrt(saturate((1.0 - xi.y) / (1.0 + (alpha * alpha - 1.0) * xi.y)));
-    const float sinTheta = sqrt(saturate(1.0 - cosTheta * cosTheta));
 
     float3 tangent;
     float3 bitangent;
     BuildTangentFrame(normal, tangent, bitangent);
 
+    // View direction in tangent space (z along the normal).
+    const float3 viewTangent = float3(
+        dot(viewWorld, tangent),
+        dot(viewWorld, bitangent),
+        dot(viewWorld, normal));
+
+    // Stretch view by alpha (transforms GGX to the hemisphere configuration).
+    const float3 stretchedView =
+        normalize(float3(alpha * viewTangent.x, alpha * viewTangent.y, viewTangent.z));
+
+    // Orthonormal basis around the stretched view.
+    const float lenSq = stretchedView.x * stretchedView.x + stretchedView.y * stretchedView.y;
+    const float3 basis1 = lenSq > 1e-7
+        ? float3(-stretchedView.y, stretchedView.x, 0.0) * rsqrt(lenSq)
+        : float3(1.0, 0.0, 0.0);
+    const float3 basis2 = cross(stretchedView, basis1);
+
+    // Uniform disk sample warped onto the visible hemisphere.
+    const float r = sqrt(xi.x);
+    const float phi = 2.0 * kPi * xi.y;
+    const float t1 = r * cos(phi);
+    float t2 = r * sin(phi);
+    const float s = 0.5 * (1.0 + stretchedView.z);
+    t2 = (1.0 - s) * sqrt(saturate(1.0 - t1 * t1)) + s * t2;
+
+    const float3 halfStretched = t1 * basis1 + t2 * basis2
+        + sqrt(saturate(1.0 - t1 * t1 - t2 * t2)) * stretchedView;
+
+    // Unstretch back to the GGX configuration.
+    const float3 halfTangent = normalize(float3(
+        alpha * halfStretched.x,
+        alpha * halfStretched.y,
+        max(halfStretched.z, 1e-6)));
+
     return normalize(
-        tangent * (sinTheta * cos(phi))
-        + bitangent * (sinTheta * sin(phi))
-        + normal * cosTheta);
+        tangent * halfTangent.x + bitangent * halfTangent.y + normal * halfTangent.z);
 }
 
 float3 ClampRadiance(float3 radiance)
@@ -355,18 +399,16 @@ void ReflectionRayGen()
     g_ViewZOutput[pixel] = mul(g_WorldToView, float4(worldPos, 1.0)).z;
     g_NormalRoughnessOutput[pixel] = float4(shadingNormal * 0.5 + 0.5, roughness);
 
-    const float3 viewVec = normalize(worldPos - g_CameraPos); // camera -> surface
-    const float3 mirrorDir = reflect(viewVec, shadingNormal);
-
-    const float surfaceDistance = length(worldPos - g_CameraPos);
-    const float3 rayOrigin =
-        worldPos + shadingNormal * max(surfaceDistance * 0.0015, 0.01);
+    const float3 viewVecCenter = normalize(worldPos - g_CameraPos); // camera -> surface (center)
 
     const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 16u);
     float3 radianceSum = 0.0.xxx;
-    float hitDistSum = 0.0;
     float radianceWeightSum = 0.0;
-    float sampleCountF = 0.0;
+    // Representative hit distance for the NRD guide: the CLOSEST actual hit. Averaging hits
+    // with maxTrace misses fed NRD a value that wobbled frame-to-frame at edge pixels, and
+    // RELAX drives specular reprojection/filter footprints from it — direct shimmer source.
+    float closestHitDist = 1e30;
+    bool anyHit = false;
 
     [loop]
     for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
@@ -375,51 +417,95 @@ void ReflectionRayGen()
         // frame-varying noise toward the true mean; a static per-pixel sequence latches pixels
         // onto whatever their fixed directions hit (bright emissives!) every single frame, so
         // the denoiser converges TO the speckle instead of averaging it away.
-        const float2 xi = RandomXi(pixel, g_FrameIndex, sampleIndex);
+        const float4 xi = RandomXi4(pixel, g_FrameIndex, sampleIndex);
 
-        float3 rayDir = mirrorDir;
-        if (roughness > 0.03)
+        // Reflection anti-aliasing: jitter the RAY SETUP sub-pixel per sample (xi.zw).
+        // Without this, mirror surfaces (roughness <= 0.03) fire N identical rays — zero
+        // anti-aliasing of the reflected image no matter the sample count. Jittered setup
+        // integrates both the reflected image and the receiver's own edge footprint.
+        const float2 sampleUv = (float2(pixel) + xi.zw) / float2(g_OutputSize);
+        const int2 sampleGbufferPixel = int2(sampleUv * float2(g_GBufferSize));
+        const float sampleDepth = g_DepthMap.Load(int3(sampleGbufferPixel, 0)).r;
+        const float3 sampleRawNormal = g_NormalMap.Load(int3(sampleGbufferPixel, 0)).xyz;
+        const float sampleNormalLength = length(sampleRawNormal);
+        const float sampleRoughness = g_Material0Map.Load(int3(sampleGbufferPixel, 0)).a;
+
+        float3 sampleRadiance;
+
+        if (sampleDepth >= 0.9999 || sampleNormalLength < 0.9)
         {
-            const float3 halfVector = SampleGgxHalfVector(shadingNormal, roughness, xi);
-            const float3 sampled = reflect(viewVec, halfVector);
-            if (dot(sampled, shadingNormal) > 1e-4)
+            // Sub-sample landed on sky or a broken (MSAA-averaged) texel: environment along
+            // the center mirror direction; counts as a miss for the composite.
+            sampleRadiance = ClampRadiance(
+                SampleEnvironment(reflect(viewVecCenter, shadingNormal), roughness));
+        }
+        else
+        {
+            const float2 sampleClipXY = DepthUvToClipXY(sampleUv);
+            const float4 sampleWorldH = mul(g_InvViewProj, float4(sampleClipXY, sampleDepth, 1.0));
+            const float3 sampleWorldPos = sampleWorldH.xyz / sampleWorldH.w;
+            const float3 sampleNormal = sampleRawNormal / sampleNormalLength;
+            const float3 sampleViewVec = normalize(sampleWorldPos - g_CameraPos);
+            const float3 sampleMirror = reflect(sampleViewVec, sampleNormal);
+
+            float3 rayDir = sampleMirror;
+            if (sampleRoughness > 0.03)
             {
-                rayDir = normalize(sampled);
+                const float3 halfVector = SampleGgxVndfHalfVector(
+                    sampleNormal, -sampleViewVec, sampleRoughness, xi.xy);
+                const float3 sampled = reflect(sampleViewVec, halfVector);
+                // VNDF makes below-surface directions vanishingly rare; keep the mirror
+                // fallback purely as numerical insurance.
+                if (dot(sampled, sampleNormal) > 1e-4)
+                {
+                    rayDir = normalize(sampled);
+                }
+            }
+
+            // Grazing-aware origin bias: at glancing incidence rays creep along the surface
+            // and intermittently self-hit (edge shimmer) — push the origin out further.
+            const float sampleDistance = length(sampleWorldPos - g_CameraPos);
+            const float nDotV = saturate(dot(sampleNormal, -sampleViewVec));
+            const float3 rayOrigin = sampleWorldPos
+                + sampleNormal * (max(sampleDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV)));
+
+            RayDesc ray;
+            ray.Origin = rayOrigin;
+            ray.Direction = rayDir;
+            ray.TMin = 0.001;
+            ray.TMax = max(g_MaxTraceDistance, 0.1);
+
+            Payload payload;
+            payload.radiance = 0.0.xxx;
+            payload.confidence = 0.0;
+            payload.hitDistance = 0.0;
+            payload.surfaceRoughness = sampleRoughness;
+            payload.hit = 0;
+            payload._pad = 0;
+
+            TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, payload);
+
+            sampleRadiance = ClampRadiance(payload.radiance);
+            if (payload.hit != 0)
+            {
+                closestHitDist = min(closestHitDist, payload.hitDistance);
+                anyHit = true;
             }
         }
-
-        RayDesc ray;
-        ray.Origin = rayOrigin;
-        ray.Direction = rayDir;
-        ray.TMin = 0.001;
-        ray.TMax = max(g_MaxTraceDistance, 0.1);
-
-        Payload payload;
-        payload.radiance = 0.0.xxx;
-        payload.confidence = 0.0;
-        payload.hitDistance = 0.0;
-        payload.surfaceRoughness = roughness;
-        payload.hit = 0;
-        payload._pad = 0;
-
-        TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, payload);
 
         // Karis firefly-weighted accumulation: a plain arithmetic mean lets a single very
         // bright sample (emissive hit) dominate the pixel forever — one 50-luminance hit in
         // 16 samples leaves a mean of ~3 on a 0.05-luminance surface, i.e. a permanent dot.
         // Weighting each sample by 1/(1+luma) forms a robust mean with negligible bias.
-        const float3 sampleRadiance = ClampRadiance(payload.radiance);
         const float sampleWeight = 1.0 / (1.0 + Luminance(sampleRadiance));
         radianceSum += sampleRadiance * sampleWeight;
         radianceWeightSum += sampleWeight;
-        hitDistSum += payload.hitDistance;
-        sampleCountF += 1.0;
     }
 
     // RELAX packing: radiance + raw hit distance in world units (miss = maxTraceDistance).
     g_ReflectionOutput[pixel] = float4(
         radianceSum / max(radianceWeightSum, 1e-4),
-        hitDistSum / max(sampleCountF, 1.0));
+        anyHit ? closestHitDist : g_MaxTraceDistance);
 }
 
 [shader("miss")]

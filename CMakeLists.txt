@@ -105,9 +105,11 @@ FetchContent_MakeAvailable(json)
 # static lib. If the build cannot locate a dxc.exe for ShaderMake, set SHADERMAKE_DXC_PATH.
 set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
 # Guide-buffer encoding contract — must match assets/shaders/dxr/reflections.hlsl:
-#   NRD_NORMAL_ENCODING 0 = RGBA8_UNORM: rgb = worldNormal * 0.5 + 0.5, a = roughness
+#   NRD_NORMAL_ENCODING 3 = RGBA16_UNORM: rgb = worldNormal * 0.5 + 0.5, a = roughness
+#   (same packing math as RGBA8, 16-bit precision — 8-bit normals quantize on curved
+#   surfaces and break RELAX's normal edge-stopping, reading as blur bands/shimmer)
 #   NRD_ROUGHNESS_ENCODING 1 = linear roughness
-set(NRD_NORMAL_ENCODING "0" CACHE STRING "" FORCE)
+set(NRD_NORMAL_ENCODING "3" CACHE STRING "" FORCE)
 set(NRD_ROUGHNESS_ENCODING "1" CACHE STRING "" FORCE)
 set(NRD_EMBEDS_SPIRV_SHADERS OFF CACHE BOOL "" FORCE) # D3D12-only engine
 set(NRD_EMBEDS_DXBC_SHADERS OFF CACHE BOOL "" FORCE)

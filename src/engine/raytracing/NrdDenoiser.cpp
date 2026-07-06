@@ -442,7 +442,7 @@ bool NrdDenoiser::ResolveResource(
     case nrd::ResourceType::IN_NORMAL_ROUGHNESS:
         outResource = resources.normalRoughness;
         outState = resources.normalRoughnessState;
-        outDxgiFormat = static_cast<std::uint32_t>(DXGI_FORMAT_R8G8B8A8_UNORM);
+        outDxgiFormat = static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_UNORM);
         return true;
     case nrd::ResourceType::IN_VIEWZ:
         outResource = resources.viewZ;
@@ -520,20 +520,26 @@ bool NrdDenoiser::Denoise(
         return false;
     }
 
-    // Engine temporalBlend (0..0.98) -> accumulated frames: frames = blend / (1 - blend).
-    const float blend = std::clamp(frame.temporalBlend, 0.0f, 0.98f);
+    // Engine temporalBlend (0..0.99) -> accumulated frames: frames = blend / (1 - blend).
+    // 0.95 -> 19, 0.97 -> 32, 0.99 -> 99. RELAX supports up to 255; the old 63 cap put a
+    // variance floor (sigma^2/N) high enough to leave residual shimmer on spiky HDR signals.
+    const float blend = std::clamp(frame.temporalBlend, 0.0f, 0.99f);
     const auto accumulatedFrames = static_cast<std::uint32_t>(
-        std::clamp(blend / std::max(1.0f - blend, 0.02f), 0.0f, 63.0f));
+        std::clamp(blend / std::max(1.0f - blend, 0.01f), 0.0f, 240.0f));
 
     nrd::RelaxSettings relaxSettings{};
     relaxSettings.specularMaxAccumulatedFrameNum = std::max(accumulatedFrames, 1u);
-    relaxSettings.specularMaxFastAccumulatedFrameNum = std::max(accumulatedFrames / 5u, 1u);
+    // Fast history clamps the main history each frame — if it's too short it re-injects
+    // noise every frame ("shimmer that never settles"). Keep it >= 4 frames.
+    relaxSettings.specularMaxFastAccumulatedFrameNum = std::max(accumulatedFrames / 5u, 4u);
     relaxSettings.hitDistanceReconstructionMode = nrd::HitDistanceReconstructionMode::OFF;
     relaxSettings.enableAntiFirefly = frame.antiFirefly;
     relaxSettings.atrousIterationNum =
         static_cast<std::uint32_t>(std::clamp(frame.atrousIterations, 2, 8));
-    // Explicit NRD defaults — brace-init would zero these and disable the prepass spatial reuse.
-    relaxSettings.specularPrepassBlurRadius = 50.0f;
+    // Prepass blur exists to spread SPARSE samples (1 spp probabilistic pipelines). Our trace
+    // provides dense, Karis-weighted, sub-pixel-jittered samples (up to 16 spp), so NRD's
+    // 50 px default massively over-blurs — it was the main "smudged mirror" contributor.
+    relaxSettings.specularPrepassBlurRadius = 12.0f;
     relaxSettings.diffusePrepassBlurRadius = 30.0f;
 
     if (nrd::SetDenoiserSettings(*m_instance, kSpecularIdentifier, &relaxSettings) != nrd::Result::SUCCESS)
