@@ -341,6 +341,19 @@ float3 EvaluateDiffuseIrradianceSh(float3 normal)
     return max(irradiance, 0.0.xxx);
 }
 
+// Analytic split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Avoids
+// binding a BRDF LUT in the reflection root signature; accurate enough for the secondary-bounce
+// specular term at a reflection hit.
+float3 EnvBrdfApprox(float3 f0, float roughness, float nDotV)
+{
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    const float4 r = roughness * c0 + c1;
+    const float a004 = min(r.x * r.x, exp2(-9.28 * nDotV)) * r.x + r.y;
+    const float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
 [shader("raygeneration")]
 void ReflectionRayGen()
 {
@@ -572,7 +585,20 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
     const float3 ambient = diffuseAlbedo * irradiance / kPi;
 
-    payload.radiance = max(direct + ambient + material.emissive, 0.0.xxx);
+    // Specular environment IBL at the hit (multi-bounce v1). Reflect the incoming ray about the hit
+    // normal, sample the prefiltered environment at the surface's roughness, and weight it by
+    // Fresnel + analytic env BRDF. This is what stops a metal/mirror SEEN IN a reflection from
+    // reading black: metals have no diffuse lobe, so without this term their reflected image is just
+    // emissive. A true "hall of mirrors" would trace a secondary ray here; this env sample is the
+    // terminal approximation for that bounce.
+    const float3 viewVec = -rayDir;
+    const float nDotV = saturate(dot(hitNormal, viewVec));
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float3 reflectDir = reflect(rayDir, hitNormal);
+    const float3 specular =
+        SampleEnvironment(reflectDir, material.roughness) * EnvBrdfApprox(f0, material.roughness, nDotV);
+
+    payload.radiance = max(direct + ambient + specular + material.emissive, 0.0.xxx);
 
     const float distance01 = saturate(hitT / max(g_MaxTraceDistance, 1e-4));
     const float distanceWeight = 1.0 - distance01 * distance01;
