@@ -35,7 +35,7 @@ cbuffer PerPixel : register(b0)
     float2 uRtUvScale; // dispatch/texture region of the RT buffers (see dxr-reflections.md)
     int uDebugSpecReplacement;
     int uHasRtTrace; // 1 = a fresh RT trace exists this frame; 0 = fall back to pure IBL (weight 0)
-    float _pad0;
+    float uRoughnessCutoff; // receivers rougher than this fade RT->IBL (matches the trace skip)
 };
 
 struct PSInput
@@ -104,12 +104,20 @@ float4 main(PSInput input) : SV_Target
     const float receiverFade =
         1.0 - smoothstep(uMaxTraceDistance * 0.5, uMaxTraceDistance, receiverViewZ);
 
+    // Roughness fade (matches the trace's g_RoughnessCutoff skip): rough receivers produce a
+    // diffuse-wide, denoiser-smeared blob and their indirect is already covered by diffuse GI/IBL.
+    // Fade RT->IBL over a small band ending at the cutoff so the handoff is seamless (the trace
+    // wrote the env fallback above the cutoff, so this reads back the same prefiltered env).
+    const float roughnessFade =
+        1.0 - smoothstep(uRoughnessCutoff - 0.15, uRoughnessCutoff, roughness);
+
     // No per-pixel hit mask: the trace's MISS shader already returns the env, so the denoised
     // rtRadiance carries BOTH the reflected occluder AND the reflected sky/sun. The old hit mask
     // (derived from the 1-spp raw hit distance) was noisy and sparkled at the reflected sun's edge;
     // dropping it and trusting the denoised RT gives a clean edge. Blend to IBL by a SMOOTH weight
-    // only (strength x receiver fade), and fall back to pure IBL when there's no fresh trace.
-    const float replacementWeight = uHasRtTrace != 0 ? saturate(uStrength * receiverFade) : 0.0;
+    // only (strength x receiver fade x roughness fade), and fall back to pure IBL when no trace.
+    const float replacementWeight =
+        uHasRtTrace != 0 ? saturate(uStrength * receiverFade * roughnessFade) : 0.0;
 
     if (uDebugSpecReplacement != 0)
     {

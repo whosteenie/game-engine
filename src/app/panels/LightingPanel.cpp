@@ -24,6 +24,7 @@
 #include "engine/rendering/DxrSettings.h"
 #include "engine/raytracing/DxrDiagnostics.h"
 #include "engine/raytracing/DxrTrace.h"
+#include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 
@@ -1611,6 +1612,23 @@ void LightingPanel::Draw(
         FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
         ImGui::Text("Ray tracing tier: %s", tierText);
 
+        // DLSS/Streamline status (devdoc/dlss-super-resolution.md S0). SR itself lands in later
+        // phases; this line reports NGX/DLSS availability so unsupported hardware is visible up
+        // front. Init runs on a background thread, so it briefly reads "initializing" at launch.
+        const DlssContext& dlss = DlssContext::Get();
+        if (!dlss.IsReady())
+        {
+            ImGui::TextDisabled("DLSS: initializing…");
+        }
+        else if (dlss.IsDlssSupported())
+        {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.4f, 1.0f), "DLSS: supported (Streamline 2.12)");
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "%s", dlss.StatusString().c_str());
+        }
+
         if (!raytracingSupported)
         {
             ImGui::TextColored(
@@ -1774,6 +1792,20 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
         ImGui::TextDisabled("Contact shadows on reflected surfaces. 0 = off; higher = cleaner, costlier.");
+
+        float roughnessCutoff = dxrSettings.GetReflectionRoughnessCutoff();
+        UndoableRendererSliderFloat(
+            "Reflection roughness cutoff",
+            &roughnessCutoff,
+            0.0f,
+            1.0f,
+            "%.2f",
+            editContext,
+            [](Scene& target, float cutoff) {
+                target.GetRenderer().GetDxrSettings().SetReflectionRoughnessCutoff(cutoff);
+                target.MarkDirty();
+            });
+        ImGui::TextDisabled("Surfaces rougher than this skip the RT trace and use IBL (cheaper, less blur).");
 
         // Phase D8 — RT soft sun shadows (devdoc/dxr-shadows.md). Supplemental over CSM.
         ImGui::SeparatorText("RT shadows");

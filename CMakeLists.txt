@@ -15,6 +15,11 @@ endif()
 
 option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr-shader-infrastructure.md)" OFF)
 
+# NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md, Phase S0). Additive upscaler/AA;
+# NVIDIA-only, gracefully hidden on unsupported hardware. Prebuilt SL/DLSS DLLs ship in the
+# release zip only (removed from the git repo as of SL 2.7.32), so we fetch the release artifact.
+option(GAME_ENGINE_ENABLE_DLSS "Enable NVIDIA DLSS Super Resolution via Streamline (Windows/NVIDIA)" ON)
+
 
 
 include(FetchContent)
@@ -124,6 +129,53 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(nrd)
+
+# NVIDIA Streamline (DLSS SR, devdoc/dlss-super-resolution.md Phase S0). Pinned to v2.12.0. The
+# release zip carries headers (include/), the import lib (lib/x64/sl.interposer.lib), and the
+# prebuilt signed plugin DLLs (bin/x64) that are NOT in the git repo. We only download+extract it
+# (no add_subdirectory — we consume prebuilt artifacts), then resolve the real paths by locating
+# sl.h and sl.interposer.lib so nested-zip layouts are handled without guessing.
+set(GAME_ENGINE_HAS_DLSS OFF)
+if(GAME_ENGINE_ENABLE_DLSS AND WIN32)
+    FetchContent_Declare(
+        streamline
+        URL https://github.com/NVIDIA-RTX/Streamline/releases/download/v2.12.0/streamline-sdk-v2.12.0.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_GetProperties(streamline)
+    if(NOT streamline_POPULATED)
+        FetchContent_Populate(streamline)
+    endif()
+
+    file(GLOB_RECURSE _sl_header "${streamline_SOURCE_DIR}/sl.h" "${streamline_SOURCE_DIR}/*/sl.h")
+    file(GLOB_RECURSE _sl_interposer_dll "${streamline_SOURCE_DIR}/sl.interposer.dll" "${streamline_SOURCE_DIR}/*/sl.interposer.dll")
+
+    # Prefer the signed PRODUCTION plugin DLLs (bin/x64) over the DEVELOPMENT variants
+    # (bin/x64/development): the dev DLLs do heavy per-plugin validation/logging that adds seconds to
+    # startup and floods the log. Fall back to whatever was found if only one set ships.
+    set(_sl_dll0 "")
+    foreach(_cand IN LISTS _sl_interposer_dll)
+        if(NOT _cand MATCHES "/development/")
+            set(_sl_dll0 "${_cand}")
+            break()
+        endif()
+    endforeach()
+    if(NOT _sl_dll0 AND _sl_interposer_dll)
+        list(GET _sl_interposer_dll 0 _sl_dll0)
+    endif()
+
+    if(_sl_header AND _sl_dll0)
+        list(GET _sl_header 0 _sl_header0)
+        get_filename_component(STREAMLINE_INCLUDE_DIR "${_sl_header0}" DIRECTORY)
+        get_filename_component(STREAMLINE_BIN_DIR "${_sl_dll0}" DIRECTORY)
+        set(GAME_ENGINE_HAS_DLSS ON)
+        message(STATUS "Streamline SDK: include=${STREAMLINE_INCLUDE_DIR} bin=${STREAMLINE_BIN_DIR}")
+    else()
+        message(WARNING
+            "GAME_ENGINE_ENABLE_DLSS is ON but the Streamline SDK layout was not found under "
+            "${streamline_SOURCE_DIR} (need sl.h and sl.interposer.dll). DLSS will be compiled out.")
+    endif()
+endif()
 
 
 
@@ -357,6 +409,7 @@ add_executable(game-engine
 
     src/engine/rhi/GfxContext.cpp
     src/engine/rhi/GpuProfiler.cpp
+    src/engine/rhi/DlssContext.cpp
     src/engine/rhi/HresultFormat.cpp
 
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
@@ -502,6 +555,31 @@ target_link_libraries(game-engine PRIVATE
 
 target_compile_definitions(game-engine PRIVATE NOMINMAX)
 
+# Streamline (DLSS SR, Phase S0): headers only + copy the prebuilt SL/DLSS plugin DLLs next to the
+# exe. We do NOT statically link sl.interposer.lib — it exports DXGI/D3D entry points that would
+# clash with our dxgi.lib/d3d12.lib and interpose the whole device. Instead DlssContext loads
+# sl.interposer.dll dynamically (NVIDIA's recommended least-invasive path for SR-only), so nothing
+# changes for the non-DLSS pipeline.
+if(GAME_ENGINE_HAS_DLSS)
+    target_include_directories(game-engine PRIVATE "${STREAMLINE_INCLUDE_DIR}")
+    target_compile_definitions(game-engine PRIVATE GAME_ENGINE_ENABLE_DLSS)
+
+    # Only the DLSS Super Resolution runtime set — copying every plugin (reflex, dlss_g, nis, imgui,
+    # deepdvc, directsr, …) makes SL map+ignore each at init (log spam + slower startup).
+    set(_sl_runtime_dlls
+        "${STREAMLINE_BIN_DIR}/sl.interposer.dll"
+        "${STREAMLINE_BIN_DIR}/sl.common.dll"
+        "${STREAMLINE_BIN_DIR}/sl.dlss.dll"
+        "${STREAMLINE_BIN_DIR}/nvngx_dlss.dll")
+    foreach(_sl_dll IN LISTS _sl_runtime_dlls)
+        if(EXISTS "${_sl_dll}")
+            add_custom_command(TARGET game-engine POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_sl_dll}" "$<TARGET_FILE_DIR:game-engine>"
+                COMMENT "Copying Streamline runtime: ${_sl_dll}")
+        endif()
+    endforeach()
+endif()
+
 if(GAME_ENGINE_D3D12_DEBUG_LAYER)
     target_compile_definitions(game-engine PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
 endif()
@@ -631,6 +709,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         tests/d3d12_test_harness.cpp
         src/engine/rhi/GfxContext.cpp
         src/engine/rhi/GpuProfiler.cpp
+        src/engine/rhi/DlssContext.cpp
         src/engine/rhi/HresultFormat.cpp
         src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
         src/engine/rhi/d3d12/GpuBuffer.cpp

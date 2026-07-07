@@ -1034,6 +1034,7 @@ void IBL::BindTextures(Shader& shader) const
     shader.SetFloat("uMaxReflectionLod", m_maxPrefilterMipLevel);
     shader.SetFloat("uEnvironmentIntensity", m_environmentIntensity);
     shader.SetInt("uOmitSpecularIbl", m_reflectionsReplaceSpecIbl ? 1 : 0);
+    shader.SetInt("uOmitDiffuseIbl", m_giReplacesDiffuseIbl ? 1 : 0);
 }
 
 float IBL::GetMaxReflectionLod() const

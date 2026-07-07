@@ -712,6 +712,7 @@ namespace SceneProjectIODetail
                  {"reflectionAtrousIterations", dxrSettings.GetReflectionAtrousIterations()},
                  {"reflectionAntiFirefly", dxrSettings.IsReflectionAntiFireflyEnabled()},
                  {"reflectionAoRays", dxrSettings.GetReflectionAoRays()},
+                 {"reflectionRoughnessCutoff", dxrSettings.GetReflectionRoughnessCutoff()},
                  {"shadowsEnabled", dxrSettings.IsShadowsEnabled()},
                  {"sunAngularRadiusDegrees", dxrSettings.GetSunAngularRadiusDegrees()},
                  {"shadowDenoiseEnabled", dxrSettings.IsShadowDenoiseEnabled()},
@@ -770,6 +771,11 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("reflectionAoRays"))
         {
             dxrSettings.SetReflectionAoRays(dxrValue.at("reflectionAoRays").get<int>());
+        }
+        if (dxrValue.contains("reflectionRoughnessCutoff"))
+        {
+            dxrSettings.SetReflectionRoughnessCutoff(
+                dxrValue.at("reflectionRoughnessCutoff").get<float>());
         }
         if (dxrValue.contains("shadowsEnabled"))
         {

@@ -688,7 +688,8 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetTemporalBlend(),
             m_dxrSettings.GetReflectionAtrousIterations(),
             m_dxrSettings.IsReflectionAntiFireflyEnabled(),
-            m_dxrSettings.GetReflectionAoRays());
+            m_dxrSettings.GetReflectionAoRays(),
+            m_dxrSettings.GetReflectionRoughnessCutoff());
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 
@@ -882,6 +883,8 @@ void SceneRenderer::RecordDxrPass(
         // add it back (see the IBL omit flag set before the scene draw), so the composite MUST
         // run to re-add it; it falls back to pure IBL (uHasRtTrace=0) when there is no fresh trace.
         m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(m_dxrSettings.IsReflectionsEnabled());
+        m_screenSpaceEffects->SetDxrReflectionRoughnessCutoff(
+            m_dxrSettings.GetReflectionRoughnessCutoff());
 
         // D8: RT sun shadow mask (penumbra drives the raw debug view, denoised feeds composite).
         m_screenSpaceEffects->SetDxrShadowSrv(
@@ -908,10 +911,10 @@ void SceneRenderer::RecordDxrPass(
             m_dxrGiDispatch->GetOutputUvScaleY());
         m_screenSpaceEffects->SetDxrGiStrength(m_dxrSettings.GetGiStrength());
 
-        // Inject the diffuse bounce into the indirect chain (and skip SSGI inject) only when the
-        // user enabled RT GI AND a fresh trace exists this frame.
-        m_screenSpaceEffects->SetDxrGiCompositeEnabled(
-            m_dxrSettings.IsGiEnabled() && giDispatched && m_dxrGiDispatch->HasValidOutput());
+        // Run the GI inject (and skip SSGI inject) whenever RT GI is ENABLED — not only on a fresh
+        // trace. The raster omits the SH diffuse ambient when GI is enabled, so the inject MUST run
+        // to replace it; it recomputes a transient SH ambient (uHasGiTrace=0) when there's no trace.
+        m_screenSpaceEffects->SetDxrGiCompositeEnabled(m_dxrSettings.IsGiEnabled());
     }
 }
 
@@ -1052,14 +1055,21 @@ void SceneRenderer::Render(
         // RT reflections require BOTH the master toggle and the reflections sub-toggle; SSR is
         // independent (the helper folds it in). Gating on the master here keeps the omit in
         // lockstep with the composite, which RecordDxrPass disables when the master is off.
+        const bool iblReady = m_environmentMap->GetIBL().IsReady();
         const bool dxrReflectionsActive =
             m_dxrSettings.IsEnabled() && m_dxrSettings.IsReflectionsEnabled();
         const bool omitSpecIbl = usePostProcess && m_screenSpaceEffects != nullptr
             && m_screenSpaceEffects->ReflectionCompositeReplacesSpecIbl(
-                   dxrReflectionsActive,
-                   m_environmentMap->GetIBL().IsReady(),
-                   activeDebugMode);
+                   dxrReflectionsActive, iblReady, activeDebugMode);
         m_environmentMap->GetIBL().SetReflectionsReplaceSpecIbl(omitSpecIbl);
+
+        // RT diffuse GI replaces the SH diffuse ambient the same way (master && GI enabled). The
+        // GI inject re-adds it (traced, or a transient SH recompute when there's no fresh trace).
+        const bool dxrGiActive = m_dxrSettings.IsEnabled() && m_dxrSettings.IsGiEnabled();
+        const bool omitDiffuseIbl = usePostProcess && m_screenSpaceEffects != nullptr
+            && m_screenSpaceEffects->GiInjectReplacesDiffuseIbl(
+                   dxrGiActive, iblReady, activeDebugMode);
+        m_environmentMap->GetIBL().SetGiReplacesDiffuseIbl(omitDiffuseIbl);
     }
 
     {

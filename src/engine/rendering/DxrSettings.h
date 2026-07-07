@@ -53,6 +53,13 @@ public:
     int GetReflectionAoRays() const { return m_reflectionAoRays; }
     void SetReflectionAoRays(const int rays);
 
+    // Roughness cutoff for RT reflections. Surfaces rougher than this skip the scattered
+    // reflection trace (a diffuse-wide, noisy blob the denoiser smears anyway) and fall back to
+    // prefiltered-env IBL specular; the composite fades RT->IBL over the same cutoff. Diffuse GI
+    // still covers their indirect. Saves trace cost on rough materials. Range [0; 1].
+    float GetReflectionRoughnessCutoff() const { return m_reflectionRoughnessCutoff; }
+    void SetReflectionRoughnessCutoff(const float cutoff);
+
     // Phase D8 — RT soft directional (sun) shadows (devdoc/dxr-shadows.md). Supplemental quality
     // tier over CSM; replaces the CSM shadow factor at composite time when enabled.
     bool IsShadowsEnabled() const { return m_shadowsEnabled; }
@@ -92,6 +99,7 @@ private:
     int m_reflectionAtrousIterations = 5;
     bool m_reflectionAntiFirefly = true;
     int m_reflectionAoRays = 4;
+    float m_reflectionRoughnessCutoff = 0.6f;
     bool m_shadowsEnabled = false;
     float m_sunAngularRadiusDegrees = 0.27f;
     bool m_shadowDenoiseEnabled = true;

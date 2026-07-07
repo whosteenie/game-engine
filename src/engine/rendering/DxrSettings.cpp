@@ -55,6 +55,11 @@ void DxrSettings::SetReflectionAoRays(const int rays)
     m_reflectionAoRays = std::clamp(rays, 0, 16);
 }
 
+void DxrSettings::SetReflectionRoughnessCutoff(const float cutoff)
+{
+    m_reflectionRoughnessCutoff = std::clamp(cutoff, 0.0f, 1.0f);
+}
+
 void DxrSettings::SetSunAngularRadiusDegrees(const float degrees)
 {
     m_sunAngularRadiusDegrees = std::clamp(degrees, 0.05f, 2.0f);
@@ -78,6 +83,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_reflectionAtrousIterations = source.m_reflectionAtrousIterations;
     m_reflectionAntiFirefly = source.m_reflectionAntiFirefly;
     m_reflectionAoRays = source.m_reflectionAoRays;
+    m_reflectionRoughnessCutoff = source.m_reflectionRoughnessCutoff;
     m_shadowsEnabled = source.m_shadowsEnabled;
     m_sunAngularRadiusDegrees = source.m_sunAngularRadiusDegrees;
     m_shadowDenoiseEnabled = source.m_shadowDenoiseEnabled;
@@ -101,6 +107,7 @@ void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
     SetTemporalBlend(m_temporalBlend);
     SetReflectionAtrousIterations(m_reflectionAtrousIterations);
     SetReflectionAoRays(m_reflectionAoRays);
+    SetReflectionRoughnessCutoff(m_reflectionRoughnessCutoff);
     SetSunAngularRadiusDegrees(m_sunAngularRadiusDegrees);
     SetGiStrength(m_giStrength);
 }

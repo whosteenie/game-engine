@@ -256,10 +256,35 @@ float3 EvaluateDiffuseIrradianceSh(float3 normal)
     return max(irradiance, 0.0.xxx);
 }
 
-// Analytic diffuse response at a ray hit (one bounce): albedo x (sun N·L + SH ambient) + emissive.
-// Identical math to reflections.hlsl's ReflectionClosestHit, so RT GI bounce light matches the
-// surface's own screen-space shading. Diffuse only (no reflected sun shadow) in v1.
-float3 ShadeHitDiffuse(uint instanceId, uint primitiveIndex, float2 barycentrics, float3 hitNormal)
+// Fresnel-Schlick with a roughness-aware ceiling (matches FresnelSchlickRoughness in pbr.ps.hlsl).
+float3 FresnelSchlickRoughnessGi(float cosTheta, float3 f0, float roughness)
+{
+    const float3 maxReflection = max(1.0.xxx - roughness, f0);
+    return f0 + (maxReflection - f0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+// Analytic split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Same term the
+// reflection trace uses (reflections.hlsl EnvBrdfApprox) so the GI bounce's specular matches it.
+float3 EnvBrdfApprox(float3 f0, float roughness, float nDotV)
+{
+    const float4 c0 = float4(-1.0, -0.0275, -0.572, 0.022);
+    const float4 c1 = float4(1.0, 0.0425, 1.04, -0.04);
+    const float4 r = roughness * c0 + c1;
+    const float a004 = min(r.x * r.x, exp2(-9.28 * nDotV)) * r.x + r.y;
+    const float2 ab = float2(-1.04, 1.04) * a004 + r.zw;
+    return f0 * ab.x + ab.y;
+}
+
+// Full one-bounce outgoing radiance at a ray hit, toward the receiver: the surface's diffuse
+// response PLUS its specular lobe (environment reflected + split-sum BRDF) PLUS emissive. The
+// specular term matters for glossy/metal hits: their outgoing radiance toward the receiver is
+// dominated by the reflected environment (a mirror bounces the sky/scene onward), not diffuse — a
+// diffuse-only bounce returned ~0 for them, both losing that transport and creating a high-variance
+// zero-vs-sky split the diffuse denoiser smears into splotches. Env is the terminal bounce (no
+// secondary trace), matching reflections.hlsl's ReflectionClosestHit.
+// viewDir = direction from the hit toward the receiver (i.e. -incoming ray direction).
+float3 ShadeHit(
+    uint instanceId, uint primitiveIndex, float2 barycentrics, float3 hitNormal, float3 viewDir)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
     const MaterialEntry material = g_Materials[instanceId];
@@ -274,7 +299,15 @@ float3 ShadeHitDiffuse(uint instanceId, uint primitiveIndex, float2 barycentrics
                 .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
         albedo *= texel;
     }
-    const float3 diffuseAlbedo = albedo * (1.0 - material.metallic);
+
+    // Energy-conserving diffuse weight, matching the raster (pbr.ps.hlsl CalcCookTorrance): the
+    // fraction of light NOT taken by the specular lobe. Without the (1 - F) term the bounce
+    // surface reads hotter than it does under direct shading, inflating GI.
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float nDotV = saturate(dot(hitNormal, viewDir));
+    const float3 specularEnergy = FresnelSchlickRoughnessGi(nDotV, f0, max(material.roughness, 0.55));
+    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+    const float3 diffuseAlbedo = albedo * diffuseEnergy;
 
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
@@ -284,7 +317,16 @@ float3 ShadeHitDiffuse(uint instanceId, uint primitiveIndex, float2 barycentrics
     const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
     const float3 ambient = diffuseAlbedo * irradiance / kPi;
 
-    return max(direct + ambient + material.emissive, 0.0.xxx);
+    // Specular environment IBL at the hit: reflect the incoming ray about the hit normal, sample the
+    // prefiltered env at the surface roughness, and weight by the split-sum env BRDF. This is the
+    // reflected-light transport the surface bounces toward the receiver (a mirror floor sends the sky
+    // up onto the receiver). f0 = 0.04 for dielectrics, albedo for metals, so metals return their
+    // tinted reflection while the (1 - F) diffuse split above keeps energy conserved.
+    const float3 reflectDir = reflect(-viewDir, hitNormal);
+    const float3 specular =
+        SampleEnvironment(reflectDir, material.roughness) * EnvBrdfApprox(f0, material.roughness, nDotV);
+
+    return max(direct + ambient + specular + material.emissive, 0.0.xxx);
 }
 
 #endif // DXR_HIT_SHADING_HLSLI

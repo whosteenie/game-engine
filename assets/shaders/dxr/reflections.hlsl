@@ -30,6 +30,8 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float3 g_SunColor;
     uint g_AoRayCount; // reflected-hit ambient-occlusion rays (0 = AO off), tunable
     float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
+    float g_RoughnessCutoff; // receivers rougher than this skip the trace (env fallback), tunable
+    float3 _padCutoff;
 };
 
 RWTexture2D<float4> g_ReflectionOutput : register(u0);
@@ -463,6 +465,19 @@ void ReflectionRayGen()
     g_NormalRoughnessOutput[pixel] = float4(shadingNormal * 0.5 + 0.5, roughness);
 
     const float3 viewVecCenter = normalize(worldPos - g_CameraPos); // camera -> surface (center)
+
+    // Roughness cutoff (perf + quality): surfaces rougher than the cutoff produce a diffuse-wide,
+    // noisy scatter that the denoiser just smears into a blurry blob — and diffuse GI/IBL already
+    // covers that indirect. Skip the per-pixel TraceRay entirely and write the prefiltered-env
+    // fallback along the mirror direction. The composite fades RT->IBL over the same cutoff, so
+    // the handoff is seamless. Guides above were already written for RELAX.
+    if (roughness >= g_RoughnessCutoff)
+    {
+        const float3 mirrorDir = reflect(viewVecCenter, shadingNormal);
+        g_ReflectionOutput[pixel] =
+            float4(SampleEnvironment(mirrorDir, roughness), g_MaxTraceDistance);
+        return;
+    }
 
     const uint sampleCount = clamp(g_SamplesPerPixel, 1u, 16u);
     float3 radianceSum = 0.0.xxx;

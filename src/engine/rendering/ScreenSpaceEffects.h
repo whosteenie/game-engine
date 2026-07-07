@@ -211,12 +211,18 @@ public:
     // D6: when true (and reflection SRVs are set), Apply() runs the RT specular composite
     // and SKIPS the SSR indirect composite — the two are mutually exclusive per plan.
     void SetDxrReflectionCompositeEnabled(bool enabled) { m_dxrReflectionCompositeEnabled = enabled; }
+    // Roughness cutoff for the RT specular composite — receivers rougher than this fade RT->IBL
+    // (matches the trace's g_RoughnessCutoff skip so the handoff is seamless).
+    void SetDxrReflectionRoughnessCutoff(float cutoff) { m_dxrReflectionRoughnessCutoff = cutoff; }
     // True when a reflection composite (RT reflections or SSR) will run this frame and therefore
     // ADD specular IBL back into the indirect. The PBR raster must OMIT spec IBL from RT1 exactly
     // when this is true (SceneRenderer sets IBL::SetReflectionsReplaceSpecIbl before the scene
     // pass). Single source of truth so the raster omit and the composite run stay in lockstep.
     bool ReflectionCompositeReplacesSpecIbl(
         bool dxrReflectionsEnabled, bool iblReady, RenderDebugMode debugMode) const;
+    // Companion for RT diffuse GI: true when the GI inject will run and REPLACE the SH diffuse
+    // ambient. The PBR raster must OMIT the SH diffuse ambient exactly when this is true.
+    bool GiInjectReplacesDiffuseIbl(bool giActive, bool iblReady, RenderDebugMode debugMode) const;
     // D8: RT sun shadow mask. penumbraSrv drives the raw debug view; denoisedSrv is the
     // SIGMA-denoised mask consumed by the composite. 0 disables.
     void SetDxrShadowSrv(
@@ -538,6 +544,7 @@ private:
     float m_dxrReflectionUvScaleY = 1.0f;
     float m_dxrReflectionMaxTraceDistance = 0.0f;
     bool m_dxrReflectionCompositeEnabled = false;
+    float m_dxrReflectionRoughnessCutoff = 0.6f;
     std::uintptr_t m_dxrShadowPenumbraSrv = 0;
     std::uintptr_t m_dxrShadowDenoisedSrv = 0;
     float m_dxrShadowUvScaleX = 1.0f;

@@ -194,5 +194,7 @@ void GiClosestHit(inout GiPayload payload, BuiltInTriangleIntersectionAttributes
 
     payload.hit = 1;
     payload.hitDistance = hitT;
-    payload.radiance = ShadeHitDiffuse(instanceId, primitiveIndex, attribs.barycentrics, hitNormal);
+    // viewDir toward the receiver is the reversed incoming ray direction.
+    payload.radiance =
+        ShadeHit(instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir);
 }

@@ -5,6 +5,7 @@
 #include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/EngineDiagnostics.h"
 #include "engine/platform/EngineLog.h"
+#include "engine/rhi/DlssContext.h"
 #include "engine/rendering/DxrCapabilities.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
@@ -359,6 +360,11 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
                 "gfx",
                 "Ray tracing is not supported on this GPU or driver. DXR features will be disabled.");
         }
+
+        // DLSS/Streamline (S0): init SL + probe DLSS support on a background thread so the
+        // multi-second NGX cold-init doesn't block editor startup. SL doesn't interpose our
+        // DXGI/D3D (manual DLSS eval), so off-thread init is safe; consumers gate on IsReady().
+        DlssContext::Get().BeginAsyncInitialize(m_impl->Device.Get(), m_impl->Adapter.Get());
     }
 
     D3D12MA::ALLOCATOR_DESC allocatorDesc{};
@@ -538,6 +544,8 @@ void GfxContext::Shutdown()
     }
 
     WaitForGpu();
+    // DLSS/Streamline (S0): shut SL down while the device is still alive.
+    DlssContext::Get().Shutdown();
     // GPU is idle and no further submissions will happen: flush everything unconditionally.
     ProcessDeferredDestroys(true);
     m_gpuProfiler.Shutdown();

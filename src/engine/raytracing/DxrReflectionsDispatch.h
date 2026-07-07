@@ -64,7 +64,8 @@ public:
         float temporalBlend,
         int atrousIterations,
         bool antiFirefly,
-        int aoRayCount);
+        int aoRayCount,
+        float roughnessCutoff);
 
     void Release();
 

@@ -2493,6 +2493,7 @@ void ScreenSpaceEffects::Apply(
             "uDebugSpecReplacement",
             rtCompositeDebugOnly ? 1 : 0);
         m_dxrIndirectShader->SetInt("uHasRtTrace", rtHasFreshTrace ? 1 : 0);
+        m_dxrIndirectShader->SetFloat("uRoughnessCutoff", m_dxrReflectionRoughnessCutoff);
         m_dxrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_dxrIndirectShader->BindTextureSlot(1, denoisedSrv);
         m_dxrIndirectShader->BindTextureSlot(2, rawSrv);
@@ -2520,17 +2521,23 @@ void ScreenSpaceEffects::Apply(
     // currently is (NOT raw RT1). Mutually exclusive with SSGI inject (gated in the composite below).
     const std::uintptr_t giInjectSrv =
         m_dxrGiDenoisedSrv != 0 ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
+    // Run whenever GI is ENABLED (not only on a fresh trace): the raster omits the SH diffuse
+    // ambient in that case (uOmitDiffuseIbl), so the inject MUST run to replace it — falling back
+    // to a recomputed SH ambient (uHasGiTrace=0) when there is no fresh trace.
+    const bool giHasFreshTrace = giInjectSrv != 0;
     const bool runRtGiInject =
-        m_dxrGiCompositeEnabled && giInjectSrv != 0 &&
+        m_dxrGiCompositeEnabled &&
         !pbrDebugActive &&
         m_sceneFramebuffer->HasSplitLighting() &&
         m_sceneFramebuffer->HasMaterialGbuffer() &&
-        m_rtGiInjectTarget.resource != nullptr;
+        m_rtGiInjectTarget.resource != nullptr &&
+        environmentMap.GetIBL().IsReady();
 
     if (runRtGiInject)
     {
         SceneRenderTrace::Scope rtGiInjectScope("dxr gi inject");
         const float injectClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const IBL& giIbl = environmentMap.GetIBL();
 
         m_dxrGiInjectShader->Use(false);
         m_dxrGiInjectShader->SetInt("uIndirectMap", 0);
@@ -2538,15 +2545,28 @@ void ScreenSpaceEffects::Apply(
         m_dxrGiInjectShader->SetInt("uDepthMap", 2);
         m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
         m_dxrGiInjectShader->SetInt("uMaterial1Map", 4);
+        m_dxrGiInjectShader->SetInt("uNormalMap", 5);
+        m_dxrGiInjectShader->SetMat4("uInvProjection", inverseProjectionMatrix);
+        m_dxrGiInjectShader->SetMat4("uInvView", glm::inverse(camera.GetViewMatrix()));
         m_dxrGiInjectShader->SetVec2(
             "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
         m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
         m_dxrGiInjectShader->SetInt("uDebugGiInject", 0);
+        m_dxrGiInjectShader->SetInt("uHasGiTrace", giHasFreshTrace ? 1 : 0);
+        m_dxrGiInjectShader->SetFloat("uEnvironmentIntensity", giIbl.GetEnvironmentIntensity());
+        m_dxrGiInjectShader->SetVec4Array(
+            "uIrradianceSh",
+            giIbl.GetIrradianceSh9().coefficients.data(),
+            static_cast<int>(giIbl.GetIrradianceSh9().coefficients.size()));
         m_dxrGiInjectShader->BindTextureSlot(0, indirectCompositeSrv);
-        m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
+        // Fall back to a valid texture (RT1) when there is no fresh GI trace; uHasGiTrace=0 makes
+        // the shader recompute the SH ambient instead of sampling this.
+        m_dxrGiInjectShader->BindTextureSlot(
+            1, giHasFreshTrace ? giInjectSrv : m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
         m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_dxrGiInjectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
         DrawFullscreenToTarget(
             *m_dxrGiInjectShader,
             const_cast<InternalTarget&>(m_rtGiInjectTarget),
@@ -4114,6 +4134,23 @@ bool ScreenSpaceEffects::ReflectionCompositeReplacesSpecIbl(
         return false;
     }
     return dxrReflectionsEnabled || m_ssrEnabled;
+}
+
+bool ScreenSpaceEffects::GiInjectReplacesDiffuseIbl(
+    const bool giActive, const bool iblReady, const RenderDebugMode debugMode) const
+{
+    // Must match the runRtGiInject gating in Apply (minus trace freshness, handled by the SH
+    // fallback). PBR debug modes render specific channels, not the inject — leave ambient baked.
+    if (IsPbrMaterialDebugMode(debugMode) || !iblReady)
+    {
+        return false;
+    }
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->HasSplitLighting()
+        || !m_sceneFramebuffer->HasMaterialGbuffer())
+    {
+        return false;
+    }
+    return giActive;
 }
 
 void ScreenSpaceEffects::SetDxrShadowSrv(

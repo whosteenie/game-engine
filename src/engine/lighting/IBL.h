@@ -28,6 +28,9 @@ public:
     // from the indirect output because a reflection composite (RT reflections / SSR) will add it
     // back at full precision (see uOmitSpecularIbl in pbr.ps.hlsl). Not persisted.
     void SetReflectionsReplaceSpecIbl(bool replace) { m_reflectionsReplaceSpecIbl = replace; }
+    // Companion to the above for RT diffuse GI: omit the SH diffuse ambient from RT1 because the
+    // GI inject will replace it (see uOmitDiffuseIbl in pbr.ps.hlsl). Not persisted.
+    void SetGiReplacesDiffuseIbl(bool replace) { m_giReplacesDiffuseIbl = replace; }
     const IrradianceSh9& GetIrradianceSh9() const { return m_irradianceSh; }
 
     bool IsReady() const;
@@ -110,6 +113,7 @@ private:
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;
     bool m_reflectionsReplaceSpecIbl = false;
+    bool m_giReplacesDiffuseIbl = false;
 
     int m_hdrWidth = 0;
     int m_hdrHeight = 0;

@@ -56,6 +56,10 @@ struct ReflectionDispatchConstants
     float sunColor[3] = {1.0f, 1.0f, 1.0f};
     std::uint32_t aoRayCount = 4; // reflected-hit AO ray count (0 = off), tunable
     float irradianceSh9[9][4] = {}; // L2 SH diffuse irradiance (9 x float4)
+    // Surfaces rougher than this skip the scattered reflection trace and write the prefiltered-env
+    // fallback (see g_RoughnessCutoff in reflections.hlsl). GI is unaffected (ignores this field).
+    float roughnessCutoff = 0.6f;
+    float _padCutoff[3] = {};
 };
 
 // Phase D8 shadows (see devdoc/dxr-shadows.md). Layout mirrors the cbuffer in

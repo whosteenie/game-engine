@@ -91,6 +91,10 @@ cbuffer PerPixel : register(b0)
     // (RT reflections or SSR) will ADD it back at full precision. Avoids baking the fp16-Inf
     // HDR sun into RT1 only to subtract it back out (which sparkled at reflected highlights).
     int uOmitSpecularIbl;
+    // When set, omit the SH diffuse ambient from the indirect (RT1) output — RT diffuse GI will
+    // REPLACE it (the cosine-hemisphere trace already integrates the sky + one bounce + true
+    // occlusion, so it supersedes the crude 9-coefficient SH sky). Avoids double-counting.
+    int uOmitDiffuseIbl;
     float4 uIrradianceSh[9];
 };
 
@@ -807,9 +811,10 @@ PSOutput main(PSInput input)
     float roughnessForIndirectEnergy = max(roughness, 0.55);
     float3 specularEnergy = FresnelSchlickRoughness(nDotVGeom, f0, roughnessForIndirectEnergy);
     float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
-    // Omit spec IBL when a reflection composite will add it back (see uOmitSpecularIbl).
+    // Omit spec IBL / diffuse SH ambient when a composite will add each back (see the u*Omit flags).
     const float3 indirectSpecular = uOmitSpecularIbl != 0 ? 0.0.xxx : specularIbl;
-    float3 ambient = (diffuseEnergy * diffuseIbl + indirectSpecular) * uEnvironmentIntensity * ambientOcclusion;
+    const float3 indirectDiffuse = uOmitDiffuseIbl != 0 ? 0.0.xxx : diffuseEnergy * diffuseIbl;
+    float3 ambient = (indirectDiffuse + indirectSpecular) * uEnvironmentIntensity * ambientOcclusion;
 
     float3 directShadowed = 0.0.xxx;
     float3 directUnshadowed = 0.0.xxx;

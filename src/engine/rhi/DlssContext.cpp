@@ -1,0 +1,248 @@
+#include "engine/rhi/DlssContext.h"
+
+#include "engine/platform/EngineLog.h"
+
+#ifdef GAME_ENGINE_ENABLE_DLSS
+#include <windows.h>
+
+#include <d3d12.h>
+#include <dxgi.h>
+
+#include <sl.h>
+
+namespace
+{
+// Resolved from sl.interposer.dll at runtime (see header rationale for not static-linking).
+// Written and reset only by the init worker / Shutdown (which joins first), so no locking needed.
+PFun_slInit* g_slInit = nullptr;
+PFun_slShutdown* g_slShutdown = nullptr;
+PFun_slSetD3DDevice* g_slSetD3DDevice = nullptr;
+PFun_slIsFeatureSupported* g_slIsFeatureSupported = nullptr;
+
+// NVIDIA's public sample/development application id. It lets NGX/DLSS load in a dev context; a
+// title shipping DLSS must swap this for an NVIDIA-issued application id (or engine id + project
+// id). See ProgrammingGuide "Preferences".
+constexpr uint32_t kApplicationId = 231313132;
+
+void SlLogCallback(sl::LogType type, const char* msg)
+{
+    if (msg == nullptr)
+    {
+        return;
+    }
+    switch (type)
+    {
+    case sl::LogType::eError:
+        EngineLog::Error("dlss", msg);
+        break;
+    case sl::LogType::eWarn:
+        EngineLog::Warn("dlss", msg);
+        break;
+    default:
+        EngineLog::Info("dlss", msg);
+        break;
+    }
+}
+
+const char* ResultToString(sl::Result r)
+{
+    switch (r)
+    {
+    case sl::Result::eOk: return "ok";
+    case sl::Result::eErrorDriverOutOfDate: return "driver out of date";
+    case sl::Result::eErrorOSOutOfDate: return "OS out of date";
+    case sl::Result::eErrorOSDisabledHWS: return "GPU hardware scheduling disabled";
+    case sl::Result::eErrorNoSupportedAdapterFound: return "no supported adapter (needs NVIDIA RTX)";
+    case sl::Result::eErrorAdapterNotSupported: return "adapter not supported";
+    case sl::Result::eErrorNoPlugins: return "SL plugins not found next to the executable";
+    case sl::Result::eErrorNGXFailed: return "NGX init failed";
+    case sl::Result::eErrorFeatureNotSupported: return "feature not supported";
+    case sl::Result::eErrorMissingOrInvalidAPI: return "missing/invalid API";
+    default: return "unsupported/unknown error";
+    }
+}
+} // namespace
+#endif // GAME_ENGINE_ENABLE_DLSS
+
+DlssContext& DlssContext::Get()
+{
+    static DlssContext instance;
+    return instance;
+}
+
+void DlssContext::SetStatus(std::string status)
+{
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    m_status = std::move(status);
+}
+
+std::string DlssContext::StatusString() const
+{
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    return m_status;
+}
+
+void DlssContext::BeginAsyncInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    (void)device;
+    (void)adapter;
+    m_ready.store(true, std::memory_order_release);
+    SetStatus("DLSS: disabled at build time");
+#else
+    bool expected = false;
+    if (!m_started.compare_exchange_strong(expected, true))
+    {
+        return; // already started
+    }
+    if (device == nullptr || adapter == nullptr)
+    {
+        m_ready.store(true, std::memory_order_release);
+        SetStatus("DLSS: no device");
+        return;
+    }
+
+    // Keep the device/adapter alive for the duration of the worker (they outlive it anyway, but be
+    // explicit). Released at the end of RunInitialize.
+    device->AddRef();
+    adapter->AddRef();
+    m_worker = std::thread(&DlssContext::RunInitialize, this, device, adapter);
+#endif
+}
+
+void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
+{
+#ifdef GAME_ENGINE_ENABLE_DLSS
+    HMODULE hmod = ::LoadLibraryW(L"sl.interposer.dll");
+    if (hmod == nullptr)
+    {
+        SetStatus("DLSS: sl.interposer.dll not found next to the executable");
+        EngineLog::Warn("dlss", "sl.interposer.dll not found next to the executable");
+        device->Release();
+        adapter->Release();
+        m_ready.store(true, std::memory_order_release);
+        return;
+    }
+    m_interposer = hmod;
+
+    bool resolved = true;
+#define SL_RESOLVE(fn)                                                                             \
+    g_##fn = reinterpret_cast<PFun_##fn*>(::GetProcAddress(hmod, #fn));                             \
+    if (g_##fn == nullptr)                                                                          \
+    {                                                                                              \
+        SetStatus("DLSS: sl.interposer.dll is missing export " #fn);                               \
+        EngineLog::Warn("dlss", "sl.interposer.dll is missing export " #fn);                       \
+        resolved = false;                                                                          \
+    }
+
+    SL_RESOLVE(slInit)
+    SL_RESOLVE(slShutdown)
+    SL_RESOLVE(slSetD3DDevice)
+    SL_RESOLVE(slIsFeatureSupported)
+#undef SL_RESOLVE
+
+    if (!resolved)
+    {
+        ::FreeLibrary(hmod);
+        m_interposer = nullptr;
+        device->Release();
+        adapter->Release();
+        m_ready.store(true, std::memory_order_release);
+        return;
+    }
+
+    static const sl::Feature kFeaturesToLoad[] = {sl::kFeatureDLSS};
+
+    sl::Preferences pref{};
+    pref.showConsole = false;
+    pref.logLevel = sl::LogLevel::eDefault;
+    pref.logMessageCallback = &SlLogCallback;
+    pref.featuresToLoad = kFeaturesToLoad;
+    pref.numFeaturesToLoad = 1;
+    // We restore command-list state ourselves after slEvaluateFeature (default SL behavior).
+    pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
+    pref.applicationId = kApplicationId;
+
+    const sl::Result initResult = g_slInit(pref, sl::kSDKVersion);
+    if (initResult != sl::Result::eOk)
+    {
+        SetStatus(std::string("DLSS: slInit failed (") + ResultToString(initResult) + ")");
+        EngineLog::Warn("dlss", StatusString());
+        device->Release();
+        adapter->Release();
+        m_ready.store(true, std::memory_order_release);
+        return;
+    }
+    m_initialized.store(true, std::memory_order_release);
+    EngineLog::Info("dlss", "Streamline initialized (SL 2.12).");
+
+    if (g_slSetD3DDevice(device) != sl::Result::eOk)
+    {
+        SetStatus("DLSS: slSetD3DDevice failed");
+        EngineLog::Warn("dlss", "slSetD3DDevice failed");
+        device->Release();
+        adapter->Release();
+        m_ready.store(true, std::memory_order_release);
+        return;
+    }
+
+    DXGI_ADAPTER_DESC desc{};
+    if (SUCCEEDED(adapter->GetDesc(&desc)))
+    {
+        sl::AdapterInfo adapterInfo{};
+        adapterInfo.deviceLUID = reinterpret_cast<uint8_t*>(&desc.AdapterLuid);
+        adapterInfo.deviceLUIDSizeInBytes = sizeof(LUID);
+
+        const sl::Result supportResult = g_slIsFeatureSupported(sl::kFeatureDLSS, adapterInfo);
+        if (supportResult == sl::Result::eOk)
+        {
+            m_supported.store(true, std::memory_order_release);
+            SetStatus("DLSS: supported");
+            EngineLog::Info("dlss", "DLSS Super Resolution is supported on this adapter.");
+        }
+        else
+        {
+            SetStatus(std::string("DLSS: unavailable (") + ResultToString(supportResult) + ")");
+            EngineLog::Info("dlss", StatusString());
+        }
+    }
+    else
+    {
+        SetStatus("DLSS: could not read adapter description");
+        EngineLog::Warn("dlss", "could not read adapter description");
+    }
+
+    device->Release();
+    adapter->Release();
+    m_ready.store(true, std::memory_order_release);
+#else
+    (void)device;
+    (void)adapter;
+#endif
+}
+
+void DlssContext::Shutdown()
+{
+    if (m_worker.joinable())
+    {
+        m_worker.join();
+    }
+#ifdef GAME_ENGINE_ENABLE_DLSS
+    if (m_initialized.load(std::memory_order_acquire) && g_slShutdown != nullptr)
+    {
+        g_slShutdown();
+    }
+    m_initialized.store(false, std::memory_order_release);
+    m_supported.store(false, std::memory_order_release);
+    g_slInit = nullptr;
+    g_slShutdown = nullptr;
+    g_slSetD3DDevice = nullptr;
+    g_slIsFeatureSupported = nullptr;
+    if (m_interposer != nullptr)
+    {
+        ::FreeLibrary(static_cast<HMODULE>(m_interposer));
+        m_interposer = nullptr;
+    }
+    SetStatus("DLSS: shut down");
+#endif
+}
