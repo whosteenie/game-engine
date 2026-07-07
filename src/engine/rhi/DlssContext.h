@@ -70,6 +70,19 @@ struct DlssFrameInputs
     float exposureScale = 1.0f;
     float preExposure = 1.0f;
     float sharpness = 0.0f; // [0,1]; 0 disables NGX sharpening (deprecated in SL but still honored)
+
+    // Ray Reconstruction (devdoc/dxr-dlss-rr.md). When true, Evaluate() runs kFeatureDLSS_RR
+    // instead of Super Resolution: it denoises the raw RT signal in colorInput using the guides
+    // below (which MUST be non-null), then upscales/AAs — replacing NRD + the SR model in one pass.
+    bool useRayReconstruction = false;
+    void* diffuseAlbedo = nullptr;   // kBufferTypeAlbedo         = albedo * (1 - metallic)
+    unsigned int diffuseAlbedoState = 0;
+    void* specularAlbedo = nullptr;  // kBufferTypeSpecularAlbedo = F0
+    unsigned int specularAlbedoState = 0;
+    void* normalRoughness = nullptr; // kBufferTypeNormalRoughness (PACKED): normal.rgb + roughness.a
+    unsigned int normalRoughnessState = 0;
+    float worldToCameraView[16] = {}; // DLSSDOptions requires the view + inverse-view matrices
+    float cameraViewToWorld[16] = {};
 };
 
 // NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md).

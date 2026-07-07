@@ -15,6 +15,7 @@
 #include <cstring>
 #include <algorithm>
 #include <iterator>
+#include <vector>
 
 namespace
 {
@@ -35,6 +36,8 @@ PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
 // DLSS feature functions (obtained via slGetFeatureFunction AFTER the device is set).
 PFun_slDLSSSetOptions* g_slDLSSSetOptions = nullptr;
 PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings = nullptr;
+// DLSS-RR (Ray Reconstruction) feature function (kFeatureDLSS_RR).
+PFun_slDLSSDSetOptions* g_slDLSSDSetOptions = nullptr;
 
 // Single viewport — the editor drives one scene view through DLSS at a time.
 constexpr uint32_t kDlssViewport = 0;
@@ -228,6 +231,12 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         {
             g_slDLSSGetOptimalSettings = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(fn);
         }
+        // Ray Reconstruction set-options (kFeatureDLSS_RR). Missing simply disables the RR path.
+        fn = nullptr;
+        if (g_slGetFeatureFunction(sl::kFeatureDLSS_RR, "slDLSSDSetOptions", fn) == sl::Result::eOk)
+        {
+            g_slDLSSDSetOptions = reinterpret_cast<PFun_slDLSSDSetOptions*>(fn);
+        }
     }
 
     DXGI_ADAPTER_DESC desc{};
@@ -311,6 +320,7 @@ void DlssContext::Shutdown()
     g_slGetFeatureFunction = nullptr;
     g_slDLSSSetOptions = nullptr;
     g_slDLSSGetOptimalSettings = nullptr;
+    g_slDLSSDSetOptions = nullptr;
     if (m_interposer != nullptr)
     {
         ::FreeLibrary(static_cast<HMODULE>(m_interposer));
@@ -361,12 +371,24 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     (void)inputs;
     return false;
 #else
-    if (!IsReady() || !IsRuntimeInitialized() || !IsDlssSupported())
+    if (!IsReady() || !IsRuntimeInitialized())
+    {
+        return false;
+    }
+    if (inputs.useRayReconstruction)
+    {
+        if (!IsRrSupported() || g_slDLSSDSetOptions == nullptr || inputs.diffuseAlbedo == nullptr
+            || inputs.specularAlbedo == nullptr || inputs.normalRoughness == nullptr)
+        {
+            return false;
+        }
+    }
+    else if (!IsDlssSupported() || g_slDLSSSetOptions == nullptr)
     {
         return false;
     }
     if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr || g_slSetTag == nullptr
-        || g_slEvaluateFeature == nullptr || g_slDLSSSetOptions == nullptr)
+        || g_slEvaluateFeature == nullptr)
     {
         return false;
     }
@@ -398,16 +420,37 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     sl::Resource mvec = MakeTex(
         inputs.motionVectors, inputs.motionVectorsState, inputs.renderWidth, inputs.renderHeight);
 
-    sl::ResourceTag tags[] = {
-        sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent),
-        sl::ResourceTag(
-            &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent),
-        sl::ResourceTag(
-            &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent),
-        sl::ResourceTag(
-            &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent),
-    };
-    if (g_slSetTag(viewport, tags, static_cast<uint32_t>(std::size(tags)), cmdList)
+    // Guide resources must outlive the slSetTag call (the tags hold pointers to them).
+    sl::Resource diffuseAlbedo{};
+    sl::Resource specularAlbedo{};
+    sl::Resource normalRoughness{};
+
+    std::vector<sl::ResourceTag> tags;
+    tags.reserve(7);
+    tags.emplace_back(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent);
+    tags.emplace_back(
+        &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent);
+    tags.emplace_back(
+        &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent);
+    tags.emplace_back(
+        &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent);
+    if (inputs.useRayReconstruction)
+    {
+        // RR material guides (devdoc/dxr-dlss-rr.md). normalRoughness is PACKED (DLSSDNormalRoughnessMode::ePacked).
+        diffuseAlbedo = MakeTex(
+            inputs.diffuseAlbedo, inputs.diffuseAlbedoState, inputs.renderWidth, inputs.renderHeight);
+        specularAlbedo = MakeTex(
+            inputs.specularAlbedo, inputs.specularAlbedoState, inputs.renderWidth, inputs.renderHeight);
+        normalRoughness = MakeTex(
+            inputs.normalRoughness, inputs.normalRoughnessState, inputs.renderWidth, inputs.renderHeight);
+        tags.emplace_back(
+            &diffuseAlbedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+        tags.emplace_back(
+            &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+        tags.emplace_back(
+            &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent);
+    }
+    if (g_slSetTag(viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)
     {
         return false;
@@ -441,22 +484,45 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         return false;
     }
 
-    sl::DLSSOptions options{};
-    options.mode = ToDlssMode(inputs.quality);
-    options.outputWidth = inputs.displayWidth;
-    options.outputHeight = inputs.displayHeight;
-    options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    options.preExposure = inputs.preExposure;
-    options.exposureScale = inputs.exposureScale;
-    options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
-    if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
+    sl::Feature feature = sl::kFeatureDLSS;
+    if (inputs.useRayReconstruction)
     {
-        return false;
+        sl::DLSSDOptions rrOptions{};
+        rrOptions.mode = ToDlssMode(inputs.quality);
+        rrOptions.outputWidth = inputs.displayWidth;
+        rrOptions.outputHeight = inputs.displayHeight;
+        rrOptions.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        rrOptions.preExposure = inputs.preExposure;
+        rrOptions.exposureScale = inputs.exposureScale;
+        rrOptions.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
+        rrOptions.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
+        CopyMatrix(rrOptions.worldToCameraView, inputs.worldToCameraView);
+        CopyMatrix(rrOptions.cameraViewToWorld, inputs.cameraViewToWorld);
+        if (g_slDLSSDSetOptions(viewport, rrOptions) != sl::Result::eOk)
+        {
+            return false;
+        }
+        feature = sl::kFeatureDLSS_RR;
+    }
+    else
+    {
+        sl::DLSSOptions options{};
+        options.mode = ToDlssMode(inputs.quality);
+        options.outputWidth = inputs.displayWidth;
+        options.outputHeight = inputs.displayHeight;
+        options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        options.preExposure = inputs.preExposure;
+        options.exposureScale = inputs.exposureScale;
+        options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
+        if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
+        {
+            return false;
+        }
     }
 
     const sl::BaseStructure* evalInputs[] = {&viewport};
     const sl::Result evalResult = g_slEvaluateFeature(
-        sl::kFeatureDLSS, *frameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
+        feature, *frameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
         cmdList);
     if (evalResult != sl::Result::eOk)
     {

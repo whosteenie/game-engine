@@ -3925,6 +3925,27 @@ void ScreenSpaceEffects::Apply(
             in.cameraRight[0] = camRight.x; in.cameraRight[1] = camRight.y; in.cameraRight[2] = camRight.z;
             in.cameraUp[0] = camUp.x; in.cameraUp[1] = camUp.y; in.cameraUp[2] = camUp.z;
 
+            // RR3: when Ray Reconstruction is active, generate the material guides and feed them so
+            // Evaluate() runs kFeatureDLSS_RR (denoise + upscale) over the raw RT signal instead of
+            // the SR model. Requires the material G-buffer (guides come from it).
+            const bool useRr = IsRayReconstructionActive() && dlss.IsRrSupported()
+                && m_sceneFramebuffer->HasMaterialGbuffer()
+                && m_rrNormalRoughnessTarget.resource != nullptr;
+            if (useRr)
+            {
+                GenerateRrGuides();
+                in.useRayReconstruction = true;
+                in.diffuseAlbedo = m_rrDiffuseAlbedoTarget.resource;
+                in.diffuseAlbedoState = m_rrDiffuseAlbedoTarget.resourceState;
+                in.specularAlbedo = m_rrSpecularAlbedoTarget.resource;
+                in.specularAlbedoState = m_rrSpecularAlbedoTarget.resourceState;
+                in.normalRoughness = m_rrNormalRoughnessTarget.resource;
+                in.normalRoughnessState = m_rrNormalRoughnessTarget.resourceState;
+                std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
+                const glm::mat4 viewToWorld = glm::inverse(view);
+                std::memcpy(in.cameraViewToWorld, glm::value_ptr(viewToWorld), sizeof(float) * 16);
+            }
+
             dlssRan = dlss.Evaluate(in);
             GfxContext::Get().RebindFrameDescriptorHeaps();
 
