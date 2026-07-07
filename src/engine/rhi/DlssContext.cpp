@@ -9,6 +9,10 @@
 #include <dxgi.h>
 
 #include <sl.h>
+#include <sl_dlss.h>
+
+#include <cstring>
+#include <iterator>
 
 namespace
 {
@@ -18,6 +22,20 @@ PFun_slInit* g_slInit = nullptr;
 PFun_slShutdown* g_slShutdown = nullptr;
 PFun_slSetD3DDevice* g_slSetD3DDevice = nullptr;
 PFun_slIsFeatureSupported* g_slIsFeatureSupported = nullptr;
+
+// Core evaluate/tag/constants exports (all C exports from sl.interposer.dll).
+PFun_slGetNewFrameToken* g_slGetNewFrameToken = nullptr;
+PFun_slSetConstants* g_slSetConstants = nullptr;
+PFun_slSetTag* g_slSetTag = nullptr;
+PFun_slEvaluateFeature* g_slEvaluateFeature = nullptr;
+PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
+
+// DLSS feature functions (obtained via slGetFeatureFunction AFTER the device is set).
+PFun_slDLSSSetOptions* g_slDLSSSetOptions = nullptr;
+PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings = nullptr;
+
+// Single viewport — the editor drives one scene view through DLSS at a time.
+constexpr uint32_t kDlssViewport = 0;
 
 // NVIDIA's public sample/development application id. It lets NGX/DLSS load in a dev context; a
 // title shipping DLSS must swap this for an NVIDIA-issued application id (or engine id + project
@@ -139,6 +157,11 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     SL_RESOLVE(slShutdown)
     SL_RESOLVE(slSetD3DDevice)
     SL_RESOLVE(slIsFeatureSupported)
+    SL_RESOLVE(slGetNewFrameToken)
+    SL_RESOLVE(slSetConstants)
+    SL_RESOLVE(slSetTag)
+    SL_RESOLVE(slEvaluateFeature)
+    SL_RESOLVE(slGetFeatureFunction)
 #undef SL_RESOLVE
 
     if (!resolved)
@@ -184,6 +207,22 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         adapter->Release();
         m_ready.store(true, std::memory_order_release);
         return;
+    }
+
+    // DLSS feature functions can only be resolved once a device is bound (slGetFeatureFunction
+    // contract). Missing ones simply disable Evaluate() — support probing below still runs.
+    if (g_slGetFeatureFunction != nullptr)
+    {
+        void* fn = nullptr;
+        if (g_slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSSetOptions", fn) == sl::Result::eOk)
+        {
+            g_slDLSSSetOptions = reinterpret_cast<PFun_slDLSSSetOptions*>(fn);
+        }
+        fn = nullptr;
+        if (g_slGetFeatureFunction(sl::kFeatureDLSS, "slDLSSGetOptimalSettings", fn) == sl::Result::eOk)
+        {
+            g_slDLSSGetOptimalSettings = reinterpret_cast<PFun_slDLSSGetOptimalSettings*>(fn);
+        }
     }
 
     DXGI_ADAPTER_DESC desc{};
@@ -238,11 +277,171 @@ void DlssContext::Shutdown()
     g_slShutdown = nullptr;
     g_slSetD3DDevice = nullptr;
     g_slIsFeatureSupported = nullptr;
+    g_slGetNewFrameToken = nullptr;
+    g_slSetConstants = nullptr;
+    g_slSetTag = nullptr;
+    g_slEvaluateFeature = nullptr;
+    g_slGetFeatureFunction = nullptr;
+    g_slDLSSSetOptions = nullptr;
+    g_slDLSSGetOptimalSettings = nullptr;
     if (m_interposer != nullptr)
     {
         ::FreeLibrary(static_cast<HMODULE>(m_interposer));
         m_interposer = nullptr;
     }
     SetStatus("DLSS: shut down");
+#endif
+}
+
+#ifdef GAME_ENGINE_ENABLE_DLSS
+namespace
+{
+sl::DLSSMode ToDlssMode(DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::DLAA: return sl::DLSSMode::eDLAA;
+    case DlssQuality::Quality: return sl::DLSSMode::eMaxQuality;
+    case DlssQuality::Balanced: return sl::DLSSMode::eBalanced;
+    case DlssQuality::Performance: return sl::DLSSMode::eMaxPerformance;
+    case DlssQuality::UltraPerformance: return sl::DLSSMode::eUltraPerformance;
+    default: return sl::DLSSMode::eDLAA;
+    }
+}
+
+// The engine hands us 16-float glm matrices (column-major storage, column-vector convention). That
+// byte layout is identical to Streamline's float4x4 (row-major storage, row-vector convention):
+// SL.row[i] == glm column i, which also transposes the operator into row-vector form. So a straight
+// 16-float copy yields the correct matrix on the SL side — no explicit transpose needed.
+void CopyMatrix(sl::float4x4& dst, const float (&src)[16])
+{
+    std::memcpy(&dst[0].x, src, sizeof(float) * 16);
+}
+
+sl::Resource MakeTex(void* native, unsigned int state, unsigned int width, unsigned int height)
+{
+    sl::Resource resource(sl::ResourceType::eTex2d, native, static_cast<uint32_t>(state));
+    resource.width = width;
+    resource.height = height;
+    return resource;
+}
+} // namespace
+#endif // GAME_ENGINE_ENABLE_DLSS
+
+bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    (void)inputs;
+    return false;
+#else
+    if (!IsReady() || !IsRuntimeInitialized() || !IsDlssSupported())
+    {
+        return false;
+    }
+    if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr || g_slSetTag == nullptr
+        || g_slEvaluateFeature == nullptr || g_slDLSSSetOptions == nullptr)
+    {
+        return false;
+    }
+    if (inputs.commandList == nullptr || inputs.colorInput == nullptr
+        || inputs.colorOutput == nullptr || inputs.depth == nullptr
+        || inputs.motionVectors == nullptr)
+    {
+        return false;
+    }
+
+    auto* cmdList = static_cast<sl::CommandBuffer*>(inputs.commandList);
+    const sl::ViewportHandle viewport(kDlssViewport);
+
+    const uint32_t frameIndex = m_evaluateFrameIndex++;
+    sl::FrameToken* frameToken = nullptr;
+    if (g_slGetNewFrameToken(frameToken, &frameIndex) != sl::Result::eOk || frameToken == nullptr)
+    {
+        return false;
+    }
+
+    // Tag the four buffers DLSS SR consumes/produces. eValidUntilPresent is the recommended default;
+    // the generating GPU work (tonemap/scene passes) is already recorded on cmdList before this call.
+    sl::Resource colorIn =
+        MakeTex(inputs.colorInput, inputs.colorInputState, inputs.renderWidth, inputs.renderHeight);
+    sl::Resource colorOut = MakeTex(
+        inputs.colorOutput, inputs.colorOutputState, inputs.displayWidth, inputs.displayHeight);
+    sl::Resource depth =
+        MakeTex(inputs.depth, inputs.depthState, inputs.renderWidth, inputs.renderHeight);
+    sl::Resource mvec = MakeTex(
+        inputs.motionVectors, inputs.motionVectorsState, inputs.renderWidth, inputs.renderHeight);
+
+    sl::ResourceTag tags[] = {
+        sl::ResourceTag(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent),
+        sl::ResourceTag(
+            &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent),
+        sl::ResourceTag(
+            &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent),
+        sl::ResourceTag(
+            &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent),
+    };
+    if (g_slSetTag(viewport, tags, static_cast<uint32_t>(std::size(tags)), cmdList)
+        != sl::Result::eOk)
+    {
+        return false;
+    }
+
+    sl::Constants consts{};
+    CopyMatrix(consts.cameraViewToClip, inputs.cameraViewToClip);
+    CopyMatrix(consts.clipToCameraView, inputs.clipToCameraView);
+    CopyMatrix(consts.clipToPrevClip, inputs.clipToPrevClip);
+    CopyMatrix(consts.prevClipToClip, inputs.prevClipToClip);
+    consts.jitterOffset = sl::float2(inputs.jitterX, inputs.jitterY);
+    consts.mvecScale = sl::float2(inputs.mvecScaleX, inputs.mvecScaleY);
+    consts.cameraPos = sl::float3(inputs.cameraPos[0], inputs.cameraPos[1], inputs.cameraPos[2]);
+    consts.cameraUp = sl::float3(inputs.cameraUp[0], inputs.cameraUp[1], inputs.cameraUp[2]);
+    consts.cameraRight =
+        sl::float3(inputs.cameraRight[0], inputs.cameraRight[1], inputs.cameraRight[2]);
+    consts.cameraFwd =
+        sl::float3(inputs.cameraForward[0], inputs.cameraForward[1], inputs.cameraForward[2]);
+    consts.cameraNear = inputs.cameraNear;
+    consts.cameraFar = inputs.cameraFar;
+    consts.cameraFOV = inputs.cameraFovVertical;
+    consts.cameraAspectRatio = inputs.cameraAspect;
+    consts.depthInverted = inputs.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+    consts.cameraMotionIncluded = sl::Boolean::eTrue;
+    consts.motionVectors3D = sl::Boolean::eFalse;
+    consts.motionVectorsDilated = sl::Boolean::eFalse;
+    consts.motionVectorsJittered = sl::Boolean::eFalse;
+    consts.reset = inputs.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+    if (g_slSetConstants(consts, *frameToken, viewport) != sl::Result::eOk)
+    {
+        return false;
+    }
+
+    sl::DLSSOptions options{};
+    options.mode = ToDlssMode(inputs.quality);
+    options.outputWidth = inputs.displayWidth;
+    options.outputHeight = inputs.displayHeight;
+    options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+    options.preExposure = inputs.preExposure;
+    options.exposureScale = inputs.exposureScale;
+    if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
+    {
+        return false;
+    }
+
+    const sl::BaseStructure* evalInputs[] = {&viewport};
+    const sl::Result evalResult = g_slEvaluateFeature(
+        sl::kFeatureDLSS, *frameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
+        cmdList);
+    if (evalResult != sl::Result::eOk)
+    {
+        static bool loggedOnce = false;
+        if (!loggedOnce)
+        {
+            loggedOnce = true;
+            EngineLog::Warn(
+                "dlss",
+                std::string("slEvaluateFeature failed (") + ResultToString(evalResult) + ")");
+        }
+        return false;
+    }
+    return true;
 #endif
 }

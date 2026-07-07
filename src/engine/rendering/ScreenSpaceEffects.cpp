@@ -11,6 +11,7 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <D3D12MemAlloc.h>
@@ -708,6 +709,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_smaaOutputTarget);
     DestroyInternalTarget(m_taaHistoryTarget);
     DestroyInternalTarget(m_taaResolveTarget);
+    DestroyInternalTarget(m_dlssOutputTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
 
@@ -793,6 +795,68 @@ void ScreenSpaceEffects::CreateInternalTarget(
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
     device->CreateRenderTargetView(resource, nullptr, rtvHandle);
+}
+
+void ScreenSpaceEffects::CreateUavTarget(
+    InternalTarget& target,
+    const int width,
+    const int height,
+    const int format)
+{
+    DestroyInternalTarget(target);
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Width = static_cast<UINT64>(width);
+    resourceDesc.Height = static_cast<UINT>(height);
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = static_cast<DXGI_FORMAT>(format);
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    // NGX writes the DLSS output via a UAV. No RTV is created (nothing rasterizes into it).
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* resource = nullptr;
+    D3D12MA::Allocation* allocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            nullptr,
+            &allocation,
+            IID_PPV_ARGS(&resource))))
+    {
+        ThrowPostProcessTargetError("Failed to create DLSS output UAV target");
+    }
+
+    target.resource = resource;
+    target.allocation = allocation;
+    target.width = width;
+    target.height = height;
+    target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    target.rtvIndex = UINT32_MAX;
+
+    target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (target.srvIndex == UINT32_MAX)
+    {
+        DestroyInternalTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate DLSS output SRV descriptor");
+    }
+    target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
+
+    CreateTexture2DSrv(
+        device,
+        resource,
+        {target.srvCpuHandle},
+        static_cast<DXGI_FORMAT>(format),
+        1);
 }
 
 void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
@@ -1100,6 +1164,21 @@ void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int he
     ResizeInternalTarget(m_taaResolveTarget, width, height, hdrFormat);
 }
 
+namespace
+{
+    DlssQuality ToDlssQuality(const DlssPreset preset)
+    {
+        switch (preset)
+        {
+        case DlssPreset::Quality: return DlssQuality::Quality;
+        case DlssPreset::Balanced: return DlssQuality::Balanced;
+        case DlssPreset::Performance: return DlssQuality::Performance;
+        case DlssPreset::UltraPerformance: return DlssQuality::UltraPerformance;
+        default: return DlssQuality::Quality;
+        }
+    }
+}
+
 float DlssPresetRenderScale(const DlssPreset preset)
 {
     switch (preset)
@@ -1153,6 +1232,7 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_ssrHistoryValid = false;
     m_ssrFrameIndex = 0;
     m_prevFrameBloomSrv = 0;
+    m_dlssHistoryValid = false;
 }
 
 void ScreenSpaceEffects::ResetTaaHistory() const
@@ -1161,6 +1241,7 @@ void ScreenSpaceEffects::ResetTaaHistory() const
     m_taaFrameIndex = 0;
     m_bloomHistoryValid = false;
     m_bloomTemporalWarmupFrames = 0;
+    m_dlssHistoryValid = false;
 }
 
 void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeight)
@@ -1224,6 +1305,17 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
         ResizeAntiAliasingTargets(renderWidth, renderHeight);
         aaTargetsScope.Success();
     }
+    {
+        // DLSS scaling output lives at DISPLAY res (upscale target), unlike the render-res targets
+        // above. S2 LDR stopgap: 8-bit UNORM matching the tonemap LDR target we feed as input.
+        SceneRenderTrace::Scope dlssScope("resize dlss output target");
+        CreateUavTarget(
+            m_dlssOutputTarget,
+            viewportWidth,
+            viewportHeight,
+            static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM));
+        dlssScope.Success();
+    }
     m_width = renderWidth;
     m_height = renderHeight;
     ResetTaaHistory();
@@ -1275,10 +1367,21 @@ namespace
     }
 }
 
+namespace
+{
+    // TAA and both DLSS modes are temporal and require sub-pixel jitter on the projection. (S3 will
+    // harden the DLSS jitter convention; S2 needs it on so the upscaler has sub-pixel coverage.)
+    bool ModeUsesTemporalJitter(const AntiAliasingMode mode)
+    {
+        return mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
+            || mode == AntiAliasingMode::DLSS;
+    }
+}
+
 void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera, const bool freezeJitter) const
 {
     camera.ClearProjectionJitter();
-    if (m_antiAliasingMode == AntiAliasingMode::TAA && m_width > 0 && m_height > 0 && !freezeJitter)
+    if (ModeUsesTemporalJitter(m_antiAliasingMode) && m_width > 0 && m_height > 0 && !freezeJitter)
     {
         camera.SetProjectionJitter(HaltonJitter(m_taaFrameIndex, m_width, m_height));
     }
@@ -1286,7 +1389,7 @@ void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera, const bool fre
 
 void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& /*camera*/, const bool freezeJitter) const
 {
-    if (m_antiAliasingMode != AntiAliasingMode::TAA || freezeJitter)
+    if (!ModeUsesTemporalJitter(m_antiAliasingMode) || freezeJitter)
     {
         return;
     }
@@ -3550,7 +3653,149 @@ void ScreenSpaceEffects::Apply(
         DrawFullscreenPass(*m_downsampleShader, true);
     };
 
-    if (needsLdrIntermediate && ldrTargetReady)
+    const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS;
+
+    if (wantDlss && ldrTargetReady)
+    {
+        SceneRenderTrace::Section dlssSection("dlss");
+        // S2 LDR stopgap: tonemap the HDR composite into the render-res LDR target, feed THAT to DLSS
+        // as the scaling input, and blit the display-res result to the viewport. S4 will move the DLSS
+        // input to pre-tonemap HDR and run bloom/tonemap at display res.
+        {
+            SceneRenderTrace::Scope tonemapScope("tonemap to ldr (dlss)");
+            runTonemapPass(true);
+            tonemapScope.Success();
+        }
+
+        bool dlssRan = false;
+        DlssContext& dlss = DlssContext::Get();
+        const bool dlssUsable = dlss.IsReady() && dlss.IsRuntimeInitialized()
+            && dlss.IsDlssSupported() && m_dlssOutputTarget.resource != nullptr
+            && m_sceneFramebuffer->HasVelocity() && m_sceneFramebuffer->GetDepthResource() != nullptr;
+
+        if (dlssUsable)
+        {
+            SceneRenderTrace::Scope evalScope("dlss evaluate");
+            auto* commandList =
+                static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+            // Depth + all scene color (incl. RT4 velocity) -> PIXEL_SHADER_RESOURCE. The LDR input is
+            // already there post-tonemap. SL adds its own barriers around evaluate and restores these.
+            m_sceneFramebuffer->EnsureShaderResourceState();
+            constexpr std::uint32_t kPixelSrv =
+                static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+            auto* dlssOut = static_cast<ID3D12Resource*>(m_dlssOutputTarget.resource);
+            TransitionResource(
+                commandList,
+                dlssOut,
+                static_cast<D3D12_RESOURCE_STATES>(m_dlssOutputTarget.resourceState),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            m_dlssOutputTarget.resourceState =
+                static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+            DlssFrameInputs in{};
+            in.commandList = commandList;
+            in.colorInput = m_ldrTonemapTarget.resource;
+            in.colorInputState = m_ldrTonemapTarget.resourceState;
+            in.colorOutput = dlssOut;
+            in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            in.depth = m_sceneFramebuffer->GetDepthResource();
+            in.depthState = kPixelSrv;
+            in.motionVectors = m_sceneFramebuffer->GetColorResource(4);
+            in.motionVectorsState = kPixelSrv;
+            in.renderWidth = static_cast<unsigned int>(m_width);
+            in.renderHeight = static_cast<unsigned int>(m_height);
+            in.displayWidth = static_cast<unsigned int>(m_dlssOutputTarget.width);
+            in.displayHeight = static_cast<unsigned int>(m_dlssOutputTarget.height);
+            in.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
+                ? DlssQuality::DLAA
+                : ToDlssQuality(m_dlssPreset);
+            in.colorIsHdr = false; // LDR stopgap
+            in.depthInverted = false; // standard 0..1 depth cleared to 1, LESS test
+            in.reset = !m_dlssHistoryValid;
+
+            // NDC motion (curr-prev) -> backward UV motion in [-1,1]: scale 0.5, negate x, flip y.
+            // Flagged for validation in S3 (fast-pan ghosting test).
+            in.mvecScaleX = -0.5f;
+            in.mvecScaleY = 0.5f;
+
+            const glm::vec2 jitterNdc = camera.GetProjectionJitter();
+            in.jitterX = jitterNdc.x * 0.5f * static_cast<float>(m_width);
+            in.jitterY = -jitterNdc.y * 0.5f * static_cast<float>(m_height);
+
+            // glm column-major storage maps byte-for-byte onto Streamline's row-major float4x4 and
+            // transposes the operator into SL's row-vector convention — a straight copy is correct
+            // (see DlssContext.cpp CopyMatrix). Matrices must be jitter-free (use unjittered proj).
+            const glm::mat4 view = camera.GetViewMatrix();
+            const glm::mat4 unjitteredProj = camera.GetUnjitteredProjectionMatrix();
+            const glm::mat4 currViewProj = unjitteredProj * view;
+            const glm::mat4 clipToPrevClip = m_motionVectorFrameState.historyValid
+                ? m_motionVectorFrameState.prevViewProjection * glm::inverse(currViewProj)
+                : glm::mat4(1.0f);
+            std::memcpy(in.cameraViewToClip, glm::value_ptr(unjitteredProj), sizeof(float) * 16);
+            const glm::mat4 clipToView = glm::inverse(unjitteredProj);
+            std::memcpy(in.clipToCameraView, glm::value_ptr(clipToView), sizeof(float) * 16);
+            std::memcpy(in.clipToPrevClip, glm::value_ptr(clipToPrevClip), sizeof(float) * 16);
+            const glm::mat4 prevClipToClip = glm::inverse(clipToPrevClip);
+            std::memcpy(in.prevClipToClip, glm::value_ptr(prevClipToClip), sizeof(float) * 16);
+
+            in.cameraNear = camera.GetNearPlane();
+            in.cameraFar = camera.GetFarPlane();
+            in.cameraFovVertical = glm::radians(camera.GetFov());
+            in.cameraAspect = camera.GetAspect();
+            const glm::vec3 camPos = camera.GetPosition();
+            const glm::vec3 camFwd = camera.GetFront();
+            const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
+            const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
+            in.cameraPos[0] = camPos.x; in.cameraPos[1] = camPos.y; in.cameraPos[2] = camPos.z;
+            in.cameraForward[0] = camFwd.x; in.cameraForward[1] = camFwd.y; in.cameraForward[2] = camFwd.z;
+            in.cameraRight[0] = camRight.x; in.cameraRight[1] = camRight.y; in.cameraRight[2] = camRight.z;
+            in.cameraUp[0] = camUp.x; in.cameraUp[1] = camUp.y; in.cameraUp[2] = camUp.z;
+
+            dlssRan = dlss.Evaluate(in);
+
+            // SL runs with eDisableCLStateTracking; restore our SRV heap before the blit below.
+            GfxContext::Get().RebindFrameDescriptorHeaps();
+
+            if (dlssRan)
+            {
+                TransitionResource(
+                    commandList,
+                    dlssOut,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                m_dlssOutputTarget.resourceState = kPixelSrv;
+                m_dlssHistoryValid = true;
+                blitLdrToViewport(m_dlssOutputTarget.srvCpuHandle);
+            }
+            else
+            {
+                // Restore output to a shader-readable state even on failure so tracking stays sane.
+                TransitionResource(
+                    commandList,
+                    dlssOut,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                m_dlssOutputTarget.resourceState = kPixelSrv;
+                m_dlssHistoryValid = false;
+            }
+            evalScope.Success();
+        }
+
+        if (!dlssRan)
+        {
+            // Fallback (DLSS unsupported / not ready / evaluate failed): bilinear-upscale the LDR
+            // tonemap target to the viewport, matching the S1 behavior.
+            SceneRenderTrace::Scope fallbackScope("dlss fallback bilinear");
+            blitLdrToViewport(m_ldrTonemapTarget.srvCpuHandle);
+            fallbackScope.Success();
+        }
+
+        dlssSection.Success();
+    }
+    else if (needsLdrIntermediate && ldrTargetReady)
     {
         SceneRenderTrace::Section tonemapSection("tonemap");
         {

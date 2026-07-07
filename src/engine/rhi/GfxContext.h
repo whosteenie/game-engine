@@ -92,6 +92,12 @@ public:
         int width,
         int height);
 
+    // Re-binds the frame's shader-visible SRV heap on the command list. BeginFrame sets it once, but
+    // any external pass that records with its own descriptor heaps and does not restore ours (e.g.
+    // Streamline/DLSS slEvaluateFeature, which runs with eDisableCLStateTracking) leaves the heap
+    // clobbered — call this immediately afterward so subsequent draws bind descriptors correctly.
+    void RebindFrameDescriptorHeaps();
+
     void BindSwapChainRenderTarget(bool clearColor = false);
     void SetBoundOutputFramebuffer(const Framebuffer* framebuffer);
     const Framebuffer* GetBoundOutputFramebuffer() const;

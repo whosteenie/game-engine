@@ -1365,6 +1365,17 @@ void GfxContext::ClearOffscreenTarget(
     commandList->RSSetScissorRects(1, &swapScissor);
 }
 
+void GfxContext::RebindFrameDescriptorHeaps()
+{
+    if (m_impl == nullptr || !m_frameRecording || m_impl->CommandList == nullptr)
+    {
+        return;
+    }
+
+    ID3D12DescriptorHeap* heaps[] = {m_impl->SrvHeap.Get()};
+    m_impl->CommandList->SetDescriptorHeaps(1, heaps);
+}
+
 void GfxContext::BindSwapChainRenderTarget(const bool clearColor)
 {
     if (m_impl == nullptr)

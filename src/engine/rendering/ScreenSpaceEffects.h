@@ -372,6 +372,9 @@ private:
     void CreateNoiseTexture();
     void CreateKernel();
     void CreateInternalTarget(InternalTarget& target, int width, int height, int format);
+    // Like CreateInternalTarget but also flags the resource for unordered access and creates a UAV
+    // (no RTV). Used for the DLSS scaling-output target, which NGX writes via a UAV.
+    void CreateUavTarget(InternalTarget& target, int width, int height, int format);
     void DestroyInternalTarget(InternalTarget& target) const;
     void ResizeInternalTarget(InternalTarget& target, int width, int height, int format);
     void ResizeSingleChannelTargets(int width, int height);
@@ -445,6 +448,7 @@ private:
     InternalTarget m_smaaOutputTarget;
     InternalTarget m_taaHistoryTarget;
     InternalTarget m_taaResolveTarget;
+    InternalTarget m_dlssOutputTarget; // DLSS scaling output (display res, UAV) — S2 LDR stopgap
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
     std::unique_ptr<Shader> m_gtaoShader;
@@ -606,6 +610,10 @@ private:
 
     mutable bool m_taaHistoryValid = false;
     mutable int m_taaFrameIndex = 0;
+    // DLSS temporal history validity (mirrors m_taaHistoryValid but for the DLSS resolve path). When
+    // false the next DLSS evaluate sets the SL reset flag. Cleared on mode/preset change, resize,
+    // and temporal-history invalidation.
+    mutable bool m_dlssHistoryValid = false;
     mutable bool m_bloomHistoryValid = false;
     mutable int m_bloomTemporalWarmupFrames = 0;
     // Last frame's final bloom SRV, fed into ssr_scene_color so reflections carry bloom
