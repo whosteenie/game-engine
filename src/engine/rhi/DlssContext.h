@@ -48,8 +48,8 @@ struct DlssFrameInputs
     bool depthInverted = false;
     bool reset = false; // break temporal history (camera cut, resize, mode/preset change, load)
 
-    float mvecScaleX = -0.5f;
-    float mvecScaleY = 0.5f;
+    float mvecScaleX = -0.5f; // NDC normalization; SL multiplies by render width internally
+    float mvecScaleY = 0.5f;  // Y-flip for texture space; SL multiplies by render height internally
     float jitterX = 0.0f; // pixel-space jitter applied to the projection this frame
     float jitterY = 0.0f;
 

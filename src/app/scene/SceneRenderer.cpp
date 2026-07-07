@@ -209,7 +209,7 @@ void SceneRenderer::EnsureGpuResources() const
         self->m_gpuResourcesInitInProgress = false;
         GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
         GfxContext::Get().SetMaterialTextureAnisotropy(self->m_textureAnisotropy);
-        GfxContext::Get().SetMaterialTextureMipBias(self->m_textureMipBias);
+        self->SyncEffectiveMaterialMipBias();
         gpuInitScope.Success();
     }
     catch (const std::exception& exception)
@@ -989,6 +989,7 @@ void SceneRenderer::Render(
         antiAliasCamera.SetAspectFromFramebuffer(
             m_screenSpaceEffects->GetRenderWidth(),
             m_screenSpaceEffects->GetRenderHeight());
+        SyncEffectiveMaterialMipBias();
         {
             SceneRenderTrace::Scope prepareAaScope("PrepareAntiAliasingFrame");
             m_screenSpaceEffects->PrepareAntiAliasingFrame(antiAliasCamera, freezeTemporalJitter);
@@ -1446,13 +1447,26 @@ void SceneRenderer::SetTextureAnisotropy(const std::uint32_t anisotropy)
     }
 }
 
+void SceneRenderer::SyncEffectiveMaterialMipBias() const
+{
+    if (!GfxContext::Get().IsInitialized())
+    {
+        return;
+    }
+
+    float effectiveBias = m_textureMipBias;
+    if (m_screenSpaceEffects != nullptr)
+    {
+        effectiveBias += m_screenSpaceEffects->GetAutoMaterialMipBias();
+    }
+
+    GfxContext::Get().SetMaterialTextureMipBias(effectiveBias);
+}
+
 void SceneRenderer::SetTextureMipBias(const float mipBias)
 {
     m_textureMipBias = std::clamp(mipBias, -4.0f, 4.0f);
-    if (GfxContext::Get().IsInitialized())
-    {
-        GfxContext::Get().SetMaterialTextureMipBias(m_textureMipBias);
-    }
+    SyncEffectiveMaterialMipBias();
 }
 
 bool SceneRenderer::ApplyGeometryMsaaReload(

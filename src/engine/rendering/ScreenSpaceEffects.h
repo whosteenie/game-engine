@@ -343,6 +343,10 @@ public:
     int GetRenderWidth() const;
     int GetRenderHeight() const;
 
+    // log2(render/display) when DLAA/DLSS is active, else 0. Add to the renderer's user mip bias
+    // before GfxContext::SetMaterialTextureMipBias (see devdoc/dlss-super-resolution.md §Mip bias).
+    float GetAutoMaterialMipBias() const;
+
     float GetSsaoBlurDepthThreshold() const;
     void SetSsaoBlurDepthThreshold(float threshold);
 

@@ -1223,6 +1223,22 @@ int ScreenSpaceEffects::GetRenderHeight() const
     return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportHeight) * GetActiveRenderScale())));
 }
 
+float ScreenSpaceEffects::GetAutoMaterialMipBias() const
+{
+    if (m_antiAliasingMode != AntiAliasingMode::DLAA && m_antiAliasingMode != AntiAliasingMode::DLSS)
+    {
+        return 0.0f;
+    }
+    if (m_viewportWidth <= 0)
+    {
+        return 0.0f;
+    }
+
+    const float renderScale = static_cast<float>(GetRenderWidth())
+        / static_cast<float>(m_viewportWidth);
+    return std::log2(renderScale);
+}
+
 void ScreenSpaceEffects::InvalidateTemporalHistory() const
 {
     m_motionVectorFrameState = {};
@@ -1369,12 +1385,46 @@ namespace
 
 namespace
 {
-    // TAA and both DLSS modes are temporal and require sub-pixel jitter on the projection. (S3 will
-    // harden the DLSS jitter convention; S2 needs it on so the upscaler has sub-pixel coverage.)
+    // TAA and both DLSS modes are temporal and require sub-pixel jitter on the projection.
     bool ModeUsesTemporalJitter(const AntiAliasingMode mode)
     {
         return mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
             || mode == AntiAliasingMode::DLSS;
+    }
+
+    // NRD + DLSS share this pixel-space jitter convention (devdoc/dlss-super-resolution.md §Jitter).
+    glm::vec2 JitterNdcToPixels(const glm::vec2& jitterNdc, const int width, const int height)
+    {
+        return glm::vec2(
+            jitterNdc.x * 0.5f * static_cast<float>(width),
+            -jitterNdc.y * 0.5f * static_cast<float>(height));
+    }
+
+    // RT4 stores currNdc - prevNdc (range ~[-2, 2]). SL multiplies mvecScale by renderWidth/Height
+    // internally before passing to NGX (see sl.dlss/dlssEntry.cpp). Pass normalization factors only:
+    // negate X (curr-prev -> prev-curr), scale 0.5 (NDC span -> [-1,1]), flip Y for texture space.
+    glm::vec2 DlssMvecScale()
+    {
+        return glm::vec2(-0.5f, 0.5f);
+    }
+
+    float DlssExposureScaleFromEv(const float exposureEv)
+    {
+        return std::exp2(exposureEv);
+    }
+
+    // Teleport / FrameTarget / focus jumps: large view delta in one frame.
+    bool DetectDlssCameraCut(const glm::mat4& currView, const MotionVectorFrameState& mvState)
+    {
+        if (!mvState.historyValid)
+        {
+            return false;
+        }
+
+        const glm::mat4 viewToViewPrev = mvState.prevView * glm::inverse(currView);
+        const glm::vec3 translation(viewToViewPrev[3]);
+        constexpr float kCutThresholdWorldUnits = 2.0f;
+        return glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits;
     }
 }
 
@@ -3712,23 +3762,32 @@ void ScreenSpaceEffects::Apply(
             in.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
                 ? DlssQuality::DLAA
                 : ToDlssQuality(m_dlssPreset);
-            in.colorIsHdr = false; // LDR stopgap
+            in.colorIsHdr = false; // LDR stopgap — S4 moves input to pre-tonemap HDR
             in.depthInverted = false; // standard 0..1 depth cleared to 1, LESS test
-            in.reset = !m_dlssHistoryValid;
 
-            // NDC motion (curr-prev) -> backward UV motion in [-1,1]: scale 0.5, negate x, flip y.
-            // Flagged for validation in S3 (fast-pan ghosting test).
-            in.mvecScaleX = -0.5f;
-            in.mvecScaleY = 0.5f;
+            const glm::mat4 view = camera.GetViewMatrix();
+            const bool cameraCut = DetectDlssCameraCut(view, m_motionVectorFrameState);
+            in.reset = !m_dlssHistoryValid || !m_motionVectorFrameState.historyValid || cameraCut;
+            if (cameraCut)
+            {
+                const_cast<ScreenSpaceEffects*>(this)->m_dlssHistoryValid = false;
+            }
 
-            const glm::vec2 jitterNdc = camera.GetProjectionJitter();
-            in.jitterX = jitterNdc.x * 0.5f * static_cast<float>(m_width);
-            in.jitterY = -jitterNdc.y * 0.5f * static_cast<float>(m_height);
+            const glm::vec2 mvecScale = DlssMvecScale();
+            in.mvecScaleX = mvecScale.x;
+            in.mvecScaleY = mvecScale.y;
+
+            const glm::vec2 jitterPixels =
+                JitterNdcToPixels(camera.GetProjectionJitter(), m_width, m_height);
+            in.jitterX = jitterPixels.x;
+            in.jitterY = jitterPixels.y;
+
+            in.exposureScale = DlssExposureScaleFromEv(m_exposure);
+            in.preExposure = 1.0f;
 
             // glm column-major storage maps byte-for-byte onto Streamline's row-major float4x4 and
             // transposes the operator into SL's row-vector convention — a straight copy is correct
             // (see DlssContext.cpp CopyMatrix). Matrices must be jitter-free (use unjittered proj).
-            const glm::mat4 view = camera.GetViewMatrix();
             const glm::mat4 unjitteredProj = camera.GetUnjitteredProjectionMatrix();
             const glm::mat4 currViewProj = unjitteredProj * view;
             const glm::mat4 clipToPrevClip = m_motionVectorFrameState.historyValid

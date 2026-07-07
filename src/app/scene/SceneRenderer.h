@@ -124,6 +124,7 @@ private:
         int dispatchHeight,
         std::uintptr_t depthSrvCpuHandle,
         bool usePostProcess);
+    void SyncEffectiveMaterialMipBias() const;
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
