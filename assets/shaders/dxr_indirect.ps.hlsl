@@ -83,6 +83,8 @@ float4 main(PSInput input) : SV_Target
         uLinearSampler,
         reflection,
         roughness * uMaxReflectionLod).rgb;
+    // This MUST reproduce the raster spec-IBL baked into RT1 (pbr.ps.hlsl:798-806) so the
+    // "indirect - specIbl" below cancels it. Same prefilter * envBrdf * intensity formula.
     const float3 specIbl = prefilteredColor * environmentBrdf * uEnvironmentIntensity;
 
     // RT buffers only cover the top-left dispatch region of their allocation.
@@ -113,6 +115,19 @@ float4 main(PSInput input) : SV_Target
 
     // Same split-sum weighting as the IBL term it replaces (mirrors SSR-04's fix).
     const float3 rtSpecular = rtRadiance * environmentBrdf;
-    const float3 specFinal = lerp(specIbl, rtSpecular, replacementWeight);
-    return float4(max(indirect - specIbl + specFinal, 0.0.xxx), 1.0);
+
+    // HDR-safe replacement. RT1 bakes the raster spec IBL (pbr.ps.hlsl:806): indirect =
+    // diffuseIbl + specIbl, so the recomputed specIbl can NEVER physically exceed indirect. The
+    // skybox sun overflows fp16 to +Inf in both, and any per-pixel mismatch between the raster's
+    // baked sun and this recomputed sun (MSAA resolve, normal/position reconstruction) left a huge
+    // residual: overshoot -> indirect-specIbl went negative -> black/dark splotch; Inf-Inf -> NaN.
+    // Clamp specIbl to [0, indirect] (its physical ceiling) so the subtraction is non-negative by
+    // construction and the sun cancels to the reflected occluder. A finite ceiling on all terms
+    // guards the Inf-Inf=NaN case. Only the already-blown-out sun is affected.
+    const float kHdrCeil = 60000.0;
+    const float3 indirectC = min(indirect, kHdrCeil.xxx);
+    const float3 specIblC = clamp(specIbl, 0.0.xxx, indirectC);
+    const float3 rtSpecularC = min(rtSpecular, kHdrCeil.xxx);
+    const float3 specFinal = lerp(specIblC, rtSpecularC, replacementWeight);
+    return float4(max(indirectC - specIblC + specFinal, 0.0.xxx), 1.0);
 }

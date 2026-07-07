@@ -120,7 +120,13 @@ void BuildTangentFrame(float3 normal, out float3 tangent, out float3 bitangent)
 
 float3 ClampRadiance(float3 radiance)
 {
-    radiance = max(radiance, 0.0.xxx);
+    // Sanitize first: the HDR skybox sun exceeds fp16 (65504) and reads back as +Inf from the
+    // RGBA16F prefilter. The luminance rescale below then computes Inf*(64/Inf) = NaN, which the
+    // denoiser smears into a black splotch. Kill NaN (n != n) and clamp Inf/huge to finite.
+    radiance.x = (radiance.x == radiance.x) ? radiance.x : 0.0;
+    radiance.y = (radiance.y == radiance.y) ? radiance.y : 0.0;
+    radiance.z = (radiance.z == radiance.z) ? radiance.z : 0.0;
+    radiance = clamp(radiance, 0.0.xxx, 65504.0.xxx);
     const float luminance = dot(radiance, float3(0.2126, 0.7152, 0.0722));
     if (luminance <= kMaxRadiance)
     {
@@ -132,10 +138,11 @@ float3 ClampRadiance(float3 radiance)
 
 float3 SampleEnvironment(float3 direction, float roughness)
 {
-    return g_PrefilterMap.SampleLevel(
+    const float3 radiance = g_PrefilterMap.SampleLevel(
         g_LinearClampSampler,
         direction,
         roughness * g_MaxReflectionLod).rgb * g_EnvironmentIntensity;
+    return min(radiance, 65504.0.xxx); // clamp fp16 Inf (huge HDR sun) to finite at the source
 }
 
 float3 LoadObjectPosition(GeometryLookupEntry geo, uint vertexIndex)
