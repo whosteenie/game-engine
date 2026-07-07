@@ -202,6 +202,7 @@ private:
     void MoveToNextFrame();
     void ProcessPendingResize();
     void ResizeInternal(int width, int height);
+    void EnsureStreamlineSwapChainUpgraded();
     void CreateRenderTargets();
     void ReleaseRenderTargets();
     void RenderImGui(ImDrawData* drawData);

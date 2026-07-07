@@ -32,6 +32,7 @@ PFun_slSetConstants* g_slSetConstants = nullptr;
 PFun_slSetTag* g_slSetTag = nullptr;
 PFun_slEvaluateFeature* g_slEvaluateFeature = nullptr;
 PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
+PFun_slUpgradeInterface* g_slUpgradeInterface = nullptr;
 
 // DLSS feature functions (obtained via slGetFeatureFunction AFTER the device is set).
 PFun_slDLSSSetOptions* g_slDLSSSetOptions = nullptr;
@@ -167,6 +168,7 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     SL_RESOLVE(slSetTag)
     SL_RESOLVE(slEvaluateFeature)
     SL_RESOLVE(slGetFeatureFunction)
+    SL_RESOLVE(slUpgradeInterface)
 #undef SL_RESOLVE
 
     if (!resolved)
@@ -309,6 +311,7 @@ void DlssContext::Shutdown()
     m_initialized.store(false, std::memory_order_release);
     m_supported.store(false, std::memory_order_release);
     m_rrSupported.store(false, std::memory_order_release);
+    m_swapChainUpgraded.store(false, std::memory_order_release);
     g_slInit = nullptr;
     g_slShutdown = nullptr;
     g_slSetD3DDevice = nullptr;
@@ -321,6 +324,7 @@ void DlssContext::Shutdown()
     g_slDLSSSetOptions = nullptr;
     g_slDLSSGetOptimalSettings = nullptr;
     g_slDLSSDSetOptions = nullptr;
+    g_slUpgradeInterface = nullptr;
     if (m_interposer != nullptr)
     {
         ::FreeLibrary(static_cast<HMODULE>(m_interposer));
@@ -546,6 +550,48 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
                 std::string("slEvaluateFeature failed (") + ResultToString(evalResult) + ")");
         }
         return false;
+    }
+    return true;
+#endif
+}
+
+bool DlssContext::UpgradeSwapChain(void** swapChain)
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    (void)swapChain;
+    return false;
+#else
+    if (!IsRuntimeInitialized() || g_slUpgradeInterface == nullptr || swapChain == nullptr
+        || *swapChain == nullptr)
+    {
+        return false;
+    }
+
+    if (m_swapChainUpgraded.load(std::memory_order_acquire))
+    {
+        return true;
+    }
+
+    void* const before = *swapChain;
+    const sl::Result upgradeResult = g_slUpgradeInterface(swapChain);
+    if (upgradeResult != sl::Result::eOk)
+    {
+        static bool loggedOnce = false;
+        if (!loggedOnce)
+        {
+            loggedOnce = true;
+            EngineLog::Warn(
+                "dlss",
+                std::string("slUpgradeInterface(swapchain) failed (") + ResultToString(upgradeResult)
+                    + "); Streamline GC will not run");
+        }
+        return false;
+    }
+
+    m_swapChainUpgraded.store(true, std::memory_order_release);
+    if (*swapChain != before)
+    {
+        EngineLog::Info("dlss", "Swapchain upgraded to Streamline proxy (presentCommon/GC enabled)");
     }
     return true;
 #endif

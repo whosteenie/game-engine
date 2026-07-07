@@ -597,9 +597,36 @@ void GfxContext::Shutdown()
     m_frameCommandsSubmitted = false;
 }
 
+void GfxContext::EnsureStreamlineSwapChainUpgraded()
+{
+    if (m_impl == nullptr || m_impl->SwapChain == nullptr)
+    {
+        return;
+    }
+
+    void* swapChain = m_impl->SwapChain.Get();
+    void* const before = swapChain;
+    if (!DlssContext::Get().UpgradeSwapChain(&swapChain))
+    {
+        return;
+    }
+
+    if (swapChain == before)
+    {
+        return;
+    }
+
+    ComPtr<IDXGISwapChain3> upgraded;
+    ThrowIfFailed(
+        static_cast<IDXGISwapChain*>(swapChain)->QueryInterface(IID_PPV_ARGS(&upgraded)),
+        "IDXGISwapChain3 QI after Streamline swapchain upgrade failed");
+    m_impl->SwapChain = upgraded;
+}
+
 void GfxContext::ResizeInternal(const int width, const int height)
 {
     WaitForGpu();
+    EnsureStreamlineSwapChainUpgraded();
     ReleaseRenderTargets();
 
     ThrowIfFailed(
@@ -690,6 +717,7 @@ void GfxContext::BeginFrame()
     }
 
     ProcessPendingResize();
+    EnsureStreamlineSwapChainUpgraded();
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     FrameDiagnostics::LogPhase("BeginFrame-wait");
     const std::uint64_t frameWaitFence =

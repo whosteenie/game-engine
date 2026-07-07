@@ -131,6 +131,12 @@ public:
     // with eDisableCLStateTracking so it does not restore command-list state).
     bool Evaluate(const DlssFrameInputs& inputs);
 
+    // Upgrades the native swapchain to Streamline's DXGI proxy so Present/ResizeBuffers run
+    // presentCommon() + GC (required for dynamic-load integrations; slHookPresent is not exported
+    // from sl.interposer.dll). Call from the render thread once IsRuntimeInitialized(); returns
+    // false until SL is ready or if upgrade fails. *swapChain is replaced on success.
+    bool UpgradeSwapChain(void** swapChain);
+
 private:
     DlssContext() = default;
     ~DlssContext() = default;
@@ -146,6 +152,7 @@ private:
     std::atomic<bool> m_initialized{false}; // slInit succeeded + function pointers resolved
     std::atomic<bool> m_supported{false};   // slIsFeatureSupported(DLSS) == eOk for this adapter
     std::atomic<bool> m_rrSupported{false}; // slIsFeatureSupported(DLSS_RR) == eOk for this adapter
+    std::atomic<bool> m_swapChainUpgraded{false};
 
     mutable std::mutex m_statusMutex;
     std::string m_status = "DLSS: initializing…";
