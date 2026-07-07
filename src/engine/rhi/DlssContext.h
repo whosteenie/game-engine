@@ -69,6 +69,7 @@ struct DlssFrameInputs
 
     float exposureScale = 1.0f;
     float preExposure = 1.0f;
+    float sharpness = 0.0f; // [0,1]; 0 disables NGX sharpening (deprecated in SL but still honored)
 };
 
 // NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md).

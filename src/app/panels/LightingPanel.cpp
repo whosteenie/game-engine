@@ -41,6 +41,19 @@
 
 namespace
 {
+    float FindGpuPassMilliseconds(const char* passName)
+    {
+        const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
+        for (const GpuProfiler::Entry& entry : timings)
+        {
+            if (entry.name == passName)
+            {
+                return entry.milliseconds;
+            }
+        }
+        return -1.0f;
+    }
+
     const char* AntiAliasingModeLabel(AntiAliasingMode mode)
     {
         switch (mode)
@@ -1027,9 +1040,27 @@ void LightingPanel::Draw(
         const AntiAliasingMode currentAaMode = screenSpaceEffects.GetAntiAliasingMode();
         const int msaaSampleCount = screenSpaceEffects.GetMsaaSampleCount();
         const int activeMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
-        const bool geometryMsaaBlocksTaa =
+        const bool currentModeOwnsResolve =
+            currentAaMode == AntiAliasingMode::TAA
+            || currentAaMode == AntiAliasingMode::DLAA
+            || currentAaMode == AntiAliasingMode::DLSS;
+        const bool geometryMsaaBlocksResolve =
             msaaSampleCount > 1 || activeMsaaSampleCount > 1;
-        const bool taaBlocksGeometryMsaa = currentAaMode == AntiAliasingMode::TAA;
+        const bool resolveBlocksGeometryMsaa = currentModeOwnsResolve;
+
+        const DlssContext& dlss = DlssContext::Get();
+        if (!dlss.IsReady())
+        {
+            ImGui::TextDisabled("DLSS: initializing…");
+        }
+        else if (dlss.IsDlssSupported())
+        {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.4f, 1.0f), "DLSS: supported (Streamline 2.12)");
+        }
+        else
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "%s", dlss.StatusString().c_str());
+        }
 
         if (ImGui::BeginCombo("Mode", AntiAliasingModeLabel(currentAaMode)))
         {
@@ -1042,13 +1073,15 @@ void LightingPanel::Draw(
                 AntiAliasingMode::DLAA,
                 AntiAliasingMode::DLSS,
             };
-            const bool dlssSupported = DlssContext::Get().IsDlssSupported();
+            const bool dlssSupported = dlss.IsDlssSupported();
             for (const AntiAliasingMode mode : selectableModes)
             {
                 const bool isDlssMode =
                     mode == AntiAliasingMode::DLAA || mode == AntiAliasingMode::DLSS;
+                const bool modeOwnsResolve =
+                    mode == AntiAliasingMode::TAA || isDlssMode;
                 const bool disabled =
-                    (geometryMsaaBlocksTaa && mode == AntiAliasingMode::TAA)
+                    (geometryMsaaBlocksResolve && modeOwnsResolve)
                     || (isDlssMode && !dlssSupported);
                 if (disabled)
                 {
@@ -1078,14 +1111,14 @@ void LightingPanel::Draw(
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     {
-                        if (isDlssMode)
+                        if (isDlssMode && !dlssSupported)
                         {
                             ImGui::SetTooltip(
                                 DlssContext::Get().IsReady()
                                     ? "Requires an NVIDIA RTX GPU with a recent driver."
                                     : "DLSS is still initializing…");
                         }
-                        else
+                        else if (geometryMsaaBlocksResolve && modeOwnsResolve)
                         {
                             ImGui::SetTooltip("Unavailable while geometry MSAA is enabled.");
                         }
@@ -1130,14 +1163,69 @@ void LightingPanel::Draw(
                 }
                 ImGui::EndCombo();
             }
+
+            const int renderWidth = screenSpaceEffects.GetRenderWidth();
+            const int renderHeight = screenSpaceEffects.GetRenderHeight();
+            ImGui::TextDisabled(
+                "Internal render: %dx%d -> display %dx%d",
+                renderWidth,
+                renderHeight,
+                viewportWidth,
+                viewportHeight);
+            const float dlssGpuMs = FindGpuPassMilliseconds("DLSS");
+            if (dlssGpuMs >= 0.0f)
+            {
+                ImGui::TextDisabled("DLSS GPU pass: %.3f ms", dlssGpuMs);
+            }
+            else
+            {
+                ImGui::TextDisabled("DLSS GPU pass: (collecting…)");
+            }
+        }
+        else if (currentAaMode == AntiAliasingMode::DLAA)
+        {
+            const int renderWidth = screenSpaceEffects.GetRenderWidth();
+            const int renderHeight = screenSpaceEffects.GetRenderHeight();
+            ImGui::TextDisabled(
+                "DLAA at native res: %dx%d",
+                renderWidth,
+                renderHeight);
+            const float dlssGpuMs = FindGpuPassMilliseconds("DLSS");
+            if (dlssGpuMs >= 0.0f)
+            {
+                ImGui::TextDisabled("DLSS GPU pass: %.3f ms", dlssGpuMs);
+            }
+        }
+
+        const bool dlssModeActive =
+            currentAaMode == AntiAliasingMode::DLAA || currentAaMode == AntiAliasingMode::DLSS;
+        if (dlssModeActive)
+        {
+            float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
+            UndoableRendererSliderFloat(
+                "DLSS sharpness",
+                &dlssSharpness,
+                0.0f,
+                1.0f,
+                "%.2f",
+                editContext,
+                [](Scene& target, float value) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetDlssSharpness(value);
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "In-DLSS sharpening (0 = off). Streamline marks this deprecated; prefer 0 for baseline quality.");
+            }
         }
 
         ImGui::Separator();
-        if (geometryMsaaBlocksTaa || taaBlocksGeometryMsaa)
+        if (geometryMsaaBlocksResolve || resolveBlocksGeometryMsaa)
         {
             ImGui::TextDisabled(
-                "Geometry MSAA above 1× and TAA are mutually exclusive. "
-                "Incompatible options are grayed out; choosing MSAA while TAA is active switches post AA to None.");
+                "Geometry MSAA above 1× and TAA/DLAA/DLSS are mutually exclusive. "
+                "Incompatible options are grayed out; choosing MSAA while a resolve owner is active switches post AA to None.");
         }
         else
         {
@@ -1176,8 +1264,8 @@ void LightingPanel::Draw(
             for (const MsaaPreset& preset : kMsaaPresets)
             {
                 const bool supported = GfxContext::Get().IsMsaaSampleCountSupported(preset.count);
-                const bool blockedByTaa = taaBlocksGeometryMsaa && preset.count > 1;
-                const bool disabled = !supported || blockedByTaa;
+                const bool blockedByResolve = resolveBlocksGeometryMsaa && preset.count > 1;
+                const bool disabled = !supported || blockedByResolve;
                 if (disabled)
                 {
                     ImGui::BeginDisabled();
@@ -1210,10 +1298,10 @@ void LightingPanel::Draw(
                         {
                             ImGui::SetTooltip("Not supported on this GPU for the scene G-buffer formats.");
                         }
-                        else if (blockedByTaa)
+                        else if (blockedByResolve)
                         {
                             ImGui::SetTooltip(
-                                "Unavailable while post AA mode is TAA. "
+                                "Unavailable while TAA, DLAA, or DLSS owns the resolve stage. "
                                 "Switch post AA to None or another mode first.");
                         }
                     }
@@ -1695,23 +1783,6 @@ void LightingPanel::Draw(
         char tierText[64]{};
         FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
         ImGui::Text("Ray tracing tier: %s", tierText);
-
-        // DLSS/Streamline status (devdoc/dlss-super-resolution.md S0). SR itself lands in later
-        // phases; this line reports NGX/DLSS availability so unsupported hardware is visible up
-        // front. Init runs on a background thread, so it briefly reads "initializing" at launch.
-        const DlssContext& dlss = DlssContext::Get();
-        if (!dlss.IsReady())
-        {
-            ImGui::TextDisabled("DLSS: initializing…");
-        }
-        else if (dlss.IsDlssSupported())
-        {
-            ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.4f, 1.0f), "DLSS: supported (Streamline 2.12)");
-        }
-        else
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "%s", dlss.StatusString().c_str());
-        }
 
         if (!raytracingSupported)
         {

@@ -289,6 +289,10 @@ public:
     DlssPreset GetDlssPreset() const;
     void SetDlssPreset(DlssPreset preset);
 
+    // In-DLSS sharpening (Streamline deprecated; 0 = off). Applied via sl::DLSSOptions::sharpness.
+    float GetDlssSharpness() const;
+    void SetDlssSharpness(float sharpness);
+
     float GetTaaBlendFactor() const;
     void SetTaaBlendFactor(float factor);
 
@@ -600,6 +604,7 @@ private:
     float m_fxaaEdgeThreshold = 0.03125f;
     float m_renderScale = 1.5f;
     DlssPreset m_dlssPreset = DlssPreset::Quality;
+    float m_dlssSharpness = 0.0f;
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
     float m_giDepthThreshold = 0.003f;

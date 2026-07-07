@@ -12,6 +12,7 @@
 #include <sl_dlss.h>
 
 #include <cstring>
+#include <algorithm>
 #include <iterator>
 
 namespace
@@ -421,6 +422,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     options.preExposure = inputs.preExposure;
     options.exposureScale = inputs.exposureScale;
+    options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
     if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
     {
         return false;

@@ -38,6 +38,7 @@
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/DlssContext.h"
 
 #include <nlohmann/json.hpp>
 
@@ -473,12 +474,58 @@ namespace SceneProjectIODetail
         {
             return AntiAliasingMode::DLAA;
         }
-        if (value == "DLSS")
+        if (value == "DLSS" || value == "dlss_sr")
         {
             return AntiAliasingMode::DLSS;
         }
 
         return AntiAliasingMode::None;
+    }
+
+    const char* DlssPresetToString(const DlssPreset preset)
+    {
+        switch (preset)
+        {
+        case DlssPreset::Balanced:
+            return "balanced";
+        case DlssPreset::Performance:
+            return "performance";
+        case DlssPreset::UltraPerformance:
+            return "ultra_performance";
+        case DlssPreset::Quality:
+        default:
+            return "quality";
+        }
+    }
+
+    DlssPreset DlssPresetFromString(const std::string& value)
+    {
+        if (value == "balanced" || value == "Balanced")
+        {
+            return DlssPreset::Balanced;
+        }
+        if (value == "performance" || value == "Performance")
+        {
+            return DlssPreset::Performance;
+        }
+        if (value == "ultra_performance" || value == "UltraPerformance"
+            || value == "Ultra Performance")
+        {
+            return DlssPreset::UltraPerformance;
+        }
+
+        return DlssPreset::Quality;
+    }
+
+    bool AntiAliasingModeOwnsResolve(const AntiAliasingMode mode)
+    {
+        return mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
+            || mode == AntiAliasingMode::DLSS;
+    }
+
+    bool IsDlssAntiAliasingMode(const AntiAliasingMode mode)
+    {
+        return mode == AntiAliasingMode::DLAA || mode == AntiAliasingMode::DLSS;
     }
 
     struct LoadedScreenSpaceAaSettings
@@ -510,6 +557,22 @@ namespace SceneProjectIODetail
         if (settings.antiAliasingMode == AntiAliasingMode::TAA && settings.msaaSampleCount > 1)
         {
             settings.msaaSampleCount = 1;
+        }
+        if (AntiAliasingModeOwnsResolve(settings.antiAliasingMode) && settings.msaaSampleCount > 1)
+        {
+            settings.msaaSampleCount = 1;
+        }
+        if (settings.msaaSampleCount > 1 && AntiAliasingModeOwnsResolve(settings.antiAliasingMode))
+        {
+            settings.antiAliasingMode = AntiAliasingMode::None;
+        }
+        if (IsDlssAntiAliasingMode(settings.antiAliasingMode)
+            && DlssContext::Get().IsReady() && !DlssContext::Get().IsDlssSupported())
+        {
+            EngineLog::Warn(
+                "dlss",
+                "Project requests DLSS but this GPU/driver does not support it; falling back to TAA.");
+            settings.antiAliasingMode = AntiAliasingMode::TAA;
         }
 
         return settings;
@@ -678,6 +741,8 @@ namespace SceneProjectIODetail
                  {"bloomIntensity", effects.GetBloomIntensity()},
                  {"bloomBlurRadius", effects.GetBloomBlurRadius()},
                  {"antiAliasingMode", AntiAliasingModeToString(effects.GetAntiAliasingMode())},
+                 {"dlssPreset", DlssPresetToString(effects.GetDlssPreset())},
+                 {"dlssSharpness", effects.GetDlssSharpness()},
                  {"msaaSampleCount", effects.GetMsaaSampleCount()},
                  {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
                  {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
@@ -913,6 +978,15 @@ namespace SceneProjectIODetail
         if (effectsValue.contains("bloomBlurRadius"))
         {
             effects.SetBloomBlurRadius(effectsValue.at("bloomBlurRadius").get<float>());
+        }
+        if (effectsValue.contains("dlssPreset"))
+        {
+            effects.SetDlssPreset(
+                DlssPresetFromString(effectsValue.at("dlssPreset").get<std::string>()));
+        }
+        if (effectsValue.contains("dlssSharpness"))
+        {
+            effects.SetDlssSharpness(effectsValue.at("dlssSharpness").get<float>());
         }
         if (effectsValue.contains("fxaaSubpixQuality"))
         {

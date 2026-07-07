@@ -3755,6 +3755,7 @@ void ScreenSpaceEffects::Apply(
         if (dlssUsable && hdrInputResource != nullptr)
         {
             SceneRenderTrace::Scope evalScope("dlss evaluate");
+            const GfxContext::GpuTimerScope gpuScopeDlss("DLSS");
             auto* commandList =
                 static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
@@ -3810,6 +3811,7 @@ void ScreenSpaceEffects::Apply(
 
             in.exposureScale = DlssExposureScaleFromEv(m_exposure);
             in.preExposure = 1.0f;
+            in.sharpness = m_dlssSharpness;
 
             const glm::mat4 unjitteredProj = camera.GetUnjitteredProjectionMatrix();
             const glm::mat4 currViewProj = unjitteredProj * view;
@@ -4708,23 +4710,33 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
         return;
     }
 
+    AntiAliasingMode effectiveMode = mode;
+    if ((mode == AntiAliasingMode::DLAA || mode == AntiAliasingMode::DLSS)
+        && DlssContext::Get().IsReady() && !DlssContext::Get().IsDlssSupported())
+    {
+        EngineLog::Warn(
+            "dlss",
+            "DLSS is not supported on this GPU; falling back to TAA.");
+        effectiveMode = AntiAliasingMode::TAA;
+    }
+
     // TAA, DLAA and DLSS own the resolve stage and are incompatible with geometry MSAA.
-    const bool ownsResolve = mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
-        || mode == AntiAliasingMode::DLSS;
+    const bool ownsResolve = effectiveMode == AntiAliasingMode::TAA
+        || effectiveMode == AntiAliasingMode::DLAA || effectiveMode == AntiAliasingMode::DLSS;
     if (ownsResolve && m_msaaSampleCount > 1)
     {
         m_msaaSampleCount = 1;
     }
 
-    if (m_antiAliasingMode != mode)
+    if (m_antiAliasingMode != effectiveMode)
     {
         ResetTaaHistory();
-        m_lastAntiAliasingMode = mode;
+        m_lastAntiAliasingMode = effectiveMode;
         m_width = 0;
         m_height = 0;
     }
 
-    m_antiAliasingMode = mode;
+    m_antiAliasingMode = effectiveMode;
 }
 
 DlssPreset ScreenSpaceEffects::GetDlssPreset() const
@@ -4746,6 +4758,25 @@ void ScreenSpaceEffects::SetDlssPreset(const DlssPreset preset)
         ResetTaaHistory();
         m_width = 0;
         m_height = 0;
+    }
+}
+
+float ScreenSpaceEffects::GetDlssSharpness() const
+{
+    return m_dlssSharpness;
+}
+
+void ScreenSpaceEffects::SetDlssSharpness(const float sharpness)
+{
+    const float clamped = std::clamp(sharpness, 0.0f, 1.0f);
+    if (m_dlssSharpness == clamped)
+    {
+        return;
+    }
+    m_dlssSharpness = clamped;
+    if (m_antiAliasingMode == AntiAliasingMode::DLAA || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        ResetTaaHistory();
     }
 }
 
@@ -4771,7 +4802,10 @@ void ScreenSpaceEffects::SetMsaaSampleCount(const int sampleCount)
         return;
     }
 
-    if (clampedCount > 1 && m_antiAliasingMode == AntiAliasingMode::TAA)
+    if (clampedCount > 1
+        && (m_antiAliasingMode == AntiAliasingMode::TAA
+            || m_antiAliasingMode == AntiAliasingMode::DLAA
+            || m_antiAliasingMode == AntiAliasingMode::DLSS))
     {
         SetAntiAliasingMode(AntiAliasingMode::None);
     }
@@ -4821,6 +4855,7 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_debugMode = source.m_debugMode;
     m_antiAliasingMode = source.m_antiAliasingMode;
     m_dlssPreset = source.m_dlssPreset;
+    m_dlssSharpness = source.m_dlssSharpness;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
     m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;
