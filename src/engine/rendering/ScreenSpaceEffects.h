@@ -387,6 +387,7 @@ private:
     void ResizeBloomTargets(int width, int height);
     void ResizeLdrTonemapTarget(int width, int height);
     void ResizeAntiAliasingTargets(int width, int height);
+    void ResizeDlssDisplayTargets(int viewportWidth, int viewportHeight);
     float GetActiveRenderScale() const;
     void ResetTaaHistory() const;
     void InvalidateTemporalHistory() const;
@@ -452,7 +453,13 @@ private:
     InternalTarget m_smaaOutputTarget;
     InternalTarget m_taaHistoryTarget;
     InternalTarget m_taaResolveTarget;
-    InternalTarget m_dlssOutputTarget; // DLSS scaling output (display res, UAV) — S2 LDR stopgap
+    // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
+    InternalTarget m_dlssOutputTarget;
+    InternalTarget m_dlssBloomExtractTarget;
+    InternalTarget m_dlssBloomBlurTarget;
+    InternalTarget m_dlssBloomBlur2Target;
+    InternalTarget m_dlssBloomHistoryTarget;
+    InternalTarget m_dlssBloomTemporalTarget;
     std::unique_ptr<Framebuffer> m_sceneFramebuffer;
     std::unique_ptr<Shader> m_ssaoShader;
     std::unique_ptr<Shader> m_gtaoShader;
@@ -618,6 +625,8 @@ private:
     // false the next DLSS evaluate sets the SL reset flag. Cleared on mode/preset change, resize,
     // and temporal-history invalidation.
     mutable bool m_dlssHistoryValid = false;
+    mutable bool m_dlssBloomHistoryValid = false;
+    mutable int m_dlssBloomTemporalWarmupFrames = 0;
     mutable bool m_bloomHistoryValid = false;
     mutable int m_bloomTemporalWarmupFrames = 0;
     // Last frame's final bloom SRV, fed into ssr_scene_color so reflections carry bloom

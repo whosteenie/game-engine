@@ -710,6 +710,11 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_taaHistoryTarget);
     DestroyInternalTarget(m_taaResolveTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
+    DestroyInternalTarget(m_dlssBloomExtractTarget);
+    DestroyInternalTarget(m_dlssBloomBlurTarget);
+    DestroyInternalTarget(m_dlssBloomBlur2Target);
+    DestroyInternalTarget(m_dlssBloomHistoryTarget);
+    DestroyInternalTarget(m_dlssBloomTemporalTarget);
     DestroyInternalTarget(m_noiseTexture);
 }
 
@@ -1164,6 +1169,22 @@ void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int he
     ResizeInternalTarget(m_taaResolveTarget, width, height, hdrFormat);
 }
 
+void ScreenSpaceEffects::ResizeDlssDisplayTargets(const int viewportWidth, const int viewportHeight)
+{
+    const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    CreateUavTarget(m_dlssOutputTarget, viewportWidth, viewportHeight, hdrFormat);
+
+    const int bloomWidth = std::max(1, viewportWidth / 2);
+    const int bloomHeight = std::max(1, viewportHeight / 2);
+    ResizeInternalTarget(m_dlssBloomExtractTarget, bloomWidth, bloomHeight, hdrFormat);
+    ResizeInternalTarget(m_dlssBloomBlurTarget, bloomWidth, bloomHeight, hdrFormat);
+    ResizeInternalTarget(m_dlssBloomBlur2Target, bloomWidth, bloomHeight, hdrFormat);
+    ResizeInternalTarget(m_dlssBloomHistoryTarget, bloomWidth, bloomHeight, hdrFormat);
+    ResizeInternalTarget(m_dlssBloomTemporalTarget, bloomWidth, bloomHeight, hdrFormat);
+    m_dlssBloomHistoryValid = false;
+    m_dlssBloomTemporalWarmupFrames = 0;
+}
+
 namespace
 {
     DlssQuality ToDlssQuality(const DlssPreset preset)
@@ -1249,6 +1270,8 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_ssrFrameIndex = 0;
     m_prevFrameBloomSrv = 0;
     m_dlssHistoryValid = false;
+    m_dlssBloomHistoryValid = false;
+    m_dlssBloomTemporalWarmupFrames = 0;
 }
 
 void ScreenSpaceEffects::ResetTaaHistory() const
@@ -1258,6 +1281,8 @@ void ScreenSpaceEffects::ResetTaaHistory() const
     m_bloomHistoryValid = false;
     m_bloomTemporalWarmupFrames = 0;
     m_dlssHistoryValid = false;
+    m_dlssBloomHistoryValid = false;
+    m_dlssBloomTemporalWarmupFrames = 0;
 }
 
 void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeight)
@@ -1322,14 +1347,9 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
         aaTargetsScope.Success();
     }
     {
-        // DLSS scaling output lives at DISPLAY res (upscale target), unlike the render-res targets
-        // above. S2 LDR stopgap: 8-bit UNORM matching the tonemap LDR target we feed as input.
-        SceneRenderTrace::Scope dlssScope("resize dlss output target");
-        CreateUavTarget(
-            m_dlssOutputTarget,
-            viewportWidth,
-            viewportHeight,
-            static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM));
+        // DLSS display-res targets: HDR upscale output + post-DLSS bloom chain (S4).
+        SceneRenderTrace::Scope dlssScope("resize dlss display targets");
+        ResizeDlssDisplayTargets(viewportWidth, viewportHeight);
         dlssScope.Success();
     }
     m_width = renderWidth;
@@ -3092,8 +3112,11 @@ void ScreenSpaceEffects::Apply(
         taaSection.Success();
     }
 
+    const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS;
+
     std::uintptr_t bloomSrv = 0;
-    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode))
+    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !wantDlss)
     {
         SceneRenderTrace::Section bloomSection("bloom");
         SceneRenderTrace::Scope bloomExtractScope("bloom extract");
@@ -3703,35 +3726,38 @@ void ScreenSpaceEffects::Apply(
         DrawFullscreenPass(*m_downsampleShader, true);
     };
 
-    const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
-        || m_antiAliasingMode == AntiAliasingMode::DLSS;
+    const bool dlssDisplayReady =
+        m_dlssOutputTarget.resource != nullptr && m_width > 0 && m_viewportWidth > 0;
 
-    if (wantDlss && ldrTargetReady)
+    if (wantDlss && dlssDisplayReady)
     {
         SceneRenderTrace::Section dlssSection("dlss");
-        // S2 LDR stopgap: tonemap the HDR composite into the render-res LDR target, feed THAT to DLSS
-        // as the scaling input, and blit the display-res result to the viewport. S4 will move the DLSS
-        // input to pre-tonemap HDR and run bloom/tonemap at display res.
-        {
-            SceneRenderTrace::Scope tonemapScope("tonemap to ldr (dlss)");
-            runTonemapPass(true);
-            tonemapScope.Success();
-        }
-
+        // S4: pre-tonemap HDR (render res) -> DLSS -> display-res HDR -> bloom + tonemap -> viewport.
         bool dlssRan = false;
         DlssContext& dlss = DlssContext::Get();
         const bool dlssUsable = dlss.IsReady() && dlss.IsRuntimeInitialized()
-            && dlss.IsDlssSupported() && m_dlssOutputTarget.resource != nullptr
-            && m_sceneFramebuffer->HasVelocity() && m_sceneFramebuffer->GetDepthResource() != nullptr;
+            && dlss.IsDlssSupported() && m_sceneFramebuffer->HasVelocity()
+            && m_sceneFramebuffer->GetDepthResource() != nullptr;
 
-        if (dlssUsable)
+        void* hdrInputResource = nullptr;
+        std::uint32_t hdrInputState =
+            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        if (hdrColorSrv == m_hdrCompositeTarget.srvCpuHandle && m_hdrCompositeTarget.resource != nullptr)
+        {
+            hdrInputResource = m_hdrCompositeTarget.resource;
+            hdrInputState = m_hdrCompositeTarget.resourceState;
+        }
+        else
+        {
+            hdrInputResource = m_sceneFramebuffer->GetColorResource(0);
+        }
+
+        if (dlssUsable && hdrInputResource != nullptr)
         {
             SceneRenderTrace::Scope evalScope("dlss evaluate");
             auto* commandList =
                 static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
-            // Depth + all scene color (incl. RT4 velocity) -> PIXEL_SHADER_RESOURCE. The LDR input is
-            // already there post-tonemap. SL adds its own barriers around evaluate and restores these.
             m_sceneFramebuffer->EnsureShaderResourceState();
             constexpr std::uint32_t kPixelSrv =
                 static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
@@ -3747,8 +3773,8 @@ void ScreenSpaceEffects::Apply(
 
             DlssFrameInputs in{};
             in.commandList = commandList;
-            in.colorInput = m_ldrTonemapTarget.resource;
-            in.colorInputState = m_ldrTonemapTarget.resourceState;
+            in.colorInput = hdrInputResource;
+            in.colorInputState = hdrInputState;
             in.colorOutput = dlssOut;
             in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
             in.depth = m_sceneFramebuffer->GetDepthResource();
@@ -3762,8 +3788,8 @@ void ScreenSpaceEffects::Apply(
             in.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
                 ? DlssQuality::DLAA
                 : ToDlssQuality(m_dlssPreset);
-            in.colorIsHdr = false; // LDR stopgap — S4 moves input to pre-tonemap HDR
-            in.depthInverted = false; // standard 0..1 depth cleared to 1, LESS test
+            in.colorIsHdr = true;
+            in.depthInverted = false;
 
             const glm::mat4 view = camera.GetViewMatrix();
             const bool cameraCut = DetectDlssCameraCut(view, m_motionVectorFrameState);
@@ -3785,9 +3811,6 @@ void ScreenSpaceEffects::Apply(
             in.exposureScale = DlssExposureScaleFromEv(m_exposure);
             in.preExposure = 1.0f;
 
-            // glm column-major storage maps byte-for-byte onto Streamline's row-major float4x4 and
-            // transposes the operator into SL's row-vector convention — a straight copy is correct
-            // (see DlssContext.cpp CopyMatrix). Matrices must be jitter-free (use unjittered proj).
             const glm::mat4 unjitteredProj = camera.GetUnjitteredProjectionMatrix();
             const glm::mat4 currViewProj = unjitteredProj * view;
             const glm::mat4 clipToPrevClip = m_motionVectorFrameState.historyValid
@@ -3814,8 +3837,6 @@ void ScreenSpaceEffects::Apply(
             in.cameraUp[0] = camUp.x; in.cameraUp[1] = camUp.y; in.cameraUp[2] = camUp.z;
 
             dlssRan = dlss.Evaluate(in);
-
-            // SL runs with eDisableCLStateTracking; restore our SRV heap before the blit below.
             GfxContext::Get().RebindFrameDescriptorHeaps();
 
             if (dlssRan)
@@ -3827,11 +3848,9 @@ void ScreenSpaceEffects::Apply(
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 m_dlssOutputTarget.resourceState = kPixelSrv;
                 m_dlssHistoryValid = true;
-                blitLdrToViewport(m_dlssOutputTarget.srvCpuHandle);
             }
             else
             {
-                // Restore output to a shader-readable state even on failure so tracking stays sane.
                 TransitionResource(
                     commandList,
                     dlssOut,
@@ -3843,13 +3862,157 @@ void ScreenSpaceEffects::Apply(
             evalScope.Success();
         }
 
-        if (!dlssRan)
+        if (dlssRan)
         {
-            // Fallback (DLSS unsupported / not ready / evaluate failed): bilinear-upscale the LDR
-            // tonemap target to the viewport, matching the S1 behavior.
-            SceneRenderTrace::Scope fallbackScope("dlss fallback bilinear");
-            blitLdrToViewport(m_ldrTonemapTarget.srvCpuHandle);
+            std::uintptr_t displayBloomSrv = 0;
+            if (m_bloomEnabled && m_dlssBloomExtractTarget.srvCpuHandle != 0)
+            {
+                SceneRenderTrace::Scope bloomScope("dlss display bloom");
+                const int bloomWidth = std::max(1, viewportWidth / 2);
+                const int bloomHeight = std::max(1, viewportHeight / 2);
+                const glm::vec2 displayTexelSize(
+                    1.0f / static_cast<float>(viewportWidth),
+                    1.0f / static_cast<float>(viewportHeight));
+                const glm::vec2 bloomTexelSize(
+                    1.0f / static_cast<float>(bloomWidth),
+                    1.0f / static_cast<float>(bloomHeight));
+                const float bloomClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+                m_bloomExtractShader->SetInt("uHdrColor", 0);
+                m_bloomExtractShader->SetFloat("uThreshold", m_bloomThreshold);
+                m_bloomExtractShader->SetFloat("uSoftKnee", m_bloomSoftKnee);
+                m_bloomExtractShader->SetFloat("uExposure", m_exposure);
+                m_bloomExtractShader->SetFloat("uFullTexelSizeX", displayTexelSize.x);
+                m_bloomExtractShader->SetFloat("uFullTexelSizeY", displayTexelSize.y);
+                const bool useMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+                m_bloomExtractShader->SetFloat("uUseMaterialGbuffer", useMaterialGbuffer ? 1.0f : 0.0f);
+                m_bloomExtractShader->BindTextureSlot(0, m_dlssOutputTarget.srvCpuHandle);
+                if (useMaterialGbuffer)
+                {
+                    m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+                    m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+                }
+                DrawFullscreenToTarget(
+                    *m_bloomExtractShader,
+                    const_cast<InternalTarget&>(m_dlssBloomExtractTarget),
+                    bloomWidth,
+                    bloomHeight,
+                    bloomClear);
+
+                const auto drawDlssBloomBlur =
+                    [&](InternalTarget& target, const std::uintptr_t inputSrv, const float dirX, const float dirY)
+                {
+                    m_bloomBlurShader->Use(false, false);
+                    m_bloomBlurShader->SetFloat("uDirectionX", dirX);
+                    m_bloomBlurShader->SetFloat("uDirectionY", dirY);
+                    m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
+                    m_bloomBlurShader->BindTextureSlot(0, inputSrv);
+                    DrawFullscreenToTarget(
+                        *m_bloomBlurShader,
+                        const_cast<InternalTarget&>(target),
+                        bloomWidth,
+                        bloomHeight,
+                        bloomClear);
+                };
+
+                drawDlssBloomBlur(
+                    const_cast<InternalTarget&>(m_dlssBloomBlurTarget),
+                    m_dlssBloomExtractTarget.srvCpuHandle,
+                    bloomTexelSize.x,
+                    0.0f);
+                drawDlssBloomBlur(
+                    const_cast<InternalTarget&>(m_dlssBloomBlur2Target),
+                    m_dlssBloomBlurTarget.srvCpuHandle,
+                    0.0f,
+                    bloomTexelSize.y);
+                drawDlssBloomBlur(
+                    const_cast<InternalTarget&>(m_dlssBloomBlurTarget),
+                    m_dlssBloomBlur2Target.srvCpuHandle,
+                    bloomTexelSize.x,
+                    0.0f);
+                drawDlssBloomBlur(
+                    const_cast<InternalTarget&>(m_dlssBloomBlur2Target),
+                    m_dlssBloomBlurTarget.srvCpuHandle,
+                    0.0f,
+                    bloomTexelSize.y);
+
+                const bool guidesMatchDisplay =
+                    m_width == viewportWidth && m_height == viewportHeight
+                    && m_sceneFramebuffer->HasVelocity()
+                    && m_dlssBloomTemporalTarget.srvCpuHandle != 0;
+                if (guidesMatchDisplay)
+                {
+                    const float bloomWarmupFactor = m_dlssBloomHistoryValid
+                        ? std::min(1.0f, static_cast<float>(m_dlssBloomTemporalWarmupFrames) / 4.0f)
+                        : 0.0f;
+                    m_bloomTemporalShader->Use(false, false);
+                    m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
+                    m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
+                    m_bloomTemporalShader->SetFloat("uHistoryValid", m_dlssBloomHistoryValid ? 1.0f : 0.0f);
+                    m_bloomTemporalShader->SetFloat("uDepthThreshold", m_bloomDepthThreshold);
+                    m_bloomTemporalShader->SetFloat("uTexelSizeX", bloomTexelSize.x);
+                    m_bloomTemporalShader->SetFloat("uTexelSizeY", bloomTexelSize.y);
+                    m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
+                    m_bloomTemporalShader->BindTextureSlot(0, m_dlssBloomBlur2Target.srvCpuHandle);
+                    m_bloomTemporalShader->BindTextureSlot(1, m_dlssBloomHistoryTarget.srvCpuHandle);
+                    m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+                    m_bloomTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+                    DrawFullscreenToTarget(
+                        *m_bloomTemporalShader,
+                        const_cast<InternalTarget&>(m_dlssBloomTemporalTarget),
+                        bloomWidth,
+                        bloomHeight,
+                        bloomClear);
+                    displayBloomSrv = m_dlssBloomTemporalTarget.srvCpuHandle;
+                    std::swap(
+                        const_cast<InternalTarget&>(m_dlssBloomHistoryTarget),
+                        const_cast<InternalTarget&>(m_dlssBloomTemporalTarget));
+                    m_dlssBloomHistoryValid = true;
+                    ++m_dlssBloomTemporalWarmupFrames;
+                }
+                else
+                {
+                    displayBloomSrv = m_dlssBloomBlur2Target.srvCpuHandle;
+                }
+
+                bloomScope.Success();
+            }
+
+            {
+                SceneRenderTrace::Scope tonemapScope("tonemap (dlss display)");
+                const int bloomHalfWidth = std::max(1, viewportWidth / 2);
+                const int bloomHalfHeight = std::max(1, viewportHeight / 2);
+                const glm::vec2 bloomTexelSize(
+                    1.0f / static_cast<float>(bloomHalfWidth),
+                    1.0f / static_cast<float>(bloomHalfHeight));
+                BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+                m_tonemapShader->Use(false, true);
+                m_tonemapShader->SetInt("uHdrColor", 0);
+                m_tonemapShader->SetFloat("uExposure", m_exposure);
+                m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
+                m_tonemapShader->SetInt("uUseBloom", displayBloomSrv != 0 ? 1 : 0);
+                m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
+                m_tonemapShader->SetFloat("uBloomTexelSizeX", bloomTexelSize.x * 2.0f);
+                m_tonemapShader->SetFloat("uBloomTexelSizeY", bloomTexelSize.y * 2.0f);
+                m_tonemapShader->SetInt("uBloom", 1);
+                m_tonemapShader->BindTextureSlot(0, m_dlssOutputTarget.srvCpuHandle);
+                if (displayBloomSrv != 0)
+                {
+                    m_tonemapShader->BindTextureSlot(1, displayBloomSrv);
+                }
+                DrawFullscreenPass(*m_tonemapShader, true);
+                tonemapScope.Success();
+            }
+
+            const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = displayBloomSrv;
+        }
+        else
+        {
+            SceneRenderTrace::Scope fallbackScope("dlss fallback tonemap");
+            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+            runTonemapPass(false);
             fallbackScope.Success();
+            const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = 0;
         }
 
         dlssSection.Success();
