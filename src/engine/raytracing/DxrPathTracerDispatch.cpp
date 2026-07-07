@@ -200,6 +200,16 @@ std::uintptr_t DxrPathTracerDispatch::GetPrimaryMetadataSrvCpuHandle() const
     return m_dispatchContext.GetPrimaryMetadataSrvCpuHandle();
 }
 
+ID3D12Resource* DxrPathTracerDispatch::GetPrimaryOutputResource() const
+{
+    return m_dispatchContext.GetPrimaryOutputResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPrimaryOutputResourceState() const
+{
+    return m_dispatchContext.GetPrimaryOutputResourceState();
+}
+
 bool DxrPathTracerDispatch::HasValidOutput() const
 {
     return m_dispatchContext.GetPrimaryOutputSrvCpuHandle() != 0

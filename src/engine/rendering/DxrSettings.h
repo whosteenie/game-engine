@@ -18,6 +18,14 @@ enum class RenderingMode
     PathTraced,
 };
 
+// Path-tracer convergence sub-mode (devdoc/dxr-path-tracing.md P3/P4).
+// RealTime = single-frame noisy output (DLSS-RR in P4). Reference = progressive accumulation.
+enum class PtConvergenceMode
+{
+    RealTime,
+    Reference,
+};
+
 class DxrSettings
 {
 public:
@@ -25,11 +33,20 @@ public:
     static DxrReflectionsQuality ReflectionsQualityFromString(const std::string& value);
     static const char* RenderingModeToString(RenderingMode mode);
     static RenderingMode RenderingModeFromString(const std::string& value);
+    static const char* PtConvergenceModeToString(PtConvergenceMode mode);
+    static PtConvergenceMode PtConvergenceModeFromString(const std::string& value);
 
     // Phase P0 — path tracing (devdoc/dxr-path-tracing.md). Requires master RT enabled + DXR support.
     RenderingMode GetRenderingMode() const { return m_renderingMode; }
     void SetRenderingMode(const RenderingMode mode) { m_renderingMode = mode; }
     bool IsPathTracingActive() const { return m_enabled && m_renderingMode == RenderingMode::PathTraced; }
+
+    PtConvergenceMode GetPtConvergenceMode() const { return m_ptConvergenceMode; }
+    void SetPtConvergenceMode(const PtConvergenceMode mode) { m_ptConvergenceMode = mode; }
+    bool IsPtReferenceConvergence() const
+    {
+        return IsPathTracingActive() && m_ptConvergenceMode == PtConvergenceMode::Reference;
+    }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -106,6 +123,7 @@ public:
 private:
     bool m_enabled = false;
     RenderingMode m_renderingMode = RenderingMode::Hybrid;
+    PtConvergenceMode m_ptConvergenceMode = PtConvergenceMode::RealTime;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

@@ -204,6 +204,8 @@ public:
     std::uintptr_t GetOutputSrvCpuHandle() const { return m_outputSrvCpuHandle; }
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const { return m_primaryOutputSrvCpuHandle; }
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
+    ID3D12Resource* GetPrimaryOutputResource() const { return m_primaryOutputResource; }
+    std::uint32_t GetPrimaryOutputResourceState() const { return m_primaryOutputResourceState; }
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }

@@ -27,6 +27,7 @@ cbuffer PerPixel : register(b0)
     int uGuideMode; // 0 = diffuse albedo, 1 = specular albedo, 2 = normal-roughness, 3 = spec hit dist
     float uReflectionUvScaleX; // render-res UV -> reflection-buffer UV (reflection may be quality-scaled)
     float uReflectionUvScaleY;
+    int uUsePathTracerHitDistance; // mode 3: sample primary-hit distance from PT output (t3) at full UV
 };
 
 struct PSInput
@@ -53,11 +54,20 @@ float4 main(PSInput input) : SV_Target
     }
     if (uGuideMode == 3)
     {
-        // Specular hit distance: raw reflection ray length (world units) from the reflection trace,
-        // stored in radiance.a. The reflection buffer may run quality-scaled, so remap the UV.
-        const float2 reflUv = uv * float2(uReflectionUvScaleX, uReflectionUvScaleY);
-        const float hitDistance = uReflectionRaw.Sample(uPointSampler, reflUv).a;
-        return float4(hitDistance, 0.0, 0.0, 0.0); // single-channel (R16_FLOAT) target keeps .r
+        // Specular hit distance: raw ray length in world units. Hybrid reflections store it in
+        // radiance.a (quality-scaled UV). Path-traced real-time uses the primary-hit distance in
+        // the PT output alpha at full render resolution (devdoc/dxr-path-tracing.md P4).
+        float hitDistance;
+        if (uUsePathTracerHitDistance != 0)
+        {
+            hitDistance = uReflectionRaw.Sample(uPointSampler, uv).a;
+        }
+        else
+        {
+            const float2 reflUv = uv * float2(uReflectionUvScaleX, uReflectionUvScaleY);
+            hitDistance = uReflectionRaw.Sample(uPointSampler, reflUv).a;
+        }
+        return float4(hitDistance, 0.0, 0.0, 0.0);
     }
 
     // Packed normal-roughness: world normal in rgb (raw signed), roughness in a.

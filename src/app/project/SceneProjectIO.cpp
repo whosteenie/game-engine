@@ -780,6 +780,8 @@ namespace SceneProjectIODetail
              json{
                  {"enabled", dxrSettings.IsEnabled()},
                  {"renderingMode", DxrSettings::RenderingModeToString(dxrSettings.GetRenderingMode())},
+                 {"ptConvergenceMode",
+                  DxrSettings::PtConvergenceModeToString(dxrSettings.GetPtConvergenceMode())},
                  {"reflectionsEnabled", dxrSettings.IsReflectionsEnabled()},
                  {"reflectionsQuality",
                   DxrSettings::ReflectionsQualityToString(dxrSettings.GetReflectionsQuality())},
@@ -812,6 +814,11 @@ namespace SceneProjectIODetail
         {
             dxrSettings.SetRenderingMode(DxrSettings::RenderingModeFromString(
                 dxrValue.at("renderingMode").get<std::string>()));
+        }
+        if (dxrValue.contains("ptConvergenceMode"))
+        {
+            dxrSettings.SetPtConvergenceMode(DxrSettings::PtConvergenceModeFromString(
+                dxrValue.at("ptConvergenceMode").get<std::string>()));
         }
         if (dxrValue.contains("reflectionsEnabled"))
         {

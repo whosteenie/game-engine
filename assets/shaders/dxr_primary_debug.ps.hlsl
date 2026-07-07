@@ -5,7 +5,8 @@ cbuffer PerPixel : register(b0)
 {
     int uViewMode;
     float uMaxTraceDistance;
-    float2 _Padding0;
+    uint uSampleCount;
+    float _Padding0;
 };
 
 struct PSInput
@@ -46,9 +47,17 @@ float4 main(PSInput input) : SV_Target
 
     if (uViewMode == 3)
     {
-        // P1 path tracer HDR radiance — simple Reinhard tonemap for display.
+        // P1/P2 real-time path tracer HDR radiance — simple Reinhard tonemap for display.
         const float3 hdr = primary.rgb;
         const float3 mapped = hdr / (1.0 + hdr);
+        return float4(mapped, 1.0);
+    }
+
+    if (uViewMode == 4)
+    {
+        // P3 reference accumulation — running mean with Reinhard tonemap.
+        const float3 mean = primary.rgb / max(uSampleCount, 1u);
+        const float3 mapped = mean / (1.0 + mean);
         return float4(mapped, 1.0);
     }
 

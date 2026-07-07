@@ -57,6 +57,7 @@ public:
     std::uint32_t GetSceneIndicesSrvIndex() const { return m_sceneIndicesSrvIndex; }
     std::uint32_t GetMaterialSrvIndex() const { return m_materialSrvIndex; }
     bool HasGeometryLookup() const { return m_geometryLookupSrvIndex != UINT32_MAX; }
+    std::size_t GetGeometryObjectCount() const { return m_geometryObjectCount; }
 
     void Release();
 

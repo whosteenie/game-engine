@@ -65,6 +65,8 @@ public:
 
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const;
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const;
+    ID3D12Resource* GetPrimaryOutputResource() const;
+    std::uint32_t GetPrimaryOutputResourceState() const;
     bool HasValidOutput() const;
 
 private:

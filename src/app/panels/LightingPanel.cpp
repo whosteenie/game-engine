@@ -1935,6 +1935,54 @@ void LightingPanel::Draw(
             ImGui::TextDisabled("    Enable ray tracing to use path tracing.");
         }
 
+        if (dxrSettings.GetRenderingMode() == RenderingMode::PathTraced && dxrEnabled)
+        {
+            int convergenceModeIndex = static_cast<int>(dxrSettings.GetPtConvergenceMode());
+            const char* convergenceModeLabels[] = {"Real-time (1 spp)", "Reference (accumulate)"};
+            if (ImGui::Combo(
+                    "PT convergence",
+                    &convergenceModeIndex,
+                    convergenceModeLabels,
+                    IM_ARRAYSIZE(convergenceModeLabels)))
+            {
+                const auto mode = static_cast<PtConvergenceMode>(convergenceModeIndex);
+                ApplyRendererChange(
+                    editContext,
+                    scene,
+                    "PT convergence mode",
+                    [mode](Scene& target) {
+                        target.GetRenderer().GetDxrSettings().SetPtConvergenceMode(mode);
+                        target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                        target.MarkDirty();
+                    });
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Reference: progressive HDR accumulation while the camera and scene are static.\n"
+                    "Resets on camera move, resize, light/scene edits, or setting changes.\n"
+                    "Real-time: 1 spp path trace denoised via DLSS Ray Reconstruction when DLSS is on.");
+            }
+
+            if (dxrSettings.IsPtReferenceConvergence())
+            {
+                const std::uint32_t spp =
+                    scene.GetRenderer().GetScreenSpaceEffects().GetPathTracerAccumSampleCount();
+                if (spp >= 64u)
+                {
+                    ImGui::TextDisabled("    Reference: %u spp (converged)", spp);
+                }
+                else if (spp > 0u)
+                {
+                    ImGui::TextDisabled("    Reference: %u spp (converging...)", spp);
+                }
+                else
+                {
+                    ImGui::TextDisabled("    Reference: accumulating...");
+                }
+            }
+        }
+
         bool debugTraceEnabled = dxrSettings.IsDebugTraceEnabled();
         UndoableRendererCheckbox(
             "Enable RT debug trace",

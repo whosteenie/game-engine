@@ -668,6 +668,27 @@ void SceneRenderer::RecordDxrPass(
             dispatchHeight,
             m_dxrSettings.GetMaxTraceDistance());
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
+
+        if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
+        {
+            PathTracerHistoryKey historyKey{};
+            historyKey.viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+            historyKey.width = dispatchWidth;
+            historyKey.height = dispatchHeight;
+            historyKey.convergenceMode = m_dxrSettings.GetPtConvergenceMode();
+            historyKey.maxTraceDistance = m_dxrSettings.GetMaxTraceDistance();
+            historyKey.sunDirection = ptInputs.sunDirection;
+            historyKey.sunColor = ptInputs.sunColor;
+            historyKey.sunIntensity = ptInputs.sunIntensity;
+            historyKey.environmentIntensity = ptInputs.environmentIntensity;
+            historyKey.geometryObjectCount = m_dxrAccelerationStructures->GetGeometryObjectCount();
+
+            m_screenSpaceEffects->AccumulatePathTracerReference(
+                historyKey,
+                m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle(),
+                dispatchWidth,
+                dispatchHeight);
+        }
     }
 
     if (usePostProcess && m_screenSpaceEffects != nullptr)
@@ -677,7 +698,10 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle() : 0);
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle() : 0,
+            m_dxrSettings.GetPtConvergenceMode(),
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResource() : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResourceState() : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so

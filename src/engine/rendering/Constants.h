@@ -80,6 +80,7 @@ namespace EngineConstants
     inline constexpr const char* DxrSmokeLibraryShader = "assets/shaders/dxr/dxr_smoke.hlsl";
     inline constexpr const char* DxrPrimaryDebugLibraryShader = "assets/shaders/dxr/primary_debug.hlsl";
     inline constexpr const char* DxrPrimaryDebugFragmentShader = "assets/shaders/dxr_primary_debug.ps.hlsl";
+    inline constexpr const char* PtAccumulateFragmentShader = "assets/shaders/pt_accumulate.ps.hlsl";
     inline constexpr const char* DxrReflectionsLibraryShader = "assets/shaders/dxr/reflections.hlsl";
     inline constexpr const char* DxrIndirectFragmentShader = "assets/shaders/dxr_indirect.ps.hlsl";
     inline constexpr const char* DxrShadowsLibraryShader = "assets/shaders/dxr/shadows.hlsl";

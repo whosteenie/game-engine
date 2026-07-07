@@ -13,6 +13,7 @@ static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
+static const float kMirrorRoughnessCutoff = 0.03; // match reflections.hlsl mirror path
 
 struct Payload
 {
@@ -162,6 +163,20 @@ bool SampleNextBounceDirection(
     float specProb = saturate(max(specularEnergy.r, max(specularEnergy.g, specularEnergy.b)));
     specProb = lerp(specProb, 1.0, metallic);
 
+    // Mirror surfaces: deterministic perfect reflection (same threshold as reflections.hlsl).
+    // Stochastic lobe selection + VNDF at roughness 0 is a poor delta-BSDF approximation and
+    // breaks sky/mirror-in-mirror paths that need a stable reflect(view, normal) direction.
+    if (roughness <= kMirrorRoughnessCutoff)
+    {
+        nextDir = normalize(reflect(-viewDir, hitNormal));
+        if (dot(nextDir, hitNormal) <= 1e-4)
+        {
+            nextDir = normalize(reflect(-viewDir, hitNormal));
+        }
+        throughput *= f0 / max(specProb, 1e-3);
+        return true;
+    }
+
     const float lobeXi = xi.z;
     const bool traceSpecular = (lobeXi < specProb) && (roughness < 0.95);
 
@@ -216,6 +231,10 @@ void PathTracerRayGen()
     uint primaryPrimitiveIndex = 0u;
     float primaryHitDistance = g_MaxTraceDistance;
     bool primaryHit = false;
+    // Roughness of the surface that launched the current ray — drives env mip on miss, matching
+    // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
+    // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
+    float missEnvRoughness = 0.0;
 
     [loop]
     for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
@@ -226,8 +245,7 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
-            const float missRoughness = bounce == 0u ? 0.0 : 1.0;
-            radiance += throughput * SampleEnvironment(ray.Direction, missRoughness);
+            radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
             break;
         }
 
@@ -275,6 +293,8 @@ void PathTracerRayGen()
             material.metallic,
             nextDir,
             throughput);
+
+        missEnvRoughness = material.roughness;
 
         if (bounce >= kRussianRouletteStartBounce)
         {

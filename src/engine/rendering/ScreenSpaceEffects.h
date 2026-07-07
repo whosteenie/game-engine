@@ -2,6 +2,7 @@
 
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/EnvironmentMap.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 
@@ -16,6 +17,23 @@ class Camera;
 class EnvironmentMap;
 class Framebuffer;
 class Shader;
+
+// Inputs that must stay stable for progressive PT reference accumulation (P3).
+struct PathTracerHistoryKey
+{
+    glm::mat4 viewProjection{1.0f};
+    int width = 0;
+    int height = 0;
+    PtConvergenceMode convergenceMode = PtConvergenceMode::RealTime;
+    float maxTraceDistance = 100.0f;
+    glm::vec3 sunDirection{0.0f, -1.0f, 0.0f};
+    glm::vec3 sunColor{1.0f};
+    float sunIntensity = 0.0f;
+    float environmentIntensity = 1.0f;
+    std::size_t geometryObjectCount = 0;
+
+    bool operator==(const PathTracerHistoryKey& other) const;
+};
 
 enum class TonemapMode
 {
@@ -92,8 +110,22 @@ public:
     // Phase P0 path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
     // mode, blit the PT primary-hit output over the final image (reusing the primary-debug shader).
     // Independent of the debug-view combo — driven by SetDxrPathTracerDisplay.
-    void SetDxrPathTracerDisplay(bool active, std::uintptr_t outputSrv, std::uintptr_t metadataSrv);
+    void SetDxrPathTracerDisplay(
+        bool active,
+        std::uintptr_t outputSrv,
+        std::uintptr_t metadataSrv,
+        PtConvergenceMode convergenceMode = PtConvergenceMode::RealTime,
+        void* outputResource = nullptr,
+        std::uint32_t outputResourceState = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
+    bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
+    void AccumulatePathTracerReference(
+        const PathTracerHistoryKey& historyKey,
+        std::uintptr_t currentFrameSrv,
+        int width,
+        int height);
+    std::uint32_t GetPathTracerAccumSampleCount() const { return m_ptAccumSampleCount; }
+    void ResetPathTracerAccumulation();
     void BlitPathTracer(
         const Framebuffer* outputTarget,
         int viewportWidth,
@@ -491,6 +523,8 @@ private:
     InternalTarget m_smaaOutputTarget;
     InternalTarget m_taaHistoryTarget;
     InternalTarget m_taaResolveTarget;
+    InternalTarget m_ptAccumSumTarget;
+    InternalTarget m_ptAccumScratchTarget;
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
     InternalTarget m_dlssBloomExtractTarget;
@@ -517,6 +551,7 @@ private:
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
+    std::unique_ptr<Shader> m_ptAccumulateShader;
     std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
@@ -615,8 +650,16 @@ private:
     std::uintptr_t m_dxrPrimaryOutputSrv = 0;
     // Phase P0 path tracing display (reuses the primary-debug blit shader).
     bool m_pathTracerActive = false;
+    PtConvergenceMode m_pathTracerConvergenceMode = PtConvergenceMode::RealTime;
     std::uintptr_t m_dxrPathTracerOutputSrv = 0;
     std::uintptr_t m_dxrPathTracerMetadataSrv = 0;
+    void* m_pathTracerOutputResource = nullptr;
+    std::uint32_t m_pathTracerOutputResourceState = 0;
+    mutable bool m_pathTracerDlssResolvedThisFrame = false;
+    mutable std::uint32_t m_ptAccumSampleCount = 0;
+    mutable PathTracerHistoryKey m_ptAccumHistoryKey{};
+    mutable bool m_ptAccumPingPongReadFromScratch = false;
+    mutable std::uintptr_t m_ptAccumSumDisplaySrv = 0;
     std::uintptr_t m_dxrReflectionSrv = 0;
     std::uintptr_t m_dxrReflectionDenoisedSrv = 0;
     float m_dxrReflectionUvScaleX = 1.0f;

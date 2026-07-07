@@ -52,6 +52,28 @@ RenderingMode DxrSettings::RenderingModeFromString(const std::string& value)
     return RenderingMode::Hybrid;
 }
 
+const char* DxrSettings::PtConvergenceModeToString(const PtConvergenceMode mode)
+{
+    switch (mode)
+    {
+    case PtConvergenceMode::Reference:
+        return "reference";
+    case PtConvergenceMode::RealTime:
+    default:
+        return "realTime";
+    }
+}
+
+PtConvergenceMode DxrSettings::PtConvergenceModeFromString(const std::string& value)
+{
+    if (value == "reference")
+    {
+        return PtConvergenceMode::Reference;
+    }
+
+    return PtConvergenceMode::RealTime;
+}
+
 void DxrSettings::SetReflectionsSamplesPerPixel(const int samples)
 {
     m_reflectionsSamplesPerPixel = std::clamp(samples, 1, 16);
@@ -96,6 +118,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
 {
     m_enabled = source.m_enabled;
     m_renderingMode = source.m_renderingMode;
+    m_ptConvergenceMode = source.m_ptConvergenceMode;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
