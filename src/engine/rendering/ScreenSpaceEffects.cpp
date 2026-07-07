@@ -1718,6 +1718,41 @@ void ScreenSpaceEffects::BlitRtPrimaryDebug(
     DrawFullscreenQuad();
 }
 
+void ScreenSpaceEffects::SetDxrPathTracerDisplay(
+    const bool active, const std::uintptr_t outputSrv, const std::uintptr_t metadataSrv)
+{
+    m_pathTracerActive = active;
+    m_dxrPathTracerOutputSrv = outputSrv;
+    m_dxrPathTracerMetadataSrv = metadataSrv;
+}
+
+void ScreenSpaceEffects::BlitPathTracer(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight,
+    const float maxTraceDistance) const
+{
+    // P0: path tracing owns the image when active — blit the PT primary-hit output over the final
+    // (hybrid) render. Reuses the primary-debug shader with the world-normal view (viewMode 2).
+    // Do NOT gate on IsRtPrimaryDebugBlitReady(): that requires an RT primary debug view mode.
+    if (!m_pathTracerActive || !IsPathTracerBlitReady() || m_dxrPathTracerOutputSrv == 0
+        || m_dxrPathTracerMetadataSrv == 0 || outputTarget == nullptr)
+    {
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_dxrPrimaryDebugShader->Use(false, true);
+    m_dxrPrimaryDebugShader->SetInt("uViewMode", 2); // world normal
+    m_dxrPrimaryDebugShader->SetFloat("uMaxTraceDistance", maxTraceDistance);
+    m_dxrPrimaryDebugShader->SetInt("uPrimaryOutput", 0);
+    m_dxrPrimaryDebugShader->SetInt("uPrimaryMetadata", 1);
+    m_dxrPrimaryDebugShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
+    m_dxrPrimaryDebugShader->BindTextureSlot(1, m_dxrPathTracerMetadataSrv);
+    m_dxrPrimaryDebugShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
 void ScreenSpaceEffects::BlitRtReflectionDebug(
     const Framebuffer* outputTarget,
     const int viewportWidth,
@@ -4735,6 +4770,11 @@ bool ScreenSpaceEffects::IsRtPrimaryDebugBlitReady() const
     }
 
     return m_rtPrimaryDebugSettleFrames >= 2;
+}
+
+bool ScreenSpaceEffects::IsPathTracerBlitReady() const
+{
+    return m_dxrPrimaryDebugShader != nullptr;
 }
 
 void ScreenSpaceEffects::SetDxrSmokeDebugSrv(const std::uintptr_t srvCpuHandle)

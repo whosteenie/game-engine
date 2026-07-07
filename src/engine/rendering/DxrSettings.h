@@ -9,11 +9,27 @@ enum class DxrReflectionsQuality
     High,
 };
 
+// Top-level rendering mode (devdoc/dxr-path-tracing.md). Hybrid = the raster + hybrid-RT pipeline
+// (default, always retained). PathTraced = the unified path tracer owns the image. Mutually
+// exclusive; selecting PathTraced bypasses the hybrid RT effect passes and shows the PT output.
+enum class RenderingMode
+{
+    Hybrid,
+    PathTraced,
+};
+
 class DxrSettings
 {
 public:
     static const char* ReflectionsQualityToString(DxrReflectionsQuality quality);
     static DxrReflectionsQuality ReflectionsQualityFromString(const std::string& value);
+    static const char* RenderingModeToString(RenderingMode mode);
+    static RenderingMode RenderingModeFromString(const std::string& value);
+
+    // Phase P0 — path tracing (devdoc/dxr-path-tracing.md). Requires master RT enabled + DXR support.
+    RenderingMode GetRenderingMode() const { return m_renderingMode; }
+    void SetRenderingMode(const RenderingMode mode) { m_renderingMode = mode; }
+    bool IsPathTracingActive() const { return m_enabled && m_renderingMode == RenderingMode::PathTraced; }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -89,6 +105,7 @@ public:
 
 private:
     bool m_enabled = false;
+    RenderingMode m_renderingMode = RenderingMode::Hybrid;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

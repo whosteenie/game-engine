@@ -89,6 +89,16 @@ public:
         int viewportWidth,
         int viewportHeight,
         float maxTraceDistance) const;
+    // Phase P0 path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
+    // mode, blit the PT primary-hit output over the final image (reusing the primary-debug shader).
+    // Independent of the debug-view combo — driven by SetDxrPathTracerDisplay.
+    void SetDxrPathTracerDisplay(bool active, std::uintptr_t outputSrv, std::uintptr_t metadataSrv);
+    bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
+    void BlitPathTracer(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight,
+        float maxTraceDistance) const;
     void BlitRtReflectionDebug(
         const Framebuffer* outputTarget,
         int viewportWidth,
@@ -222,6 +232,7 @@ public:
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
     bool IsRtPrimaryDebugBlitReady() const;
+    bool IsPathTracerBlitReady() const;
     void SetDxrSmokeDebugSrv(std::uintptr_t srvCpuHandle);
     void SetDxrPrimaryDebugSrvs(
         std::uintptr_t primaryOutputSrvCpuHandle,
@@ -602,6 +613,10 @@ private:
     RenderDebugMode m_debugMode = RenderDebugMode::None;
     std::uintptr_t m_dxrSmokeDebugSrv = 0;
     std::uintptr_t m_dxrPrimaryOutputSrv = 0;
+    // Phase P0 path tracing display (reuses the primary-debug blit shader).
+    bool m_pathTracerActive = false;
+    std::uintptr_t m_dxrPathTracerOutputSrv = 0;
+    std::uintptr_t m_dxrPathTracerMetadataSrv = 0;
     std::uintptr_t m_dxrReflectionSrv = 0;
     std::uintptr_t m_dxrReflectionDenoisedSrv = 0;
     float m_dxrReflectionUvScaleX = 1.0f;

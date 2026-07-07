@@ -779,6 +779,7 @@ namespace SceneProjectIODetail
             {"dxr",
              json{
                  {"enabled", dxrSettings.IsEnabled()},
+                 {"renderingMode", DxrSettings::RenderingModeToString(dxrSettings.GetRenderingMode())},
                  {"reflectionsEnabled", dxrSettings.IsReflectionsEnabled()},
                  {"reflectionsQuality",
                   DxrSettings::ReflectionsQualityToString(dxrSettings.GetReflectionsQuality())},
@@ -806,6 +807,11 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("enabled"))
         {
             dxrSettings.SetEnabled(dxrValue.at("enabled").get<bool>());
+        }
+        if (dxrValue.contains("renderingMode"))
+        {
+            dxrSettings.SetRenderingMode(DxrSettings::RenderingModeFromString(
+                dxrValue.at("renderingMode").get<std::string>()));
         }
         if (dxrValue.contains("reflectionsEnabled"))
         {

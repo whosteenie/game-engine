@@ -750,6 +750,197 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
     return true;
 }
 
+// Phase P0 path-tracer RTPSO (devdoc/dxr-path-tracing.md). Structurally identical to the
+// primary-debug pipeline and reuses its global/local root signatures (same b0 + t0..t4 + u0/u1
+// binding layout); only the shader library and export names differ. P1+ grows the megakernel.
+bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
+{
+    outError.clear();
+    Release();
+
+    DxrBreadcrumb("pipeline CreatePathTracerPipeline begin");
+    ID3D12Device5* device5 = DxrContext::Get().GetDevice5();
+    if (device5 == nullptr)
+    {
+        outError = "ID3D12Device5 unavailable";
+        return false;
+    }
+
+    try
+    {
+        m_globalRootSignature = DxrRootSignature::CreatePrimaryDebugGlobalRootSignature();
+    }
+    catch (const std::exception& exception)
+    {
+        outError = exception.what();
+        DxrBreadcrumb("pipeline failed: path tracer root signature");
+        return false;
+    }
+
+    ID3D12RootSignature* localRootSignature = nullptr;
+    try
+    {
+        localRootSignature = DxrRootSignature::CreatePrimaryDebugLocalRootSignature();
+    }
+    catch (const std::exception& exception)
+    {
+        outError = exception.what();
+        DxrBreadcrumb("pipeline failed: path tracer local root signature");
+        return false;
+    }
+
+    struct LocalRootSignatureScope
+    {
+        ID3D12RootSignature* signature = nullptr;
+        ~LocalRootSignatureScope()
+        {
+            if (signature != nullptr)
+            {
+                signature->Release();
+            }
+        }
+    } localRootSignatureScope{localRootSignature};
+
+    std::shared_ptr<DxrCompiledLibrary> library;
+    try
+    {
+        library = DxrShaderCache::Load(EngineConstants::DxrPathTracerLibraryShader);
+    }
+    catch (const std::exception& exception)
+    {
+        outError = exception.what();
+        DxrBreadcrumb("pipeline failed: path tracer shader load");
+        return false;
+    }
+
+    if (library == nullptr || library->dxilBytecode == nullptr)
+    {
+        outError = "DXR path tracer library bytecode missing";
+        return false;
+    }
+
+    D3D12_SHADER_BYTECODE dxilBytecode{};
+    if (library->containerBytecode != nullptr)
+    {
+        dxilBytecode.pShaderBytecode = library->containerBytecode->GetBufferPointer();
+        dxilBytecode.BytecodeLength = library->containerBytecode->GetBufferSize();
+    }
+    else
+    {
+        dxilBytecode.pShaderBytecode = library->dxilBytecode->GetBufferPointer();
+        dxilBytecode.BytecodeLength = library->dxilBytecode->GetBufferSize();
+    }
+
+    SmokeRtpsoSubobjects subobjects{};
+    subobjects.shaderConfig.MaxPayloadSizeInBytes = 32;
+    subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
+    subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
+
+    subobjects.exportNames = {L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit"};
+    subobjects.allRtpsoExportNames = {
+        L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit", L"PathTracerHitGroup"};
+    subobjects.hitGroupExportNames = {L"PathTracerHitGroup"};
+
+    subobjects.exports.resize(subobjects.exportNames.size());
+    for (std::size_t exportIndex = 0; exportIndex < subobjects.exportNames.size(); ++exportIndex)
+    {
+        subobjects.exports[exportIndex].Name = subobjects.exportNames[exportIndex];
+        subobjects.exports[exportIndex].ExportToRename = nullptr;
+        subobjects.exports[exportIndex].Flags = D3D12_EXPORT_FLAG_NONE;
+    }
+
+    subobjects.dxilLibraryDesc.DXILLibrary = dxilBytecode;
+    subobjects.dxilLibraryDesc.NumExports = static_cast<UINT>(subobjects.exports.size());
+    subobjects.dxilLibraryDesc.pExports = subobjects.exports.data();
+
+    subobjects.hitGroupDesc.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
+    subobjects.hitGroupDesc.HitGroupExport = L"PathTracerHitGroup";
+    subobjects.hitGroupDesc.ClosestHitShaderImport = L"PathTracerClosestHit";
+
+    subobjects.subobjects.clear();
+    subobjects.subobjects.reserve(10);
+
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,
+        &subobjects.dxilLibraryDesc);
+
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_HIT_GROUP,
+        &subobjects.hitGroupDesc);
+
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_SHADER_CONFIG,
+        &subobjects.shaderConfig);
+    const std::size_t shaderConfigIndex = subobjects.subobjects.size() - 1;
+
+    subobjects.shaderConfigAssociation.pSubobjectToAssociate = &subobjects.subobjects[shaderConfigIndex];
+    subobjects.shaderConfigAssociation.NumExports = static_cast<UINT>(subobjects.allRtpsoExportNames.size());
+    subobjects.shaderConfigAssociation.pExports = subobjects.allRtpsoExportNames.data();
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION,
+        &subobjects.shaderConfigAssociation);
+
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_RAYTRACING_PIPELINE_CONFIG,
+        &subobjects.pipelineConfig);
+    const std::size_t pipelineConfigIndex = subobjects.subobjects.size() - 1;
+
+    subobjects.pipelineConfigAssociation.pSubobjectToAssociate = &subobjects.subobjects[pipelineConfigIndex];
+    subobjects.pipelineConfigAssociation.NumExports = static_cast<UINT>(subobjects.allRtpsoExportNames.size());
+    subobjects.pipelineConfigAssociation.pExports = subobjects.allRtpsoExportNames.data();
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION,
+        &subobjects.pipelineConfigAssociation);
+
+    subobjects.globalRootSignatureDesc.pGlobalRootSignature = m_globalRootSignature;
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_GLOBAL_ROOT_SIGNATURE,
+        &subobjects.globalRootSignatureDesc);
+
+    subobjects.localRootSignatureDesc.pLocalRootSignature = localRootSignature;
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_LOCAL_ROOT_SIGNATURE,
+        &subobjects.localRootSignatureDesc);
+
+    subobjects.localRootSignatureAssociation.pSubobjectToAssociate =
+        &subobjects.subobjects[subobjects.subobjects.size() - 1];
+    subobjects.localRootSignatureAssociation.NumExports =
+        static_cast<UINT>(subobjects.hitGroupExportNames.size());
+    subobjects.localRootSignatureAssociation.pExports = subobjects.hitGroupExportNames.data();
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_SUBOBJECT_TO_EXPORTS_ASSOCIATION,
+        &subobjects.localRootSignatureAssociation);
+
+    ComPtr<ID3D12StateObject> stateObject;
+    if (!CreateStateObjectFromSubobjects(device5, subobjects, "path-tracer-full", stateObject, outError))
+    {
+        return false;
+    }
+
+    ID3D12StateObjectProperties* stateObjectProperties = nullptr;
+    if (FAILED(stateObject->QueryInterface(IID_PPV_ARGS(&stateObjectProperties))))
+    {
+        outError = "QueryInterface(ID3D12StateObjectProperties) failed";
+        return false;
+    }
+
+    m_stateObject = stateObject.Detach();
+    m_stateObjectProperties = stateObjectProperties;
+
+    EngineLog::Info("dxr-pipeline", "Created DXR path tracer RTPSO");
+    DxrBreadcrumb("pipeline CreatePathTracerPipeline ok");
+    return true;
+}
+
 // Phase D4 reflections RTPSO (see devdoc/dxr-reflections.md). Structure mirrors the
 // primary-debug pipeline; only the library, exports, and root signatures differ.
 bool DxrPipeline::CreateReflectionsPipeline(std::string& outError)

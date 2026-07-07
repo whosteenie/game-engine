@@ -18,6 +18,9 @@ public:
 
     bool CreateSmokePipeline(std::string& outError);
     bool CreatePrimaryDebugPipeline(std::string& outError);
+    // Phase P0 — unified path tracer RTPSO (devdoc/dxr-path-tracing.md). Reuses the primary-debug
+    // global/local root signatures; only the library + export names differ.
+    bool CreatePathTracerPipeline(std::string& outError);
     bool CreateReflectionsPipeline(std::string& outError);
     bool CreateShadowsPipeline(std::string& outError);
     bool CreateGiPipeline(std::string& outError);

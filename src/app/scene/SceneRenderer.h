@@ -12,6 +12,7 @@
 #include "engine/raytracing/DxrDiagnostics.h"
 #include "engine/raytracing/DxrGiDispatch.h"
 #include "engine/raytracing/DxrPrimaryDebugDispatch.h"
+#include "engine/raytracing/DxrPathTracerDispatch.h"
 #include "engine/raytracing/DxrReflectionsDispatch.h"
 #include "engine/raytracing/DxrShadowsDispatch.h"
 #include "engine/raytracing/DxrSmokeDispatch.h"
@@ -137,6 +138,7 @@ private:
     std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
     std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
     std::unique_ptr<DxrPrimaryDebugDispatch> m_dxrPrimaryDebugDispatch;
+    std::unique_ptr<DxrPathTracerDispatch> m_dxrPathTracerDispatch;
     std::unique_ptr<DxrReflectionsDispatch> m_dxrReflectionsDispatch;
     std::unique_ptr<DxrShadowsDispatch> m_dxrShadowsDispatch;
     std::unique_ptr<DxrGiDispatch> m_dxrGiDispatch;

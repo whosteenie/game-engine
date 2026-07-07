@@ -30,6 +30,28 @@ DxrReflectionsQuality DxrSettings::ReflectionsQualityFromString(const std::strin
     return DxrReflectionsQuality::Medium;
 }
 
+const char* DxrSettings::RenderingModeToString(const RenderingMode mode)
+{
+    switch (mode)
+    {
+    case RenderingMode::PathTraced:
+        return "pathTraced";
+    case RenderingMode::Hybrid:
+    default:
+        return "hybrid";
+    }
+}
+
+RenderingMode DxrSettings::RenderingModeFromString(const std::string& value)
+{
+    if (value == "pathTraced")
+    {
+        return RenderingMode::PathTraced;
+    }
+
+    return RenderingMode::Hybrid;
+}
+
 void DxrSettings::SetReflectionsSamplesPerPixel(const int samples)
 {
     m_reflectionsSamplesPerPixel = std::clamp(samples, 1, 16);
@@ -73,6 +95,7 @@ void DxrSettings::SetGiStrength(const float strength)
 void DxrSettings::CopySettingsFrom(const DxrSettings& source)
 {
     m_enabled = source.m_enabled;
+    m_renderingMode = source.m_renderingMode;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
@@ -97,6 +120,7 @@ void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
     if (!raytracingSupported)
     {
         m_enabled = false;
+        m_renderingMode = RenderingMode::Hybrid;
         m_reflectionsEnabled = false;
         m_shadowsEnabled = false;
         m_giEnabled = false;

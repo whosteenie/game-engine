@@ -427,12 +427,19 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
         }
 
+        if (m_dxrPathTracerDispatch == nullptr)
+        {
+            m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
+        }
+
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
         const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
         const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
         const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
         const bool giReady = m_dxrGiDispatch->IsPipelineReady();
-        if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady)
+        const bool pathTracerReady = m_dxrPathTracerDispatch->IsPipelineReady();
+        if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady
+            && pathTracerReady)
         {
             return;
         }
@@ -457,6 +464,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (!giReady)
         {
             m_dxrGiDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!pathTracerReady)
+        {
+            m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
@@ -520,6 +531,7 @@ void SceneRenderer::RecordDxrPass(
             m_screenSpaceEffects->SetDxrShadowCompositeEnabled(false);
             m_screenSpaceEffects->SetDxrGiSrv(0);
             m_screenSpaceEffects->SetDxrGiCompositeEnabled(false);
+            m_screenSpaceEffects->SetDxrPathTracerDisplay(false, 0, 0);
         }
         return;
     }
@@ -583,6 +595,44 @@ void SceneRenderer::RecordDxrPass(
         dispatchHeight,
         m_dxrSettings.GetMaxTraceDistance());
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
+
+    // Phase P0 — path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
+    // mode, trace one camera ray per pixel and display the primary-hit result over the hybrid image
+    // (which still renders underneath in P0 — a full bypass is a later optimization). Purely additive:
+    // when Hybrid is the mode the PT dispatch is skipped and its display is cleared.
+    const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+    if (m_dxrPathTracerDispatch == nullptr)
+    {
+        m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
+    }
+
+    bool pathTracerDispatched = false;
+    if (pathTracingActive && usePostProcess)
+    {
+        DxrBreadcrumb("render: path-tracer DispatchIfEnabled begin");
+        const GfxContext::GpuTimerScope gpuScopePathTracer("Path tracer");
+        pathTracerDispatched = m_dxrPathTracerDispatch->DispatchIfEnabled(
+            *m_dxrAccelerationStructures,
+            camera,
+            true,
+            true,
+            GfxContext::Get().GetCommandList(),
+            depthSrvCpuHandle,
+            dispatchWidth,
+            dispatchHeight,
+            m_dxrSettings.GetMaxTraceDistance());
+        DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
+    }
+
+    if (usePostProcess && m_screenSpaceEffects != nullptr)
+    {
+        const bool pathTracerShow =
+            pathTracingActive && m_dxrPathTracerDispatch->HasValidOutput();
+        m_screenSpaceEffects->SetDxrPathTracerDisplay(
+            pathTracerShow,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle() : 0);
+    }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
     // reflection hits know GI is enabled; bounce lighting is traced world-space at each hit.
@@ -1205,6 +1255,12 @@ void SceneRenderer::Render(
                 reinterpret_cast<Framebuffer*>(targetFramebuffer),
                 viewportWidth,
                 viewportHeight);
+            // P0 path tracing: overlay the PT primary-hit image when path tracing is the active mode.
+            m_screenSpaceEffects->BlitPathTracer(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight,
+                m_dxrSettings.GetMaxTraceDistance());
         }
 
         if (target != nullptr)

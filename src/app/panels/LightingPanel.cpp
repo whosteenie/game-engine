@@ -1894,6 +1894,47 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        // Phase P0 — rendering mode (devdoc/dxr-path-tracing.md). Hybrid (raster + hybrid RT, the
+        // default) vs the unified path tracer. Path tracing needs master RT on; greyed otherwise.
+        const bool renderingModeSelectable = dxrEnabled;
+        if (!renderingModeSelectable)
+        {
+            ImGui::BeginDisabled();
+        }
+        int renderingModeIndex = static_cast<int>(dxrSettings.GetRenderingMode());
+        const char* renderingModeLabels[] = {"Hybrid (raster + RT)", "Path traced"};
+        if (ImGui::Combo(
+                "Rendering mode",
+                &renderingModeIndex,
+                renderingModeLabels,
+                IM_ARRAYSIZE(renderingModeLabels)))
+        {
+            const auto mode = static_cast<RenderingMode>(renderingModeIndex);
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "Rendering mode",
+                [mode](Scene& target) {
+                    target.GetRenderer().GetDxrSettings().SetRenderingMode(mode);
+                    if (mode == RenderingMode::PathTraced && !GfxContext::Get().IsFrameRecording())
+                    {
+                        target.GetRenderer().WarmUpDxrPipelineIfNeeded();
+                    }
+                    target.MarkDirty();
+                });
+        }
+        if (ImGui::IsItemHovered() && renderingModeSelectable)
+        {
+            ImGui::SetTooltip(
+                "Path traced: the unified path tracer owns the image (P0 shows primary-hit normals).\n"
+                "Hybrid keeps the raster + RT pipeline. Additive - both are selectable for comparison.");
+        }
+        if (!renderingModeSelectable)
+        {
+            ImGui::EndDisabled();
+            ImGui::TextDisabled("    Enable ray tracing to use path tracing.");
+        }
+
         bool debugTraceEnabled = dxrSettings.IsDebugTraceEnabled();
         UndoableRendererCheckbox(
             "Enable RT debug trace",
