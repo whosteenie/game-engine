@@ -1250,18 +1250,18 @@ void LightingPanel::Draw(
                 // Explain WHY it's greyed so the gate is discoverable, not mysterious.
                 if (!rrSupported)
                 {
-                    ImGui::TextDisabled("  ↳ Requires NVIDIA RTX GPU + recent driver (DLSS 3.5).");
+                    ImGui::TextDisabled("    Requires NVIDIA RTX GPU + recent driver (DLSS 3.5).");
                 }
                 else
                 {
-                    ImGui::TextDisabled("  ↳ Enable a ray-traced feature (reflections / GI / shadows) first.");
+                    ImGui::TextDisabled("    Enable a ray-traced feature (reflections / GI / shadows) first.");
                 }
             }
             else if (screenSpaceEffects.IsRayReconstructionActive())
             {
                 ImGui::TextColored(
                     ImVec4(0.4f, 0.85f, 0.4f, 1.0f),
-                    "  ↳ Active — reconstructing RT signal (NRD + SR bypassed).");
+                    "    Active - reconstructing RT signal (NRD + SR bypassed).");
             }
 
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
