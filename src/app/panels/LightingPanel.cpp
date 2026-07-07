@@ -1216,11 +1216,16 @@ void LightingPanel::Draw(
             currentAaMode == AntiAliasingMode::DLAA || currentAaMode == AntiAliasingMode::DLSS;
         if (dlssModeActive)
         {
-            // Ray Reconstruction (devdoc/dxr-dlss-rr.md). Replaces the NRD denoisers + the SR model
-            // with one neural pass. Disabled when RR isn't supported; full precondition gating
-            // (requires an RT feature on) and NRD-controls-disable arrive in a later RR phase.
+            // Ray Reconstruction (devdoc/dxr-dlss-rr.md, Phase RR5). Replaces the NRD denoisers + the
+            // SR model with one neural pass. Precondition-gated: needs DLSS-RR support AND an active RT
+            // feature to reconstruct. Disabled with a reason string otherwise (checkbox stays visible).
+            const DxrSettings& rrDxrSettings = renderer.GetDxrSettings();
+            const bool rrHasRtSignal = rrDxrSettings.IsEnabled()
+                && (rrDxrSettings.IsReflectionsEnabled() || rrDxrSettings.IsShadowsEnabled()
+                    || rrDxrSettings.IsGiEnabled());
             const bool rrSupported = dlss.IsReady() && dlss.IsRrSupported();
-            if (!rrSupported)
+            const bool rrAvailable = rrSupported && rrHasRtSignal;
+            if (!rrAvailable)
             {
                 ImGui::BeginDisabled();
             }
@@ -1239,9 +1244,24 @@ void LightingPanel::Draw(
                     "DLSS Ray Reconstruction: replaces the NRD denoisers AND the DLSS SR model with "
                     "one neural pass. Needs RT reflections/GI/shadows on to have a signal to reconstruct.");
             }
-            if (!rrSupported)
+            if (!rrAvailable)
             {
                 ImGui::EndDisabled();
+                // Explain WHY it's greyed so the gate is discoverable, not mysterious.
+                if (!rrSupported)
+                {
+                    ImGui::TextDisabled("  ↳ Requires NVIDIA RTX GPU + recent driver (DLSS 3.5).");
+                }
+                else
+                {
+                    ImGui::TextDisabled("  ↳ Enable a ray-traced feature (reflections / GI / shadows) first.");
+                }
+            }
+            else if (screenSpaceEffects.IsRayReconstructionActive())
+            {
+                ImGui::TextColored(
+                    ImVec4(0.4f, 0.85f, 0.4f, 1.0f),
+                    "  ↳ Active — reconstructing RT signal (NRD + SR bypassed).");
             }
 
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
@@ -1841,6 +1861,11 @@ void LightingPanel::Draw(
 
         DxrSettings& dxrSettings = renderer.GetDxrSettings();
 
+        // RR5: when Ray Reconstruction is running it replaces the NRD denoisers entirely, so their
+        // tuning controls are inert. Render them disabled with a reason (not hidden) — toggling RR off
+        // brings them back live. The RT feature enables + trace params stay live (RR consumes them).
+        const bool rrActive = screenSpaceEffects.IsRayReconstructionActive();
+
         if (!raytracingSupported)
         {
             ImGui::BeginDisabled();
@@ -1933,6 +1958,11 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        if (rrActive)
+        {
+            ImGui::TextDisabled("Reflection denoise (NRD RELAX): handled by Ray Reconstruction.");
+            ImGui::BeginDisabled();
+        }
         bool denoiseEnabled = dxrSettings.IsDenoiseEnabled();
         UndoableRendererCheckbox(
             "Denoise enabled",
@@ -1977,6 +2007,10 @@ void LightingPanel::Draw(
                 target.GetRenderer().GetDxrSettings().SetReflectionAntiFireflyEnabled(enabled);
                 target.MarkDirty();
             });
+        if (rrActive)
+        {
+            ImGui::EndDisabled();
+        }
 
         int aoRays = dxrSettings.GetReflectionAoRays();
         UndoableRendererSliderInt(
@@ -2035,6 +2069,11 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        if (rrActive)
+        {
+            ImGui::TextDisabled("Shadow denoise (NRD SIGMA): handled by Ray Reconstruction.");
+            ImGui::BeginDisabled();
+        }
         bool shadowDenoise = dxrSettings.IsShadowDenoiseEnabled();
         UndoableRendererCheckbox(
             "Shadow denoise (SIGMA)",
@@ -2044,6 +2083,10 @@ void LightingPanel::Draw(
                 target.GetRenderer().GetDxrSettings().SetShadowDenoiseEnabled(enabled);
                 target.MarkDirty();
             });
+        if (rrActive)
+        {
+            ImGui::EndDisabled();
+        }
 
         // Phase D9 — RT diffuse GI (devdoc/dxr-diffuse-gi.md). One-bounce diffuse bounce light
         // added into the indirect buffer; mutually exclusive with SSGI inject.
@@ -2076,6 +2119,11 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        if (rrActive)
+        {
+            ImGui::TextDisabled("GI denoise (NRD RELAX): handled by Ray Reconstruction.");
+            ImGui::BeginDisabled();
+        }
         bool giDenoise = dxrSettings.IsGiDenoiseEnabled();
         UndoableRendererCheckbox(
             "GI denoise (RELAX)",
@@ -2085,6 +2133,10 @@ void LightingPanel::Draw(
                 target.GetRenderer().GetDxrSettings().SetGiDenoiseEnabled(enabled);
                 target.MarkDirty();
             });
+        if (rrActive)
+        {
+            ImGui::EndDisabled();
+        }
 
         ImGui::TextDisabled(
             "Additive over ambient; reduces to an ambient boost at v1. Lower Environment\n"

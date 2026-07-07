@@ -28,3 +28,6 @@ Optional: copy `dxcompiler.dll` and `dxil.dll` into `vendor/dxc/x64/` before bui
 - [SSGI groundwork](devdoc/ssgi-groundwork.md) — prerequisites and phased plan before production screen-space GI.
 - [SSGI quality tracker](devdoc/ssgi-quality-tracker.md) — open quality bugs, tuning notes, and fix order.
 - [SSR groundwork](devdoc/ssr-groundwork.md) — phased plan for screen-space reflections (specular IBL replacement).
+- [DXR groundwork](devdoc/dxr-groundwork.md) — ray-tracing roadmap: RT reflections, shadows, and diffuse GI on DXR 1.1 + NRD.
+- [DLSS Super Resolution](devdoc/dlss-super-resolution.md) — NVIDIA DLSS-SR / DLAA via Streamline (the resolve/upscale path).
+- [DLSS Ray Reconstruction](devdoc/dxr-dlss-rr.md) — DLSS-RR: one neural pass replacing NRD + SR for the RT signal (additive, toggle-gated).
