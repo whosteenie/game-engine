@@ -343,10 +343,16 @@ namespace
         HandleMaterialFieldEditEvents(editContext);
 
         float roughness = material.GetRoughness();
-        if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
+        if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f))
         {
             material.SetRoughness(roughness);
             scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "0 = perfect mirror (stored in the G-buffer for RT/SSR). "
+                "Direct sun specular still uses a small BRDF floor to avoid GGX singularities.");
         }
         HandleMaterialFieldEditEvents(editContext);
 

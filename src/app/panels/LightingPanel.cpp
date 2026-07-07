@@ -2377,7 +2377,7 @@ void LightingPanel::Draw(
         else if (debugMode == static_cast<int>(RenderDebugMode::GBufferRoughness))
         {
             ImGui::TextWrapped(
-                "Per-pixel roughness in [0.04, 1]. White = fully rough; black = smoothest allowed value.");
+                "Per-pixel roughness in [0, 1]. White = fully rough; black = mirror-smooth (0).");
         }
         else if (debugMode == static_cast<int>(RenderDebugMode::GBufferMetallic))
         {

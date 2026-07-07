@@ -776,8 +776,10 @@ PSOutput main(PSInput input)
     {
         roughness *= uRoughnessMap.Sample(uRoughnessSampler, roughnessTexCoord).r;
     }
-    roughness = clamp(roughness, 0.04, 1.0);
+    roughness = clamp(roughness, 0.0, 1.0);
     metallic = clamp(metallic, 0.0, 1.0);
+    // GGX NDF/geometry need a non-zero alpha; keep the authored roughness (incl. 0) in the G-buffer.
+    const float roughnessBrdf = max(roughness, 0.04);
 
     float3 emissiveLinear = max(uEmissive, 0.0.xxx);
     if (uUseEmissiveMap != 0)
@@ -859,7 +861,7 @@ PSOutput main(PSInput input)
             viewDir,
             lightDir,
             albedo,
-            roughness,
+            roughnessBrdf,
             metallic,
             radiance,
             diffuseNdotL,

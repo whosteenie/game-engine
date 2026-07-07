@@ -17,6 +17,7 @@
 #include "engine/rendering/Texture.h"
 
 #include <array>
+#include <algorithm>
 #include <filesystem>
 #include <glm/glm.hpp>
 #include <nlohmann/json.hpp>
@@ -426,7 +427,7 @@ void Material::SetAlbedo(const glm::vec3& albedo)
 
 void Material::SetRoughness(float roughness)
 {
-    m_roughness = roughness;
+    m_roughness = std::clamp(roughness, 0.0f, 1.0f);
 }
 
 void Material::SetMetallic(float metallic)
