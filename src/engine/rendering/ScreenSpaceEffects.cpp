@@ -707,6 +707,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_rrDiffuseAlbedoTarget);
     DestroyInternalTarget(m_rrSpecularAlbedoTarget);
     DestroyInternalTarget(m_rrNormalRoughnessTarget);
+    DestroyInternalTarget(m_rrSpecularHitDistanceTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -1124,6 +1125,9 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_rrDiffuseAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrSpecularAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrNormalRoughnessTarget, width, height, format);
+    // RR4 spec hit-distance guide: single-channel raw ray length in world units (unambiguous channel).
+    const int hitDistFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
+    ResizeInternalTarget(m_rrSpecularHitDistanceTarget, width, height, hitDistFormat);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1885,10 +1889,32 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         m_rrGuidesShader->SetInt("uMaterial0Map", 1);
         m_rrGuidesShader->SetInt("uMaterial1Map", 2);
         m_rrGuidesShader->SetInt("uGuideMode", pass.second);
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleX", m_dxrReflectionUvScaleX);
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleY", m_dxrReflectionUvScaleY);
         m_rrGuidesShader->BindTextureSlot(0, normalSrv);
         m_rrGuidesShader->BindTextureSlot(1, material0Srv);
         m_rrGuidesShader->BindTextureSlot(2, material1Srv);
+        // t3 (reflection) is unused in modes 0-2 but must be a valid descriptor; bind a placeholder.
+        m_rrGuidesShader->BindTextureSlot(3, m_dxrReflectionSrv != 0 ? m_dxrReflectionSrv : normalSrv);
         DrawFullscreenToTarget(*m_rrGuidesShader, *pass.first, m_width, m_height, clear);
+    }
+
+    // RR4 spec hit-distance guide (mode 3): only when a raw RT reflection buffer exists this frame
+    // (reflections on). Its .a carries the reflection ray length in world units; RR uses it to
+    // reproject/sharpen reflections. Skipped otherwise — RR runs fine without this optional guide.
+    if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
+    {
+        m_rrGuidesShader->Use(false);
+        m_rrGuidesShader->SetInt("uGuideMode", 3);
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleX", m_dxrReflectionUvScaleX);
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleY", m_dxrReflectionUvScaleY);
+        m_rrGuidesShader->BindTextureSlot(0, normalSrv);      // unused in mode 3, keep slots bound
+        m_rrGuidesShader->BindTextureSlot(1, material0Srv);
+        m_rrGuidesShader->BindTextureSlot(2, material1Srv);
+        m_rrGuidesShader->BindTextureSlot(3, m_dxrReflectionSrv);
+        DrawFullscreenToTarget(
+            *m_rrGuidesShader, const_cast<InternalTarget&>(m_rrSpecularHitDistanceTarget),
+            m_width, m_height, clear);
     }
     guideScope.Success();
 }
@@ -3941,6 +3967,13 @@ void ScreenSpaceEffects::Apply(
                 in.specularAlbedoState = m_rrSpecularAlbedoTarget.resourceState;
                 in.normalRoughness = m_rrNormalRoughnessTarget.resource;
                 in.normalRoughnessState = m_rrNormalRoughnessTarget.resourceState;
+                // RR4: optional spec hit-distance guide — only when reflections produced a raw buffer
+                // this frame (GenerateRrGuides wrote it). Null otherwise; RR runs without it.
+                if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
+                {
+                    in.specularHitDistance = m_rrSpecularHitDistanceTarget.resource;
+                    in.specularHitDistanceState = m_rrSpecularHitDistanceTarget.resourceState;
+                }
                 std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
                 const glm::mat4 viewToWorld = glm::inverse(view);
                 std::memcpy(in.cameraViewToWorld, glm::value_ptr(viewToWorld), sizeof(float) * 16);

@@ -81,6 +81,10 @@ struct DlssFrameInputs
     unsigned int specularAlbedoState = 0;
     void* normalRoughness = nullptr; // kBufferTypeNormalRoughness (PACKED): normal.rgb + roughness.a
     unsigned int normalRoughnessState = 0;
+    // Optional (RR4): kBufferTypeSpecularHitDistance — raw reflection ray length in world units.
+    // Tagged only when non-null (reflections on); RR runs without it otherwise. Sharpens reflections.
+    void* specularHitDistance = nullptr;
+    unsigned int specularHitDistanceState = 0;
     float worldToCameraView[16] = {}; // DLSSDOptions requires the view + inverse-view matrices
     float cameraViewToWorld[16] = {};
 };

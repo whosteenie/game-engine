@@ -424,9 +424,10 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     sl::Resource diffuseAlbedo{};
     sl::Resource specularAlbedo{};
     sl::Resource normalRoughness{};
+    sl::Resource specularHitDistance{};
 
     std::vector<sl::ResourceTag> tags;
-    tags.reserve(7);
+    tags.reserve(8);
     tags.emplace_back(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent);
     tags.emplace_back(
         &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent);
@@ -449,6 +450,16 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
             &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
         tags.emplace_back(
             &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent);
+        // Optional spec hit-distance guide (RR4): present only when reflections ran this frame.
+        if (inputs.specularHitDistance != nullptr)
+        {
+            specularHitDistance = MakeTex(
+                inputs.specularHitDistance, inputs.specularHitDistanceState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &specularHitDistance, sl::kBufferTypeSpecularHitDistance,
+                sl::ResourceLifecycle::eValidUntilPresent);
+        }
     }
     if (g_slSetTag(viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)

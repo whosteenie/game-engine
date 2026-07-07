@@ -469,6 +469,7 @@ private:
     InternalTarget m_rrDiffuseAlbedoTarget;   // albedo * (1 - metallic)
     InternalTarget m_rrSpecularAlbedoTarget;  // F0 = lerp(0.04, albedo, metallic)
     InternalTarget m_rrNormalRoughnessTarget; // packed: world normal rgb + roughness a
+    InternalTarget m_rrSpecularHitDistanceTarget; // R16F reflection ray length (world units), RR4
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
