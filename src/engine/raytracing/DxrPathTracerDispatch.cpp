@@ -137,7 +137,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.environmentIntensity = frameInputs.environmentIntensity;
     constants.maxReflectionLod = frameInputs.maxReflectionLod;
     constants.frameIndex = m_frameIndex;
-    constants.samplesPerPixel = 1;
+    constants.samplesPerPixel = 4; // P2: max path bounces (tunable in P5)
     constants.sunDirection[0] = frameInputs.sunDirection.x;
     constants.sunDirection[1] = frameInputs.sunDirection.y;
     constants.sunDirection[2] = frameInputs.sunDirection.z;

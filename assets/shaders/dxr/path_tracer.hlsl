@@ -1,28 +1,27 @@
-// DXR path tracer — Phase P1 direct lighting (devdoc/dxr-path-tracing.md).
+// DXR path tracer — Phase P2 core integrator (devdoc/dxr-path-tracing.md).
 //
-// P0 proved pure camera-ray tracing via a separate PT RTPSO/SBT. P1 replaces the normal debug
-// output with a direct-only HDR image at the primary hit: sun NEE + binary shadow ray, emissive,
-// and prefiltered environment on miss. No multi-bounce GI yet (P2).
-//
-// Reuses the reflection global root signature + DxrRootSignature::ReflectionDispatchConstants so
-// material table (t12), bindless albedo (space1), and prefiltered env (t10) bind the same way as
-// the hybrid RT passes. MaxTraceRecursionDepth = 2 for nested shadow rays.
+// Megakernel: the raygen owns the bounce loop (throughput + NEE + BRDF sampling + Russian roulette).
+// Closest-hit only extracts surface data; shadow and bounce traces originate from raygen so
+// MaxTraceRecursionDepth = 1 suffices. P1 direct-only shading is subsumed by the loop.
 
 #include "hit_shading.hlsli"
 
-RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = hit distance
+RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = primary hit distance
 RWTexture2D<uint2> g_Metadata : register(u1);  // (instanceId+1, primitiveIndex)
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
+static const uint kPayloadFlagVisibility = 2u;
+static const uint kRussianRouletteStartBounce = 3u;
+static const float kRussianRouletteMaxProb = 0.95;
 
 struct Payload
 {
-    float3 radiance;
+    float3 normal;
     float hitDistance;
-    uint hit;
     uint instanceId;
     uint primitiveIndex;
-    uint _pad;
+    uint hit;
+    float2 barycentrics;
 };
 
 float2 PixelToClipXY(float2 texCoord)
@@ -32,15 +31,67 @@ float2 PixelToClipXY(float2 texCoord)
 
 void ResetPayload(inout Payload payload)
 {
-    payload.radiance = 0.0.xxx;
+    payload.normal = float3(0.0, 0.0, 1.0);
     payload.hitDistance = 0.0;
-    payload.hit = 0;
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
-    payload._pad = 0;
+    payload.hit = 0;
+    payload.barycentrics = 0.0.xx;
 }
 
-// Binary visibility along a ray (same contract as reflections.hlsl TraceVisibility).
+// GGX VNDF half-vector sampling (Heitz 2018) — same as reflections.hlsl.
+float3 SampleGgxVndfHalfVector(float3 normal, float3 viewWorld, float roughness, float2 xi)
+{
+    const float alpha = max(roughness * roughness, 1e-3);
+
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(normal, tangent, bitangent);
+
+    const float3 viewTangent = float3(
+        dot(viewWorld, tangent),
+        dot(viewWorld, bitangent),
+        dot(viewWorld, normal));
+
+    const float3 stretchedView =
+        normalize(float3(alpha * viewTangent.x, alpha * viewTangent.y, viewTangent.z));
+
+    const float lenSq = stretchedView.x * stretchedView.x + stretchedView.y * stretchedView.y;
+    const float3 basis1 = lenSq > 1e-7
+        ? float3(-stretchedView.y, stretchedView.x, 0.0) * rsqrt(lenSq)
+        : float3(1.0, 0.0, 0.0);
+    const float3 basis2 = cross(stretchedView, basis1);
+
+    const float r = sqrt(xi.x);
+    const float phi = 2.0 * kPi * xi.y;
+    const float t1 = r * cos(phi);
+    float t2 = r * sin(phi);
+    const float s = 0.5 * (1.0 + stretchedView.z);
+    t2 = (1.0 - s) * sqrt(saturate(1.0 - t1 * t1)) + s * t2;
+
+    const float3 halfStretched = t1 * basis1 + t2 * basis2
+        + sqrt(saturate(1.0 - t1 * t1 - t2 * t2)) * stretchedView;
+
+    const float3 halfTangent = normalize(float3(
+        alpha * halfStretched.x,
+        alpha * halfStretched.y,
+        max(halfStretched.z, 1e-6)));
+
+    return normalize(
+        tangent * halfTangent.x + bitangent * halfTangent.y + normal * halfTangent.z);
+}
+
+float3 CosineSampleHemisphere(float3 normal, float2 xi)
+{
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(normal, tangent, bitangent);
+    const float radius = sqrt(saturate(xi.x));
+    const float phi = 2.0 * kPi * xi.y;
+    const float z = sqrt(max(1.0 - xi.x, 0.0));
+    return normalize(tangent * (radius * cos(phi)) + bitangent * (radius * sin(phi)) + normal * z);
+}
+
 float TraceVisibility(float3 origin, float3 direction, float tMax)
 {
     RayDesc ray;
@@ -51,7 +102,7 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
 
     Payload probe;
     ResetPayload(probe);
-    probe.hit = 1; // assume occluded; PathTracerMiss clears to 0 when the ray escapes
+    probe.hit = kPayloadFlagVisibility;
 
     const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
         | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
@@ -59,15 +110,7 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
     return probe.hit == 0 ? 1.0 : 0.0;
 }
 
-// P1 direct lighting at the primary hit: Lambert sun (NEE + shadow) + emissive. No SH ambient or
-// specular env yet — those arrive with multi-bounce GI in P2.
-float3 ShadePrimaryDirect(
-    uint instanceId,
-    uint primitiveIndex,
-    float2 barycentrics,
-    float3 hitNormal,
-    float3 viewDir,
-    float3 shadowOrigin)
+float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycentrics)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
     const MaterialEntry material = g_Materials[instanceId];
@@ -82,26 +125,63 @@ float3 ShadePrimaryDirect(
                 .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
         albedo *= texel;
     }
+    return albedo;
+}
 
-    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
-    const float nDotV = saturate(dot(hitNormal, viewDir));
-    const float3 specularEnergy =
-        FresnelSchlickRoughnessGi(nDotV, f0, max(material.roughness, 0.55));
-    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
-    const float3 diffuseAlbedo = albedo * diffuseEnergy;
-
+float3 EvaluateDirectSun(
+    float3 diffuseAlbedo, float3 hitNormal, float3 shadowOrigin)
+{
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
-    float sunVis = 0.0;
-    if (ndotl > 0.0)
+    if (ndotl <= 0.0)
     {
-        sunVis = TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+        return 0.0.xxx;
     }
 
+    const float sunVis = TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
+    return diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
+}
 
-    return ClampRadiance(max(direct + material.emissive, 0.0.xxx));
+bool SampleNextBounceDirection(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 hitNormal,
+    float3 viewDir,
+    float3 f0,
+    float3 diffuseAlbedo,
+    float roughness,
+    float metallic,
+    out float3 nextDir,
+    inout float3 throughput)
+{
+    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
+    const float3 specularEnergy =
+        FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(roughness, 0.55));
+
+    float specProb = saturate(max(specularEnergy.r, max(specularEnergy.g, specularEnergy.b)));
+    specProb = lerp(specProb, 1.0, metallic);
+
+    const float lobeXi = xi.z;
+    const bool traceSpecular = (lobeXi < specProb) && (roughness < 0.95);
+
+    if (traceSpecular)
+    {
+        const float3 halfVector = SampleGgxVndfHalfVector(hitNormal, viewDir, roughness, xi.xy);
+        nextDir = normalize(reflect(-viewDir, halfVector));
+        if (dot(nextDir, hitNormal) <= 1e-4)
+        {
+            nextDir = normalize(reflect(-viewDir, hitNormal));
+        }
+        throughput *= f0 / max(specProb, 1e-3);
+    }
+    else
+    {
+        nextDir = CosineSampleHemisphere(hitNormal, xi.xy);
+        throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-3);
+    }
+
+    return traceSpecular;
 }
 
 [shader("raygeneration")]
@@ -113,53 +193,135 @@ void PathTracerRayGen()
         return;
     }
 
-    const float2 texCoord = (float2(pixel) + 0.5) / float2(g_OutputSize);
+    const float4 primaryXi = RandomXi4(pixel, g_FrameIndex, 0u);
+    const float2 texCoord = (float2(pixel) + primaryXi.zw) / float2(g_OutputSize);
     const float2 clipXY = PixelToClipXY(texCoord);
 
     const float4 farH = mul(g_InvViewProj, float4(clipXY, 1.0, 1.0));
     const float3 farWorld = farH.xyz / farH.w;
-    const float3 rayDir = normalize(farWorld - g_CameraPos);
+    const float3 cameraRayDir = normalize(farWorld - g_CameraPos);
+
+    const uint maxBounces = clamp(g_SamplesPerPixel, 1u, 8u);
+
+    float3 radiance = 0.0.xxx;
+    float3 throughput = 1.0.xxx;
 
     RayDesc ray;
     ray.Origin = g_CameraPos;
-    ray.Direction = rayDir;
+    ray.Direction = cameraRayDir;
     ray.TMin = 0.001;
     ray.TMax = g_MaxTraceDistance;
 
-    Payload payload;
-    ResetPayload(payload);
-    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
+    uint primaryInstanceId = 0u;
+    uint primaryPrimitiveIndex = 0u;
+    float primaryHitDistance = g_MaxTraceDistance;
+    bool primaryHit = false;
 
-    if (payload.hit != 0)
+    [loop]
+    for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
     {
-        g_Output[pixel] = float4(payload.radiance, payload.hitDistance);
-        g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);
+        Payload payload;
+        ResetPayload(payload);
+        TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
+
+        if (payload.hit == 0)
+        {
+            const float missRoughness = bounce == 0u ? 0.0 : 1.0;
+            radiance += throughput * SampleEnvironment(ray.Direction, missRoughness);
+            break;
+        }
+
+        const MaterialEntry material = g_Materials[payload.instanceId];
+        const float3 albedo = SampleSurfaceAlbedo(
+            payload.instanceId, payload.primitiveIndex, payload.barycentrics);
+        const float3 hitNormal = payload.normal;
+        const float3 viewDir = -ray.Direction;
+        const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
+        const float3 shadowOrigin = hitPos + hitNormal * max(payload.hitDistance * 0.001, 0.002);
+
+        const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+        const float3 specularEnergy =
+            FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(material.roughness, 0.55));
+        const float3 diffuseAlbedo = albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+
+        radiance += throughput * material.emissive;
+        radiance += throughput * EvaluateDirectSun(diffuseAlbedo, hitNormal, shadowOrigin);
+
+        if (bounce == 0u)
+        {
+            primaryHit = true;
+            primaryInstanceId = payload.instanceId;
+            primaryPrimitiveIndex = payload.primitiveIndex;
+            primaryHitDistance = payload.hitDistance;
+        }
+
+        if (bounce >= maxBounces)
+        {
+            // Terminal-bounce rule: fade to environment instead of zero (devdoc P2).
+            const float3 terminalDir = normalize(reflect(-viewDir, hitNormal));
+            radiance += throughput * SampleEnvironment(terminalDir, material.roughness);
+            break;
+        }
+
+        float3 nextDir;
+        SampleNextBounceDirection(
+            pixel,
+            bounce,
+            hitNormal,
+            viewDir,
+            f0,
+            diffuseAlbedo,
+            material.roughness,
+            material.metallic,
+            nextDir,
+            throughput);
+
+        if (bounce >= kRussianRouletteStartBounce)
+        {
+            const float rrProb = min(
+                max(throughput.r, max(throughput.g, throughput.b)),
+                kRussianRouletteMaxProb);
+            const float rrXi = RandomXi4(pixel, g_FrameIndex, bounce + 64u).w;
+            if (rrProb <= 1e-4 || rrXi > rrProb)
+            {
+                break;
+            }
+            throughput /= rrProb;
+        }
+
+        const float nDotV = saturate(dot(hitNormal, viewDir));
+        ray.Origin = hitPos + hitNormal * max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV));
+        ray.Direction = nextDir;
     }
-    else
-    {
-        g_Output[pixel] = float4(payload.radiance, g_MaxTraceDistance);
-        g_Metadata[pixel] = uint2(0, 0);
-    }
+
+    radiance = ClampRadiance(radiance);
+    g_Output[pixel] = float4(radiance, primaryHitDistance);
+    g_Metadata[pixel] = primaryHit
+        ? uint2(primaryInstanceId + 1u, primaryPrimitiveIndex)
+        : uint2(0, 0);
 }
 
 [shader("miss")]
 void PathTracerMiss(inout Payload payload)
 {
-    // Visibility probes prime hit=1 (occluded) with zero radiance; reaching miss means unoccluded.
-    const bool visibilityProbe = (payload.hit != 0u && all(payload.radiance == 0.0));
-    payload.hit = 0;
-    if (visibilityProbe)
+    if (payload.hit == kPayloadFlagVisibility)
     {
+        payload.hit = 0;
         return;
     }
 
-    payload.radiance = SampleEnvironment(WorldRayDirection(), 0.0);
+    payload.hit = 0;
     payload.hitDistance = g_MaxTraceDistance;
 }
 
 [shader("closesthit")]
 void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
+    if (payload.hit == kPayloadFlagVisibility)
+    {
+        return;
+    }
+
     const uint instanceId = InstanceID();
     const uint primitiveIndex = PrimitiveIndex();
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
@@ -177,14 +339,10 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         hitNormal = -hitNormal;
     }
 
-    const float3 hitPos = WorldRayOrigin() + rayDir * hitT;
-    const float3 shadowOrigin = hitPos + hitNormal * max(hitT * 0.001, 0.002);
-    const float3 viewDir = -rayDir;
-
     payload.hit = 1;
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;
-    payload.radiance = ShadePrimaryDirect(
-        instanceId, primitiveIndex, attribs.barycentrics, hitNormal, viewDir, shadowOrigin);
+    payload.normal = hitNormal;
+    payload.barycentrics = attribs.barycentrics;
 }

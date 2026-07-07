@@ -12,10 +12,10 @@
 class Camera;
 class DxrAccelerationStructures;
 
-// Phase P0/P1 — unified path tracer (devdoc/dxr-path-tracing.md).
+// Phase P0/P1/P2 — unified path tracer (devdoc/dxr-path-tracing.md).
 //
-// P0: pure camera-ray tracing with a separate PT RTPSO/SBT.
-// P1: direct-lit HDR radiance at the primary hit (sun NEE + shadow ray + emissive + sky miss).
+// P2: megakernel integrator with multi-bounce BRDF sampling, sun NEE, Russian roulette, and
+// firefly clamp. Reuses the reflection root signature + primary output textures.
 class DxrPathTracerDispatch
 {
 public:

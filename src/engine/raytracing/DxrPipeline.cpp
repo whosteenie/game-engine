@@ -832,9 +832,9 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     }
 
     SmokeRtpsoSubobjects subobjects{};
-    subobjects.shaderConfig.MaxPayloadSizeInBytes = 32;
+    subobjects.shaderConfig.MaxPayloadSizeInBytes = 48;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
-    subobjects.pipelineConfig.MaxTraceRecursionDepth = 2u;
+    subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
 
     subobjects.exportNames = {L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit"};
     subobjects.allRtpsoExportNames = {
