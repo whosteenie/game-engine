@@ -31,7 +31,9 @@ cbuffer ReflectionDispatchConstants : register(b0)
     uint g_AoRayCount; // reflected-hit ambient-occlusion rays (0 = AO off), tunable
     float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
     float g_RoughnessCutoff; // receivers rougher than this skip the trace (env fallback), tunable
-    float3 _padCutoff;
+    float g_SunAngularTanRadius; // tan(sunAngularRadiusDegrees) — soft sun cone at reflection hits
+    float g_GiStrength;      // one-bounce diffuse GI weight at reflection hits
+    uint g_HasGiTrace;       // 1 when RT GI is enabled (world-space bounce trace at hits)
 };
 
 RWTexture2D<float4> g_ReflectionOutput : register(u0);
@@ -76,6 +78,7 @@ struct MaterialEntry
 };
 
 StructuredBuffer<MaterialEntry> g_Materials : register(t12);
+Texture2D<float4> g_GiDenoisedMap : register(t13); // RELAX_DIFFUSE output for screen-space GI lookup
 
 // Bindless: the whole shader-visible SRV heap, indexed by absolute descriptor index. Used to
 // sample per-object albedo textures at the hit point (space1 avoids clashing with t0..t12).
@@ -88,6 +91,7 @@ static const float kPi = 3.14159265;
 static const uint kHitKindTriangleBackFace = 255u;
 static const uint kReflectionRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const float kMaxRadiance = 64.0;
+static const uint kPayloadFlagGiBounce = 2u; // payload.hit sentinel for GI bounce traces
 
 struct Payload
 {
@@ -96,7 +100,7 @@ struct Payload
     float hitDistance;
     float surfaceRoughness; // in: receiver roughness (for miss mip selection)
     uint hit;
-    uint _pad;
+    uint rngPixelPacked; // raygen dispatch pixel (x low 16, y high 16) for closest-hit AO RNG
 };
 
 float2 DepthUvToClipXY(float2 texCoord)
@@ -355,6 +359,13 @@ float3 EvaluateDiffuseIrradianceSh(float3 normal)
     return max(irradiance, 0.0.xxx);
 }
 
+// Fresnel-Schlick with roughness ceiling — matches hit_shading.hlsli / pbr.ps.hlsl energy split.
+float3 FresnelSchlickRoughnessReflection(float cosTheta, float3 f0, float roughness)
+{
+    const float3 maxReflection = max(1.0.xxx - roughness, f0);
+    return f0 + (maxReflection - f0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
 // Analytic split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Avoids
 // binding a BRDF LUT in the reflection root signature; accurate enough for the secondary-bounce
 // specular term at a reflection hit.
@@ -398,12 +409,109 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
     probe.hitDistance = 0.0;
     probe.surfaceRoughness = 0.0;
     probe.hit = 1; // assume occluded; ReflectionMiss clears this to 0 when the ray escapes
-    probe._pad = 0;
+    probe.rngPixelPacked = 0;
 
     const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
         | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
     TraceRay(g_SceneTlas, occlusionFlags, 0xFF, 0, 0, 0, ray, probe);
     return probe.hit == 0 ? 1.0 : 0.0;
+}
+
+// Soft sun visibility at a world-space hit: cone-jittered shadow rays matching shadows.hlsl.
+float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel, uint salt)
+{
+    const float3 sunDir = normalize(g_SunDirection);
+    if (dot(shadingNormal, sunDir) <= 0.0)
+    {
+        return 0.0;
+    }
+
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(sunDir, tangent, bitangent);
+
+    const uint sampleCount = 4u;
+    float visSum = 0.0;
+    [loop]
+    for (uint sampleIndex = 0u; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        const float4 xi = RandomXi4(rngPixel, g_FrameIndex, salt + sampleIndex);
+        const float diskRadius = sqrt(xi.x);
+        const float diskPhi = 2.0 * kPi * xi.y;
+        const float2 disk = float2(diskRadius * cos(diskPhi), diskRadius * sin(diskPhi));
+        const float3 rayDir = normalize(
+            sunDir + (tangent * disk.x + bitangent * disk.y) * g_SunAngularTanRadius);
+        visSum += TraceVisibility(origin, rayDir, g_MaxTraceDistance);
+    }
+    return visSum / float(sampleCount);
+}
+
+// Outgoing radiance from a GI bounce hit toward the reflection receiver (matches hit_shading.hlsli).
+float3 ShadeGiBounceHit(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 hitNormal,
+    float3 viewDir)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const MaterialEntry material = g_Materials[instanceId];
+
+    float3 albedo = material.albedo;
+    if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
+        const float3 texel =
+            g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
+                .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
+        albedo *= texel;
+    }
+
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float nDotV = saturate(dot(hitNormal, viewDir));
+    const float3 specularEnergy =
+        FresnelSchlickRoughnessReflection(nDotV, f0, max(material.roughness, 0.55));
+    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+    const float3 diffuseAlbedo = albedo * diffuseEnergy;
+
+    const float3 sunL = normalize(g_SunDirection);
+    const float ndotl = saturate(dot(hitNormal, sunL));
+    const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
+    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi;
+
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
+    const float3 ambient = diffuseAlbedo * irradiance / kPi;
+
+    const float3 reflectDir = reflect(-viewDir, hitNormal);
+    const float3 specular = SampleEnvironment(reflectDir, material.roughness)
+        * EnvBrdfApprox(f0, material.roughness, nDotV);
+
+    return max(direct + ambient + specular + material.emissive, 0.0.xxx);
+}
+
+float3 TraceDiffuseGiBounce(
+    float3 origin, float3 normal, float3 viewVecTowardReceiver, uint2 rngPixel)
+{
+    const float2 giXi = RandomXi(rngPixel, g_FrameIndex, 24u);
+    const float3 giDir = CosineSampleHemisphere(normal, giXi);
+
+    Payload giProbe;
+    giProbe.radiance = 0.0.xxx;
+    giProbe.confidence = 0.0;
+    giProbe.hitDistance = 0.0;
+    giProbe.surfaceRoughness = 0.0;
+    giProbe.hit = kPayloadFlagGiBounce;
+    giProbe.rngPixelPacked = (rngPixel.x & 0xFFFFu) | (rngPixel.y << 16u);
+
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = giDir;
+    ray.TMin = 0.001;
+    ray.TMax = max(g_MaxTraceDistance, 0.1);
+
+    TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, giProbe);
+    return giProbe.radiance;
 }
 
 [shader("raygeneration")]
@@ -559,7 +667,7 @@ void ReflectionRayGen()
             payload.hitDistance = 0.0;
             payload.surfaceRoughness = sampleRoughness;
             payload.hit = 0;
-            payload._pad = 0;
+            payload.rngPixelPacked = (pixel.x & 0xFFFFu) | (pixel.y << 16u);
 
             TraceRay(g_SceneTlas, kReflectionRayFlags, 0xFF, 0, 0, 0, ray, payload);
 
@@ -589,6 +697,13 @@ void ReflectionRayGen()
 [shader("miss")]
 void ReflectionMiss(inout Payload payload)
 {
+    if (payload.hit == kPayloadFlagGiBounce)
+    {
+        payload.radiance = SampleEnvironment(WorldRayDirection(), 1.0);
+        payload.hit = 0;
+        return;
+    }
+
     // Ray left the scene: prefiltered environment IS the correct radiance. Hit distance is
     // reported as the trace range ("hit at infinity") — NRD uses it for reprojection and the
     // D6 composite will treat far hits as IBL-equivalent.
@@ -618,13 +733,25 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         hitNormal = -hitNormal;
     }
 
+    const uint payloadMode = payload.hit;
     payload.hit = 1;
     payload.hitDistance = hitT;
 
-    // In-hit analytic material shading (devdoc/dxr-nrd-integration.md). Evaluate the surface's
-    // own diffuse response instead of reusing screen-space radiance — this is what makes rough
-    // objects reflect their own color rather than surrounding geometry, and stays correct at
-    // grazing / off-screen angles. v1: diffuse only, no reflected sun shadow.
+    const uint2 rngPixel =
+        uint2(payload.rngPixelPacked & 0xFFFFu, payload.rngPixelPacked >> 16u);
+
+    if (payloadMode == kPayloadFlagGiBounce)
+    {
+        const float3 viewVec = -rayDir;
+        payload.radiance = ShadeGiBounceHit(
+            instanceId, primitiveIndex, attribs.barycentrics, hitNormal, viewVec);
+        payload.hit = 1;
+        return;
+    }
+
+    // In-hit analytic material shading. Screen-space reprojection of the primary G-buffer does
+    // NOT work here (unlike SSR): a reflection hit projects to pixels that usually show unrelated
+    // geometry, which caused misaligned/shimmery reflections. Evaluate lighting at the hit instead.
     const MaterialEntry material = g_Materials[instanceId];
 
     // Textured surfaces carry their color in the albedo map, not the constant. Sample it bindless
@@ -640,36 +767,34 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
                 .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
         albedo *= texel;
     }
-    const float3 diffuseAlbedo = albedo * (1.0 - material.metallic);
 
-    // Occlusion at the hit. The primary view darkens contact crevices via screen-space AO and
-    // cascade shadows; neither is available for an off-screen reflection hit, so without tracing
-    // it here the reflected copy of an object stays fully lit where its primary copy is dark —
-    // the object-colored halo seen where geometry clips into a mirror. Origin is pushed off the
-    // surface along the geometric-ish shading normal to avoid self-intersection.
+    const float3 viewVec = -rayDir;
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float nDotV = saturate(dot(hitNormal, viewVec));
+    const float3 specularEnergy =
+        FresnelSchlickRoughnessReflection(nDotV, f0, max(material.roughness, 0.55));
+    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+    const float3 diffuseAlbedo = albedo * diffuseEnergy;
+
     const float3 hitPos = WorldRayOrigin() + rayDir * hitT;
     const float3 occlusionOrigin = hitPos + hitNormal * max(hitT * 0.001, 0.002);
-    const uint2 dispatchPixel = DispatchRaysIndex().xy;
 
-    // Occlusion only modulates the DIFFUSE terms, so it's invisible on surfaces with no diffuse
-    // lobe. Skip every occlusion ray on metals and near-black materials — a large saving on
-    // metallic reflections at zero visual cost (perf: dxr-groundwork.md).
+    // Occlusion only modulates diffuse; skip on metals/near-black (perf).
     const float diffuseWeight = max(diffuseAlbedo.r, max(diffuseAlbedo.g, diffuseAlbedo.b));
     const bool needsOcclusion = diffuseWeight > 0.02;
 
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    // Only pay for the shadow ray where the sun actually contributes (front-facing + visible diffuse).
-    const float sunVisibility = (needsOcclusion && ndotl > 0.0)
-        ? TraceVisibility(occlusionOrigin, sunL, g_MaxTraceDistance)
-        : 1.0;
-    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * sunVisibility;
+    float softSunVis = 1.0;
+    if (needsOcclusion)
+    {
+        softSunVis = (ndotl > 0.0)
+            ? TraceSoftSunVisibility(occlusionOrigin, hitNormal, rngPixel, 4u)
+            : 0.0;
+    }
+    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * softSunVis;
 
-    // Cosine-weighted ambient occlusion over a bounded radius (contact-scale). Ray count is a
-    // quality/perf tunable (g_AoRayCount): more rays = less noise before the RELAX specular
-    // denoiser smooths it. Skipped entirely on metals/dark surfaces (needsOcclusion) or when the
-    // count is 0.
     const float aoRadius = max(g_MaxTraceDistance * 0.05, 0.5);
     const uint aoRayCount = g_AoRayCount;
     const bool traceAo = needsOcclusion && aoRayCount > 0u;
@@ -680,7 +805,7 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         [loop]
         for (uint aoIndex = 0u; aoIndex < aoRayCount; ++aoIndex)
         {
-            const float2 aoXi = RandomXi(dispatchPixel, g_FrameIndex, aoIndex + 8u);
+            const float2 aoXi = RandomXi(rngPixel, g_FrameIndex, aoIndex + 8u);
             const float3 aoDir = CosineSampleHemisphere(hitNormal, aoXi);
             aoSum += TraceVisibility(occlusionOrigin, aoDir, aoRadius);
         }
@@ -690,20 +815,20 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
     const float3 ambient = diffuseAlbedo * irradiance / kPi * aoVisibility;
 
-    // Specular environment IBL at the hit (multi-bounce v1). Reflect the incoming ray about the hit
-    // normal, sample the prefiltered environment at the surface's roughness, and weight it by
-    // Fresnel + analytic env BRDF. This is what stops a metal/mirror SEEN IN a reflection from
-    // reading black: metals have no diffuse lobe, so without this term their reflected image is just
-    // emissive. A true "hall of mirrors" would trace a secondary ray here; this env sample is the
-    // terminal approximation for that bounce.
-    const float3 viewVec = -rayDir;
-    const float nDotV = saturate(dot(hitNormal, viewVec));
-    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
-    const float3 reflectDir = reflect(rayDir, hitNormal);
-    const float3 specular =
-        SampleEnvironment(reflectDir, material.roughness) * EnvBrdfApprox(f0, material.roughness, nDotV);
+    float3 giBounce = 0.0.xxx;
+    if (g_HasGiTrace != 0u && needsOcclusion)
+    {
+        giBounce = TraceDiffuseGiBounce(occlusionOrigin, hitNormal, viewVec, rngPixel);
+    }
 
-    payload.radiance = max(direct + ambient + specular + material.emissive, 0.0.xxx);
+    const float3 reflectDir = reflect(rayDir, hitNormal);
+    float3 specular = SampleEnvironment(reflectDir, material.roughness)
+        * EnvBrdfApprox(f0, material.roughness, nDotV);
+    specular *= TraceVisibility(occlusionOrigin, reflectDir, g_MaxTraceDistance);
+
+    payload.radiance = max(
+        direct + ambient + diffuseAlbedo * giBounce * g_GiStrength + specular + material.emissive,
+        0.0.xxx);
 
     const float distance01 = saturate(hitT / max(g_MaxTraceDistance, 1e-4));
     const float distanceWeight = 1.0 - distance01 * distance01;

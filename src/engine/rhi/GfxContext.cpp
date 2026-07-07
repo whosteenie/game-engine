@@ -688,14 +688,10 @@ void GfxContext::Resize(int width, int height)
         return;
     }
 
-    if (m_frameRecording)
-    {
-        m_pendingResizeWidth = width;
-        m_pendingResizeHeight = height;
-        return;
-    }
-
-    ResizeInternal(width, height);
+    // Always defer swapchain resize to BeginFrame so rapid window drags coalesce into one
+    // WaitForGpu + ResizeBuffers instead of stalling on every GLFW size callback.
+    m_pendingResizeWidth = width;
+    m_pendingResizeHeight = height;
 }
 
 void GfxContext::BeginFrame()

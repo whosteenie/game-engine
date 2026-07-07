@@ -29,7 +29,7 @@ PFun_slIsFeatureSupported* g_slIsFeatureSupported = nullptr;
 // Core evaluate/tag/constants exports (all C exports from sl.interposer.dll).
 PFun_slGetNewFrameToken* g_slGetNewFrameToken = nullptr;
 PFun_slSetConstants* g_slSetConstants = nullptr;
-PFun_slSetTag* g_slSetTag = nullptr;
+PFun_slSetTagForFrame* g_slSetTagForFrame = nullptr;
 PFun_slEvaluateFeature* g_slEvaluateFeature = nullptr;
 PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
 PFun_slUpgradeInterface* g_slUpgradeInterface = nullptr;
@@ -165,7 +165,7 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     SL_RESOLVE(slIsFeatureSupported)
     SL_RESOLVE(slGetNewFrameToken)
     SL_RESOLVE(slSetConstants)
-    SL_RESOLVE(slSetTag)
+    SL_RESOLVE(slSetTagForFrame)
     SL_RESOLVE(slEvaluateFeature)
     SL_RESOLVE(slGetFeatureFunction)
     SL_RESOLVE(slUpgradeInterface)
@@ -193,7 +193,8 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     pref.featuresToLoad = kFeaturesToLoad;
     pref.numFeaturesToLoad = static_cast<uint32_t>(std::size(kFeaturesToLoad));
     // We restore command-list state ourselves after slEvaluateFeature (default SL behavior).
-    pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
+    pref.flags = sl::PreferenceFlags::eDisableCLStateTracking
+        | sl::PreferenceFlags::eUseFrameBasedResourceTagging;
     pref.applicationId = kApplicationId;
 
     const sl::Result initResult = g_slInit(pref, sl::kSDKVersion);
@@ -318,7 +319,7 @@ void DlssContext::Shutdown()
     g_slIsFeatureSupported = nullptr;
     g_slGetNewFrameToken = nullptr;
     g_slSetConstants = nullptr;
-    g_slSetTag = nullptr;
+    g_slSetTagForFrame = nullptr;
     g_slEvaluateFeature = nullptr;
     g_slGetFeatureFunction = nullptr;
     g_slDLSSSetOptions = nullptr;
@@ -391,8 +392,8 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     {
         return false;
     }
-    if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr || g_slSetTag == nullptr
-        || g_slEvaluateFeature == nullptr)
+    if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr
+        || g_slSetTagForFrame == nullptr || g_slEvaluateFeature == nullptr)
     {
         return false;
     }
@@ -424,7 +425,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     sl::Resource mvec = MakeTex(
         inputs.motionVectors, inputs.motionVectorsState, inputs.renderWidth, inputs.renderHeight);
 
-    // Guide resources must outlive the slSetTag call (the tags hold pointers to them).
+    // Guide resources must outlive the slSetTagForFrame call (the tags hold pointers to them).
     sl::Resource diffuseAlbedo{};
     sl::Resource specularAlbedo{};
     sl::Resource normalRoughness{};
@@ -465,7 +466,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
                 sl::ResourceLifecycle::eValidUntilPresent);
         }
     }
-    if (g_slSetTag(viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
+    if (g_slSetTagForFrame(*frameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)
     {
         return false;
@@ -478,6 +479,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     CopyMatrix(consts.prevClipToClip, inputs.prevClipToClip);
     consts.jitterOffset = sl::float2(inputs.jitterX, inputs.jitterY);
     consts.mvecScale = sl::float2(inputs.mvecScaleX, inputs.mvecScaleY);
+    consts.cameraPinholeOffset = sl::float2(0.0f, 0.0f);
     consts.cameraPos = sl::float3(inputs.cameraPos[0], inputs.cameraPos[1], inputs.cameraPos[2]);
     consts.cameraUp = sl::float3(inputs.cameraUp[0], inputs.cameraUp[1], inputs.cameraUp[2]);
     consts.cameraRight =
@@ -490,6 +492,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.cameraAspectRatio = inputs.cameraAspect;
     consts.depthInverted = inputs.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.cameraMotionIncluded = sl::Boolean::eTrue;
+    consts.orthographicProjection = sl::Boolean::eFalse;
     consts.motionVectors3D = sl::Boolean::eFalse;
     consts.motionVectorsDilated = sl::Boolean::eFalse;
     consts.motionVectorsJittered = sl::Boolean::eFalse;

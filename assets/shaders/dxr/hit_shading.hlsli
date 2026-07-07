@@ -29,6 +29,10 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float3 g_SunColor;
     uint g_AoRayCount; // reflection-only AO ray count; unused by the GI pass (kept for layout parity)
     float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
+    float g_RoughnessCutoff; // reflection-only; unused by GI (layout parity)
+    float g_SunAngularTanRadius;
+    float g_GiStrength;
+    uint g_HasGiTrace;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

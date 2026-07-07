@@ -584,6 +584,114 @@ void SceneRenderer::RecordDxrPass(
         m_dxrSettings.GetMaxTraceDistance());
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
 
+    // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
+    // reflection hits know GI is enabled; bounce lighting is traced world-space at each hit.
+    const bool giDebugViewActive = IsRtGiDebugMode(debugMode);
+    const bool giWanted = m_dxrSettings.IsGiEnabled() || giDebugViewActive;
+    bool giDispatched = false;
+
+    if (m_dxrGiDispatch == nullptr)
+    {
+        m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
+    }
+
+    if (giWanted && usePostProcess && m_screenSpaceEffects != nullptr
+        && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
+    {
+        DxrBreadcrumb("render: gi DispatchIfEnabled begin");
+        const GfxContext::GpuTimerScope gpuScopeGi("RT diffuse GI");
+
+        float giQualityScale = 0.75f; // Medium
+        switch (m_dxrSettings.GetReflectionsQuality())
+        {
+        case DxrReflectionsQuality::Low:
+            giQualityScale = 0.5f;
+            break;
+        case DxrReflectionsQuality::High:
+            giQualityScale = 1.0f;
+            break;
+        case DxrReflectionsQuality::Medium:
+        default:
+            giQualityScale = 0.75f;
+            break;
+        }
+
+        const int giWidth =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchWidth) * giQualityScale));
+        const int giHeight =
+            std::max(1, static_cast<int>(static_cast<float>(dispatchHeight) * giQualityScale));
+
+        const IBL& giIbl = m_environmentMap->GetIBL();
+        DxrGiDispatch::FrameInputs giInputs{};
+        giInputs.depthSrvCpuHandle = depthSrvCpuHandle;
+        giInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
+        giInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
+        giInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
+        giInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
+        giInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        giInputs.prefilterSrvCpuHandle = giIbl.GetPrefilterMapSrvCpuHandle();
+        giInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        giInputs.environmentIntensity = giIbl.GetEnvironmentIntensity();
+        giInputs.maxReflectionLod = giIbl.GetMaxReflectionLod();
+
+        giInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
+        giInputs.sunDirection = glm::normalize(GetSunDirection());
+        {
+            const std::vector<Light>& lights = m_lighting.GetLights();
+            const int shadowLightIndex = m_lighting.GetShadowLightIndex();
+            const Light* sun = nullptr;
+            if (shadowLightIndex >= 0
+                && static_cast<std::size_t>(shadowLightIndex) < lights.size()
+                && lights[static_cast<std::size_t>(shadowLightIndex)].GetType() == LightType::Directional)
+            {
+                sun = &lights[static_cast<std::size_t>(shadowLightIndex)];
+            }
+            else
+            {
+                for (const Light& light : lights)
+                {
+                    if (light.GetType() == LightType::Directional)
+                    {
+                        sun = &light;
+                        break;
+                    }
+                }
+            }
+            if (sun != nullptr)
+            {
+                giInputs.sunColor = sun->GetColor();
+                giInputs.sunIntensity = sun->GetIntensity();
+            }
+        }
+        const IrradianceSh9& giSh9 = giIbl.GetIrradianceSh9();
+        for (std::size_t i = 0; i < giSh9.coefficients.size() && i < giInputs.irradianceSh9.size(); ++i)
+        {
+            giInputs.irradianceSh9[i] = giSh9.coefficients[i];
+        }
+
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+
+        giDispatched = m_dxrGiDispatch->DispatchIfEnabled(
+            *m_dxrAccelerationStructures,
+            camera,
+            true,
+            m_dxrSettings.IsGiEnabled(),
+            giDebugViewActive,
+            GfxContext::Get().GetCommandList(),
+            giInputs,
+            giWidth,
+            giHeight,
+            dispatchWidth,
+            dispatchHeight,
+            m_dxrSettings.GetMaxTraceDistance(),
+            1, // RELAX_DIFFUSE is designed for 1 spp
+            m_dxrSettings.IsGiDenoiseEnabled() && !rrActive,
+            m_dxrSettings.GetTemporalBlend(),
+            m_dxrSettings.GetReflectionAtrousIterations(),
+            m_dxrSettings.IsReflectionAntiFireflyEnabled());
+        DxrBreadcrumb("render: gi DispatchIfEnabled end");
+    }
+
     // Phase D4 — reflection trace (devdoc/dxr-reflections.md). Requires the scene MRTs, so
     // only runs on the post-process path.
     const bool reflectionDebugViewActive = IsRtReflectionDebugMode(debugMode);
@@ -632,6 +740,9 @@ void SceneRenderer::RecordDxrPass(
         frameInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
         frameInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
         frameInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        frameInputs.giStrength = m_dxrSettings.GetGiStrength();
+        frameInputs.hasGiTrace = giDispatched && m_dxrSettings.IsGiEnabled();
+        frameInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
         frameInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
         frameInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
 
@@ -742,117 +853,6 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetMaxTraceDistance(),
             m_dxrSettings.IsShadowDenoiseEnabled());
         DxrBreadcrumb("render: shadows DispatchIfEnabled end");
-    }
-
-    // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Quality-scaled like reflections;
-    // needs the scene MRTs + IBL, so only runs on the post-process path.
-    const bool giDebugViewActive = IsRtGiDebugMode(debugMode);
-    const bool giWanted = m_dxrSettings.IsGiEnabled() || giDebugViewActive;
-    bool giDispatched = false;
-
-    if (m_dxrGiDispatch == nullptr)
-    {
-        m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
-    }
-
-    if (giWanted && usePostProcess && m_screenSpaceEffects != nullptr
-        && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
-    {
-        DxrBreadcrumb("render: gi DispatchIfEnabled begin");
-        const GfxContext::GpuTimerScope gpuScopeGi("RT diffuse GI");
-
-        float giQualityScale = 0.75f; // Medium
-        switch (m_dxrSettings.GetReflectionsQuality())
-        {
-        case DxrReflectionsQuality::Low:
-            giQualityScale = 0.5f;
-            break;
-        case DxrReflectionsQuality::High:
-            giQualityScale = 1.0f;
-            break;
-        case DxrReflectionsQuality::Medium:
-        default:
-            giQualityScale = 0.75f;
-            break;
-        }
-
-        const int giWidth =
-            std::max(1, static_cast<int>(static_cast<float>(dispatchWidth) * giQualityScale));
-        const int giHeight =
-            std::max(1, static_cast<int>(static_cast<float>(dispatchHeight) * giQualityScale));
-
-        const IBL& ibl = m_environmentMap->GetIBL();
-        DxrGiDispatch::FrameInputs giInputs{};
-        giInputs.depthSrvCpuHandle = depthSrvCpuHandle;
-        giInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
-        giInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
-        giInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
-        giInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
-        giInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
-        giInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
-        giInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
-        giInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
-        giInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
-
-        // In-hit analytic shading inputs (shared hit_shading.hlsli — identical to reflections).
-        giInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
-        giInputs.sunDirection = glm::normalize(GetSunDirection());
-        {
-            const std::vector<Light>& lights = m_lighting.GetLights();
-            const int shadowLightIndex = m_lighting.GetShadowLightIndex();
-            const Light* sun = nullptr;
-            if (shadowLightIndex >= 0
-                && static_cast<std::size_t>(shadowLightIndex) < lights.size()
-                && lights[static_cast<std::size_t>(shadowLightIndex)].GetType() == LightType::Directional)
-            {
-                sun = &lights[static_cast<std::size_t>(shadowLightIndex)];
-            }
-            else
-            {
-                for (const Light& light : lights)
-                {
-                    if (light.GetType() == LightType::Directional)
-                    {
-                        sun = &light;
-                        break;
-                    }
-                }
-            }
-            if (sun != nullptr)
-            {
-                giInputs.sunColor = sun->GetColor();
-                giInputs.sunIntensity = sun->GetIntensity();
-            }
-        }
-        const IrradianceSh9& sh9 = ibl.GetIrradianceSh9();
-        for (std::size_t i = 0; i < sh9.coefficients.size() && i < giInputs.irradianceSh9.size(); ++i)
-        {
-            giInputs.irradianceSh9[i] = sh9.coefficients[i];
-        }
-
-        // DispatchRays samples the MRTs from non-pixel shaders; idempotent with the reflection /
-        // shadow passes' transitions.
-        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
-
-        giDispatched = m_dxrGiDispatch->DispatchIfEnabled(
-            *m_dxrAccelerationStructures,
-            camera,
-            true,
-            m_dxrSettings.IsGiEnabled(),
-            giDebugViewActive,
-            GfxContext::Get().GetCommandList(),
-            giInputs,
-            giWidth,
-            giHeight,
-            dispatchWidth,
-            dispatchHeight,
-            m_dxrSettings.GetMaxTraceDistance(),
-            1, // RELAX_DIFFUSE is designed for 1 spp
-            m_dxrSettings.IsGiDenoiseEnabled() && !rrActive, // RR reconstructs the raw signal instead
-            m_dxrSettings.GetTemporalBlend(),
-            m_dxrSettings.GetReflectionAtrousIterations(),
-            m_dxrSettings.IsReflectionAntiFireflyEnabled());
-        DxrBreadcrumb("render: gi DispatchIfEnabled end");
     }
 
     if (usePostProcess && m_screenSpaceEffects != nullptr)

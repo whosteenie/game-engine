@@ -30,6 +30,9 @@ public:
         std::uintptr_t indirectSrvCpuHandle = 0;  // RT1 indirect
         std::uintptr_t prefilterSrvCpuHandle = 0; // IBL prefiltered env cube
         std::uintptr_t velocitySrvCpuHandle = 0;  // RT4 motion NDC (NRD guide source)
+        float giStrength = 1.0f;
+        bool hasGiTrace = false;
+        float sunAngularRadiusDegrees = 0.5f;
         float environmentIntensity = 1.0f;
         float maxReflectionLod = 4.0f;
         // In-hit analytic shading inputs.

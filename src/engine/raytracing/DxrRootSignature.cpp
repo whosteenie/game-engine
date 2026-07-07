@@ -317,7 +317,7 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
 // See devdoc/dxr-reflections.md for the binding table.
 void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
-    constexpr std::uint32_t kSrvCount = 13;
+    constexpr std::uint32_t kSrvCount = 14;
     constexpr std::uint32_t kUavCount = 4;
 
     D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};

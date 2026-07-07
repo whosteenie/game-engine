@@ -159,6 +159,12 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     constants.aoRayCount =
         static_cast<std::uint32_t>(aoRayCount < 0 ? 0 : (aoRayCount > 16 ? 16 : aoRayCount));
     constants.roughnessCutoff = roughnessCutoff < 0.0f ? 0.0f : (roughnessCutoff > 1.0f ? 1.0f : roughnessCutoff);
+    constants.sunAngularTanRadius =
+        std::tan(glm::radians(frameInputs.sunAngularRadiusDegrees < 0.0f ? 0.0f
+            : (frameInputs.sunAngularRadiusDegrees > 5.0f ? 5.0f
+                                                            : frameInputs.sunAngularRadiusDegrees)));
+    constants.giStrength = frameInputs.giStrength;
+    constants.hasGiTrace = frameInputs.hasGiTrace ? 1u : 0u;
 
     // In-hit analytic shading inputs.
     constants.sunDirection[0] = frameInputs.sunDirection.x;

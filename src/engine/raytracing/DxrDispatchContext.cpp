@@ -984,8 +984,11 @@ bool DxrDispatchContext::DispatchReflections(
     commandList->SetComputeRootSignature(rootSignature);
     commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
-    // Root params 1..13 = SRV tables t0..t12 (see SerializeReflectionGlobalRootSignature).
-    constexpr std::uint32_t kReflectionSrvCount = 13;
+    // Root params 1..14 = SRV tables t0..t13 (see SerializeReflectionGlobalRootSignature).
+    constexpr std::uint32_t kReflectionSrvCount = 14;
+    const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
+        ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
+        : srvIndicesFromHandles[5]; // harmless fallback: RT1 indirect
     const std::uint32_t srvHeapIndices[kReflectionSrvCount] = {
         m_tlasSrvIndex,                     // t0 TLAS
         srvIndicesFromHandles[0],           // t1 depth
@@ -999,7 +1002,14 @@ bool DxrDispatchContext::DispatchReflections(
         srvIndicesFromHandles[5],           // t9 indirect RT1
         srvIndicesFromHandles[6],           // t10 prefiltered env cube
         srvIndicesFromHandles[7],           // t11 velocity RT4
-        inputs.materialSrvIndex};           // t12 per-object material table
+        inputs.materialSrvIndex,            // t12 per-object material table
+        giSrvIndex};                        // t13 GI denoised (optional)
+
+    if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
+    {
+        outError = "DXR reflection GI SRV binding unavailable";
+        return false;
+    }
 
     for (std::uint32_t rootIndex = 0; rootIndex < kReflectionSrvCount; ++rootIndex)
     {
@@ -1466,8 +1476,8 @@ bool DxrDispatchContext::DispatchGi(
     commandList->SetComputeRootSignature(rootSignature);
     commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
 
-    // Root params 1..13 = SRV tables t0..t12 (reflection global root signature layout).
-    constexpr std::uint32_t kGiSrvCount = 13;
+    // Root params 1..14 = SRV tables t0..t13 (reflection global root signature layout).
+    constexpr std::uint32_t kGiSrvCount = 14;
     const std::uint32_t srvHeapIndices[kGiSrvCount] = {
         m_tlasSrvIndex,                     // t0 TLAS
         srvIndicesFromHandles[0],           // t1 depth
@@ -1481,7 +1491,8 @@ bool DxrDispatchContext::DispatchGi(
         srvIndicesFromHandles[5],           // t9 indirect RT1 (unused)
         srvIndicesFromHandles[6],           // t10 prefiltered env cube
         srvIndicesFromHandles[7],           // t11 velocity RT4
-        inputs.materialSrvIndex};           // t12 per-object material table
+        inputs.materialSrvIndex,            // t12 per-object material table
+        srvIndicesFromHandles[5]};          // t13 GI unused by GI shader; bind RT1 for parity
 
     for (std::uint32_t rootIndex = 0; rootIndex < kGiSrvCount; ++rootIndex)
     {

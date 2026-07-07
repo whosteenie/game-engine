@@ -77,6 +77,7 @@ public:
         std::uintptr_t indirectSrvCpuHandle = 0;
         std::uintptr_t prefilterSrvCpuHandle = 0;
         std::uintptr_t velocitySrvCpuHandle = 0; // RT4, NRD motion guide source
+        std::uintptr_t giDenoisedSrvCpuHandle = 0; // RELAX_DIFFUSE for screen-space hit lookup (t13)
     };
 
     // Phase D5 (devdoc/dxr-nrd-integration.md): everything the NRD backend needs to denoise

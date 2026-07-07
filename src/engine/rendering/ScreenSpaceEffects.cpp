@@ -1310,6 +1310,8 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
         return;
     }
 
+    const int prevViewportWidth = m_viewportWidth;
+    const int prevViewportHeight = m_viewportHeight;
     m_viewportWidth = viewportWidth;
     m_viewportHeight = viewportHeight;
     const int renderWidth = GetRenderWidth();
@@ -1318,6 +1320,16 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     if (m_width == renderWidth && m_height == renderHeight && m_sceneFramebuffer->IsValid()
         && m_sceneFramebuffer->GetSampleCount() == GetEffectiveGeometryMsaaSampleCount())
     {
+        const bool wantsDlssDisplay = m_antiAliasingMode == AntiAliasingMode::DLAA
+            || m_antiAliasingMode == AntiAliasingMode::DLSS;
+        if (wantsDlssDisplay
+            && (prevViewportWidth != viewportWidth || prevViewportHeight != viewportHeight))
+        {
+            ResizeDlssDisplayTargets(viewportWidth, viewportHeight);
+            m_dlssHistoryValid = false;
+            m_dlssBloomHistoryValid = false;
+            m_dlssBloomTemporalWarmupFrames = 0;
+        }
         return;
     }
 

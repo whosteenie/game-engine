@@ -833,10 +833,8 @@ bool DxrPipeline::CreateReflectionsPipeline(std::string& outError)
     SmokeRtpsoSubobjects subobjects{};
     subobjects.shaderConfig.MaxPayloadSizeInBytes = 32;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
-    // Depth 2: the closest-hit traces occlusion rays (sun shadow + ambient occlusion) so the
-    // reflected surface picks up the same contact darkening the primary view gets from
-    // screen-space AO/shadows. Those rays skip the closest-hit shader, so they never recurse
-    // further (see ReflectionClosestHit in assets/shaders/dxr/reflections.hlsl).
+    // Depth 2: closest-hit traces occlusion rays (soft sun cone + AO + spec occlusion) and an
+    // optional one-bounce diffuse GI trace (world-space, not screen-space reprojection).
     subobjects.pipelineConfig.MaxTraceRecursionDepth = 2u;
 
     subobjects.exportNames = {L"ReflectionRayGen", L"ReflectionMiss", L"ReflectionClosestHit"};
