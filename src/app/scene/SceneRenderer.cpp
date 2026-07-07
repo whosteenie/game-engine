@@ -1195,6 +1195,10 @@ void SceneRenderer::Render(
                 reinterpret_cast<Framebuffer*>(targetFramebuffer),
                 viewportWidth,
                 viewportHeight);
+            m_screenSpaceEffects->BlitRrGuideDebug(
+                reinterpret_cast<Framebuffer*>(targetFramebuffer),
+                viewportWidth,
+                viewportHeight);
         }
 
         if (target != nullptr)

@@ -647,7 +647,12 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrGiInjectFragmentShader,
           // s0 = linear clamp (colors/GI radiance), s1 = point clamp (G-buffer)
-          ShaderSamplerOverrides{(1u << 1), true}))
+          ShaderSamplerOverrides{(1u << 1), true})),
+      m_rrGuidesShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RrGuidesFragmentShader,
+          // s0 = point clamp (G-buffer reads)
+          ShaderSamplerOverrides{(1u << 0), true}))
 {
     SceneRenderTrace::Section initSection("sse-init");
     {
@@ -699,6 +704,9 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ssrIndirectTarget);
     DestroyInternalTarget(m_rtIndirectTarget);
     DestroyInternalTarget(m_rtGiInjectTarget);
+    DestroyInternalTarget(m_rrDiffuseAlbedoTarget);
+    DestroyInternalTarget(m_rrSpecularAlbedoTarget);
+    DestroyInternalTarget(m_rrNormalRoughnessTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -1110,6 +1118,12 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_ssrIndirectTarget, width, height, format);
     ResizeInternalTarget(m_rtIndirectTarget, width, height, format);
     ResizeInternalTarget(m_rtGiInjectTarget, width, height, format);
+    // RR1 material guides at render res. Albedos are [0,1] (RGBA8 ok); normal-roughness needs a
+    // signed format for raw world normals, so fp16.
+    const int albedoFormat = static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM);
+    ResizeInternalTarget(m_rrDiffuseAlbedoTarget, width, height, albedoFormat);
+    ResizeInternalTarget(m_rrSpecularAlbedoTarget, width, height, albedoFormat);
+    ResizeInternalTarget(m_rrNormalRoughnessTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1840,6 +1854,79 @@ void ScreenSpaceEffects::BlitRtGiDebug(
     m_debugChannelShader->SetVec2(
         "uUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
     m_debugChannelShader->BindTextureSlot(0, sourceSrv);
+    m_debugChannelShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::GenerateRrGuides() const
+{
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid()
+        || !m_sceneFramebuffer->HasMaterialGbuffer()
+        || m_rrNormalRoughnessTarget.resource == nullptr)
+    {
+        return;
+    }
+
+    SceneRenderTrace::Scope guideScope("rr guides");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const std::uintptr_t normalSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(2);   // RT2
+    const std::uintptr_t material0Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(5); // RT5 albedo+rough
+    const std::uintptr_t material1Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(6); // RT6 metallic
+
+    const std::pair<InternalTarget*, int> passes[] = {
+        {const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget), 0},
+        {const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget), 1},
+        {const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget), 2},
+    };
+    for (const auto& pass : passes)
+    {
+        m_rrGuidesShader->Use(false);
+        m_rrGuidesShader->SetInt("uNormalMap", 0);
+        m_rrGuidesShader->SetInt("uMaterial0Map", 1);
+        m_rrGuidesShader->SetInt("uMaterial1Map", 2);
+        m_rrGuidesShader->SetInt("uGuideMode", pass.second);
+        m_rrGuidesShader->BindTextureSlot(0, normalSrv);
+        m_rrGuidesShader->BindTextureSlot(1, material0Srv);
+        m_rrGuidesShader->BindTextureSlot(2, material1Srv);
+        DrawFullscreenToTarget(*m_rrGuidesShader, *pass.first, m_width, m_height, clear);
+    }
+    guideScope.Success();
+}
+
+void ScreenSpaceEffects::BlitRrGuideDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (!IsRrGuideDebugMode(m_debugMode) || outputTarget == nullptr
+        || m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->HasMaterialGbuffer())
+    {
+        return;
+    }
+
+    GenerateRrGuides();
+
+    std::uintptr_t srv = 0;
+    switch (m_debugMode)
+    {
+    case RenderDebugMode::RrDiffuseAlbedo: srv = m_rrDiffuseAlbedoTarget.srvCpuHandle; break;
+    case RenderDebugMode::RrSpecularAlbedo: srv = m_rrSpecularAlbedoTarget.srvCpuHandle; break;
+    case RenderDebugMode::RrNormalRoughness: srv = m_rrNormalRoughnessTarget.srvCpuHandle; break;
+    default: return;
+    }
+    if (srv == 0)
+    {
+        return;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_debugChannelShader->Use(false, true);
+    m_debugChannelShader->SetInt("uInput", 0);
+    m_debugChannelShader->SetInt("uOutputRgb", 1);
+    m_debugChannelShader->SetInt("uOutputAlpha", 0);
+    m_debugChannelShader->SetFloat("uAlphaScale", 1.0f);
+    m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
+    m_debugChannelShader->BindTextureSlot(0, srv);
     m_debugChannelShader->FlushUniforms();
     DrawFullscreenQuad();
 }

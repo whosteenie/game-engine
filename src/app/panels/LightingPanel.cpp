@@ -2167,6 +2167,9 @@ void LightingPanel::Draw(
             RenderDebugModeLabel(RenderDebugMode::RtGiRaw),
             RenderDebugModeLabel(RenderDebugMode::RtGiDenoised),
             RenderDebugModeLabel(RenderDebugMode::RtGiInject),
+            RenderDebugModeLabel(RenderDebugMode::RrDiffuseAlbedo),
+            RenderDebugModeLabel(RenderDebugMode::RrSpecularAlbedo),
+            RenderDebugModeLabel(RenderDebugMode::RrNormalRoughness),
         };
 
         if (ImGui::Combo(

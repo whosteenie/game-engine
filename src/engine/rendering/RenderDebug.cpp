@@ -136,6 +136,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RT GI denoised";
     case RenderDebugMode::RtGiInject:
         return "RT GI inject";
+    case RenderDebugMode::RrDiffuseAlbedo:
+        return "RR guide: diffuse albedo";
+    case RenderDebugMode::RrSpecularAlbedo:
+        return "RR guide: specular albedo";
+    case RenderDebugMode::RrNormalRoughness:
+        return "RR guide: normal-roughness";
     default:
         return "Unknown";
     }
@@ -292,6 +298,19 @@ bool IsRtGiDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::RtGiRaw:
     case RenderDebugMode::RtGiDenoised:
     case RenderDebugMode::RtGiInject:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsRrGuideDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::RrDiffuseAlbedo:
+    case RenderDebugMode::RrSpecularAlbedo:
+    case RenderDebugMode::RrNormalRoughness:
         return true;
     default:
         return false;

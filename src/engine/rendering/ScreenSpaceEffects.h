@@ -101,6 +101,12 @@ public:
         const Framebuffer* outputTarget,
         int viewportWidth,
         int viewportHeight) const;
+    // RR1: visualize a DLSS-RR material guide (diffuse/specular albedo, normal-roughness). Runs the
+    // guide pass straight to the output; only active for the RR-guide debug views (no cost otherwise).
+    void BlitRrGuideDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
 
     void Apply(
         const Camera& camera,
@@ -376,6 +382,11 @@ private:
         mutable std::uint32_t resourceState = 0;
     };
 
+    // RR1: populate the DLSS-RR material guide targets (diffuse/specular albedo, normal-roughness)
+    // from the G-buffer at render res. Cheap 3-pass; called only when RR (or an RR-guide debug
+    // view) is active, so the RR-off path is unchanged.
+    void GenerateRrGuides() const;
+
     void CreateFullscreenQuad();
     void CreateNoiseTexture();
     void CreateKernel();
@@ -447,6 +458,10 @@ private:
     InternalTarget m_ssrIndirectTarget;
     InternalTarget m_rtIndirectTarget; // D6 RT specular composite (mutually exclusive with SSR)
     InternalTarget m_rtGiInjectTarget; // D9 RT diffuse GI inject (additive into the indirect chain)
+    // RR1 (dxr-dlss-rr.md): DLSS Ray Reconstruction material guides, render-res, from the G-buffer.
+    InternalTarget m_rrDiffuseAlbedoTarget;   // albedo * (1 - metallic)
+    InternalTarget m_rrSpecularAlbedoTarget;  // F0 = lerp(0.04, albedo, metallic)
+    InternalTarget m_rrNormalRoughnessTarget; // packed: world normal rgb + roughness a
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -507,6 +522,7 @@ private:
     std::unique_ptr<Shader> m_ssrIndirectShader;
     std::unique_ptr<Shader> m_dxrIndirectShader;
     std::unique_ptr<Shader> m_dxrGiInjectShader;
+    std::unique_ptr<Shader> m_rrGuidesShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
