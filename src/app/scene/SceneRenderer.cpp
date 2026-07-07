@@ -596,10 +596,8 @@ void SceneRenderer::RecordDxrPass(
         m_dxrSettings.GetMaxTraceDistance());
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
 
-    // Phase P0 — path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
-    // mode, trace one camera ray per pixel and display the primary-hit result over the hybrid image
-    // (which still renders underneath in P0 — a full bypass is a later optimization). Purely additive:
-    // when Hybrid is the mode the PT dispatch is skipped and its display is cleared.
+    // Phase P1 — path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
+    // mode, trace one camera ray per pixel and display direct-lit HDR radiance over the hybrid image.
     const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
     if (m_dxrPathTracerDispatch == nullptr)
     {
@@ -607,17 +605,65 @@ void SceneRenderer::RecordDxrPass(
     }
 
     bool pathTracerDispatched = false;
-    if (pathTracingActive && usePostProcess)
+    if (pathTracingActive && usePostProcess && m_screenSpaceEffects != nullptr
+        && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled begin");
         const GfxContext::GpuTimerScope gpuScopePathTracer("Path tracer");
+
+        const IBL& ptIbl = m_environmentMap->GetIBL();
+        DxrPathTracerDispatch::FrameInputs ptInputs{};
+        ptInputs.depthSrvCpuHandle = depthSrvCpuHandle;
+        ptInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
+        ptInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
+        ptInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
+        ptInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
+        ptInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        ptInputs.prefilterSrvCpuHandle = ptIbl.GetPrefilterMapSrvCpuHandle();
+        ptInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        ptInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
+        ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
+        ptInputs.maxReflectionLod = ptIbl.GetMaxReflectionLod();
+        ptInputs.sunDirection = glm::normalize(GetSunDirection());
+        {
+            const std::vector<Light>& lights = m_lighting.GetLights();
+            const int shadowLightIndex = m_lighting.GetShadowLightIndex();
+            const Light* sun = nullptr;
+            if (shadowLightIndex >= 0
+                && static_cast<std::size_t>(shadowLightIndex) < lights.size()
+                && lights[static_cast<std::size_t>(shadowLightIndex)].GetType() == LightType::Directional)
+            {
+                sun = &lights[static_cast<std::size_t>(shadowLightIndex)];
+            }
+            else
+            {
+                for (const Light& light : lights)
+                {
+                    if (light.GetType() == LightType::Directional)
+                    {
+                        sun = &light;
+                        break;
+                    }
+                }
+            }
+            if (sun != nullptr)
+            {
+                ptInputs.sunColor = sun->GetColor();
+                ptInputs.sunIntensity = sun->GetIntensity();
+            }
+        }
+
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+
         pathTracerDispatched = m_dxrPathTracerDispatch->DispatchIfEnabled(
             *m_dxrAccelerationStructures,
             camera,
             true,
             true,
             GfxContext::Get().GetCommandList(),
-            depthSrvCpuHandle,
+            ptInputs,
+            dispatchWidth,
+            dispatchHeight,
             dispatchWidth,
             dispatchHeight,
             m_dxrSettings.GetMaxTraceDistance());

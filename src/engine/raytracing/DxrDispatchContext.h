@@ -116,6 +116,19 @@ public:
         const DxrRootSignature::ReflectionDispatchConstants& constants,
         std::string& outError);
 
+    // Phase P1 path tracer (devdoc/dxr-path-tracing.md). Reuses the reflection global root
+    // signature bindings but writes HDR radiance to the primary-debug output textures (u0/u1).
+    bool DispatchPathTracer(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        const ReflectionDispatchInputs& inputs,
+        int width,
+        int height,
+        const DxrRootSignature::ReflectionDispatchConstants& constants,
+        std::string& outError);
+
     // Phase D8 shadows (devdoc/dxr-shadows.md). SRV CPU handles must live in the shader-visible
     // SRV heap (same contract as the reflection inputs).
     struct ShadowDispatchInputs

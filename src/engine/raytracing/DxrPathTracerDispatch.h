@@ -7,36 +7,54 @@
 #include <cstdint>
 #include <string>
 
+#include <glm/glm.hpp>
+
 class Camera;
 class DxrAccelerationStructures;
 
-// Phase P0 — unified path tracer (devdoc/dxr-path-tracing.md).
+// Phase P0/P1 — unified path tracer (devdoc/dxr-path-tracing.md).
 //
-// This is the scaffolding for the megakernel path tracer: it owns the PT RTPSO + SBT and dispatches
-// pure camera-ray tracing (no raster/depth dependency), writing a primary-hit world-normal debug
-// image. It deliberately reuses the primary-debug global root signature + output textures (via
-// DxrDispatchContext::DispatchPrimaryDebug), so P0 adds no new dispatch/output plumbing. P1 grows the
-// raygen into the real path integrator (direct lighting), then multi-bounce GI, denoise, etc.
+// P0: pure camera-ray tracing with a separate PT RTPSO/SBT.
+// P1: direct-lit HDR radiance at the primary hit (sun NEE + shadow ray + emissive + sky miss).
 class DxrPathTracerDispatch
 {
 public:
+    struct FrameInputs
+    {
+        std::uintptr_t depthSrvCpuHandle = 0;
+        std::uintptr_t normalSrvCpuHandle = 0;
+        std::uintptr_t material0SrvCpuHandle = 0;
+        std::uintptr_t directSrvCpuHandle = 0;
+        std::uintptr_t sunShadowSrvCpuHandle = 0;
+        std::uintptr_t indirectSrvCpuHandle = 0;
+        std::uintptr_t prefilterSrvCpuHandle = 0;
+        std::uintptr_t velocitySrvCpuHandle = 0;
+        std::uint32_t materialSrvIndex = UINT32_MAX;
+        float environmentIntensity = 1.0f;
+        float maxReflectionLod = 4.0f;
+        glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
+        glm::vec3 sunColor = glm::vec3(1.0f);
+        float sunIntensity = 0.0f;
+    };
+
     DxrPathTracerDispatch() = default;
     ~DxrPathTracerDispatch();
 
     DxrPathTracerDispatch(const DxrPathTracerDispatch&) = delete;
     DxrPathTracerDispatch& operator=(const DxrPathTracerDispatch&) = delete;
 
-    // Runs when path tracing is the active rendering mode (and DXR is supported/enabled). Traces one
-    // camera ray per pixel into the shared primary-debug output textures.
+    // Runs when path tracing is the active rendering mode (and DXR is supported/enabled).
     bool DispatchIfEnabled(
         const DxrAccelerationStructures& accelerationStructures,
         const Camera& camera,
         bool dxrEnabled,
         bool pathTracingActive,
         void* commandList,
-        std::uintptr_t depthSrvCpuHandle,
+        const FrameInputs& frameInputs,
         int width,
         int height,
+        int gbufferWidth,
+        int gbufferHeight,
         float maxTraceDistance);
 
     void Release();
@@ -57,4 +75,5 @@ private:
     DxrDispatchContext m_dispatchContext;
     bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
+    std::uint32_t m_frameIndex = 0;
 };

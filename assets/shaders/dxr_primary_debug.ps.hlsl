@@ -44,6 +44,14 @@ float4 main(PSInput input) : SV_Target
         return float4(depthNorm, depthNorm, depthNorm, 1.0);
     }
 
+    if (uViewMode == 3)
+    {
+        // P1 path tracer HDR radiance — simple Reinhard tonemap for display.
+        const float3 hdr = primary.rgb;
+        const float3 mapped = hdr / (1.0 + hdr);
+        return float4(mapped, 1.0);
+    }
+
     if (metadata.x == 0)
     {
         return float4(0.05, 0.05, 0.85, 1.0);

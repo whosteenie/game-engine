@@ -1,59 +1,27 @@
-// DXR path tracer — Phase P0 scaffolding (devdoc/dxr-path-tracing.md).
+// DXR path tracer — Phase P1 direct lighting (devdoc/dxr-path-tracing.md).
 //
-// This is the FOUNDATION of the unified megakernel path tracer, not the finished integrator. P0
-// stands up the separate PT RTPSO/SBT and proves pure camera-ray tracing works with no raster
-// dependency: it shoots one ray per pixel straight from the lens (NOT bounded by the depth buffer,
-// unlike primary_debug.hlsl) and writes the primary-hit world normal as a debug visualization.
+// P0 proved pure camera-ray tracing via a separate PT RTPSO/SBT. P1 replaces the normal debug
+// output with a direct-only HDR image at the primary hit: sun NEE + binary shadow ray, emissive,
+// and prefiltered environment on miss. No multi-bounce GI yet (P2).
 //
-// It deliberately reuses the primary-debug global root signature + constants + output textures so P0
-// adds no new dispatch/output plumbing — only a new shader library, pipeline, and SBT. P1 grows the
-// raygen into the real path loop (direct lighting), P2 adds multi-bounce GI, etc. The binding layout
-// (b0 + t0..t4 + u0/u1) matches DxrRootSignature::PrimaryDispatchConstants / the primary-debug root
-// signature exactly; t1 (depth) is bound by the shared dispatch but intentionally unused here — a
-// path tracer generates its own camera rays.
+// Reuses the reflection global root signature + DxrRootSignature::ReflectionDispatchConstants so
+// material table (t12), bindless albedo (space1), and prefiltered env (t10) bind the same way as
+// the hybrid RT passes. MaxTraceRecursionDepth = 2 for nested shadow rays.
 
-cbuffer PrimaryDispatchConstants : register(b0)
-{
-    uint2 g_OutputSize;
-    uint2 _Padding0;
-    float4x4 g_InvViewProj;
-    float4x4 g_ViewProj;
-    float3 g_CameraPos;
-    float _Padding1;
-    float g_NearPlane;
-    float g_FarPlane;
-    float g_MaxTraceDistance;
-    float _Padding2;
-};
+#include "hit_shading.hlsli"
 
-RWTexture2D<float4> g_Output : register(u0);   // rgb = world normal (or debug), a = hit distance
-RWTexture2D<uint2> g_Metadata : register(u1);  // (instanceId+1, primitiveIndex) — reserved for blit
+RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = hit distance
+RWTexture2D<uint2> g_Metadata : register(u1);  // (instanceId+1, primitiveIndex)
 
-RaytracingAccelerationStructure g_SceneTlas : register(t0);
-Texture2D<float> g_DepthMap : register(t1); // bound by the shared dispatch; UNUSED (pure camera rays)
-
-struct GeometryLookupEntry
-{
-    uint vertexFloatOffset;
-    uint vertexStrideFloats;
-    uint indexUintOffset;
-    uint _pad0;
-};
-
-StructuredBuffer<GeometryLookupEntry> g_GeometryLookup : register(t2);
-StructuredBuffer<float> g_SceneVertexFloats : register(t3);
-StructuredBuffer<uint> g_SceneIndices : register(t4);
-
-static const uint kHitKindTriangleBackFace = 255u;
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 
 struct Payload
 {
-    float3 normal;
+    float3 radiance;
     float hitDistance;
+    uint hit;
     uint instanceId;
     uint primitiveIndex;
-    uint hit;
     uint _pad;
 };
 
@@ -62,42 +30,78 @@ float2 PixelToClipXY(float2 texCoord)
     return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
 }
 
-float3 LoadObjectPosition(GeometryLookupEntry geo, uint vertexIndex)
-{
-    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats;
-    return float3(
-        g_SceneVertexFloats[base + 0],
-        g_SceneVertexFloats[base + 1],
-        g_SceneVertexFloats[base + 2]);
-}
-
-float3 ComputeWorldGeometricNormal(GeometryLookupEntry geo, uint primitiveIndex)
-{
-    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
-    const uint i0 = g_SceneIndices[indexBase + 0];
-    const uint i1 = g_SceneIndices[indexBase + 1];
-    const uint i2 = g_SceneIndices[indexBase + 2];
-
-    const float3 p0 = LoadObjectPosition(geo, i0);
-    const float3 p1 = LoadObjectPosition(geo, i1);
-    const float3 p2 = LoadObjectPosition(geo, i2);
-
-    const float3x4 objectToWorld = ObjectToWorld3x4();
-    const float3 w0 = mul(objectToWorld, float4(p0, 1.0)).xyz;
-    const float3 w1 = mul(objectToWorld, float4(p1, 1.0)).xyz;
-    const float3 w2 = mul(objectToWorld, float4(p2, 1.0)).xyz;
-
-    return normalize(cross(w1 - w0, w2 - w0));
-}
-
 void ResetPayload(inout Payload payload)
 {
-    payload.normal = float3(0.0, 0.0, 1.0);
+    payload.radiance = 0.0.xxx;
     payload.hitDistance = 0.0;
+    payload.hit = 0;
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
-    payload.hit = 0;
     payload._pad = 0;
+}
+
+// Binary visibility along a ray (same contract as reflections.hlsl TraceVisibility).
+float TraceVisibility(float3 origin, float3 direction, float tMax)
+{
+    RayDesc ray;
+    ray.Origin = origin;
+    ray.Direction = direction;
+    ray.TMin = 0.001;
+    ray.TMax = tMax;
+
+    Payload probe;
+    ResetPayload(probe);
+    probe.hit = 1; // assume occluded; PathTracerMiss clears to 0 when the ray escapes
+
+    const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+        | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
+    TraceRay(g_SceneTlas, occlusionFlags, 0xFF, 0, 0, 0, ray, probe);
+    return probe.hit == 0 ? 1.0 : 0.0;
+}
+
+// P1 direct lighting at the primary hit: Lambert sun (NEE + shadow) + emissive. No SH ambient or
+// specular env yet — those arrive with multi-bounce GI in P2.
+float3 ShadePrimaryDirect(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 hitNormal,
+    float3 viewDir,
+    float3 shadowOrigin)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const MaterialEntry material = g_Materials[instanceId];
+
+    float3 albedo = material.albedo;
+    if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
+        const float3 texel =
+            g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
+                .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
+        albedo *= texel;
+    }
+
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float nDotV = saturate(dot(hitNormal, viewDir));
+    const float3 specularEnergy =
+        FresnelSchlickRoughnessGi(nDotV, f0, max(material.roughness, 0.55));
+    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+    const float3 diffuseAlbedo = albedo * diffuseEnergy;
+
+    const float3 sunL = normalize(g_SunDirection);
+    const float ndotl = saturate(dot(hitNormal, sunL));
+    float sunVis = 0.0;
+    if (ndotl > 0.0)
+    {
+        sunVis = TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+    }
+
+    const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
+    const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
+
+    return ClampRadiance(max(direct + material.emissive, 0.0.xxx));
 }
 
 [shader("raygeneration")]
@@ -109,13 +113,9 @@ void PathTracerRayGen()
         return;
     }
 
-    // Pure path-tracing primary ray: reconstruct a world-space ray straight from the camera through
-    // this pixel's centre. No depth-buffer read — the path tracer owns first-hit visibility (P1+ adds
-    // sub-pixel jitter for anti-aliasing; P0 uses the centre so the normal image is stable).
     const float2 texCoord = (float2(pixel) + 0.5) / float2(g_OutputSize);
     const float2 clipXY = PixelToClipXY(texCoord);
 
-    // Unproject a near and far clip point to define the ray direction robustly for any projection.
     const float4 farH = mul(g_InvViewProj, float4(clipXY, 1.0, 1.0));
     const float3 farWorld = farH.xyz / farH.w;
     const float3 rayDir = normalize(farWorld - g_CameraPos);
@@ -124,7 +124,7 @@ void PathTracerRayGen()
     ray.Origin = g_CameraPos;
     ray.Direction = rayDir;
     ray.TMin = 0.001;
-    ray.TMax = max(g_MaxTraceDistance, g_FarPlane);
+    ray.TMax = g_MaxTraceDistance;
 
     Payload payload;
     ResetPayload(payload);
@@ -132,14 +132,12 @@ void PathTracerRayGen()
 
     if (payload.hit != 0)
     {
-        // P0 debug output: RAW world normal + hit distance, matching primary_debug.hlsl so the shared
-        // primary-debug blit (viewMode = normal) maps it to colour. P1 replaces this with HDR radiance.
-        g_Output[pixel] = float4(payload.normal, payload.hitDistance);
+        g_Output[pixel] = float4(payload.radiance, payload.hitDistance);
         g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);
     }
     else
     {
-        g_Output[pixel] = float4(0.0, 0.0, 0.0, 0.0);
+        g_Output[pixel] = float4(payload.radiance, g_MaxTraceDistance);
         g_Metadata[pixel] = uint2(0, 0);
     }
 }
@@ -147,37 +145,46 @@ void PathTracerRayGen()
 [shader("miss")]
 void PathTracerMiss(inout Payload payload)
 {
+    // Visibility probes prime hit=1 (occluded) with zero radiance; reaching miss means unoccluded.
+    const bool visibilityProbe = (payload.hit != 0u && all(payload.radiance == 0.0));
     payload.hit = 0;
-    payload.instanceId = 0;
-    payload.primitiveIndex = 0;
-    payload.hitDistance = 0.0;
-    payload.normal = float3(0.0, 0.0, 1.0);
+    if (visibilityProbe)
+    {
+        return;
+    }
+
+    payload.radiance = SampleEnvironment(WorldRayDirection(), 0.0);
+    payload.hitDistance = g_MaxTraceDistance;
 }
 
 [shader("closesthit")]
 void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
-    (void)attribs;
-
     const uint instanceId = InstanceID();
     const uint primitiveIndex = PrimitiveIndex();
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
 
+    const float3 rayDir = WorldRayDirection();
+    const float hitT = RayTCurrent();
+
+    float3 hitNormal = ComputeWorldShadingNormal(geo, primitiveIndex, attribs.barycentrics);
+    if (HitKind() == kHitKindTriangleBackFace)
+    {
+        hitNormal = -hitNormal;
+    }
+    if (dot(hitNormal, rayDir) > 0.0)
+    {
+        hitNormal = -hitNormal;
+    }
+
+    const float3 hitPos = WorldRayOrigin() + rayDir * hitT;
+    const float3 shadowOrigin = hitPos + hitNormal * max(hitT * 0.001, 0.002);
+    const float3 viewDir = -rayDir;
+
     payload.hit = 1;
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
-    payload.hitDistance = RayTCurrent();
-
-    float3 normal = ComputeWorldGeometricNormal(geo, primitiveIndex);
-    if (HitKind() == kHitKindTriangleBackFace)
-    {
-        normal = -normal;
-    }
-    const float3 rayDir = WorldRayDirection();
-    if (dot(normal, rayDir) > 0.0)
-    {
-        normal = -normal;
-    }
-
-    payload.normal = normal;
+    payload.hitDistance = hitT;
+    payload.radiance = ShadePrimaryDirect(
+        instanceId, primitiveIndex, attribs.barycentrics, hitNormal, viewDir, shadowOrigin);
 }

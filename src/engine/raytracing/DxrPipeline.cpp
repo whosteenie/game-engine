@@ -750,9 +750,9 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
     return true;
 }
 
-// Phase P0 path-tracer RTPSO (devdoc/dxr-path-tracing.md). Structurally identical to the
-// primary-debug pipeline and reuses its global/local root signatures (same b0 + t0..t4 + u0/u1
-// binding layout); only the shader library and export names differ. P1+ grows the megakernel.
+// Phase P0/P1 path-tracer RTPSO (devdoc/dxr-path-tracing.md). P1 reuses the reflection global
+// root signature (material table + bindless + env cube) and MaxTraceRecursionDepth = 2 for shadow
+// rays from the closest-hit shader.
 bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 {
     outError.clear();
@@ -768,7 +768,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 
     try
     {
-        m_globalRootSignature = DxrRootSignature::CreatePrimaryDebugGlobalRootSignature();
+        m_globalRootSignature = DxrRootSignature::CreateReflectionGlobalRootSignature();
     }
     catch (const std::exception& exception)
     {
@@ -780,7 +780,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     ID3D12RootSignature* localRootSignature = nullptr;
     try
     {
-        localRootSignature = DxrRootSignature::CreatePrimaryDebugLocalRootSignature();
+        localRootSignature = DxrRootSignature::CreateReflectionLocalRootSignature();
     }
     catch (const std::exception& exception)
     {
@@ -834,7 +834,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     SmokeRtpsoSubobjects subobjects{};
     subobjects.shaderConfig.MaxPayloadSizeInBytes = 32;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
-    subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
+    subobjects.pipelineConfig.MaxTraceRecursionDepth = 2u;
 
     subobjects.exportNames = {L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit"};
     subobjects.allRtpsoExportNames = {

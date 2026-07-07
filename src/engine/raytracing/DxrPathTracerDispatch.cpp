@@ -22,6 +22,7 @@ void DxrPathTracerDispatch::Release()
     m_pipeline.Release();
     m_dispatchContext.Release();
     m_pipelineReady = false;
+    m_frameIndex = 0;
 }
 
 bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded()
@@ -63,15 +64,17 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool dxrEnabled,
     const bool pathTracingActive,
     void* commandList,
-    const std::uintptr_t depthSrvCpuHandle,
+    const FrameInputs& frameInputs,
     const int width,
     const int height,
+    const int gbufferWidth,
+    const int gbufferHeight,
     const float maxTraceDistance)
 {
     m_dispatchedThisFrame = false;
 
     if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || !pathTracingActive
-        || width <= 0 || height <= 0)
+        || width <= 0 || height <= 0 || gbufferWidth <= 0 || gbufferHeight <= 0)
     {
         return false;
     }
@@ -79,6 +82,16 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     if (!accelerationStructures.IsTlasBuilt() || !accelerationStructures.HasGeometryLookup())
     {
         DxrBreadcrumb("path-tracer skipped: TLAS or geometry lookup unavailable");
+        return false;
+    }
+
+    if (frameInputs.depthSrvCpuHandle == 0 || frameInputs.normalSrvCpuHandle == 0
+        || frameInputs.material0SrvCpuHandle == 0 || frameInputs.directSrvCpuHandle == 0
+        || frameInputs.sunShadowSrvCpuHandle == 0 || frameInputs.indirectSrvCpuHandle == 0
+        || frameInputs.prefilterSrvCpuHandle == 0 || frameInputs.velocitySrvCpuHandle == 0
+        || frameInputs.materialSrvIndex == UINT32_MAX)
+    {
+        DxrBreadcrumb("path-tracer skipped: frame inputs unavailable");
         return false;
     }
 
@@ -109,38 +122,59 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const glm::mat4 invViewProj = glm::inverse(viewProj);
     const glm::vec3 cameraPos = camera.GetPosition();
 
-    DxrRootSignature::PrimaryDispatchConstants constants{};
+    DxrRootSignature::ReflectionDispatchConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(width);
     constants.outputHeight = static_cast<std::uint32_t>(height);
+    constants.gbufferWidth = static_cast<std::uint32_t>(gbufferWidth);
+    constants.gbufferHeight = static_cast<std::uint32_t>(gbufferHeight);
     std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
     std::memcpy(constants.viewProj, glm::value_ptr(viewProj), sizeof(constants.viewProj));
+    std::memcpy(constants.worldToView, glm::value_ptr(viewMatrix), sizeof(constants.worldToView));
     constants.cameraPos[0] = cameraPos.x;
     constants.cameraPos[1] = cameraPos.y;
     constants.cameraPos[2] = cameraPos.z;
-    constants.nearPlane = camera.GetNearPlane();
-    constants.farPlane = camera.GetFarPlane();
     constants.maxTraceDistance = maxTraceDistance;
+    constants.environmentIntensity = frameInputs.environmentIntensity;
+    constants.maxReflectionLod = frameInputs.maxReflectionLod;
+    constants.frameIndex = m_frameIndex;
+    constants.samplesPerPixel = 1;
+    constants.sunDirection[0] = frameInputs.sunDirection.x;
+    constants.sunDirection[1] = frameInputs.sunDirection.y;
+    constants.sunDirection[2] = frameInputs.sunDirection.z;
+    constants.sunIntensity = frameInputs.sunIntensity;
+    constants.sunColor[0] = frameInputs.sunColor.x;
+    constants.sunColor[1] = frameInputs.sunColor.y;
+    constants.sunColor[2] = frameInputs.sunColor.z;
 
-    // Reuse the primary-debug dispatch (same root signature + output textures); only the state object
-    // and SBT are the path tracer's. The PT shader ignores the bound depth SRV (pure camera rays).
-    if (!m_dispatchContext.DispatchPrimaryDebug(
+    DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
+    dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
+    dispatchInputs.tlasGpuVirtualAddress = accelerationStructures.GetTlasGpuVirtualAddress();
+    dispatchInputs.depthSrvCpuHandle = frameInputs.depthSrvCpuHandle;
+    dispatchInputs.normalSrvCpuHandle = frameInputs.normalSrvCpuHandle;
+    dispatchInputs.material0SrvCpuHandle = frameInputs.material0SrvCpuHandle;
+    dispatchInputs.geometryLookupSrvIndex = accelerationStructures.GetGeometryLookupSrvIndex();
+    dispatchInputs.sceneVertexFloatsSrvIndex = accelerationStructures.GetSceneVertexFloatsSrvIndex();
+    dispatchInputs.sceneIndicesSrvIndex = accelerationStructures.GetSceneIndicesSrvIndex();
+    dispatchInputs.materialSrvIndex = frameInputs.materialSrvIndex;
+    dispatchInputs.directSrvCpuHandle = frameInputs.directSrvCpuHandle;
+    dispatchInputs.sunShadowSrvCpuHandle = frameInputs.sunShadowSrvCpuHandle;
+    dispatchInputs.indirectSrvCpuHandle = frameInputs.indirectSrvCpuHandle;
+    dispatchInputs.prefilterSrvCpuHandle = frameInputs.prefilterSrvCpuHandle;
+    dispatchInputs.velocitySrvCpuHandle = frameInputs.velocitySrvCpuHandle;
+
+    if (!m_dispatchContext.DispatchPathTracer(
             commandList4,
             m_pipeline.GetStateObject(),
             m_pipeline.GetGlobalRootSignature(),
             m_shaderBindingTable,
-            accelerationStructures.GetTlasResource(),
-            accelerationStructures.GetTlasGpuVirtualAddress(),
-            depthSrvCpuHandle,
-            accelerationStructures.GetGeometryLookupSrvIndex(),
-            accelerationStructures.GetSceneVertexFloatsSrvIndex(),
-            accelerationStructures.GetSceneIndicesSrvIndex(),
+            dispatchInputs,
             width,
             height,
             constants,
             error))
     {
         const std::string failureMessage =
-            std::string("path tracer dispatch failed: DispatchPrimaryDebug (") + error + ")";
+            std::string("path tracer dispatch failed: DispatchPathTracer (") + error + ")";
         DxrLogErrorOnce("dispatch-path-tracer-failure", failureMessage);
         DxrBreadcrumbOnce("dispatch-path-tracer-failure", failureMessage);
         dispatchScope.Success();
@@ -148,6 +182,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         return false;
     }
 
+    ++m_frameIndex;
     DxrBreadcrumb("path-tracer dispatch ok");
     dispatchScope.Success();
     DxrEnableTrustMode();

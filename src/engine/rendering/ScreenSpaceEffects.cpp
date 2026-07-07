@@ -1732,9 +1732,7 @@ void ScreenSpaceEffects::BlitPathTracer(
     const int viewportHeight,
     const float maxTraceDistance) const
 {
-    // P0: path tracing owns the image when active — blit the PT primary-hit output over the final
-    // (hybrid) render. Reuses the primary-debug shader with the world-normal view (viewMode 2).
-    // Do NOT gate on IsRtPrimaryDebugBlitReady(): that requires an RT primary debug view mode.
+    // P1 path tracing: blit direct-lit HDR radiance (viewMode 3 = Reinhard tonemap).
     if (!m_pathTracerActive || !IsPathTracerBlitReady() || m_dxrPathTracerOutputSrv == 0
         || m_dxrPathTracerMetadataSrv == 0 || outputTarget == nullptr)
     {
@@ -1743,7 +1741,7 @@ void ScreenSpaceEffects::BlitPathTracer(
 
     BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
     m_dxrPrimaryDebugShader->Use(false, true);
-    m_dxrPrimaryDebugShader->SetInt("uViewMode", 2); // world normal
+    m_dxrPrimaryDebugShader->SetInt("uViewMode", 3);
     m_dxrPrimaryDebugShader->SetFloat("uMaxTraceDistance", maxTraceDistance);
     m_dxrPrimaryDebugShader->SetInt("uPrimaryOutput", 0);
     m_dxrPrimaryDebugShader->SetInt("uPrimaryMetadata", 1);

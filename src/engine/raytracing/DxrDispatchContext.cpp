@@ -1725,3 +1725,192 @@ bool DxrDispatchContext::DispatchPrimaryDebug(
     DxrBreadcrumb("dispatch DispatchPrimaryDebug ok");
     return true;
 }
+
+bool DxrDispatchContext::DispatchPathTracer(
+    ID3D12GraphicsCommandList4* commandList,
+    ID3D12StateObject* stateObject,
+    ID3D12RootSignature* rootSignature,
+    const ShaderBindingTable& shaderBindingTable,
+    const ReflectionDispatchInputs& inputs,
+    const int width,
+    const int height,
+    const DxrRootSignature::ReflectionDispatchConstants& constants,
+    std::string& outError)
+{
+    outError.clear();
+    if (commandList == nullptr || stateObject == nullptr || rootSignature == nullptr)
+    {
+        outError = "invalid DXR path tracer dispatch arguments";
+        return false;
+    }
+
+    const std::uint32_t srvIndicesFromHandles[8] = {
+        DepthSrvIndexFromCpuHandle(inputs.depthSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.normalSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.material0SrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.directSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.sunShadowSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.indirectSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.prefilterSrvCpuHandle),
+        DepthSrvIndexFromCpuHandle(inputs.velocitySrvCpuHandle)};
+    for (const std::uint32_t index : srvIndicesFromHandles)
+    {
+        if (index == UINT32_MAX)
+        {
+            outError = "DXR path tracer SRV bindings unavailable";
+            return false;
+        }
+    }
+
+    if (inputs.geometryLookupSrvIndex == UINT32_MAX
+        || inputs.sceneVertexFloatsSrvIndex == UINT32_MAX
+        || inputs.sceneIndicesSrvIndex == UINT32_MAX
+        || inputs.materialSrvIndex == UINT32_MAX)
+    {
+        outError = "DXR path tracer geometry lookup SRVs unavailable";
+        return false;
+    }
+
+    if (!EnsurePrimaryOutput(width, height, outError))
+    {
+        return false;
+    }
+
+    if (!CreateTlasSrv(inputs.tlasResource, inputs.tlasGpuVirtualAddress, outError))
+    {
+        return false;
+    }
+
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate transient DXR path tracer constants";
+        return false;
+    }
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    if (m_primaryOutputResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_primaryOutputResource,
+            static_cast<D3D12_RESOURCE_STATES>(m_primaryOutputResourceState),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_primaryOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    if (m_primaryMetadataResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_primaryMetadataResource,
+            static_cast<D3D12_RESOURCE_STATES>(m_primaryMetadataResourceState),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_primaryMetadataResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
+    commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+    commandList->SetPipelineState1(stateObject);
+    commandList->SetComputeRootSignature(rootSignature);
+    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+
+    constexpr std::uint32_t kReflectionSrvCount = 14;
+    const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
+        ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
+        : srvIndicesFromHandles[5];
+    const std::uint32_t srvHeapIndices[kReflectionSrvCount] = {
+        m_tlasSrvIndex,
+        srvIndicesFromHandles[0],
+        srvIndicesFromHandles[1],
+        srvIndicesFromHandles[2],
+        inputs.geometryLookupSrvIndex,
+        inputs.sceneVertexFloatsSrvIndex,
+        inputs.sceneIndicesSrvIndex,
+        srvIndicesFromHandles[3],
+        srvIndicesFromHandles[4],
+        srvIndicesFromHandles[5],
+        srvIndicesFromHandles[6],
+        srvIndicesFromHandles[7],
+        inputs.materialSrvIndex,
+        giSrvIndex};
+
+    if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
+    {
+        outError = "DXR path tracer GI SRV binding unavailable";
+        return false;
+    }
+
+    for (std::uint32_t rootIndex = 0; rootIndex < kReflectionSrvCount; ++rootIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
+        tableHandle.ptr =
+            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
+        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
+    }
+
+    constexpr std::uint32_t kReflectionUavCount = 4;
+    const std::uint32_t pathTracerUavIndices[kReflectionUavCount] = {
+        m_primaryOutputUavIndex,
+        m_primaryMetadataUavIndex,
+        m_primaryOutputUavIndex,
+        m_primaryOutputUavIndex};
+    for (std::uint32_t uavIndex = 0; uavIndex < kReflectionUavCount; ++uavIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+        uavTableHandle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(pathTracerUavIndices[uavIndex]));
+        commandList->SetComputeRootDescriptorTable(1 + kReflectionSrvCount + uavIndex, uavTableHandle);
+    }
+
+    {
+        const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
+            srvHeap->GetGPUDescriptorHandleForHeapStart();
+        commandList->SetComputeRootDescriptorTable(
+            1 + kReflectionSrvCount + kReflectionUavCount, bindlessHandle);
+    }
+
+    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
+    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
+    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
+    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
+    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
+    dispatchDesc.Width = static_cast<UINT>(width);
+    dispatchDesc.Height = static_cast<UINT>(height);
+    dispatchDesc.Depth = 1;
+
+    if (inputs.tlasResource != nullptr)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
+    }
+
+    commandList->DispatchRays(&dispatchDesc);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
+
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_primaryOutputResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    m_primaryOutputResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_primaryMetadataResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    m_primaryMetadataResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+
+    DxrBreadcrumb("dispatch DispatchPathTracer ok");
+    return true;
+}
