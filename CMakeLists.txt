@@ -566,13 +566,17 @@ if(GAME_ENGINE_HAS_DLSS)
     target_include_directories(game-engine PRIVATE "${STREAMLINE_INCLUDE_DIR}")
     target_compile_definitions(game-engine PRIVATE GAME_ENGINE_ENABLE_DLSS)
 
-    # Only the DLSS Super Resolution runtime set — copying every plugin (reflex, dlss_g, nis, imgui,
-    # deepdvc, directsr, …) makes SL map+ignore each at init (log spam + slower startup).
+    # DLSS Super Resolution + Ray Reconstruction runtime set. We copy only these plugins (not
+    # reflex, dlss_g, nis, imgui, deepdvc, directsr, …) — copying every plugin makes SL map+ignore
+    # each at init (log spam + slower startup). RR (dxr-dlss-rr.md) adds sl.dlss_d.dll (the RR
+    # plugin) + nvngx_dlssd.dll (the RR NGX model); without them kFeatureDLSS_RR fails to load.
     set(_sl_runtime_dlls
         "${STREAMLINE_BIN_DIR}/sl.interposer.dll"
         "${STREAMLINE_BIN_DIR}/sl.common.dll"
         "${STREAMLINE_BIN_DIR}/sl.dlss.dll"
-        "${STREAMLINE_BIN_DIR}/nvngx_dlss.dll")
+        "${STREAMLINE_BIN_DIR}/nvngx_dlss.dll"
+        "${STREAMLINE_BIN_DIR}/sl.dlss_d.dll"
+        "${STREAMLINE_BIN_DIR}/nvngx_dlssd.dll")
     foreach(_sl_dll IN LISTS _sl_runtime_dlls)
         if(EXISTS "${_sl_dll}")
             add_custom_command(TARGET game-engine POST_BUILD

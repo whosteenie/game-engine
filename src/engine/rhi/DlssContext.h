@@ -100,6 +100,9 @@ public:
     bool IsReady() const { return m_ready.load(std::memory_order_acquire); }
     bool IsRuntimeInitialized() const { return m_initialized.load(std::memory_order_acquire); }
     bool IsDlssSupported() const { return m_supported.load(std::memory_order_acquire); }
+    // DLSS Ray Reconstruction (kFeatureDLSS_RR) support on this adapter (devdoc/dxr-dlss-rr.md).
+    // Probed alongside Super Resolution; RR consumers gate on this in addition to IsReady().
+    bool IsRrSupported() const { return m_rrSupported.load(std::memory_order_acquire); }
 
     // Thread-safe snapshot of the human-readable status (worker updates it as it progresses).
     std::string StatusString() const;
@@ -125,6 +128,7 @@ private:
     std::atomic<bool> m_ready{false};       // worker finished
     std::atomic<bool> m_initialized{false}; // slInit succeeded + function pointers resolved
     std::atomic<bool> m_supported{false};   // slIsFeatureSupported(DLSS) == eOk for this adapter
+    std::atomic<bool> m_rrSupported{false}; // slIsFeatureSupported(DLSS_RR) == eOk for this adapter
 
     mutable std::mutex m_statusMutex;
     std::string m_status = "DLSS: initializing…";

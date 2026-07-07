@@ -1062,6 +1062,21 @@ void LightingPanel::Draw(
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "%s", dlss.StatusString().c_str());
         }
 
+        // Ray Reconstruction support readout (devdoc/dxr-dlss-rr.md, Phase RR0). Probed alongside
+        // SR; the RR toggle and NRD-bypass wiring arrive in a later RR phase.
+        if (dlss.IsReady() && dlss.IsDlssSupported())
+        {
+            if (dlss.IsRrSupported())
+            {
+                ImGui::TextColored(
+                    ImVec4(0.4f, 0.85f, 0.4f, 1.0f), "Ray Reconstruction: supported");
+            }
+            else
+            {
+                ImGui::TextDisabled("Ray Reconstruction: not available on this GPU/driver");
+            }
+        }
+
         if (ImGui::BeginCombo("Mode", AntiAliasingModeLabel(currentAaMode)))
         {
             const AntiAliasingMode selectableModes[] = {

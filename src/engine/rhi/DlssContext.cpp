@@ -10,6 +10,7 @@
 
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h> // DLSS Ray Reconstruction (kFeatureDLSS_RR), devdoc/dxr-dlss-rr.md
 
 #include <cstring>
 #include <algorithm>
@@ -175,14 +176,17 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         return;
     }
 
-    static const sl::Feature kFeaturesToLoad[] = {sl::kFeatureDLSS};
+    // Load both DLSS Super Resolution and Ray Reconstruction plugins. RR (kFeatureDLSS_RR) needs
+    // sl.dlss_d.dll + nvngx_dlssd.dll next to the exe (shipped by CMake); if absent SL maps+ignores
+    // it and the RR probe below simply reports unsupported.
+    static const sl::Feature kFeaturesToLoad[] = {sl::kFeatureDLSS, sl::kFeatureDLSS_RR};
 
     sl::Preferences pref{};
     pref.showConsole = false;
     pref.logLevel = sl::LogLevel::eDefault;
     pref.logMessageCallback = &SlLogCallback;
     pref.featuresToLoad = kFeaturesToLoad;
-    pref.numFeaturesToLoad = 1;
+    pref.numFeaturesToLoad = static_cast<uint32_t>(std::size(kFeaturesToLoad));
     // We restore command-list state ourselves after slEvaluateFeature (default SL behavior).
     pref.flags = sl::PreferenceFlags::eDisableCLStateTracking;
     pref.applicationId = kApplicationId;
@@ -237,14 +241,35 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         if (supportResult == sl::Result::eOk)
         {
             m_supported.store(true, std::memory_order_release);
-            SetStatus("DLSS: supported");
             EngineLog::Info("dlss", "DLSS Super Resolution is supported on this adapter.");
         }
         else
         {
-            SetStatus(std::string("DLSS: unavailable (") + ResultToString(supportResult) + ")");
-            EngineLog::Info("dlss", StatusString());
+            EngineLog::Info(
+                "dlss",
+                std::string("DLSS Super Resolution unavailable (") + ResultToString(supportResult) + ")");
         }
+
+        // Ray Reconstruction probe (devdoc/dxr-dlss-rr.md). Independent of SR support.
+        const sl::Result rrSupportResult = g_slIsFeatureSupported(sl::kFeatureDLSS_RR, adapterInfo);
+        if (rrSupportResult == sl::Result::eOk)
+        {
+            m_rrSupported.store(true, std::memory_order_release);
+            EngineLog::Info("dlss", "DLSS Ray Reconstruction is supported on this adapter.");
+        }
+        else
+        {
+            EngineLog::Info(
+                "dlss",
+                std::string("DLSS Ray Reconstruction unavailable (") + ResultToString(rrSupportResult)
+                    + ")");
+        }
+
+        const std::string srStatus =
+            m_supported.load(std::memory_order_acquire) ? "supported" : "unavailable";
+        const std::string rrStatus =
+            m_rrSupported.load(std::memory_order_acquire) ? "supported" : "unavailable";
+        SetStatus("DLSS: " + srStatus + " | Ray Reconstruction: " + rrStatus);
     }
     else
     {
@@ -274,6 +299,7 @@ void DlssContext::Shutdown()
     }
     m_initialized.store(false, std::memory_order_release);
     m_supported.store(false, std::memory_order_release);
+    m_rrSupported.store(false, std::memory_order_release);
     g_slInit = nullptr;
     g_slShutdown = nullptr;
     g_slSetD3DDevice = nullptr;
