@@ -77,7 +77,8 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     const bool denoiseEnabled,
     const float temporalBlend,
     const int atrousIterations,
-    const bool antiFirefly)
+    const bool antiFirefly,
+    const int aoRayCount)
 {
     m_dispatchedThisFrame = false;
     m_denoisedThisFrame = false;
@@ -154,6 +155,8 @@ bool DxrReflectionsDispatch::DispatchIfEnabled(
     constants.frameIndex = m_frameIndex;
     constants.samplesPerPixel =
         static_cast<std::uint32_t>(samplesPerPixel < 1 ? 1 : (samplesPerPixel > 16 ? 16 : samplesPerPixel));
+    constants.aoRayCount =
+        static_cast<std::uint32_t>(aoRayCount < 0 ? 0 : (aoRayCount > 16 ? 16 : aoRayCount));
 
     // In-hit analytic shading inputs.
     constants.sunDirection[0] = frameInputs.sunDirection.x;

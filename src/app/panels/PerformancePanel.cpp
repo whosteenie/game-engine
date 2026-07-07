@@ -10,6 +10,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <vector>
 
 namespace
 {
@@ -161,6 +163,57 @@ void PerformancePanel::Draw(
             std::max(m_maxFrameMs, 33.3f),
             plotSize);
         ImGui::TextDisabled("Rolling window: last %d frames", kHistorySize);
+    }
+
+    if (ImGui::CollapsingHeader("GPU passes", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
+        if (timings.empty())
+        {
+            ImGui::TextDisabled("No GPU timing data yet.");
+            ImGui::TextDisabled("(timestamp queries unavailable or first frames)");
+        }
+        else
+        {
+            const float gpuTotalMs = GfxContext::Get().GetGpuTotalMs();
+            float maxPassMs = 0.0f;
+            for (const GpuProfiler::Entry& entry : timings)
+            {
+                maxPassMs = std::max(maxPassMs, entry.milliseconds);
+            }
+
+            if (ImGui::BeginTable(
+                    "perf_gpu_passes",
+                    3,
+                    ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+            {
+                ImGui::TableSetupColumn("Pass");
+                ImGui::TableSetupColumn("ms");
+                ImGui::TableSetupColumn("Share");
+                ImGui::TableHeadersRow();
+
+                for (const GpuProfiler::Entry& entry : timings)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted(entry.name.c_str());
+                    ImGui::TableNextColumn();
+                    ImGui::Text("%.3f", entry.milliseconds);
+                    ImGui::TableNextColumn();
+                    const float barFrac = maxPassMs > 0.0f ? entry.milliseconds / maxPassMs : 0.0f;
+                    const float sharePct =
+                        gpuTotalMs > 0.0f ? entry.milliseconds / gpuTotalMs * 100.0f : 0.0f;
+                    char overlay[16];
+                    std::snprintf(overlay, sizeof(overlay), "%.0f%%", sharePct);
+                    ImGui::ProgressBar(barFrac, ImVec2(-1.0f, 0.0f), overlay);
+                }
+
+                ImGui::EndTable();
+            }
+
+            ImGui::Text("GPU total (timed passes): %.3f ms", gpuTotalMs);
+            ImGui::TextDisabled("Sum of instrumented scopes; excludes untimed work. ~1-2 frame latency.");
+        }
     }
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))

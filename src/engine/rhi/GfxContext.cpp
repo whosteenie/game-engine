@@ -423,6 +423,12 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         m_impl->Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&m_impl->ImGuiUploadQueue)),
         "Create ImGui upload command queue failed");
 
+    UINT64 timestampFrequency = 0;
+    if (SUCCEEDED(m_impl->CommandQueue->GetTimestampFrequency(&timestampFrequency)))
+    {
+        m_gpuProfiler.Initialize(m_impl->Device.Get(), FrameCount, timestampFrequency);
+    }
+
     DXGI_SWAP_CHAIN_DESC1 swapChainDesc{};
     swapChainDesc.Width = static_cast<UINT>(width);
     swapChainDesc.Height = static_cast<UINT>(height);
@@ -534,6 +540,7 @@ void GfxContext::Shutdown()
     WaitForGpu();
     // GPU is idle and no further submissions will happen: flush everything unconditionally.
     ProcessDeferredDestroys(true);
+    m_gpuProfiler.Shutdown();
     ReleaseRenderTargets();
 
     for (TransientUploadArena& arena : m_impl->TransientUploadArenas)
@@ -679,6 +686,9 @@ void GfxContext::BeginFrame()
     // Drain deferred destroys whose covering fence has completed (CRASH-01/CRASH-03).
     ProcessDeferredDestroys(false);
 
+    // This slice's fence has completed, so the previous submission's timestamps are readable now.
+    m_gpuProfiler.BeginFrame(m_frameIndex);
+
     const HRESULT allocatorResetResult = frame.CommandAllocator->Reset();
     if (FAILED(allocatorResetResult))
     {
@@ -796,6 +806,8 @@ void GfxContext::SubmitCommandList()
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     commandList->ResourceBarrier(1, &barrier);
 
+    m_gpuProfiler.Resolve(commandList, m_frameIndex);
+
     ThrowIfFailed(m_impl->CommandList->Close(), "CommandList close failed");
 
     ID3D12CommandList* commandLists[] = {m_impl->CommandList.Get()};
@@ -824,10 +836,12 @@ void GfxContext::EndFrame()
 
     BindSwapChainRenderTarget(false);
 
+    const int uiScopeId = m_gpuProfiler.BeginScope(commandList, "UI (ImGui)");
     if (ImDrawData* drawData = ImGui::GetDrawData())
     {
         RenderImGui(drawData);
     }
+    m_gpuProfiler.EndScope(commandList, uiScopeId);
 
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
@@ -836,6 +850,8 @@ void GfxContext::EndFrame()
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     commandList->ResourceBarrier(1, &barrier);
+
+    m_gpuProfiler.Resolve(commandList, m_frameIndex);
 
     ThrowIfFailed(m_impl->CommandList->Close(), "CommandList close failed");
 
@@ -880,6 +896,37 @@ void* GfxContext::GetDevice() const
 void* GfxContext::GetCommandList() const
 {
     return m_impl != nullptr ? m_impl->CommandList.Get() : nullptr;
+}
+
+int GfxContext::GpuScopeBegin(const char* name)
+{
+    if (m_impl == nullptr || !m_frameRecording)
+    {
+        return -1;
+    }
+    return m_gpuProfiler.BeginScope(m_impl->CommandList.Get(), name);
+}
+
+void GfxContext::GpuScopeEnd(const int scopeId)
+{
+    if (m_impl == nullptr || scopeId < 0)
+    {
+        return;
+    }
+    m_gpuProfiler.EndScope(m_impl->CommandList.Get(), scopeId);
+}
+
+GfxContext::GpuTimerScope::GpuTimerScope(const char* name)
+    : m_scopeId(GfxContext::Get().GpuScopeBegin(name))
+{
+}
+
+GfxContext::GpuTimerScope::~GpuTimerScope()
+{
+    if (m_scopeId >= 0)
+    {
+        GfxContext::Get().GpuScopeEnd(m_scopeId);
+    }
 }
 
 void* GfxContext::GetSrvHeap() const

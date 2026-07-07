@@ -579,6 +579,7 @@ void SceneRenderer::RecordDxrPass(
         && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
         DxrBreadcrumb("render: reflections DispatchIfEnabled begin");
+        const GfxContext::GpuTimerScope gpuScopeReflections("RT reflections");
 
         float qualityScale = 0.75f; // Medium
         switch (m_dxrSettings.GetReflectionsQuality())
@@ -671,7 +672,8 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.IsDenoiseEnabled(),
             m_dxrSettings.GetTemporalBlend(),
             m_dxrSettings.GetReflectionAtrousIterations(),
-            m_dxrSettings.IsReflectionAntiFireflyEnabled());
+            m_dxrSettings.IsReflectionAntiFireflyEnabled(),
+            m_dxrSettings.GetReflectionAoRays());
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 
@@ -689,6 +691,7 @@ void SceneRenderer::RecordDxrPass(
     if (shadowsWanted && usePostProcess && m_screenSpaceEffects != nullptr)
     {
         DxrBreadcrumb("render: shadows DispatchIfEnabled begin");
+        const GfxContext::GpuTimerScope gpuScopeShadows("RT shadows");
 
         DxrShadowsDispatch::FrameInputs shadowInputs{};
         shadowInputs.depthSrvCpuHandle = depthSrvCpuHandle;
@@ -734,6 +737,7 @@ void SceneRenderer::RecordDxrPass(
         && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
         DxrBreadcrumb("render: gi DispatchIfEnabled begin");
+        const GfxContext::GpuTimerScope gpuScopeGi("RT diffuse GI");
 
         float giQualityScale = 0.75f; // Medium
         switch (m_dxrSettings.GetReflectionsQuality())
@@ -942,6 +946,7 @@ void SceneRenderer::Render(
     if (options.enableShadowPass)
     {
         SceneRenderTrace::Scope shadowScope("RenderShadowPass");
+        const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
         RenderShadowPass(scene, camera);
         m_shadowMap->EndFrame();
         shadowScope.Success();
@@ -1025,6 +1030,7 @@ void SceneRenderer::Render(
 
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
+        const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {
             const SceneObject& object = objects[objectIndex];
@@ -1101,6 +1107,7 @@ void SceneRenderer::Render(
 
         {
             SceneRenderTrace::Scope applyScope("ScreenSpaceEffects::Apply");
+            const GfxContext::GpuTimerScope gpuScopePost("Post-process");
             m_screenSpaceEffects->Apply(
                 camera,
                 viewportWidth,

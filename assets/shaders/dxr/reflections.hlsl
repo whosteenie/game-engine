@@ -28,7 +28,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float3 g_SunDirection;
     float g_SunIntensity;
     float3 g_SunColor;
-    float _padSun;
+    uint g_AoRayCount; // reflected-hit ambient-occlusion rays (0 = AO off), tunable
     float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
 };
 
@@ -626,27 +626,41 @@ void ReflectionClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const float3 occlusionOrigin = hitPos + hitNormal * max(hitT * 0.001, 0.002);
     const uint2 dispatchPixel = DispatchRaysIndex().xy;
 
+    // Occlusion only modulates the DIFFUSE terms, so it's invisible on surfaces with no diffuse
+    // lobe. Skip every occlusion ray on metals and near-black materials — a large saving on
+    // metallic reflections at zero visual cost (perf: dxr-groundwork.md).
+    const float diffuseWeight = max(diffuseAlbedo.r, max(diffuseAlbedo.g, diffuseAlbedo.b));
+    const bool needsOcclusion = diffuseWeight > 0.02;
+
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    // Only pay for the shadow ray where the sun actually contributes (front-facing to the sun).
-    const float sunVisibility =
-        ndotl > 0.0 ? TraceVisibility(occlusionOrigin, sunL, g_MaxTraceDistance) : 1.0;
+    // Only pay for the shadow ray where the sun actually contributes (front-facing + visible diffuse).
+    const float sunVisibility = (needsOcclusion && ndotl > 0.0)
+        ? TraceVisibility(occlusionOrigin, sunL, g_MaxTraceDistance)
+        : 1.0;
     const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi * sunVisibility;
 
-    // Cosine-weighted ambient occlusion over a bounded radius (contact-scale). Noisy at a few
-    // rays, but it modulates the radiance the RELAX specular denoiser already smooths.
+    // Cosine-weighted ambient occlusion over a bounded radius (contact-scale). Ray count is a
+    // quality/perf tunable (g_AoRayCount): more rays = less noise before the RELAX specular
+    // denoiser smooths it. Skipped entirely on metals/dark surfaces (needsOcclusion) or when the
+    // count is 0.
     const float aoRadius = max(g_MaxTraceDistance * 0.05, 0.5);
-    const uint kAoRays = 4u;
-    float aoVisibility = 0.0;
-    [loop]
-    for (uint aoIndex = 0u; aoIndex < kAoRays; ++aoIndex)
+    const uint aoRayCount = g_AoRayCount;
+    const bool traceAo = needsOcclusion && aoRayCount > 0u;
+    float aoVisibility = 1.0;
+    if (traceAo)
     {
-        const float2 aoXi = RandomXi(dispatchPixel, g_FrameIndex, aoIndex + 8u);
-        const float3 aoDir = CosineSampleHemisphere(hitNormal, aoXi);
-        aoVisibility += TraceVisibility(occlusionOrigin, aoDir, aoRadius);
+        float aoSum = 0.0;
+        [loop]
+        for (uint aoIndex = 0u; aoIndex < aoRayCount; ++aoIndex)
+        {
+            const float2 aoXi = RandomXi(dispatchPixel, g_FrameIndex, aoIndex + 8u);
+            const float3 aoDir = CosineSampleHemisphere(hitNormal, aoXi);
+            aoSum += TraceVisibility(occlusionOrigin, aoDir, aoRadius);
+        }
+        aoVisibility = aoSum / float(aoRayCount);
     }
-    aoVisibility *= 1.0 / float(kAoRays);
 
     const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
     const float3 ambient = diffuseAlbedo * irradiance / kPi * aoVisibility;

@@ -576,6 +576,25 @@ bool NrdDenoiser::Denoise(
     relaxSettings.specularPrepassBlurRadius = 12.0f;
     relaxSettings.diffusePrepassBlurRadius = 30.0f;
 
+    if (m_signal == Signal::Specular)
+    {
+        // Roughness-aware sharpening. RELAX already scales its A-trous footprint by the per-pixel
+        // specular lobe (driven by the roughness guide), but the default lobe fraction + angle
+        // slack + edge-stopping relaxation leave a blur FLOOR that softens even near-mirror
+        // surfaces — the "reflections are still blurry up close" complaint. Tightening these keeps
+        // low-roughness reflections crisp; wide (rough) lobes are largely unaffected because a
+        // fraction of a wide angle is still wide. Trade-off: slightly less edge smoothing on rough
+        // reflections, covered by temporal accumulation + anti-firefly.
+        relaxSettings.lobeAngleFraction = 0.15f;     // default 0.5 — normal-based rejection cone
+        relaxSettings.specularLobeAngleSlack = 0.03f; // default 0.15 deg — additive blur floor
+        relaxSettings.specularPrepassBlurRadius = 6.0f;
+        // Stricter A-trous edge stopping (defaults relax these when reprojection confidence dips,
+        // which is exactly when a mirror smears): keep reflected silhouettes sharp.
+        relaxSettings.normalEdgeStoppingRelaxation = 0.1f;    // default 0.3
+        relaxSettings.luminanceEdgeStoppingRelaxation = 0.2f; // default 0.5
+        relaxSettings.roughnessEdgeStoppingRelaxation = 0.4f; // default 1.0
+    }
+
     if (nrd::SetDenoiserSettings(*m_instance, kSpecularIdentifier, &relaxSettings) != nrd::Result::SUCCESS)
     {
         outError = "nrd::SetDenoiserSettings failed";

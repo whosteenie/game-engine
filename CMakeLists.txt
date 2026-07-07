@@ -356,6 +356,7 @@ add_executable(game-engine
     src/engine/platform/RenderPathDiagnostics.cpp
 
     src/engine/rhi/GfxContext.cpp
+    src/engine/rhi/GpuProfiler.cpp
     src/engine/rhi/HresultFormat.cpp
 
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
@@ -629,6 +630,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         tests/d3d12_render_tests.cpp
         tests/d3d12_test_harness.cpp
         src/engine/rhi/GfxContext.cpp
+        src/engine/rhi/GpuProfiler.cpp
         src/engine/rhi/HresultFormat.cpp
         src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
         src/engine/rhi/d3d12/GpuBuffer.cpp

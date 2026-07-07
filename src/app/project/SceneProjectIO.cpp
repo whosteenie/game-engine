@@ -711,6 +711,7 @@ namespace SceneProjectIODetail
                  {"temporalBlend", dxrSettings.GetTemporalBlend()},
                  {"reflectionAtrousIterations", dxrSettings.GetReflectionAtrousIterations()},
                  {"reflectionAntiFirefly", dxrSettings.IsReflectionAntiFireflyEnabled()},
+                 {"reflectionAoRays", dxrSettings.GetReflectionAoRays()},
                  {"shadowsEnabled", dxrSettings.IsShadowsEnabled()},
                  {"sunAngularRadiusDegrees", dxrSettings.GetSunAngularRadiusDegrees()},
                  {"shadowDenoiseEnabled", dxrSettings.IsShadowDenoiseEnabled()},
@@ -765,6 +766,10 @@ namespace SceneProjectIODetail
         {
             dxrSettings.SetReflectionAntiFireflyEnabled(
                 dxrValue.at("reflectionAntiFirefly").get<bool>());
+        }
+        if (dxrValue.contains("reflectionAoRays"))
+        {
+            dxrSettings.SetReflectionAoRays(dxrValue.at("reflectionAoRays").get<int>());
         }
         if (dxrValue.contains("shadowsEnabled"))
         {

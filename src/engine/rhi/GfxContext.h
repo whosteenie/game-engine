@@ -1,10 +1,12 @@
 #pragma once
 
 #include "engine/rendering/TextureSamplerSettings.h"
+#include "engine/rhi/GpuProfiler.h"
 
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 struct GLFWwindow;
 struct ImDrawData;
@@ -152,6 +154,28 @@ public:
 
     void LogD3D12InfoQueueMessages(const char* context);
 
+    // Per-pass GPU timing (timestamp queries). Scopes are recorded on the active frame command
+    // list; results lag by ~1-2 frames (read back after the covering fence). Use GpuTimerScope for
+    // RAII pairing. GpuScopeBegin returns -1 when unavailable / budget exhausted.
+    int GpuScopeBegin(const char* name);
+    void GpuScopeEnd(int scopeId);
+    const std::vector<GpuProfiler::Entry>& GetGpuTimings() const { return m_gpuProfiler.GetResults(); }
+    float GetGpuTotalMs() const { return m_gpuProfiler.GetTotalMs(); }
+
+    // RAII wrapper around GpuScopeBegin/End on the active frame command list.
+    class GpuTimerScope
+    {
+    public:
+        explicit GpuTimerScope(const char* name);
+        ~GpuTimerScope();
+
+        GpuTimerScope(const GpuTimerScope&) = delete;
+        GpuTimerScope& operator=(const GpuTimerScope&) = delete;
+
+    private:
+        int m_scopeId = -1;
+    };
+
 private:
     GfxContext() = default;
 
@@ -192,4 +216,5 @@ private:
     std::uint8_t m_supportedMsaaSampleCountsMask = 0;
     int m_raytracingTier = 0;
     std::string m_adapterDescription;
+    GpuProfiler m_gpuProfiler;
 };

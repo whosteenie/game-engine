@@ -27,7 +27,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float3 g_SunDirection;
     float g_SunIntensity;
     float3 g_SunColor;
-    float _padSun;
+    uint g_AoRayCount; // reflection-only AO ray count; unused by the GI pass (kept for layout parity)
     float4 g_IrradianceSh9[9]; // L2 SH diffuse irradiance
 };
 

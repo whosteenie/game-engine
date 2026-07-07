@@ -1762,6 +1762,19 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
 
+        int aoRays = dxrSettings.GetReflectionAoRays();
+        UndoableRendererSliderInt(
+            "Reflection AO rays",
+            &aoRays,
+            0,
+            16,
+            editContext,
+            [](Scene& target, int rays) {
+                target.GetRenderer().GetDxrSettings().SetReflectionAoRays(rays);
+                target.MarkDirty();
+            });
+        ImGui::TextDisabled("Contact shadows on reflected surfaces. 0 = off; higher = cleaner, costlier.");
+
         // Phase D8 — RT soft sun shadows (devdoc/dxr-shadows.md). Supplemental over CSM.
         ImGui::SeparatorText("RT shadows");
 

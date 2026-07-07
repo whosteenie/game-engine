@@ -63,7 +63,8 @@ public:
         bool denoiseEnabled,
         float temporalBlend,
         int atrousIterations,
-        bool antiFirefly);
+        bool antiFirefly,
+        int aoRayCount);
 
     void Release();
 

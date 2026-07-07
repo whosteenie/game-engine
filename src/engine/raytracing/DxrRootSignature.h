@@ -54,7 +54,7 @@ struct ReflectionDispatchConstants
     float sunDirection[3] = {0.0f, -1.0f, 0.0f};
     float sunIntensity = 0.0f;
     float sunColor[3] = {1.0f, 1.0f, 1.0f};
-    float _padSun = 0.0f;
+    std::uint32_t aoRayCount = 4; // reflected-hit AO ray count (0 = off), tunable
     float irradianceSh9[9][4] = {}; // L2 SH diffuse irradiance (9 x float4)
 };
 
