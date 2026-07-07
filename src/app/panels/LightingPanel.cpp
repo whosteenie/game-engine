@@ -3,6 +3,7 @@
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/EditorWidgets.h"
+#include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -180,7 +181,7 @@ void LightingPanel::Draw(
     ScreenSpaceEffects& screenSpaceEffects = renderer.GetScreenSpaceEffects();
     BeginRendererEditFrame(editContext);
 
-    if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Scene", true))
     {
         bool showGizmos = scene.GetShowLightGizmos();
         if (ImGui::Checkbox("Show light gizmos", &showGizmos))
@@ -204,7 +205,7 @@ void LightingPanel::Draw(
         ImGui::TextUnformatted("Create and edit lights from the Hierarchy and Inspector.");
     }
 
-    if (ImGui::CollapsingHeader("Skybox", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Skybox", true))
     {
         int backgroundMode = static_cast<int>(environmentMap.GetBackgroundMode());
         const char* backgroundModeLabels[] = {"Skybox (HDR)", "Solid color"};
@@ -358,7 +359,7 @@ void LightingPanel::Draw(
             "For star fields and fine cloud detail, use 2K or 4K HDR files from Poly Haven.");
     }
 
-    if (ImGui::CollapsingHeader("Image-Based Lighting", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Image-Based Lighting", true))
     {
         float environmentIntensity = ibl.GetEnvironmentIntensity();
         if (ImGui::SliderFloat("Environment intensity", &environmentIntensity, 0.0f, 2.0f))
@@ -369,7 +370,7 @@ void LightingPanel::Draw(
         HandleRendererFieldEditEvents(editContext);
     }
 
-    if (ImGui::CollapsingHeader("Directional Shadows", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Directional Shadows", true))
     {
         DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
         const CascadedShadowMap& shadowMap = renderer.GetShadowMap();
@@ -657,7 +658,7 @@ void LightingPanel::Draw(
         }
     }
 
-    if (ImGui::CollapsingHeader("HDR", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("HDR", true))
     {
         float exposure = screenSpaceEffects.GetExposure();
         UndoableRendererSliderFloat(
@@ -755,7 +756,7 @@ void LightingPanel::Draw(
         }
     }
 
-    if (ImGui::CollapsingHeader("Screen Space", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Screen Space", true))
     {
         bool enabled = screenSpaceEffects.IsEnabled();
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
@@ -1005,7 +1006,7 @@ void LightingPanel::Draw(
         }
     }
 
-    if (ImGui::CollapsingHeader("Anti-aliasing", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Anti-aliasing", true))
     {
         if (!screenSpaceEffects.IsEnabled())
         {
@@ -1332,7 +1333,7 @@ void LightingPanel::Draw(
         }
     }
 
-    if (ImGui::CollapsingHeader("Texture filtering", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Texture filtering", true))
     {
         ImGui::TextDisabled("Material textures upload with full mip chains.");
 
@@ -1385,7 +1386,7 @@ void LightingPanel::Draw(
         HandleRendererFieldEditEvents(editContext);
     }
 
-    if (ImGui::CollapsingHeader("Screen-space GI (SSGI)", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Screen-space GI (SSGI)", true))
     {
         ImGui::TextDisabled(
             "Screen-space indirect from emissive / radiance buffer. "
@@ -1538,7 +1539,7 @@ void LightingPanel::Draw(
         }
     }
 
-    if (ImGui::CollapsingHeader("Screen-space reflections (SSR)", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Screen-space reflections (SSR)", true))
     {
         ImGui::TextDisabled(
             "Specular screen-space trace from Phase S1 scene-color buffer. "
@@ -1682,7 +1683,7 @@ void LightingPanel::Draw(
             screenSpaceEffects.GetSsrTraceTargetHeight());
     }
 
-    if (ImGui::CollapsingHeader("Ray tracing"))
+    if (TuningSectionState::SectionHeader("Ray tracing", true))
     {
         const GfxContext& gfx = GfxContext::Get();
         const bool raytracingSupported = gfx.IsInitialized() && gfx.IsRaytracingSupported();
@@ -2006,7 +2007,7 @@ void LightingPanel::Draw(
             "Acceleration structures build when ray tracing is enabled. DispatchRays arrives in a later DXR phase.");
     }
 
-    if (ImGui::CollapsingHeader("Diagnostics", ImGuiTreeNodeFlags_DefaultOpen))
+    if (TuningSectionState::SectionHeader("Diagnostics", true))
     {
         ImGui::TextUnformatted(
             "Use debug views to see which render pass causes an artifact. "

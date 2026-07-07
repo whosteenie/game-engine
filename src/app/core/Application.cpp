@@ -37,6 +37,7 @@
 #include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/assets/TextureCache.h"
+#include "app/editor/TuningSectionState.h"
 #include "engine/platform/ImGuiLayer.h"
 #include "engine/platform/EngineLog.h"
 
@@ -302,6 +303,10 @@ Application::Application(int width, int height, const char* title)
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
         GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
         m_imguiLayer->InitPlatformBackend();
+
+        // Persist renderer-tuning section open/close state in the editor imgui.ini. Must be
+        // registered before the layout ini is loaded so saved section states are parsed.
+        TuningSectionState::RegisterImGuiSettingsHandler();
 
         m_renderer = std::make_unique<Renderer>();
         m_editorSettings = std::make_unique<EditorSettings>();

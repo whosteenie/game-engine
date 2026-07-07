@@ -313,6 +313,7 @@ add_executable(game-engine
     src/app/core/Application.cpp
 
     src/app/editor/EditorSettings.cpp
+    src/app/editor/TuningSectionState.cpp
 
 
     src/app/editor/EditorDockSpace.cpp
