@@ -4848,6 +4848,37 @@ void ScreenSpaceEffects::SetDlssPreset(const DlssPreset preset)
     }
 }
 
+bool ScreenSpaceEffects::GetRayReconstruction() const
+{
+    return m_rayReconstruction;
+}
+
+void ScreenSpaceEffects::SetRayReconstruction(const bool enabled)
+{
+    if (m_rayReconstruction == enabled)
+    {
+        return;
+    }
+    m_rayReconstruction = enabled;
+    // Switching RR on/off changes the resolve owner (RR replaces the SR model) and the RT denoise
+    // path — drop temporal history so the reconstruction restarts cleanly.
+    ResetTaaHistory();
+}
+
+bool ScreenSpaceEffects::IsRayReconstructionActive() const
+{
+    if (!m_rayReconstruction)
+    {
+        return false;
+    }
+    if (m_antiAliasingMode != AntiAliasingMode::DLAA && m_antiAliasingMode != AntiAliasingMode::DLSS)
+    {
+        return false;
+    }
+    const DlssContext& dlss = DlssContext::Get();
+    return dlss.IsReady() && dlss.IsRrSupported();
+}
+
 float ScreenSpaceEffects::GetDlssSharpness() const
 {
     return m_dlssSharpness;
@@ -4942,6 +4973,7 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_debugMode = source.m_debugMode;
     m_antiAliasingMode = source.m_antiAliasingMode;
     m_dlssPreset = source.m_dlssPreset;
+    m_rayReconstruction = source.m_rayReconstruction;
     m_dlssSharpness = source.m_dlssSharpness;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;

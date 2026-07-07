@@ -742,6 +742,7 @@ namespace SceneProjectIODetail
                  {"bloomBlurRadius", effects.GetBloomBlurRadius()},
                  {"antiAliasingMode", AntiAliasingModeToString(effects.GetAntiAliasingMode())},
                  {"dlssPreset", DlssPresetToString(effects.GetDlssPreset())},
+                 {"dlssRayReconstruction", effects.GetRayReconstruction()},
                  {"dlssSharpness", effects.GetDlssSharpness()},
                  {"msaaSampleCount", effects.GetMsaaSampleCount()},
                  {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
@@ -983,6 +984,10 @@ namespace SceneProjectIODetail
         {
             effects.SetDlssPreset(
                 DlssPresetFromString(effectsValue.at("dlssPreset").get<std::string>()));
+        }
+        if (effectsValue.contains("dlssRayReconstruction"))
+        {
+            effects.SetRayReconstruction(effectsValue.at("dlssRayReconstruction").get<bool>());
         }
         if (effectsValue.contains("dlssSharpness"))
         {

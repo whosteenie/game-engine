@@ -539,6 +539,12 @@ void SceneRenderer::RecordDxrPass(
     const RenderDebugMode debugMode =
         usePostProcess && m_screenSpaceEffects != nullptr ? m_screenSpaceEffects->GetDebugMode()
                                                           : RenderDebugMode::None;
+    // DLSS Ray Reconstruction (devdoc/dxr-dlss-rr.md, RR2): when RR owns the resolve it replaces
+    // the NRD denoisers — force NRD OFF for the RT signals it reconstructs (reflections + GI) so
+    // the RAW noisy radiance flows into the HDR color. (RT shadows stay on SIGMA for now — open
+    // decision #3.) RR3 wires the actual RR evaluate; until then RR-on shows the noisy signal.
+    const bool rrActive = usePostProcess && m_screenSpaceEffects != nullptr
+        && m_screenSpaceEffects->IsRayReconstructionActive();
     const bool smokeDebugMode = debugMode == RenderDebugMode::RtDispatchSmoke;
     const bool primaryDebugViewActive = IsRtPrimaryDebugMode(debugMode);
     const bool primaryTraceEnabled =
@@ -684,7 +690,7 @@ void SceneRenderer::RecordDxrPass(
             dispatchHeight,
             m_dxrSettings.GetMaxTraceDistance(),
             m_dxrSettings.GetReflectionsSamplesPerPixel(),
-            m_dxrSettings.IsDenoiseEnabled(),
+            m_dxrSettings.IsDenoiseEnabled() && !rrActive, // RR reconstructs the raw signal instead
             m_dxrSettings.GetTemporalBlend(),
             m_dxrSettings.GetReflectionAtrousIterations(),
             m_dxrSettings.IsReflectionAntiFireflyEnabled(),
@@ -842,7 +848,7 @@ void SceneRenderer::RecordDxrPass(
             dispatchHeight,
             m_dxrSettings.GetMaxTraceDistance(),
             1, // RELAX_DIFFUSE is designed for 1 spp
-            m_dxrSettings.IsGiDenoiseEnabled(),
+            m_dxrSettings.IsGiDenoiseEnabled() && !rrActive, // RR reconstructs the raw signal instead
             m_dxrSettings.GetTemporalBlend(),
             m_dxrSettings.GetReflectionAtrousIterations(),
             m_dxrSettings.IsReflectionAntiFireflyEnabled());

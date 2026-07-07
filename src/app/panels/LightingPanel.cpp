@@ -1216,6 +1216,34 @@ void LightingPanel::Draw(
             currentAaMode == AntiAliasingMode::DLAA || currentAaMode == AntiAliasingMode::DLSS;
         if (dlssModeActive)
         {
+            // Ray Reconstruction (devdoc/dxr-dlss-rr.md). Replaces the NRD denoisers + the SR model
+            // with one neural pass. Disabled when RR isn't supported; full precondition gating
+            // (requires an RT feature on) and NRD-controls-disable arrive in a later RR phase.
+            const bool rrSupported = dlss.IsReady() && dlss.IsRrSupported();
+            if (!rrSupported)
+            {
+                ImGui::BeginDisabled();
+            }
+            bool rayReconstruction = screenSpaceEffects.GetRayReconstruction();
+            UndoableRendererCheckbox(
+                "Ray Reconstruction",
+                &rayReconstruction,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetRayReconstruction(enabled);
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "DLSS Ray Reconstruction: replaces the NRD denoisers AND the DLSS SR model with "
+                    "one neural pass. Needs RT reflections/GI/shadows on to have a signal to reconstruct.");
+            }
+            if (!rrSupported)
+            {
+                ImGui::EndDisabled();
+            }
+
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
             UndoableRendererSliderFloat(
                 "DLSS sharpness",

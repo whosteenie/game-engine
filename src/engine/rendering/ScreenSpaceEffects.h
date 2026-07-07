@@ -295,6 +295,13 @@ public:
     DlssPreset GetDlssPreset() const;
     void SetDlssPreset(DlssPreset preset);
 
+    // DLSS Ray Reconstruction (devdoc/dxr-dlss-rr.md). When active it replaces NRD + the SR model.
+    bool GetRayReconstruction() const;
+    void SetRayReconstruction(bool enabled);
+    // True when RR will own the resolve this frame: a DLSS mode is selected, the RR toggle is on,
+    // and RR is supported. (The RT-feature-on precondition is applied by the caller / SceneRenderer.)
+    bool IsRayReconstructionActive() const;
+
     // In-DLSS sharpening (Streamline deprecated; 0 = off). Applied via sl::DLSSOptions::sharpness.
     float GetDlssSharpness() const;
     void SetDlssSharpness(float sharpness);
@@ -620,6 +627,7 @@ private:
     float m_fxaaEdgeThreshold = 0.03125f;
     float m_renderScale = 1.5f;
     DlssPreset m_dlssPreset = DlssPreset::Quality;
+    bool m_rayReconstruction = false;
     float m_dlssSharpness = 0.0f;
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
