@@ -1250,12 +1250,13 @@ void SceneRenderer::Render(
             endPassScope.Success();
         }
 
+        const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
         const bool drawGrid = options.showGrid && scene.GetShowGrid();
-        if (drawGrid)
+        if (drawGrid && !pathTracingActive)
         {
             SceneRenderTrace::Scope gridScope("scene grid pass");
             m_screenSpaceEffects->BeginSceneGridPass();
-            m_grid->Draw(camera, splitLightingMrt);
+            m_grid->Draw(camera, splitLightingMrt, false, splitLightingMrt);
             m_screenSpaceEffects->EndSceneGridPass();
             gridScope.Success();
         }
@@ -1274,6 +1275,18 @@ void SceneRenderer::Render(
         if (target != nullptr)
         {
             GfxContext::Get().SetBoundOutputFramebuffer(target);
+        }
+
+        if (drawGrid && m_dxrSettings.IsPathTracingActive())
+        {
+            m_screenSpaceEffects->SetPathTracerGridOverlayCallback(
+                [this](const Camera& cam, const bool useDepthTest) {
+                    m_grid->Draw(cam, true, true, false, useDepthTest);
+                });
+        }
+        else
+        {
+            m_screenSpaceEffects->SetPathTracerGridOverlayCallback({});
         }
 
         {
@@ -1331,6 +1344,26 @@ void SceneRenderer::Render(
                 viewportWidth,
                 viewportHeight,
                 m_dxrSettings.GetMaxTraceDistance());
+
+            // Reference / DLSS-fallback PT still blits after post — grid was not in the HDR chain.
+            if (drawGrid && m_dxrSettings.IsPathTracingActive()
+                && !m_screenSpaceEffects->PathTracerPostIntegratedThisFrame()
+                && !m_screenSpaceEffects->PathTracerResolvedViaDlssThisFrame())
+            {
+                SceneRenderTrace::Scope gridOverlayScope("grid pt overlay (ldr fallback)");
+                auto* viewportTarget = reinterpret_cast<Framebuffer*>(targetFramebuffer);
+                bool depthReadOnly = false;
+                if (m_screenSpaceEffects->BlitDepthToFramebuffer(viewportTarget))
+                {
+                    depthReadOnly = viewportTarget->BindGizmoDrawTarget();
+                }
+                if (!depthReadOnly)
+                {
+                    viewportTarget->BindDrawTarget(false);
+                }
+                m_grid->Draw(camera, false, true, false, depthReadOnly);
+                gridOverlayScope.Success();
+            }
         }
 
         if (target != nullptr)

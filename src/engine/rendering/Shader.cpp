@@ -98,6 +98,8 @@ Shader::~Shader()
     releasePipeline(m_pipelineStateMrt);
     releasePipeline(m_pipelineStateLdr);
     releasePipeline(m_pipelineStateLdrDepthRead);
+    releasePipeline(m_pipelineStateNoDepth);
+    releasePipeline(m_pipelineStateLdrNoDepth);
     releasePipeline(m_pipelineStateDoubleSided);
     releasePipeline(m_pipelineStateMrtDoubleSided);
     releasePipeline(m_pipelineStateLdrDoubleSided);
@@ -126,6 +128,8 @@ Shader::Shader(Shader&& other) noexcept
       m_pipelineStateMrt(other.m_pipelineStateMrt),
       m_pipelineStateLdr(other.m_pipelineStateLdr),
       m_pipelineStateLdrDepthRead(other.m_pipelineStateLdrDepthRead),
+      m_pipelineStateNoDepth(other.m_pipelineStateNoDepth),
+      m_pipelineStateLdrNoDepth(other.m_pipelineStateLdrNoDepth),
       m_pipelineStateDoubleSided(other.m_pipelineStateDoubleSided),
       m_pipelineStateMrtDoubleSided(other.m_pipelineStateMrtDoubleSided),
       m_pipelineStateLdrDoubleSided(other.m_pipelineStateLdrDoubleSided),
@@ -140,6 +144,8 @@ Shader::Shader(Shader&& other) noexcept
     other.m_pipelineStateMrt = nullptr;
     other.m_pipelineStateLdr = nullptr;
     other.m_pipelineStateLdrDepthRead = nullptr;
+    other.m_pipelineStateNoDepth = nullptr;
+    other.m_pipelineStateLdrNoDepth = nullptr;
     other.m_pipelineStateDoubleSided = nullptr;
     other.m_pipelineStateMrtDoubleSided = nullptr;
     other.m_pipelineStateLdrDoubleSided = nullptr;
@@ -160,6 +166,8 @@ Shader& Shader::operator=(Shader&& other) noexcept
         m_pipelineStateMrt = other.m_pipelineStateMrt;
         m_pipelineStateLdr = other.m_pipelineStateLdr;
         m_pipelineStateLdrDepthRead = other.m_pipelineStateLdrDepthRead;
+        m_pipelineStateNoDepth = other.m_pipelineStateNoDepth;
+        m_pipelineStateLdrNoDepth = other.m_pipelineStateLdrNoDepth;
         m_pipelineStateDoubleSided = other.m_pipelineStateDoubleSided;
         m_pipelineStateMrtDoubleSided = other.m_pipelineStateMrtDoubleSided;
         m_pipelineStateLdrDoubleSided = other.m_pipelineStateLdrDoubleSided;
@@ -173,6 +181,8 @@ Shader& Shader::operator=(Shader&& other) noexcept
         other.m_pipelineStateMrt = nullptr;
         other.m_pipelineStateLdr = nullptr;
         other.m_pipelineStateLdrDepthRead = nullptr;
+        other.m_pipelineStateNoDepth = nullptr;
+        other.m_pipelineStateLdrNoDepth = nullptr;
         other.m_pipelineStateDoubleSided = nullptr;
         other.m_pipelineStateMrtDoubleSided = nullptr;
         other.m_pipelineStateLdrDoubleSided = nullptr;
@@ -827,6 +837,13 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         }
 
         m_pipelineState = createPipeline(psoDesc);
+        if (isGridVertex)
+        {
+            applyNoDepthPass();
+            m_pipelineStateNoDepth = createPipeline(psoDesc);
+            setupDepthReadOnly(psoDesc.DepthStencilState);
+            psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+        }
         if (isPbr)
         {
             psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -846,6 +863,11 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         }
 
         m_pipelineStateLdr = createPipeline(psoDesc);
+        if (isGridVertex)
+        {
+            applyNoDepthPass();
+            m_pipelineStateLdrNoDepth = createPipeline(psoDesc);
+        }
         if (isPbr)
         {
             psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
@@ -999,7 +1021,8 @@ void Shader::BindPipeline(
     const bool mrtPass,
     const bool viewportLdr,
     const bool doubleSided,
-    const bool depthReadOnly) const
+    const bool depthReadOnly,
+    const bool skipDepthTest) const
 {
     g_activeShader = this;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
@@ -1018,6 +1041,14 @@ void Shader::BindPipeline(
         {
             pipeline = m_pipelineStateDoubleSided;
         }
+    }
+    else if (skipDepthTest && viewportLdr && m_pipelineStateLdrNoDepth != nullptr)
+    {
+        pipeline = m_pipelineStateLdrNoDepth;
+    }
+    else if (skipDepthTest && !viewportLdr && m_pipelineStateNoDepth != nullptr)
+    {
+        pipeline = m_pipelineStateNoDepth;
     }
     else if (mrtPass && m_pipelineStateMrt != nullptr)
     {
@@ -1045,13 +1076,14 @@ void Shader::Use(
     const bool mrtPass,
     const bool viewportLdr,
     const bool doubleSided,
-    const bool depthReadOnly) const
+    const bool depthReadOnly,
+    const bool skipDepthTest) const
 {
     std::fill(
         const_cast<std::vector<std::uintptr_t>&>(m_textureSlots).begin(),
         const_cast<std::vector<std::uintptr_t>&>(m_textureSlots).end(),
         0);
-    BindPipeline(mrtPass, viewportLdr, doubleSided, depthReadOnly);
+    BindPipeline(mrtPass, viewportLdr, doubleSided, depthReadOnly, skipDepthTest);
 }
 
 void Shader::UseOnCommandList(void* commandList) const

@@ -38,17 +38,20 @@ public:
 
     // viewportLdr selects the UNORM pipeline for the editor viewport framebuffer.
     // depthReadOnly selects LDR + scene-depth testing (editor world gizmos).
+    // skipDepthTest selects the grid overlay pipeline (HDR/LDR without depth when no DSV is bound).
     void Use(
         bool mrtPass = false,
         bool viewportLdr = false,
         bool doubleSided = false,
-        bool depthReadOnly = false) const;
+        bool depthReadOnly = false,
+        bool skipDepthTest = false) const;
     // Binds PSO/root signature without clearing texture slots (post-process draws).
     void BindPipeline(
         bool mrtPass = false,
         bool viewportLdr = false,
         bool doubleSided = false,
-        bool depthReadOnly = false) const;
+        bool depthReadOnly = false,
+        bool skipDepthTest = false) const;
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -102,6 +105,8 @@ private:
     void* m_pipelineStateMrt = nullptr;
     void* m_pipelineStateLdr = nullptr;
     void* m_pipelineStateLdrDepthRead = nullptr;
+    void* m_pipelineStateNoDepth = nullptr;
+    void* m_pipelineStateLdrNoDepth = nullptr;
     void* m_pipelineStateDoubleSided = nullptr;
     void* m_pipelineStateMrtDoubleSided = nullptr;
     void* m_pipelineStateLdrDoubleSided = nullptr;

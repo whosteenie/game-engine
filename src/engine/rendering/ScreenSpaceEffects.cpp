@@ -760,6 +760,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ptAccumSumTarget);
     DestroyInternalTarget(m_ptAccumScratchTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
+    DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
     DestroyInternalTarget(m_dlssBloomExtractTarget);
     DestroyInternalTarget(m_dlssBloomBlurTarget);
     DestroyInternalTarget(m_dlssBloomBlur2Target);
@@ -852,6 +853,98 @@ void ScreenSpaceEffects::CreateInternalTarget(
     device->CreateRenderTargetView(resource, nullptr, rtvHandle);
 }
 
+void ScreenSpaceEffects::CreateInternalDepthTarget(
+    InternalDepthTarget& target,
+    const int width,
+    const int height)
+{
+    DestroyInternalDepthTarget(target);
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+
+    D3D12_RESOURCE_DESC resourceDesc{};
+    resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    resourceDesc.Width = static_cast<UINT64>(width);
+    resourceDesc.Height = static_cast<UINT>(height);
+    resourceDesc.DepthOrArraySize = 1;
+    resourceDesc.MipLevels = 1;
+    resourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    resourceDesc.SampleDesc.Count = 1;
+    resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE clearValue{};
+    clearValue.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    clearValue.DepthStencil.Depth = 1.0f;
+    clearValue.DepthStencil.Stencil = 0;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* resource = nullptr;
+    D3D12MA::Allocation* allocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &resourceDesc,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            &clearValue,
+            &allocation,
+            IID_PPV_ARGS(&resource))))
+    {
+        ThrowPostProcessTargetError("Failed to create display depth target");
+    }
+
+    target.resource = resource;
+    target.allocation = allocation;
+    target.width = width;
+    target.height = height;
+    target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+    target.dsvIndex = GfxContext::Get().AllocateOffscreenDsv();
+    if (target.dsvIndex == UINT32_MAX)
+    {
+        DestroyInternalDepthTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate display depth DSV descriptor");
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{
+        GfxContext::Get().GetOffscreenDsvCpuHandle(target.dsvIndex)};
+    device->CreateDepthStencilView(resource, nullptr, dsvHandle);
+}
+
+void ScreenSpaceEffects::DestroyInternalDepthTarget(InternalDepthTarget& target) const
+{
+    if (!GfxContext::Get().IsInitialized())
+    {
+        target.dsvIndex = UINT32_MAX;
+        target.allocation = nullptr;
+        target.resource = nullptr;
+        target.width = 0;
+        target.height = 0;
+        target.resourceState =
+            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        return;
+    }
+
+    if (target.dsvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().DeferredFreeOffscreenDsv(target.dsvIndex);
+        target.dsvIndex = UINT32_MAX;
+    }
+
+    if (target.allocation != nullptr || target.resource != nullptr)
+    {
+        GfxContext::Get().DeferredReleaseResource(target.allocation, target.resource);
+    }
+
+    target.allocation = nullptr;
+    target.resource = nullptr;
+    target.width = 0;
+    target.height = 0;
+    target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+}
+
 void ScreenSpaceEffects::CreateUavTarget(
     InternalTarget& target,
     const int width,
@@ -872,8 +965,16 @@ void ScreenSpaceEffects::CreateUavTarget(
     resourceDesc.Format = static_cast<DXGI_FORMAT>(format);
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-    // NGX writes the DLSS output via a UAV. No RTV is created (nothing rasterizes into it).
-    resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    // NGX writes via UAV; PT editor grid overlays rasterize into the same texture after evaluate.
+    resourceDesc.Flags =
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+    D3D12_CLEAR_VALUE clearValue{};
+    clearValue.Format = static_cast<DXGI_FORMAT>(format);
+    clearValue.Color[0] = 0.0f;
+    clearValue.Color[1] = 0.0f;
+    clearValue.Color[2] = 0.0f;
+    clearValue.Color[3] = 1.0f;
 
     D3D12MA::ALLOCATION_DESC allocationDesc{};
     allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -884,7 +985,7 @@ void ScreenSpaceEffects::CreateUavTarget(
             &allocationDesc,
             &resourceDesc,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            nullptr,
+            &clearValue,
             &allocation,
             IID_PPV_ARGS(&resource))))
     {
@@ -896,7 +997,6 @@ void ScreenSpaceEffects::CreateUavTarget(
     target.width = width;
     target.height = height;
     target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    target.rtvIndex = UINT32_MAX;
 
     target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
     if (target.srvIndex == UINT32_MAX)
@@ -912,6 +1012,16 @@ void ScreenSpaceEffects::CreateUavTarget(
         {target.srvCpuHandle},
         static_cast<DXGI_FORMAT>(format),
         1);
+
+    target.rtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
+    if (target.rtvIndex == UINT32_MAX)
+    {
+        DestroyInternalTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate DLSS output RTV descriptor");
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
+    device->CreateRenderTargetView(resource, nullptr, rtvHandle);
 }
 
 void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
@@ -1228,10 +1338,29 @@ void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int he
     ResizeInternalTarget(m_taaResolveTarget, width, height, hdrFormat);
 }
 
+void ScreenSpaceEffects::ResizeDlssDisplayDepthTarget(const int viewportWidth, const int viewportHeight)
+{
+    if (viewportWidth <= 0 || viewportHeight <= 0)
+    {
+        DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
+        return;
+    }
+
+    if (m_dlssDisplayDepthTarget.resource != nullptr
+        && m_dlssDisplayDepthTarget.width == viewportWidth
+        && m_dlssDisplayDepthTarget.height == viewportHeight)
+    {
+        return;
+    }
+
+    CreateInternalDepthTarget(m_dlssDisplayDepthTarget, viewportWidth, viewportHeight);
+}
+
 void ScreenSpaceEffects::ResizeDlssDisplayTargets(const int viewportWidth, const int viewportHeight)
 {
     const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     CreateUavTarget(m_dlssOutputTarget, viewportWidth, viewportHeight, hdrFormat);
+    ResizeDlssDisplayDepthTarget(viewportWidth, viewportHeight);
 
     const int bloomWidth = std::max(1, viewportWidth / 2);
     const int bloomHeight = std::max(1, viewportHeight / 2);
@@ -1648,6 +1777,98 @@ void ScreenSpaceEffects::EnsureMsaaDepthResolveShader() const
     shaderScope.Success();
 }
 
+void ScreenSpaceEffects::EnsureDepthBlitShader() const
+{
+    if (m_depthBlitShader != nullptr)
+    {
+        return;
+    }
+
+    const_cast<ScreenSpaceEffects*>(this)->m_depthBlitShader = std::make_unique<Shader>(
+        EngineConstants::FullscreenVertexShader,
+        EngineConstants::DepthBlitFragmentShader,
+        ShaderSamplerOverrides{(1u << 0), true});
+}
+
+bool ScreenSpaceEffects::BindPathTracerGridOverlayDepth(
+    const int overlayWidth,
+    const int overlayHeight,
+    std::uintptr_t& outDepthDsvCpuHandle) const
+{
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid()
+        || m_sceneFramebuffer->GetDepthResource() == nullptr || overlayWidth <= 0
+        || overlayHeight <= 0)
+    {
+        return false;
+    }
+
+    auto* commandList =
+        static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+    if (m_width == overlayWidth && m_height == overlayHeight)
+    {
+        if (m_sceneFramebuffer->UsesMsaa())
+        {
+            const_cast<Framebuffer*>(m_sceneFramebuffer.get())->PrepareResolvedDepthForDepthTestPass();
+            outDepthDsvCpuHandle = m_sceneFramebuffer->GetResolvedDepthDsvCpuHandle();
+        }
+        else
+        {
+            const_cast<Framebuffer*>(m_sceneFramebuffer.get())->PrepareDepthForDepthTestPass();
+            outDepthDsvCpuHandle = m_sceneFramebuffer->GetDepthDsvCpuHandle();
+        }
+        return outDepthDsvCpuHandle != 0;
+    }
+
+    if (m_dlssDisplayDepthTarget.resource == nullptr
+        || m_dlssDisplayDepthTarget.dsvIndex == UINT32_MAX
+        || m_dlssDisplayDepthTarget.width != overlayWidth
+        || m_dlssDisplayDepthTarget.height != overlayHeight)
+    {
+        return false;
+    }
+
+    m_sceneFramebuffer->EnsureShaderResourceState();
+    EnsureDepthBlitShader();
+
+    auto* displayDepth = static_cast<ID3D12Resource*>(m_dlssDisplayDepthTarget.resource);
+    const D3D12_RESOURCE_STATES depthWriteState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    D3D12_RESOURCE_STATES beforeState =
+        static_cast<D3D12_RESOURCE_STATES>(m_dlssDisplayDepthTarget.resourceState);
+    if (beforeState == D3D12_RESOURCE_STATE_COMMON)
+    {
+        beforeState = depthWriteState;
+    }
+    TransitionResource(commandList, displayDepth, beforeState, depthWriteState);
+    const_cast<InternalDepthTarget&>(m_dlssDisplayDepthTarget).resourceState =
+        static_cast<std::uint32_t>(depthWriteState);
+
+    outDepthDsvCpuHandle =
+        GfxContext::Get().GetOffscreenDsvCpuHandle(m_dlssDisplayDepthTarget.dsvIndex);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = outDepthDsvCpuHandle;
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(overlayWidth);
+    viewport.Height = static_cast<float>(overlayHeight);
+    viewport.MaxDepth = 1.0f;
+    const D3D12_RECT scissor{0, 0, overlayWidth, overlayHeight};
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, &depthDsv);
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+    commandList->ClearDepthStencilView(depthDsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    m_depthBlitShader->Use(false, false);
+    m_depthBlitShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
+    m_depthBlitShader->FlushUniforms();
+    DrawFullscreenQuad();
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    return true;
+}
+
 void ScreenSpaceEffects::EndScenePass() const
 {
     if (m_sceneFramebuffer->UsesMsaa())
@@ -1781,6 +2002,96 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerDlssResolvedThisFrame = false;
 }
 
+void ScreenSpaceEffects::SetPathTracerGridOverlayCallback(PathTracerGridOverlayFn fn)
+{
+    m_pathTracerGridOverlayDraw = std::move(fn);
+}
+
+void ScreenSpaceEffects::CopySrvToInternalHdrTarget(
+    const std::uintptr_t srv,
+    InternalTarget& target,
+    const int width,
+    const int height) const
+{
+    if (srv == 0 || target.resource == nullptr || width <= 0 || height <= 0)
+    {
+        return;
+    }
+
+    const float clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_downsampleShader->Use(false, false);
+    m_downsampleShader->BindTextureSlot(0, srv);
+    DrawFullscreenToTarget(
+        *m_downsampleShader,
+        const_cast<InternalTarget&>(target),
+        width,
+        height,
+        clearColor,
+        false);
+}
+
+void ScreenSpaceEffects::DrawPathTracerGridOverlayOntoHdrTarget(
+    const Camera& camera,
+    InternalTarget& target,
+    const int width,
+    const int height) const
+{
+    if (!m_pathTracerGridOverlayDraw || target.resource == nullptr || target.rtvIndex == UINT32_MAX
+        || width <= 0 || height <= 0)
+    {
+        return;
+    }
+
+    auto* commandList =
+        static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    auto* resource = static_cast<ID3D12Resource*>(target.resource);
+
+    const D3D12_RESOURCE_STATES renderTargetState = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    D3D12_RESOURCE_STATES beforeState = static_cast<D3D12_RESOURCE_STATES>(target.resourceState);
+    if (beforeState == D3D12_RESOURCE_STATE_COMMON)
+    {
+        beforeState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    }
+    TransitionResource(commandList, resource, beforeState, renderTargetState);
+    target.resourceState = static_cast<std::uint32_t>(renderTargetState);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{
+        GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    const D3D12_CPU_DESCRIPTOR_HANDLE* depthPtr = nullptr;
+    std::uintptr_t depthDsvCpuHandle = 0;
+    const bool useDepthTest =
+        BindPathTracerGridOverlayDepth(width, height, depthDsvCpuHandle);
+    if (useDepthTest)
+    {
+        depthDsv.ptr = depthDsvCpuHandle;
+        depthPtr = &depthDsv;
+    }
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(width);
+    viewport.Height = static_cast<float>(height);
+    viewport.MaxDepth = 1.0f;
+    const D3D12_RECT scissor{0, 0, width, height};
+
+    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, depthPtr);
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+
+    m_pathTracerGridOverlayDraw(camera, useDepthTest);
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+    TransitionResource(
+        commandList,
+        resource,
+        renderTargetState,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    target.resourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    GfxContext::Get().RebindFrameDescriptorHeaps();
+}
+
 void ScreenSpaceEffects::ResetPathTracerAccumulation()
 {
     m_ptAccumSampleCount = 0;
@@ -1847,8 +2158,8 @@ void ScreenSpaceEffects::BlitPathTracer(
         return;
     }
 
-    // P4: real-time PT resolved through DLSS (RR) is already on the viewport — skip the noisy overlay.
-    if (m_pathTracerDlssResolvedThisFrame)
+    // PT image already went through bloom/tonemap (grid composited in HDR inside Apply).
+    if (m_pathTracerPostIntegrated || m_pathTracerDlssResolvedThisFrame)
     {
         return;
     }
@@ -2252,6 +2563,7 @@ void ScreenSpaceEffects::Apply(
 
     const Framebuffer* outputTarget = GfxContext::Get().GetBoundOutputFramebuffer();
     const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = false;
+    const_cast<ScreenSpaceEffects*>(this)->m_pathTracerPostIntegrated = false;
 
     const bool pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
     const bool runAo = m_aoMode != AmbientOcclusionMode::Off && !pbrDebugActive;
@@ -3405,6 +3717,30 @@ void ScreenSpaceEffects::Apply(
     const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
         || m_antiAliasingMode == AntiAliasingMode::DLSS;
 
+    // Path-traced display at render resolution (no DLSS upscale pass): copy PT into the HDR
+    // chain, composite the editor grid before bloom, then tonemap — same as hybrid mode.
+    if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !wantDlss
+        && !IsPbrMaterialDebugMode(m_debugMode))
+    {
+        const bool referenceMode = m_pathTracerConvergenceMode == PtConvergenceMode::Reference;
+        const std::uintptr_t ptDisplaySrv =
+            referenceMode && m_ptAccumSampleCount > 0 && m_ptAccumSumDisplaySrv != 0
+                ? m_ptAccumSumDisplaySrv
+                : m_dxrPathTracerOutputSrv;
+        CopySrvToInternalHdrTarget(ptDisplaySrv, const_cast<InternalTarget&>(m_hdrCompositeTarget), m_width, m_height);
+        if (m_pathTracerGridOverlayDraw)
+        {
+            DrawPathTracerGridOverlayOntoHdrTarget(
+                camera,
+                const_cast<InternalTarget&>(m_hdrCompositeTarget),
+                m_width,
+                m_height);
+        }
+        hdrColorSrv = m_hdrCompositeTarget.srvCpuHandle;
+        hdrColorSource = "path_tracer_grid";
+        const_cast<ScreenSpaceEffects*>(this)->m_pathTracerPostIntegrated = true;
+    }
+
     std::uintptr_t bloomSrv = 0;
     if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !wantDlss)
     {
@@ -4216,6 +4552,15 @@ void ScreenSpaceEffects::Apply(
 
         if (dlssRan)
         {
+            if (dlssRan && pathTracerRealTimeDlss && m_pathTracerGridOverlayDraw)
+            {
+                DrawPathTracerGridOverlayOntoHdrTarget(
+                    camera,
+                    const_cast<InternalTarget&>(m_dlssOutputTarget),
+                    viewportWidth,
+                    viewportHeight);
+            }
+
             std::uintptr_t displayBloomSrv = 0;
             if (m_bloomEnabled && m_dlssBloomExtractTarget.srvCpuHandle != 0)
             {

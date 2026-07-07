@@ -10,6 +10,7 @@
 
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -119,6 +120,10 @@ public:
         std::uint32_t outputResourceState = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
+    bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
+    // Editor grid drawn into HDR before bloom when path tracing is active (not into the PT trace).
+    using PathTracerGridOverlayFn = std::function<void(const Camera&, bool useDepthTest)>;
+    void SetPathTracerGridOverlayCallback(PathTracerGridOverlayFn fn);
     void AccumulatePathTracerReference(
         const PathTracerHistoryKey& historyKey,
         std::uintptr_t currentFrameSrv,
@@ -419,6 +424,16 @@ public:
     const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
 
 private:
+    struct InternalDepthTarget
+    {
+        void* resource = nullptr;
+        void* allocation = nullptr;
+        std::uint32_t dsvIndex = UINT32_MAX;
+        int width = 0;
+        int height = 0;
+        mutable std::uint32_t resourceState = 0;
+    };
+
     struct InternalTarget
     {
         void* resource = nullptr;
@@ -466,6 +481,24 @@ private:
         const float clearColor[4],
         bool viewportLdr = false) const;
     void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
+    void CopySrvToInternalHdrTarget(
+        std::uintptr_t srv,
+        InternalTarget& target,
+        int width,
+        int height) const;
+    void CreateInternalDepthTarget(InternalDepthTarget& target, int width, int height);
+    void DestroyInternalDepthTarget(InternalDepthTarget& target) const;
+    void ResizeDlssDisplayDepthTarget(int viewportWidth, int viewportHeight);
+    bool BindPathTracerGridOverlayDepth(
+        int overlayWidth,
+        int overlayHeight,
+        std::uintptr_t& outDepthDsvCpuHandle) const;
+    void DrawPathTracerGridOverlayOntoHdrTarget(
+        const Camera& camera,
+        InternalTarget& target,
+        int width,
+        int height) const;
+    void EnsureDepthBlitShader() const;
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
@@ -527,6 +560,7 @@ private:
     InternalTarget m_ptAccumScratchTarget;
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
+    InternalDepthTarget m_dlssDisplayDepthTarget;
     InternalTarget m_dlssBloomExtractTarget;
     InternalTarget m_dlssBloomBlurTarget;
     InternalTarget m_dlssBloomBlur2Target;
@@ -548,6 +582,7 @@ private:
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_msaaDepthResolveShader;
+    std::unique_ptr<Shader> m_depthBlitShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
@@ -656,6 +691,8 @@ private:
     void* m_pathTracerOutputResource = nullptr;
     std::uint32_t m_pathTracerOutputResourceState = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
+    mutable bool m_pathTracerPostIntegrated = false;
+    PathTracerGridOverlayFn m_pathTracerGridOverlayDraw;
     mutable std::uint32_t m_ptAccumSampleCount = 0;
     mutable PathTracerHistoryKey m_ptAccumHistoryKey{};
     mutable bool m_ptAccumPingPongReadFromScratch = false;

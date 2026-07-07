@@ -132,7 +132,12 @@ void GridRenderer::BuildGridGeometry()
         static_cast<std::uint32_t>(indices.size() * sizeof(unsigned int)));
 }
 
-void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
+void GridRenderer::Draw(
+    const Camera& camera,
+    const bool outputLinear,
+    const bool useUnjitteredProjection,
+    const bool useSplitLightingMrt,
+    const bool useDepthTest) const
 {
     if (!m_vertexBuffer.IsValid() || !m_indexBuffer.IsValid() || m_indexCount == 0)
     {
@@ -152,9 +157,12 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
     const float altitudeUlp = glm::clamp((cameraPosition.y - 8.0f) / 40.0f, 0.0f, 48.0f);
     const float clipDepthBiasUlp = 4.0f + altitudeUlp;
 
-    m_shader->Use(outputLinear, !outputLinear);
+    const bool mrtPass = outputLinear && useSplitLightingMrt;
+    m_shader->Use(mrtPass, !outputLinear, false, false, !useDepthTest);
     m_shader->SetMat4("uView", camera.GetViewMatrix());
-    m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
+    m_shader->SetMat4(
+        "uProjection",
+        useUnjitteredProjection ? camera.GetUnjitteredProjectionMatrix() : camera.GetProjectionMatrix());
     m_shader->SetVec2("uGridSnapOrigin", gridSnapOrigin);
     m_shader->SetFloat("uGridHeight", effectiveGridHeight);
     m_shader->SetFloat("uDrawHalfExtent", lod.drawHalfExtent);
@@ -167,7 +175,7 @@ void GridRenderer::Draw(const Camera& camera, const bool outputLinear) const
     m_shader->SetFloat("uFadeEnd", lod.fadeEnd);
     m_shader->SetFloat("uMaxRenderDistance", lod.maxRenderDistance);
     m_shader->SetInt("uOutputLinear", outputLinear ? 1 : 0);
-    m_shader->SetInt("uSplitLightingOutput", outputLinear ? 1 : 0);
+    m_shader->SetInt("uSplitLightingOutput", useSplitLightingMrt && outputLinear ? 1 : 0);
     m_shader->FlushUniforms();
 
     auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
