@@ -437,6 +437,10 @@ namespace SceneProjectIODetail
             return "SMAA";
         case AntiAliasingMode::SSAA:
             return "SSAA";
+        case AntiAliasingMode::DLAA:
+            return "DLAA";
+        case AntiAliasingMode::DLSS:
+            return "DLSS";
         case AntiAliasingMode::None:
         default:
             return "None";
@@ -464,6 +468,14 @@ namespace SceneProjectIODetail
         if (value == "SSAA")
         {
             return AntiAliasingMode::SSAA;
+        }
+        if (value == "DLAA")
+        {
+            return AntiAliasingMode::DLAA;
+        }
+        if (value == "DLSS")
+        {
+            return AntiAliasingMode::DLSS;
         }
 
         return AntiAliasingMode::None;

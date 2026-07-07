@@ -1,5 +1,6 @@
 #include "app/core/Application.h"
 
+#include "engine/platform/CrashHandler.h"
 #include "engine/platform/ExceptionMessage.h"
 
 #include <iostream>
@@ -15,6 +16,10 @@ namespace
 
 int main()
 {
+    // Install first so hard faults (access violations, GPU driver faults) during startup/load are
+    // captured with a symbolized stack even when they never unwind the C++ stack.
+    CrashHandler::Install();
+
     try
     {
         Application app(1280, 720, "Game Engine");

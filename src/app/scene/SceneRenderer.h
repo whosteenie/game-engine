@@ -95,6 +95,14 @@ public:
     void ResetGpuResourcesIfInitFailed() const;
     bool ApplyGeometryMsaaReload(Scene& scene, int viewportWidth, int viewportHeight, std::string* outError = nullptr);
 
+    // Geometry MSAA reload recreates GPU pipelines/framebuffers, so it must run at a frame boundary
+    // (before ImGui builds draw data that references soon-to-be-destroyed resources), never mid-UI.
+    // The editor requests a reload here; Application applies it from ProcessPendingGpuStructuralChanges.
+    void RequestGeometryMsaaReload() { m_geometryMsaaReloadRequested = true; }
+    bool IsGeometryMsaaReloadRequested() const { return m_geometryMsaaReloadRequested; }
+    bool HasGeometryMsaaReloadFailed() const { return m_geometryMsaaReloadFailed; }
+    const std::string& GetGeometryMsaaReloadError() const { return m_geometryMsaaReloadError; }
+
     void MergePendingRendererSettings(const nlohmann::json& delta);
     bool HasPendingRendererSettings() const { return m_hasPendingRendererSettings; }
     nlohmann::json TakePendingRendererSettings();
@@ -144,4 +152,7 @@ private:
     mutable std::string m_gpuResourcesInitError;
     nlohmann::json m_pendingRendererSettings;
     bool m_hasPendingRendererSettings = false;
+    bool m_geometryMsaaReloadRequested = false;
+    bool m_geometryMsaaReloadFailed = false;
+    std::string m_geometryMsaaReloadError;
 };

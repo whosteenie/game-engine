@@ -1,6 +1,7 @@
 #include "engine/lighting/IBL.h"
 #include "engine/lighting/IrradianceSh.h"
 
+#include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rhi/GfxContext.h"
@@ -349,6 +350,14 @@ void IBL::DestroyGpuTexture(GpuTexture& texture)
     if (texture.srvDescriptorIndex != UINT32_MAX)
     {
         GfxContext::Get().FreeOffscreenSrv(texture.srvDescriptorIndex);
+    }
+
+    // Both the ID3D12Resource and its D3D12MA allocation are created with an owning ref
+    // (CreateResource with IID_PPV_ARGS), so both must be released. Releasing only the allocation
+    // leaked the resource object every reload — release the resource first, then the allocation.
+    if (texture.resource != nullptr)
+    {
+        static_cast<ID3D12Resource*>(texture.resource)->Release();
     }
 
     if (texture.allocation != nullptr)
@@ -898,18 +907,25 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
 
     try
     {
+        SceneRenderTrace::Step("ibl: reload begin");
         if (m_captureDepthResource == nullptr)
         {
+            SceneRenderTrace::Step("ibl: create capture resources");
             CreateCaptureResources();
         }
 
+        SceneRenderTrace::Step("ibl: load hdr equirect");
         LoadHdrEquirectangular(m_hdrPath.c_str());
+        SceneRenderTrace::Step("ibl: create environment cubemap");
         CreateEnvironmentCubemap();
+        SceneRenderTrace::Step("ibl: create prefilter map");
         CreatePrefilterMap();
         if (m_brdfLutGpu.resource == nullptr)
         {
+            SceneRenderTrace::Step("ibl: create brdf lut");
             CreateBrdfLut();
         }
+        SceneRenderTrace::Step("ibl: reload ok");
         m_gpuGenerated = true;
         m_loadError.clear();
     }

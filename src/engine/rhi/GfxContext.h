@@ -41,6 +41,13 @@ public:
     void EndFrame();
     void SubmitCommandList();
 
+    // Resets the graphics command list to a clean, closed state so it no longer references any GPU
+    // objects recorded during the previous frame. Call after WaitForGpuIdle() and before destroying
+    // pipelines/resources OUTSIDE the normal BeginFrame path (e.g. the geometry-MSAA reload), so the
+    // D3D12 debug layer doesn't fault on releasing an object the stale command list still tracks.
+    // No-op while a frame is recording.
+    void ResetCommandListForTeardown();
+
     std::uint32_t AllocateOffscreenSrv();
     void FreeOffscreenSrv(std::uint32_t descriptorIndex);
     void* GetSrvHeapGpuHandle(std::uint32_t descriptorIndex) const;

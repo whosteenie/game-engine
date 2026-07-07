@@ -1461,14 +1461,25 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
     const int viewportHeight,
     std::string* outError)
 {
+    // This is the single point of truth for the reload result; the editor reads it back for display.
+    m_geometryMsaaReloadRequested = false;
+    m_geometryMsaaReloadFailed = false;
+    m_geometryMsaaReloadError.clear();
+
+    auto reportFailure = [&](const std::string& message) {
+        m_geometryMsaaReloadFailed = true;
+        m_geometryMsaaReloadError = message;
+        if (outError != nullptr)
+        {
+            *outError = message;
+        }
+        return false;
+    };
+
     EnsureGpuResources();
     if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
     {
-        if (outError != nullptr)
-        {
-            *outError = "GPU resources are not initialized.";
-        }
-        return false;
+        return reportFailure("GPU resources are not initialized.");
     }
 
     if (!m_screenSpaceEffects->IsMsaaPendingReload())
@@ -1478,11 +1489,7 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
 
     if (viewportWidth <= 0 || viewportHeight <= 0)
     {
-        if (outError != nullptr)
-        {
-            *outError = "Viewport size is invalid.";
-        }
-        return false;
+        return reportFailure("Viewport size is invalid.");
     }
 
     const int requestedMsaaSampleCount = m_screenSpaceEffects->GetMsaaSampleCount();
@@ -1492,6 +1499,9 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
         GfxContext::Get().CancelFrame();
         GfxContext::Get().WaitForGpuIdle();
         GfxContext::Get().SetBoundOutputFramebuffer(nullptr);
+        // Drop the previous frame's command-list object references before we start releasing
+        // pipelines/framebuffers below, or the D3D12 debug layer faults on the first PSO release.
+        GfxContext::Get().ResetCommandListForTeardown();
 
         GfxContext::Get().SetActiveMsaaSampleCount(requestedMsaaSampleCount);
         RenderingPipelineCache::InvalidateAll();
@@ -1507,19 +1517,11 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
     {
         const std::string message = SafeExceptionMessage(exception);
         EngineLog::Error("scene", "MSAA reload failed: " + message);
-        if (outError != nullptr)
-        {
-            *outError = message;
-        }
-        return false;
+        return reportFailure(message);
     }
     catch (...)
     {
         EngineLog::Error("scene", "MSAA reload failed: unknown error");
-        if (outError != nullptr)
-        {
-            *outError = "unknown MSAA reload error";
-        }
-        return false;
+        return reportFailure("unknown MSAA reload error");
     }
 }

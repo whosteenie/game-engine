@@ -32,7 +32,25 @@ enum class AntiAliasingMode
     MSAA = 3,
     SMAA = 4,
     SSAA = 5,
+    // NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md). Both own the resolve stage like
+    // TAA. DLAA = DLSS at native res (pure AA); DLSS = super-resolution (renders below display res).
+    DLAA = 6,
+    DLSS = 7,
 };
+
+// DLSS Super Resolution quality preset. Per-axis internal render scale relative to display res
+// (see DlssPresetRenderScale). DLAA (native) is a separate AntiAliasingMode, not a preset.
+enum class DlssPreset
+{
+    Quality = 0,          // ~0.667x per axis
+    Balanced = 1,         // ~0.58x
+    Performance = 2,      // 0.5x
+    UltraPerformance = 3, // ~0.333x
+};
+
+// Standard DLSS per-axis render-scale factors. In later phases the exact internal extent comes from
+// slDLSSGetOptimalSettings; these fixed ratios drive the internal-res allocation until then.
+float DlssPresetRenderScale(DlssPreset preset);
 
 enum class AmbientOcclusionMode
 {
@@ -267,6 +285,9 @@ public:
 
     float GetRenderScale() const;
     void SetRenderScale(float scale);
+
+    DlssPreset GetDlssPreset() const;
+    void SetDlssPreset(DlssPreset preset);
 
     float GetTaaBlendFactor() const;
     void SetTaaBlendFactor(float factor);
@@ -563,6 +584,7 @@ private:
     float m_fxaaSubpixQuality = 0.75f;
     float m_fxaaEdgeThreshold = 0.03125f;
     float m_renderScale = 1.5f;
+    DlssPreset m_dlssPreset = DlssPreset::Quality;
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
     float m_giDepthThreshold = 0.003f;

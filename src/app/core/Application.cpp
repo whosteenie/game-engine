@@ -617,6 +617,23 @@ void Application::Update(double deltaTime)
     const bool cancelReorderDragOnly =
         escapePressed && EditorReorderDragDrop::IsReorderDragActive();
 
+    // Apply deferred GPU-structural changes (e.g. geometry MSAA reload) here, before ImGui begins a
+    // new frame. Recreating pipelines/framebuffers while the UI is mid-build leaves ImGui draw data
+    // referencing destroyed resources, which faults the GPU. This is the safe frame boundary.
+    if (Scene* pendingScene = GetEditorTargetScene())
+    {
+        SceneRenderer& pendingRenderer = pendingScene->GetRenderer();
+        if (pendingRenderer.IsGeometryMsaaReloadRequested() && pendingRenderer.IsGpuResourcesReady())
+        {
+            RunApplicationPhase("apply-geometry-msaa-reload", [&]() {
+                pendingRenderer.ApplyGeometryMsaaReload(
+                    *pendingScene,
+                    m_sceneViewportPanel->GetRenderWidth(),
+                    m_sceneViewportPanel->GetRenderHeight());
+            });
+        }
+    }
+
     m_imguiLayer->BeginFrame();
     m_imguiFrameActive = true;
     InputDiagnostics::LogFrame(m_window, "after-imgui-newframe");

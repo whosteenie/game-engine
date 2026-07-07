@@ -54,9 +54,30 @@ namespace
             return "SMAA";
         case AntiAliasingMode::SSAA:
             return "SSAA";
+        case AntiAliasingMode::DLAA:
+            return "DLAA (DLSS native)";
+        case AntiAliasingMode::DLSS:
+            return "DLSS Super Resolution";
         case AntiAliasingMode::None:
         default:
             return "None";
+        }
+    }
+
+    const char* DlssPresetLabel(DlssPreset preset)
+    {
+        switch (preset)
+        {
+        case DlssPreset::Quality:
+            return "Quality";
+        case DlssPreset::Balanced:
+            return "Balanced";
+        case DlssPreset::Performance:
+            return "Performance";
+        case DlssPreset::UltraPerformance:
+            return "Ultra Performance";
+        default:
+            return "Quality";
         }
     }
 
@@ -1017,11 +1038,17 @@ void LightingPanel::Draw(
                 AntiAliasingMode::SMAA,
                 AntiAliasingMode::TAA,
                 AntiAliasingMode::SSAA,
+                AntiAliasingMode::DLAA,
+                AntiAliasingMode::DLSS,
             };
+            const bool dlssSupported = DlssContext::Get().IsDlssSupported();
             for (const AntiAliasingMode mode : selectableModes)
             {
+                const bool isDlssMode =
+                    mode == AntiAliasingMode::DLAA || mode == AntiAliasingMode::DLSS;
                 const bool disabled =
-                    geometryMsaaBlocksTaa && mode == AntiAliasingMode::TAA;
+                    (geometryMsaaBlocksTaa && mode == AntiAliasingMode::TAA)
+                    || (isDlssMode && !dlssSupported);
                 if (disabled)
                 {
                     ImGui::BeginDisabled();
@@ -1050,12 +1077,58 @@ void LightingPanel::Draw(
                     ImGui::EndDisabled();
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                     {
-                        ImGui::SetTooltip("Unavailable while geometry MSAA is enabled.");
+                        if (isDlssMode)
+                        {
+                            ImGui::SetTooltip(
+                                DlssContext::Get().IsReady()
+                                    ? "Requires an NVIDIA RTX GPU with a recent driver."
+                                    : "DLSS is still initializing…");
+                        }
+                        else
+                        {
+                            ImGui::SetTooltip("Unavailable while geometry MSAA is enabled.");
+                        }
                     }
                 }
             }
 
             ImGui::EndCombo();
+        }
+
+        // DLSS SR quality preset (drives the internal render resolution). Enabled only in DLSS SR.
+        if (currentAaMode == AntiAliasingMode::DLSS)
+        {
+            const DlssPreset currentPreset = screenSpaceEffects.GetDlssPreset();
+            if (ImGui::BeginCombo("DLSS preset", DlssPresetLabel(currentPreset)))
+            {
+                const DlssPreset presets[] = {
+                    DlssPreset::Quality,
+                    DlssPreset::Balanced,
+                    DlssPreset::Performance,
+                    DlssPreset::UltraPerformance,
+                };
+                for (const DlssPreset preset : presets)
+                {
+                    const bool selected = currentPreset == preset;
+                    if (ImGui::Selectable(DlssPresetLabel(preset), selected) && !selected)
+                    {
+                        ApplyRendererChange(
+                            editContext,
+                            scene,
+                            "DLSS preset",
+                            [preset](Scene& target) {
+                                target.GetRenderer().GetScreenSpaceEffects().SetDlssPreset(preset);
+                                target.MarkDirty();
+                            });
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (selected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
         }
 
         ImGui::Separator();
@@ -1148,38 +1221,48 @@ void LightingPanel::Draw(
             ImGui::EndCombo();
         }
 
-        static std::string msaaReloadStatus;
+        const bool reloadRequested = renderer.IsGeometryMsaaReloadRequested();
         if (screenSpaceEffects.IsMsaaPendingReload())
         {
-            if (ImGui::Button("Apply geometry MSAA"))
+            if (reloadRequested)
             {
-                msaaReloadStatus.clear();
-                if (!renderer.ApplyGeometryMsaaReload(scene, viewportWidth, viewportHeight, &msaaReloadStatus))
-                {
-                    if (msaaReloadStatus.empty())
-                    {
-                        msaaReloadStatus = "Failed to reload renderer for geometry MSAA.";
-                    }
-                }
+                ImGui::BeginDisabled();
             }
-            if (ImGui::IsItemHovered())
+            // Requests a deferred reload; Application applies it at a safe frame boundary because
+            // recreating GPU pipelines/framebuffers mid-UI can leave stale resource references and
+            // crash. See SceneRenderer::RequestGeometryMsaaReload.
+            if (ImGui::Button("Apply geometry MSAA") && !reloadRequested)
+            {
+                renderer.RequestGeometryMsaaReload();
+            }
+            if (reloadRequested)
+            {
+                ImGui::EndDisabled();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
                 ImGui::SetTooltip(
                     "Recreates the scene renderer pipeline (framebuffer, shaders, post targets) "
                     "for the selected MSAA sample count.");
             }
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Reload required");
+            if (reloadRequested)
+            {
+                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "Applying…");
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.35f, 1.0f), "Reload required");
+            }
         }
         else if (msaaSampleCount > 1)
         {
-            msaaReloadStatus.clear();
             ImGui::TextDisabled("Geometry MSAA active: %d×", msaaSampleCount);
         }
 
-        if (!msaaReloadStatus.empty())
+        if (renderer.HasGeometryMsaaReloadFailed() && !renderer.GetGeometryMsaaReloadError().empty())
         {
-            ImGui::TextWrapped("%s", msaaReloadStatus.c_str());
+            ImGui::TextWrapped("MSAA reload failed: %s", renderer.GetGeometryMsaaReloadError().c_str());
         }
 
         if (currentAaMode == AntiAliasingMode::FXAA)

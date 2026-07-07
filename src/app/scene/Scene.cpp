@@ -70,6 +70,7 @@ namespace
         destinationEffects.SetFxaaSubpixQuality(sourceEffects.GetFxaaSubpixQuality());
         destinationEffects.SetFxaaEdgeThreshold(sourceEffects.GetFxaaEdgeThreshold());
         destinationEffects.SetRenderScale(sourceEffects.GetRenderScale());
+        destinationEffects.SetDlssPreset(sourceEffects.GetDlssPreset());
         destinationEffects.SetTaaBlendFactor(sourceEffects.GetTaaBlendFactor());
         destinationEffects.SetSmaaThreshold(sourceEffects.GetSmaaThreshold());
         destinationEffects.SetSmaaSearchSteps(sourceEffects.GetSmaaSearchSteps());

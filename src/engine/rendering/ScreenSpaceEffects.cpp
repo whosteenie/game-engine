@@ -1100,14 +1100,38 @@ void ScreenSpaceEffects::ResizeAntiAliasingTargets(const int width, const int he
     ResizeInternalTarget(m_taaResolveTarget, width, height, hdrFormat);
 }
 
+float DlssPresetRenderScale(const DlssPreset preset)
+{
+    switch (preset)
+    {
+    case DlssPreset::Quality:
+        return 0.667f;
+    case DlssPreset::Balanced:
+        return 0.58f;
+    case DlssPreset::Performance:
+        return 0.5f;
+    case DlssPreset::UltraPerformance:
+        return 0.333f;
+    default:
+        return 0.667f;
+    }
+}
+
 float ScreenSpaceEffects::GetActiveRenderScale() const
 {
-    if (m_antiAliasingMode == AntiAliasingMode::SSAA)
+    switch (m_antiAliasingMode)
     {
+    case AntiAliasingMode::SSAA:
         return std::clamp(m_renderScale, 1.0f, 2.0f);
+    case AntiAliasingMode::DLAA:
+        // DLSS at native resolution: internal == display.
+        return 1.0f;
+    case AntiAliasingMode::DLSS:
+        // Super resolution: render below display res; the composite/DLSS pass upscales to viewport.
+        return DlssPresetRenderScale(m_dlssPreset);
+    default:
+        return 1.0f;
     }
-
-    return 1.0f;
 }
 
 int ScreenSpaceEffects::GetRenderWidth() const
@@ -4217,7 +4241,10 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
         return;
     }
 
-    if (mode == AntiAliasingMode::TAA && m_msaaSampleCount > 1)
+    // TAA, DLAA and DLSS own the resolve stage and are incompatible with geometry MSAA.
+    const bool ownsResolve = mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
+        || mode == AntiAliasingMode::DLSS;
+    if (ownsResolve && m_msaaSampleCount > 1)
     {
         m_msaaSampleCount = 1;
     }
@@ -4231,6 +4258,28 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
     }
 
     m_antiAliasingMode = mode;
+}
+
+DlssPreset ScreenSpaceEffects::GetDlssPreset() const
+{
+    return m_dlssPreset;
+}
+
+void ScreenSpaceEffects::SetDlssPreset(const DlssPreset preset)
+{
+    if (m_dlssPreset == preset)
+    {
+        return;
+    }
+    m_dlssPreset = preset;
+    // The internal render resolution changes with the preset — force a target reallocation and drop
+    // temporal history so the upscaler restarts cleanly.
+    if (m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        ResetTaaHistory();
+        m_width = 0;
+        m_height = 0;
+    }
 }
 
 int ScreenSpaceEffects::GetMsaaSampleCount() const
@@ -4304,6 +4353,7 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_bloomDepthThreshold = source.m_bloomDepthThreshold;
     m_debugMode = source.m_debugMode;
     m_antiAliasingMode = source.m_antiAliasingMode;
+    m_dlssPreset = source.m_dlssPreset;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
     m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;

@@ -2,6 +2,7 @@
 
 #include "engine/rhi/HresultFormat.h"
 
+#include "engine/platform/CrashHandler.h"
 #include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/EngineDiagnostics.h"
 #include "engine/platform/EngineLog.h"
@@ -365,6 +366,10 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         // multi-second NGX cold-init doesn't block editor startup. SL doesn't interpose our
         // DXGI/D3D (manual DLSS eval), so off-thread init is safe; consumers gate on IsReady().
         DlssContext::Get().BeginAsyncInitialize(m_impl->Device.Get(), m_impl->Adapter.Get());
+
+        // On a hard crash, dump the D3D12 debug-layer info queue so the last validation message
+        // (the actual reason behind driver/debug-layer faults) is logged right before the stack.
+        CrashHandler::SetContextHook([]() { GfxContext::Get().LogD3D12InfoQueueMessages("crash"); });
     }
 
     D3D12MA::ALLOCATOR_DESC allocatorDesc{};
@@ -791,6 +796,30 @@ void GfxContext::CancelFrame()
     m_frameRecording = false;
     m_frameCommandsSubmitted = false;
     m_boundOutputFramebuffer = nullptr;
+    m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
+}
+
+void GfxContext::ResetCommandListForTeardown()
+{
+    if (m_impl == nullptr || m_frameRecording)
+    {
+        return;
+    }
+
+    // The command list is closed here (post-EndFrame) and still tracks the objects it recorded last
+    // frame. Reset the allocator + list and immediately close them: this drops those references so
+    // releasing pipelines/resources next won't trip the debug layer, and leaves the list closed as
+    // BeginFrame expects. Safe only because callers WaitForGpuIdle() first.
+    FrameContext& frame = m_impl->Frames[m_frameIndex];
+    if (FAILED(frame.CommandAllocator->Reset()))
+    {
+        return;
+    }
+    if (FAILED(m_impl->CommandList->Reset(frame.CommandAllocator.Get(), nullptr)))
+    {
+        return;
+    }
+    m_impl->CommandList->Close();
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
 }
 
@@ -1611,6 +1640,36 @@ void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue, const bool pu
         return;
     }
 
+    if (m_impl->Fence->GetCompletedValue() >= fenceValue)
+    {
+        return;
+    }
+
+    // Register the completion notification exactly ONCE. The previous code re-registered on every
+    // loop iteration, which queues a separate notification per iteration for the same value. When
+    // the fence completes they ALL fire: our WaitForSingleObject consumes one (auto-reset event),
+    // but the leftovers re-signal the event with no waiter, leaving it stuck signaled. The next
+    // WaitForFenceValue (for a higher, still-pending value) then returns WAIT_OBJECT_0 immediately
+    // and the caller proceeds while the GPU is still running — freeing/resetting PSOs and command
+    // allocators mid-flight (the "referenced by GPU operations in-flight" CORRUPTION and the
+    // "allocator reset before previous executions completed" errors). It only triggered when a wait
+    // looped more than once (op > ~16ms, e.g. IBL cubemap generation), hence the intermittency.
+    {
+        const HRESULT setEventResult =
+            m_impl->Fence->SetEventOnCompletion(fenceValue, m_impl->FenceEvent);
+        if (FAILED(setEventResult))
+        {
+            std::string deviceRemovedReason;
+            if (IsDeviceRemoved(&deviceRemovedReason))
+            {
+                throw std::runtime_error(
+                    "D3D12 device removed while waiting for fence: " + deviceRemovedReason);
+            }
+
+            ThrowIfFailed(setEventResult, "SetEventOnCompletion failed");
+        }
+    }
+
     const auto waitStart = std::chrono::steady_clock::now();
     long long lastLoggedMs = -1;
 
@@ -1639,21 +1698,11 @@ void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue, const bool pu
             throw std::runtime_error("D3D12 device removed while waiting for fence: " + deviceRemovedReason);
         }
 
-        const HRESULT setEventResult =
-            m_impl->Fence->SetEventOnCompletion(fenceValue, m_impl->FenceEvent);
-        if (FAILED(setEventResult))
-        {
-            if (IsDeviceRemoved(&deviceRemovedReason))
-            {
-                throw std::runtime_error(
-                    "D3D12 device removed while waiting for fence: " + deviceRemovedReason);
-            }
-
-            ThrowIfFailed(setEventResult, "SetEventOnCompletion failed");
-        }
-
-        const DWORD waitResult = WaitForSingleObject(m_impl->FenceEvent, 16);
-        if (waitResult == WAIT_OBJECT_0)
+        // Poll with a short timeout so we can keep pumping window events / checking device-removed,
+        // but do NOT re-register the completion notification (see above). The while-condition on
+        // GetCompletedValue() remains the source of truth, so a spurious wake just re-checks.
+        const DWORD waitResult = WaitForSingleObject(m_impl->FenceEvent, pumpWindowEvents ? 16 : INFINITE);
+        if (waitResult == WAIT_OBJECT_0 && m_impl->Fence->GetCompletedValue() >= fenceValue)
         {
             break;
         }

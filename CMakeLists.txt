@@ -401,6 +401,7 @@ add_executable(game-engine
     src/engine/platform/InputDiagnostics.cpp
     src/engine/platform/EngineLog.cpp
     src/engine/platform/EngineDiagnostics.cpp
+    src/engine/platform/CrashHandler.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/FrameDiagnostics.cpp
     src/engine/platform/ProjectLoadTrace.cpp
@@ -586,10 +587,13 @@ endif()
 
 if(MSVC)
     target_link_options(game-engine PRIVATE "$<$<CONFIG:Debug>:/MAP:FULL>")
+    # Dbghelp's import lib requests the static CRT (libcmt); the project uses the dynamic CRT, so
+    # tell the linker to ignore the static one and avoid the LNK4098 conflict.
+    target_link_options(game-engine PRIVATE /NODEFAULTLIB:libcmt)
 endif()
 
 if(WIN32)
-    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32)
+    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32 Dbghelp)
 endif()
 
 # DXC is linked at build time but loaded at runtime — copy vendored or SDK redist DLLs next to the exe.
@@ -750,6 +754,8 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         src/engine/platform/EngineDiagnostics.cpp
         src/engine/platform/EngineLog.cpp
         src/engine/platform/ExceptionMessage.cpp
+        src/engine/platform/SceneRenderTrace.cpp
+        src/engine/platform/CrashHandler.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
         src/engine/rendering/RenderDebug.cpp
         src/primitives/Cube.cpp
@@ -776,6 +782,11 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
     target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX)
     if(GAME_ENGINE_D3D12_DEBUG_LAYER)
         target_compile_definitions(d3d12-render-tests PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
+    endif()
+    if(MSVC)
+        # CrashHandler pulls in Dbghelp, whose import lib requests the static CRT (libcmt); this
+        # project uses the dynamic CRT, so ignore the static one to avoid the LNK4098 conflict.
+        target_link_options(d3d12-render-tests PRIVATE /NODEFAULTLIB:libcmt)
     endif()
     game_engine_copy_dxc_runtime(d3d12-render-tests)
 
