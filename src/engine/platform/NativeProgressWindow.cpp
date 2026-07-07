@@ -184,7 +184,9 @@ namespace
         const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
         const int x = (screenWidth - windowWidth) / 2;
         const int y = (screenHeight - windowHeight) / 2;
-        SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_SHOWWINDOW);
+        // Position only; keep the window hidden. Callers show it afterwards so it never appears
+        // at its CW_USEDEFAULT spawn location first (the top-left "empty box" flash).
+        SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     LRESULT CALLBACK ProgressWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -284,8 +286,11 @@ namespace
             return 0;
         }
         case WM_PROGRESS_SHOW:
-            ShowWindow(window, SW_SHOW);
+            // Center (and lay out children) while still hidden, then reveal fully formed so there
+            // is no one-frame flash of an empty box at the default top-left spawn position.
             CenterWindow(window);
+            LayoutControls(controls);
+            ShowWindow(window, SW_SHOW);
             SetForegroundWindow(window);
             return 0;
         case WM_PROGRESS_HIDE:

@@ -894,12 +894,20 @@ void GfxContext::EndFrame()
 
     ID3D12CommandList* commandLists[] = {m_impl->CommandList.Get()};
     m_impl->CommandQueue->ExecuteCommandLists(1, commandLists);
-    SignalFrameSubmission();
     m_frameCommandsSubmitted = true;
 
     PumpWindowEvents(m_window);
 
     const HRESULT presentResult = m_impl->SwapChain->Present(1, 0);
+
+    // Signal AFTER Present so this frame's fence covers the present's GPU work, not just the
+    // command list. Present() enqueues its flip work on the command queue *after* the command
+    // list; signalling before it (the previous order) left the back buffer referenced by an
+    // in-flight present that WaitForGpu() never waited on. That untracked present is exactly why
+    // releasing the swapchain at shutdown faulted the debug layer with "resource ... referenced
+    // by GPU operations in-flight". m_frameIndex still refers to the frame we just rendered here
+    // (AdvanceSwapchainFrameIndex() runs below), so the fence value is attributed correctly.
+    SignalFrameSubmission();
 
     m_frameRecording = false;
     m_boundOutputFramebuffer = nullptr;
