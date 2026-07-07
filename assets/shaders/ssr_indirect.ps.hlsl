@@ -1,5 +1,10 @@
-// SSR Phase 4 — replace specular IBL in RT1 with denoised SSR where confidence allows.
-// indirect_out = RT1 - spec_ibl + lerp(spec_ibl, ssr.rgb, weight)
+// SSR Phase 4 — add the SSR specular reflection into the (diffuse-only) indirect.
+// ADDITIVE: RT1 (indirect) is diffuse-only here — the PBR raster omits spec IBL when a reflection
+// composite runs (uOmitSpecularIbl) — so this pass ADDS the specular term rather than subtracting
+// the baked IBL and adding SSR back. The old subtract pattern could not cleanly cancel the fp16
+// HDR sun (+Inf) baked into RT1. indirect_out = RT1_diffuse + lerp(spec_ibl, ssr.rgb, weight).
+// SSR (unlike DXR) has no env-on-miss, so the confidence weight (ssr.a, SVGF-denoised) still
+// selects IBL where the screen-space trace failed.
 
 #include "screen_space_common.hlsl"
 
@@ -29,6 +34,7 @@ cbuffer PerPixel : register(b0)
     float uMaxReflectionLod;
     float uSsrStrength;
     int uDebugSpecReplacement;
+    int uHasSsrTrace; // 1 = fresh SSR resolve this frame; 0 = fall back to pure IBL (weight 0)
     // Receiver-distance fade: beyond this view depth the replacement falls back to IBL.
     // Distant/grazing receivers only produce degenerate screen-space hits (horizon rows,
     // reflected grid moire, dark self-reflections) — the data is unusable there.
@@ -77,7 +83,8 @@ float3 RecomputeSpecularIbl(
         uPrefilterSampler,
         reflection,
         roughness * uMaxReflectionLod).rgb;
-    return prefilteredColor * environmentBrdf * uEnvironmentIntensity;
+    // Clamp to finite so the fp16 HDR sun (+Inf) stays a bright bounded highlight when ADDED.
+    return min(prefilteredColor * environmentBrdf * uEnvironmentIntensity, 65504.0.xxx);
 }
 
 float4 main(PSInput input) : SV_Target
@@ -114,7 +121,8 @@ float4 main(PSInput input) : SV_Target
     const float receiverViewZ = viewH.z / viewH.w;
     const float fadeDistance = max(uReceiverFadeDistance, 1e-3);
     const float receiverFade = 1.0 - smoothstep(fadeDistance * 0.5, fadeDistance, receiverViewZ);
-    const float replacementWeight = saturate(ssr.a * uSsrStrength * receiverFade);
+    const float replacementWeight =
+        uHasSsrTrace != 0 ? saturate(ssr.a * uSsrStrength * receiverFade) : 0.0;
 
     if (uDebugSpecReplacement != 0)
     {
@@ -125,6 +133,8 @@ float4 main(PSInput input) : SV_Target
     // replaces — otherwise dielectrics get mirror-strength reflections (no Fresnel) and
     // metals lose their F0 tint.
     const float3 ssrSpecular = ssr.rgb * environmentBrdf;
+    // ADDITIVE: indirect is diffuse-only (raster omitted spec IBL); add the specular term (SSR
+    // where confident, IBL where not). No subtraction -> no HDR cancellation to get wrong.
     const float3 specFinal = lerp(specIbl, ssrSpecular, replacementWeight);
-    return float4(max(indirect - specIbl + specFinal, 0.0.xxx), 1.0);
+    return float4(max(indirect + specFinal, 0.0.xxx), 1.0);
 }

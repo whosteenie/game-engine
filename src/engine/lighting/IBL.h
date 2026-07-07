@@ -24,6 +24,10 @@ public:
     float GetMaxReflectionLod() const;
     float GetEnvironmentIntensity() const;
     void SetEnvironmentIntensity(float intensity);
+    // Per-frame render policy: when true, BindTextures tells the PBR pass to omit specular IBL
+    // from the indirect output because a reflection composite (RT reflections / SSR) will add it
+    // back at full precision (see uOmitSpecularIbl in pbr.ps.hlsl). Not persisted.
+    void SetReflectionsReplaceSpecIbl(bool replace) { m_reflectionsReplaceSpecIbl = replace; }
     const IrradianceSh9& GetIrradianceSh9() const { return m_irradianceSh; }
 
     bool IsReady() const;
@@ -105,6 +109,7 @@ private:
 
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;
+    bool m_reflectionsReplaceSpecIbl = false;
 
     int m_hdrWidth = 0;
     int m_hdrHeight = 0;

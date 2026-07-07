@@ -1,8 +1,12 @@
 // DXR Phase D6 — RT specular composite (devdoc/dxr-groundwork.md Phase D6).
-// Standalone RT pass, mutually exclusive with ssr_indirect.ps.hlsl (same energy pattern,
-// no SSR buffer reads): indirect_out = RT1 - spec_ibl + lerp(spec_ibl, rt * envBrdf, w).
-// w comes from the RAW trace's hit distance (denoised alpha carries NRD history length,
-// not hit data): miss/far rays keep the recomputed IBL term.
+// Standalone RT pass, mutually exclusive with ssr_indirect.ps.hlsl, no SSR buffer reads.
+// ADDITIVE: RT1 (indirect) is diffuse-only here — the PBR raster omits spec IBL when a reflection
+// composite runs (uOmitSpecularIbl) — so this pass ADDS the specular reflection rather than
+// subtracting the baked IBL and adding RT back. That old subtract-then-add sparkled/blackened at
+// the reflected sun, where the fp16 HDR sun (+Inf) baked into RT1 could not be cancelled cleanly.
+// indirect_out = RT1_diffuse + lerp(spec_ibl, rt * envBrdf, w). The trace's miss shader returns
+// the env, so the denoised RT carries both the reflected occluder and the sky/sun — no noisy
+// hit-mask needed; w is a smooth strength x receiver fade (0 when there is no fresh trace).
 
 #include "screen_space_common.hlsl"
 
@@ -30,6 +34,7 @@ cbuffer PerPixel : register(b0)
     float uMaxTraceDistance;
     float2 uRtUvScale; // dispatch/texture region of the RT buffers (see dxr-reflections.md)
     int uDebugSpecReplacement;
+    int uHasRtTrace; // 1 = a fresh RT trace exists this frame; 0 = fall back to pure IBL (weight 0)
     float _pad0;
 };
 
@@ -83,20 +88,13 @@ float4 main(PSInput input) : SV_Target
         uLinearSampler,
         reflection,
         roughness * uMaxReflectionLod).rgb;
-    // This MUST reproduce the raster spec-IBL baked into RT1 (pbr.ps.hlsl:798-806) so the
-    // "indirect - specIbl" below cancels it. Same prefilter * envBrdf * intensity formula.
-    const float3 specIbl = prefilteredColor * environmentBrdf * uEnvironmentIntensity;
+    // IBL fallback for pixels the trace can't serve (no fresh trace / distant-grazing receivers).
+    // Clamp to finite so the fp16 HDR sun (+Inf) stays a bright bounded highlight when ADDED.
+    const float3 specIbl = min(prefilteredColor * environmentBrdf * uEnvironmentIntensity, 65504.0.xxx);
 
     // RT buffers only cover the top-left dispatch region of their allocation.
     const float2 rtUv = uv * uRtUvScale;
     const float3 rtRadiance = uRtDenoisedMap.Sample(uLinearSampler, rtUv).rgb;
-    const float hitDistance = uRtRawMap.Sample(uPointSampler, rtUv).a;
-
-    // Hit validity: rays that reached maxTraceDistance are misses (the trace stored the
-    // prefiltered env in rgb, but the composite's own BRDF-weighted IBL term is the
-    // energy-correct fallback). Fade out slightly before the cap to avoid a hard seam.
-    const float hitMask =
-        1.0 - smoothstep(uMaxTraceDistance * 0.85, uMaxTraceDistance * 0.99, hitDistance);
 
     // Receiver-distance fade: distant/grazing receivers mostly produce degenerate self-hits
     // (dark reflected floor, compressed grid moire at the horizon) — hand those back to IBL.
@@ -106,28 +104,26 @@ float4 main(PSInput input) : SV_Target
     const float receiverFade =
         1.0 - smoothstep(uMaxTraceDistance * 0.5, uMaxTraceDistance, receiverViewZ);
 
-    const float replacementWeight = saturate(hitMask * uStrength * receiverFade);
+    // No per-pixel hit mask: the trace's MISS shader already returns the env, so the denoised
+    // rtRadiance carries BOTH the reflected occluder AND the reflected sky/sun. The old hit mask
+    // (derived from the 1-spp raw hit distance) was noisy and sparkled at the reflected sun's edge;
+    // dropping it and trusting the denoised RT gives a clean edge. Blend to IBL by a SMOOTH weight
+    // only (strength x receiver fade), and fall back to pure IBL when there's no fresh trace.
+    const float replacementWeight = uHasRtTrace != 0 ? saturate(uStrength * receiverFade) : 0.0;
 
     if (uDebugSpecReplacement != 0)
     {
         return float4(replacementWeight.xxx, 1.0);
     }
 
-    // Same split-sum weighting as the IBL term it replaces (mirrors SSR-04's fix).
+    // Same split-sum weighting as the IBL term (SSR-04): weight traced radiance by envBrdf.
     const float3 rtSpecular = rtRadiance * environmentBrdf;
 
-    // HDR-safe replacement. RT1 bakes the raster spec IBL (pbr.ps.hlsl:806): indirect =
-    // diffuseIbl + specIbl, so the recomputed specIbl can NEVER physically exceed indirect. The
-    // skybox sun overflows fp16 to +Inf in both, and any per-pixel mismatch between the raster's
-    // baked sun and this recomputed sun (MSAA resolve, normal/position reconstruction) left a huge
-    // residual: overshoot -> indirect-specIbl went negative -> black/dark splotch; Inf-Inf -> NaN.
-    // Clamp specIbl to [0, indirect] (its physical ceiling) so the subtraction is non-negative by
-    // construction and the sun cancels to the reflected occluder. A finite ceiling on all terms
-    // guards the Inf-Inf=NaN case. Only the already-blown-out sun is affected.
-    const float kHdrCeil = 60000.0;
-    const float3 indirectC = min(indirect, kHdrCeil.xxx);
-    const float3 specIblC = clamp(specIbl, 0.0.xxx, indirectC);
-    const float3 rtSpecularC = min(rtSpecular, kHdrCeil.xxx);
-    const float3 specFinal = lerp(specIblC, rtSpecularC, replacementWeight);
-    return float4(max(indirectC - specIblC + specFinal, 0.0.xxx), 1.0);
+    // ADDITIVE composite. RT1 (indirect) is now DIFFUSE-ONLY — the raster omitted spec IBL
+    // (uOmitSpecularIbl) precisely so we never bake the fp16-Inf sun into RT1 and subtract it back
+    // out (that subtraction sparkled/blackened at the reflected sun). Just add the specular term:
+    // the denoised RT reflection where usable, IBL where not. No subtraction -> no HDR cancellation
+    // to get wrong.
+    const float3 specFinal = lerp(specIbl, rtSpecular, replacementWeight);
+    return float4(max(indirect + specFinal, 0.0.xxx), 1.0);
 }

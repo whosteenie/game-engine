@@ -2370,20 +2370,23 @@ void ScreenSpaceEffects::Apply(
     }
 
     // D6: RT specular composite and SSR spec composite are mutually exclusive — only one
-    // may adjust spec IBL in RT1 per frame (dxr-groundwork.md pipeline rule).
-    const bool rtCompositeWanted =
-        m_dxrReflectionCompositeEnabled && m_dxrReflectionSrv != 0;
+    // may adjust spec IBL in RT1 per frame (dxr-groundwork.md pipeline rule). The composite now
+    // runs whenever its feature is ENABLED (not only when a fresh trace exists): the PBR raster
+    // omits spec IBL from RT1 in that case (uOmitSpecularIbl), so a composite MUST add it back —
+    // falling back to pure IBL (uHasRtTrace/uHasSsrTrace = 0) when there is no fresh trace.
+    const bool rtHasFreshTrace = m_dxrReflectionSrv != 0;
+    const bool rtCompositeWanted = m_dxrReflectionCompositeEnabled;
     const bool rtCompositeDebugOnly =
         !rtCompositeWanted && m_debugMode == RenderDebugMode::RtSpecReplacement
         && m_dxrReflectionSrv != 0;
 
+    const bool ssrHasFreshTrace = m_lastSsrResolvedSrv != 0;
     const bool runSsrIndirect =
         !pbrDebugActive &&
         !rtCompositeWanted &&
         m_sceneFramebuffer->HasSplitLighting() &&
         m_sceneFramebuffer->HasMaterialGbuffer() &&
         m_ssrIndirectTarget.resource != nullptr &&
-        m_lastSsrResolvedSrv != 0 &&
         environmentMap.GetIBL().IsReady() &&
         (m_ssrEnabled || IsSsrCompositeDebugMode(m_debugMode));
 
@@ -2414,8 +2417,12 @@ void ScreenSpaceEffects::Apply(
         m_ssrIndirectShader->SetInt(
             "uDebugSpecReplacement",
             (!m_ssrEnabled && m_debugMode == RenderDebugMode::SsrSpecReplacement) ? 1 : 0);
+        m_ssrIndirectShader->SetInt("uHasSsrTrace", ssrHasFreshTrace ? 1 : 0);
         m_ssrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
-        m_ssrIndirectShader->BindTextureSlot(1, m_lastSsrResolvedSrv);
+        // Fall back to a valid texture (RT1) when there is no fresh SSR resolve; uHasSsrTrace=0
+        // forces the weight to 0 so the sample is ignored and pure IBL is added.
+        m_ssrIndirectShader->BindTextureSlot(
+            1, ssrHasFreshTrace ? m_lastSsrResolvedSrv : m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_ssrIndirectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_ssrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
         m_ssrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
@@ -2453,8 +2460,13 @@ void ScreenSpaceEffects::Apply(
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 invView = glm::inverse(viewMatrix);
         const IBL& ibl = environmentMap.GetIBL();
-        const std::uintptr_t denoisedSrv =
-            m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv;
+        // Fall back to a valid texture (RT1) when there is no fresh trace; uHasRtTrace=0 forces
+        // the weight to 0 so the RT sample is ignored and pure IBL is added.
+        const std::uintptr_t rt1Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(1);
+        const std::uintptr_t denoisedSrv = rtHasFreshTrace
+            ? (m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv)
+            : rt1Srv;
+        const std::uintptr_t rawSrv = rtHasFreshTrace ? m_dxrReflectionSrv : rt1Srv;
 
         m_dxrIndirectShader->Use(false);
         m_dxrIndirectShader->SetInt("uIndirectMap", 0);
@@ -2480,9 +2492,10 @@ void ScreenSpaceEffects::Apply(
         m_dxrIndirectShader->SetInt(
             "uDebugSpecReplacement",
             rtCompositeDebugOnly ? 1 : 0);
+        m_dxrIndirectShader->SetInt("uHasRtTrace", rtHasFreshTrace ? 1 : 0);
         m_dxrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
         m_dxrIndirectShader->BindTextureSlot(1, denoisedSrv);
-        m_dxrIndirectShader->BindTextureSlot(2, m_dxrReflectionSrv);
+        m_dxrIndirectShader->BindTextureSlot(2, rawSrv);
         m_dxrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_dxrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
         m_dxrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
@@ -4083,6 +4096,24 @@ void ScreenSpaceEffects::SetDxrReflectionSrv(
     m_dxrReflectionUvScaleX = uvScaleX;
     m_dxrReflectionUvScaleY = uvScaleY;
     m_dxrReflectionMaxTraceDistance = maxTraceDistance;
+}
+
+bool ScreenSpaceEffects::ReflectionCompositeReplacesSpecIbl(
+    const bool dxrReflectionsEnabled, const bool iblReady, const RenderDebugMode debugMode) const
+{
+    // Must match the runRtIndirect / runSsrIndirect gating in Apply (minus trace freshness, which
+    // is handled by the pure-IBL fallback). PBR debug modes render specific channels, not the
+    // composite, so leave spec IBL baked there.
+    if (IsPbrMaterialDebugMode(debugMode) || !iblReady)
+    {
+        return false;
+    }
+    if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->HasSplitLighting()
+        || !m_sceneFramebuffer->HasMaterialGbuffer())
+    {
+        return false;
+    }
+    return dxrReflectionsEnabled || m_ssrEnabled;
 }
 
 void ScreenSpaceEffects::SetDxrShadowSrv(

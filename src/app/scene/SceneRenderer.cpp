@@ -506,6 +506,21 @@ void SceneRenderer::RecordDxrPass(
 {
     if (!m_dxrSettings.IsEnabled() || !GfxContext::Get().IsRaytracingSupported())
     {
+        // Master RT off (or unsupported): clear every DXR SRV + composite flag so the post stack
+        // stops compositing STALE reflection/shadow/GI buffers from when RT was on (a ghost that
+        // reprojects with the camera). The raster's spec-IBL omit is likewise gated on the master
+        // toggle, so spec IBL is baked normally again.
+        if (usePostProcess && m_screenSpaceEffects != nullptr)
+        {
+            m_screenSpaceEffects->SetDxrSmokeDebugSrv(0);
+            m_screenSpaceEffects->SetDxrPrimaryDebugSrvs(0, 0);
+            m_screenSpaceEffects->SetDxrReflectionSrv(0);
+            m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(false);
+            m_screenSpaceEffects->SetDxrShadowSrv(0);
+            m_screenSpaceEffects->SetDxrShadowCompositeEnabled(false);
+            m_screenSpaceEffects->SetDxrGiSrv(0);
+            m_screenSpaceEffects->SetDxrGiCompositeEnabled(false);
+        }
         return;
     }
 
@@ -862,11 +877,11 @@ void SceneRenderer::RecordDxrPass(
             reflectionsDispatched ? m_dxrReflectionsDispatch->GetDenoisedSrvCpuHandle() : 0,
             m_dxrSettings.GetMaxTraceDistance());
 
-        // D6: run the RT specular composite in Apply (and skip SSR's) only when the user
-        // enabled RT reflections AND this frame actually produced a fresh trace.
-        m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(
-            m_dxrSettings.IsReflectionsEnabled() && reflectionsDispatched
-            && m_dxrReflectionsDispatch->HasValidOutput());
+        // Run the RT specular composite in Apply (and skip SSR's) whenever RT reflections are
+        // ENABLED — not only on a fresh trace. The raster omits spec IBL when the composite will
+        // add it back (see the IBL omit flag set before the scene draw), so the composite MUST
+        // run to re-add it; it falls back to pure IBL (uHasRtTrace=0) when there is no fresh trace.
+        m_screenSpaceEffects->SetDxrReflectionCompositeEnabled(m_dxrSettings.IsReflectionsEnabled());
 
         // D8: RT sun shadow mask (penumbra drives the raw debug view, denoised feeds composite).
         m_screenSpaceEffects->SetDxrShadowSrv(
@@ -1027,6 +1042,25 @@ void SceneRenderer::Render(
 
     const MotionVectorFrameState motionFrameState =
         usePostProcess ? m_screenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
+
+    // Spec-IBL handoff: when a reflection composite (RT reflections / SSR) will ADD spec IBL back
+    // into the indirect this frame, tell the PBR raster to OMIT it from RT1. This avoids baking the
+    // fp16-Inf HDR sun into RT1 only to subtract it back in the composite (which sparkled/blackened
+    // at reflected highlights). Kept in lockstep with the composite gating via the shared helper.
+    if (m_environmentMap != nullptr)
+    {
+        // RT reflections require BOTH the master toggle and the reflections sub-toggle; SSR is
+        // independent (the helper folds it in). Gating on the master here keeps the omit in
+        // lockstep with the composite, which RecordDxrPass disables when the master is off.
+        const bool dxrReflectionsActive =
+            m_dxrSettings.IsEnabled() && m_dxrSettings.IsReflectionsEnabled();
+        const bool omitSpecIbl = usePostProcess && m_screenSpaceEffects != nullptr
+            && m_screenSpaceEffects->ReflectionCompositeReplacesSpecIbl(
+                   dxrReflectionsActive,
+                   m_environmentMap->GetIBL().IsReady(),
+                   activeDebugMode);
+        m_environmentMap->GetIBL().SetReflectionsReplaceSpecIbl(omitSpecIbl);
+    }
 
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
