@@ -201,6 +201,8 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     m_impl = new Impl();
     m_impl->Hwnd = glfwGetWin32Window(window);
 
+    const auto pumpEvents = [this]() { PumpWindowEvents(m_window); };
+
     UINT factoryFlags = 0;
 #if defined(_DEBUG) && defined(GAME_ENGINE_D3D12_DEBUG_LAYER)
     {
@@ -214,6 +216,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
 #endif
 
     ThrowIfFailed(CreateDXGIFactory2(factoryFlags, IID_PPV_ARGS(&m_impl->Factory)), "CreateDXGIFactory2 failed");
+    pumpEvents();
 
     ComPtr<IDXGIAdapter1> adapter;
     for (UINT adapterIndex = 0;
@@ -269,6 +272,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         ThrowIfFailed(createResult, "D3D12CreateDevice failed");
         m_impl->Adapter = adapter;
     }
+    pumpEvents();
 
     auto queryMsaaSupport = [](ID3D12Device* device, const DXGI_FORMAT format, const UINT sampleCount) {
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels{};
@@ -371,6 +375,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         // (the actual reason behind driver/debug-layer faults) is logged right before the stack.
         CrashHandler::SetContextHook([]() { GfxContext::Get().LogD3D12InfoQueueMessages("crash"); });
     }
+    pumpEvents();
 
     D3D12MA::ALLOCATOR_DESC allocatorDesc{};
     allocatorDesc.pAdapter = m_impl->Adapter.Get();
@@ -423,6 +428,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         arena.Mapped = mapped;
         arena.Offset = 0;
     }
+    pumpEvents();
 
     D3D12_COMMAND_QUEUE_DESC queueDesc{};
     queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -461,6 +467,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         "CreateSwapChainForHwnd failed");
     ThrowIfFailed(m_impl->Factory->MakeWindowAssociation(m_impl->Hwnd, DXGI_MWA_NO_ALT_ENTER), "MakeWindowAssociation failed");
     ThrowIfFailed(swapChain1.As(&m_impl->SwapChain), "SwapChain QueryInterface failed");
+    pumpEvents();
 
     D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc{};
     rtvHeapDesc.NumDescriptors = FrameCount;
@@ -493,6 +500,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     m_impl->SrvDescriptorSize = m_impl->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_impl->SrvAllocator = FixedDescriptorHeap(OffscreenSrvDescriptorCount);
     m_impl->SrvAllocator.SetIndexOffset(OffscreenSrvDescriptorStart);
+    pumpEvents();
 
     for (std::uint32_t frameIndex = 0; frameIndex < FrameCount; ++frameIndex)
     {
@@ -522,6 +530,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     }
 
     CreateRenderTargets();
+    pumpEvents();
 
     ImGui_ImplDX12_InitInfo imguiInit{};
     imguiInit.Device = m_impl->Device.Get();
@@ -537,6 +546,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     {
         throw std::runtime_error("ImGui_ImplDX12_Init failed");
     }
+    pumpEvents();
 
     return true;
 }
@@ -608,9 +618,19 @@ void GfxContext::Shutdown()
     m_frameCommandsSubmitted = false;
 }
 
+void GfxContext::TryDeferredStreamlineSwapChainUpgrade()
+{
+    EnsureStreamlineSwapChainUpgraded();
+}
+
 void GfxContext::EnsureStreamlineSwapChainUpgraded()
 {
     if (m_impl == nullptr || m_impl->SwapChain == nullptr)
+    {
+        return;
+    }
+
+    if (!DlssContext::Get().IsRuntimeInitialized())
     {
         return;
     }
@@ -724,7 +744,6 @@ void GfxContext::BeginFrame()
     }
 
     ProcessPendingResize();
-    EnsureStreamlineSwapChainUpgraded();
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     FrameDiagnostics::LogPhase("BeginFrame-wait");
     const std::uint64_t frameWaitFence =
@@ -1034,6 +1053,54 @@ std::uintptr_t GfxContext::GetSrvCpuHandle(const std::uint32_t descriptorIndex) 
     D3D12_CPU_DESCRIPTOR_HANDLE handle = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
     handle.ptr += static_cast<SIZE_T>(descriptorIndex) * m_impl->SrvDescriptorSize;
     return handle.ptr;
+}
+
+bool GfxContext::IsShaderVisibleSrvCpuHandle(const std::uintptr_t cpuHandle) const
+{
+    if (cpuHandle == 0 || m_impl == nullptr || m_impl->SrvDescriptorSize == 0)
+    {
+        return false;
+    }
+
+    if (m_impl->OffscreenRtvHeap != nullptr)
+    {
+        const SIZE_T rtvStart = m_impl->OffscreenRtvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+        const SIZE_T rtvEnd = rtvStart + static_cast<SIZE_T>(OffscreenRtvCount) * m_impl->RtvDescriptorSize;
+        if (cpuHandle >= rtvStart && cpuHandle < rtvEnd)
+        {
+            return false;
+        }
+    }
+
+    if (m_impl->OffscreenDsvHeap != nullptr)
+    {
+        const SIZE_T dsvStart = m_impl->OffscreenDsvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+        const SIZE_T dsvEnd = dsvStart + static_cast<SIZE_T>(OffscreenDsvCount) * m_impl->DsvDescriptorSize;
+        if (cpuHandle >= dsvStart && cpuHandle < dsvEnd)
+        {
+            return false;
+        }
+    }
+
+    const SIZE_T heapStart = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+    const SIZE_T heapEnd = heapStart + static_cast<SIZE_T>(SrvDescriptorCount)
+        * static_cast<SIZE_T>(m_impl->SrvDescriptorSize);
+    if (cpuHandle < heapStart || cpuHandle >= heapEnd)
+    {
+        return false;
+    }
+
+    const SIZE_T offset = cpuHandle - heapStart;
+    if (offset % static_cast<SIZE_T>(m_impl->SrvDescriptorSize) != 0)
+    {
+        return false;
+    }
+
+    const std::uint32_t index =
+        static_cast<std::uint32_t>(offset / static_cast<SIZE_T>(m_impl->SrvDescriptorSize));
+    D3D12_CPU_DESCRIPTOR_HANDLE expected = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
+    expected.ptr += static_cast<SIZE_T>(index) * m_impl->SrvDescriptorSize;
+    return expected.ptr == cpuHandle;
 }
 
 std::uint32_t GfxContext::AllocateOffscreenRtvBlock(const std::uint32_t count)

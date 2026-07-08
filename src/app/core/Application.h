@@ -56,6 +56,7 @@ private:
     void RecoverInterruptedFrame();
     void EnsureEditorLayoutLoaded();
     void HandleFatalGpuDeviceLoss(const std::string& reason);
+    void PumpStartupFramesUntilDlssReady();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;

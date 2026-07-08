@@ -54,6 +54,17 @@ void SlLogCallback(sl::LogType type, const char* msg)
     {
         return;
     }
+
+    // Loading both kFeatureDLSS and kFeatureDLSS_RR makes Streamline warn about duplicate hooks
+    // and compute kernels. That is expected and does not indicate double-init on our side.
+    if (type == sl::LogType::eWarn)
+    {
+        if (std::strstr(msg, "DUPLICATED") != nullptr || std::strstr(msg, "already created") != nullptr)
+        {
+            return;
+        }
+    }
+
     switch (type)
     {
     case sl::LogType::eError:

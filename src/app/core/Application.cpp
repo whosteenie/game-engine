@@ -44,6 +44,7 @@
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/DlssContext.h"
 #include "engine/rhi/HresultFormat.h"
 
 #include <ImGuizmo.h>
@@ -313,9 +314,15 @@ Application::Application(int width, int height, const char* title)
         m_editorSettings->Load();
         m_projectSession = std::make_unique<ProjectSession>();
         m_projectChooser = std::make_unique<ProjectChooser>();
+        m_scene = std::make_unique<Scene>();
+        glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
+        PumpStartupFramesUntilDlssReady();
+
         m_mainMenuBar = std::make_unique<MainMenuBar>();
+        glfwPollEvents();
         m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
         m_lightingPanel = std::make_unique<LightingPanel>();
+        glfwPollEvents();
         m_performancePanel = std::make_unique<PerformancePanel>();
         m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
         m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
@@ -324,6 +331,7 @@ Application::Application(int width, int height, const char* title)
         m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
         m_gameViewportPanel = std::make_unique<GameViewportPanel>();
         m_editorDockSpace = std::make_unique<EditorDockSpace>();
+        glfwPollEvents();
         m_camera = std::make_unique<Camera>(
             glm::vec3(6.0f, 5.0f, 6.0f),
             -135.0f,
@@ -332,13 +340,10 @@ Application::Application(int width, int height, const char* title)
         OnFramebufferResize(framebufferWidth, framebufferHeight);
 
         m_input = std::make_unique<Input>(m_window);
-        m_scene = std::make_unique<Scene>();
         m_sceneEditingController = std::make_unique<SceneEditingController>();
         m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
         m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
         m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
-
-        glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
     }
     catch (...)
     {
@@ -579,6 +584,42 @@ void Application::InitGLFW()
 #endif
 }
 
+void Application::PumpStartupFramesUntilDlssReady()
+{
+    if (m_window == nullptr || !GfxContext::Get().IsInitialized() || m_imguiLayer == nullptr
+        || m_projectChooser == nullptr || m_projectSession == nullptr || m_scene == nullptr
+        || m_editorSettings == nullptr || m_renderer == nullptr)
+    {
+        return;
+    }
+
+    constexpr int kMaxBootstrapFrames = 600;
+    for (int frameIndex = 0;
+         frameIndex < kMaxBootstrapFrames && !DlssContext::Get().IsReady()
+         && !glfwWindowShouldClose(m_window);
+         ++frameIndex)
+    {
+        glfwPollEvents();
+
+        m_imguiLayer->BeginFrame();
+        m_projectChooser->Draw(
+            *m_projectSession,
+            *m_scene,
+            *m_editorSettings,
+            m_projectEditorState,
+            [](const ProjectEditorState&) {},
+            [this]() { RequestClose(); },
+            []() {},
+            m_undoStack,
+            m_editorClipboard);
+        m_renderer->BeginFrame();
+        m_imguiLayer->EndFrame();
+        m_renderer->EndFrame(m_window);
+    }
+
+    GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
+}
+
 void Application::Update(double deltaTime)
 {
     m_performancePanel->OnFrame(deltaTime);
@@ -594,6 +635,8 @@ void Application::Update(double deltaTime)
             HandleFatalGpuDeviceLoss(HresultFormat::FatalDeviceRemovedMessage(deviceRemovedReason));
             return;
         }
+
+        GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
     }
 
     std::string pendingProjectError;

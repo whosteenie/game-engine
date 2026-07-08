@@ -40,6 +40,9 @@ public:
     void CancelFrame();
     void EndFrame();
     void SubmitCommandList();
+    // Upgrades the swapchain to Streamline's DXGI proxy when DLSS init has finished. Safe to call
+    // from the main thread during startup or editor idle time; no-op until SL is runtime-ready.
+    void TryDeferredStreamlineSwapChainUpgrade();
 
     // Resets the graphics command list to a clean, closed state so it no longer references any GPU
     // objects recorded during the previous frame. Call after WaitForGpuIdle() and before destroying
@@ -71,6 +74,8 @@ public:
     D3D12MA::Allocator* GetMemoryAllocator() const;
     std::uint32_t GetSrvDescriptorSize() const;
     std::uintptr_t GetSrvCpuHandle(std::uint32_t descriptorIndex) const;
+    // True when cpuHandle lies in the shader-visible SRV heap (valid CopyDescriptorsSimple source).
+    bool IsShaderVisibleSrvCpuHandle(std::uintptr_t cpuHandle) const;
     std::uint32_t AllocateOffscreenRtvBlock(std::uint32_t count);
     void FreeOffscreenRtvBlock(std::uint32_t baseIndex, std::uint32_t count);
     std::uint32_t AllocateOffscreenDsv();

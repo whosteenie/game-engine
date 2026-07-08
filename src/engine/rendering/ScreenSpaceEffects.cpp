@@ -80,6 +80,28 @@ namespace
         -1.0f,  1.0f, 0.0f, 0.0f,
     };
 
+    bool IsLdrRenderTargetFormat(const int format)
+    {
+        return format == static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM)
+            || format == static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+    }
+
+    bool IsSingleChannelRenderTargetFormat(const int format)
+    {
+        return format == static_cast<int>(DXGI_FORMAT_R16_FLOAT);
+    }
+
+    void ResolveFullscreenPipelineFlags(
+        const int targetFormat,
+        const bool viewportLdrOverride,
+        bool& outViewportLdr,
+        bool& outSingleChannelRtv)
+    {
+        outViewportLdr = viewportLdrOverride || IsLdrRenderTargetFormat(targetFormat);
+        outSingleChannelRtv =
+            !outViewportLdr && IsSingleChannelRenderTargetFormat(targetFormat);
+    }
+
     float SrgbChannelToLinear(float channel)
     {
         return std::pow(channel, 2.2f);
@@ -826,6 +848,7 @@ void ScreenSpaceEffects::CreateInternalTarget(
     target.allocation = allocation;
     target.width = width;
     target.height = height;
+    target.format = format;
     target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
     if (target.srvIndex == UINT32_MAX)
@@ -996,6 +1019,7 @@ void ScreenSpaceEffects::CreateUavTarget(
     target.allocation = allocation;
     target.width = width;
     target.height = height;
+    target.format = format;
     target.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
 
     target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
@@ -1035,6 +1059,7 @@ void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
         target.srvCpuHandle = 0;
         target.width = 0;
         target.height = 0;
+        target.format = 0;
         target.resourceState =
             static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         return;
@@ -1065,6 +1090,7 @@ void ScreenSpaceEffects::DestroyInternalTarget(InternalTarget& target) const
     target.srvCpuHandle = 0;
     target.width = 0;
     target.height = 0;
+    target.format = 0;
     target.resourceState =
         static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
@@ -2454,7 +2480,7 @@ void ScreenSpaceEffects::DrawFullscreenQuad() const
 
 void ScreenSpaceEffects::DrawFullscreenPass(Shader& shader, const bool viewportLdr) const
 {
-    shader.BindPipeline(false, viewportLdr);
+    shader.BindPipeline(false, viewportLdr, false, false, false, false);
     shader.FlushUniforms();
     DrawFullscreenQuad();
 }
@@ -2497,7 +2523,10 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     commandList->RSSetScissorRects(1, &scissor);
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
-    shader.BindPipeline(false, viewportLdr);
+    bool useLdrPipeline = viewportLdr;
+    bool useSingleChannelPipeline = false;
+    ResolveFullscreenPipelineFlags(target.format, viewportLdr, useLdrPipeline, useSingleChannelPipeline);
+    shader.BindPipeline(false, useLdrPipeline, false, false, false, useSingleChannelPipeline);
     shader.FlushUniforms();
     DrawFullscreenQuad();
 

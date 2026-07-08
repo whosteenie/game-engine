@@ -2,6 +2,7 @@
 #include "engine/rendering/Shader.h"
 
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
@@ -98,6 +99,7 @@ Shader::~Shader()
     releasePipeline(m_pipelineStateMrt);
     releasePipeline(m_pipelineStateLdr);
     releasePipeline(m_pipelineStateLdrDepthRead);
+    releasePipeline(m_pipelineStateSingleChannel);
     releasePipeline(m_pipelineStateNoDepth);
     releasePipeline(m_pipelineStateLdrNoDepth);
     releasePipeline(m_pipelineStateDoubleSided);
@@ -128,6 +130,7 @@ Shader::Shader(Shader&& other) noexcept
       m_pipelineStateMrt(other.m_pipelineStateMrt),
       m_pipelineStateLdr(other.m_pipelineStateLdr),
       m_pipelineStateLdrDepthRead(other.m_pipelineStateLdrDepthRead),
+      m_pipelineStateSingleChannel(other.m_pipelineStateSingleChannel),
       m_pipelineStateNoDepth(other.m_pipelineStateNoDepth),
       m_pipelineStateLdrNoDepth(other.m_pipelineStateLdrNoDepth),
       m_pipelineStateDoubleSided(other.m_pipelineStateDoubleSided),
@@ -144,6 +147,7 @@ Shader::Shader(Shader&& other) noexcept
     other.m_pipelineStateMrt = nullptr;
     other.m_pipelineStateLdr = nullptr;
     other.m_pipelineStateLdrDepthRead = nullptr;
+    other.m_pipelineStateSingleChannel = nullptr;
     other.m_pipelineStateNoDepth = nullptr;
     other.m_pipelineStateLdrNoDepth = nullptr;
     other.m_pipelineStateDoubleSided = nullptr;
@@ -166,6 +170,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         m_pipelineStateMrt = other.m_pipelineStateMrt;
         m_pipelineStateLdr = other.m_pipelineStateLdr;
         m_pipelineStateLdrDepthRead = other.m_pipelineStateLdrDepthRead;
+        m_pipelineStateSingleChannel = other.m_pipelineStateSingleChannel;
         m_pipelineStateNoDepth = other.m_pipelineStateNoDepth;
         m_pipelineStateLdrNoDepth = other.m_pipelineStateLdrNoDepth;
         m_pipelineStateDoubleSided = other.m_pipelineStateDoubleSided;
@@ -181,6 +186,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         other.m_pipelineStateMrt = nullptr;
         other.m_pipelineStateLdr = nullptr;
         other.m_pipelineStateLdrDepthRead = nullptr;
+        other.m_pipelineStateSingleChannel = nullptr;
         other.m_pipelineStateNoDepth = nullptr;
         other.m_pipelineStateLdrNoDepth = nullptr;
         other.m_pipelineStateDoubleSided = nullptr;
@@ -884,21 +890,33 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     {
         m_pipelineState = createPipeline(psoDesc);
 
-        applySingleRenderTarget(DXGI_FORMAT_R8G8B8A8_UNORM);
-        if (isSelectionGlow)
+        if (!isIblBrdf)
         {
-            setupAdditiveBlend(psoDesc.BlendState.RenderTarget[0]);
+            applySingleRenderTarget(DXGI_FORMAT_R8G8B8A8_UNORM);
+            if (isSelectionGlow)
+            {
+                setupAdditiveBlend(psoDesc.BlendState.RenderTarget[0]);
+            }
+            else if (isSelectionSharp)
+            {
+                setupAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
+            }
+            else if (isGridComposite)
+            {
+                setupPremultipliedAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
+            }
+
+            m_pipelineStateLdr = createPipeline(psoDesc);
+
+            applySingleRenderTarget(DXGI_FORMAT_R16_FLOAT);
+            m_pipelineStateSingleChannel = createPipeline(psoDesc);
         }
-        else if (isSelectionSharp)
+        else
         {
-            setupAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
-        }
-        else if (isGridComposite)
-        {
-            setupPremultipliedAlphaBlend(psoDesc.BlendState.RenderTarget[0]);
+            m_pipelineStateLdr = nullptr;
+            m_pipelineStateSingleChannel = nullptr;
         }
 
-        m_pipelineStateLdr = createPipeline(psoDesc);
         m_pipelineStateMrt = nullptr;
     }
     else
@@ -1022,7 +1040,8 @@ void Shader::BindPipeline(
     const bool viewportLdr,
     const bool doubleSided,
     const bool depthReadOnly,
-    const bool skipDepthTest) const
+    const bool skipDepthTest,
+    const bool singleChannelRtv) const
 {
     g_activeShader = this;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
@@ -1053,6 +1072,10 @@ void Shader::BindPipeline(
     else if (mrtPass && m_pipelineStateMrt != nullptr)
     {
         pipeline = m_pipelineStateMrt;
+    }
+    else if (singleChannelRtv && m_pipelineStateSingleChannel != nullptr)
+    {
+        pipeline = m_pipelineStateSingleChannel;
     }
     else if (viewportLdr && depthReadOnly && m_pipelineStateLdrDepthRead != nullptr)
     {
@@ -1136,13 +1159,28 @@ void Shader::FlushUniformsOnCommandList(void* commandList) const
 
     for (std::uint32_t unit = 0; unit < m_textureSlots.size(); ++unit)
     {
-        if (m_textureSlots[unit] == 0)
+        const std::uintptr_t slotHandle = m_textureSlots[unit];
+        if (slotHandle == 0)
         {
             continue;
         }
 
+        if (!GfxContext::Get().IsShaderVisibleSrvCpuHandle(slotHandle))
+        {
+            static bool loggedInvalidSrv = false;
+            if (!loggedInvalidSrv)
+            {
+                loggedInvalidSrv = true;
+                EngineLog::Breadcrumb(
+                    "shader",
+                    "BindTextureSlot: skipping CopyDescriptorsSimple for non-SRV CPU handle 0x"
+                        + std::to_string(slotHandle) + " (unit " + std::to_string(unit) + ")");
+            }
+            continue;
+        }
+
         D3D12_CPU_DESCRIPTOR_HANDLE src{};
-        src.ptr = static_cast<SIZE_T>(m_textureSlots[unit]);
+        src.ptr = static_cast<SIZE_T>(slotHandle);
         D3D12_CPU_DESCRIPTOR_HANDLE dst = cpuBase;
         dst.ptr += static_cast<SIZE_T>(unit) * descriptorSize;
         device->CopyDescriptorsSimple(1, dst, src, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -1159,6 +1197,11 @@ void Shader::FlushUniformsOnCommandList(void* commandList) const
 void Shader::BindTextureSlot(const int unit, const std::uintptr_t srvCpuHandle) const
 {
     if (unit < 0 || static_cast<std::size_t>(unit) >= m_textureSlots.size())
+    {
+        return;
+    }
+
+    if (srvCpuHandle != 0 && !GfxContext::Get().IsShaderVisibleSrvCpuHandle(srvCpuHandle))
     {
         return;
     }

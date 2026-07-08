@@ -51,7 +51,8 @@ public:
         bool viewportLdr = false,
         bool doubleSided = false,
         bool depthReadOnly = false,
-        bool skipDepthTest = false) const;
+        bool skipDepthTest = false,
+        bool singleChannelRtv = false) const;
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -105,6 +106,7 @@ private:
     void* m_pipelineStateMrt = nullptr;
     void* m_pipelineStateLdr = nullptr;
     void* m_pipelineStateLdrDepthRead = nullptr;
+    void* m_pipelineStateSingleChannel = nullptr;
     void* m_pipelineStateNoDepth = nullptr;
     void* m_pipelineStateLdrNoDepth = nullptr;
     void* m_pipelineStateDoubleSided = nullptr;
