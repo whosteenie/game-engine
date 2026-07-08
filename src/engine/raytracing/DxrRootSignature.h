@@ -62,6 +62,10 @@ struct ReflectionDispatchConstants
     float sunAngularTanRadius = 0.0f;
     float giStrength = 1.0f;
     std::uint32_t hasGiTrace = 0;
+    // Path-tracer-only (P4): unjittered matrices for primary-hit motion vectors (DLSS-RR).
+    float paddingUnjitteredViewProj[3] = {};
+    float unjitteredViewProj[16] = {};
+    float prevViewProj[16] = {};
 };
 
 // Phase D8 shadows (see devdoc/dxr-shadows.md). Layout mirrors the cbuffer in

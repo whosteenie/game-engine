@@ -7,11 +7,14 @@
 #include "hit_shading.hlsli"
 
 RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = specular hit-distance guide (RR4)
-RWTexture2D<uint2> g_Metadata : register(u1);  // (instanceId+1, primitiveIndex)
+RWTexture2D<float> g_DepthOutput : register(u1); // hyperbolic depth [0,1] at primary hit (DLSS)
+RWTexture2D<uint2> g_Metadata : register(u2);  // (instanceId+1, primitiveIndex)
+RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) at primary hit, matches RT4
 
 // Path-tracer-only packing in reflection cbuffer fields this pass does not otherwise use.
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
+#define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
@@ -32,6 +35,13 @@ struct Payload
 float2 PixelToClipXY(float2 texCoord)
 {
     return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
+}
+
+float2 ComputeMotionNdc(float4 currClip, float4 prevClip)
+{
+    const float2 currNdc = currClip.xy / currClip.w;
+    const float2 prevNdc = prevClip.xy / prevClip.w;
+    return currNdc - prevNdc;
 }
 
 void ResetPayload(inout Payload payload)
@@ -216,7 +226,8 @@ void PathTracerRayGen()
     }
 
     const float4 primaryXi = RandomXi4(pixel, g_FrameIndex, 0u);
-    const float2 texCoord = (float2(pixel) + primaryXi.zw) / float2(g_OutputSize);
+    const float2 primaryOffset = kPtCenterPrimaryRays ? float2(0.5, 0.5) : primaryXi.zw;
+    const float2 texCoord = (float2(pixel) + primaryOffset) / float2(g_OutputSize);
     const float2 clipXY = PixelToClipXY(texCoord);
 
     const float4 farH = mul(g_InvViewProj, float4(clipXY, 1.0, 1.0));
@@ -237,6 +248,8 @@ void PathTracerRayGen()
     uint primaryInstanceId = 0u;
     uint primaryPrimitiveIndex = 0u;
     bool primaryHit = false;
+    float primaryDepth = 1.0;
+    float2 primaryMotion = 0.0.xx;
     float specHitDistGuide = g_MaxTraceDistance;
     bool specGuideCaptured = false;
     bool launchSpecularFromPrimary = false;
@@ -291,6 +304,10 @@ void PathTracerRayGen()
             primaryHit = true;
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
+            const float4 currClip = mul(g_UnjitteredViewProj, float4(hitPos, 1.0));
+            const float4 prevClip = mul(g_PrevViewProj, float4(hitPos, 1.0));
+            primaryMotion = ComputeMotionNdc(currClip, prevClip);
+            primaryDepth = saturate(currClip.z / max(currClip.w, 1e-6));
         }
 
         if (bounce >= maxBounces)
@@ -346,6 +363,8 @@ void PathTracerRayGen()
         radiance = ClampRadiance(radiance);
     }
     g_Output[pixel] = float4(radiance, specHitDistGuide);
+    g_DepthOutput[pixel] = primaryDepth;
+    g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);
     g_Metadata[pixel] = primaryHit
         ? uint2(primaryInstanceId + 1u, primaryPrimitiveIndex)
         : uint2(0, 0);

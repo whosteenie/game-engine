@@ -35,6 +35,10 @@ public:
         glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 sunColor = glm::vec3(1.0f);
         float sunIntensity = 0.0f;
+        glm::mat4 prevViewProjection{1.0f};
+        bool motionHistoryValid = false;
+        // Real-time (DLSS): pixel-center primary rays only. Reference: sub-pixel jitter for accumulation.
+        bool centerPrimaryRays = false;
     };
 
     DxrPathTracerDispatch() = default;
@@ -70,6 +74,10 @@ public:
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const;
     ID3D12Resource* GetPrimaryOutputResource() const;
     std::uint32_t GetPrimaryOutputResourceState() const;
+    ID3D12Resource* GetPathTracerDepthResource() const;
+    std::uint32_t GetPathTracerDepthResourceState() const;
+    ID3D12Resource* GetPathTracerMotionResource() const;
+    std::uint32_t GetPathTracerMotionResourceState() const;
     bool HasValidOutput() const;
 
 private:

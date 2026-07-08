@@ -608,6 +608,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_ptAccumulateShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtAccumulateFragmentShader)),
+      m_ptMeanShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtMeanFragmentShader)),
       m_dxrShadowDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrShadowDebugFragmentShader)),
@@ -2025,7 +2028,11 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     const std::uintptr_t metadataSrv,
     const PtConvergenceMode convergenceMode,
     void* const outputResource,
-    const std::uint32_t outputResourceState)
+    const std::uint32_t outputResourceState,
+    void* const depthResource,
+    const std::uint32_t depthResourceState,
+    void* const motionResource,
+    const std::uint32_t motionResourceState)
 {
     if (!active)
     {
@@ -2038,6 +2045,10 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_dxrPathTracerMetadataSrv = metadataSrv;
     m_pathTracerOutputResource = outputResource;
     m_pathTracerOutputResourceState = outputResourceState;
+    m_pathTracerDepthResource = depthResource;
+    m_pathTracerDepthResourceState = depthResourceState;
+    m_pathTracerMotionResource = motionResource;
+    m_pathTracerMotionResourceState = motionResourceState;
     m_pathTracerDlssResolvedThisFrame = false;
 }
 
@@ -2067,6 +2078,52 @@ void ScreenSpaceEffects::CopySrvToInternalHdrTarget(
         height,
         clearColor,
         false);
+}
+
+void ScreenSpaceEffects::PreparePathTracerDlssHdrInput() const
+{
+    if (!m_pathTracerActive || m_dxrPathTracerOutputSrv == 0 || m_width <= 0 || m_height <= 0)
+    {
+        return;
+    }
+
+    const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    const_cast<ScreenSpaceEffects*>(this)->ResizeInternalTarget(
+        const_cast<ScreenSpaceEffects*>(this)->m_hdrCompositeTarget,
+        m_width,
+        m_height,
+        hdrFormat);
+
+    const float clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    CopyPathTracerHdrToCompositeTarget(clearColor);
+}
+
+void ScreenSpaceEffects::CopyPathTracerHdrToCompositeTarget(const float clearColor[4]) const
+{
+    const bool referenceMode = m_pathTracerConvergenceMode == PtConvergenceMode::Reference;
+
+    if (referenceMode && m_ptAccumSampleCount > 0 && m_ptAccumSumDisplaySrv != 0
+        && m_ptMeanShader != nullptr)
+    {
+        m_ptMeanShader->Use(false, true);
+        m_ptMeanShader->SetInt("uSampleCount", static_cast<int>(m_ptAccumSampleCount));
+        m_ptMeanShader->SetInt("uAccumSum", 0);
+        m_ptMeanShader->BindTextureSlot(0, m_ptAccumSumDisplaySrv);
+        m_ptMeanShader->FlushUniforms();
+        DrawFullscreenToTarget(
+            *m_ptMeanShader,
+            const_cast<InternalTarget&>(m_hdrCompositeTarget),
+            m_width,
+            m_height,
+            clearColor);
+        return;
+    }
+
+    CopySrvToInternalHdrTarget(
+        m_dxrPathTracerOutputSrv,
+        const_cast<InternalTarget&>(m_hdrCompositeTarget),
+        m_width,
+        m_height);
 }
 
 void ScreenSpaceEffects::DrawPathTracerGridOverlayOntoHdrTarget(
@@ -2417,27 +2474,19 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         DrawFullscreenToTarget(*m_rrGuidesShader, *pass.first, m_width, m_height, clear);
     }
 
-    // RR4 spec hit-distance guide (mode 3): hybrid reflections store ray length in radiance.a
-    // (quality-scaled UV). Real-time path tracing stores primary-hit distance in PT output .a at
-    // full render resolution (devdoc/dxr-path-tracing.md P4).
-    const bool usePathTracerHitDistance =
-        m_pathTracerActive
-        && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime
-        && m_dxrPathTracerOutputSrv != 0;
-    if ((m_dxrReflectionSrv != 0 || usePathTracerHitDistance)
-        && m_rrSpecularHitDistanceTarget.resource != nullptr)
+    // RR4 spec hit-distance guide (mode 3): hybrid reflections only. PT output .a is not stable
+    // enough for RR (bounce RNG) and was a static-camera shimmer source.
+    if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
     {
         m_rrGuidesShader->Use(false);
         m_rrGuidesShader->SetInt("uGuideMode", 3);
-        m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", usePathTracerHitDistance ? 1 : 0);
+        m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", 0);
         m_rrGuidesShader->SetFloat("uReflectionUvScaleX", m_dxrReflectionUvScaleX);
         m_rrGuidesShader->SetFloat("uReflectionUvScaleY", m_dxrReflectionUvScaleY);
         m_rrGuidesShader->BindTextureSlot(0, normalSrv);      // unused in mode 3, keep slots bound
         m_rrGuidesShader->BindTextureSlot(1, material0Srv);
         m_rrGuidesShader->BindTextureSlot(2, material1Srv);
-        m_rrGuidesShader->BindTextureSlot(
-            3,
-            usePathTracerHitDistance ? m_dxrPathTracerOutputSrv : m_dxrReflectionSrv);
+        m_rrGuidesShader->BindTextureSlot(3, m_dxrReflectionSrv);
         DrawFullscreenToTarget(
             *m_rrGuidesShader, const_cast<InternalTarget&>(m_rrSpecularHitDistanceTarget),
             m_width, m_height, clear);
@@ -3758,18 +3807,26 @@ void ScreenSpaceEffects::Apply(
 
     const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
         || m_antiAliasingMode == AntiAliasingMode::DLSS;
+    // Reference PT accumulates a changing running mean — DLSS temporal filtering on that input
+    // crawls/shimmers even with a static camera. Bypass DLSS for reference ground truth.
+    const bool pathTracerReferenceActive =
+        m_pathTracerActive
+        && m_pathTracerConvergenceMode == PtConvergenceMode::Reference;
+    const bool effectiveWantDlss = wantDlss && !pathTracerReferenceActive;
 
     // Path-traced display at render resolution (no DLSS upscale pass): copy PT into the HDR
     // chain, composite the editor grid before bloom, then tonemap — same as hybrid mode.
-    if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !wantDlss
+    if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !effectiveWantDlss
         && !IsPbrMaterialDebugMode(m_debugMode))
     {
-        const bool referenceMode = m_pathTracerConvergenceMode == PtConvergenceMode::Reference;
-        const std::uintptr_t ptDisplaySrv =
-            referenceMode && m_ptAccumSampleCount > 0 && m_ptAccumSumDisplaySrv != 0
-                ? m_ptAccumSumDisplaySrv
-                : m_dxrPathTracerOutputSrv;
-        CopySrvToInternalHdrTarget(ptDisplaySrv, const_cast<InternalTarget&>(m_hdrCompositeTarget), m_width, m_height);
+        const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+        const_cast<ScreenSpaceEffects*>(this)->ResizeInternalTarget(
+            const_cast<ScreenSpaceEffects*>(this)->m_hdrCompositeTarget,
+            m_width,
+            m_height,
+            hdrFormat);
+        const float compositeClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        CopyPathTracerHdrToCompositeTarget(compositeClear);
         if (m_pathTracerGridOverlayDraw)
         {
             DrawPathTracerGridOverlayOntoHdrTarget(
@@ -3784,7 +3841,7 @@ void ScreenSpaceEffects::Apply(
     }
 
     std::uintptr_t bloomSrv = 0;
-    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !wantDlss)
+    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !effectiveWantDlss)
     {
         SceneRenderTrace::Section bloomSection("bloom");
         SceneRenderTrace::Scope bloomExtractScope("bloom extract");
@@ -4397,7 +4454,7 @@ void ScreenSpaceEffects::Apply(
     const bool dlssDisplayReady =
         m_dlssOutputTarget.resource != nullptr && m_width > 0 && m_viewportWidth > 0;
 
-    if (wantDlss && dlssDisplayReady)
+    if (effectiveWantDlss && dlssDisplayReady)
     {
         SceneRenderTrace::Section dlssSection("dlss");
         // S4: pre-tonemap HDR (render res) -> DLSS -> display-res HDR -> bloom + tonemap -> viewport.
@@ -4410,12 +4467,12 @@ void ScreenSpaceEffects::Apply(
         void* hdrInputResource = nullptr;
         std::uint32_t hdrInputState =
             static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        const bool pathTracerRealTimeDlss =
+        const bool pathTracerDlssActive =
             m_pathTracerActive
             && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime
             && m_pathTracerOutputResource != nullptr
             && m_dxrPathTracerOutputSrv != 0;
-        if (pathTracerRealTimeDlss)
+        if (pathTracerDlssActive)
         {
             hdrInputResource = m_pathTracerOutputResource;
             hdrInputState = m_pathTracerOutputResourceState;
@@ -4441,7 +4498,7 @@ void ScreenSpaceEffects::Apply(
             constexpr std::uint32_t kPixelSrv =
                 static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 
-            if (pathTracerRealTimeDlss
+            if (pathTracerDlssActive
                 && hdrInputState != kPixelSrv)
             {
                 TransitionResource(
@@ -4467,6 +4524,8 @@ void ScreenSpaceEffects::Apply(
             in.colorInputState = hdrInputState;
             in.colorOutput = dlssOut;
             in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            // P4 PT depth/MV are not fed to DLSS yet — R32 UAV depth does not match the D24 depth
+            // buffer Streamline expects, which caused static shimmer. Use raster G-buffer guides.
             in.depth = m_sceneFramebuffer->GetDepthResource();
             in.depthState = kPixelSrv;
             in.motionVectors = m_sceneFramebuffer->GetColorResource(4);
@@ -4531,8 +4590,11 @@ void ScreenSpaceEffects::Apply(
             // Evaluate() runs kFeatureDLSS_RR (denoise + upscale) over the raw RT signal instead of
             // the SR model. Requires the material G-buffer (guides come from it).
             // P4: real-time path tracing always uses RR when supported (even if the hybrid RR toggle
-            // is off) — noisy PT HDR + gbuffer guides feed DLSS-RR every frame.
-            const bool pathTracerRealTimeRr = pathTracerRealTimeDlss;
+            // is off) — noisy PT HDR + gbuffer guides feed DLSS-RR every frame. Reference mode uses
+            // plain DLSS SR on the accumulated mean (no RR denoise).
+            const bool pathTracerRealTimeRr =
+                pathTracerDlssActive
+                && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime;
             const bool useRr = dlss.IsRrSupported()
                 && m_sceneFramebuffer->HasMaterialGbuffer()
                 && m_rrNormalRoughnessTarget.resource != nullptr
@@ -4547,11 +4609,9 @@ void ScreenSpaceEffects::Apply(
                 in.specularAlbedoState = m_rrSpecularAlbedoTarget.resourceState;
                 in.normalRoughness = m_rrNormalRoughnessTarget.resource;
                 in.normalRoughnessState = m_rrNormalRoughnessTarget.resourceState;
-                // RR4: optional spec hit-distance guide — hybrid reflections or PT primary-hit .a.
-                const bool usePtHitDistGuide =
-                    pathTracerRealTimeRr && m_dxrPathTracerOutputSrv != 0;
-                if ((m_dxrReflectionSrv != 0 || usePtHitDistGuide)
-                    && m_rrSpecularHitDistanceTarget.resource != nullptr)
+                // RR4 spec hit-distance: hybrid reflections only. PT .a wobbles every frame (bounce
+                // RNG) and destabilizes RR even on a static camera.
+                if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
                 {
                     in.specularHitDistance = m_rrSpecularHitDistanceTarget.resource;
                     in.specularHitDistanceState = m_rrSpecularHitDistanceTarget.resourceState;
@@ -4564,7 +4624,7 @@ void ScreenSpaceEffects::Apply(
             dlssRan = dlss.Evaluate(in);
             GfxContext::Get().RebindFrameDescriptorHeaps();
 
-            if (dlssRan && pathTracerRealTimeDlss)
+            if (dlssRan && pathTracerDlssActive)
             {
                 const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = true;
             }
@@ -4594,7 +4654,7 @@ void ScreenSpaceEffects::Apply(
 
         if (dlssRan)
         {
-            if (dlssRan && pathTracerRealTimeDlss && m_pathTracerGridOverlayDraw)
+            if (dlssRan && pathTracerDlssActive && m_pathTracerGridOverlayDraw)
             {
                 DrawPathTracerGridOverlayOntoHdrTarget(
                     camera,

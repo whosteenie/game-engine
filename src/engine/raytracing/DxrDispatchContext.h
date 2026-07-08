@@ -206,6 +206,10 @@ public:
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
     ID3D12Resource* GetPrimaryOutputResource() const { return m_primaryOutputResource; }
     std::uint32_t GetPrimaryOutputResourceState() const { return m_primaryOutputResourceState; }
+    ID3D12Resource* GetPathTracerDepthResource() const { return m_ptDepthTexture.resource; }
+    std::uint32_t GetPathTracerDepthResourceState() const { return m_ptDepthTexture.state; }
+    ID3D12Resource* GetPathTracerMotionResource() const { return m_ptMotionTexture.resource; }
+    std::uint32_t GetPathTracerMotionResourceState() const { return m_ptMotionTexture.state; }
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }
@@ -225,6 +229,7 @@ private:
         std::string& outError);
     void CreateOutputDescriptors();
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
+    bool EnsurePathTracerGuides(int width, int height, std::string& outError);
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
     bool EnsureShadowOutput(int width, int height, std::string& outError);
@@ -294,6 +299,10 @@ private:
         ReflectionTexture& outTexture,
         std::string& outError);
     void RetireOrDestroyReflectionTexture(ReflectionTexture& texture);
+
+    // P4 path-tracer DLSS guides (primary-hit depth + motion).
+    ReflectionTexture m_ptDepthTexture{};
+    ReflectionTexture m_ptMotionTexture{};
 
     static constexpr int kReflectionTextureCount = 5;
     // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised

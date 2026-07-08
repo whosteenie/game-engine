@@ -101,6 +101,9 @@ void DxrDispatchContext::Release()
     m_primaryOutputResourceState = 0;
     m_primaryMetadataResourceState = 0;
 
+    RetireOrDestroyReflectionTexture(m_ptDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+
     ReleaseRetiredReflectionOutputs();
     for (ReflectionTexture& texture : m_reflectionTextures)
     {
@@ -588,7 +591,7 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
 
     if (m_primaryOutputResource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
-        return true;
+        return EnsurePathTracerGuides(width, height, outError);
     }
 
     if (m_primaryOutputResource != nullptr)
@@ -621,6 +624,8 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         m_primaryOutputHeight = 0;
         m_primaryOutputResourceState = 0;
         m_primaryMetadataResourceState = 0;
+        RetireOrDestroyReflectionTexture(m_ptDepthTexture);
+        RetireOrDestroyReflectionTexture(m_ptMotionTexture);
     }
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
@@ -703,6 +708,51 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     }
 
     CreatePrimaryOutputDescriptors();
+    if (!EnsurePathTracerGuides(width, height, outError))
+    {
+        return false;
+    }
+    return true;
+}
+
+bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid path tracer guide dimensions";
+        return false;
+    }
+
+    if (m_ptDepthTexture.resource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
+    {
+        return true;
+    }
+
+    RetireOrDestroyReflectionTexture(m_ptDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+
+    if (!CreateReflectionTexture(
+            width,
+            height,
+            static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
+            m_ptDepthTexture,
+            outError))
+    {
+        return false;
+    }
+
+    if (!CreateReflectionTexture(
+            width,
+            height,
+            static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT),
+            m_ptMotionTexture,
+            outError))
+    {
+        RetireOrDestroyReflectionTexture(m_ptDepthTexture);
+        return false;
+    }
+
     return true;
 }
 
@@ -1810,6 +1860,26 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_primaryMetadataResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
+    if (m_ptDepthTexture.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_ptDepthTexture.resource,
+            static_cast<D3D12_RESOURCE_STATES>(m_ptDepthTexture.state),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_ptDepthTexture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
+    if (m_ptMotionTexture.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            m_ptMotionTexture.resource,
+            static_cast<D3D12_RESOURCE_STATES>(m_ptMotionTexture.state),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        m_ptMotionTexture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+
     auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
     ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
     commandList->SetDescriptorHeaps(1, descriptorHeaps);
@@ -1855,9 +1925,9 @@ bool DxrDispatchContext::DispatchPathTracer(
     constexpr std::uint32_t kReflectionUavCount = 4;
     const std::uint32_t pathTracerUavIndices[kReflectionUavCount] = {
         m_primaryOutputUavIndex,
+        m_ptDepthTexture.uavIndex,
         m_primaryMetadataUavIndex,
-        m_primaryOutputUavIndex,
-        m_primaryOutputUavIndex};
+        m_ptMotionTexture.uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kReflectionUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
@@ -1894,9 +1964,23 @@ bool DxrDispatchContext::DispatchPathTracer(
     commandList->DispatchRays(&dispatchDesc);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);
+    RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptMotionTexture.resource);
 
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_ptDepthTexture.resource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    m_ptDepthTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        m_ptMotionTexture.resource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    m_ptMotionTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
     TransitionResource(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_primaryOutputResource,

@@ -117,7 +117,11 @@ public:
         std::uintptr_t metadataSrv,
         PtConvergenceMode convergenceMode = PtConvergenceMode::RealTime,
         void* outputResource = nullptr,
-        std::uint32_t outputResourceState = 0);
+        std::uint32_t outputResourceState = 0,
+        void* depthResource = nullptr,
+        std::uint32_t depthResourceState = 0,
+        void* motionResource = nullptr,
+        std::uint32_t motionResourceState = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
@@ -487,6 +491,8 @@ private:
         InternalTarget& target,
         int width,
         int height) const;
+    void PreparePathTracerDlssHdrInput() const;
+    void CopyPathTracerHdrToCompositeTarget(const float clearColor[4]) const;
     void CreateInternalDepthTarget(InternalDepthTarget& target, int width, int height);
     void DestroyInternalDepthTarget(InternalDepthTarget& target) const;
     void ResizeDlssDisplayDepthTarget(int viewportWidth, int viewportHeight);
@@ -588,6 +594,7 @@ private:
     std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
     std::unique_ptr<Shader> m_ptAccumulateShader;
+    std::unique_ptr<Shader> m_ptMeanShader;
     std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
@@ -691,6 +698,10 @@ private:
     std::uintptr_t m_dxrPathTracerMetadataSrv = 0;
     void* m_pathTracerOutputResource = nullptr;
     std::uint32_t m_pathTracerOutputResourceState = 0;
+    void* m_pathTracerDepthResource = nullptr;
+    std::uint32_t m_pathTracerDepthResourceState = 0;
+    void* m_pathTracerMotionResource = nullptr;
+    std::uint32_t m_pathTracerMotionResourceState = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
     mutable bool m_pathTracerPostIntegrated = false;
     PathTracerGridOverlayFn m_pathTracerGridOverlayDraw;

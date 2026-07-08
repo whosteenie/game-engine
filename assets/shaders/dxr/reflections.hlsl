@@ -34,6 +34,9 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float g_SunAngularTanRadius; // tan(sunAngularRadiusDegrees) — soft sun cone at reflection hits
     float g_GiStrength;      // one-bounce diffuse GI weight at reflection hits
     uint g_HasGiTrace;       // 1 when RT GI is enabled (world-space bounce trace at hits)
+    float3 _PadUnjitteredViewProj;
+    float4x4 g_UnjitteredViewProj;
+    float4x4 g_PrevViewProj;
 };
 
 RWTexture2D<float4> g_ReflectionOutput : register(u0);

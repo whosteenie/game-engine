@@ -122,8 +122,13 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
 
     const glm::mat4 viewMatrix = camera.GetViewMatrix();
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
+    const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
+    const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
     const glm::mat4 invViewProj = glm::inverse(viewProj);
+    const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
+        ? frameInputs.prevViewProjection
+        : unjitteredViewProj;
     const glm::vec3 cameraPos = camera.GetPosition();
 
     DxrRootSignature::ReflectionDispatchConstants constants{};
@@ -134,6 +139,11 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
     std::memcpy(constants.viewProj, glm::value_ptr(viewProj), sizeof(constants.viewProj));
     std::memcpy(constants.worldToView, glm::value_ptr(viewMatrix), sizeof(constants.worldToView));
+    std::memcpy(
+        constants.unjitteredViewProj,
+        glm::value_ptr(unjitteredViewProj),
+        sizeof(constants.unjitteredViewProj));
+    std::memcpy(constants.prevViewProj, glm::value_ptr(prevViewProj), sizeof(constants.prevViewProj));
     constants.cameraPos[0] = cameraPos.x;
     constants.cameraPos[1] = cameraPos.y;
     constants.cameraPos[2] = cameraPos.z;
@@ -152,6 +162,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.sunColor[0] = frameInputs.sunColor.x;
     constants.sunColor[1] = frameInputs.sunColor.y;
     constants.sunColor[2] = frameInputs.sunColor.z;
+    // Path-tracer-only: g_RoughnessCutoff > 0.5 => pixel-center primary rays (real-time + DLSS).
+    constants.roughnessCutoff = frameInputs.centerPrimaryRays ? 1.0f : 0.0f;
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
@@ -215,6 +227,26 @@ ID3D12Resource* DxrPathTracerDispatch::GetPrimaryOutputResource() const
 std::uint32_t DxrPathTracerDispatch::GetPrimaryOutputResourceState() const
 {
     return m_dispatchContext.GetPrimaryOutputResourceState();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerDepthResource() const
+{
+    return m_dispatchContext.GetPathTracerDepthResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerDepthResourceState() const
+{
+    return m_dispatchContext.GetPathTracerDepthResourceState();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerMotionResource() const
+{
+    return m_dispatchContext.GetPathTracerMotionResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState() const
+{
+    return m_dispatchContext.GetPathTracerMotionResourceState();
 }
 
 bool DxrPathTracerDispatch::HasValidOutput() const

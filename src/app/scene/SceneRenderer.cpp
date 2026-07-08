@@ -624,6 +624,14 @@ void SceneRenderer::RecordDxrPass(
         ptInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
         ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
         ptInputs.maxReflectionLod = ptIbl.GetMaxReflectionLod();
+        {
+            const MotionVectorFrameState& motionState = m_screenSpaceEffects->GetMotionVectorFrameState();
+            ptInputs.motionHistoryValid = motionState.historyValid;
+            ptInputs.prevViewProjection = motionState.historyValid
+                ? motionState.prevViewProjection
+                : camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        }
+        ptInputs.centerPrimaryRays = !m_dxrSettings.IsPtReferenceConvergence();
         ptInputs.sunDirection = glm::normalize(GetSunDirection());
         {
             const std::vector<Light>& lights = m_lighting.GetLights();
@@ -675,7 +683,8 @@ void SceneRenderer::RecordDxrPass(
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
         {
             PathTracerHistoryKey historyKey{};
-            historyKey.viewProjection = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+            historyKey.viewProjection =
+                camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
             historyKey.width = dispatchWidth;
             historyKey.height = dispatchHeight;
             historyKey.convergenceMode = m_dxrSettings.GetPtConvergenceMode();
@@ -704,7 +713,11 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle() : 0,
             m_dxrSettings.GetPtConvergenceMode(),
             pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResource() : nullptr,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResourceState() : 0);
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResourceState() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResource() : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResourceState() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResource() : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
