@@ -15,6 +15,7 @@
 #include "engine/rendering/post/BloomTonemapPass.h"
 #include "engine/rendering/post/DxrDebugBlitPass.h"
 #include "engine/rendering/post/ScreenSpaceReflectionPass.h"
+#include "engine/rendering/post/ScreenSpaceGiPass.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
@@ -2941,211 +2942,56 @@ void ScreenSpaceEffects::Apply(
         rtGiInjectScope.Success();
     }
 
-    std::uintptr_t temporalInputSrv = m_radianceTarget.srvCpuHandle;
+    ScreenSpaceGiPassInputs ssgiInputs{};
+    ssgiInputs.runRadianceAssembly = runRadianceAssembly;
+    ssgiInputs.ssgiEnabled = m_ssgiEnabled;
+    ssgiInputs.ssgiDenoiseEnabled = m_ssgiDenoiseEnabled;
+    ssgiInputs.ssgiNoiseInjectionEnabled = m_ssgiNoiseInjectionEnabled;
+    ssgiInputs.sceneHasGeometryNormals = m_sceneFramebuffer->HasGeometryNormals();
+    ssgiInputs.sceneHasMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+    ssgiInputs.projectionMatrix = projectionMatrix;
+    ssgiInputs.inverseProjectionMatrix = inverseProjectionMatrix;
+    ssgiInputs.viewMatrix = camera.GetViewMatrix();
+    ssgiInputs.unjitteredProjectionMatrix = camera.GetUnjitteredProjectionMatrix();
+    ssgiInputs.texelSize = texelSize;
+    ssgiInputs.motionVectorState = m_motionVectorFrameState;
+    ssgiInputs.giFrameIndex = m_giFrameIndex;
+    ssgiInputs.radianceHistoryValid = m_radianceHistoryValid;
+    ssgiInputs.radianceSrv = m_radianceTarget.srvCpuHandle;
+    ssgiInputs.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+    ssgiInputs.normalSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal);
+    ssgiInputs.material0Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+    ssgiInputs.material1Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic);
+    ssgiInputs.ssgiMaxTraceDistance = m_ssgiMaxTraceDistance;
+    ssgiInputs.ssgiStepCount = m_ssgiStepCount;
+    ssgiInputs.ssgiThickness = m_ssgiThickness;
+    ssgiInputs.ssgiNoiseStrength = m_ssgiNoiseStrength;
+    ssgiInputs.ssgiSpatialDepthThreshold = m_ssgiSpatialDepthThreshold;
+    ssgiInputs.ssgiSpatialBlurSpread = m_ssgiSpatialBlurSpread;
+    ssgiInputs.ssgiRoughnessSpreadMin = m_ssgiRoughnessSpreadMin;
+    ssgiInputs.ssgiRoughnessSpreadMax = m_ssgiRoughnessSpreadMax;
+    ssgiInputs.giTemporalBlendFactor = m_giTemporalBlendFactor;
+    ssgiInputs.giDepthThreshold = m_giDepthThreshold;
+    ssgiInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+    ssgiInputs.ssgiTraceShader = m_ssgiTraceShader.get();
+    ssgiInputs.ssgiNoiseInjectShader = m_ssgiNoiseInjectShader.get();
+    ssgiInputs.ssgiDenoiseSpatialShader = m_ssgiDenoiseSpatialShader.get();
+    ssgiInputs.temporalReprojectShader = m_temporalReprojectShader.get();
+    ssgiInputs.giDepthHistoryShader = m_giDepthHistoryShader.get();
+    ssgiInputs.radianceTraceInputTarget = const_cast<InternalTarget*>(&m_radianceTraceInputTarget);
+    ssgiInputs.radianceSpatialTarget = const_cast<InternalTarget*>(&m_radianceSpatialTarget);
+    ssgiInputs.radianceSpatialBlurTarget = const_cast<InternalTarget*>(&m_radianceSpatialBlurTarget);
+    ssgiInputs.radianceHistoryTarget = const_cast<InternalTarget*>(&m_radianceHistoryTarget);
+    ssgiInputs.radianceTemporalTarget = const_cast<InternalTarget*>(&m_radianceTemporalTarget);
+    ssgiInputs.radianceHistoryDepthTarget = const_cast<InternalTarget*>(&m_radianceHistoryDepthTarget);
 
-    const bool runSsgiTrace =
-        runRadianceAssembly &&
-        m_ssgiEnabled &&
-        m_sceneFramebuffer->HasGeometryNormals() &&
-        m_radianceTraceInputTarget.resource != nullptr;
+    ScreenSpaceGiPassOutputs ssgiOutputs{};
+    ScreenSpaceGiPass::Execute(BuildPostProcessContext(), ssgiInputs, ssgiOutputs);
 
-    if (runSsgiTrace)
-    {
-        SceneRenderTrace::Section ssgiSection("ssgi");
-        SceneRenderTrace::Scope traceScope("ssgi trace");
-        m_ssgiTraceShader->Use(false);
-        m_ssgiTraceShader->SetInt("uDepthMap", 0);
-        m_ssgiTraceShader->SetInt("uNormalMap", 1);
-        m_ssgiTraceShader->SetInt("uMaterial0Map", 2);
-        m_ssgiTraceShader->SetInt("uMaterial1Map", 3);
-        m_ssgiTraceShader->SetInt("uRadianceMap", 4);
-        m_ssgiTraceShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssgiTraceShader->SetMat4("uProjection", projectionMatrix);
-        m_ssgiTraceShader->SetMat4("uView", camera.GetViewMatrix());
-        m_ssgiTraceShader->SetFloat("uMaxTraceDistance", m_ssgiMaxTraceDistance);
-        m_ssgiTraceShader->SetInt("uStepCount", m_ssgiStepCount);
-        m_ssgiTraceShader->SetFloat("uThickness", m_ssgiThickness);
-        m_ssgiTraceShader->SetFloat("uFrameIndex", static_cast<float>(m_giFrameIndex));
-        m_ssgiTraceShader->SetFloat("uEdgeFadeScale", 20.0f);
-        m_ssgiTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssgiTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-        m_ssgiTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-        m_ssgiTraceShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
-        m_ssgiTraceShader->BindTextureSlot(4, m_radianceTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_ssgiTraceShader,
-            const_cast<InternalTarget&>(m_radianceTraceInputTarget),
-            m_width,
-            m_height,
-            radianceClear);
-        temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
-        traceScope.Success();
-        ssgiSection.Success();
-    }
-
-    const bool runSsgiDenoise =
-        runRadianceAssembly &&
-        m_ssgiDenoiseEnabled &&
-        m_sceneFramebuffer->HasGeometryNormals() &&
-        m_sceneFramebuffer->HasMaterialGbuffer() &&
-        m_radianceTraceInputTarget.resource != nullptr &&
-        m_radianceSpatialTarget.resource != nullptr &&
-        (runSsgiTrace || m_ssgiNoiseInjectionEnabled);
-
-    if (runRadianceAssembly && !runSsgiTrace && m_ssgiNoiseInjectionEnabled)
-    {
-        SceneRenderTrace::Section ssgiSection("ssgi");
-        SceneRenderTrace::Scope noiseScope("ssgi noise inject");
-        const float noiseStrength =
-            m_ssgiNoiseInjectionEnabled ? m_ssgiNoiseStrength : 0.0f;
-        m_ssgiNoiseInjectShader->Use(false);
-        m_ssgiNoiseInjectShader->SetInt("uRadianceMap", 0);
-        m_ssgiNoiseInjectShader->SetInt("uDepthMap", 1);
-        m_ssgiNoiseInjectShader->SetFloat("uNoiseStrength", noiseStrength);
-        m_ssgiNoiseInjectShader->SetFloat(
-            "uFrameIndex",
-            static_cast<float>(m_giFrameIndex));
-        m_ssgiNoiseInjectShader->BindTextureSlot(0, m_radianceTarget.srvCpuHandle);
-        m_ssgiNoiseInjectShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        DrawFullscreenToTarget(
-            *m_ssgiNoiseInjectShader,
-            const_cast<InternalTarget&>(m_radianceTraceInputTarget),
-            m_width,
-            m_height,
-            radianceClear);
-        temporalInputSrv = m_radianceTraceInputTarget.srvCpuHandle;
-        noiseScope.Success();
-        ssgiSection.Success();
-    }
-
-    if (runSsgiDenoise)
-    {
-        SceneRenderTrace::Section ssgiSection("ssgi");
-        SceneRenderTrace::Scope denoiseScope("ssgi denoise spatial");
-        m_ssgiDenoiseSpatialShader->Use(false);
-        m_ssgiDenoiseSpatialShader->SetInt("uInput", 0);
-        m_ssgiDenoiseSpatialShader->SetInt("uDepthMap", 1);
-        m_ssgiDenoiseSpatialShader->SetInt("uNormalMap", 2);
-        m_ssgiDenoiseSpatialShader->SetInt("uMaterial0Map", 3);
-        m_ssgiDenoiseSpatialShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssgiDenoiseSpatialShader->SetVec2("uTexelSize", texelSize);
-        m_ssgiDenoiseSpatialShader->SetFloat("uDepthThreshold", m_ssgiSpatialDepthThreshold);
-        m_ssgiDenoiseSpatialShader->SetFloat("uBlurSpread", m_ssgiSpatialBlurSpread);
-        m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMin", m_ssgiRoughnessSpreadMin);
-        m_ssgiDenoiseSpatialShader->SetFloat("uRoughnessSpreadMax", m_ssgiRoughnessSpreadMax);
-        m_ssgiDenoiseSpatialShader->SetFloat("uNormalPower", 4.0f);
-        static constexpr float kSsgiAtrousStepScales[] = {1.0f, 2.0f, 4.0f, 2.0f};
-        std::uintptr_t atrousInputSrv = temporalInputSrv;
-        bool writeToBlurTarget = true;
-        for (const float stepScale : kSsgiAtrousStepScales)
-        {
-            InternalTarget& outputTarget = writeToBlurTarget
-                ? const_cast<InternalTarget&>(m_radianceSpatialBlurTarget)
-                : const_cast<InternalTarget&>(m_radianceSpatialTarget);
-            m_ssgiDenoiseSpatialShader->SetFloat("uStepScale", stepScale);
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(0, atrousInputSrv);
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-            DrawFullscreenToTarget(
-                *m_ssgiDenoiseSpatialShader,
-                outputTarget,
-                m_width,
-                m_height,
-                radianceClear);
-            atrousInputSrv = outputTarget.srvCpuHandle;
-            writeToBlurTarget = !writeToBlurTarget;
-        }
-
-        temporalInputSrv = atrousInputSrv;
-        denoiseScope.Success();
-        ssgiSection.Success();
-    }
-
-    const bool runGiTemporal =
-        runRadianceAssembly &&
-        m_radianceHistoryTarget.resource != nullptr &&
-        m_radianceTemporalTarget.resource != nullptr &&
-        m_radianceHistoryDepthTarget.resource != nullptr &&
-        (runSsgiDenoise ||
-         (!m_ssgiEnabled && !m_ssgiNoiseInjectionEnabled && !m_ssgiDenoiseEnabled));
-
-    if (runGiTemporal)
-    {
-        SceneRenderTrace::Section ssgiSection("ssgi");
-        SceneRenderTrace::Scope temporalScope("gi temporal reproject");
-        const glm::mat4 viewMatrix = camera.GetViewMatrix();
-        const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-        const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
-        const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
-            ? m_motionVectorFrameState.prevViewProjection
-            : unjitteredProjection * viewMatrix;
-        const float temporalClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
-        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-        commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
-        m_sceneFramebuffer->RestoreDepthShaderResource();
-
-        m_temporalReprojectShader->Use(false);
-        m_temporalReprojectShader->SetInt("uCurrentRadiance", 0);
-        m_temporalReprojectShader->SetInt("uHistoryRadiance", 1);
-        m_temporalReprojectShader->SetInt("uDepth", 2);
-        m_temporalReprojectShader->SetInt("uHistoryDepth", 3);
-        m_temporalReprojectShader->SetMat4("uInvViewProj", invViewProjCurr);
-        m_temporalReprojectShader->SetMat4("uPrevViewProj", prevViewProj);
-        m_temporalReprojectShader->SetFloat("uBlendFactor", m_giTemporalBlendFactor);
-        m_temporalReprojectShader->SetFloat(
-            "uHistoryValid",
-            m_radianceHistoryValid && m_motionVectorFrameState.historyValid ? 1.0f : 0.0f);
-        m_temporalReprojectShader->SetFloat("uTexelSizeX", texelSize.x);
-        m_temporalReprojectShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_temporalReprojectShader->SetFloat("uDepthRejectThreshold", m_giDepthThreshold);
-        m_temporalReprojectShader->BindTextureSlot(0, temporalInputSrv);
-        m_temporalReprojectShader->BindTextureSlot(1, m_radianceHistoryTarget.srvCpuHandle);
-        m_temporalReprojectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_temporalReprojectShader->BindTextureSlot(3, m_radianceHistoryDepthTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_temporalReprojectShader,
-            const_cast<InternalTarget&>(m_radianceTemporalTarget),
-            m_width,
-            m_height,
-            temporalClear);
-
-        // Stored for Phase 5+ proper depth disocclusion (point-sampled prev-view Z compare).
-        m_giDepthHistoryShader->Use(false);
-        m_giDepthHistoryShader->SetInt("uDepth", 0);
-        m_giDepthHistoryShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        DrawFullscreenToTarget(
-            *m_giDepthHistoryShader,
-            const_cast<InternalTarget&>(m_radianceHistoryDepthTarget),
-            m_width,
-            m_height,
-            temporalClear);
-
-        std::swap(
-            const_cast<InternalTarget&>(m_radianceHistoryTarget),
-            const_cast<InternalTarget&>(m_radianceTemporalTarget));
-        m_radianceHistoryValid = true;
-        ++m_giFrameIndex;
-        temporalScope.Success();
-        ssgiSection.Success();
-    }
-
-    m_lastSsgiInjectSrv = 0;
-    if (runSsgiTrace)
-    {
-        if (runGiTemporal && m_radianceHistoryTarget.srvCpuHandle != 0)
-        {
-            m_lastSsgiInjectSrv = m_radianceHistoryTarget.srvCpuHandle;
-        }
-        else if (runSsgiDenoise && m_radianceSpatialTarget.srvCpuHandle != 0)
-        {
-            m_lastSsgiInjectSrv = m_radianceSpatialTarget.srvCpuHandle;
-        }
-        else if (m_radianceTraceInputTarget.srvCpuHandle != 0)
-        {
-            m_lastSsgiInjectSrv = m_radianceTraceInputTarget.srvCpuHandle;
-        }
-    }
+    m_giFrameIndex = ssgiOutputs.giFrameIndex;
+    m_radianceHistoryValid = ssgiOutputs.radianceHistoryValid;
+    m_lastSsgiInjectSrv = ssgiOutputs.lastSsgiInjectSrv;
+    const bool runSsgiTrace = ssgiOutputs.runSsgiTrace;
 
     std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting);
     const char* hdrColorSource = "scene_direct";
