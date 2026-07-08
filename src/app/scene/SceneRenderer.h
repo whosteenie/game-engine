@@ -17,6 +17,8 @@
 #include "engine/raytracing/DxrShadowsDispatch.h"
 #include "engine/raytracing/DxrSmokeDispatch.h"
 
+#include "engine/rendering/RenderDebug.h"
+
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <memory>
@@ -28,6 +30,7 @@ class Camera;
 class CameraGizmoRenderer;
 class CascadedShadowMap;
 class ColliderGizmoRenderer;
+class Framebuffer;
 class GridRenderer;
 class EnvironmentMap;
 class IBL;
@@ -37,6 +40,14 @@ class Shader;
 
 class SceneRenderer
 {
+    enum class GpuResourceState
+    {
+        NotStarted,
+        InProgress,
+        Ready,
+        Failed,
+    };
+
 public:
     SceneRenderer();
     ~SceneRenderer();
@@ -88,8 +99,8 @@ public:
     float GetTextureMipBias() const { return m_textureMipBias; }
     void SetTextureMipBias(float mipBias);
 
-    bool IsGpuResourcesReady() const { return m_gpuResourcesInitialized; }
-    bool HasGpuResourcesInitFailed() const { return m_gpuResourcesInitFailed; }
+    bool IsGpuResourcesReady() const { return m_gpuResourceState == GpuResourceState::Ready; }
+    bool HasGpuResourcesInitFailed() const { return m_gpuResourceState == GpuResourceState::Failed; }
     const std::string& GetGpuResourcesInitError() const { return m_gpuResourcesInitError; }
     void PrepareGpuResources() const { EnsureGpuResources(); }
     void PrepareGpuResourcesForGeometryMsaa(int msaaSampleCount) const;
@@ -118,6 +129,38 @@ private:
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass(const Scene& scene, const Camera& camera);
+    void PrepareSceneRasterTarget(
+        const Scene& scene,
+        const Camera& camera,
+        int viewportWidth,
+        int viewportHeight,
+        Framebuffer* target,
+        bool usePostProcess,
+        bool freezeTemporalJitter,
+        bool& outSplitLightingMrt);
+    void RenderGeometryPass(
+        const Scene& scene,
+        const Camera& camera,
+        bool usePostProcess,
+        Framebuffer* target,
+        bool splitLightingMrt,
+        RenderDebugMode materialDebugMode,
+        RenderDebugMode activeDebugMode);
+    void RenderPostProcessPass(
+        const Scene& scene,
+        const Camera& camera,
+        int viewportWidth,
+        int viewportHeight,
+        Framebuffer* target,
+        const SceneRenderOptions& options,
+        bool freezeTemporalJitter,
+        bool splitLightingMrt);
+    void RenderGizmoPass(
+        const Scene& scene,
+        const Camera& camera,
+        Framebuffer* target,
+        const SceneRenderOptions& options,
+        bool usePostProcess);
     void RecordDxrPass(
         const Scene& scene,
         const Camera& camera,
@@ -149,9 +192,7 @@ private:
     float m_textureMipBias = 0.0f;
     SceneLighting m_lighting;
     mutable std::vector<glm::mat4> m_previousWorldMatrices;
-    mutable bool m_gpuResourcesInitialized = false;
-    mutable bool m_gpuResourcesInitFailed = false;
-    mutable bool m_gpuResourcesInitInProgress = false;
+    mutable GpuResourceState m_gpuResourceState = GpuResourceState::NotStarted;
     mutable std::string m_gpuResourcesInitError;
     nlohmann::json m_pendingRendererSettings;
     bool m_hasPendingRendererSettings = false;

@@ -107,22 +107,20 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_dxrShadowsDispatch.reset();
     self->m_dxrGiDispatch.reset();
     self->m_shadowDepthShader.reset();
-    self->m_gpuResourcesInitialized = false;
-    self->m_gpuResourcesInitInProgress = false;
+    self->m_gpuResourceState = GpuResourceState::NotStarted;
 }
 
 void SceneRenderer::ResetGpuResourcesIfInitFailed() const
 {
-    if (m_gpuResourcesInitialized || !m_gpuResourcesInitFailed)
+    if (IsGpuResourcesReady() || !HasGpuResourcesInitFailed())
     {
         return;
     }
 
     ResetPartialGpuResources();
     SceneRenderer* self = const_cast<SceneRenderer*>(this);
-    self->m_gpuResourcesInitFailed = false;
+    self->m_gpuResourceState = GpuResourceState::NotStarted;
     self->m_gpuResourcesInitError.clear();
-    self->m_gpuResourcesInitInProgress = false;
 }
 
 void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount) const
@@ -130,7 +128,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
     GfxContext::Get().SetActiveMsaaSampleCount(msaaSampleCount);
     const int activeMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
 
-    if (m_gpuResourcesInitialized)
+    if (IsGpuResourcesReady())
     {
         const bool geometryMsaaMatches =
             m_screenSpaceEffects != nullptr
@@ -144,9 +142,8 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
         RenderingPipelineCache::InvalidateAll();
         ResetPartialGpuResources();
         SceneRenderer* self = const_cast<SceneRenderer*>(this);
-        self->m_gpuResourcesInitFailed = false;
+        self->m_gpuResourceState = GpuResourceState::NotStarted;
         self->m_gpuResourcesInitError.clear();
-        self->m_gpuResourcesInitInProgress = false;
     }
     else
     {
@@ -159,7 +156,7 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
 
     EnsureGpuResources();
 
-    if (m_gpuResourcesInitialized && m_screenSpaceEffects != nullptr
+    if (IsGpuResourcesReady() && m_screenSpaceEffects != nullptr
         && m_screenSpaceEffects->GetMsaaSampleCount() != activeMsaaSampleCount)
     {
         const_cast<ScreenSpaceEffects*>(m_screenSpaceEffects.get())->SetMsaaSampleCount(activeMsaaSampleCount);
@@ -168,21 +165,21 @@ void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount
 
 void SceneRenderer::EnsureGpuResources() const
 {
-    if (m_gpuResourcesInitialized || m_gpuResourcesInitFailed || m_gpuResourcesInitInProgress)
+    if (m_gpuResourceState != GpuResourceState::NotStarted)
     {
         return;
     }
 
     if (!GfxContext::Get().IsInitialized())
     {
-        m_gpuResourcesInitFailed = true;
+        m_gpuResourceState = GpuResourceState::Failed;
         m_gpuResourcesInitError = "GfxContext is not initialized";
         EngineLog::Error("scene", "GPU init failed: " + m_gpuResourcesInitError);
         return;
     }
 
     SceneRenderer* self = const_cast<SceneRenderer*>(this);
-    self->m_gpuResourcesInitInProgress = true;
+    self->m_gpuResourceState = GpuResourceState::InProgress;
     SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
@@ -205,8 +202,7 @@ void SceneRenderer::EnsureGpuResources() const
                 EngineConstants::ShadowDepthVertexShader,
                 EngineConstants::ShadowDepthFragmentShader);
         });
-        self->m_gpuResourcesInitialized = true;
-        self->m_gpuResourcesInitInProgress = false;
+        self->m_gpuResourceState = GpuResourceState::Ready;
         GfxContext::Get().SetMaterialTextureFilterMode(self->m_textureFilterMode);
         GfxContext::Get().SetMaterialTextureAnisotropy(self->m_textureAnisotropy);
         self->SyncEffectiveMaterialMipBias();
@@ -215,16 +211,14 @@ void SceneRenderer::EnsureGpuResources() const
     catch (const std::exception& exception)
     {
         ResetPartialGpuResources();
-        self->m_gpuResourcesInitInProgress = false;
-        self->m_gpuResourcesInitFailed = true;
+        self->m_gpuResourceState = GpuResourceState::Failed;
         self->m_gpuResourcesInitError = SafeExceptionMessage(exception);
         EngineLog::Error("scene", "GPU init failed: " + self->m_gpuResourcesInitError);
     }
     catch (...)
     {
         ResetPartialGpuResources();
-        self->m_gpuResourcesInitInProgress = false;
-        self->m_gpuResourcesInitFailed = true;
+        self->m_gpuResourceState = GpuResourceState::Failed;
         self->m_gpuResourcesInitError = "unknown GPU initialization error";
         EngineLog::Error("scene", self->m_gpuResourcesInitError);
     }
@@ -315,7 +309,7 @@ bool SceneRenderer::ComputeShadowCasterBounds(
 void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized)
+    if (!IsGpuResourcesReady())
     {
         return;
     }
@@ -483,7 +477,7 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
 void SceneRenderer::PrepareFrameGpuResources()
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || GfxContext::Get().IsFrameRecording())
+    if (!IsGpuResourcesReady() || GfxContext::Get().IsFrameRecording())
     {
         return;
     }
@@ -614,13 +608,13 @@ void SceneRenderer::RecordDxrPass(
         const IBL& ptIbl = m_environmentMap->GetIBL();
         DxrPathTracerDispatch::FrameInputs ptInputs{};
         ptInputs.depthSrvCpuHandle = depthSrvCpuHandle;
-        ptInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
-        ptInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
-        ptInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
-        ptInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
-        ptInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        ptInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::ShadingNormal);
+        ptInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+        ptInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::DirectLighting);
+        ptInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::SunShadowFactor);
+        ptInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::IndirectLighting);
         ptInputs.prefilterSrvCpuHandle = ptIbl.GetPrefilterMapSrvCpuHandle();
-        ptInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        ptInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MotionVelocity);
         ptInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
         ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
         ptInputs.maxReflectionLod = ptIbl.GetMaxReflectionLod();
@@ -775,13 +769,13 @@ void SceneRenderer::RecordDxrPass(
         const IBL& giIbl = m_environmentMap->GetIBL();
         DxrGiDispatch::FrameInputs giInputs{};
         giInputs.depthSrvCpuHandle = depthSrvCpuHandle;
-        giInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
-        giInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
-        giInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
-        giInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
-        giInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        giInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::ShadingNormal);
+        giInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+        giInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::DirectLighting);
+        giInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::SunShadowFactor);
+        giInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::IndirectLighting);
         giInputs.prefilterSrvCpuHandle = giIbl.GetPrefilterMapSrvCpuHandle();
-        giInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        giInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MotionVelocity);
         giInputs.environmentIntensity = giIbl.GetEnvironmentIntensity();
         giInputs.maxReflectionLod = giIbl.GetMaxReflectionLod();
 
@@ -885,13 +879,13 @@ void SceneRenderer::RecordDxrPass(
         const IBL& ibl = m_environmentMap->GetIBL();
         DxrReflectionsDispatch::FrameInputs frameInputs{};
         frameInputs.depthSrvCpuHandle = depthSrvCpuHandle;
-        frameInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
-        frameInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
-        frameInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(0);
-        frameInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(3);
-        frameInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(1);
+        frameInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::ShadingNormal);
+        frameInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+        frameInputs.directSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::DirectLighting);
+        frameInputs.sunShadowSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::SunShadowFactor);
+        frameInputs.indirectSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::IndirectLighting);
         frameInputs.prefilterSrvCpuHandle = ibl.GetPrefilterMapSrvCpuHandle();
-        frameInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        frameInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MotionVelocity);
         frameInputs.giStrength = m_dxrSettings.GetGiStrength();
         frameInputs.hasGiTrace = giDispatched && m_dxrSettings.IsGiEnabled();
         frameInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
@@ -981,9 +975,9 @@ void SceneRenderer::RecordDxrPass(
 
         DxrShadowsDispatch::FrameInputs shadowInputs{};
         shadowInputs.depthSrvCpuHandle = depthSrvCpuHandle;
-        shadowInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(2);
-        shadowInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(5);
-        shadowInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(4);
+        shadowInputs.normalSrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::ShadingNormal);
+        shadowInputs.material0SrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+        shadowInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MotionVelocity);
         shadowInputs.sunDirection = glm::normalize(GetSunDirection());
         shadowInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
 
@@ -1077,64 +1071,17 @@ void SceneRenderer::RecordDxrPass(
     }
 }
 
-void SceneRenderer::Render(
+void SceneRenderer::PrepareSceneRasterTarget(
     const Scene& scene,
     const Camera& camera,
-    int viewportWidth,
-    int viewportHeight,
-    std::uintptr_t targetFramebuffer,
-    const SceneRenderOptions& options)
+    const int viewportWidth,
+    const int viewportHeight,
+    Framebuffer* target,
+    const bool usePostProcess,
+    const bool freezeTemporalJitter,
+    bool& outSplitLightingMrt)
 {
-    SceneRenderTrace::Scope renderScope("SceneRenderer::Render");
-    EnsureGpuResources();
-    if (!m_gpuResourcesInitialized)
-    {
-        renderScope.Success();
-        return;
-    }
-
-    GfxContext::Get().ResetDrawSrvTable();
-
-    Framebuffer* target = nullptr;
-    if (targetFramebuffer != 0)
-    {
-        target = reinterpret_cast<Framebuffer*>(targetFramebuffer);
-    }
-
-    const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
-    const bool freezeTemporalJitter =
-        ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
-
-    SceneRenderTrace::Step(
-        std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
-        + " shadowPass=" + (options.enableShadowPass ? "1" : "0"));
-
-    if (target != nullptr)
-    {
-        GfxContext::Get().SetBoundOutputFramebuffer(target);
-    }
-
-    {
-        SceneRenderTrace::Scope lightingScope("SyncLighting");
-        SyncLighting(scene);
-        lightingScope.Success();
-    }
-
-    if (options.enableShadowPass)
-    {
-        SceneRenderTrace::Scope shadowScope("RenderShadowPass");
-        const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
-        RenderShadowPass(scene, camera);
-        m_shadowMap->EndFrame();
-        shadowScope.Success();
-    }
-
-    RenderDebugMode materialDebugMode = RenderDebugMode::None;
-    const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
-    if (IsPbrMaterialDebugMode(activeDebugMode))
-    {
-        materialDebugMode = activeDebugMode;
-    }
+    (void)scene;
 
     if (usePostProcess)
     {
@@ -1160,8 +1107,11 @@ void SceneRenderer::Render(
             beginPassScope.Success();
         }
         aaSection.Success();
+        outSplitLightingMrt = m_screenSpaceEffects->HasSplitLighting();
+        return;
     }
-    else if (target != nullptr)
+
+    if (target != nullptr)
     {
         const glm::vec3 solidSrgb = m_environmentMap->GetSolidBackgroundColorSrgb();
         const glm::vec3 solidBackground = glm::vec3(
@@ -1174,25 +1124,27 @@ void SceneRenderer::Render(
             m_environmentMap->UsesSolidColorBackground() ? solidClear : blackClear;
         target->BindDrawTarget(true, clearColor);
         GfxContext::Get().SetBoundOutputFramebuffer(target);
+        outSplitLightingMrt = target->HasSplitLighting();
+        return;
     }
 
-    bool splitLightingMrt = false;
-    if (usePostProcess)
-    {
-        splitLightingMrt = m_screenSpaceEffects->HasSplitLighting();
-    }
-    else if (target != nullptr)
-    {
-        splitLightingMrt = target->HasSplitLighting();
-    }
+    outSplitLightingMrt = false;
+}
 
+void SceneRenderer::RenderGeometryPass(
+    const Scene& scene,
+    const Camera& camera,
+    const bool usePostProcess,
+    Framebuffer* target,
+    const bool splitLightingMrt,
+    const RenderDebugMode materialDebugMode,
+    const RenderDebugMode activeDebugMode)
+{
+    if (!m_dxrSettings.IsPathTracingActive())
     {
-        if (!m_dxrSettings.IsPathTracingActive())
-        {
-            SceneRenderTrace::Scope skyboxScope("RenderSkybox");
-            m_environmentMap->RenderSkybox(camera, splitLightingMrt);
-            skyboxScope.Success();
-        }
+        SceneRenderTrace::Scope skyboxScope("RenderSkybox");
+        m_environmentMap->RenderSkybox(camera, splitLightingMrt);
+        skyboxScope.Success();
     }
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
@@ -1209,15 +1161,8 @@ void SceneRenderer::Render(
     const MotionVectorFrameState motionFrameState =
         usePostProcess ? m_screenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
 
-    // Spec-IBL handoff: when a reflection composite (RT reflections / SSR) will ADD spec IBL back
-    // into the indirect this frame, tell the PBR raster to OMIT it from RT1. This avoids baking the
-    // fp16-Inf HDR sun into RT1 only to subtract it back in the composite (which sparkled/blackened
-    // at reflected highlights). Kept in lockstep with the composite gating via the shared helper.
     if (m_environmentMap != nullptr)
     {
-        // RT reflections require BOTH the master toggle and the reflections sub-toggle; SSR is
-        // independent (the helper folds it in). Gating on the master here keeps the omit in
-        // lockstep with the composite, which RecordDxrPass disables when the master is off.
         const bool iblReady = m_environmentMap->GetIBL().IsReady();
         const bool dxrReflectionsActive =
             m_dxrSettings.IsEnabled() && m_dxrSettings.IsReflectionsEnabled();
@@ -1226,8 +1171,6 @@ void SceneRenderer::Render(
                    dxrReflectionsActive, iblReady, activeDebugMode);
         m_environmentMap->GetIBL().SetReflectionsReplaceSpecIbl(omitSpecIbl);
 
-        // RT diffuse GI replaces the SH diffuse ambient the same way (master && GI enabled). The
-        // GI inject re-adds it (traced, or a transient SH recompute when there's no fresh trace).
         const bool dxrGiActive = m_dxrSettings.IsEnabled() && m_dxrSettings.IsGiEnabled();
         const bool omitDiffuseIbl = usePostProcess && m_screenSpaceEffects != nullptr
             && m_screenSpaceEffects->GiInjectReplacesDiffuseIbl(
@@ -1277,150 +1220,317 @@ void SceneRenderer::Render(
     {
         target->Unbind();
     }
+}
 
+void SceneRenderer::RenderPostProcessPass(
+    const Scene& scene,
+    const Camera& camera,
+    const int viewportWidth,
+    const int viewportHeight,
+    Framebuffer* target,
+    const SceneRenderOptions& options,
+    const bool freezeTemporalJitter,
+    const bool splitLightingMrt)
+{
+    {
+        SceneRenderTrace::Scope endPassScope("EndScenePass");
+        m_screenSpaceEffects->EndScenePass();
+        endPassScope.Success();
+    }
+
+    const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+    const bool drawGrid = options.showGrid && scene.GetShowGrid();
+    if (drawGrid && !pathTracingActive)
+    {
+        SceneRenderTrace::Scope gridScope("scene grid pass");
+        m_screenSpaceEffects->BeginSceneGridPass();
+        m_grid->Draw(camera, splitLightingMrt, false, splitLightingMrt);
+        m_screenSpaceEffects->EndSceneGridPass();
+        gridScope.Success();
+    }
+
+    RecordDxrPass(
+        scene,
+        camera,
+        m_screenSpaceEffects->GetRenderWidth(),
+        m_screenSpaceEffects->GetRenderHeight(),
+        m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
+        true);
+
+    if (target != nullptr)
+    {
+        GfxContext::Get().SetBoundOutputFramebuffer(target);
+    }
+
+    if (drawGrid && m_dxrSettings.IsPathTracingActive())
+    {
+        m_screenSpaceEffects->SetPathTracerGridOverlayCallback(
+            [this](const Camera& cam, const bool useDepthTest) {
+                m_grid->Draw(cam, true, true, false, useDepthTest);
+            });
+    }
+    else
+    {
+        m_screenSpaceEffects->SetPathTracerGridOverlayCallback({});
+    }
+
+    {
+        SceneRenderTrace::Scope applyScope("ScreenSpaceEffects::Apply");
+        const GfxContext::GpuTimerScope gpuScopePost("Post-process");
+        m_screenSpaceEffects->Apply(
+            camera,
+            viewportWidth,
+            viewportHeight,
+            m_directionalShadowSettings,
+            *m_environmentMap);
+        applyScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope finalizeAaScope("FinalizeAntiAliasingFrame");
+        m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera, freezeTemporalJitter);
+        finalizeAaScope.Success();
+    }
+    {
+        SceneRenderTrace::Scope advanceTemporalScope("AdvanceTemporalFrame");
+        m_screenSpaceEffects->AdvanceTemporalFrame(camera);
+        advanceTemporalScope.Success();
+    }
+
+    if (target != nullptr)
+    {
+        m_screenSpaceEffects->BlitRtDispatchSmokeDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitRtPrimaryDebug(
+            target,
+            viewportWidth,
+            viewportHeight,
+            m_dxrSettings.GetMaxTraceDistance());
+        m_screenSpaceEffects->BlitRtReflectionDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitRtShadowDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitRtGiDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitRrGuideDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitPathTracer(
+            target,
+            viewportWidth,
+            viewportHeight,
+            m_dxrSettings.GetMaxTraceDistance());
+
+        if (drawGrid && m_dxrSettings.IsPathTracingActive()
+            && !m_screenSpaceEffects->PathTracerPostIntegratedThisFrame()
+            && !m_screenSpaceEffects->PathTracerResolvedViaDlssThisFrame())
+        {
+            SceneRenderTrace::Scope gridOverlayScope("grid pt overlay (ldr fallback)");
+            bool depthReadOnly = false;
+            if (m_screenSpaceEffects->BlitDepthToFramebuffer(target))
+            {
+                depthReadOnly = target->BindGizmoDrawTarget();
+            }
+            if (!depthReadOnly)
+            {
+                target->BindDrawTarget(false);
+            }
+            m_grid->Draw(camera, false, true, false, depthReadOnly);
+            gridOverlayScope.Success();
+        }
+    }
+
+    if (target != nullptr)
+    {
+        target->BindDrawTarget(false);
+    }
+
+    if (options.showEditorOverlay)
+    {
+        if (const SceneEditor* editor = scene.TryGetSceneEditor())
+        {
+            editor->RenderSelectionOverlay(scene, camera, true);
+        }
+    }
+}
+
+void SceneRenderer::RenderGizmoPass(
+    const Scene& scene,
+    const Camera& camera,
+    Framebuffer* target,
+    const SceneRenderOptions& options,
+    const bool usePostProcess)
+{
+    const bool drawWorldGizmos =
+        options.showCameraGizmos
+        || (options.showLightGizmos && scene.GetShowLightGizmos())
+        || options.showColliderGizmos;
+
+    if (target == nullptr || !drawWorldGizmos)
+    {
+        if (target != nullptr)
+        {
+            target->Unbind();
+        }
+        return;
+    }
+
+    GfxContext::Get().ResetDrawSrvTable();
+
+    bool viewportDepthReadOnly = false;
     if (usePostProcess)
     {
+        if (m_screenSpaceEffects->BlitDepthToFramebuffer(target))
         {
-            SceneRenderTrace::Scope endPassScope("EndScenePass");
-            m_screenSpaceEffects->EndScenePass();
-            endPassScope.Success();
+            viewportDepthReadOnly = target->BindGizmoDrawTarget();
         }
-
-        const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
-        const bool drawGrid = options.showGrid && scene.GetShowGrid();
-        if (drawGrid && !pathTracingActive)
-        {
-            SceneRenderTrace::Scope gridScope("scene grid pass");
-            m_screenSpaceEffects->BeginSceneGridPass();
-            m_grid->Draw(camera, splitLightingMrt, false, splitLightingMrt);
-            m_screenSpaceEffects->EndSceneGridPass();
-            gridScope.Success();
-        }
-
-        // D6: the DXR pass records BEFORE Apply so the same-frame RT reflection buffers are
-        // ready when Apply's RT specular composite runs. All DXR inputs (scene MRTs, depth)
-        // are complete at this point (EndScenePass + grid have run).
-        RecordDxrPass(
-            scene,
-            camera,
-            m_screenSpaceEffects->GetRenderWidth(),
-            m_screenSpaceEffects->GetRenderHeight(),
-            m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
-            true);
-
-        if (target != nullptr)
-        {
-            GfxContext::Get().SetBoundOutputFramebuffer(target);
-        }
-
-        if (drawGrid && m_dxrSettings.IsPathTracingActive())
-        {
-            m_screenSpaceEffects->SetPathTracerGridOverlayCallback(
-                [this](const Camera& cam, const bool useDepthTest) {
-                    m_grid->Draw(cam, true, true, false, useDepthTest);
-                });
-        }
-        else
-        {
-            m_screenSpaceEffects->SetPathTracerGridOverlayCallback({});
-        }
-
-        {
-            SceneRenderTrace::Scope applyScope("ScreenSpaceEffects::Apply");
-            const GfxContext::GpuTimerScope gpuScopePost("Post-process");
-            m_screenSpaceEffects->Apply(
-                camera,
-                viewportWidth,
-                viewportHeight,
-                m_directionalShadowSettings,
-                *m_environmentMap);
-            applyScope.Success();
-        }
-        {
-            SceneRenderTrace::Scope finalizeAaScope("FinalizeAntiAliasingFrame");
-            m_screenSpaceEffects->FinalizeAntiAliasingFrame(camera, freezeTemporalJitter);
-            finalizeAaScope.Success();
-        }
-        {
-            SceneRenderTrace::Scope advanceTemporalScope("AdvanceTemporalFrame");
-            m_screenSpaceEffects->AdvanceTemporalFrame(camera);
-            advanceTemporalScope.Success();
-        }
-
-        if (target != nullptr)
-        {
-            m_screenSpaceEffects->BlitRtDispatchSmokeDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight);
-            m_screenSpaceEffects->BlitRtPrimaryDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight,
-                m_dxrSettings.GetMaxTraceDistance());
-            m_screenSpaceEffects->BlitRtReflectionDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight);
-            m_screenSpaceEffects->BlitRtShadowDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight);
-            m_screenSpaceEffects->BlitRtGiDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight);
-            m_screenSpaceEffects->BlitRrGuideDebug(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight);
-            // P0 path tracing: overlay the PT primary-hit image when path tracing is the active mode.
-            m_screenSpaceEffects->BlitPathTracer(
-                reinterpret_cast<Framebuffer*>(targetFramebuffer),
-                viewportWidth,
-                viewportHeight,
-                m_dxrSettings.GetMaxTraceDistance());
-
-            // Reference / DLSS-fallback PT still blits after post — grid was not in the HDR chain.
-            if (drawGrid && m_dxrSettings.IsPathTracingActive()
-                && !m_screenSpaceEffects->PathTracerPostIntegratedThisFrame()
-                && !m_screenSpaceEffects->PathTracerResolvedViaDlssThisFrame())
-            {
-                SceneRenderTrace::Scope gridOverlayScope("grid pt overlay (ldr fallback)");
-                auto* viewportTarget = reinterpret_cast<Framebuffer*>(targetFramebuffer);
-                bool depthReadOnly = false;
-                if (m_screenSpaceEffects->BlitDepthToFramebuffer(viewportTarget))
-                {
-                    depthReadOnly = viewportTarget->BindGizmoDrawTarget();
-                }
-                if (!depthReadOnly)
-                {
-                    viewportTarget->BindDrawTarget(false);
-                }
-                m_grid->Draw(camera, false, true, false, depthReadOnly);
-                gridOverlayScope.Success();
-            }
-        }
-
-        if (target != nullptr)
+        if (!viewportDepthReadOnly)
         {
             target->BindDrawTarget(false);
         }
-
-        if (options.showEditorOverlay)
+    }
+    else
+    {
+        viewportDepthReadOnly = target->BindGizmoDrawTarget();
+        if (!viewportDepthReadOnly)
         {
-            if (const SceneEditor* editor = scene.TryGetSceneEditor())
-            {
-                editor->RenderSelectionOverlay(scene, camera, true);
-            }
+            target->BindDrawTarget(false);
         }
+    }
+
+    const bool depthReadOnly = viewportDepthReadOnly;
+    const std::vector<SceneObject>& objects = scene.GetObjects();
+    const SceneSelection& selection = scene.GetSelection();
+
+    if (options.showLightGizmos && scene.GetShowLightGizmos())
+    {
+        m_lightGizmos->Draw(
+            camera,
+            objects,
+            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+            selection.indices,
+            depthReadOnly);
+    }
+
+    if (options.showCameraGizmos)
+    {
+        m_cameraGizmos->Draw(
+            camera,
+            objects,
+            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+            selection.indices,
+            depthReadOnly);
+    }
+
+    if (options.showColliderGizmos)
+    {
+        m_colliderGizmos->Draw(
+            camera,
+            objects,
+            [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
+            selection.indices,
+            depthReadOnly);
+    }
+
+    if (viewportDepthReadOnly)
+    {
+        target->BindColorRenderTarget(false, nullptr);
+        target->RestoreDepthShaderResource();
+    }
+
+    target->Unbind();
+}
+
+void SceneRenderer::Render(
+    const Scene& scene,
+    const Camera& camera,
+    int viewportWidth,
+    int viewportHeight,
+    std::uintptr_t targetFramebuffer,
+    const SceneRenderOptions& options)
+{
+    SceneRenderTrace::Scope renderScope("SceneRenderer::Render");
+    EnsureGpuResources();
+    if (!IsGpuResourcesReady())
+    {
+        renderScope.Success();
+        return;
+    }
+
+    GfxContext::Get().ResetDrawSrvTable();
+
+    Framebuffer* target = nullptr;
+    if (targetFramebuffer != 0)
+    {
+        target = reinterpret_cast<Framebuffer*>(targetFramebuffer);
+    }
+
+    const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
+    const bool freezeTemporalJitter =
+        ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
+
+    SceneRenderTrace::Step(
+        std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
+        + " shadowPass=" + (options.enableShadowPass ? "1" : "0"));
+
+    if (target != nullptr)
+    {
+        GfxContext::Get().SetBoundOutputFramebuffer(target);
+    }
+
+    {
+        SceneRenderTrace::Scope lightingScope("SyncLighting");
+        SyncLighting(scene);
+        lightingScope.Success();
+    }
+
+    if (options.enableShadowPass)
+    {
+        SceneRenderTrace::Scope shadowScope("RenderShadowPass");
+        const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
+        RenderShadowPass(scene, camera);
+        m_shadowMap->EndFrame();
+        shadowScope.Success();
+    }
+
+    RenderDebugMode materialDebugMode = RenderDebugMode::None;
+    const RenderDebugMode activeDebugMode = m_screenSpaceEffects->GetDebugMode();
+    if (IsPbrMaterialDebugMode(activeDebugMode))
+    {
+        materialDebugMode = activeDebugMode;
+    }
+
+    bool splitLightingMrt = false;
+    PrepareSceneRasterTarget(
+        scene,
+        camera,
+        viewportWidth,
+        viewportHeight,
+        target,
+        usePostProcess,
+        freezeTemporalJitter,
+        splitLightingMrt);
+
+    RenderGeometryPass(
+        scene,
+        camera,
+        usePostProcess,
+        target,
+        splitLightingMrt,
+        materialDebugMode,
+        activeDebugMode);
+
+    if (usePostProcess)
+    {
+        RenderPostProcessPass(
+            scene,
+            camera,
+            viewportWidth,
+            viewportHeight,
+            target,
+            options,
+            freezeTemporalJitter,
+            splitLightingMrt);
     }
     else if (options.showGrid && scene.GetShowGrid())
     {
         RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
         m_grid->Draw(camera, false);
     }
-    else if (!usePostProcess)
+    else
     {
         RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
     }
@@ -1433,85 +1543,8 @@ void SceneRenderer::Render(
         }
     }
 
-    const bool drawWorldGizmos =
-        options.showCameraGizmos
-        || (options.showLightGizmos && scene.GetShowLightGizmos())
-        || options.showColliderGizmos;
+    RenderGizmoPass(scene, camera, target, options, usePostProcess);
 
-    if (target != nullptr && drawWorldGizmos)
-    {
-        GfxContext::Get().ResetDrawSrvTable();
-
-        auto* viewportTarget = reinterpret_cast<Framebuffer*>(targetFramebuffer);
-        bool viewportDepthReadOnly = false;
-        if (usePostProcess)
-        {
-            if (m_screenSpaceEffects->BlitDepthToFramebuffer(viewportTarget))
-            {
-                viewportDepthReadOnly = viewportTarget->BindGizmoDrawTarget();
-            }
-            if (!viewportDepthReadOnly)
-            {
-                viewportTarget->BindDrawTarget(false);
-            }
-        }
-        else
-        {
-            viewportDepthReadOnly = viewportTarget->BindGizmoDrawTarget();
-            if (!viewportDepthReadOnly)
-            {
-                viewportTarget->BindDrawTarget(false);
-            }
-        }
-
-        const bool depthReadOnly = viewportDepthReadOnly;
-
-        const SceneSelection& selection = scene.GetSelection();
-        if (options.showLightGizmos && scene.GetShowLightGizmos())
-        {
-            m_lightGizmos->Draw(
-                camera,
-                objects,
-                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-                selection.indices,
-                depthReadOnly);
-        }
-
-        if (options.showCameraGizmos)
-        {
-            m_cameraGizmos->Draw(
-                camera,
-                objects,
-                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-                selection.indices,
-                depthReadOnly);
-        }
-
-        if (options.showColliderGizmos)
-        {
-            m_colliderGizmos->Draw(
-                camera,
-                objects,
-                [&scene](int objectIndex) { return scene.GetWorldMatrix(objectIndex); },
-                selection.indices,
-                depthReadOnly);
-        }
-
-        if (viewportDepthReadOnly)
-        {
-            viewportTarget->BindColorRenderTarget(false, nullptr);
-            viewportTarget->RestoreDepthShaderResource();
-        }
-
-        viewportTarget->Unbind();
-    }
-    else if (target != nullptr)
-    {
-        reinterpret_cast<Framebuffer*>(targetFramebuffer)->Unbind();
-    }
-
-    (void)viewportWidth;
-    (void)viewportHeight;
     renderScope.Success();
     SceneRenderTrace::CompleteFirstFrame();
 }
@@ -1529,7 +1562,7 @@ SceneLighting& SceneRenderer::GetLighting()
 IBL& SceneRenderer::GetIBL()
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    if (!IsGpuResourcesReady() || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1540,7 +1573,7 @@ IBL& SceneRenderer::GetIBL()
 const IBL& SceneRenderer::GetIBL() const
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    if (!IsGpuResourcesReady() || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1551,7 +1584,7 @@ const IBL& SceneRenderer::GetIBL() const
 EnvironmentMap& SceneRenderer::GetEnvironmentMap()
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    if (!IsGpuResourcesReady() || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1562,7 +1595,7 @@ EnvironmentMap& SceneRenderer::GetEnvironmentMap()
 const EnvironmentMap& SceneRenderer::GetEnvironmentMap() const
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_environmentMap == nullptr)
+    if (!IsGpuResourcesReady() || m_environmentMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1573,7 +1606,7 @@ const EnvironmentMap& SceneRenderer::GetEnvironmentMap() const
 ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects()
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    if (!IsGpuResourcesReady() || m_screenSpaceEffects == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1584,7 +1617,7 @@ ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects()
 const ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects() const
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    if (!IsGpuResourcesReady() || m_screenSpaceEffects == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1626,7 +1659,7 @@ DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings()
 const CascadedShadowMap& SceneRenderer::GetShadowMap() const
 {
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_shadowMap == nullptr)
+    if (!IsGpuResourcesReady() || m_shadowMap == nullptr)
     {
         ThrowGpuResourcesUnavailable();
     }
@@ -1696,7 +1729,7 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
     };
 
     EnsureGpuResources();
-    if (!m_gpuResourcesInitialized || m_screenSpaceEffects == nullptr)
+    if (!IsGpuResourcesReady() || m_screenSpaceEffects == nullptr)
     {
         return reportFailure("GPU resources are not initialized.");
     }
@@ -1728,7 +1761,6 @@ bool SceneRenderer::ApplyGeometryMsaaReload(
         m_environmentMap->ReloadSkyboxRenderer();
         m_screenSpaceEffects->ReloadGeometryMsaaTargets(viewportWidth, viewportHeight);
 
-        m_gpuResourcesInitFailed = false;
         m_gpuResourcesInitError.clear();
         return true;
     }

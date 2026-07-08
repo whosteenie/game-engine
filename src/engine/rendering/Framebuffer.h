@@ -8,6 +8,23 @@ enum class FramebufferColorMode
     SplitDirectIndirect,
 };
 
+// Split-direct/indirect MRT layout (see devdoc/dxr-reflections.md binding table).
+enum class GBufferSlot : int
+{
+    DirectLighting = 0,
+    IndirectLighting = 1,
+    ShadingNormal = 2,
+    SunShadowFactor = 3,
+    MotionVelocity = 4,
+    MaterialAlbedoRough = 5,
+    MaterialMetallic = 6,
+};
+
+inline int ToGBufferAttachmentIndex(const GBufferSlot slot)
+{
+    return static_cast<int>(slot);
+}
+
 class Framebuffer
 {
 public:
@@ -36,6 +53,7 @@ public:
     void RestoreDepthShaderResource() const;
     void EnsureShaderResourceState() const;
     std::uintptr_t GetColorSrvCpuHandle(int attachmentIndex = 0) const;
+    std::uintptr_t GetGBufferSrvCpuHandle(GBufferSlot slot) const;
     std::uintptr_t GetDepthSrvCpuHandle() const;
     void* GetColorResource(int attachmentIndex = 0) const;
     void* GetDepthResource() const;
@@ -70,6 +88,7 @@ public:
     // Public for DXR passes: DispatchRays reads the resolved MRTs from non-pixel shaders, so
     // callers move attachments to a combined shader-read state first (tracked transitions).
     void TransitionColorAttachment(int attachmentIndex, std::uint32_t newState) const;
+    void TransitionGBufferSlot(GBufferSlot slot, std::uint32_t newState) const;
 
 private:
     void Destroy();

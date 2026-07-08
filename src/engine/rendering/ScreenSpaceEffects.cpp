@@ -2010,7 +2010,7 @@ bool ScreenSpaceEffects::PatchPathTracerSkyMotion() const
 
     const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
     m_ptSkyMotionPatchShader->Use(false, false);
-    m_ptSkyMotionPatchShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+    m_ptSkyMotionPatchShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
     m_ptSkyMotionPatchShader->BindTextureSlot(1, m_pathTracerMotionSrv);
     m_ptSkyMotionPatchShader->BindTextureSlot(2, m_dxrPathTracerMetadataSrv);
     DrawFullscreenToTarget(
@@ -2519,11 +2519,11 @@ void ScreenSpaceEffects::BlitRtGiDebug(
             "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
         m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
         m_dxrGiInjectShader->SetInt("uDebugGiInject", 1);
-        m_dxrGiInjectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_dxrGiInjectShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
         m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         m_dxrGiInjectShader->FlushUniforms();
         DrawFullscreenQuad();
         return;
@@ -2562,9 +2562,9 @@ void ScreenSpaceEffects::GenerateRrGuides() const
 
     SceneRenderTrace::Scope guideScope("rr guides");
     const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-    const std::uintptr_t normalSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(2);   // RT2
-    const std::uintptr_t material0Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(5); // RT5 albedo+rough
-    const std::uintptr_t material1Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(6); // RT6 metallic
+    const std::uintptr_t normalSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal);   // RT2
+    const std::uintptr_t material0Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough); // RT5 albedo+rough
+    const std::uintptr_t material1Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic); // RT6 metallic
 
     const std::pair<InternalTarget*, int> passes[] = {
         {const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget), 0},
@@ -2821,7 +2821,7 @@ void ScreenSpaceEffects::Apply(
             m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
             m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
             m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
             m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
             DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
         }
@@ -2847,7 +2847,7 @@ void ScreenSpaceEffects::Apply(
                 "uUseGeometryNormals",
                 m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
             m_gtaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_gtaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_gtaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
             DrawFullscreenToTarget(
                 *m_gtaoShader,
                 const_cast<InternalTarget&>(m_gtaoRawTarget),
@@ -2875,13 +2875,13 @@ void ScreenSpaceEffects::Apply(
             m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
             m_blurShader->BindTextureSlot(0, runGtao ? m_gtaoRawTarget.srvCpuHandle : m_ssaoTarget.srvCpuHandle);
             m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
             DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
 
             m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
             m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
             m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
             DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
 
             if (runSsao)
@@ -2890,13 +2890,13 @@ void ScreenSpaceEffects::Apply(
                 m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
                 m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
                 m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
                 DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
 
                 m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
                 m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
                 m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
                 DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
             }
             aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
@@ -2905,7 +2905,7 @@ void ScreenSpaceEffects::Apply(
 
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
 
-    std::uintptr_t shadowFactorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(3);
+    std::uintptr_t shadowFactorSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::SunShadowFactor);
     if (useShadowFactorComposite &&
         shadowSettings.GetShadowBlurEnabled() &&
         shadowSettings.GetShadowBlurRadius() > 0.0f)
@@ -2967,11 +2967,11 @@ void ScreenSpaceEffects::Apply(
         m_radianceAssemblyShader->SetInt("uMaterial0Map", 3);
         m_radianceAssemblyShader->SetInt("uMaterial1Map", 4);
         m_radianceAssemblyShader->SetInt("uIncludeFillDirect", 1);
-        m_radianceAssemblyShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
-        m_radianceAssemblyShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_radianceAssemblyShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
+        m_radianceAssemblyShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_radianceAssemblyShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_radianceAssemblyShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_radianceAssemblyShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_radianceAssemblyShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_radianceAssemblyShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         DrawFullscreenToTarget(
             *m_radianceAssemblyShader,
             const_cast<InternalTarget&>(m_radianceTarget),
@@ -3014,14 +3014,14 @@ void ScreenSpaceEffects::Apply(
         m_ssrSceneColorShader->SetFloat(
             "uBloomIntensity",
             useBloomInReflections ? m_bloomIntensity : 0.0f);
-        m_ssrSceneColorShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_ssrSceneColorShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
         m_ssrSceneColorShader->BindTextureSlot(1, shadowFactorSrv);
         m_ssrSceneColorShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrSceneColorShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_ssrSceneColorShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_ssrSceneColorShader->BindTextureSlot(
             4,
             useBloomInReflections ? m_prevFrameBloomSrv
-                                  : m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+                                  : m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
         DrawFullscreenToTarget(
             *m_ssrSceneColorShader,
             const_cast<InternalTarget&>(m_ssrSceneColorTarget),
@@ -3076,8 +3076,8 @@ void ScreenSpaceEffects::Apply(
                 1.0f / static_cast<float>(std::max(m_ssrTraceTarget.width, 1)),
                 1.0f / static_cast<float>(std::max(m_ssrTraceTarget.height, 1))));
         m_ssrTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssrTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_ssrTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+        m_ssrTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
         m_ssrTraceShader->BindTextureSlot(3, m_ssrSceneColorTarget.srvCpuHandle);
         DrawFullscreenToTarget(
             *m_ssrTraceShader,
@@ -3146,9 +3146,9 @@ void ScreenSpaceEffects::Apply(
             m_ssrSvgfTemporalShader->SetFloat("uTexelSizeY", traceTexelSize.y);
             m_ssrSvgfTemporalShader->BindTextureSlot(0, ssrDenoiseInputSrv);
             m_ssrSvgfTemporalShader->BindTextureSlot(1, m_ssrHistoryTarget.srvCpuHandle);
-            m_ssrSvgfTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+            m_ssrSvgfTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
             m_ssrSvgfTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssrSvgfTemporalShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+            m_ssrSvgfTemporalShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
             m_ssrSvgfTemporalShader->BindTextureSlot(5, m_ssrHistoryDepthTarget.srvCpuHandle);
             DrawFullscreenToTarget(
                 *m_ssrSvgfTemporalShader,
@@ -3251,7 +3251,7 @@ void ScreenSpaceEffects::Apply(
             {
                 m_ssrSvgfVarianceTemporalShader->BindTextureSlot(
                     3,
-                    m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+                    m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
             }
             else
             {
@@ -3311,8 +3311,8 @@ void ScreenSpaceEffects::Apply(
             m_ssrSvgfAtrousShader->BindTextureSlot(0, atrousInputSrv);
             m_ssrSvgfAtrousShader->BindTextureSlot(1, ssrVarianceSrv);
             m_ssrSvgfAtrousShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssrSvgfAtrousShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-            m_ssrSvgfAtrousShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+            m_ssrSvgfAtrousShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+            m_ssrSvgfAtrousShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
             DrawFullscreenToTarget(
                 *m_ssrSvgfAtrousShader,
                 outputTarget,
@@ -3360,8 +3360,8 @@ void ScreenSpaceEffects::Apply(
         m_ssrUpscaleShader->SetFloat("uRoughnessSpreadMax", 1.75f);
         m_ssrUpscaleShader->BindTextureSlot(0, ssrDenoiseInputSrv);
         m_ssrUpscaleShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrUpscaleShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssrUpscaleShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+        m_ssrUpscaleShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+        m_ssrUpscaleShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
         DrawFullscreenToTarget(
             *m_ssrUpscaleShader,
             const_cast<InternalTarget&>(m_ssrResolvedTarget),
@@ -3402,7 +3402,7 @@ void ScreenSpaceEffects::Apply(
         environmentMap.GetIBL().IsReady() &&
         (m_ssrEnabled || IsSsrCompositeDebugMode(m_debugMode));
 
-    std::uintptr_t indirectCompositeSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(1);
+    std::uintptr_t indirectCompositeSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting);
     if (runSsrIndirect)
     {
         SceneRenderTrace::Scope ssrIndirectScope("ssr indirect composite");
@@ -3430,15 +3430,15 @@ void ScreenSpaceEffects::Apply(
             "uDebugSpecReplacement",
             (!m_ssrEnabled && m_debugMode == RenderDebugMode::SsrSpecReplacement) ? 1 : 0);
         m_ssrIndirectShader->SetInt("uHasSsrTrace", ssrHasFreshTrace ? 1 : 0);
-        m_ssrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_ssrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         // Fall back to a valid texture (RT1) when there is no fresh SSR resolve; uHasSsrTrace=0
         // forces the weight to 0 so the sample is ignored and pure IBL is added.
         m_ssrIndirectShader->BindTextureSlot(
-            1, ssrHasFreshTrace ? m_lastSsrResolvedSrv : m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+            1, ssrHasFreshTrace ? m_lastSsrResolvedSrv : m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_ssrIndirectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_ssrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_ssrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+        m_ssrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_ssrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         m_ssrIndirectShader->BindTextureSlot(6, ibl.GetPrefilterMapSrvCpuHandle());
         m_ssrIndirectShader->BindTextureSlot(7, ibl.GetBrdfLutSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -3474,7 +3474,7 @@ void ScreenSpaceEffects::Apply(
         const IBL& ibl = environmentMap.GetIBL();
         // Fall back to a valid texture (RT1) when there is no fresh trace; uHasRtTrace=0 forces
         // the weight to 0 so the RT sample is ignored and pure IBL is added.
-        const std::uintptr_t rt1Srv = m_sceneFramebuffer->GetColorSrvCpuHandle(1);
+        const std::uintptr_t rt1Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting);
         const std::uintptr_t denoisedSrv = rtHasFreshTrace
             ? (m_dxrReflectionDenoisedSrv != 0 ? m_dxrReflectionDenoisedSrv : m_dxrReflectionSrv)
             : rt1Srv;
@@ -3506,13 +3506,13 @@ void ScreenSpaceEffects::Apply(
             rtCompositeDebugOnly ? 1 : 0);
         m_dxrIndirectShader->SetInt("uHasRtTrace", rtHasFreshTrace ? 1 : 0);
         m_dxrIndirectShader->SetFloat("uRoughnessCutoff", m_dxrReflectionRoughnessCutoff);
-        m_dxrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+        m_dxrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_dxrIndirectShader->BindTextureSlot(1, denoisedSrv);
         m_dxrIndirectShader->BindTextureSlot(2, rawSrv);
         m_dxrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_dxrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_dxrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_dxrIndirectShader->BindTextureSlot(6, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_dxrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+        m_dxrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_dxrIndirectShader->BindTextureSlot(6, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         m_dxrIndirectShader->BindTextureSlot(7, environmentMap.GetIBL().GetPrefilterMapSrvCpuHandle());
         m_dxrIndirectShader->BindTextureSlot(8, environmentMap.GetIBL().GetBrdfLutSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -3574,11 +3574,11 @@ void ScreenSpaceEffects::Apply(
         // Fall back to a valid texture (RT1) when there is no fresh GI trace; uHasGiTrace=0 makes
         // the shader recompute the SH ambient instead of sampling this.
         m_dxrGiInjectShader->BindTextureSlot(
-            1, giHasFreshTrace ? giInjectSrv : m_sceneFramebuffer->GetColorSrvCpuHandle(1));
+            1, giHasFreshTrace ? giInjectSrv : m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
         m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
-        m_dxrGiInjectShader->BindTextureSlot(5, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
+        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
+        m_dxrGiInjectShader->BindTextureSlot(5, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
         DrawFullscreenToTarget(
             *m_dxrGiInjectShader,
             const_cast<InternalTarget&>(m_rtGiInjectTarget),
@@ -3616,9 +3616,9 @@ void ScreenSpaceEffects::Apply(
         m_ssgiTraceShader->SetFloat("uFrameIndex", static_cast<float>(m_giFrameIndex));
         m_ssgiTraceShader->SetFloat("uEdgeFadeScale", 20.0f);
         m_ssgiTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssgiTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-        m_ssgiTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-        m_ssgiTraceShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+        m_ssgiTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+        m_ssgiTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+        m_ssgiTraceShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         m_ssgiTraceShader->BindTextureSlot(4, m_radianceTarget.srvCpuHandle);
         DrawFullscreenToTarget(
             *m_ssgiTraceShader,
@@ -3693,8 +3693,8 @@ void ScreenSpaceEffects::Apply(
             m_ssgiDenoiseSpatialShader->SetFloat("uStepScale", stepScale);
             m_ssgiDenoiseSpatialShader->BindTextureSlot(0, atrousInputSrv);
             m_ssgiDenoiseSpatialShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(2));
-            m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
+            m_ssgiDenoiseSpatialShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
             DrawFullscreenToTarget(
                 *m_ssgiDenoiseSpatialShader,
                 outputTarget,
@@ -3795,7 +3795,7 @@ void ScreenSpaceEffects::Apply(
         }
     }
 
-    std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(0);
+    std::uintptr_t hdrColorSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting);
     const char* hdrColorSource = "scene_direct";
     bool compositeRan = false;
     const bool compositeUsesSsao = runAo;
@@ -3833,7 +3833,7 @@ void ScreenSpaceEffects::Apply(
         m_compositeShader->SetVec2(
             "uRtShadowUvScale", glm::vec2(m_dxrShadowUvScaleX, m_dxrShadowUvScaleY));
         SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
-        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
         m_compositeShader->BindTextureSlot(1, indirectCompositeSrv);
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         m_compositeShader->BindTextureSlot(3, aoCompositeSrv);
@@ -3869,7 +3869,7 @@ void ScreenSpaceEffects::Apply(
             "uDebugOcclusionOnly",
             m_debugMode == RenderDebugMode::CompositeOcclusion ? 1 : 0);
         SetCompositeBackgroundUniforms(*m_compositeShader, camera, environmentMap);
-        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(0));
+        m_compositeShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
         m_compositeShader->BindTextureSlot(3, aoCompositeSrv);
         m_compositeShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
         DrawFullscreenToTarget(
@@ -3907,7 +3907,7 @@ void ScreenSpaceEffects::Apply(
         m_taaShader->BindTextureSlot(0, hdrColorSrv);
         m_taaShader->BindTextureSlot(1, m_taaHistoryTarget.srvCpuHandle);
         m_taaShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_taaShader->BindTextureSlot(3, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+        m_taaShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
         DrawFullscreenToTarget(
             *m_taaShader,
             const_cast<InternalTarget&>(m_taaResolveTarget),
@@ -3985,8 +3985,8 @@ void ScreenSpaceEffects::Apply(
         m_bloomExtractShader->BindTextureSlot(0, hdrColorSrv);
         if (useMaterialGbuffer)
         {
-            m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-            m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+            m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+            m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
         }
         DrawFullscreenToTarget(
             *m_bloomExtractShader,
@@ -4051,7 +4051,7 @@ void ScreenSpaceEffects::Apply(
             m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
             m_bloomTemporalShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
             m_bloomTemporalShader->BindTextureSlot(1, m_bloomHistoryTarget.srvCpuHandle);
-            m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+            m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
             m_bloomTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
             DrawFullscreenToTarget(
                 *m_bloomTemporalShader,
@@ -4143,7 +4143,7 @@ void ScreenSpaceEffects::Apply(
             m_velocityDebugShader->SetInt("uVelocityMap", 0);
             m_velocityDebugShader->SetInt("uDepthMap", 1);
             m_velocityDebugShader->SetFloat("uVelocityScale", 80.0f);
-            m_velocityDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+            m_velocityDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
             m_velocityDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
             m_velocityDebugShader->FlushUniforms();
             DrawFullscreenQuad();
@@ -4170,8 +4170,8 @@ void ScreenSpaceEffects::Apply(
             m_gbufferDebugShader->SetInt("uMaterial1Map", 1);
             m_gbufferDebugShader->SetInt("uDepthMap", 2);
             m_gbufferDebugShader->SetInt("uGBufferDebugMode", GBufferDebugModeIndex(m_debugMode));
-            m_gbufferDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-            m_gbufferDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+            m_gbufferDebugShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+            m_gbufferDebugShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
             m_gbufferDebugShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
             m_gbufferDebugShader->FlushUniforms();
             DrawFullscreenQuad();
@@ -4830,8 +4830,8 @@ void ScreenSpaceEffects::Apply(
                 m_bloomExtractShader->BindTextureSlot(0, m_dlssOutputTarget.srvCpuHandle);
                 if (useMaterialGbuffer)
                 {
-                    m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetColorSrvCpuHandle(5));
-                    m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(6));
+                    m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
+                    m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
                 }
                 DrawFullscreenToTarget(
                     *m_bloomExtractShader,
@@ -4896,7 +4896,7 @@ void ScreenSpaceEffects::Apply(
                     m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
                     m_bloomTemporalShader->BindTextureSlot(0, m_dlssBloomBlur2Target.srvCpuHandle);
                     m_bloomTemporalShader->BindTextureSlot(1, m_dlssBloomHistoryTarget.srvCpuHandle);
-                    m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+                    m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
                     m_bloomTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
                     DrawFullscreenToTarget(
                         *m_bloomTemporalShader,
@@ -5064,8 +5064,8 @@ void ScreenSpaceEffects::Apply(
             useShadowFactorComposite,
             outputTarget != nullptr,
             hdrColorSrv,
-            m_sceneFramebuffer->GetColorSrvCpuHandle(0),
-            m_sceneFramebuffer->GetColorSrvCpuHandle(1),
+            m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting),
+            m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting),
             m_sceneFramebuffer->GetDepthSrvCpuHandle(),
             srvUsed,
             srvCapacity);
@@ -5265,7 +5265,7 @@ void ScreenSpaceEffects::CaptureSsaoDiagnosticsCpu(
     m_ssaoDiagnostics.sceneWidth = m_width;
     m_ssaoDiagnostics.sceneHeight = m_height;
     m_ssaoDiagnostics.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
-    m_ssaoDiagnostics.normalSrv = m_sceneFramebuffer->GetColorSrvCpuHandle(2);
+    m_ssaoDiagnostics.normalSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal);
     m_ssaoDiagnostics.noiseSrv = m_noiseTexture.srvCpuHandle;
     m_ssaoDiagnostics.ssaoRawSrv =
         m_aoMode == AmbientOcclusionMode::GTAO ? m_gtaoRawTarget.srvCpuHandle : m_ssaoTarget.srvCpuHandle;
@@ -5614,14 +5614,14 @@ void ScreenSpaceEffects::SetDxrGiSrv(
     m_dxrGiUvScaleY = uvScaleY;
 }
 
-std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const int attachmentIndex) const
+std::uintptr_t ScreenSpaceEffects::GetSceneColorSrvCpuHandle(const GBufferSlot slot) const
 {
     if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid())
     {
         return 0;
     }
 
-    return m_sceneFramebuffer->GetColorSrvCpuHandle(attachmentIndex);
+    return m_sceneFramebuffer->GetGBufferSrvCpuHandle(slot);
 }
 
 void ScreenSpaceEffects::PrepareSceneColorForDxrRead() const
@@ -5633,13 +5633,11 @@ void ScreenSpaceEffects::PrepareSceneColorForDxrRead() const
 
     constexpr std::uint32_t kAllShaderRead = static_cast<std::uint32_t>(
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    // RT0 direct, RT1 indirect, RT2 shading normal, RT3 sun shadow, RT5 material0
-    // (see devdoc/dxr-reflections.md binding table).
-    m_sceneFramebuffer->TransitionColorAttachment(0, kAllShaderRead);
-    m_sceneFramebuffer->TransitionColorAttachment(1, kAllShaderRead);
-    m_sceneFramebuffer->TransitionColorAttachment(2, kAllShaderRead);
-    m_sceneFramebuffer->TransitionColorAttachment(3, kAllShaderRead);
-    m_sceneFramebuffer->TransitionColorAttachment(5, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::DirectLighting, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::IndirectLighting, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::ShadingNormal, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::SunShadowFactor, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::MaterialAlbedoRough, kAllShaderRead);
 }
 
 AntiAliasingMode ScreenSpaceEffects::GetAntiAliasingMode() const

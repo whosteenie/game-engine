@@ -3,6 +3,7 @@
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 
@@ -16,7 +17,6 @@
 
 class Camera;
 class EnvironmentMap;
-class Framebuffer;
 class Shader;
 
 // Inputs that must stay stable for progressive PT reference accumulation (P3).
@@ -323,7 +323,7 @@ public:
     void SetDxrGiCompositeEnabled(bool enabled) { m_dxrGiCompositeEnabled = enabled; }
     void SetDxrGiStrength(float strength) { m_dxrGiStrength = strength; }
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
-    std::uintptr_t GetSceneColorSrvCpuHandle(int attachmentIndex) const;
+    std::uintptr_t GetSceneColorSrvCpuHandle(GBufferSlot slot) const;
     // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
     // pixel + non-pixel shader-read state so DispatchRays can sample them legally.
     void PrepareSceneColorForDxrRead() const;
