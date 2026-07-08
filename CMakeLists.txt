@@ -352,11 +352,12 @@ add_executable(game-engine
 
     src/app/panels/LightingPanel.cpp
     src/app/panels/lighting/LightingPanelShared.cpp
+    src/app/panels/lighting/LightingPanelUi.cpp
+    src/app/panels/lighting/LightingPanelWidgets.cpp
     src/app/panels/lighting/SceneSection.cpp
-    src/app/panels/lighting/SkyboxSection.cpp
-    src/app/panels/lighting/IblSection.cpp
+    src/app/panels/lighting/EnvironmentSection.cpp
     src/app/panels/lighting/DirectionalShadowsSection.cpp
-    src/app/panels/lighting/HdrSection.cpp
+    src/app/panels/lighting/PostProcessingSection.cpp
     src/app/panels/lighting/ScreenSpaceSection.cpp
     src/app/panels/lighting/AntiAliasingSection.cpp
     src/app/panels/lighting/TextureFilteringSection.cpp

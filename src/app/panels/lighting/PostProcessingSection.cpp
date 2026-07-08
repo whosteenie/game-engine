@@ -1,52 +1,45 @@
 #include "app/panels/lighting/LightingPanelSections.h"
 
-#include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
-#include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/RenderDiagnostics.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/raytracing/DxrDiagnostics.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
-#include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
-#include <cmath>
-#include <cstring>
-#include <vector>
-
-void DrawHdrSection(const LightingPanelContext& ctx)
+void DrawPostProcessingSection(const LightingPanelContext& ctx)
 {
     Scene& scene = ctx.scene;
     RendererEditContext& editContext = ctx.editContext;
     ScreenSpaceEffects& screenSpaceEffects = ctx.screenSpaceEffects;
+    const LightingPanelUi::FeatureState features = LightingPanelUi::QueryFeatures(ctx.renderer, screenSpaceEffects);
 
-    if (TuningSectionState::SectionHeader("HDR", true))
+    if (TuningSectionState::SectionHeader("Post-processing", true))
     {
+        bool enabled = screenSpaceEffects.IsEnabled();
+        if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
+        {
+            ApplyRendererChange(
+                editContext,
+                scene,
+                "HDR post-processing",
+                [enabled](Scene& target) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetEnabled(enabled);
+                    target.MarkDirty();
+                });
+        }
+
+        if (!enabled)
+        {
+            LightingPanelUi::DrawWrappedNote(
+                "Turn this on for bloom, tonemap, screen-space AO/GI/SSR, and post AA (FXAA/TAA/DLSS). "
+                "The deferred lighting pass still runs.");
+            return;
+        }
+
         float exposure = screenSpaceEffects.GetExposure();
         UndoableRendererSliderFloat(
             "Exposure (stops)",
@@ -55,8 +48,8 @@ void DrawHdrSection(const LightingPanelContext& ctx)
             4.0f,
             "%.3f",
             editContext,
-            [](Scene& target, float exposure) {
-                target.GetRenderer().GetScreenSpaceEffects().SetExposure(exposure);
+            [](Scene& target, float exposureValue) {
+                target.GetRenderer().GetScreenSpaceEffects().SetExposure(exposureValue);
                 target.MarkDirty();
             });
 
@@ -97,8 +90,8 @@ void DrawHdrSection(const LightingPanelContext& ctx)
                 3.0f,
                 "%.3f",
                 editContext,
-                [](Scene& target, float bloomThreshold) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetBloomThreshold(bloomThreshold);
+                [](Scene& target, float value) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomThreshold(value);
                     target.MarkDirty();
                 });
 
@@ -110,8 +103,8 @@ void DrawHdrSection(const LightingPanelContext& ctx)
                 1.0f,
                 "%.3f",
                 editContext,
-                [](Scene& target, float bloomSoftKnee) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetBloomSoftKnee(bloomSoftKnee);
+                [](Scene& target, float value) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomSoftKnee(value);
                     target.MarkDirty();
                 });
 
@@ -123,8 +116,8 @@ void DrawHdrSection(const LightingPanelContext& ctx)
                 2.0f,
                 "%.3f",
                 editContext,
-                [](Scene& target, float bloomIntensity) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetBloomIntensity(bloomIntensity);
+                [](Scene& target, float value) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomIntensity(value);
                     target.MarkDirty();
                 });
 
@@ -136,10 +129,16 @@ void DrawHdrSection(const LightingPanelContext& ctx)
                 4.0f,
                 "%.3f",
                 editContext,
-                [](Scene& target, float bloomBlurRadius) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetBloomBlurRadius(bloomBlurRadius);
+                [](Scene& target, float value) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetBloomBlurRadius(value);
                     target.MarkDirty();
                 });
+        }
+
+        if (features.debugViewActive)
+        {
+            LightingPanelUi::DrawWrappedNote(
+                "A debug view is active. Bloom and tonemap still run, but FXAA only affects the final resolved image when debug view is None.");
         }
     }
 }

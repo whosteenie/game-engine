@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -39,14 +40,16 @@
 #include <cstring>
 #include <vector>
 
-void DrawSkyboxSection(const LightingPanelContext& ctx)
+void DrawEnvironmentSection(const LightingPanelContext& ctx)
 {
     Scene& scene = ctx.scene;
     RendererEditContext& editContext = ctx.editContext;
     EnvironmentMap& environmentMap = ctx.environmentMap;
+    IBL& ibl = ctx.ibl;
 
-    if (TuningSectionState::SectionHeader("Skybox", true))
+    if (TuningSectionState::SectionHeader("Environment", true))
     {
+        ImGui::SeparatorText("Sky & background");
         int backgroundMode = static_cast<int>(environmentMap.GetBackgroundMode());
         const char* backgroundModeLabels[] = {"Skybox (HDR)", "Solid color"};
         if (ImGui::Combo("Background", &backgroundMode, backgroundModeLabels, IM_ARRAYSIZE(backgroundModeLabels)))
@@ -161,9 +164,8 @@ void DrawSkyboxSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
-        ImGui::TextDisabled(
-            "Sky background uses the HDR file at full resolution. IBL cubemap resolution "
-            "affects reflections only.");
+        LightingPanelUi::DrawWrappedNote(
+            "Sky background uses the HDR file at full resolution. IBL cubemap resolution affects reflections only.");
 
         if (environmentMap.IsLoaded())
         {
@@ -195,7 +197,18 @@ void DrawSkyboxSection(const LightingPanelContext& ctx)
             ImGui::TextDisabled("Status: pending");
         }
 
-        ImGui::TextDisabled(
+        LightingPanelUi::DrawWrappedNote(
             "For star fields and fine cloud detail, use 2K or 4K HDR files from Poly Haven.");
+
+        ImGui::SeparatorText("Image-based lighting");
+        float environmentIntensity = ibl.GetEnvironmentIntensity();
+        if (ImGui::SliderFloat("Environment intensity", &environmentIntensity, 0.0f, 2.0f))
+        {
+            ibl.SetEnvironmentIntensity(environmentIntensity);
+            scene.MarkDirty();
+        }
+        HandleRendererFieldEditEvents(editContext);
+        LightingPanelUi::DrawWrappedNote(
+            "Scales diffuse and specular IBL in the deferred composite. Lower this if RT GI or SSGI washes the scene out.");
     }
 }

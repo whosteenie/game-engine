@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -47,23 +48,14 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
     ScreenSpaceEffects& screenSpaceEffects = ctx.screenSpaceEffects;
     const int viewportWidth = ctx.viewportWidth;
     const int viewportHeight = ctx.viewportHeight;
+    const LightingPanelUi::FeatureState features = LightingPanelUi::QueryFeatures(renderer, screenSpaceEffects);
 
-    if (TuningSectionState::SectionHeader("Anti-aliasing", true))
+    if (TuningSectionState::SectionHeader("Anti-aliasing & upscaling", true))
     {
-        if (!screenSpaceEffects.IsEnabled())
+        if (!features.postProcessingEnabled)
         {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
-                "Enable HDR post-processing (Screen Space section) for FXAA.");
-        }
-
-        const RenderDebugMode debugMode = screenSpaceEffects.GetDebugMode();
-        if (debugMode != RenderDebugMode::None)
-        {
-            ImGui::TextColored(
-                ImVec4(1.0f, 0.65f, 0.2f, 1.0f),
-                "FXAA only affects the final image. Set Diagnostics > Debug view to None.");
-            ImGui::TextDisabled("Active debug view: %s", RenderDebugModeLabel(debugMode));
+            LightingPanelUi::DrawWrappedNote(
+                "Enable Post-processing for post AA (FXAA, TAA, DLSS). Geometry MSAA is configured below.");
         }
 
         const AntiAliasingMode currentAaMode = screenSpaceEffects.GetAntiAliasingMode();
@@ -91,8 +83,6 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.2f, 1.0f), "%s", dlss.StatusString().c_str());
         }
 
-        // Ray Reconstruction support readout (devdoc/dxr/dlss-rr.md, Phase RR0). Probed alongside
-        // SR; the RR toggle and NRD-bypass wiring arrive in a later RR phase.
         if (dlss.IsReady() && dlss.IsDlssSupported())
         {
             if (dlss.IsRrSupported())
@@ -104,6 +94,20 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             {
                 ImGui::TextDisabled("Ray Reconstruction: not available on this GPU/driver");
             }
+        }
+
+        const RenderDebugMode debugMode = screenSpaceEffects.GetDebugMode();
+        if (debugMode != RenderDebugMode::None)
+        {
+            LightingPanelUi::DrawWrappedNote(
+                "FXAA only affects the final image when Diagnostics > View is None.");
+            ImGui::TextDisabled("Active debug view: %s", RenderDebugModeLabel(debugMode));
+        }
+
+        const bool postAaDisabled = !features.postProcessingEnabled;
+        if (postAaDisabled)
+        {
+            ImGui::BeginDisabled();
         }
 
         if (ImGui::BeginCombo("Mode", AntiAliasingModeLabel(currentAaMode)))
@@ -312,18 +316,22 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
         }
 
+        if (postAaDisabled)
+        {
+            ImGui::EndDisabled();
+        }
+
         ImGui::Separator();
         if (geometryMsaaBlocksResolve || resolveBlocksGeometryMsaa)
         {
-            ImGui::TextDisabled(
+            LightingPanelUi::DrawWrappedNote(
                 "Geometry MSAA above 1× and TAA/DLAA/DLSS are mutually exclusive. "
                 "Incompatible options are grayed out; choosing MSAA while a resolve owner is active switches post AA to None.");
         }
         else
         {
-            ImGui::TextDisabled(
-                "Geometry MSAA supersamples the scene pass before post AA (FXAA, TAA, etc.). "
-                "Pick 1× for standard single-sample rendering.");
+            LightingPanelUi::DrawWrappedNote(
+                "Geometry MSAA supersamples the scene pass before post AA. Pick 1× for standard single-sample rendering.");
         }
 
         const char* msaaPreview = "1× (None)";
@@ -486,7 +494,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         }
         else if (currentAaMode == AntiAliasingMode::TAA)
         {
-            ImGui::TextDisabled(
+            LightingPanelUi::DrawWrappedNote(
                 "HDR temporal resolve (motion vectors) -> bloom -> tonemap -> viewport");
             float taaBlend = screenSpaceEffects.GetTaaBlendFactor();
             if (ImGui::SliderFloat("TAA history blend", &taaBlend, 0.0f, 0.99f))
@@ -498,7 +506,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         }
         else if (currentAaMode == AntiAliasingMode::SSAA)
         {
-            ImGui::TextDisabled("Supersampled scene -> tonemap -> downsample -> viewport");
+            LightingPanelUi::DrawWrappedNote("Supersampled scene -> tonemap -> downsample -> viewport");
             float renderScale = screenSpaceEffects.GetRenderScale();
             if (ImGui::SliderFloat("Render scale", &renderScale, 1.0f, 2.0f, "%.2fx"))
             {

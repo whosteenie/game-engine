@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -45,19 +46,35 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
     RendererEditContext& editContext = ctx.editContext;
     SceneRenderer& renderer = ctx.renderer;
     ScreenSpaceEffects& screenSpaceEffects = ctx.screenSpaceEffects;
+    const LightingPanelUi::FeatureState features = LightingPanelUi::QueryFeatures(renderer, screenSpaceEffects);
 
     if (TuningSectionState::SectionHeader("Screen-space GI (SSGI)", true))
     {
-        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
-        if (pathTracingScreenSpaceHandled)
+        const bool sectionDisabled =
+            !features.postProcessingEnabled || features.pathTracingActive || features.rtGiEnabled;
+
+        if (!features.postProcessingEnabled)
         {
-            ImGui::TextDisabled("SSGI is handled by the path tracer.");
-            ImGui::BeginDisabled();
+            LightingPanelUi::DrawWrappedNote("Enable Post-processing to use SSGI.");
         }
 
-        ImGui::TextDisabled(
-            "Screen-space indirect from emissive / radiance buffer. "
-            "Use Diagnostics debug views for pipeline isolation.");
+        if (features.pathTracingActive)
+        {
+            LightingPanelUi::DrawWrappedNote("Path tracing replaces SSGI.");
+        }
+
+        if (features.rtGiEnabled)
+        {
+            LightingPanelUi::DrawWrappedNote("RT diffuse GI is enabled. Disable RT GI before using SSGI inject.");
+        }
+
+        LightingPanelUi::DrawWrappedHelp(
+            "Screen-space indirect from the radiance buffer. Use Diagnostics > SSGI views to inspect the pipeline.");
+
+        if (sectionDisabled)
+        {
+            ImGui::BeginDisabled();
+        }
 
         if (ImGui::TreeNode("GI temporal"))
         {
@@ -161,8 +178,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                 "Enable SSGI",
                 &ssgiEnabled,
                 editContext,
-                [](Scene& target, bool ssgiEnabled) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiEnabled(ssgiEnabled);
+                [](Scene& target, bool ssgiEnabledValue) {
+                    target.GetRenderer().GetScreenSpaceEffects().SetSsgiEnabled(ssgiEnabledValue);
                     target.MarkDirty();
                 });
             float ssgiStrength = screenSpaceEffects.GetSsgiStrength();
@@ -205,7 +222,7 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
             ImGui::TreePop();
         }
 
-        if (pathTracingScreenSpaceHandled)
+        if (sectionDisabled)
         {
             ImGui::EndDisabled();
         }

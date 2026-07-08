@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -66,7 +67,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 "Ray tracing requires a DXR Tier 1.0+ GPU and up-to-date driver.");
             if (raytracingTier == 0 && gfx.IsInitialized())
             {
-                ImGui::TextDisabled(
+                LightingPanelUi::DrawWrappedNote(
                     "Update your graphics driver (NVIDIA 531+ class recommended) if you expect RTX support.");
             }
         }
@@ -345,7 +346,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (pathTracingActive)
         {
-            ImGui::TextDisabled("Hybrid RT effects are handled by the path tracer.");
+            LightingPanelUi::DrawWrappedNote("Hybrid RT effects are handled by the path tracer.");
             ImGui::BeginDisabled();
         }
 
@@ -401,7 +402,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (rrActive)
         {
-            ImGui::TextDisabled("Reflection denoise (NRD RELAX): handled by Ray Reconstruction.");
+            LightingPanelUi::DrawWrappedNote("Reflection denoise (NRD RELAX): handled by Ray Reconstruction.");
             ImGui::BeginDisabled();
         }
         bool denoiseEnabled = dxrSettings.IsDenoiseEnabled();
@@ -464,7 +465,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetReflectionAoRays(rays);
                 target.MarkDirty();
             });
-        ImGui::TextDisabled("Contact shadows on reflected surfaces. 0 = off; higher = cleaner, costlier.");
+        LightingPanelUi::DrawWrappedNote(
+            "Contact shadows on reflected surfaces. 0 = off; higher = cleaner, costlier.");
 
         float roughnessCutoff = dxrSettings.GetReflectionRoughnessCutoff();
         UndoableRendererSliderFloat(
@@ -478,7 +480,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetReflectionRoughnessCutoff(cutoff);
                 target.MarkDirty();
             });
-        ImGui::TextDisabled("Surfaces rougher than this skip the RT trace and use IBL (cheaper, less blur).");
+        LightingPanelUi::DrawWrappedNote(
+            "Surfaces rougher than this skip the RT trace and use IBL (cheaper, less blur).");
 
         // Phase D8 — RT soft sun shadows (devdoc/dxr/shadows.md). Supplemental over CSM.
         ImGui::SeparatorText("RT shadows");
@@ -517,7 +520,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (rrActive)
         {
-            ImGui::TextDisabled("Shadow denoise (NRD SIGMA): handled by Ray Reconstruction.");
+            LightingPanelUi::DrawWrappedNote("Shadow denoise (NRD SIGMA): handled by Ray Reconstruction.");
             ImGui::BeginDisabled();
         }
         bool shadowDenoise = dxrSettings.IsShadowDenoiseEnabled();
@@ -534,9 +537,19 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             ImGui::EndDisabled();
         }
 
-        // Phase D9 — RT diffuse GI (devdoc/dxr/diffuse-gi.md). One-bounce diffuse bounce light
-        // added into the indirect buffer; mutually exclusive with SSGI inject.
+        // Phase D9 — RT diffuse GI. Mutually exclusive with SSGI inject.
         ImGui::SeparatorText("RT diffuse GI");
+
+        const bool ssgiBlocksRtGi = screenSpaceEffects.IsSsgiEnabled();
+        if (ssgiBlocksRtGi)
+        {
+            LightingPanelUi::DrawWrappedNote("SSGI is enabled. Disable SSGI before enabling RT diffuse GI.");
+        }
+
+        if (ssgiBlocksRtGi)
+        {
+            ImGui::BeginDisabled();
+        }
 
         bool giEnabled = dxrSettings.IsGiEnabled();
         UndoableRendererCheckbox(
@@ -551,6 +564,14 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 }
                 target.MarkDirty();
             });
+        if (ssgiBlocksRtGi)
+        {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip("Mutually exclusive with SSGI inject.");
+            }
+        }
 
         float giStrength = dxrSettings.GetGiStrength();
         UndoableRendererSliderFloat(
@@ -567,7 +588,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (rrActive)
         {
-            ImGui::TextDisabled("GI denoise (NRD RELAX): handled by Ray Reconstruction.");
+            LightingPanelUi::DrawWrappedNote("GI denoise (NRD RELAX): handled by Ray Reconstruction.");
             ImGui::BeginDisabled();
         }
         bool giDenoise = dxrSettings.IsGiDenoiseEnabled();
@@ -589,9 +610,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             ImGui::EndDisabled();
         }
 
-        ImGui::TextDisabled(
-            "Additive over ambient; reduces to an ambient boost at v1. Lower Environment\n"
-            "Intensity if the scene washes out. Overrides SSGI inject when enabled.");
+        LightingPanelUi::DrawWrappedNote(
+            "Additive over ambient. Lower Environment intensity if the scene washes out. Overrides SSGI when enabled.");
 
         ImGui::PopID();
 
@@ -620,7 +640,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             ImGui::EndDisabled();
         }
 
-        ImGui::TextDisabled(
+        LightingPanelUi::DrawWrappedNote(
             "Acceleration structures build when ray tracing is enabled. DispatchRays arrives in a later DXR phase.");
     }
 }

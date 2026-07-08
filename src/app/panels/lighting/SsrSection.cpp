@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -45,19 +46,30 @@ void DrawSsrSection(const LightingPanelContext& ctx)
     RendererEditContext& editContext = ctx.editContext;
     SceneRenderer& renderer = ctx.renderer;
     ScreenSpaceEffects& screenSpaceEffects = ctx.screenSpaceEffects;
+    const LightingPanelUi::FeatureState features = LightingPanelUi::QueryFeatures(renderer, screenSpaceEffects);
 
     if (TuningSectionState::SectionHeader("Screen-space reflections (SSR)", true))
     {
-        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
-        if (pathTracingScreenSpaceHandled)
+        const bool sectionDisabled =
+            !features.postProcessingEnabled || features.pathTracingActive;
+
+        if (!features.postProcessingEnabled)
         {
-            ImGui::TextDisabled("SSR is handled by the path tracer.");
-            ImGui::BeginDisabled();
+            LightingPanelUi::DrawWrappedNote("Enable Post-processing to use SSR.");
         }
 
-        ImGui::TextDisabled(
-            "Specular screen-space trace from Phase S1 scene-color buffer. "
-            "Use Diagnostics debug views for pipeline isolation.");
+        if (features.pathTracingActive)
+        {
+            LightingPanelUi::DrawWrappedNote("Path tracing replaces SSR.");
+        }
+
+        LightingPanelUi::DrawWrappedHelp(
+            "Specular screen-space trace from the scene-color buffer. Use Diagnostics > SSR views to inspect stages.");
+
+        if (sectionDisabled)
+        {
+            ImGui::BeginDisabled();
+        }
 
         bool ssrEnabled = screenSpaceEffects.IsSsrEnabled();
         UndoableRendererCheckbox(
@@ -105,9 +117,8 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrSampleCount(ssrSampleCount);
                 target.MarkDirty();
             });
-        ImGui::TextDisabled(
-            "Samples = jittered reflection rays averaged per pixel (2 recommended). "
-            "Costs linearly; reduces speckle without extra blur.");
+        LightingPanelUi::DrawWrappedNote(
+            "Samples = jittered reflection rays averaged per pixel. Costs linearly; reduces speckle without extra blur.");
 
         float ssrThickness = screenSpaceEffects.GetSsrThickness();
         UndoableRendererSliderFloat(
@@ -134,13 +145,11 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrRoughnessCutoff(ssrRoughnessCutoff);
                 target.MarkDirty();
             });
-        ImGui::TextDisabled(
-            "Surfaces rougher than cutoff skip trace (IBL fallback in composite). "
-            "Trace also runs when an SSR debug view is selected.");
+        LightingPanelUi::DrawWrappedNote(
+            "Surfaces rougher than cutoff skip trace (IBL fallback in composite). Trace also runs when an SSR debug view is selected.");
 
-        ImGui::TextUnformatted(
-            "Multi-sample trace averages hits only (RGB); alpha is mean confidence. "
-            "More samples lowers alpha on misses but should not dim denoise RGB.");
+        LightingPanelUi::DrawWrappedNote(
+            "Multi-sample trace averages hits only (RGB); alpha is mean confidence.");
 
         float ssrStrength = screenSpaceEffects.GetSsrStrength();
         UndoableRendererSliderFloat(
@@ -165,8 +174,8 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.MarkDirty();
             });
 
-        ImGui::TextDisabled(
-            "Quadratic steps + jitter. Spatial filters speckle only; temporal uses edge-aware blend (~0.9).");
+        LightingPanelUi::DrawWrappedNote(
+            "Quadratic steps + jitter. Spatial filters speckle; temporal uses edge-aware blend (~0.9).");
 
         float ssrTemporalBlend = screenSpaceEffects.GetSsrTemporalBlendFactor();
         UndoableRendererSliderFloat(
@@ -180,8 +189,8 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrTemporalBlendFactor(ssrTemporalBlend);
                 target.MarkDirty();
             });
-        ImGui::TextDisabled(
-            "SVGF denoise: temporal variance accumulation + 4-pass à-trous. Enable SSR and set debug to None for composite.");
+        LightingPanelUi::DrawWrappedNote(
+            "SVGF denoise: temporal variance accumulation + 4-pass à-trous. Set debug view to None for composite.");
 
         const bool sceneColorRan = screenSpaceEffects.GetSsrSceneColorRanLastFrame();
         const bool traceRan = screenSpaceEffects.GetSsrTraceRanLastFrame();
@@ -196,7 +205,7 @@ void DrawSsrSection(const LightingPanelContext& ctx)
             screenSpaceEffects.GetSsrTraceTargetWidth(),
             screenSpaceEffects.GetSsrTraceTargetHeight());
 
-        if (pathTracingScreenSpaceHandled)
+        if (sectionDisabled)
         {
             ImGui::EndDisabled();
         }

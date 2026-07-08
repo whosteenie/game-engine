@@ -28,6 +28,7 @@
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 
 #include <imgui.h>
 
@@ -45,11 +46,25 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
     RendererEditContext& editContext = ctx.editContext;
     SceneRenderer& renderer = ctx.renderer;
     const Camera& camera = ctx.camera;
+    const LightingPanelUi::FeatureState features =
+        LightingPanelUi::QueryFeatures(renderer, ctx.screenSpaceEffects);
 
     if (TuningSectionState::SectionHeader("Directional Shadows", true))
     {
+        if (features.pathTracingActive)
+        {
+            LightingPanelUi::DrawWrappedNote(
+                "Path tracing shades direct sun with RT visibility, not CSM. These settings still affect "
+                "raster shadow maps and shadow-map debug views.");
+        }
+
         DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
         const CascadedShadowMap& shadowMap = renderer.GetShadowMap();
+
+        if (features.pathTracingActive)
+        {
+            ImGui::BeginDisabled();
+        }
 
         if (ImGui::TreeNodeEx("Quality & filtering", ImGuiTreeNodeFlags_DefaultOpen))
         {
@@ -92,7 +107,7 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Rotated PCF: 7x7 at radius 3, 9x9 at radius 4.");
+            LightingPanelUi::DrawWrappedNote("Rotated PCF: 7x7 at radius 3, 9x9 at radius 4.");
 
             int pcfSampleCount = shadowSettings.GetPcfSampleCount();
             if (ImGui::SliderInt("PCF sample count", &pcfSampleCount, 8, 32))
@@ -109,7 +124,8 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Per-pixel rotated grid; smoother than axis-aligned, no stochastic grain.");
+            LightingPanelUi::DrawWrappedNote(
+                "Per-pixel rotated grid; smoother than axis-aligned, no stochastic grain.");
 
             float sunAngularDiameter = shadowSettings.GetSunAngularDiameterDegrees();
             if (ImGui::SliderFloat("Sun angular diameter (deg)", &sunAngularDiameter, 0.0f, 5.0f))
@@ -134,7 +150,8 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Separable screen-space blur on shadow visibility (removes PCF grain).");
+            LightingPanelUi::DrawWrappedNote(
+                "Separable screen-space blur on shadow visibility (removes PCF grain).");
 
             if (shadowBlurEnabled)
             {
@@ -211,7 +228,7 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
 
         if (ImGui::TreeNodeEx("Shadow map fit", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            ImGui::TextDisabled(
+            LightingPanelUi::DrawWrappedNote(
                 "Single shadow map (CSM off). Ortho covers scene casters plus the visible view frustum.");
 
             bool tightNearPlaneFit = shadowSettings.GetTightNearPlaneXyFit();
@@ -221,7 +238,8 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Fit ortho XY to the view frustum; caster bounds still expand Z depth.");
+            LightingPanelUi::DrawWrappedNote(
+                "Fit ortho XY to the view frustum; caster bounds still expand Z depth.");
 
             float xyMargin = shadowSettings.GetXyMarginFraction();
             if (ImGui::SliderFloat("Ortho XY margin", &xyMargin, 0.005f, 0.2f, "%.3f"))
@@ -267,12 +285,17 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled(
+            LightingPanelUi::DrawWrappedNote(
                 "Receiver scales: raise if acne, lower if shadows detach. "
                 "Caster scale adds optional front-face shader bias; 0 relies on slope bias only. "
                 "Shadow pass uses front-face culling (back faces) for contact depth.");
 
             ImGui::TreePop();
+        }
+
+        if (features.pathTracingActive)
+        {
+            ImGui::EndDisabled();
         }
 
         if (ImGui::TreeNodeEx("Shadow map stats", ImGuiTreeNodeFlags_DefaultOpen))
@@ -320,14 +343,14 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                     "Floor under camera",
                     glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z));
 
-                ImGui::TextDisabled(
+                LightingPanelUi::DrawWrappedNote(
                     "Magenta in light-space depth debug = clip Z outside [0, 1]. "
                     "UV outside [0, 1] = shadow map coverage.");
                 ImGui::TreePop();
             }
 
             ImGui::Separator();
-            ImGui::TextWrapped(
+            LightingPanelUi::DrawWrappedHelp(
                 "Large texels or blocky shadows: raise resolution or lower ortho margin. "
                 "Debug: Shadow factor (1), Shadow blocked (22).");
             ImGui::TreePop();

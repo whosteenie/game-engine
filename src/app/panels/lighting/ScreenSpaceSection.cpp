@@ -27,6 +27,7 @@
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/assets/FileDialog.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
 
 #include <imgui.h>
@@ -39,33 +40,32 @@
 #include <cstring>
 #include <vector>
 
-void DrawScreenSpaceSection(const LightingPanelContext& ctx)
+void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
 {
     Scene& scene = ctx.scene;
     RendererEditContext& editContext = ctx.editContext;
     SceneRenderer& renderer = ctx.renderer;
     ScreenSpaceEffects& screenSpaceEffects = ctx.screenSpaceEffects;
+    const LightingPanelUi::FeatureState features = LightingPanelUi::QueryFeatures(renderer, screenSpaceEffects);
 
-    if (TuningSectionState::SectionHeader("Screen Space", true))
+    if (TuningSectionState::SectionHeader("Ambient occlusion", true))
     {
-        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
+        const bool sectionDisabled =
+            !features.postProcessingEnabled || features.pathTracingActive;
 
-        bool enabled = screenSpaceEffects.IsEnabled();
-        if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
+        if (!features.postProcessingEnabled)
         {
-            ApplyRendererChange(
-                editContext,
-                scene,
-                "HDR post-processing",
-                [enabled](Scene& target) {
-                    target.GetRenderer().GetScreenSpaceEffects().SetEnabled(enabled);
-                    target.MarkDirty();
-                });
+            LightingPanelUi::DrawWrappedNote("Enable Post-processing to use screen-space ambient occlusion.");
         }
 
-        if (pathTracingScreenSpaceHandled)
+        if (features.pathTracingActive)
         {
-            ImGui::TextDisabled("SSAO/GTAO, SSGI, and SSR are handled by the path tracer.");
+            LightingPanelUi::DrawWrappedNote(
+                "Path tracing handles occlusion in the integrator. Hybrid AO is disabled.");
+        }
+
+        if (sectionDisabled)
+        {
             ImGui::BeginDisabled();
         }
 
@@ -109,7 +109,7 @@ void DrawScreenSpaceSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
-            ImGui::TextDisabled("Radius is view-space units (fixed, not scaled by depth).");
+            LightingPanelUi::DrawWrappedNote("Radius is view-space units (fixed, not scaled by depth).");
 
             float ssaoBias = screenSpaceEffects.GetSsaoBias();
             if (ImGui::SliderFloat("SSAO bias", &ssaoBias, 0.0f, 0.1f))
@@ -195,7 +195,8 @@ void DrawScreenSpaceSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
-        ImGui::TextDisabled("Edge-aware blur: lower = sharper AO edges across depth discontinuities.");
+        LightingPanelUi::DrawWrappedNote(
+            "Edge-aware blur: lower = sharper AO edges across depth discontinuities.");
 
         int ssaoShaderDebug = screenSpaceEffects.GetSsaoShaderDebugMode();
         if (aoMode == AmbientOcclusionMode::SSAO && ImGui::Combo(
@@ -213,13 +214,13 @@ void DrawScreenSpaceSection(const LightingPanelContext& ctx)
         }
         if (ssaoShaderDebug != 0)
         {
-            ImGui::TextDisabled(
-                "Shader debug shows raw SSAO target (unblurred). Set debug view to SSAO buffer.");
+            LightingPanelUi::DrawWrappedNote(
+                "Shader debug shows raw SSAO target (unblurred). Set Diagnostics > View to SSAO buffer.");
         }
-        ImGui::TextDisabled(
+        LightingPanelUi::DrawWrappedNote(
             "Intensity = pow() on AO in composite (indirect only). Blend = how much AO affects indirect.");
-        ImGui::TextDisabled(
-            "Use AO buffer/debug views for raw or filtered factors; Composite occlusion shows the final factor.");
+        LightingPanelUi::DrawWrappedNote(
+            "Use AO debug views for raw or filtered factors; Composite occlusion shows the final factor.");
 
         float aoStrength = screenSpaceEffects.GetAoStrength();
         if (ImGui::SliderFloat("AO blend strength", &aoStrength, 0.0f, 1.0f))
@@ -303,7 +304,7 @@ void DrawScreenSpaceSection(const LightingPanelContext& ctx)
             ImGui::TreePop();
         }
 
-        if (pathTracingScreenSpaceHandled)
+        if (sectionDisabled)
         {
             ImGui::EndDisabled();
         }

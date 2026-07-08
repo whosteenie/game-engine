@@ -76,16 +76,15 @@ void LightingPanel::Draw(
     };
 
     DrawSceneSection(panelContext);
-    DrawSkyboxSection(panelContext);
-    DrawIblSection(panelContext);
+    DrawEnvironmentSection(panelContext);
     DrawDirectionalShadowsSection(panelContext);
-    DrawHdrSection(panelContext);
-    DrawScreenSpaceSection(panelContext);
-    DrawAntiAliasingSection(panelContext);
-    DrawTextureFilteringSection(panelContext);
+    DrawPostProcessingSection(panelContext);
+    DrawAmbientOcclusionSection(panelContext);
     DrawSsgiSection(panelContext);
     DrawSsrSection(panelContext);
     DrawRayTracingSection(panelContext);
+    DrawAntiAliasingSection(panelContext);
+    DrawTextureFilteringSection(panelContext);
     DrawDiagnosticsSection(panelContext);
 
     ImGui::End();
