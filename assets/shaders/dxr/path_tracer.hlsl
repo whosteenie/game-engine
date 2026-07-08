@@ -6,8 +6,12 @@
 
 #include "hit_shading.hlsli"
 
-RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = primary hit distance
+RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = specular hit-distance guide (RR4)
 RWTexture2D<uint2> g_Metadata : register(u1);  // (instanceId+1, primitiveIndex)
+
+// Path-tracer-only packing in reflection cbuffer fields this pass does not otherwise use.
+#define kPtFireflyClampEnabled (g_AoRayCount != 0u)
+#define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
@@ -154,6 +158,7 @@ bool SampleNextBounceDirection(
     float roughness,
     float metallic,
     out float3 nextDir,
+    out bool isSpecular,
     inout float3 throughput)
 {
     const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
@@ -168,6 +173,7 @@ bool SampleNextBounceDirection(
     // breaks sky/mirror-in-mirror paths that need a stable reflect(view, normal) direction.
     if (roughness <= kMirrorRoughnessCutoff)
     {
+        isSpecular = true;
         nextDir = normalize(reflect(-viewDir, hitNormal));
         if (dot(nextDir, hitNormal) <= 1e-4)
         {
@@ -196,6 +202,7 @@ bool SampleNextBounceDirection(
         throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-3);
     }
 
+    isSpecular = traceSpecular;
     return traceSpecular;
 }
 
@@ -229,8 +236,10 @@ void PathTracerRayGen()
 
     uint primaryInstanceId = 0u;
     uint primaryPrimitiveIndex = 0u;
-    float primaryHitDistance = g_MaxTraceDistance;
     bool primaryHit = false;
+    float specHitDistGuide = g_MaxTraceDistance;
+    bool specGuideCaptured = false;
+    bool launchSpecularFromPrimary = false;
     // Roughness of the surface that launched the current ray — drives env mip on miss, matching
     // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
     // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
@@ -245,8 +254,20 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
+            if (bounce == 1u && launchSpecularFromPrimary)
+            {
+                specHitDistGuide = g_MaxTraceDistance;
+                specGuideCaptured = true;
+            }
+
             radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
             break;
+        }
+
+        if (bounce == 1u && launchSpecularFromPrimary)
+        {
+            specHitDistGuide = payload.hitDistance;
+            specGuideCaptured = true;
         }
 
         const MaterialEntry material = g_Materials[payload.instanceId];
@@ -270,7 +291,6 @@ void PathTracerRayGen()
             primaryHit = true;
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
-            primaryHitDistance = payload.hitDistance;
         }
 
         if (bounce >= maxBounces)
@@ -282,6 +302,7 @@ void PathTracerRayGen()
         }
 
         float3 nextDir;
+        bool isSpecular = false;
         SampleNextBounceDirection(
             pixel,
             bounce,
@@ -292,11 +313,17 @@ void PathTracerRayGen()
             material.roughness,
             material.metallic,
             nextDir,
+            isSpecular,
             throughput);
+
+        if (bounce == 0u)
+        {
+            launchSpecularFromPrimary = isSpecular;
+        }
 
         missEnvRoughness = material.roughness;
 
-        if (bounce >= kRussianRouletteStartBounce)
+        if (kPtRussianRouletteEnabled && bounce >= kRussianRouletteStartBounce)
         {
             const float rrProb = min(
                 max(throughput.r, max(throughput.g, throughput.b)),
@@ -314,8 +341,11 @@ void PathTracerRayGen()
         ray.Direction = nextDir;
     }
 
-    radiance = ClampRadiance(radiance);
-    g_Output[pixel] = float4(radiance, primaryHitDistance);
+    if (kPtFireflyClampEnabled)
+    {
+        radiance = ClampRadiance(radiance);
+    }
+    g_Output[pixel] = float4(radiance, specHitDistGuide);
     g_Metadata[pixel] = primaryHit
         ? uint2(primaryInstanceId + 1u, primaryPrimitiveIndex)
         : uint2(0, 0);

@@ -782,6 +782,9 @@ namespace SceneProjectIODetail
                  {"renderingMode", DxrSettings::RenderingModeToString(dxrSettings.GetRenderingMode())},
                  {"ptConvergenceMode",
                   DxrSettings::PtConvergenceModeToString(dxrSettings.GetPtConvergenceMode())},
+                 {"ptMaxBounces", dxrSettings.GetPtMaxBounces()},
+                 {"ptRussianRoulette", dxrSettings.IsPtRussianRouletteEnabled()},
+                 {"ptFireflyClamp", dxrSettings.IsPtFireflyClampEnabled()},
                  {"reflectionsEnabled", dxrSettings.IsReflectionsEnabled()},
                  {"reflectionsQuality",
                   DxrSettings::ReflectionsQualityToString(dxrSettings.GetReflectionsQuality())},
@@ -819,6 +822,18 @@ namespace SceneProjectIODetail
         {
             dxrSettings.SetPtConvergenceMode(DxrSettings::PtConvergenceModeFromString(
                 dxrValue.at("ptConvergenceMode").get<std::string>()));
+        }
+        if (dxrValue.contains("ptMaxBounces"))
+        {
+            dxrSettings.SetPtMaxBounces(dxrValue.at("ptMaxBounces").get<int>());
+        }
+        if (dxrValue.contains("ptRussianRoulette"))
+        {
+            dxrSettings.SetPtRussianRouletteEnabled(dxrValue.at("ptRussianRoulette").get<bool>());
+        }
+        if (dxrValue.contains("ptFireflyClamp"))
+        {
+            dxrSettings.SetPtFireflyClampEnabled(dxrValue.at("ptFireflyClamp").get<bool>());
         }
         if (dxrValue.contains("reflectionsEnabled"))
         {
@@ -902,7 +917,13 @@ namespace SceneProjectIODetail
             return;
         }
 
+        const bool hadPathTraced =
+            dxrSettings.GetRenderingMode() == RenderingMode::PathTraced;
         dxrSettings.ClampToHardwareCapabilities(GfxContext::Get().IsRaytracingSupported());
+        if (hadPathTraced && dxrSettings.GetRenderingMode() != RenderingMode::PathTraced)
+        {
+            EngineLog::Warn("dxr", "Path traced mode unavailable on this GPU — falling back to Hybrid");
+        }
     }
 
     void ApplyScreenSpaceEffectsDelta(ScreenSpaceEffects& effects, const json& effectsValue)

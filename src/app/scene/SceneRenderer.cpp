@@ -666,7 +666,10 @@ void SceneRenderer::RecordDxrPass(
             dispatchHeight,
             dispatchWidth,
             dispatchHeight,
-            m_dxrSettings.GetMaxTraceDistance());
+            m_dxrSettings.GetMaxTraceDistance(),
+            m_dxrSettings.GetPtMaxBounces(),
+            m_dxrSettings.IsPtRussianRouletteEnabled(),
+            m_dxrSettings.IsPtFireflyClampEnabled());
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
@@ -707,7 +710,8 @@ void SceneRenderer::RecordDxrPass(
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
     // reflection hits know GI is enabled; bounce lighting is traced world-space at each hit.
     const bool giDebugViewActive = IsRtGiDebugMode(debugMode);
-    const bool giWanted = m_dxrSettings.IsGiEnabled() || giDebugViewActive;
+    const bool giWanted =
+        !pathTracingActive && (m_dxrSettings.IsGiEnabled() || giDebugViewActive);
     bool giDispatched = false;
 
     if (m_dxrGiDispatch == nullptr)
@@ -816,7 +820,8 @@ void SceneRenderer::RecordDxrPass(
     // only runs on the post-process path.
     const bool reflectionDebugViewActive = IsRtReflectionDebugMode(debugMode);
     const bool reflectionsWanted =
-        m_dxrSettings.IsReflectionsEnabled() || reflectionDebugViewActive;
+        !pathTracingActive
+        && (m_dxrSettings.IsReflectionsEnabled() || reflectionDebugViewActive);
     bool reflectionsDispatched = false;
 
     if (m_dxrReflectionsDispatch == nullptr)
@@ -933,7 +938,8 @@ void SceneRenderer::RecordDxrPass(
     // Phase D8 — RT sun shadow trace (devdoc/dxr-shadows.md). Full render resolution; needs the
     // scene MRTs (depth, RT2 normal, RT5 roughness, RT4 velocity) so only runs on post-process.
     const bool shadowDebugViewActive = IsRtShadowDebugMode(debugMode);
-    const bool shadowsWanted = m_dxrSettings.IsShadowsEnabled() || shadowDebugViewActive;
+    const bool shadowsWanted =
+        !pathTracingActive && (m_dxrSettings.IsShadowsEnabled() || shadowDebugViewActive);
     bool shadowsDispatched = false;
 
     if (m_dxrShadowsDispatch == nullptr)

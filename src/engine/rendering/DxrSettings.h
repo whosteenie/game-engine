@@ -48,6 +48,15 @@ public:
         return IsPathTracingActive() && m_ptConvergenceMode == PtConvergenceMode::Reference;
     }
 
+    int GetPtMaxBounces() const { return m_ptMaxBounces; }
+    void SetPtMaxBounces(const int bounces);
+
+    bool IsPtRussianRouletteEnabled() const { return m_ptRussianRoulette; }
+    void SetPtRussianRouletteEnabled(const bool enabled) { m_ptRussianRoulette = enabled; }
+
+    bool IsPtFireflyClampEnabled() const { return m_ptFireflyClamp; }
+    void SetPtFireflyClampEnabled(const bool enabled) { m_ptFireflyClamp = enabled; }
+
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
 
@@ -124,6 +133,9 @@ private:
     bool m_enabled = false;
     RenderingMode m_renderingMode = RenderingMode::Hybrid;
     PtConvergenceMode m_ptConvergenceMode = PtConvergenceMode::RealTime;
+    int m_ptMaxBounces = 4;
+    bool m_ptRussianRoulette = true;
+    bool m_ptFireflyClamp = true;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

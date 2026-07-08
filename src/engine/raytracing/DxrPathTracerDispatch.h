@@ -55,7 +55,10 @@ public:
         int height,
         int gbufferWidth,
         int gbufferHeight,
-        float maxTraceDistance);
+        float maxTraceDistance,
+        int ptMaxBounces,
+        bool ptRussianRoulette,
+        bool ptFireflyClamp);
 
     void Release();
 

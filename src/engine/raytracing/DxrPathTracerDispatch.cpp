@@ -9,6 +9,7 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
 #include <cstring>
 
 DxrPathTracerDispatch::~DxrPathTracerDispatch()
@@ -69,7 +70,10 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const int height,
     const int gbufferWidth,
     const int gbufferHeight,
-    const float maxTraceDistance)
+    const float maxTraceDistance,
+    const int ptMaxBounces,
+    const bool ptRussianRoulette,
+    const bool ptFireflyClamp)
 {
     m_dispatchedThisFrame = false;
 
@@ -137,7 +141,10 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.environmentIntensity = frameInputs.environmentIntensity;
     constants.maxReflectionLod = frameInputs.maxReflectionLod;
     constants.frameIndex = m_frameIndex;
-    constants.samplesPerPixel = 4; // P2: max path bounces (tunable in P5)
+    constants.samplesPerPixel = static_cast<std::uint32_t>(std::clamp(ptMaxBounces, 1, 16));
+    // Path-tracer-only packing in reflection fields unused by this pass (see path_tracer.hlsl).
+    constants.aoRayCount = ptFireflyClamp ? 1u : 0u;
+    constants.hasGiTrace = ptRussianRoulette ? 1u : 0u;
     constants.sunDirection[0] = frameInputs.sunDirection.x;
     constants.sunDirection[1] = frameInputs.sunDirection.y;
     constants.sunDirection[2] = frameInputs.sunDirection.z;

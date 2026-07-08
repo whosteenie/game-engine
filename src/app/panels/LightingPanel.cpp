@@ -771,6 +771,8 @@ void LightingPanel::Draw(
 
     if (TuningSectionState::SectionHeader("Screen Space", true))
     {
+        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
+
         bool enabled = screenSpaceEffects.IsEnabled();
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
@@ -782,6 +784,12 @@ void LightingPanel::Draw(
                     target.GetRenderer().GetScreenSpaceEffects().SetEnabled(enabled);
                     target.MarkDirty();
                 });
+        }
+
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::TextDisabled("SSAO/GTAO, SSGI, and SSR are handled by the path tracer.");
+            ImGui::BeginDisabled();
         }
 
         AmbientOcclusionMode aoMode = screenSpaceEffects.GetAmbientOcclusionMode();
@@ -1016,6 +1024,11 @@ void LightingPanel::Draw(
             }
             ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");
             ImGui::TreePop();
+        }
+
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::EndDisabled();
         }
     }
 
@@ -1539,6 +1552,13 @@ void LightingPanel::Draw(
 
     if (TuningSectionState::SectionHeader("Screen-space GI (SSGI)", true))
     {
+        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::TextDisabled("SSGI is handled by the path tracer.");
+            ImGui::BeginDisabled();
+        }
+
         ImGui::TextDisabled(
             "Screen-space indirect from emissive / radiance buffer. "
             "Use Diagnostics debug views for pipeline isolation.");
@@ -1688,10 +1708,22 @@ void LightingPanel::Draw(
                 "Trace → denoise → inject into indirect before SSAO. AA = None recommended for tuning.");
             ImGui::TreePop();
         }
+
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::EndDisabled();
+        }
     }
 
     if (TuningSectionState::SectionHeader("Screen-space reflections (SSR)", true))
     {
+        const bool pathTracingScreenSpaceHandled = renderer.GetDxrSettings().IsPathTracingActive();
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::TextDisabled("SSR is handled by the path tracer.");
+            ImGui::BeginDisabled();
+        }
+
         ImGui::TextDisabled(
             "Specular screen-space trace from Phase S1 scene-color buffer. "
             "Use Diagnostics debug views for pipeline isolation.");
@@ -1832,6 +1864,11 @@ void LightingPanel::Draw(
             temporalRan ? "ran" : "skip",
             screenSpaceEffects.GetSsrTraceTargetWidth(),
             screenSpaceEffects.GetSsrTraceTargetHeight());
+
+        if (pathTracingScreenSpaceHandled)
+        {
+            ImGui::EndDisabled();
+        }
     }
 
     if (TuningSectionState::SectionHeader("Ray tracing", true))
@@ -1873,6 +1910,9 @@ void LightingPanel::Draw(
 
         ImGui::PushID("RayTracing");
         bool dxrEnabled = dxrSettings.IsEnabled();
+        const bool pathTracingActive =
+            dxrEnabled && dxrSettings.GetRenderingMode() == RenderingMode::PathTraced;
+        const bool ptRrSupported = DlssContext::Get().IsReady() && DlssContext::Get().IsRrSupported();
         UndoableRendererCheckbox(
             "Enable ray tracing",
             &dxrEnabled,
@@ -1937,8 +1977,13 @@ void LightingPanel::Draw(
 
         if (dxrSettings.GetRenderingMode() == RenderingMode::PathTraced && dxrEnabled)
         {
+            const bool rrConvergenceSelectable = ptRrSupported;
+            if (!rrConvergenceSelectable)
+            {
+                ImGui::BeginDisabled();
+            }
             int convergenceModeIndex = static_cast<int>(dxrSettings.GetPtConvergenceMode());
-            const char* convergenceModeLabels[] = {"Real-time (1 spp)", "Reference (accumulate)"};
+            const char* convergenceModeLabels[] = {"Real-time (DLSS-RR)", "Reference (accumulate)"};
             if (ImGui::Combo(
                     "PT convergence",
                     &convergenceModeIndex,
@@ -1946,22 +1991,73 @@ void LightingPanel::Draw(
                     IM_ARRAYSIZE(convergenceModeLabels)))
             {
                 const auto mode = static_cast<PtConvergenceMode>(convergenceModeIndex);
-                ApplyRendererChange(
-                    editContext,
-                    scene,
-                    "PT convergence mode",
-                    [mode](Scene& target) {
-                        target.GetRenderer().GetDxrSettings().SetPtConvergenceMode(mode);
-                        target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
-                        target.MarkDirty();
-                    });
+                if (mode == PtConvergenceMode::RealTime && !ptRrSupported)
+                {
+                    // Combo can still be changed programmatically; keep Reference when RR is absent.
+                }
+                else
+                {
+                    ApplyRendererChange(
+                        editContext,
+                        scene,
+                        "PT convergence mode",
+                        [mode](Scene& target) {
+                            target.GetRenderer().GetDxrSettings().SetPtConvergenceMode(mode);
+                            target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                            target.MarkDirty();
+                        });
+                }
+            }
+            if (!rrConvergenceSelectable)
+            {
+                ImGui::EndDisabled();
+                ImGui::TextDisabled("    Real-time needs DLSS Ray Reconstruction on this GPU.");
             }
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
                     "Reference: progressive HDR accumulation while the camera and scene are static.\n"
                     "Resets on camera move, resize, light/scene edits, or setting changes.\n"
-                    "Real-time: 1 spp path trace denoised via DLSS Ray Reconstruction when DLSS is on.");
+                    "Real-time: 1 spp path trace denoised via DLSS Ray Reconstruction.");
+            }
+
+            int ptMaxBounces = dxrSettings.GetPtMaxBounces();
+            UndoableRendererSliderInt(
+                "PT max bounces",
+                &ptMaxBounces,
+                1,
+                16,
+                editContext,
+                [](Scene& target, int bounces) {
+                    target.GetRenderer().GetDxrSettings().SetPtMaxBounces(bounces);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+
+            bool ptRussianRoulette = dxrSettings.IsPtRussianRouletteEnabled();
+            UndoableRendererCheckbox(
+                "PT Russian roulette",
+                &ptRussianRoulette,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtRussianRouletteEnabled(enabled);
+                    target.MarkDirty();
+                });
+
+            bool ptFireflyClamp = dxrSettings.IsPtFireflyClampEnabled();
+            UndoableRendererCheckbox(
+                "PT firefly clamp",
+                &ptFireflyClamp,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtFireflyClampEnabled(enabled);
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Clamps rare ultra-bright path samples before denoise/accumulate.\n"
+                    "Slightly biased; turn off in Reference for ground truth.");
             }
 
             if (dxrSettings.IsPtReferenceConvergence())
@@ -1981,6 +2077,22 @@ void LightingPanel::Draw(
                     ImGui::TextDisabled("    Reference: accumulating...");
                 }
             }
+            else
+            {
+                if (screenSpaceEffects.PathTracerResolvedViaDlssThisFrame())
+                {
+                    ImGui::TextDisabled("    Real-time: DLSS-RR reconstructed this frame");
+                }
+                else if (ptRrSupported)
+                {
+                    ImGui::TextDisabled("    Real-time: awaiting DLSS-RR...");
+                }
+                const float pathTracerMs = FindGpuPassMilliseconds("Path tracer");
+                if (pathTracerMs >= 0.0f)
+                {
+                    ImGui::TextDisabled("    Path tracer GPU: %.3f ms", pathTracerMs);
+                }
+            }
         }
 
         bool debugTraceEnabled = dxrSettings.IsDebugTraceEnabled();
@@ -1996,6 +2108,12 @@ void LightingPanel::Draw(
                 }
                 target.MarkDirty();
             });
+
+        if (pathTracingActive)
+        {
+            ImGui::TextDisabled("Hybrid RT effects are handled by the path tracer.");
+            ImGui::BeginDisabled();
+        }
 
         bool reflectionsEnabled = dxrSettings.IsReflectionsEnabled();
         UndoableRendererCheckbox(
@@ -2223,6 +2341,11 @@ void LightingPanel::Draw(
                 target.MarkDirty();
             });
         if (rrActive)
+        {
+            ImGui::EndDisabled();
+        }
+
+        if (pathTracingActive)
         {
             ImGui::EndDisabled();
         }

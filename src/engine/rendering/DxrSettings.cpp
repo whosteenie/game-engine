@@ -114,11 +114,19 @@ void DxrSettings::SetGiStrength(const float strength)
     m_giStrength = std::clamp(strength, 0.0f, 2.0f);
 }
 
+void DxrSettings::SetPtMaxBounces(const int bounces)
+{
+    m_ptMaxBounces = std::clamp(bounces, 1, 16);
+}
+
 void DxrSettings::CopySettingsFrom(const DxrSettings& source)
 {
     m_enabled = source.m_enabled;
     m_renderingMode = source.m_renderingMode;
     m_ptConvergenceMode = source.m_ptConvergenceMode;
+    m_ptMaxBounces = source.m_ptMaxBounces;
+    m_ptRussianRoulette = source.m_ptRussianRoulette;
+    m_ptFireflyClamp = source.m_ptFireflyClamp;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;

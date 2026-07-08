@@ -1670,7 +1670,20 @@ namespace
         const glm::mat4 viewToViewPrev = mvState.prevView * glm::inverse(currView);
         const glm::vec3 translation(viewToViewPrev[3]);
         constexpr float kCutThresholdWorldUnits = 2.0f;
-        return glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits;
+        if (glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits)
+        {
+            return true;
+        }
+
+        // Orbit / pan rotates the view without large translation — reset RR history so specular
+        // reprojection does not smear stale reflection content.
+        const glm::mat3 rotation{
+            glm::vec3(viewToViewPrev[0]),
+            glm::vec3(viewToViewPrev[1]),
+            glm::vec3(viewToViewPrev[2])};
+        const float trace = rotation[0][0] + rotation[1][1] + rotation[2][2];
+        constexpr float kRotationTraceThreshold = 2.999f;
+        return trace < kRotationTraceThreshold;
     }
 }
 
