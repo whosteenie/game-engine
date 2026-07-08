@@ -493,6 +493,7 @@ add_executable(game-engine
     src/engine/rendering/Framebuffer.cpp
 
     src/engine/rendering/ScreenSpaceEffects.cpp
+    src/engine/rendering/ScreenSpaceEffectsApply.cpp
     src/engine/rendering/ScreenSpaceEffectsSettings.cpp
     src/engine/rendering/post/PostProcessDraw.cpp
     src/engine/rendering/post/DxrDebugBlitPass.cpp
@@ -502,6 +503,9 @@ add_executable(game-engine
     src/engine/rendering/post/ScreenSpaceGiPass.cpp
     src/engine/rendering/post/AntiAliasingPass.cpp
     src/engine/rendering/post/DlssResolvePass.cpp
+    src/engine/rendering/post/PathTracerDisplayPass.cpp
+    src/engine/rendering/post/ScreenCompositePass.cpp
+    src/engine/rendering/post/PostProcessDebugPass.cpp
 
     src/engine/rendering/DxrSettings.cpp
 

@@ -9,6 +9,7 @@
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessDraw.h"
 #include "engine/rendering/post/PostProcessTarget.h"
+#include "engine/rendering/post/PathTracerDisplayPass.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
@@ -22,22 +23,7 @@ class Camera;
 class EnvironmentMap;
 class Shader;
 
-// Inputs that must stay stable for progressive PT reference accumulation (P3).
-struct PathTracerHistoryKey
-{
-    glm::mat4 viewProjection{1.0f};
-    int width = 0;
-    int height = 0;
-    PtConvergenceMode convergenceMode = PtConvergenceMode::RealTime;
-    float maxTraceDistance = 100.0f;
-    glm::vec3 sunDirection{0.0f, -1.0f, 0.0f};
-    glm::vec3 sunColor{1.0f};
-    float sunIntensity = 0.0f;
-    float environmentIntensity = 1.0f;
-    std::size_t geometryObjectCount = 0;
-
-    bool operator==(const PathTracerHistoryKey& other) const;
-};
+// PathTracerHistoryKey lives in PathTracerDisplayPass.h (HK-C8).
 
 enum class TonemapMode
 {
@@ -470,20 +456,11 @@ private:
         const float clearColor[4],
         bool viewportLdr = false) const;
     void BindOutputTarget(const Framebuffer* outputTarget, int viewportWidth, int viewportHeight) const;
-    void CopySrvToInternalHdrTarget(
-        std::uintptr_t srv,
-        InternalTarget& target,
-        int width,
-        int height) const;
     void PreparePathTracerDlssHdrInput() const;
     void CopyPathTracerHdrToCompositeTarget(const float clearColor[4]) const;
     void CreateInternalDepthTarget(InternalDepthTarget& target, int width, int height);
     void DestroyInternalDepthTarget(InternalDepthTarget& target) const;
     void ResizeDlssDisplayDepthTarget(int viewportWidth, int viewportHeight);
-    bool BindPathTracerGridOverlayDepth(
-        int overlayWidth,
-        int overlayHeight,
-        std::uintptr_t& outDepthDsvCpuHandle) const;
     void DrawPathTracerGridOverlayOntoHdrTarget(
         const Camera& camera,
         InternalTarget& target,
@@ -510,6 +487,24 @@ private:
         std::uintptr_t hdrColorSrv,
         std::uintptr_t shadowFactorSrv) const;
     PostProcessContext BuildPostProcessContext() const;
+    PathTracerHdrCopyInputs BuildPathTracerHdrCopyInputs() const;
+
+    struct ApplyFrameState;
+    void InitApplyFrame(
+        ApplyFrameState& state,
+        const Camera& camera,
+        int viewportWidth,
+        int viewportHeight,
+        const DirectionalShadowSettings& shadowSettings,
+        const EnvironmentMap& environmentMap) const;
+    void RunApplyLightingStage(ApplyFrameState& state) const;
+    bool RunApplyDebugStage(ApplyFrameState& state) const;
+    void RunApplyPresentationStage(ApplyFrameState& state) const;
+    void FinalizeApplyFrame(ApplyFrameState& state) const;
+    void FillAmbientOcclusionInputs(ApplyFrameState& state) const;
+    void FillScreenSpaceReflectionInputs(ApplyFrameState& state) const;
+    void FillScreenSpaceGiInputs(ApplyFrameState& state) const;
+    void FillDlssResolveInputs(ApplyFrameState& state) const;
 
     GpuBuffer m_quadVb;
     mutable PostProcessDraw m_draw;
