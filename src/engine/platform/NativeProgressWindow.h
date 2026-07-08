@@ -7,6 +7,10 @@ class NativeProgressWindow
 public:
     static NativeProgressWindow& Instance();
 
+    // Create the native progress window thread early so the first Begin() does not stall the UI.
+    void WarmUp();
+    bool IsActive() const { return m_depth > 0; }
+
     void Begin(const std::string& title, const std::string& message);
     void SetMessage(const std::string& message);
     void SetProgress(float progress);

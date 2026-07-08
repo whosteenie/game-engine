@@ -130,7 +130,15 @@ bool ProjectChooser::OpenProjectAtPath(
         }
     }
 
-    NativeProgressWindow::Instance().Begin("Loading Project", "Opening project...");
+    NativeProgressWindow::Instance().WarmUp();
+    if (!NativeProgressWindow::Instance().IsActive())
+    {
+        NativeProgressWindow::Instance().Begin("Loading Project", "Opening project...");
+    }
+    else
+    {
+        NativeProgressWindow::Instance().SetMessage("Opening project...");
+    }
     NativeProgressWindow::Instance().SetProgress(0.02f);
     bool keepProgressOpenForFirstFrame = false;
 
@@ -302,6 +310,17 @@ bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
         m_errorMessage = "Project path is empty.";
         return false;
     }
+
+    NativeProgressWindow::Instance().WarmUp();
+    if (!NativeProgressWindow::Instance().IsActive())
+    {
+        NativeProgressWindow::Instance().Begin("Loading Project", "Waiting to start...");
+    }
+    else
+    {
+        NativeProgressWindow::Instance().SetMessage("Waiting to start...");
+    }
+    NativeProgressWindow::Instance().SetProgress(-1.0f);
 
     m_pendingProjectPath = projectFilePath;
     m_errorMessage.clear();

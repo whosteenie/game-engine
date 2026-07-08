@@ -301,6 +301,7 @@ Application::Application(int width, int height, const char* title)
 
         EditorSettings::EnsureAppDataDirectoryExists();
         EngineLog::EnsureLogDirectoryExists();
+        NativeProgressWindow::Instance().WarmUp();
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
         GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
         m_imguiLayer->InitPlatformBackend();
@@ -318,9 +319,11 @@ Application::Application(int width, int height, const char* title)
         glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
         PumpStartupFramesUntilDlssReady();
 
+        UpdatePendingProjectStartupProgress("Preparing editor...");
         m_mainMenuBar = std::make_unique<MainMenuBar>();
         glfwPollEvents();
         m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
+        UpdatePendingProjectStartupProgress("Preparing editor panels...");
         m_lightingPanel = std::make_unique<LightingPanel>();
         glfwPollEvents();
         m_performancePanel = std::make_unique<PerformancePanel>();
@@ -332,6 +335,7 @@ Application::Application(int width, int height, const char* title)
         m_gameViewportPanel = std::make_unique<GameViewportPanel>();
         m_editorDockSpace = std::make_unique<EditorDockSpace>();
         glfwPollEvents();
+        UpdatePendingProjectStartupProgress("Preparing editor viewports...");
         m_camera = std::make_unique<Camera>(
             glm::vec3(6.0f, 5.0f, 6.0f),
             -135.0f,
@@ -344,6 +348,8 @@ Application::Application(int width, int height, const char* title)
         m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
         m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
         m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
+
+        ProcessQueuedProjectOpenIfReady();
     }
     catch (...)
     {
@@ -600,6 +606,7 @@ void Application::PumpStartupFramesUntilDlssReady()
          ++frameIndex)
     {
         glfwPollEvents();
+        UpdatePendingProjectStartupProgress("Finishing graphics initialization...");
 
         m_imguiLayer->BeginFrame();
         m_projectChooser->Draw(
@@ -620,23 +627,26 @@ void Application::PumpStartupFramesUntilDlssReady()
     GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
 }
 
-void Application::Update(double deltaTime)
+void Application::UpdatePendingProjectStartupProgress(const char* message) const
 {
-    m_performancePanel->OnFrame(deltaTime);
-
-    glfwPollEvents();
-    InputDiagnostics::LogFrame(m_window, "after-poll");
-
-    if (GfxContext::Get().IsInitialized())
+    if (message == nullptr || m_projectChooser == nullptr || !m_projectChooser->HasPendingProjectOpen())
     {
-        std::string deviceRemovedReason;
-        if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
-        {
-            HandleFatalGpuDeviceLoss(HresultFormat::FatalDeviceRemovedMessage(deviceRemovedReason));
-            return;
-        }
+        return;
+    }
 
-        GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
+    NativeProgressWindow::Instance().SetMessage(message);
+    if (m_window != nullptr)
+    {
+        glfwPollEvents();
+    }
+}
+
+void Application::ProcessQueuedProjectOpenIfReady()
+{
+    if (m_projectChooser == nullptr || m_projectSession == nullptr || m_scene == nullptr
+        || m_editorSettings == nullptr || !m_projectChooser->HasPendingProjectOpen())
+    {
+        return;
     }
 
     std::string pendingProjectError;
@@ -659,6 +669,26 @@ void Application::Update(double deltaTime)
         }
 
         m_projectChooser->SetErrorMessage(pendingProjectError);
+    }
+}
+
+void Application::Update(double deltaTime)
+{
+    m_performancePanel->OnFrame(deltaTime);
+
+    glfwPollEvents();
+    InputDiagnostics::LogFrame(m_window, "after-poll");
+
+    if (GfxContext::Get().IsInitialized())
+    {
+        std::string deviceRemovedReason;
+        if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+        {
+            HandleFatalGpuDeviceLoss(HresultFormat::FatalDeviceRemovedMessage(deviceRemovedReason));
+            return;
+        }
+
+        GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
     }
 
     const bool escapePressed = m_input->WasKeyPressed(GLFW_KEY_ESCAPE);
@@ -696,6 +726,8 @@ void Application::Update(double deltaTime)
         [this]() { ResetEditorLayoutLoadState(); },
         m_undoStack,
         m_editorClipboard);
+
+    ProcessQueuedProjectOpenIfReady();
 
     InputDiagnostics::LogFrame(m_window, "after-ui-build");
 

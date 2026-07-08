@@ -10,6 +10,8 @@ NativeProgressWindow& NativeProgressWindow::Instance()
 
 NativeProgressWindow::~NativeProgressWindow() = default;
 
+void NativeProgressWindow::WarmUp() {}
+bool NativeProgressWindow::IsActive() const { return m_depth > 0; }
 void NativeProgressWindow::Begin(const std::string&, const std::string&) {}
 void NativeProgressWindow::SetMessage(const std::string&) {}
 void NativeProgressWindow::SetProgress(float) {}
@@ -317,6 +319,11 @@ namespace
             return instance;
         }
 
+        void WarmUp()
+        {
+            EnsureThreadRunning();
+        }
+
         void Begin(const std::string& title, const std::string& message)
         {
             EnsureThreadRunning();
@@ -495,6 +502,11 @@ NativeProgressWindow& NativeProgressWindow::Instance()
 NativeProgressWindow::~NativeProgressWindow()
 {
     Shutdown();
+}
+
+void NativeProgressWindow::WarmUp()
+{
+    Win32ProgressWindow::Get().WarmUp();
 }
 
 void NativeProgressWindow::Begin(const std::string& title, const std::string& message)

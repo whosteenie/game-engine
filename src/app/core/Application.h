@@ -57,6 +57,8 @@ private:
     void EnsureEditorLayoutLoaded();
     void HandleFatalGpuDeviceLoss(const std::string& reason);
     void PumpStartupFramesUntilDlssReady();
+    void UpdatePendingProjectStartupProgress(const char* message) const;
+    void ProcessQueuedProjectOpenIfReady();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;

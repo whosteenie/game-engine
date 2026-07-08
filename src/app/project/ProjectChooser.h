@@ -60,6 +60,7 @@ public:
         std::string& outError);
 
     bool QueueProjectOpen(const std::string& projectFilePath);
+    bool HasPendingProjectOpen() const { return !m_pendingProjectPath.empty(); }
 
     bool IsPresentingProjectLoad() const { return m_projectLoadInProgress; }
     void NotifyEditorCompositeReady();
