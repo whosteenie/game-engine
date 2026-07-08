@@ -2541,19 +2541,26 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         DrawFullscreenToTarget(*m_rrGuidesShader, *pass.first, m_width, m_height, clear);
     }
 
-    // RR4 spec hit-distance guide (mode 3): hybrid reflections only. PT output .a is not stable
-    // enough for RR (bounce RNG) and was a static-camera shimmer source.
-    if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
+    // RR4 spec hit-distance guide (mode 3). Hybrid: sampled from the reflection trace (quality-scaled
+    // UV). Path-traced real-time: sampled from the STABLE deterministic primary spec hit distance in
+    // the PT output .a at full render res (devdoc/dxr-pt-rr4-spec-hitdist.md) — only reflective pixels
+    // carry a finite distance; rough/diffuse report max trace distance (no specular reprojection).
+    const bool ptSpecGuide = m_pathTracerActive
+        && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime
+        && m_dxrPathTracerOutputSrv != 0;
+    if ((m_dxrReflectionSrv != 0 || ptSpecGuide) && m_rrSpecularHitDistanceTarget.resource != nullptr)
     {
+        const std::uintptr_t hitDistSrv = ptSpecGuide ? m_dxrPathTracerOutputSrv : m_dxrReflectionSrv;
         m_rrGuidesShader->Use(false);
         m_rrGuidesShader->SetInt("uGuideMode", 3);
-        m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", 0);
-        m_rrGuidesShader->SetFloat("uReflectionUvScaleX", m_dxrReflectionUvScaleX);
-        m_rrGuidesShader->SetFloat("uReflectionUvScaleY", m_dxrReflectionUvScaleY);
+        m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", ptSpecGuide ? 1 : 0);
+        // PT output is full render res (uv scale 1); the hybrid reflection buffer may be quality-scaled.
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleX", ptSpecGuide ? 1.0f : m_dxrReflectionUvScaleX);
+        m_rrGuidesShader->SetFloat("uReflectionUvScaleY", ptSpecGuide ? 1.0f : m_dxrReflectionUvScaleY);
         m_rrGuidesShader->BindTextureSlot(0, normalSrv);      // unused in mode 3, keep slots bound
         m_rrGuidesShader->BindTextureSlot(1, material0Srv);
         m_rrGuidesShader->BindTextureSlot(2, material1Srv);
-        m_rrGuidesShader->BindTextureSlot(3, m_dxrReflectionSrv);
+        m_rrGuidesShader->BindTextureSlot(3, hitDistSrv);
         DrawFullscreenToTarget(
             *m_rrGuidesShader, const_cast<InternalTarget&>(m_rrSpecularHitDistanceTarget),
             m_width, m_height, clear);
@@ -4684,9 +4691,14 @@ void ScreenSpaceEffects::Apply(
                 in.specularAlbedoState = m_rrSpecularAlbedoTarget.resourceState;
                 in.normalRoughness = m_rrNormalRoughnessTarget.resource;
                 in.normalRoughnessState = m_rrNormalRoughnessTarget.resourceState;
-                // RR4 spec hit-distance: hybrid reflections only. PT .a wobbles every frame (bounce
-                // RNG) and destabilizes RR even on a static camera.
-                if (m_dxrReflectionSrv != 0 && m_rrSpecularHitDistanceTarget.resource != nullptr)
+                // RR4 spec hit-distance guide. Hybrid: from the reflection trace. Path-traced real-time:
+                // from the STABLE deterministic primary spec hit distance (devdoc/dxr-pt-rr4-spec-hitdist.md)
+                // — reprojects reflections at their virtual depth without touching primary geometry, so
+                // it cannot reintroduce the reverted P4 all-geometry shimmer. GenerateRrGuides populated
+                // m_rrSpecularHitDistanceTarget from the matching source above.
+                const bool ptSpecGuideActive = pathTracerRealTimeRr && m_dxrPathTracerOutputSrv != 0;
+                if ((m_dxrReflectionSrv != 0 || ptSpecGuideActive)
+                    && m_rrSpecularHitDistanceTarget.resource != nullptr)
                 {
                     in.specularHitDistance = m_rrSpecularHitDistanceTarget.resource;
                     in.specularHitDistanceState = m_rrSpecularHitDistanceTarget.resourceState;

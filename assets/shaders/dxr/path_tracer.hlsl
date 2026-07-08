@@ -21,6 +21,9 @@ static const uint kPayloadFlagVisibility = 2u;
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
 static const float kMirrorRoughnessCutoff = 0.03; // match reflections.hlsl mirror path
+// RR4 stable spec hit-distance guide (devdoc/dxr-pt-rr4-spec-hitdist.md): only reflective-enough
+// primary surfaces emit a finite hit distance; rougher/diffuse surfaces report "no reflection".
+static const float kReflectionGuideRoughnessCutoff = 0.6; // match hybrid g_RoughnessCutoff default
 
 struct Payload
 {
@@ -251,8 +254,6 @@ void PathTracerRayGen()
     float primaryDepth = 1.0;
     float2 primaryMotion = 0.0.xx;
     float specHitDistGuide = g_MaxTraceDistance;
-    bool specGuideCaptured = false;
-    bool launchSpecularFromPrimary = false;
     // Roughness of the surface that launched the current ray — drives env mip on miss, matching
     // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
     // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
@@ -267,20 +268,8 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
-            if (bounce == 1u && launchSpecularFromPrimary)
-            {
-                specHitDistGuide = g_MaxTraceDistance;
-                specGuideCaptured = true;
-            }
-
             radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
             break;
-        }
-
-        if (bounce == 1u && launchSpecularFromPrimary)
-        {
-            specHitDistGuide = payload.hitDistance;
-            specGuideCaptured = true;
         }
 
         const MaterialEntry material = g_Materials[payload.instanceId];
@@ -308,6 +297,26 @@ void PathTracerRayGen()
             const float4 prevClip = mul(g_PrevViewProj, float4(hitPos, 1.0));
             primaryMotion = ComputeMotionNdc(currClip, prevClip);
             primaryDepth = saturate(currClip.z / max(currClip.w, 1e-6));
+
+            // Stable RR4 spec hit-distance guide (devdoc/dxr-pt-rr4-spec-hitdist.md): trace ONE
+            // DETERMINISTIC mirror ray from the primary hit (no RNG) so DLSS-RR can reproject
+            // reflections at their virtual depth without wobble. Reflective surfaces only; rougher /
+            // diffuse / miss report g_MaxTraceDistance ("no specular reprojection"). Independent of
+            // the stochastic radiance bounce chosen below.
+            if (material.roughness < kReflectionGuideRoughnessCutoff)
+            {
+                RayDesc guideRay;
+                guideRay.Origin = shadowOrigin;
+                guideRay.Direction = normalize(reflect(ray.Direction, hitNormal));
+                guideRay.TMin = 0.001;
+                guideRay.TMax = g_MaxTraceDistance;
+
+                Payload guidePayload;
+                ResetPayload(guidePayload);
+                TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
+                specHitDistGuide =
+                    (guidePayload.hit != 0) ? guidePayload.hitDistance : g_MaxTraceDistance;
+            }
         }
 
         if (bounce >= maxBounces)
@@ -332,11 +341,6 @@ void PathTracerRayGen()
             nextDir,
             isSpecular,
             throughput);
-
-        if (bounce == 0u)
-        {
-            launchSpecularFromPrimary = isSpecular;
-        }
 
         missEnvRoughness = material.roughness;
 
