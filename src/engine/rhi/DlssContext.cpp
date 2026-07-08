@@ -10,7 +10,7 @@
 
 #include <sl.h>
 #include <sl_dlss.h>
-#include <sl_dlss_d.h> // DLSS Ray Reconstruction (kFeatureDLSS_RR), devdoc/dxr-dlss-rr.md
+#include <sl_dlss_d.h> // DLSS Ray Reconstruction (kFeatureDLSS_RR), devdoc/dxr/dlss-rr.md
 
 #include <cstring>
 #include <algorithm>
@@ -273,7 +273,7 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
                 std::string("DLSS Super Resolution unavailable (") + ResultToString(supportResult) + ")");
         }
 
-        // Ray Reconstruction probe (devdoc/dxr-dlss-rr.md). Independent of SR support.
+        // Ray Reconstruction probe (devdoc/dxr/dlss-rr.md). Independent of SR support.
         const sl::Result rrSupportResult = g_slIsFeatureSupported(sl::kFeatureDLSS_RR, adapterInfo);
         if (rrSupportResult == sl::Result::eOk)
         {
@@ -453,7 +453,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent);
     if (inputs.useRayReconstruction)
     {
-        // RR material guides (devdoc/dxr-dlss-rr.md). normalRoughness is PACKED (DLSSDNormalRoughnessMode::ePacked).
+        // RR material guides (devdoc/dxr/dlss-rr.md). normalRoughness is PACKED (DLSSDNormalRoughnessMode::ePacked).
         diffuseAlbedo = MakeTex(
             inputs.diffuseAlbedo, inputs.diffuseAlbedoState, inputs.renderWidth, inputs.renderHeight);
         specularAlbedo = MakeTex(

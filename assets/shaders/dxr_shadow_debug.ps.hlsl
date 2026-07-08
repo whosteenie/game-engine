@@ -1,4 +1,4 @@
-// DXR Phase D8 shadow debug view (devdoc/dxr-shadows.md).
+// DXR Phase D8 shadow debug view (devdoc/dxr/shadows.md).
 // Raw mode: the 1-spp packed penumbra buffer (R16F). Lit pixels pack NRD_FP16_MAX (65504);
 //   occluded pixels pack a penumbra radius in [0; 32768]. Map to a binary lit/shadowed mask so
 //   the aliased 1-spp shadow edges are visible (this is the noisy signal SIGMA consumes).

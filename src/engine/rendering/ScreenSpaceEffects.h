@@ -40,7 +40,7 @@ enum class AntiAliasingMode
     MSAA = 3,
     SMAA = 4,
     SSAA = 5,
-    // NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md). Both own the resolve stage like
+    // NVIDIA DLSS via Streamline (devdoc/rendering/dlss-super-resolution.md). Both own the resolve stage like
     // TAA. DLAA = DLSS at native res (pure AA); DLSS = super-resolution (renders below display res).
     DLAA = 6,
     DLSS = 7,
@@ -97,7 +97,7 @@ public:
         int viewportWidth,
         int viewportHeight,
         float maxTraceDistance) const;
-    // Phase P0 path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
+    // Phase P0 path tracing (devdoc/dxr/path-tracing.md). When path tracing is the active rendering
     // mode, blit the PT primary-hit output over the final image (reusing the primary-debug shader).
     // Independent of the debug-view combo — driven by SetDxrPathTracerDisplay.
     void SetDxrPathTracerDisplay(
@@ -338,7 +338,7 @@ public:
     DlssPreset GetDlssPreset() const;
     void SetDlssPreset(DlssPreset preset);
 
-    // DLSS Ray Reconstruction (devdoc/dxr-dlss-rr.md). When active it replaces NRD + the SR model.
+    // DLSS Ray Reconstruction (devdoc/dxr/dlss-rr.md). When active it replaces NRD + the SR model.
     bool GetRayReconstruction() const;
     void SetRayReconstruction(bool enabled);
     // True when RR will own the resolve this frame: a DLSS mode is selected, the RR toggle is on,
@@ -404,7 +404,7 @@ public:
     int GetRenderHeight() const;
 
     // log2(render/display) when DLAA/DLSS is active, else 0. Add to the renderer's user mip bias
-    // before GfxContext::SetMaterialTextureMipBias (see devdoc/dlss-super-resolution.md §Mip bias).
+    // before GfxContext::SetMaterialTextureMipBias (see devdoc/rendering/dlss-super-resolution.md §Mip bias).
     float GetAutoMaterialMipBias() const;
 
     float GetSsaoBlurDepthThreshold() const;

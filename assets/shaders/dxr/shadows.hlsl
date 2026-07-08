@@ -1,5 +1,5 @@
 // DXR Phase D8 — ray-traced soft directional (sun) shadows + NRD SIGMA_SHADOW guides
-// (see devdoc/dxr-shadows.md). Runs at FULL render resolution (1 spp; SIGMA is built for 1 spp).
+// (see devdoc/dxr/shadows.md). Runs at FULL render resolution (1 spp; SIGMA is built for 1 spp).
 // u0: R16F packed penumbra  — SIGMA_FrontEnd_PackPenumbra(distanceToOccluder, tanAngularRadius);
 //     miss (no occluder = lit) packs NRD_FP16_MAX.
 // u1: R32F linear viewZ      — SIGMA guide (sky = large value beyond the denoising range)

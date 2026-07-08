@@ -24,7 +24,7 @@ namespace nrd
 struct Instance;
 }
 
-// Phase D8 — NVIDIA NRD SIGMA_SHADOW manual D3D12 backend, no NRI (devdoc/dxr-shadows.md).
+// Phase D8 — NVIDIA NRD SIGMA_SHADOW manual D3D12 backend, no NRI (devdoc/dxr/shadows.md).
 // A SEPARATE nrd::Instance from the reflections denoiser: SIGMA runs at full render resolution
 // while RELAX_SPECULAR runs at quality-scaled resolution, and CommonSettings::resourceSize is
 // per-instance. Copy-adapted from NrdDenoiser; only the denoiser enum, settings struct, and

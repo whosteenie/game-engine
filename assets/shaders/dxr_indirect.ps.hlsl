@@ -1,4 +1,4 @@
-// DXR Phase D6 — RT specular composite (devdoc/dxr-groundwork.md Phase D6).
+// DXR Phase D6 — RT specular composite (devdoc/dxr/groundwork.md Phase D6).
 // Standalone RT pass, mutually exclusive with ssr_indirect.ps.hlsl, no SSR buffer reads.
 // ADDITIVE: RT1 (indirect) is diffuse-only here — the PBR raster omits spec IBL when a reflection
 // composite runs (uOmitSpecularIbl) — so this pass ADDS the specular reflection rather than

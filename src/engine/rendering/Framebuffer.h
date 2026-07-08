@@ -8,7 +8,7 @@ enum class FramebufferColorMode
     SplitDirectIndirect,
 };
 
-// Split-direct/indirect MRT layout (see devdoc/dxr-reflections.md binding table).
+// Split-direct/indirect MRT layout (see devdoc/dxr/reflections.md binding table).
 enum class GBufferSlot : int
 {
     DirectLighting = 0,

@@ -545,7 +545,7 @@ void SceneRenderer::RecordDxrPass(
     const RenderDebugMode debugMode =
         usePostProcess && m_screenSpaceEffects != nullptr ? m_screenSpaceEffects->GetDebugMode()
                                                           : RenderDebugMode::None;
-    // DLSS Ray Reconstruction (devdoc/dxr-dlss-rr.md, RR2): when RR owns the resolve it replaces
+    // DLSS Ray Reconstruction (devdoc/dxr/dlss-rr.md, RR2): when RR owns the resolve it replaces
     // the NRD denoisers — force NRD OFF for the RT signals it reconstructs (reflections + GI) so
     // the RAW noisy radiance flows into the HDR color. (RT shadows stay on SIGMA for now — open
     // decision #3.) RR3 wires the actual RR evaluate; until then RR-on shows the noisy signal.
@@ -590,7 +590,7 @@ void SceneRenderer::RecordDxrPass(
         m_dxrSettings.GetMaxTraceDistance());
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled end");
 
-    // Phase P1 — path tracing (devdoc/dxr-path-tracing.md). When path tracing is the active rendering
+    // Phase P1 — path tracing (devdoc/dxr/path-tracing.md). When path tracing is the active rendering
     // mode, trace one camera ray per pixel and display direct-lit HDR radiance over the hybrid image.
     const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
     if (m_dxrPathTracerDispatch == nullptr)
@@ -728,7 +728,7 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle() : 0);
     }
 
-    // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
+    // Phase D9 — RT diffuse GI trace (devdoc/dxr/diffuse-gi.md). Runs before reflections so
     // reflection hits know GI is enabled; bounce lighting is traced world-space at each hit.
     const bool giDebugViewActive = IsRtGiDebugMode(debugMode);
     const bool giWanted =
@@ -837,7 +837,7 @@ void SceneRenderer::RecordDxrPass(
         DxrBreadcrumb("render: gi DispatchIfEnabled end");
     }
 
-    // Phase D4 — reflection trace (devdoc/dxr-reflections.md). Requires the scene MRTs, so
+    // Phase D4 — reflection trace (devdoc/dxr/reflections.md). Requires the scene MRTs, so
     // only runs on the post-process path.
     const bool reflectionDebugViewActive = IsRtReflectionDebugMode(debugMode);
     const bool reflectionsWanted =
@@ -956,7 +956,7 @@ void SceneRenderer::RecordDxrPass(
         DxrBreadcrumb("render: reflections DispatchIfEnabled end");
     }
 
-    // Phase D8 — RT sun shadow trace (devdoc/dxr-shadows.md). Full render resolution; needs the
+    // Phase D8 — RT sun shadow trace (devdoc/dxr/shadows.md). Full render resolution; needs the
     // scene MRTs (depth, RT2 normal, RT5 roughness, RT4 velocity) so only runs on post-process.
     const bool shadowDebugViewActive = IsRtShadowDebugMode(debugMode);
     const bool shadowsWanted =

@@ -1,4 +1,4 @@
-// DXR Phase D9 — RT diffuse GI composite (devdoc/dxr-diffuse-gi.md).
+// DXR Phase D9 — RT diffuse GI composite (devdoc/dxr/diffuse-gi.md).
 // REPLACES the SH diffuse ambient in RT1 with one-bounce ray-traced diffuse GI. The PBR raster
 // omits the SH diffuse ambient from RT1 when GI is active (uOmitDiffuseIbl), so this pass supplies
 // the diffuse indirect: the cosine-hemisphere trace already integrates the sky (miss -> env) PLUS

@@ -151,7 +151,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     // Path-tracer-only: g_RoughnessCutoff > 0.5 => pixel-center primary rays (real-time + DLSS).
     constants.roughnessCutoff = frameInputs.centerPrimaryRays ? 1.0f : 0.0f;
     // Path-tracer-only: g_GiStrength / _PadUnjitteredViewProj.x repurposed for ambient v2
-    // (devdoc/dxr-pt-crevice-darkening.md). g_SunAngularTanRadius = soft sun disk (devdoc/dxr-pt-soft-sun.md).
+    // (devdoc/dxr/pt/crevice-darkening.md). g_SunAngularTanRadius = soft sun disk (devdoc/dxr/pt/soft-sun.md).
     constants.giStrength = std::clamp(ptAmbientStrength, 0.0f, 2.0f);
     constants.paddingUnjitteredViewProj[0] =
         static_cast<float>(std::clamp(ptAmbientAoRayCount, 0, 8));

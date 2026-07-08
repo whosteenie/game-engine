@@ -1,4 +1,4 @@
-// Phase P3 path-tracer reference accumulation (devdoc/dxr-path-tracing.md).
+// Phase P3 path-tracer reference accumulation (devdoc/dxr/path-tracing.md).
 // Adds the current frame's HDR radiance into a running sum (RGBA32F). Reset on any history change.
 
 Texture2D<float4> uCurrentFrame : register(t0);

@@ -59,7 +59,7 @@ public:
         const DxrRootSignature::PrimaryDispatchConstants& constants,
         std::string& outError);
 
-    // Phase D4 reflections (devdoc/dxr-reflections.md). SRV CPU handles must live in the
+    // Phase D4 reflections (devdoc/dxr/reflections.md). SRV CPU handles must live in the
     // shader-visible SRV heap (same contract as depthSrvCpuHandle above).
     struct ReflectionDispatchInputs
     {
@@ -80,7 +80,7 @@ public:
         std::uintptr_t giDenoisedSrvCpuHandle = 0; // RELAX_DIFFUSE for screen-space hit lookup (t13)
     };
 
-    // Phase D5 (devdoc/dxr-nrd-integration.md): everything the NRD backend needs to denoise
+    // Phase D5 (devdoc/dxr/nrd-integration.md): everything the NRD backend needs to denoise
     // this frame's reflection trace. States are D3D12_RESOURCE_STATES of each resource as
     // left by DispatchReflections; the denoiser transitions internally and reports back.
     struct ReflectionNrdResources
@@ -116,7 +116,7 @@ public:
         const DxrRootSignature::ReflectionDispatchConstants& constants,
         std::string& outError);
 
-    // Phase P1 path tracer (devdoc/dxr-path-tracing.md). Reuses the reflection global root
+    // Phase P1 path tracer (devdoc/dxr/path-tracing.md). Reuses the reflection global root
     // signature bindings but writes HDR radiance to the primary-debug output textures (u0/u1).
     bool DispatchPathTracer(
         ID3D12GraphicsCommandList4* commandList,
@@ -129,7 +129,7 @@ public:
         const DxrRootSignature::ReflectionDispatchConstants& constants,
         std::string& outError);
 
-    // Phase D8 shadows (devdoc/dxr-shadows.md). SRV CPU handles must live in the shader-visible
+    // Phase D8 shadows (devdoc/dxr/shadows.md). SRV CPU handles must live in the shader-visible
     // SRV heap (same contract as the reflection inputs).
     struct ShadowDispatchInputs
     {
@@ -180,7 +180,7 @@ public:
         const DxrRootSignature::ShadowDispatchConstants& constants,
         std::string& outError);
 
-    // Phase D9 diffuse GI (devdoc/dxr-diffuse-gi.md). Reuses the reflection inputs/root signature
+    // Phase D9 diffuse GI (devdoc/dxr/diffuse-gi.md). Reuses the reflection inputs/root signature
     // and the ReflectionNrdResources layout (RELAX_DIFFUSE denoiser, separate instance).
     ReflectionNrdResources GetGiNrdResources();
     std::uintptr_t GetGiOutputSrvCpuHandle() const { return m_giOutputSrvCpuHandle; }

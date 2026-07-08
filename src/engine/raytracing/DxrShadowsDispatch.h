@@ -12,7 +12,7 @@ class Camera;
 class DxrAccelerationStructures;
 
 // Phase D8 — RT soft directional (sun) shadow trace + NRD SIGMA_SHADOW denoise
-// (devdoc/dxr-shadows.md). Owns the shadows RTPSO, SBT, full-res penumbra output, and a
+// (devdoc/dxr/shadows.md). Owns the shadows RTPSO, SBT, full-res penumbra output, and a
 // dedicated SIGMA denoiser instance (separate from the reflections RELAX instance).
 class DxrShadowsDispatch : public DxrDispatchBase
 {

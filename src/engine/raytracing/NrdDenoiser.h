@@ -25,7 +25,7 @@ struct Instance;
 }
 
 // Phase D5 — NVIDIA NRD (RELAX_SPECULAR / RELAX_DIFFUSE) manual D3D12 backend, no NRI
-// (devdoc/dxr-nrd-integration.md). NRD is API-agnostic: it hands us compute-shader DXIL,
+// (devdoc/dxr/nrd-integration.md). NRD is API-agnostic: it hands us compute-shader DXIL,
 // resource pool descriptions, and per-frame dispatch lists; we own PSOs, pool textures,
 // barriers, and descriptor binding. Written against NRD v4.17 (pinned in CMakeLists.txt).
 //

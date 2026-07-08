@@ -1985,7 +1985,7 @@ void ScreenSpaceEffects::GenerateRrGuides() const
 
     // RR4 spec hit-distance guide (mode 3). Hybrid: sampled from the reflection trace (quality-scaled
     // UV). Path-traced real-time: sampled from the STABLE deterministic primary spec hit distance in
-    // the PT output .a at full render res (devdoc/dxr-pt-rr4-spec-hitdist.md) — only reflective pixels
+    // the PT output .a at full render res (devdoc/dxr/pt/rr4-spec-hitdist.md) — only reflective pixels
     // carry a finite distance; rough/diffuse report max trace distance (no specular reprojection).
     const bool ptSpecGuide = m_pathTracerActive
         && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime

@@ -1,5 +1,5 @@
 // DXR Phase D4/D5 — specular reflection trace + NRD guide buffers
-// (see devdoc/dxr-reflections.md and devdoc/dxr-nrd-integration.md).
+// (see devdoc/dxr/reflections.md and devdoc/dxr/nrd-integration.md).
 // u0: RGBA16F radiance (rgb) + HIT DISTANCE (a) — RELAX_FrontEnd_PackRadianceAndHitDist
 //     convention (raw world units; miss = maxTraceDistance).
 // u1: R32F linear viewZ (sky = large value beyond the denoising range)

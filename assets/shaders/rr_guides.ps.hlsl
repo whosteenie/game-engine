@@ -1,4 +1,4 @@
-// DLSS Ray Reconstruction guide generation (devdoc/dxr-dlss-rr.md, Phases RR1/RR4).
+// DLSS Ray Reconstruction guide generation (devdoc/dxr/dlss-rr.md, Phases RR1/RR4).
 // Produces the material guides RR consumes, at render (internal) resolution, from the G-buffer.
 // One shader, selected by uGuideMode; the renderer draws it once per guide target.
 //   0 = diffuse albedo   (SL kBufferTypeAlbedo)            = albedo * (1 - metallic)
@@ -56,7 +56,7 @@ float4 main(PSInput input) : SV_Target
     {
         // Specular hit distance: raw ray length in world units. Hybrid reflections store it in
         // radiance.a (quality-scaled UV). Path-traced real-time uses the primary-hit distance in
-        // the PT output alpha at full render resolution (devdoc/dxr-path-tracing.md P4).
+        // the PT output alpha at full render resolution (devdoc/dxr/path-tracing.md P4).
         float hitDistance;
         if (uUsePathTracerHitDistance != 0)
         {

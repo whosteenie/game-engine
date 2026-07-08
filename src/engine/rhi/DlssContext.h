@@ -71,7 +71,7 @@ struct DlssFrameInputs
     float preExposure = 1.0f;
     float sharpness = 0.0f; // [0,1]; 0 disables NGX sharpening (deprecated in SL but still honored)
 
-    // Ray Reconstruction (devdoc/dxr-dlss-rr.md). When true, Evaluate() runs kFeatureDLSS_RR
+    // Ray Reconstruction (devdoc/dxr/dlss-rr.md). When true, Evaluate() runs kFeatureDLSS_RR
     // instead of Super Resolution: it denoises the raw RT signal in colorInput using the guides
     // below (which MUST be non-null), then upscales/AAs — replacing NRD + the SR model in one pass.
     bool useRayReconstruction = false;
@@ -89,7 +89,7 @@ struct DlssFrameInputs
     float cameraViewToWorld[16] = {};
 };
 
-// NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md).
+// NVIDIA DLSS via Streamline (devdoc/rendering/dlss-super-resolution.md).
 //
 // Phase S0 scope: dynamically load sl.interposer.dll, initialize Streamline, bind our D3D12 device,
 // and probe DLSS support for the active adapter. Nothing here touches the render pipeline yet —
@@ -117,7 +117,7 @@ public:
     bool IsReady() const { return m_ready.load(std::memory_order_acquire); }
     bool IsRuntimeInitialized() const { return m_initialized.load(std::memory_order_acquire); }
     bool IsDlssSupported() const { return m_supported.load(std::memory_order_acquire); }
-    // DLSS Ray Reconstruction (kFeatureDLSS_RR) support on this adapter (devdoc/dxr-dlss-rr.md).
+    // DLSS Ray Reconstruction (kFeatureDLSS_RR) support on this adapter (devdoc/dxr/dlss-rr.md).
     // Probed alongside Super Resolution; RR consumers gate on this in addition to IsReady().
     bool IsRrSupported() const { return m_rrSupported.load(std::memory_order_acquire); }
 

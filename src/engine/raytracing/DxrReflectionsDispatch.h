@@ -12,7 +12,7 @@
 class Camera;
 class DxrAccelerationStructures;
 
-// Phase D4 — RT specular reflection trace (devdoc/dxr-reflections.md).
+// Phase D4 — RT specular reflection trace (devdoc/dxr/reflections.md).
 // Owns the reflections RTPSO, SBT, and quality-scaled RGBA16F radiance+confidence output.
 class DxrReflectionsDispatch : public DxrDispatchBase
 {

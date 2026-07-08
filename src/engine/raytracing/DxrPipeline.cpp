@@ -750,7 +750,7 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
     return true;
 }
 
-// Phase P0/P1 path-tracer RTPSO (devdoc/dxr-path-tracing.md). P1 reuses the reflection global
+// Phase P0/P1 path-tracer RTPSO (devdoc/dxr/path-tracing.md). P1 reuses the reflection global
 // root signature (material table + bindless + env cube) and MaxTraceRecursionDepth = 2 for shadow
 // rays from the closest-hit shader.
 bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
@@ -941,7 +941,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     return true;
 }
 
-// Phase D4 reflections RTPSO (see devdoc/dxr-reflections.md). Structure mirrors the
+// Phase D4 reflections RTPSO (see devdoc/dxr/reflections.md). Structure mirrors the
 // primary-debug pipeline; only the library, exports, and root signatures differ.
 bool DxrPipeline::CreateReflectionsPipeline(std::string& outError)
 {
@@ -1133,7 +1133,7 @@ bool DxrPipeline::CreateReflectionsPipeline(std::string& outError)
     return true;
 }
 
-// Phase D8 shadows RTPSO (see devdoc/dxr-shadows.md). Copy of CreateReflectionsPipeline;
+// Phase D8 shadows RTPSO (see devdoc/dxr/shadows.md). Copy of CreateReflectionsPipeline;
 // only the library, exports, root signatures, and payload size (16 bytes) differ.
 bool DxrPipeline::CreateShadowsPipeline(std::string& outError)
 {
@@ -1323,7 +1323,7 @@ bool DxrPipeline::CreateShadowsPipeline(std::string& outError)
     return true;
 }
 
-// Phase D9 diffuse-GI RTPSO (see devdoc/dxr-diffuse-gi.md). Reuses the REFLECTION global + local
+// Phase D9 diffuse-GI RTPSO (see devdoc/dxr/diffuse-gi.md). Reuses the REFLECTION global + local
 // root signatures wholesale (same SRV inputs; GI just doesn't reference the GGX-specific ones);
 // only the DXIL library and exports differ. Payload size 32 (matches the reflections config).
 bool DxrPipeline::CreateGiPipeline(std::string& outError)

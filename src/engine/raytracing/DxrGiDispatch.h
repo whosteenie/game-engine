@@ -13,7 +13,7 @@ class Camera;
 class DxrAccelerationStructures;
 
 // Phase D9 — one-bounce RT diffuse GI trace + NRD RELAX_DIFFUSE denoise
-// (devdoc/dxr-diffuse-gi.md). Owns the GI RTPSO, SBT, quality-scaled RGBA16F radiance+hitDist
+// (devdoc/dxr/diffuse-gi.md). Owns the GI RTPSO, SBT, quality-scaled RGBA16F radiance+hitDist
 // output, and a dedicated RELAX_DIFFUSE denoiser instance (SEPARATE from the reflections RELAX
 // instance — the two guides/history live in independent texture sets). Structurally a copy of
 // DxrReflectionsDispatch: same inputs, same reflection global root signature + constants struct.

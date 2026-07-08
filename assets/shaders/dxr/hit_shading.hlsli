@@ -1,4 +1,4 @@
-// DXR shared hit-shading core (Phase D9, devdoc/dxr-diffuse-gi.md).
+// DXR shared hit-shading core (Phase D9, devdoc/dxr/diffuse-gi.md).
 // Self-contained shared portion for the diffuse-GI trace: the same analytic material shading the
 // reflection closest-hit uses (material table + bindless albedo + sun N·L + SH ambient + emissive),
 // plus the geometry accessors, RNG, and environment sampling both raygens share.

@@ -11,7 +11,7 @@
 class Camera;
 class DxrAccelerationStructures;
 
-// Phase P0/P1/P2 — unified path tracer (devdoc/dxr-path-tracing.md).
+// Phase P0/P1/P2 — unified path tracer (devdoc/dxr/path-tracing.md).
 //
 // P2: megakernel integrator with multi-bounce BRDF sampling, sun NEE, Russian roulette, and
 // firefly clamp. Reuses the reflection root signature + primary output textures.

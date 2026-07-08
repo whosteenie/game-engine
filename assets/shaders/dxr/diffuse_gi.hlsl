@@ -1,5 +1,5 @@
 // DXR Phase D9 — one-bounce diffuse GI trace + NRD RELAX_DIFFUSE guides
-// (see devdoc/dxr-diffuse-gi.md). Cosine-weighted hemisphere rays from every G-buffer pixel,
+// (see devdoc/dxr/diffuse-gi.md). Cosine-weighted hemisphere rays from every G-buffer pixel,
 // shaded at the hit with the SAME analytic material shading the reflection trace uses
 // (hit_shading.hlsli), accumulated Karis-weighted, denoised by RELAX_DIFFUSE, then added into
 // RT1 by dxr_gi_inject.ps.hlsl.

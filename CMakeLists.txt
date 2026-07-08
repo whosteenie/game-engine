@@ -13,9 +13,9 @@ if(MSVC)
     add_compile_options(/FS)
 endif()
 
-option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr-shader-infrastructure.md)" OFF)
+option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr/shader-infrastructure.md)" OFF)
 
-# NVIDIA DLSS via Streamline (devdoc/dlss-super-resolution.md, Phase S0). Additive upscaler/AA;
+# NVIDIA DLSS via Streamline (devdoc/rendering/dlss-super-resolution.md, Phase S0). Additive upscaler/AA;
 # NVIDIA-only, gracefully hidden on unsupported hardware. Prebuilt SL/DLSS DLLs ship in the
 # release zip only (removed from the git repo as of SL 2.7.32), so we fetch the release artifact.
 option(GAME_ENGINE_ENABLE_DLSS "Enable NVIDIA DLSS Super Resolution via Streamline (Windows/NVIDIA)" ON)
@@ -108,7 +108,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(json)
 
-# NVIDIA NRD (DXR Phase D5, devdoc/dxr-nrd-integration.md). Pinned to the release whose API
+# NVIDIA NRD (DXR Phase D5, devdoc/dxr/nrd-integration.md). Pinned to the release whose API
 # the integration was written against (v4.17). NRD fetches its own dependencies (ShaderMake,
 # MathLib) and compiles its internal shaders at build time; DXIL blobs are embedded in the
 # static lib. If the build cannot locate a dxc.exe for ShaderMake, set SHADERMAKE_DXC_PATH.
@@ -134,7 +134,7 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(nrd)
 
-# NVIDIA Streamline (DLSS SR, devdoc/dlss-super-resolution.md Phase S0). Pinned to v2.12.0. The
+# NVIDIA Streamline (DLSS SR, devdoc/rendering/dlss-super-resolution.md Phase S0). Pinned to v2.12.0. The
 # release zip carries headers (include/), the import lib (lib/x64/sl.interposer.lib), and the
 # prebuilt signed plugin DLLs (bin/x64) that are NOT in the git repo. We only download+extract it
 # (no add_subdirectory — we consume prebuilt artifacts), then resolve the real paths by locating
@@ -351,6 +351,19 @@ add_executable(game-engine
     src/app/panels/ProjectFilesPanel.cpp
 
     src/app/panels/LightingPanel.cpp
+    src/app/panels/lighting/LightingPanelShared.cpp
+    src/app/panels/lighting/SceneSection.cpp
+    src/app/panels/lighting/SkyboxSection.cpp
+    src/app/panels/lighting/IblSection.cpp
+    src/app/panels/lighting/DirectionalShadowsSection.cpp
+    src/app/panels/lighting/HdrSection.cpp
+    src/app/panels/lighting/ScreenSpaceSection.cpp
+    src/app/panels/lighting/AntiAliasingSection.cpp
+    src/app/panels/lighting/TextureFilteringSection.cpp
+    src/app/panels/lighting/SsgiSection.cpp
+    src/app/panels/lighting/SsrSection.cpp
+    src/app/panels/lighting/RayTracingSection.cpp
+    src/app/panels/lighting/DiagnosticsSection.cpp
     src/app/panels/PerformancePanel.cpp
     src/app/scene/RenderDiagnostics.cpp
 

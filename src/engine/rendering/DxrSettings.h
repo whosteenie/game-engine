@@ -11,7 +11,7 @@ enum class DxrReflectionsQuality
     High,
 };
 
-// Top-level rendering mode (devdoc/dxr-path-tracing.md). Hybrid = the raster + hybrid-RT pipeline
+// Top-level rendering mode (devdoc/dxr/path-tracing.md). Hybrid = the raster + hybrid-RT pipeline
 // (default, always retained). PathTraced = the unified path tracer owns the image. Mutually
 // exclusive; selecting PathTraced bypasses the hybrid RT effect passes and shows the PT output.
 enum class RenderingMode
@@ -20,7 +20,7 @@ enum class RenderingMode
     PathTraced,
 };
 
-// Path-tracer convergence sub-mode (devdoc/dxr-path-tracing.md P3/P4).
+// Path-tracer convergence sub-mode (devdoc/dxr/path-tracing.md P3/P4).
 // RealTime = single-frame noisy output (DLSS-RR in P4). Reference = progressive accumulation.
 enum class PtConvergenceMode
 {
@@ -38,7 +38,7 @@ public:
     static const char* PtConvergenceModeToString(PtConvergenceMode mode);
     static PtConvergenceMode PtConvergenceModeFromString(const std::string& value);
 
-    // Phase P0 — path tracing (devdoc/dxr-path-tracing.md). Requires master RT enabled + DXR support.
+    // Phase P0 — path tracing (devdoc/dxr/path-tracing.md). Requires master RT enabled + DXR support.
     RenderingMode GetRenderingMode() const { return m_renderingMode; }
     void SetRenderingMode(const RenderingMode mode) { m_renderingMode = mode; }
     bool IsPathTracingActive() const { return m_enabled && m_renderingMode == RenderingMode::PathTraced; }
@@ -59,7 +59,7 @@ public:
     bool IsPtFireflyClampEnabled() const { return m_ptFireflyClamp; }
     void SetPtFireflyClampEnabled(const bool enabled) { m_ptFireflyClamp = enabled; }
 
-    // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr-pt-crevice-darkening.md). Reference ignores.
+    // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr/pt/crevice-darkening.md). Reference ignores.
     float GetPtAmbientStrength() const { return m_ptAmbientStrength; }
     void SetPtAmbientStrength(const float strength);
 
@@ -112,7 +112,7 @@ public:
     float GetReflectionRoughnessCutoff() const { return m_reflectionRoughnessCutoff; }
     void SetReflectionRoughnessCutoff(const float cutoff);
 
-    // Phase D8 — RT soft directional (sun) shadows (devdoc/dxr-shadows.md). Supplemental quality
+    // Phase D8 — RT soft directional (sun) shadows (devdoc/dxr/shadows.md). Supplemental quality
     // tier over CSM; replaces the CSM shadow factor at composite time when enabled.
     bool IsShadowsEnabled() const { return m_shadowsEnabled; }
     void SetShadowsEnabled(const bool enabled) { m_shadowsEnabled = enabled; }
@@ -124,7 +124,7 @@ public:
     bool IsShadowDenoiseEnabled() const { return m_shadowDenoiseEnabled; }
     void SetShadowDenoiseEnabled(const bool enabled) { m_shadowDenoiseEnabled = enabled; }
 
-    // Phase D9 — one-bounce RT diffuse GI (devdoc/dxr-diffuse-gi.md). Adds ray-traced diffuse
+    // Phase D9 — one-bounce RT diffuse GI (devdoc/dxr/diffuse-gi.md). Adds ray-traced diffuse
     // bounce light into RT1 (indirect); mutually exclusive with SSGI inject.
     bool IsGiEnabled() const { return m_giEnabled; }
     void SetGiEnabled(const bool enabled) { m_giEnabled = enabled; }

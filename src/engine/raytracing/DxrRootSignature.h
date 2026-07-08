@@ -33,7 +33,7 @@ struct PrimaryDispatchConstants
     float _padding3 = 0.0f;
 };
 
-// Phase D4 reflections (see devdoc/dxr-reflections.md). Layout mirrors the cbuffer in
+// Phase D4 reflections (see devdoc/dxr/reflections.md). Layout mirrors the cbuffer in
 // assets/shaders/dxr/reflections.hlsl exactly.
 struct ReflectionDispatchConstants
 {
@@ -68,7 +68,7 @@ struct ReflectionDispatchConstants
     float prevViewProj[16] = {};
 };
 
-// Phase D8 shadows (see devdoc/dxr-shadows.md). Layout mirrors the cbuffer in
+// Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in
 // assets/shaders/dxr/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then
 // float3+float pairs, then scalars in multiples of 4).
 struct ShadowDispatchConstants

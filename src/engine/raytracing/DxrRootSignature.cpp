@@ -314,7 +314,7 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
 
 // Phase D4/D5 reflections: CBV b0, SRV tables t0-t11, UAV tables u0-u3 (radiance+hitDist,
 // viewZ, normal+roughness, motion — NRD guide outputs), static linear-clamp s0.
-// See devdoc/dxr-reflections.md for the binding table.
+// See devdoc/dxr/reflections.md for the binding table.
 void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     constexpr std::uint32_t kSrvCount = 14;
@@ -509,7 +509,7 @@ void DxrRootSignature::ReleaseReflectionLocalRootSignature()
 // Phase D8 shadows: CBV b0, SRV tables t0-t4 (TLAS, depth, normal, material0, velocity),
 // UAV tables u0-u3 (penumbra, viewZ, normal+roughness, motion — SIGMA guide outputs). No
 // bindless or static samplers: the shadow ray does occlusion only (no hit shading).
-// See devdoc/dxr-shadows.md.
+// See devdoc/dxr/shadows.md.
 void DxrRootSignature::SerializeShadowGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     constexpr std::uint32_t kSrvCount = 5;
