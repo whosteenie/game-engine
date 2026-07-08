@@ -1,15 +1,23 @@
 #pragma once
 
-#include "app/undo/UndoCommand.h"
 #include "app/undo/UndoContext.h"
 
 #include <memory>
 #include <vector>
 
+class IUndoCommand;
+
 class UndoStack
 {
 public:
     static constexpr std::size_t DefaultMaxDepth = 100;
+
+    UndoStack() = default;
+    ~UndoStack();
+    UndoStack(UndoStack&&) noexcept;
+    UndoStack& operator=(UndoStack&&) noexcept;
+    UndoStack(const UndoStack&) = delete;
+    UndoStack& operator=(const UndoStack&) = delete;
 
     void Push(std::unique_ptr<IUndoCommand> command);
 
