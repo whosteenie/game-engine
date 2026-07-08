@@ -1,8 +1,6 @@
 #pragma once
 
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/ShaderBindingTable.h"
+#include "engine/raytracing/DxrDispatchBase.h"
 
 #include <array>
 #include <cstdint>
@@ -17,7 +15,7 @@ class DxrAccelerationStructures;
 //
 // P2: megakernel integrator with multi-bounce BRDF sampling, sun NEE, Russian roulette, and
 // firefly clamp. Reuses the reflection root signature + primary output textures.
-class DxrPathTracerDispatch
+class DxrPathTracerDispatch : public DxrDispatchBase
 {
 public:
     struct FrameInputs
@@ -72,7 +70,7 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
 
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const;
@@ -90,10 +88,6 @@ public:
 private:
     bool EnsurePipeline(std::string& outError);
 
-    DxrPipeline m_pipeline;
-    ShaderBindingTable m_shaderBindingTable;
-    DxrDispatchContext m_dispatchContext;
-    bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
     std::uint32_t m_frameIndex = 0;
 };

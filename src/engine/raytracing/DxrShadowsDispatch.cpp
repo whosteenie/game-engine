@@ -21,11 +21,8 @@ DxrShadowsDispatch::~DxrShadowsDispatch()
 void DxrShadowsDispatch::Release()
 {
     m_denoiser.Release();
-    m_shaderBindingTable.Release();
-    m_pipeline.Release();
-    m_dispatchContext.Release();
+    ReleaseCore();
     m_nrdHistoryValid = false;
-    m_pipelineReady = false;
 }
 
 bool DxrShadowsDispatch::WarmUpPipelineIfNeeded()
@@ -36,29 +33,15 @@ bool DxrShadowsDispatch::WarmUpPipelineIfNeeded()
 
 bool DxrShadowsDispatch::EnsurePipeline(std::string& outError)
 {
-    outError.clear();
-    if (m_pipelineReady)
-    {
-        return true;
-    }
-
-    DxrBreadcrumb("shadows EnsurePipeline begin");
-    if (!m_pipeline.CreateShadowsPipeline(outError))
-    {
-        DxrBreadcrumb("shadows EnsurePipeline failed: CreateShadowsPipeline");
-        return false;
-    }
-
-    if (!m_shaderBindingTable.BuildShadowTable(m_pipeline.GetProperties(), outError))
-    {
-        DxrBreadcrumb("shadows EnsurePipeline failed: BuildShadowTable");
-        m_pipeline.Release();
-        return false;
-    }
-
-    m_pipelineReady = true;
-    DxrBreadcrumb("shadows EnsurePipeline ok");
-    return true;
+    return EnsurePipelineWith(
+        "shadows",
+        [](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreateShadowsPipeline(pipelineError);
+        },
+        [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
+            return shaderBindingTable.BuildShadowTable(pipeline.GetProperties(), tableError);
+        },
+        outError);
 }
 
 bool DxrShadowsDispatch::DispatchIfEnabled(
@@ -79,20 +62,13 @@ bool DxrShadowsDispatch::DispatchIfEnabled(
     m_dispatchedThisFrame = false;
     m_denoisedThisFrame = false;
 
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled
-        || width <= 0 || height <= 0 || gbufferWidth <= 0 || gbufferHeight <= 0)
-    {
-        return false;
-    }
-
     if (!shadowsEnabled && !shadowDebugViewActive)
     {
         return false;
     }
 
-    if (!accelerationStructures.IsTlasBuilt())
+    if (gbufferWidth <= 0 || gbufferHeight <= 0)
     {
-        DxrBreadcrumb("shadows skipped: TLAS unavailable");
         return false;
     }
 
@@ -103,22 +79,25 @@ bool DxrShadowsDispatch::DispatchIfEnabled(
         return false;
     }
 
-    ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
+    ID3D12GraphicsCommandList4* commandList4 = ResolveDispatchCommandList(
+        accelerationStructures,
+        dxrEnabled,
+        width,
+        height,
+        commandList,
+        DxrDispatchGeometryRequirement::TlasOnly,
+        "shadows");
     if (commandList4 == nullptr)
     {
-        DxrBreadcrumb("shadows skipped: CommandList4 unavailable");
         return false;
     }
 
     std::string error;
 
-    if (!m_pipelineReady)
+    if (!m_pipelineReady && !EnsurePipeline(error))
     {
-        if (!EnsurePipeline(error))
-        {
-            DxrBreadcrumb("shadows skipped: pipeline not ready");
-            return false;
-        }
+        DxrBreadcrumb("shadows skipped: pipeline not ready");
+        return false;
     }
 
     DxrBreadcrumb("shadows dispatch begin");

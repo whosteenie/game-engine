@@ -200,6 +200,64 @@ void DxrDispatchContext::ReleaseRetiredGiOutputs()
 // arena (256-byte aligned). A single persistent CB was previously overwritten by each dispatch,
 // so with Scene View + Game View both dispatching in one frame, the GPU executed *both*
 // DispatchRays with the last-written constants (wrong camera for the first view).
+class DxrDispatchRecorder
+{
+public:
+    explicit DxrDispatchRecorder(ID3D12GraphicsCommandList4* commandList) : m_commandList(commandList) {}
+
+    void BeginDraw(
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const std::uint64_t constantsGpuAddress) const
+    {
+        m_commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+        auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+        ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
+        m_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+        m_commandList->SetPipelineState1(stateObject);
+        m_commandList->SetComputeRootSignature(rootSignature);
+        m_commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    }
+
+    void BindSrvTable(const UINT rootParameterIndex, const std::uint32_t srvHeapIndex) const
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
+        tableHandle.ptr = reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndex));
+        m_commandList->SetComputeRootDescriptorTable(rootParameterIndex, tableHandle);
+    }
+
+    void BindSrvTables(
+        const UINT rootParameterStart,
+        const std::uint32_t* srvHeapIndices,
+        const UINT count) const
+    {
+        for (UINT tableOffset = 0; tableOffset < count; ++tableOffset)
+        {
+            BindSrvTable(rootParameterStart + tableOffset, srvHeapIndices[tableOffset]);
+        }
+    }
+
+    void DispatchRays(const ShaderBindingTable& shaderBindingTable, const int width, const int height) const
+    {
+        D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
+        dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+        dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
+        dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
+        dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
+        dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
+        dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
+        dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
+        dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
+        dispatchDesc.Width = static_cast<UINT>(width);
+        dispatchDesc.Height = static_cast<UINT>(height);
+        dispatchDesc.Depth = 1;
+        m_commandList->DispatchRays(&dispatchDesc);
+    }
+
+private:
+    ID3D12GraphicsCommandList4* m_commandList = nullptr;
+};
+
 namespace
 {
     template <typename TConstants>
@@ -453,7 +511,6 @@ bool DxrDispatchContext::DispatchSmoke(
     }
 
     DxrBreadcrumb("dispatch bind + DispatchRays begin");
-    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
     if (m_outputResourceState != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
     {
         TransitionResource(
@@ -464,36 +521,11 @@ bool DxrDispatchContext::DispatchSmoke(
         m_outputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
-
-    D3D12_GPU_DESCRIPTOR_HANDLE srvTableHandle{};
-    srvTableHandle.ptr = reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_tlasSrvIndex));
-    commandList->SetComputeRootDescriptorTable(1, srvTableHandle);
-
-    D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
-    uavTableHandle.ptr = reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_outputUavIndex));
-    commandList->SetComputeRootDescriptorTable(2, uavTableHandle);
-
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
-
-    commandList->DispatchRays(&dispatchDesc);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
+    recorder.BindSrvTable(1, m_tlasSrvIndex);
+    recorder.BindSrvTable(2, m_outputUavIndex);
+    recorder.DispatchRays(shaderBindingTable, width, height);
     DxrBreadcrumb("dispatch DispatchRays submitted");
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_outputResource);
 
@@ -1026,13 +1058,8 @@ bool DxrDispatchContext::DispatchReflections(
         }
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     // Root params 1..14 = SRV tables t0..t13 (see SerializeReflectionGlobalRootSignature).
     constexpr std::uint32_t kReflectionSrvCount = 14;
@@ -1061,13 +1088,7 @@ bool DxrDispatchContext::DispatchReflections(
         return false;
     }
 
-    for (std::uint32_t rootIndex = 0; rootIndex < kReflectionSrvCount; ++rootIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
-        tableHandle.ptr =
-            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
-    }
+    recorder.BindSrvTables(1, srvHeapIndices, kReflectionSrvCount);
 
     // Root params 14..17 = UAV tables u0..u3 (base = 1 + kReflectionSrvCount).
     constexpr std::uint32_t kReflectionUavCount = 4;
@@ -1084,31 +1105,19 @@ bool DxrDispatchContext::DispatchReflections(
     // correctly. GetSrvHeapGpuHandle(0) can't be used: the SRV allocator reserves the first
     // descriptors (index offset), so index 0 is "invalid" and would return null.
     {
+        auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
         const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
             srvHeap->GetGPUDescriptorHandleForHeapStart();
         commandList->SetComputeRootDescriptorTable(
             1 + kReflectionSrvCount + kReflectionUavCount, bindlessHandle);
     }
 
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
-
     if (inputs.tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
-    commandList->DispatchRays(&dispatchDesc);
+    recorder.DispatchRays(shaderBindingTable, width, height);
 
     // Combined read state: pixel-shader debug blit + NRD compute reads (D5).
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
@@ -1281,13 +1290,8 @@ bool DxrDispatchContext::DispatchShadows(
         }
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     // Root params 1..5 = SRV tables t0..t4 (see SerializeShadowGlobalRootSignature).
     constexpr std::uint32_t kShadowSrvCount = 5;
@@ -1298,13 +1302,7 @@ bool DxrDispatchContext::DispatchShadows(
         srvIndicesFromHandles[2], // t3 material0 (roughness)
         srvIndicesFromHandles[3]};// t4 velocity
 
-    for (std::uint32_t rootIndex = 0; rootIndex < kShadowSrvCount; ++rootIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
-        tableHandle.ptr =
-            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
-    }
+    recorder.BindSrvTables(1, srvHeapIndices, kShadowSrvCount);
 
     // Root params 6..9 = UAV tables u0..u3 (base = 1 + kShadowSrvCount).
     for (int textureIndex = 0; textureIndex < 4; ++textureIndex)
@@ -1315,25 +1313,12 @@ bool DxrDispatchContext::DispatchShadows(
         commandList->SetComputeRootDescriptorTable(1 + kShadowSrvCount + textureIndex, uavTableHandle);
     }
 
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
-
     if (inputs.tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
-    commandList->DispatchRays(&dispatchDesc);
+    recorder.DispatchRays(shaderBindingTable, width, height);
 
     // Combined read state: pixel-shader debug blit + NRD compute reads.
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
@@ -1518,13 +1503,8 @@ bool DxrDispatchContext::DispatchGi(
         }
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     // Root params 1..14 = SRV tables t0..t13 (reflection global root signature layout).
     constexpr std::uint32_t kGiSrvCount = 14;
@@ -1544,13 +1524,7 @@ bool DxrDispatchContext::DispatchGi(
         inputs.materialSrvIndex,            // t12 per-object material table
         srvIndicesFromHandles[5]};          // t13 GI unused by GI shader; bind RT1 for parity
 
-    for (std::uint32_t rootIndex = 0; rootIndex < kGiSrvCount; ++rootIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
-        tableHandle.ptr =
-            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
-    }
+    recorder.BindSrvTables(1, srvHeapIndices, kGiSrvCount);
 
     // Root params 14..17 = UAV tables u0..u3 (GI texture set).
     constexpr std::uint32_t kGiUavCount = 4;
@@ -1564,31 +1538,19 @@ bool DxrDispatchContext::DispatchGi(
 
     // Root param 18 = bindless SRV table (space1) over the whole heap (physical heap start).
     {
+        auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
         const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
             srvHeap->GetGPUDescriptorHandleForHeapStart();
         commandList->SetComputeRootDescriptorTable(
             1 + kGiSrvCount + kGiUavCount, bindlessHandle);
     }
 
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
-
     if (inputs.tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
-    commandList->DispatchRays(&dispatchDesc);
+    recorder.DispatchRays(shaderBindingTable, width, height);
 
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -1700,13 +1662,8 @@ bool DxrDispatchContext::DispatchPrimaryDebug(
         m_primaryMetadataResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     const std::uint32_t srvIndices[5] = {
         m_tlasSrvIndex,
@@ -1714,44 +1671,16 @@ bool DxrDispatchContext::DispatchPrimaryDebug(
         geometryLookupSrvIndex,
         sceneVertexFloatsSrvIndex,
         sceneIndicesSrvIndex};
-
-    for (std::uint32_t rootIndex = 0; rootIndex < 5; ++rootIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
-        tableHandle.ptr =
-            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvIndices[rootIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
-    }
-
-    D3D12_GPU_DESCRIPTOR_HANDLE outputUavHandle{};
-    outputUavHandle.ptr =
-        reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_primaryOutputUavIndex));
-    commandList->SetComputeRootDescriptorTable(6, outputUavHandle);
-
-    D3D12_GPU_DESCRIPTOR_HANDLE metadataUavHandle{};
-    metadataUavHandle.ptr =
-        reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(m_primaryMetadataUavIndex));
-    commandList->SetComputeRootDescriptorTable(7, metadataUavHandle);
-
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
+    recorder.BindSrvTables(1, srvIndices, 5);
+    recorder.BindSrvTable(6, m_primaryOutputUavIndex);
+    recorder.BindSrvTable(7, m_primaryMetadataUavIndex);
 
     if (tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
     }
 
-    commandList->DispatchRays(&dispatchDesc);
+    recorder.DispatchRays(shaderBindingTable, width, height);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
 
@@ -1880,13 +1809,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptMotionTexture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    ID3D12DescriptorHeap* descriptorHeaps[] = {srvHeap};
-    commandList->SetDescriptorHeaps(1, descriptorHeaps);
-
-    commandList->SetPipelineState1(stateObject);
-    commandList->SetComputeRootSignature(rootSignature);
-    commandList->SetComputeRootConstantBufferView(0, constantsGpuAddress);
+    const DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     constexpr std::uint32_t kReflectionSrvCount = 14;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
@@ -1914,13 +1838,7 @@ bool DxrDispatchContext::DispatchPathTracer(
         return false;
     }
 
-    for (std::uint32_t rootIndex = 0; rootIndex < kReflectionSrvCount; ++rootIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE tableHandle{};
-        tableHandle.ptr =
-            reinterpret_cast<UINT64>(GfxContext::Get().GetSrvHeapGpuHandle(srvHeapIndices[rootIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + rootIndex, tableHandle);
-    }
+    recorder.BindSrvTables(1, srvHeapIndices, kReflectionSrvCount);
 
     constexpr std::uint32_t kReflectionUavCount = 4;
     const std::uint32_t pathTracerUavIndices[kReflectionUavCount] = {
@@ -1937,31 +1855,19 @@ bool DxrDispatchContext::DispatchPathTracer(
     }
 
     {
+        auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
         const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
             srvHeap->GetGPUDescriptorHandleForHeapStart();
         commandList->SetComputeRootDescriptorTable(
             1 + kReflectionSrvCount + kReflectionUavCount, bindlessHandle);
     }
 
-    D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-    dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
-    dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
-    dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
-    dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.MissShaderTable.StrideInBytes = shaderBindingTable.GetMissRecordStride();
-    dispatchDesc.HitGroupTable.StartAddress = shaderBindingTable.GetHitGroupGpuAddress();
-    dispatchDesc.HitGroupTable.SizeInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.HitGroupTable.StrideInBytes = shaderBindingTable.GetHitGroupRecordStride();
-    dispatchDesc.Width = static_cast<UINT>(width);
-    dispatchDesc.Height = static_cast<UINT>(height);
-    dispatchDesc.Depth = 1;
-
     if (inputs.tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
-    commandList->DispatchRays(&dispatchDesc);
+    recorder.DispatchRays(shaderBindingTable, width, height);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);

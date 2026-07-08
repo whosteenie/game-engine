@@ -20,11 +20,8 @@ DxrGiDispatch::~DxrGiDispatch()
 void DxrGiDispatch::Release()
 {
     m_denoiser.Release();
-    m_shaderBindingTable.Release();
-    m_pipeline.Release();
-    m_dispatchContext.Release();
+    ReleaseCore();
     m_nrdHistoryValid = false;
-    m_pipelineReady = false;
 }
 
 bool DxrGiDispatch::WarmUpPipelineIfNeeded()
@@ -35,32 +32,17 @@ bool DxrGiDispatch::WarmUpPipelineIfNeeded()
 
 bool DxrGiDispatch::EnsurePipeline(std::string& outError)
 {
-    outError.clear();
-    if (m_pipelineReady)
-    {
-        return true;
-    }
-
-    // Dedicated diffuse NRD instance (separate from reflections' specular instance).
     m_denoiser.SetSignal(NrdDenoiser::Signal::Diffuse);
 
-    DxrBreadcrumb("gi EnsurePipeline begin");
-    if (!m_pipeline.CreateGiPipeline(outError))
-    {
-        DxrBreadcrumb("gi EnsurePipeline failed: CreateGiPipeline");
-        return false;
-    }
-
-    if (!m_shaderBindingTable.BuildGiTable(m_pipeline.GetProperties(), outError))
-    {
-        DxrBreadcrumb("gi EnsurePipeline failed: BuildGiTable");
-        m_pipeline.Release();
-        return false;
-    }
-
-    m_pipelineReady = true;
-    DxrBreadcrumb("gi EnsurePipeline ok");
-    return true;
+    return EnsurePipelineWith(
+        "gi",
+        [](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreateGiPipeline(pipelineError);
+        },
+        [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
+            return shaderBindingTable.BuildGiTable(pipeline.GetProperties(), tableError);
+        },
+        outError);
 }
 
 bool DxrGiDispatch::DispatchIfEnabled(
@@ -85,20 +67,13 @@ bool DxrGiDispatch::DispatchIfEnabled(
     m_dispatchedThisFrame = false;
     m_denoisedThisFrame = false;
 
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled
-        || outputWidth <= 0 || outputHeight <= 0 || gbufferWidth <= 0 || gbufferHeight <= 0)
-    {
-        return false;
-    }
-
     if (!giEnabled && !giDebugViewActive)
     {
         return false;
     }
 
-    if (!accelerationStructures.IsTlasBuilt() || !accelerationStructures.HasGeometryLookup())
+    if (gbufferWidth <= 0 || gbufferHeight <= 0)
     {
-        DxrBreadcrumb("gi skipped: TLAS or geometry lookup unavailable");
         return false;
     }
 
@@ -111,22 +86,25 @@ bool DxrGiDispatch::DispatchIfEnabled(
         return false;
     }
 
-    ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
+    ID3D12GraphicsCommandList4* commandList4 = ResolveDispatchCommandList(
+        accelerationStructures,
+        dxrEnabled,
+        outputWidth,
+        outputHeight,
+        commandList,
+        DxrDispatchGeometryRequirement::TlasAndGeometryLookup,
+        "gi");
     if (commandList4 == nullptr)
     {
-        DxrBreadcrumb("gi skipped: CommandList4 unavailable");
         return false;
     }
 
     std::string error;
 
-    if (!m_pipelineReady)
+    if (!m_pipelineReady && !EnsurePipeline(error))
     {
-        if (!EnsurePipeline(error))
-        {
-            DxrBreadcrumb("gi skipped: pipeline not ready");
-            return false;
-        }
+        DxrBreadcrumb("gi skipped: pipeline not ready");
+        return false;
     }
 
     DxrBreadcrumb("gi dispatch begin");

@@ -1,9 +1,7 @@
 #pragma once
 
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/DxrDispatchBase.h"
 #include "engine/raytracing/NrdDenoiser.h"
-#include "engine/raytracing/ShaderBindingTable.h"
 
 #include <array>
 #include <cstdint>
@@ -16,7 +14,7 @@ class DxrAccelerationStructures;
 
 // Phase D4 — RT specular reflection trace (devdoc/dxr-reflections.md).
 // Owns the reflections RTPSO, SBT, and quality-scaled RGBA16F radiance+confidence output.
-class DxrReflectionsDispatch
+class DxrReflectionsDispatch : public DxrDispatchBase
 {
 public:
     // G-buffer / environment SRV CPU handles (shader-visible SRV heap).
@@ -73,7 +71,7 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
 
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const;
@@ -89,16 +87,12 @@ public:
 private:
     bool EnsurePipeline(std::string& outError);
 
-    DxrPipeline m_pipeline;
-    ShaderBindingTable m_shaderBindingTable;
-    DxrDispatchContext m_dispatchContext;
     NrdDenoiser m_denoiser;
     glm::mat4 m_prevViewToClip{1.0f};
     glm::mat4 m_prevWorldToView{1.0f};
     glm::vec2 m_prevJitterUv{0.0f};
     std::uint32_t m_frameIndex = 0;
     bool m_nrdHistoryValid = false;
-    bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
     bool m_denoisedThisFrame = false;
 };

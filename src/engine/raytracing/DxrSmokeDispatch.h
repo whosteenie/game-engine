@@ -1,15 +1,13 @@
 #pragma once
 
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/ShaderBindingTable.h"
+#include "engine/raytracing/DxrDispatchBase.h"
 
 #include <cstdint>
 #include <string>
 
 class DxrAccelerationStructures;
 
-class DxrSmokeDispatch
+class DxrSmokeDispatch : public DxrDispatchBase
 {
 public:
     DxrSmokeDispatch() = default;
@@ -29,16 +27,11 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
 
     std::uintptr_t GetOutputSrvCpuHandle() const;
     bool HasValidOutput() const;
 
 private:
     bool EnsurePipeline(std::string& outError);
-
-    DxrPipeline m_pipeline;
-    ShaderBindingTable m_shaderBindingTable;
-    DxrDispatchContext m_dispatchContext;
-    bool m_pipelineReady = false;
 };

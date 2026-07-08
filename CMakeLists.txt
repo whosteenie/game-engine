@@ -493,8 +493,11 @@ add_executable(game-engine
     src/engine/rendering/Framebuffer.cpp
 
     src/engine/rendering/ScreenSpaceEffects.cpp
+    src/engine/rendering/ScreenSpaceEffectsSettings.cpp
 
     src/engine/rendering/DxrSettings.cpp
+
+    src/engine/lighting/DirectionalShadowSettings.cpp
 
     src/engine/raytracing/DxrContext.cpp
     src/engine/raytracing/DxrGpuResource.cpp
@@ -507,6 +510,7 @@ add_executable(game-engine
     src/engine/raytracing/DxrPipeline.cpp
     src/engine/raytracing/ShaderBindingTable.cpp
     src/engine/raytracing/DxrDispatchContext.cpp
+    src/engine/raytracing/DxrDispatchBase.cpp
     src/engine/raytracing/DxrSmokeDispatch.cpp
     src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
     src/engine/raytracing/DxrPathTracerDispatch.cpp
@@ -680,6 +684,7 @@ add_executable(engine-tests
     tests/color_space_test.cpp
     tests/rotation_utils_test.cpp
     tests/dxr_settings_test.cpp
+    tests/directional_shadow_settings_test.cpp
     tests/dxr_acceleration_structure_test.cpp
     tests/dxr_shader_infrastructure_test.cpp
     src/engine/lighting/ShadowMapMath.cpp
@@ -689,11 +694,13 @@ add_executable(engine-tests
     src/engine/scene/Transform.cpp
     src/engine/platform/ExceptionMessage.cpp
     src/engine/platform/EngineDiagnostics.cpp
+    src/engine/platform/EngineLog.cpp
     src/engine/rendering/DxrSettings.cpp
+    src/engine/lighting/DirectionalShadowSettings.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src)
-target_link_libraries(engine-tests PRIVATE glm::glm)
+target_link_libraries(engine-tests PRIVATE glm::glm nlohmann_json::nlohmann_json)
 add_test(NAME engine-tests COMMAND engine-tests)
 
 add_executable(descriptor-heap-tests

@@ -3,7 +3,7 @@
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrAccelerationStructures.h"
-#include "engine/raytracing/DxrContext.h"
+#include "engine/raytracing/DxrRootSignature.h"
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 
@@ -14,10 +14,7 @@ DxrSmokeDispatch::~DxrSmokeDispatch()
 
 void DxrSmokeDispatch::Release()
 {
-    m_shaderBindingTable.Release();
-    m_pipeline.Release();
-    m_dispatchContext.Release();
-    m_pipelineReady = false;
+    ReleaseCore();
 }
 
 bool DxrSmokeDispatch::WarmUpPipelineIfNeeded()
@@ -28,29 +25,15 @@ bool DxrSmokeDispatch::WarmUpPipelineIfNeeded()
 
 bool DxrSmokeDispatch::EnsurePipeline(std::string& outError)
 {
-    outError.clear();
-    if (m_pipelineReady)
-    {
-        return true;
-    }
-
-    DxrBreadcrumb("smoke EnsurePipeline begin");
-    if (!m_pipeline.CreateSmokePipeline(outError))
-    {
-        DxrBreadcrumb("smoke EnsurePipeline failed: CreateSmokePipeline");
-        return false;
-    }
-
-    if (!m_shaderBindingTable.BuildSmokeTable(m_pipeline.GetProperties(), outError))
-    {
-        DxrBreadcrumb("smoke EnsurePipeline failed: BuildSmokeTable");
-        m_pipeline.Release();
-        return false;
-    }
-
-    m_pipelineReady = true;
-    DxrBreadcrumb("smoke EnsurePipeline ok");
-    return true;
+    return EnsurePipelineWith(
+        "smoke",
+        [](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreateSmokePipeline(pipelineError);
+        },
+        [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
+            return shaderBindingTable.BuildSmokeTable(pipeline.GetProperties(), tableError);
+        },
+        outError);
 }
 
 void DxrSmokeDispatch::DispatchIfEnabled(
@@ -61,21 +44,21 @@ void DxrSmokeDispatch::DispatchIfEnabled(
     const int width,
     const int height)
 {
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || !smokeDebugMode || width <= 0 || height <= 0)
+    if (!smokeDebugMode)
     {
         return;
     }
 
-    if (!accelerationStructures.IsTlasBuilt())
-    {
-        DxrBreadcrumb("smoke skipped: TLAS not built");
-        return;
-    }
-
-    ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
+    ID3D12GraphicsCommandList4* commandList4 = ResolveDispatchCommandList(
+        accelerationStructures,
+        dxrEnabled,
+        width,
+        height,
+        commandList,
+        DxrDispatchGeometryRequirement::TlasOnly,
+        "smoke");
     if (commandList4 == nullptr)
     {
-        DxrBreadcrumb("smoke skipped: CommandList4 unavailable");
         return;
     }
 

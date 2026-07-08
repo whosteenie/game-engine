@@ -1,9 +1,7 @@
 #pragma once
 
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/DxrDispatchBase.h"
 #include "engine/raytracing/NrdShadowDenoiser.h"
-#include "engine/raytracing/ShaderBindingTable.h"
 
 #include <cstdint>
 #include <string>
@@ -16,7 +14,7 @@ class DxrAccelerationStructures;
 // Phase D8 — RT soft directional (sun) shadow trace + NRD SIGMA_SHADOW denoise
 // (devdoc/dxr-shadows.md). Owns the shadows RTPSO, SBT, full-res penumbra output, and a
 // dedicated SIGMA denoiser instance (separate from the reflections RELAX instance).
-class DxrShadowsDispatch
+class DxrShadowsDispatch : public DxrDispatchBase
 {
 public:
     struct FrameInputs
@@ -53,7 +51,7 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
     bool DenoisedThisFrame() const { return m_denoisedThisFrame; }
 
@@ -69,16 +67,12 @@ public:
 private:
     bool EnsurePipeline(std::string& outError);
 
-    DxrPipeline m_pipeline;
-    ShaderBindingTable m_shaderBindingTable;
-    DxrDispatchContext m_dispatchContext;
     NrdShadowDenoiser m_denoiser;
     glm::mat4 m_prevViewToClip{1.0f};
     glm::mat4 m_prevWorldToView{1.0f};
     glm::vec2 m_prevJitterUv{0.0f};
     std::uint32_t m_frameIndex = 0;
     bool m_nrdHistoryValid = false;
-    bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
     bool m_denoisedThisFrame = false;
 };

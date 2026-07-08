@@ -1,5 +1,7 @@
 #include "engine/rendering/DxrSettings.h"
 
+#include <nlohmann/json.hpp>
+
 void RunDxrSettingsTests(int& failures)
 {
     auto expectTrue = [&failures](const bool condition, const char* message) {
@@ -25,4 +27,17 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(settings.GetReflectionsSamplesPerPixel() == 16, "samples clamped to 16");
     expectTrue(settings.GetMaxTraceDistance() == 500.0f, "max trace distance clamped to 500");
     expectTrue(settings.GetTemporalBlend() == 0.99f, "temporal blend clamped to 0.99");
+
+    DxrSettings roundTrip;
+    roundTrip.ApplyFromJson(settings.ToJson());
+    expectTrue(roundTrip.IsEnabled() == settings.IsEnabled(), "json round-trip enabled");
+    expectTrue(
+        roundTrip.GetRenderingMode() == settings.GetRenderingMode(),
+        "json round-trip rendering mode");
+    expectTrue(
+        roundTrip.GetReflectionsSamplesPerPixel() == settings.GetReflectionsSamplesPerPixel(),
+        "json round-trip reflection samples");
+    expectTrue(
+        roundTrip.GetGiStrength() == settings.GetGiStrength(),
+        "json round-trip gi strength");
 }

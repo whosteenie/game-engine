@@ -19,10 +19,7 @@ DxrPathTracerDispatch::~DxrPathTracerDispatch()
 
 void DxrPathTracerDispatch::Release()
 {
-    m_shaderBindingTable.Release();
-    m_pipeline.Release();
-    m_dispatchContext.Release();
-    m_pipelineReady = false;
+    ReleaseCore();
     m_frameIndex = 0;
 }
 
@@ -34,29 +31,15 @@ bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded()
 
 bool DxrPathTracerDispatch::EnsurePipeline(std::string& outError)
 {
-    outError.clear();
-    if (m_pipelineReady)
-    {
-        return true;
-    }
-
-    DxrBreadcrumb("path-tracer EnsurePipeline begin");
-    if (!m_pipeline.CreatePathTracerPipeline(outError))
-    {
-        DxrBreadcrumb("path-tracer EnsurePipeline failed: CreatePathTracerPipeline");
-        return false;
-    }
-
-    if (!m_shaderBindingTable.BuildPathTracerTable(m_pipeline.GetProperties(), outError))
-    {
-        DxrBreadcrumb("path-tracer EnsurePipeline failed: BuildPathTracerTable");
-        m_pipeline.Release();
-        return false;
-    }
-
-    m_pipelineReady = true;
-    DxrBreadcrumb("path-tracer EnsurePipeline ok");
-    return true;
+    return EnsurePipelineWith(
+        "path-tracer",
+        [](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreatePathTracerPipeline(pipelineError);
+        },
+        [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
+            return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), tableError);
+        },
+        outError);
 }
 
 bool DxrPathTracerDispatch::DispatchIfEnabled(
@@ -79,15 +62,13 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
 {
     m_dispatchedThisFrame = false;
 
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || !pathTracingActive
-        || width <= 0 || height <= 0 || gbufferWidth <= 0 || gbufferHeight <= 0)
+    if (!pathTracingActive)
     {
         return false;
     }
 
-    if (!accelerationStructures.IsTlasBuilt() || !accelerationStructures.HasGeometryLookup())
+    if (gbufferWidth <= 0 || gbufferHeight <= 0)
     {
-        DxrBreadcrumb("path-tracer skipped: TLAS or geometry lookup unavailable");
         return false;
     }
 
@@ -101,22 +82,25 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         return false;
     }
 
-    ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
+    ID3D12GraphicsCommandList4* commandList4 = ResolveDispatchCommandList(
+        accelerationStructures,
+        dxrEnabled,
+        width,
+        height,
+        commandList,
+        DxrDispatchGeometryRequirement::TlasAndGeometryLookup,
+        "path-tracer");
     if (commandList4 == nullptr)
     {
-        DxrBreadcrumb("path-tracer skipped: CommandList4 unavailable");
         return false;
     }
 
     std::string error;
 
-    if (!m_pipelineReady)
+    if (!m_pipelineReady && !EnsurePipeline(error))
     {
-        if (!EnsurePipeline(error))
-        {
-            DxrBreadcrumb("path-tracer skipped: pipeline not ready");
-            return false;
-        }
+        DxrBreadcrumb("path-tracer skipped: pipeline not ready");
+        return false;
     }
 
     DxrBreadcrumb("path-tracer dispatch begin");

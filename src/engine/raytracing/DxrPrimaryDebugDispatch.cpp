@@ -3,7 +3,7 @@
 #include "engine/camera/Camera.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrAccelerationStructures.h"
-#include "engine/raytracing/DxrContext.h"
+#include "engine/raytracing/DxrRootSignature.h"
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 
@@ -18,10 +18,8 @@ DxrPrimaryDebugDispatch::~DxrPrimaryDebugDispatch()
 
 void DxrPrimaryDebugDispatch::Release()
 {
-    m_shaderBindingTable.Release();
-    m_pipeline.Release();
-    m_dispatchContext.Release();
-    m_pipelineReady = false;
+    ReleaseCore();
+    m_dispatchedThisFrame = false;
 }
 
 bool DxrPrimaryDebugDispatch::WarmUpPipelineIfNeeded()
@@ -32,29 +30,15 @@ bool DxrPrimaryDebugDispatch::WarmUpPipelineIfNeeded()
 
 bool DxrPrimaryDebugDispatch::EnsurePipeline(std::string& outError)
 {
-    outError.clear();
-    if (m_pipelineReady)
-    {
-        return true;
-    }
-
-    DxrBreadcrumb("primary-debug EnsurePipeline begin");
-    if (!m_pipeline.CreatePrimaryDebugPipeline(outError))
-    {
-        DxrBreadcrumb("primary-debug EnsurePipeline failed: CreatePrimaryDebugPipeline");
-        return false;
-    }
-
-    if (!m_shaderBindingTable.BuildPrimaryDebugTable(m_pipeline.GetProperties(), outError))
-    {
-        DxrBreadcrumb("primary-debug EnsurePipeline failed: BuildPrimaryDebugTable");
-        m_pipeline.Release();
-        return false;
-    }
-
-    m_pipelineReady = true;
-    DxrBreadcrumb("primary-debug EnsurePipeline ok");
-    return true;
+    return EnsurePipelineWith(
+        "primary-debug",
+        [](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreatePrimaryDebugPipeline(pipelineError);
+        },
+        [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
+            return shaderBindingTable.BuildPrimaryDebugTable(pipeline.GetProperties(), tableError);
+        },
+        outError);
 }
 
 bool DxrPrimaryDebugDispatch::DispatchIfEnabled(
@@ -71,45 +55,35 @@ bool DxrPrimaryDebugDispatch::DispatchIfEnabled(
 {
     m_dispatchedThisFrame = false;
 
-    if (!GfxContext::Get().IsRaytracingSupported() || !dxrEnabled || width <= 0 || height <= 0)
-    {
-        return false;
-    }
-
     if (!debugTraceEnabled && !primaryDebugViewActive)
     {
         return false;
     }
 
-    if (!accelerationStructures.IsTlasBuilt() || !accelerationStructures.HasGeometryLookup())
-    {
-        DxrBreadcrumb("primary-debug skipped: TLAS or geometry lookup unavailable");
-        return false;
-    }
-
-    ID3D12GraphicsCommandList4* commandList4 = DxrContext::Get().QueryCommandList4(commandList);
+    ID3D12GraphicsCommandList4* commandList4 = ResolveDispatchCommandList(
+        accelerationStructures,
+        dxrEnabled,
+        width,
+        height,
+        commandList,
+        DxrDispatchGeometryRequirement::TlasAndGeometryLookup,
+        "primary-debug");
     if (commandList4 == nullptr)
     {
-        DxrBreadcrumb("primary-debug skipped: CommandList4 unavailable");
         return false;
     }
 
     std::string error;
-
-    if (!m_pipelineReady)
+    if (!m_pipelineReady && !EnsurePipeline(error))
     {
-        if (!EnsurePipeline(error))
-        {
-            DxrBreadcrumb("primary-debug skipped: pipeline not ready");
-            return false;
-        }
+        DxrBreadcrumb("primary-debug skipped: pipeline not ready");
+        return false;
     }
 
     DxrBreadcrumb("primary-debug dispatch begin");
     SceneRenderTrace::Scope dispatchScope("dxr-dispatch-primary-debug");
 
     const glm::mat4 viewMatrix = camera.GetViewMatrix();
-    // Match the jittered projection used when the scene depth buffer was rendered.
     const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
     const glm::mat4 invViewProj = glm::inverse(viewProj);

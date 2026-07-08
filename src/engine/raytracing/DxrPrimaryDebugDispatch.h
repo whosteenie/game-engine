@@ -1,8 +1,6 @@
 #pragma once
 
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/ShaderBindingTable.h"
+#include "engine/raytracing/DxrDispatchBase.h"
 
 #include <cstdint>
 #include <string>
@@ -10,7 +8,7 @@
 class Camera;
 class DxrAccelerationStructures;
 
-class DxrPrimaryDebugDispatch
+class DxrPrimaryDebugDispatch : public DxrDispatchBase
 {
 public:
     DxrPrimaryDebugDispatch() = default;
@@ -34,7 +32,7 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return m_pipelineReady; }
+    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
 
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const;
@@ -44,9 +42,5 @@ public:
 private:
     bool EnsurePipeline(std::string& outError);
 
-    DxrPipeline m_pipeline;
-    ShaderBindingTable m_shaderBindingTable;
-    DxrDispatchContext m_dispatchContext;
-    bool m_pipelineReady = false;
     bool m_dispatchedThisFrame = false;
 };

@@ -18,6 +18,7 @@ void RunIrradianceShTests(int& failures);
 void RunColorSpaceTests(int& failures);
 void RunRotationUtilsTests(int& failures);
 void RunDxrSettingsTests(int& failures);
+void RunDirectionalShadowSettingsTests(int& failures);
 void RunDxrAccelerationStructureTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 
@@ -507,6 +508,7 @@ int main()
     RunColorSpaceTests(gFailures);
     RunRotationUtilsTests(gFailures);
     RunDxrSettingsTests(gFailures);
+    RunDirectionalShadowSettingsTests(gFailures);
     RunDxrAccelerationStructureTests(gFailures);
     RunDxrShaderInfrastructureTests(gFailures);
 

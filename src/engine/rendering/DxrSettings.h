@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include <nlohmann/json_fwd.hpp>
+
 enum class DxrReflectionsQuality
 {
     Low,
@@ -136,6 +138,10 @@ public:
 
     void CopySettingsFrom(const DxrSettings& source);
     void ClampToHardwareCapabilities(bool raytracingSupported);
+
+    nlohmann::json ToJson() const;
+    void ApplyFromJson(const nlohmann::json& value);
+    void ClampToHardwareWithLogging(bool raytracingSupported);
 
 private:
     bool m_enabled = false;

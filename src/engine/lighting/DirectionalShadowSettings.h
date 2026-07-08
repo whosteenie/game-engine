@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <nlohmann/json_fwd.hpp>
+
 enum class DirectionalShadowFilterMode
 {
     PCF = 0,
@@ -101,6 +103,12 @@ public:
     {
         m_shadowBlurShadowThreshold = std::clamp(threshold, 0.01f, 1.0f);
     }
+
+    static const char* FilterModeToString(DirectionalShadowFilterMode mode);
+    static DirectionalShadowFilterMode FilterModeFromString(const std::string& value);
+
+    nlohmann::json ToJson() const;
+    void ApplyFromJson(const nlohmann::json& value);
 
 private:
     DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCF;
