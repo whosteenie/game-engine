@@ -137,6 +137,10 @@ public:
     // false until SL is ready or if upgrade fails. *swapChain is replaced on success.
     bool UpgradeSwapChain(void** swapChain);
 
+    // True after slUpgradeInterface replaced the native swapchain with Streamline's proxy.
+    // GfxContext::Shutdown must Detach its ComPtr after slShutdown (SL owns the proxy lifetime).
+    bool IsSwapChainUpgraded() const { return m_swapChainUpgraded.load(std::memory_order_acquire); }
+
 private:
     DlssContext() = default;
     ~DlssContext() = default;

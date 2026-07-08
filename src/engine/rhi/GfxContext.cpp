@@ -549,12 +549,23 @@ void GfxContext::Shutdown()
     }
 
     WaitForGpu();
+    // Drop swapchain back-buffer refs before Streamline teardown (upgraded swapchains must have
+    // zero outstanding references when slShutdown runs).
+    ReleaseRenderTargets();
+
+    const bool swapChainOwnedByStreamline = DlssContext::Get().IsSwapChainUpgraded();
     // DLSS/Streamline (S0): shut SL down while the device is still alive.
     DlssContext::Get().Shutdown();
+    // slUpgradeInterface hands ownership of the proxy swapchain to Streamline; slShutdown destroys
+    // it. Detach so ~ComPtr does not Release() an already-freed object (shutdown access violation).
+    if (swapChainOwnedByStreamline)
+    {
+        m_impl->SwapChain.Detach();
+    }
+
     // GPU is idle and no further submissions will happen: flush everything unconditionally.
     ProcessDeferredDestroys(true);
     m_gpuProfiler.Shutdown();
-    ReleaseRenderTargets();
 
     for (TransientUploadArena& arena : m_impl->TransientUploadArenas)
     {
