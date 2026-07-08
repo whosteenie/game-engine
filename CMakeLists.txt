@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(game-engine VERSION 0.1.0 LANGUAGES CXX)
+project(game-engine VERSION 0.1.0 LANGUAGES CXX C)
 
 
 
@@ -24,7 +24,11 @@ option(GAME_ENGINE_ENABLE_DLSS "Enable NVIDIA DLSS Super Resolution via Streamli
 
 include(FetchContent)
 
-
+# Several deps are download-only (no add_subdirectory). MakeAvailable would configure their
+# CMakeLists.txt; single-arg Populate after Declare is the supported pattern under CMP0169 OLD.
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
 
 FetchContent_Declare(
 
@@ -190,10 +194,6 @@ FetchContent_Declare(
 )
 
 
-
-if(POLICY CMP0169)
-    cmake_policy(SET CMP0169 OLD)
-endif()
 
 FetchContent_GetProperties(imguizmo)
 
