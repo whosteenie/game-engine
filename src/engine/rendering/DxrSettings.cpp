@@ -119,6 +119,16 @@ void DxrSettings::SetPtMaxBounces(const int bounces)
     m_ptMaxBounces = std::clamp(bounces, 1, 16);
 }
 
+void DxrSettings::SetPtAmbientStrength(const float strength)
+{
+    m_ptAmbientStrength = std::clamp(strength, 0.0f, 2.0f);
+}
+
+void DxrSettings::SetPtAmbientAoRayCount(const int rays)
+{
+    m_ptAmbientAoRayCount = std::clamp(rays, 0, 8);
+}
+
 void DxrSettings::CopySettingsFrom(const DxrSettings& source)
 {
     m_enabled = source.m_enabled;
@@ -127,6 +137,8 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptMaxBounces = source.m_ptMaxBounces;
     m_ptRussianRoulette = source.m_ptRussianRoulette;
     m_ptFireflyClamp = source.m_ptFireflyClamp;
+    m_ptAmbientStrength = source.m_ptAmbientStrength;
+    m_ptAmbientAoRayCount = source.m_ptAmbientAoRayCount;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
@@ -165,4 +177,7 @@ void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
     SetReflectionRoughnessCutoff(m_reflectionRoughnessCutoff);
     SetSunAngularRadiusDegrees(m_sunAngularRadiusDegrees);
     SetGiStrength(m_giStrength);
+    SetPtMaxBounces(m_ptMaxBounces);
+    SetPtAmbientStrength(m_ptAmbientStrength);
+    SetPtAmbientAoRayCount(m_ptAmbientAoRayCount);
 }

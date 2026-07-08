@@ -73,7 +73,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const float maxTraceDistance,
     const int ptMaxBounces,
     const bool ptRussianRoulette,
-    const bool ptFireflyClamp)
+    const bool ptFireflyClamp,
+    const float ptAmbientStrength,
+    const int ptAmbientAoRayCount)
 {
     m_dispatchedThisFrame = false;
 
@@ -164,6 +166,19 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.sunColor[2] = frameInputs.sunColor.z;
     // Path-tracer-only: g_RoughnessCutoff > 0.5 => pixel-center primary rays (real-time + DLSS).
     constants.roughnessCutoff = frameInputs.centerPrimaryRays ? 1.0f : 0.0f;
+    // Path-tracer-only: g_GiStrength / g_SunAngularTanRadius repurposed for ambient v2
+    // (devdoc/dxr-pt-crevice-darkening.md).
+    constants.giStrength = std::clamp(ptAmbientStrength, 0.0f, 2.0f);
+    constants.sunAngularTanRadius =
+        static_cast<float>(std::clamp(ptAmbientAoRayCount, 0, 8));
+    // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.
+    for (std::size_t i = 0; i < frameInputs.irradianceSh9.size(); ++i)
+    {
+        constants.irradianceSh9[i][0] = frameInputs.irradianceSh9[i].x;
+        constants.irradianceSh9[i][1] = frameInputs.irradianceSh9[i].y;
+        constants.irradianceSh9[i][2] = frameInputs.irradianceSh9[i].z;
+        constants.irradianceSh9[i][3] = frameInputs.irradianceSh9[i].w;
+    }
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();

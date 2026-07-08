@@ -15,6 +15,10 @@ RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) a
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
 #define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
+#define g_PtAmbientStrength g_GiStrength
+#define g_PtAmbientAoRayCount uint(round(saturate(g_SunAngularTanRadius)))
+
+static const uint kPtAmbientAoRngSalt = 128u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
@@ -146,6 +150,47 @@ float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycent
     return albedo;
 }
 
+float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, uint rayCount)
+{
+    if (rayCount == 0u)
+    {
+        return 1.0;
+    }
+
+    const float aoRadius = max(g_MaxTraceDistance * 0.05, 0.5);
+    float aoSum = 0.0;
+    [loop]
+    for (uint aoIndex = 0u; aoIndex < rayCount; ++aoIndex)
+    {
+        const float2 aoXi = RandomXi4(pixel, g_FrameIndex, aoIndex + kPtAmbientAoRngSalt).xy;
+        const float3 aoDir = CosineSampleHemisphere(normal, aoXi);
+        aoSum += TraceVisibility(origin, aoDir, aoRadius);
+    }
+
+    return aoSum / float(rayCount);
+}
+
+float3 EvaluateRealTimeDiffuseAmbient(
+    uint2 pixel,
+    float3 diffuseAlbedo,
+    float3 hitNormal,
+    float3 shadowOrigin)
+{
+    const float diffuseWeight = max(diffuseAlbedo.r, max(diffuseAlbedo.g, diffuseAlbedo.b));
+    if (diffuseWeight <= 0.02)
+    {
+        return 0.0.xxx;
+    }
+
+    const float aoVisibility =
+        TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormal, g_PtAmbientAoRayCount);
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
+    return diffuseAlbedo * irradiance / kPi
+        * aoVisibility
+        * g_EnvironmentIntensity
+        * g_PtAmbientStrength;
+}
+
 float3 EvaluateDirectSun(
     float3 diffuseAlbedo, float3 hitNormal, float3 shadowOrigin)
 {
@@ -258,6 +303,11 @@ void PathTracerRayGen()
     // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
     // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
     float missEnvRoughness = 0.0;
+    // Real-time only: primary-hit AO-gated SH ambient (devdoc/dxr-pt-crevice-darkening.md v2) covers
+    // the diffuse sky floor, so a DIFFUSE bounce that escapes must NOT also add the environment.
+    // SPECULAR bounces still add the env on miss (background + reflections). Reference traces the sky
+    // purely and always adds it on miss.
+    bool addEnvOnMiss = true;
 
     [loop]
     for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
@@ -268,7 +318,10 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
-            radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
+            if (addEnvOnMiss)
+            {
+                radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
+            }
             break;
         }
 
@@ -287,6 +340,14 @@ void PathTracerRayGen()
 
         radiance += throughput * material.emissive;
         radiance += throughput * EvaluateDirectSun(diffuseAlbedo, hitNormal, shadowOrigin);
+
+        // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr-pt-crevice-darkening.md). Fills
+        // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
+        if (kPtCenterPrimaryRays && bounce == 0u)
+        {
+            radiance += throughput
+                * EvaluateRealTimeDiffuseAmbient(pixel, diffuseAlbedo, hitNormal, shadowOrigin);
+        }
 
         if (bounce == 0u)
         {
@@ -321,9 +382,18 @@ void PathTracerRayGen()
 
         if (bounce >= maxBounces)
         {
-            // Terminal-bounce rule: fade to environment instead of zero (devdoc P2).
-            const float3 terminalDir = normalize(reflect(-viewDir, hitNormal));
-            radiance += throughput * SampleEnvironment(terminalDir, material.roughness);
+            // Terminal specular tail: the mirror-direction environment, energy-weighted (a
+            // hall-of-mirrors fade instead of black). The DIFFUSE tail is covered by primary-hit SH
+            // in real-time, or added here in reference mode. Only fires for paths that did not escape.
+            const float terminalNdotV = saturate(dot(hitNormal, viewDir));
+            radiance += throughput
+                * SampleEnvironment(reflect(-viewDir, hitNormal), material.roughness)
+                * EnvBrdfApprox(f0, material.roughness, terminalNdotV);
+            if (!kPtCenterPrimaryRays)
+            {
+                radiance += throughput * diffuseAlbedo * EvaluateDiffuseIrradianceSh(hitNormal) / kPi
+                    * g_EnvironmentIntensity;
+            }
             break;
         }
 
@@ -341,6 +411,10 @@ void PathTracerRayGen()
             nextDir,
             isSpecular,
             throughput);
+
+        // Real-time: specular bounces add env on miss; diffuse bounces use primary-hit SH only.
+        // Reference: always add the true sky.
+        addEnvOnMiss = kPtCenterPrimaryRays ? isSpecular : true;
 
         missEnvRoughness = material.roughness;
 

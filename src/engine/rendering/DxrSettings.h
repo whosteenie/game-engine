@@ -57,6 +57,14 @@ public:
     bool IsPtFireflyClampEnabled() const { return m_ptFireflyClamp; }
     void SetPtFireflyClampEnabled(const bool enabled) { m_ptFireflyClamp = enabled; }
 
+    // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr-pt-crevice-darkening.md). Reference ignores.
+    float GetPtAmbientStrength() const { return m_ptAmbientStrength; }
+    void SetPtAmbientStrength(const float strength);
+
+    // Cosine AO rays at the primary hit for SH ambient occlusion (0 = off). Range [0; 8].
+    int GetPtAmbientAoRayCount() const { return m_ptAmbientAoRayCount; }
+    void SetPtAmbientAoRayCount(const int rays);
+
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
 
@@ -136,6 +144,8 @@ private:
     int m_ptMaxBounces = 4;
     bool m_ptRussianRoulette = true;
     bool m_ptFireflyClamp = true;
+    float m_ptAmbientStrength = 1.0f;
+    int m_ptAmbientAoRayCount = 0;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

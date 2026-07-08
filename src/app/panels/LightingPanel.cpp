@@ -2060,6 +2060,45 @@ void LightingPanel::Draw(
                     "Slightly biased; turn off in Reference for ground truth.");
             }
 
+            float ptAmbientStrength = dxrSettings.GetPtAmbientStrength();
+            UndoableRendererSliderFloat(
+                "PT ambient strength",
+                &ptAmbientStrength,
+                0.0f,
+                2.0f,
+                "%.2f",
+                editContext,
+                [](Scene& target, float strength) {
+                    target.GetRenderer().GetDxrSettings().SetPtAmbientStrength(strength);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Real-time only: scales the AO-gated SH sky ambient at the primary hit.\n"
+                    "Independent of sun intensity. 0 = no ambient floor (crevices go black).");
+            }
+
+            int ptAmbientAoRayCount = dxrSettings.GetPtAmbientAoRayCount();
+            UndoableRendererSliderInt(
+                "PT ambient AO rays",
+                &ptAmbientAoRayCount,
+                0,
+                8,
+                editContext,
+                [](Scene& target, int rays) {
+                    target.GetRenderer().GetDxrSettings().SetPtAmbientAoRayCount(rays);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Real-time only: short cosine visibility rays that darken SH ambient in crevices.\n"
+                    "0 = unoccluded ambient (recommended). Raise only if open shadows wash out.");
+            }
+
             if (dxrSettings.IsPtReferenceConvergence())
             {
                 const std::uint32_t spp =

@@ -4,6 +4,7 @@
 #include "engine/raytracing/DxrPipeline.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 
@@ -35,6 +36,7 @@ public:
         glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 sunColor = glm::vec3(1.0f);
         float sunIntensity = 0.0f;
+        std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse sky irradiance (ambient floor)
         glm::mat4 prevViewProjection{1.0f};
         bool motionHistoryValid = false;
         // Real-time (DLSS): pixel-center primary rays only. Reference: sub-pixel jitter for accumulation.
@@ -62,7 +64,9 @@ public:
         float maxTraceDistance,
         int ptMaxBounces,
         bool ptRussianRoulette,
-        bool ptFireflyClamp);
+        bool ptFireflyClamp,
+        float ptAmbientStrength,
+        int ptAmbientAoRayCount);
 
     void Release();
 

@@ -625,6 +625,15 @@ void SceneRenderer::RecordDxrPass(
         ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
         ptInputs.maxReflectionLod = ptIbl.GetMaxReflectionLod();
         {
+            const IrradianceSh9& ptSh9 = ptIbl.GetIrradianceSh9();
+            for (std::size_t i = 0;
+                 i < ptSh9.coefficients.size() && i < ptInputs.irradianceSh9.size();
+                 ++i)
+            {
+                ptInputs.irradianceSh9[i] = ptSh9.coefficients[i];
+            }
+        }
+        {
             const MotionVectorFrameState& motionState = m_screenSpaceEffects->GetMotionVectorFrameState();
             ptInputs.motionHistoryValid = motionState.historyValid;
             ptInputs.prevViewProjection = motionState.historyValid
@@ -677,7 +686,9 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetMaxTraceDistance(),
             m_dxrSettings.GetPtMaxBounces(),
             m_dxrSettings.IsPtRussianRouletteEnabled(),
-            m_dxrSettings.IsPtFireflyClampEnabled());
+            m_dxrSettings.IsPtFireflyClampEnabled(),
+            m_dxrSettings.GetPtAmbientStrength(),
+            m_dxrSettings.GetPtAmbientAoRayCount());
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())

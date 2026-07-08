@@ -785,6 +785,8 @@ namespace SceneProjectIODetail
                  {"ptMaxBounces", dxrSettings.GetPtMaxBounces()},
                  {"ptRussianRoulette", dxrSettings.IsPtRussianRouletteEnabled()},
                  {"ptFireflyClamp", dxrSettings.IsPtFireflyClampEnabled()},
+                 {"ptAmbientStrength", dxrSettings.GetPtAmbientStrength()},
+                 {"ptAmbientAoRayCount", dxrSettings.GetPtAmbientAoRayCount()},
                  {"reflectionsEnabled", dxrSettings.IsReflectionsEnabled()},
                  {"reflectionsQuality",
                   DxrSettings::ReflectionsQualityToString(dxrSettings.GetReflectionsQuality())},
@@ -834,6 +836,14 @@ namespace SceneProjectIODetail
         if (dxrValue.contains("ptFireflyClamp"))
         {
             dxrSettings.SetPtFireflyClampEnabled(dxrValue.at("ptFireflyClamp").get<bool>());
+        }
+        if (dxrValue.contains("ptAmbientStrength"))
+        {
+            dxrSettings.SetPtAmbientStrength(dxrValue.at("ptAmbientStrength").get<float>());
+        }
+        if (dxrValue.contains("ptAmbientAoRayCount"))
+        {
+            dxrSettings.SetPtAmbientAoRayCount(dxrValue.at("ptAmbientAoRayCount").get<int>());
         }
         if (dxrValue.contains("reflectionsEnabled"))
         {
