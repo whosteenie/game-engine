@@ -717,7 +717,8 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResource() : nullptr,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResourceState() : 0,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResource() : nullptr,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0);
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle() : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so

@@ -786,6 +786,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ptAccumScratchTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
+    DestroyInternalDepthTarget(m_ptDlssDepthTarget);
     DestroyInternalTarget(m_dlssBloomExtractTarget);
     DestroyInternalTarget(m_dlssBloomBlurTarget);
     DestroyInternalTarget(m_dlssBloomBlur2Target);
@@ -1308,6 +1309,9 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     // RR4 spec hit-distance guide: single-channel raw ray length in world units (unambiguous channel).
     const int hitDistFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
     ResizeInternalTarget(m_rrSpecularHitDistanceTarget, width, height, hitDistFormat);
+    // P4: render-res D24 depth target for the path tracer's DLSS depth input (resolved from the PT
+    // R32 depth each frame). D24 (not the R32 UAV) is what Streamline expects, avoiding shimmer.
+    CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1911,6 +1915,67 @@ bool ScreenSpaceEffects::BindPathTracerGridOverlayDepth(
     return true;
 }
 
+bool ScreenSpaceEffects::ResolvePathTracerDlssDepth() const
+{
+    // P4: resolve the path tracer's R32 hyperbolic primary depth into a render-res D24 target so DLSS
+    // gets a depth buffer in the format Streamline expects (feeding the R32 UAV directly shimmers).
+    if (m_pathTracerDepthSrv == 0 || m_ptDlssDepthTarget.resource == nullptr
+        || m_ptDlssDepthTarget.dsvIndex == UINT32_MAX || m_ptDlssDepthTarget.width != m_width
+        || m_ptDlssDepthTarget.height != m_height || m_width <= 0 || m_height <= 0)
+    {
+        return false;
+    }
+
+    auto* commandList =
+        static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    EnsureDepthBlitShader();
+
+    auto* d24Depth = static_cast<ID3D12Resource*>(m_ptDlssDepthTarget.resource);
+    const D3D12_RESOURCE_STATES depthWriteState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    D3D12_RESOURCE_STATES beforeState =
+        static_cast<D3D12_RESOURCE_STATES>(m_ptDlssDepthTarget.resourceState);
+    if (beforeState == D3D12_RESOURCE_STATE_COMMON)
+    {
+        beforeState = depthWriteState;
+    }
+    if (beforeState != depthWriteState)
+    {
+        TransitionResource(commandList, d24Depth, beforeState, depthWriteState);
+    }
+    const_cast<InternalDepthTarget&>(m_ptDlssDepthTarget).resourceState =
+        static_cast<std::uint32_t>(depthWriteState);
+
+    D3D12_CPU_DESCRIPTOR_HANDLE depthDsv{};
+    depthDsv.ptr = GfxContext::Get().GetOffscreenDsvCpuHandle(m_ptDlssDepthTarget.dsvIndex);
+
+    D3D12_VIEWPORT viewport{};
+    viewport.Width = static_cast<float>(m_width);
+    viewport.Height = static_cast<float>(m_height);
+    viewport.MaxDepth = 1.0f;
+    const D3D12_RECT scissor{0, 0, m_width, m_height};
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, &depthDsv);
+    commandList->RSSetViewports(1, &viewport);
+    commandList->RSSetScissorRects(1, &scissor);
+    commandList->ClearDepthStencilView(depthDsv, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+    // depth_blt.ps.hlsl point-samples .r and writes SV_Depth. The PT R32 depth SRV is already in a
+    // shader-read state from DispatchPathTracer (no source transition needed).
+    m_depthBlitShader->Use(false, false);
+    m_depthBlitShader->BindTextureSlot(0, m_pathTracerDepthSrv);
+    m_depthBlitShader->FlushUniforms();
+    DrawFullscreenQuad();
+
+    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
+
+    // DLSS/Streamline reads depth as a shader resource — transition into that state.
+    TransitionResource(
+        commandList, d24Depth, depthWriteState, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    const_cast<InternalDepthTarget&>(m_ptDlssDepthTarget).resourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    return true;
+}
+
 void ScreenSpaceEffects::EndScenePass() const
 {
     if (m_sceneFramebuffer->UsesMsaa())
@@ -2032,7 +2097,8 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     void* const depthResource,
     const std::uint32_t depthResourceState,
     void* const motionResource,
-    const std::uint32_t motionResourceState)
+    const std::uint32_t motionResourceState,
+    const std::uintptr_t depthSrv)
 {
     if (!active)
     {
@@ -2047,6 +2113,7 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerOutputResourceState = outputResourceState;
     m_pathTracerDepthResource = depthResource;
     m_pathTracerDepthResourceState = depthResourceState;
+    m_pathTracerDepthSrv = depthSrv;
     m_pathTracerMotionResource = motionResource;
     m_pathTracerMotionResourceState = motionResourceState;
     m_pathTracerDlssResolvedThisFrame = false;
@@ -4524,8 +4591,16 @@ void ScreenSpaceEffects::Apply(
             in.colorInputState = hdrInputState;
             in.colorOutput = dlssOut;
             in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            // P4 PT depth/MV are not fed to DLSS yet — R32 UAV depth does not match the D24 depth
-            // buffer Streamline expects, which caused static shimmer. Use raster G-buffer guides.
+            // Depth + motion come from the RASTER G-buffer (D24 depth + RT4), for both hybrid AND
+            // real-time path tracing. This is intentional: DLSS-RR reprojects using depth + motion +
+            // the material guides (normal/roughness) TOGETHER, assuming one consistent sub-pixel
+            // sample. Feeding PT primary-hit depth/MV while the RR material guides stay on the raster
+            // G-buffer mixes two sources that disagree sub-pixel every jittered frame → static shimmer
+            // on ALL geometry (P4 regression, reverted). Raster depth/MV are self-consistent with the
+            // raster guides (clean on diffuse); the residual is reflection smear (PT color vs mirror-
+            // surface depth), which the stable RR4 spec-hit-distance guide targets instead — see
+            // devdoc/dxr-pt-p4-dlss-guides.md. The PT depth-resolve scaffolding remains dormant for a
+            // future FULL-PT-guides path (all guides from the PT hit → self-consistent).
             in.depth = m_sceneFramebuffer->GetDepthResource();
             in.depthState = kPixelSrv;
             in.motionVectors = m_sceneFramebuffer->GetColorResource(4);

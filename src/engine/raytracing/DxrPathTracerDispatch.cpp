@@ -239,6 +239,11 @@ std::uint32_t DxrPathTracerDispatch::GetPathTracerDepthResourceState() const
     return m_dispatchContext.GetPathTracerDepthResourceState();
 }
 
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerDepthSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerDepthSrvCpuHandle();
+}
+
 ID3D12Resource* DxrPathTracerDispatch::GetPathTracerMotionResource() const
 {
     return m_dispatchContext.GetPathTracerMotionResource();

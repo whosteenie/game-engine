@@ -121,7 +121,8 @@ public:
         void* depthResource = nullptr,
         std::uint32_t depthResourceState = 0,
         void* motionResource = nullptr,
-        std::uint32_t motionResourceState = 0);
+        std::uint32_t motionResourceState = 0,
+        std::uintptr_t depthSrv = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
@@ -506,6 +507,9 @@ private:
         int width,
         int height) const;
     void EnsureDepthBlitShader() const;
+    // P4: resolve the path tracer's R32 primary-depth UAV into m_ptDlssDepthTarget (D24) so DLSS gets
+    // a depth buffer in the format Streamline expects. Returns true if the D24 target is ready to feed.
+    bool ResolvePathTracerDlssDepth() const;
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
@@ -568,6 +572,9 @@ private:
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
     InternalDepthTarget m_dlssDisplayDepthTarget;
+    // P4: render-res D24 target holding the path tracer's primary-hit depth for DLSS (resolved from
+    // the PT R32 depth UAV). Streamline expects a D24 depth resource; feeding the R32 UAV shimmers.
+    InternalDepthTarget m_ptDlssDepthTarget;
     InternalTarget m_dlssBloomExtractTarget;
     InternalTarget m_dlssBloomBlurTarget;
     InternalTarget m_dlssBloomBlur2Target;
@@ -700,6 +707,7 @@ private:
     std::uint32_t m_pathTracerOutputResourceState = 0;
     void* m_pathTracerDepthResource = nullptr;
     std::uint32_t m_pathTracerDepthResourceState = 0;
+    std::uintptr_t m_pathTracerDepthSrv = 0; // R32 primary-depth SRV (P4 resolve source)
     void* m_pathTracerMotionResource = nullptr;
     std::uint32_t m_pathTracerMotionResourceState = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
