@@ -210,6 +210,7 @@ public:
     std::uint32_t GetPathTracerDepthResourceState() const { return m_ptDepthTexture.state; }
     // R32 primary-depth SRV — P4 resolves this into a D24 target for the DLSS depth input.
     std::uintptr_t GetPathTracerDepthSrvCpuHandle() const { return m_ptDepthTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerMotionSrvCpuHandle() const { return m_ptMotionTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerMotionResource() const { return m_ptMotionTexture.resource; }
     std::uint32_t GetPathTracerMotionResourceState() const { return m_ptMotionTexture.state; }
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }

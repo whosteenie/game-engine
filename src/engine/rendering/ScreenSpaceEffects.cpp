@@ -787,6 +787,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_dlssOutputTarget);
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
     DestroyInternalDepthTarget(m_ptDlssDepthTarget);
+    DestroyInternalTarget(m_ptDlssMotionTarget);
     DestroyInternalTarget(m_dlssBloomExtractTarget);
     DestroyInternalTarget(m_dlssBloomBlurTarget);
     DestroyInternalTarget(m_dlssBloomBlur2Target);
@@ -1312,6 +1313,7 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     // P4: render-res D24 depth target for the path tracer's DLSS depth input (resolved from the PT
     // R32 depth each frame). D24 (not the R32 UAV) is what Streamline expects, avoiding shimmer.
     CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
+    ResizeInternalTarget(m_ptDlssMotionTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1976,6 +1978,50 @@ bool ScreenSpaceEffects::ResolvePathTracerDlssDepth() const
     return true;
 }
 
+void ScreenSpaceEffects::EnsurePtSkyMotionPatchShader() const
+{
+    if (m_ptSkyMotionPatchShader != nullptr)
+    {
+        return;
+    }
+
+    const_cast<ScreenSpaceEffects*>(this)->m_ptSkyMotionPatchShader = std::make_unique<Shader>(
+        EngineConstants::FullscreenVertexShader,
+        EngineConstants::PtSkyMotionPatchFragmentShader,
+        ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true});
+}
+
+bool ScreenSpaceEffects::PatchPathTracerSkyMotion() const
+{
+    if (m_dxrPathTracerMetadataSrv == 0 || m_pathTracerMotionSrv == 0 || m_sceneFramebuffer == nullptr
+        || !m_sceneFramebuffer->HasVelocity() || m_width <= 0 || m_height <= 0)
+    {
+        return false;
+    }
+
+    if (m_ptDlssMotionTarget.resource == nullptr || m_ptDlssMotionTarget.rtvIndex == UINT32_MAX
+        || m_ptDlssMotionTarget.width != m_width || m_ptDlssMotionTarget.height != m_height)
+    {
+        return false;
+    }
+
+    m_sceneFramebuffer->EnsureShaderResourceState();
+    EnsurePtSkyMotionPatchShader();
+
+    const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_ptSkyMotionPatchShader->Use(false, false);
+    m_ptSkyMotionPatchShader->BindTextureSlot(0, m_sceneFramebuffer->GetColorSrvCpuHandle(4));
+    m_ptSkyMotionPatchShader->BindTextureSlot(1, m_pathTracerMotionSrv);
+    m_ptSkyMotionPatchShader->BindTextureSlot(2, m_dxrPathTracerMetadataSrv);
+    DrawFullscreenToTarget(
+        *m_ptSkyMotionPatchShader,
+        const_cast<InternalTarget&>(m_ptDlssMotionTarget),
+        m_width,
+        m_height,
+        clearColor);
+    return true;
+}
+
 void ScreenSpaceEffects::EndScenePass() const
 {
     if (m_sceneFramebuffer->UsesMsaa())
@@ -2098,7 +2144,8 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     const std::uint32_t depthResourceState,
     void* const motionResource,
     const std::uint32_t motionResourceState,
-    const std::uintptr_t depthSrv)
+    const std::uintptr_t depthSrv,
+    const std::uintptr_t motionSrv)
 {
     if (!active)
     {
@@ -2116,6 +2163,7 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerDepthSrv = depthSrv;
     m_pathTracerMotionResource = motionResource;
     m_pathTracerMotionResourceState = motionResourceState;
+    m_pathTracerMotionSrv = motionSrv;
     m_pathTracerDlssResolvedThisFrame = false;
 }
 
@@ -4605,13 +4653,20 @@ void ScreenSpaceEffects::Apply(
             // G-buffer mixes two sources that disagree sub-pixel every jittered frame → static shimmer
             // on ALL geometry (P4 regression, reverted). Raster depth/MV are self-consistent with the
             // raster guides (clean on diffuse); the residual is reflection smear (PT color vs mirror-
-            // surface depth), which the stable RR4 spec-hit-distance guide targets instead — see
-            // devdoc/dxr-pt-p4-dlss-guides.md. The PT depth-resolve scaffolding remains dormant for a
-            // future FULL-PT-guides path (all guides from the PT hit → self-consistent).
+            // surface depth) and close-up GI shimmer (PT multi-bounce vs raster guides) — see
+            // devdoc/dxr-pt-p4-dlss-guides.md. Sky pixels are patched separately (PT sky MV where
+            // metadata says miss) — devdoc/dxr-pt-sky-motion.md. Full PT guides are the real fix for GI.
             in.depth = m_sceneFramebuffer->GetDepthResource();
             in.depthState = kPixelSrv;
-            in.motionVectors = m_sceneFramebuffer->GetColorResource(4);
-            in.motionVectorsState = kPixelSrv;
+            void* motionInput = m_sceneFramebuffer->GetColorResource(4);
+            std::uint32_t motionInputState = kPixelSrv;
+            if (pathTracerDlssActive && PatchPathTracerSkyMotion())
+            {
+                motionInput = m_ptDlssMotionTarget.resource;
+                motionInputState = m_ptDlssMotionTarget.resourceState;
+            }
+            in.motionVectors = motionInput;
+            in.motionVectorsState = motionInputState;
             in.renderWidth = static_cast<unsigned int>(m_width);
             in.renderHeight = static_cast<unsigned int>(m_height);
             in.displayWidth = static_cast<unsigned int>(m_dlssOutputTarget.width);

@@ -62,6 +62,8 @@ namespace EngineConstants
     inline constexpr const char* RtReflectionResolveFragmentShader =
         "assets/shaders/rt_reflection_resolve.ps.hlsl";
     inline constexpr const char* DepthBlitFragmentShader = "assets/shaders/depth_blt.ps.hlsl";
+    inline constexpr const char* PtSkyMotionPatchFragmentShader =
+        "assets/shaders/pt_sky_motion_patch.ps.hlsl";
     inline constexpr const char* MsaaDepthResolveFragmentShader =
         "assets/shaders/msaa_depth_resolve.ps.hlsl";
 

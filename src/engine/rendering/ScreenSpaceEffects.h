@@ -122,7 +122,8 @@ public:
         std::uint32_t depthResourceState = 0,
         void* motionResource = nullptr,
         std::uint32_t motionResourceState = 0,
-        std::uintptr_t depthSrv = 0);
+        std::uintptr_t depthSrv = 0,
+        std::uintptr_t motionSrv = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
@@ -507,9 +508,12 @@ private:
         int width,
         int height) const;
     void EnsureDepthBlitShader() const;
+    void EnsurePtSkyMotionPatchShader() const;
     // P4: resolve the path tracer's R32 primary-depth UAV into m_ptDlssDepthTarget (D24) so DLSS gets
     // a depth buffer in the format Streamline expects. Returns true if the D24 target is ready to feed.
     bool ResolvePathTracerDlssDepth() const;
+    // Real-time PT: patch sky pixels in the motion buffer (raster MV + PT sky MV from metadata).
+    bool PatchPathTracerSkyMotion() const;
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
@@ -575,6 +579,7 @@ private:
     // P4: render-res D24 target holding the path tracer's primary-hit depth for DLSS (resolved from
     // the PT R32 depth UAV). Streamline expects a D24 depth resource; feeding the R32 UAV shimmers.
     InternalDepthTarget m_ptDlssDepthTarget;
+    InternalTarget m_ptDlssMotionTarget;
     InternalTarget m_dlssBloomExtractTarget;
     InternalTarget m_dlssBloomBlurTarget;
     InternalTarget m_dlssBloomBlur2Target;
@@ -597,6 +602,7 @@ private:
     std::unique_ptr<Shader> m_smaaNeighborShader;
     std::unique_ptr<Shader> m_msaaDepthResolveShader;
     std::unique_ptr<Shader> m_depthBlitShader;
+    mutable std::unique_ptr<Shader> m_ptSkyMotionPatchShader;
     std::unique_ptr<Shader> m_debugChannelShader;
     std::unique_ptr<Shader> m_rtReflectionResolveShader;
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
@@ -708,6 +714,7 @@ private:
     void* m_pathTracerDepthResource = nullptr;
     std::uint32_t m_pathTracerDepthResourceState = 0;
     std::uintptr_t m_pathTracerDepthSrv = 0; // R32 primary-depth SRV (P4 resolve source)
+    std::uintptr_t m_pathTracerMotionSrv = 0;
     void* m_pathTracerMotionResource = nullptr;
     std::uint32_t m_pathTracerMotionResourceState = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;

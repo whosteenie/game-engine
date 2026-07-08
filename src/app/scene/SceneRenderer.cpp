@@ -730,7 +730,8 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResourceState() : 0,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResource() : nullptr,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle() : 0);
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle() : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
@@ -1186,9 +1187,12 @@ void SceneRenderer::Render(
     }
 
     {
-        SceneRenderTrace::Scope skyboxScope("RenderSkybox");
-        m_environmentMap->RenderSkybox(camera, splitLightingMrt);
-        skyboxScope.Success();
+        if (!m_dxrSettings.IsPathTracingActive())
+        {
+            SceneRenderTrace::Scope skyboxScope("RenderSkybox");
+            m_environmentMap->RenderSkybox(camera, splitLightingMrt);
+            skyboxScope.Success();
+        }
     }
 
     const std::vector<SceneObject>& objects = scene.GetObjects();

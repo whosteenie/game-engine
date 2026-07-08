@@ -355,6 +355,16 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
+            if (bounce == 0u)
+            {
+                // Sky pixel: reprojection motion for the view ray (raster sky does not write RT4).
+                const float3 skyAnchor = g_CameraPos + ray.Direction * (g_MaxTraceDistance * 0.5);
+                const float4 currClip = mul(g_UnjitteredViewProj, float4(skyAnchor, 1.0));
+                const float4 prevClip = mul(g_PrevViewProj, float4(skyAnchor, 1.0));
+                primaryMotion = ComputeMotionNdc(currClip, prevClip);
+                primaryDepth = 1.0;
+            }
+
             if (addEnvOnMiss)
             {
                 radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);

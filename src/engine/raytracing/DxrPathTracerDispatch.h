@@ -82,6 +82,7 @@ public:
     ID3D12Resource* GetPathTracerDepthResource() const;
     std::uint32_t GetPathTracerDepthResourceState() const;
     std::uintptr_t GetPathTracerDepthSrvCpuHandle() const;
+    std::uintptr_t GetPathTracerMotionSrvCpuHandle() const;
     ID3D12Resource* GetPathTracerMotionResource() const;
     std::uint32_t GetPathTracerMotionResourceState() const;
     bool HasValidOutput() const;
