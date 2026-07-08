@@ -166,11 +166,13 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.sunColor[2] = frameInputs.sunColor.z;
     // Path-tracer-only: g_RoughnessCutoff > 0.5 => pixel-center primary rays (real-time + DLSS).
     constants.roughnessCutoff = frameInputs.centerPrimaryRays ? 1.0f : 0.0f;
-    // Path-tracer-only: g_GiStrength / g_SunAngularTanRadius repurposed for ambient v2
-    // (devdoc/dxr-pt-crevice-darkening.md).
+    // Path-tracer-only: g_GiStrength / _PadUnjitteredViewProj.x repurposed for ambient v2
+    // (devdoc/dxr-pt-crevice-darkening.md). g_SunAngularTanRadius = soft sun disk (devdoc/dxr-pt-soft-sun.md).
     constants.giStrength = std::clamp(ptAmbientStrength, 0.0f, 2.0f);
-    constants.sunAngularTanRadius =
+    constants.paddingUnjitteredViewProj[0] =
         static_cast<float>(std::clamp(ptAmbientAoRayCount, 0, 8));
+    constants.sunAngularTanRadius = std::tan(
+        glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.
     for (std::size_t i = 0; i < frameInputs.irradianceSh9.size(); ++i)
     {

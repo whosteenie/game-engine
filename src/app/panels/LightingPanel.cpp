@@ -2099,6 +2099,26 @@ void LightingPanel::Draw(
                     "0 = unoccluded ambient (recommended). Raise only if open shadows wash out.");
             }
 
+            float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
+            UndoableRendererSliderFloat(
+                "PT sun angular radius",
+                &ptSunAngularRadius,
+                0.05f,
+                2.0f,
+                "%.2f deg",
+                editContext,
+                [](Scene& target, float degrees) {
+                    target.GetRenderer().GetDxrSettings().SetSunAngularRadiusDegrees(degrees);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Angular radius of the sun disk for soft shadow penumbra (real-time PT NEE).\n"
+                    "~0.27 deg matches the real sun. Wider = softer contact shadows. Shared with RT shadows.");
+            }
+
             if (dxrSettings.IsPtReferenceConvergence())
             {
                 const std::uint32_t spp =
@@ -2314,6 +2334,11 @@ void LightingPanel::Draw(
                 target.GetRenderer().GetDxrSettings().SetSunAngularRadiusDegrees(degrees);
                 target.MarkDirty();
             });
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Angular radius of the sun disk. Drives RT shadow penumbra and path-traced soft sun NEE.");
+        }
 
         if (rrActive)
         {

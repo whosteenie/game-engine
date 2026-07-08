@@ -642,6 +642,7 @@ void SceneRenderer::RecordDxrPass(
         }
         ptInputs.centerPrimaryRays = !m_dxrSettings.IsPtReferenceConvergence();
         ptInputs.sunDirection = glm::normalize(GetSunDirection());
+        ptInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
         {
             const std::vector<Light>& lights = m_lighting.GetLights();
             const int shadowLightIndex = m_lighting.GetShadowLightIndex();

@@ -16,9 +16,11 @@ RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) a
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
 #define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
 #define g_PtAmbientStrength g_GiStrength
-#define g_PtAmbientAoRayCount uint(round(saturate(g_SunAngularTanRadius)))
+#define g_PtAmbientAoRayCount uint(round(saturate(_PadUnjitteredViewProj.x)))
 
 static const uint kPtAmbientAoRngSalt = 128u;
+static const uint kPtSoftSunRngSalt = 32u;
+static const uint kPtSoftSunSampleCount = 4u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
@@ -132,6 +134,35 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
     return probe.hit == 0 ? 1.0 : 0.0;
 }
 
+// Soft sun visibility: cone-jittered shadow rays matching shadows.hlsl / reflections.hlsl.
+float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel, uint salt)
+{
+    const float3 sunDir = normalize(g_SunDirection);
+    if (dot(shadingNormal, sunDir) <= 0.0)
+    {
+        return 0.0;
+    }
+
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(sunDir, tangent, bitangent);
+
+    float visSum = 0.0;
+    [loop]
+    for (uint sampleIndex = 0u; sampleIndex < kPtSoftSunSampleCount; ++sampleIndex)
+    {
+        const float4 xi = RandomXi4(rngPixel, g_FrameIndex, salt + sampleIndex);
+        const float diskRadius = sqrt(xi.x);
+        const float diskPhi = 2.0 * kPi * xi.y;
+        const float2 disk = float2(diskRadius * cos(diskPhi), diskRadius * sin(diskPhi));
+        const float3 rayDir = normalize(
+            sunDir + (tangent * disk.x + bitangent * disk.y) * g_SunAngularTanRadius);
+        visSum += TraceVisibility(origin, rayDir, g_MaxTraceDistance);
+    }
+
+    return visSum / float(kPtSoftSunSampleCount);
+}
+
 float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycentrics)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
@@ -192,7 +223,11 @@ float3 EvaluateRealTimeDiffuseAmbient(
 }
 
 float3 EvaluateDirectSun(
-    float3 diffuseAlbedo, float3 hitNormal, float3 shadowOrigin)
+    uint2 pixel,
+    uint bounceIndex,
+    float3 diffuseAlbedo,
+    float3 hitNormal,
+    float3 shadowOrigin)
 {
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
@@ -201,7 +236,9 @@ float3 EvaluateDirectSun(
         return 0.0.xxx;
     }
 
-    const float sunVis = TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+    const float sunVis = (g_SunAngularTanRadius > 1e-6)
+        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, pixel, bounceIndex + kPtSoftSunRngSalt)
+        : TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
     return diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
 }
@@ -339,7 +376,8 @@ void PathTracerRayGen()
         const float3 diffuseAlbedo = albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
 
         radiance += throughput * material.emissive;
-        radiance += throughput * EvaluateDirectSun(diffuseAlbedo, hitNormal, shadowOrigin);
+        radiance += throughput * EvaluateDirectSun(
+            pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr-pt-crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.

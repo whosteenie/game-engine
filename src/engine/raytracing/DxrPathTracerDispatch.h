@@ -36,6 +36,7 @@ public:
         glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 sunColor = glm::vec3(1.0f);
         float sunIntensity = 0.0f;
+        float sunAngularRadiusDegrees = 0.27f;
         std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse sky irradiance (ambient floor)
         glm::mat4 prevViewProjection{1.0f};
         bool motionHistoryValid = false;
