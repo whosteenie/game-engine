@@ -1,0 +1,98 @@
+#pragma once
+
+#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/MotionVectorFrameState.h"
+#include "engine/rendering/post/BloomTonemapPass.h"
+#include "engine/rendering/post/PostProcessContext.h"
+#include "engine/rendering/post/PostProcessTarget.h"
+#include "engine/rhi/DlssContext.h"
+
+#include <cstdint>
+#include <functional>
+
+class Camera;
+class Framebuffer;
+
+struct DlssResolvePassInputs
+{
+    const Camera* camera = nullptr;
+    Framebuffer* sceneFramebuffer = nullptr;
+    const Framebuffer* outputTarget = nullptr;
+    MotionVectorFrameState motionVectorState{};
+
+    int viewportWidth = 0;
+    int viewportHeight = 0;
+
+    std::uintptr_t hdrColorSrv = 0;
+    PostProcessTarget* hdrCompositeTarget = nullptr;
+
+    bool pathTracerActive = false;
+    PtConvergenceMode pathTracerConvergenceMode = PtConvergenceMode::RealTime;
+    void* pathTracerOutputResource = nullptr;
+    std::uint32_t pathTracerOutputResourceState = 0;
+    std::uintptr_t dxrPathTracerOutputSrv = 0;
+    std::uintptr_t dxrReflectionSrv = 0;
+    bool pathTracerGridOverlayEnabled = false;
+
+    DlssQuality quality = DlssQuality::DLAA;
+    float exposure = 1.0f;
+    float dlssSharpness = 0.0f;
+    int tonemapMode = 0;
+
+    bool dlssHistoryValid = false;
+    bool bloomEnabled = false;
+    float bloomThreshold = 1.0f;
+    float bloomSoftKnee = 0.5f;
+    float bloomBlurRadius = 1.0f;
+    float bloomIntensity = 1.0f;
+    float bloomTemporalBlendFactor = 0.9f;
+    float bloomSameUvBlendFactor = 0.95f;
+    float bloomDepthThreshold = 0.01f;
+    bool dlssBloomHistoryValid = false;
+    int dlssBloomTemporalWarmupFrames = 0;
+
+    bool rayReconstructionActive = false;
+
+    PostProcessTarget* dlssOutputTarget = nullptr;
+    PostProcessTarget* ptDlssMotionTarget = nullptr;
+    PostProcessTarget* rrDiffuseAlbedoTarget = nullptr;
+    PostProcessTarget* rrSpecularAlbedoTarget = nullptr;
+    PostProcessTarget* rrNormalRoughnessTarget = nullptr;
+    PostProcessTarget* rrSpecularHitDistanceTarget = nullptr;
+
+    PostProcessTarget* dlssBloomExtractTarget = nullptr;
+    PostProcessTarget* dlssBloomBlurTarget = nullptr;
+    PostProcessTarget* dlssBloomBlur2Target = nullptr;
+    PostProcessTarget* dlssBloomHistoryTarget = nullptr;
+    PostProcessTarget* dlssBloomTemporalTarget = nullptr;
+
+    Shader* bloomExtractShader = nullptr;
+    Shader* bloomBlurShader = nullptr;
+    Shader* bloomTemporalShader = nullptr;
+    Shader* tonemapShader = nullptr;
+
+    TonemapPassInputs fallbackTonemapInputs{};
+
+    std::function<bool()> patchPathTracerSkyMotion;
+    std::function<void()> generateRrGuides;
+    std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
+};
+
+struct DlssResolvePassOutputs
+{
+    bool dlssRan = false;
+    bool pathTracerDlssResolvedThisFrame = false;
+    bool dlssHistoryValid = false;
+    bool dlssBloomHistoryValid = false;
+    int dlssBloomTemporalWarmupFrames = 0;
+    std::uintptr_t prevFrameBloomSrv = 0;
+};
+
+class DlssResolvePass
+{
+public:
+    static void Execute(
+        const PostProcessContext& context,
+        const DlssResolvePassInputs& inputs,
+        DlssResolvePassOutputs& outputs);
+};

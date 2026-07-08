@@ -16,6 +16,8 @@
 #include "engine/rendering/post/DxrDebugBlitPass.h"
 #include "engine/rendering/post/ScreenSpaceReflectionPass.h"
 #include "engine/rendering/post/ScreenSpaceGiPass.h"
+#include "engine/rendering/post/AntiAliasingPass.h"
+#include "engine/rendering/post/DlssResolvePass.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
@@ -1631,54 +1633,6 @@ namespace
         return mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
             || mode == AntiAliasingMode::DLSS;
     }
-
-    // NRD + DLSS share this pixel-space jitter convention (devdoc/dlss-super-resolution.md §Jitter).
-    glm::vec2 JitterNdcToPixels(const glm::vec2& jitterNdc, const int width, const int height)
-    {
-        return glm::vec2(
-            jitterNdc.x * 0.5f * static_cast<float>(width),
-            -jitterNdc.y * 0.5f * static_cast<float>(height));
-    }
-
-    // RT4 stores currNdc - prevNdc (range ~[-2, 2]). SL multiplies mvecScale by renderWidth/Height
-    // internally before passing to NGX (see sl.dlss/dlssEntry.cpp). Pass normalization factors only:
-    // negate X (curr-prev -> prev-curr), scale 0.5 (NDC span -> [-1,1]), flip Y for texture space.
-    glm::vec2 DlssMvecScale()
-    {
-        return glm::vec2(-0.5f, 0.5f);
-    }
-
-    float DlssExposureScaleFromEv(const float exposureEv)
-    {
-        return std::exp2(exposureEv);
-    }
-
-    // Teleport / FrameTarget / focus jumps: large view delta in one frame.
-    bool DetectDlssCameraCut(const glm::mat4& currView, const MotionVectorFrameState& mvState)
-    {
-        if (!mvState.historyValid)
-        {
-            return false;
-        }
-
-        const glm::mat4 viewToViewPrev = mvState.prevView * glm::inverse(currView);
-        const glm::vec3 translation(viewToViewPrev[3]);
-        constexpr float kCutThresholdWorldUnits = 2.0f;
-        if (glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits)
-        {
-            return true;
-        }
-
-        // Orbit / pan rotates the view without large translation — reset RR history so specular
-        // reprojection does not smear stale reflection content.
-        const glm::mat3 rotation{
-            glm::vec3(viewToViewPrev[0]),
-            glm::vec3(viewToViewPrev[1]),
-            glm::vec3(viewToViewPrev[2])};
-        const float trace = rotation[0][0] + rotation[1][1] + rotation[2][2];
-        constexpr float kRotationTraceThreshold = 2.999f;
-        return trace < kRotationTraceThreshold;
-    }
 }
 
 void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera, const bool freezeJitter) const
@@ -2009,25 +1963,17 @@ bool ScreenSpaceEffects::PatchPathTracerSkyMotion() const
 
 void ScreenSpaceEffects::EndScenePass() const
 {
-    if (m_sceneFramebuffer->UsesMsaa())
+    if (m_sceneFramebuffer->UsesMsaa() && m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle() != 0)
+    {
+        EnsureMsaaDepthResolveShader();
+        MsaaDepthResolveInputs msaaInputs{};
+        msaaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+        msaaInputs.msaaDepthResolveShader = m_msaaDepthResolveShader.get();
+        AntiAliasingPass::ExecuteMsaaDepthResolve(BuildPostProcessContext(), msaaInputs);
+    }
+    else if (m_sceneFramebuffer->UsesMsaa())
     {
         m_sceneFramebuffer->ResolveMsaa();
-
-        if (m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle() != 0)
-        {
-            EnsureMsaaDepthResolveShader();
-            m_sceneFramebuffer->BeginMsaaDepthResolvePass();
-            m_msaaDepthResolveShader->Use(false, false);
-            m_msaaDepthResolveShader->SetInt(
-                "uSampleCount",
-                m_sceneFramebuffer->GetSampleCount());
-            m_msaaDepthResolveShader->BindTextureSlot(
-                0,
-                m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle());
-            m_msaaDepthResolveShader->SetInt("uMsaaDepth", 0);
-            DrawFullscreenPass(*m_msaaDepthResolveShader, false);
-            m_sceneFramebuffer->FinishMsaaDepthResolvePass();
-        }
     }
 
     m_sceneFramebuffer->Unbind();
@@ -3083,46 +3029,27 @@ void ScreenSpaceEffects::Apply(
     }
 
     const bool useTaa = m_antiAliasingMode == AntiAliasingMode::TAA;
-    if (useTaa && m_taaResolveTarget.srvCpuHandle != 0 && m_sceneFramebuffer->HasVelocity())
+    TaaPassInputs taaInputs{};
+    taaInputs.useTaa = useTaa;
+    taaInputs.hdrColorSrv = hdrColorSrv;
+    taaInputs.texelSize = texelSize;
+    taaInputs.viewMatrix = camera.GetViewMatrix();
+    taaInputs.unjitteredProjectionMatrix = camera.GetUnjitteredProjectionMatrix();
+    taaInputs.motionVectorState = m_motionVectorFrameState;
+    taaInputs.taaBlendFactor = m_taaBlendFactor;
+    taaInputs.taaHistoryValid = m_taaHistoryValid;
+    taaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+    taaInputs.taaShader = m_taaShader.get();
+    taaInputs.taaHistoryTarget = const_cast<InternalTarget*>(&m_taaHistoryTarget);
+    taaInputs.taaResolveTarget = const_cast<InternalTarget*>(&m_taaResolveTarget);
+
+    TaaPassOutputs taaOutputs{};
+    AntiAliasingPass::ExecuteTaa(BuildPostProcessContext(), taaInputs, taaOutputs);
+    if (taaOutputs.ran)
     {
-        SceneRenderTrace::Section taaSection("aa-taa");
-        SceneRenderTrace::Scope taaScope("taa resolve");
-        const glm::mat4 viewMatrix = camera.GetViewMatrix();
-        const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-        const glm::mat4 invViewProjection = glm::inverse(unjitteredProjection * viewMatrix);
-        const glm::mat4 prevViewProjection = m_motionVectorFrameState.historyValid
-            ? m_motionVectorFrameState.prevViewProjection
-            : unjitteredProjection * viewMatrix;
-        const float hdrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-
-        m_taaShader->Use(false, false);
-        m_taaShader->SetMat4("uInvViewProj", invViewProjection);
-        m_taaShader->SetMat4("uPrevViewProj", prevViewProjection);
-        m_taaShader->SetFloat("uBlendFactor", m_taaBlendFactor);
-        m_taaShader->SetFloat("uHistoryValid", m_taaHistoryValid ? 1.0f : 0.0f);
-        m_taaShader->SetFloat("uTexelSizeX", texelSize.x);
-        m_taaShader->SetFloat("uTexelSizeY", texelSize.y);
-        m_taaShader->BindTextureSlot(0, hdrColorSrv);
-        m_taaShader->BindTextureSlot(1, m_taaHistoryTarget.srvCpuHandle);
-        m_taaShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_taaShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
-        DrawFullscreenToTarget(
-            *m_taaShader,
-            const_cast<InternalTarget&>(m_taaResolveTarget),
-            m_width,
-            m_height,
-            hdrClear,
-            false);
-
-        hdrColorSrv = m_taaResolveTarget.srvCpuHandle;
+        hdrColorSrv = taaOutputs.hdrColorSrv;
         hdrColorSource = "hdr_taa";
-
-        std::swap(
-            const_cast<InternalTarget&>(m_taaHistoryTarget),
-            const_cast<InternalTarget&>(m_taaResolveTarget));
-        m_taaHistoryValid = true;
-        taaScope.Success();
-        taaSection.Success();
+        const_cast<ScreenSpaceEffects*>(this)->m_taaHistoryValid = taaOutputs.taaHistoryValid;
     }
 
     const bool wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
@@ -3655,10 +3582,14 @@ void ScreenSpaceEffects::Apply(
     const bool useFxaa = m_antiAliasingMode == AntiAliasingMode::FXAA;
     const bool useSmaa = m_antiAliasingMode == AntiAliasingMode::SMAA;
     const bool useSsaa = m_antiAliasingMode == AntiAliasingMode::SSAA;
-    const bool needsLdrIntermediate =
-        useFxaa || useSmaa || (useSsaa && m_viewportWidth > 0 && m_viewportHeight > 0
-        && (m_width != m_viewportWidth || m_height != m_viewportHeight));
-    const float ldrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    const bool needsLdrIntermediate = AntiAliasingPass::NeedsLdrIntermediate(
+        useFxaa,
+        useSmaa,
+        useSsaa,
+        m_width,
+        m_height,
+        m_viewportWidth,
+        m_viewportHeight);
 
     auto runTonemapPass = [&](const bool drawToLdrTarget) {
         TonemapPassInputs tonemapInputs{};
@@ -3687,397 +3618,93 @@ void ScreenSpaceEffects::Apply(
     const bool ldrTargetReady =
         m_ldrTonemapTarget.srvCpuHandle != 0 && m_width > 0 && m_height > 0;
 
-    auto blitLdrToViewport = [&](const std::uintptr_t sourceSrv) {
-        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-        m_downsampleShader->Use(false, true);
-        m_downsampleShader->BindTextureSlot(0, sourceSrv);
-        DrawFullscreenPass(*m_downsampleShader, true);
-    };
-
     const bool dlssDisplayReady =
         m_dlssOutputTarget.resource != nullptr && m_width > 0 && m_viewportWidth > 0;
 
     if (effectiveWantDlss && dlssDisplayReady)
     {
-        SceneRenderTrace::Section dlssSection("dlss");
-        // S4: pre-tonemap HDR (render res) -> DLSS -> display-res HDR -> bloom + tonemap -> viewport.
-        bool dlssRan = false;
-        DlssContext& dlss = DlssContext::Get();
-        const bool dlssUsable = dlss.IsReady() && dlss.IsRuntimeInitialized()
-            && dlss.IsDlssSupported() && m_sceneFramebuffer->HasVelocity()
-            && m_sceneFramebuffer->GetDepthResource() != nullptr;
-
-        void* hdrInputResource = nullptr;
-        std::uint32_t hdrInputState =
-            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        const bool pathTracerDlssActive =
-            m_pathTracerActive
-            && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime
-            && m_pathTracerOutputResource != nullptr
-            && m_dxrPathTracerOutputSrv != 0;
-        if (pathTracerDlssActive)
-        {
-            hdrInputResource = m_pathTracerOutputResource;
-            hdrInputState = m_pathTracerOutputResourceState;
-        }
-        else if (hdrColorSrv == m_hdrCompositeTarget.srvCpuHandle && m_hdrCompositeTarget.resource != nullptr)
-        {
-            hdrInputResource = m_hdrCompositeTarget.resource;
-            hdrInputState = m_hdrCompositeTarget.resourceState;
-        }
-        else
-        {
-            hdrInputResource = m_sceneFramebuffer->GetColorResource(0);
-        }
-
-        if (dlssUsable && hdrInputResource != nullptr)
-        {
-            SceneRenderTrace::Scope evalScope("dlss evaluate");
-            const GfxContext::GpuTimerScope gpuScopeDlss("DLSS");
-            auto* commandList =
-                static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-
-            m_sceneFramebuffer->EnsureShaderResourceState();
-            constexpr std::uint32_t kPixelSrv =
-                static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-            if (pathTracerDlssActive
-                && hdrInputState != kPixelSrv)
-            {
-                TransitionResource(
-                    commandList,
-                    static_cast<ID3D12Resource*>(hdrInputResource),
-                    static_cast<D3D12_RESOURCE_STATES>(hdrInputState),
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                hdrInputState = kPixelSrv;
-            }
-
-            auto* dlssOut = static_cast<ID3D12Resource*>(m_dlssOutputTarget.resource);
-            TransitionResource(
-                commandList,
-                dlssOut,
-                static_cast<D3D12_RESOURCE_STATES>(m_dlssOutputTarget.resourceState),
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            m_dlssOutputTarget.resourceState =
-                static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-
-            DlssFrameInputs in{};
-            in.commandList = commandList;
-            in.colorInput = hdrInputResource;
-            in.colorInputState = hdrInputState;
-            in.colorOutput = dlssOut;
-            in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-            // Depth + motion come from the RASTER G-buffer (D24 depth + RT4), for both hybrid AND
-            // real-time path tracing. This is intentional: DLSS-RR reprojects using depth + motion +
-            // the material guides (normal/roughness) TOGETHER, assuming one consistent sub-pixel
-            // sample. Feeding PT primary-hit depth/MV while the RR material guides stay on the raster
-            // G-buffer mixes two sources that disagree sub-pixel every jittered frame → static shimmer
-            // on ALL geometry (P4 regression, reverted). Raster depth/MV are self-consistent with the
-            // raster guides (clean on diffuse); the residual is reflection smear (PT color vs mirror-
-            // surface depth) and close-up GI shimmer (PT multi-bounce vs raster guides) — see
-            // devdoc/dxr-pt-p4-dlss-guides.md. Sky pixels are patched separately (PT sky MV where
-            // metadata says miss) — devdoc/dxr-pt-sky-motion.md. Full PT guides are the real fix for GI.
-            in.depth = m_sceneFramebuffer->GetDepthResource();
-            in.depthState = kPixelSrv;
-            void* motionInput = m_sceneFramebuffer->GetColorResource(4);
-            std::uint32_t motionInputState = kPixelSrv;
-            if (pathTracerDlssActive && PatchPathTracerSkyMotion())
-            {
-                motionInput = m_ptDlssMotionTarget.resource;
-                motionInputState = m_ptDlssMotionTarget.resourceState;
-            }
-            in.motionVectors = motionInput;
-            in.motionVectorsState = motionInputState;
-            in.renderWidth = static_cast<unsigned int>(m_width);
-            in.renderHeight = static_cast<unsigned int>(m_height);
-            in.displayWidth = static_cast<unsigned int>(m_dlssOutputTarget.width);
-            in.displayHeight = static_cast<unsigned int>(m_dlssOutputTarget.height);
-            in.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
-                ? DlssQuality::DLAA
-                : ToDlssQuality(m_dlssPreset);
-            in.colorIsHdr = true;
-            in.depthInverted = false;
-
-            const glm::mat4 view = camera.GetViewMatrix();
-            const bool cameraCut = DetectDlssCameraCut(view, m_motionVectorFrameState);
-            in.reset = !m_dlssHistoryValid || !m_motionVectorFrameState.historyValid || cameraCut;
-            if (cameraCut)
-            {
-                const_cast<ScreenSpaceEffects*>(this)->m_dlssHistoryValid = false;
-            }
-
-            const glm::vec2 mvecScale = DlssMvecScale();
-            in.mvecScaleX = mvecScale.x;
-            in.mvecScaleY = mvecScale.y;
-
-            const glm::vec2 jitterPixels =
-                JitterNdcToPixels(camera.GetProjectionJitter(), m_width, m_height);
-            in.jitterX = jitterPixels.x;
-            in.jitterY = jitterPixels.y;
-
-            in.exposureScale = DlssExposureScaleFromEv(m_exposure);
-            in.preExposure = 1.0f;
-            in.sharpness = m_dlssSharpness;
-
-            const glm::mat4 unjitteredProj = camera.GetUnjitteredProjectionMatrix();
-            const glm::mat4 currViewProj = unjitteredProj * view;
-            const glm::mat4 clipToPrevClip = m_motionVectorFrameState.historyValid
-                ? m_motionVectorFrameState.prevViewProjection * glm::inverse(currViewProj)
-                : glm::mat4(1.0f);
-            std::memcpy(in.cameraViewToClip, glm::value_ptr(unjitteredProj), sizeof(float) * 16);
-            const glm::mat4 clipToView = glm::inverse(unjitteredProj);
-            std::memcpy(in.clipToCameraView, glm::value_ptr(clipToView), sizeof(float) * 16);
-            std::memcpy(in.clipToPrevClip, glm::value_ptr(clipToPrevClip), sizeof(float) * 16);
-            const glm::mat4 prevClipToClip = glm::inverse(clipToPrevClip);
-            std::memcpy(in.prevClipToClip, glm::value_ptr(prevClipToClip), sizeof(float) * 16);
-
-            in.cameraNear = camera.GetNearPlane();
-            in.cameraFar = camera.GetFarPlane();
-            in.cameraFovVertical = glm::radians(camera.GetFov());
-            in.cameraAspect = camera.GetAspect();
-            const glm::vec3 camPos = camera.GetPosition();
-            const glm::vec3 camFwd = camera.GetFront();
-            const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
-            const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
-            in.cameraPos[0] = camPos.x; in.cameraPos[1] = camPos.y; in.cameraPos[2] = camPos.z;
-            in.cameraForward[0] = camFwd.x; in.cameraForward[1] = camFwd.y; in.cameraForward[2] = camFwd.z;
-            in.cameraRight[0] = camRight.x; in.cameraRight[1] = camRight.y; in.cameraRight[2] = camRight.z;
-            in.cameraUp[0] = camUp.x; in.cameraUp[1] = camUp.y; in.cameraUp[2] = camUp.z;
-
-            // RR3: when Ray Reconstruction is active, generate the material guides and feed them so
-            // Evaluate() runs kFeatureDLSS_RR (denoise + upscale) over the raw RT signal instead of
-            // the SR model. Requires the material G-buffer (guides come from it).
-            // P4: real-time path tracing always uses RR when supported (even if the hybrid RR toggle
-            // is off) — noisy PT HDR + gbuffer guides feed DLSS-RR every frame. Reference mode uses
-            // plain DLSS SR on the accumulated mean (no RR denoise).
-            const bool pathTracerRealTimeRr =
-                pathTracerDlssActive
-                && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime;
-            const bool useRr = dlss.IsRrSupported()
-                && m_sceneFramebuffer->HasMaterialGbuffer()
-                && m_rrNormalRoughnessTarget.resource != nullptr
-                && (IsRayReconstructionActive() || pathTracerRealTimeRr);
-            if (useRr)
-            {
-                GenerateRrGuides();
-                in.useRayReconstruction = true;
-                in.diffuseAlbedo = m_rrDiffuseAlbedoTarget.resource;
-                in.diffuseAlbedoState = m_rrDiffuseAlbedoTarget.resourceState;
-                in.specularAlbedo = m_rrSpecularAlbedoTarget.resource;
-                in.specularAlbedoState = m_rrSpecularAlbedoTarget.resourceState;
-                in.normalRoughness = m_rrNormalRoughnessTarget.resource;
-                in.normalRoughnessState = m_rrNormalRoughnessTarget.resourceState;
-                // RR4 spec hit-distance guide. Hybrid: from the reflection trace. Path-traced real-time:
-                // from the STABLE deterministic primary spec hit distance (devdoc/dxr-pt-rr4-spec-hitdist.md)
-                // — reprojects reflections at their virtual depth without touching primary geometry, so
-                // it cannot reintroduce the reverted P4 all-geometry shimmer. GenerateRrGuides populated
-                // m_rrSpecularHitDistanceTarget from the matching source above.
-                const bool ptSpecGuideActive = pathTracerRealTimeRr && m_dxrPathTracerOutputSrv != 0;
-                if ((m_dxrReflectionSrv != 0 || ptSpecGuideActive)
-                    && m_rrSpecularHitDistanceTarget.resource != nullptr)
-                {
-                    in.specularHitDistance = m_rrSpecularHitDistanceTarget.resource;
-                    in.specularHitDistanceState = m_rrSpecularHitDistanceTarget.resourceState;
-                }
-                std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
-                const glm::mat4 viewToWorld = glm::inverse(view);
-                std::memcpy(in.cameraViewToWorld, glm::value_ptr(viewToWorld), sizeof(float) * 16);
-            }
-
-            dlssRan = dlss.Evaluate(in);
-            GfxContext::Get().RebindFrameDescriptorHeaps();
-
-            if (dlssRan && pathTracerDlssActive)
-            {
-                const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = true;
-            }
-
-            if (dlssRan)
-            {
-                TransitionResource(
-                    commandList,
-                    dlssOut,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                m_dlssOutputTarget.resourceState = kPixelSrv;
-                m_dlssHistoryValid = true;
-            }
-            else
-            {
-                TransitionResource(
-                    commandList,
-                    dlssOut,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                m_dlssOutputTarget.resourceState = kPixelSrv;
-                m_dlssHistoryValid = false;
-            }
-            evalScope.Success();
-        }
-
-        if (dlssRan)
-        {
-            if (dlssRan && pathTracerDlssActive && m_pathTracerGridOverlayDraw)
+        DlssResolvePassInputs dlssInputs{};
+        dlssInputs.camera = &camera;
+        dlssInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+        dlssInputs.outputTarget = outputTarget;
+        dlssInputs.motionVectorState = m_motionVectorFrameState;
+        dlssInputs.viewportWidth = viewportWidth;
+        dlssInputs.viewportHeight = viewportHeight;
+        dlssInputs.hdrColorSrv = hdrColorSrv;
+        dlssInputs.hdrCompositeTarget = const_cast<InternalTarget*>(&m_hdrCompositeTarget);
+        dlssInputs.pathTracerActive = m_pathTracerActive;
+        dlssInputs.pathTracerConvergenceMode = m_pathTracerConvergenceMode;
+        dlssInputs.pathTracerOutputResource = m_pathTracerOutputResource;
+        dlssInputs.pathTracerOutputResourceState = m_pathTracerOutputResourceState;
+        dlssInputs.dxrPathTracerOutputSrv = m_dxrPathTracerOutputSrv;
+        dlssInputs.dxrReflectionSrv = m_dxrReflectionSrv;
+        dlssInputs.pathTracerGridOverlayEnabled = m_pathTracerGridOverlayDraw != nullptr;
+        dlssInputs.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
+            ? DlssQuality::DLAA
+            : ToDlssQuality(m_dlssPreset);
+        dlssInputs.exposure = m_exposure;
+        dlssInputs.dlssSharpness = m_dlssSharpness;
+        dlssInputs.tonemapMode = static_cast<int>(m_tonemapMode);
+        dlssInputs.dlssHistoryValid = m_dlssHistoryValid;
+        dlssInputs.bloomEnabled = m_bloomEnabled;
+        dlssInputs.bloomThreshold = m_bloomThreshold;
+        dlssInputs.bloomSoftKnee = m_bloomSoftKnee;
+        dlssInputs.bloomBlurRadius = m_bloomBlurRadius;
+        dlssInputs.bloomIntensity = m_bloomIntensity;
+        dlssInputs.bloomTemporalBlendFactor = m_bloomTemporalBlendFactor;
+        dlssInputs.bloomSameUvBlendFactor = m_bloomSameUvBlendFactor;
+        dlssInputs.bloomDepthThreshold = m_bloomDepthThreshold;
+        dlssInputs.dlssBloomHistoryValid = m_dlssBloomHistoryValid;
+        dlssInputs.dlssBloomTemporalWarmupFrames = m_dlssBloomTemporalWarmupFrames;
+        dlssInputs.rayReconstructionActive = IsRayReconstructionActive();
+        dlssInputs.dlssOutputTarget = const_cast<InternalTarget*>(&m_dlssOutputTarget);
+        dlssInputs.ptDlssMotionTarget = const_cast<InternalTarget*>(&m_ptDlssMotionTarget);
+        dlssInputs.rrDiffuseAlbedoTarget = const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget);
+        dlssInputs.rrSpecularAlbedoTarget = const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget);
+        dlssInputs.rrNormalRoughnessTarget = const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget);
+        dlssInputs.rrSpecularHitDistanceTarget =
+            const_cast<InternalTarget*>(&m_rrSpecularHitDistanceTarget);
+        dlssInputs.dlssBloomExtractTarget = const_cast<InternalTarget*>(&m_dlssBloomExtractTarget);
+        dlssInputs.dlssBloomBlurTarget = const_cast<InternalTarget*>(&m_dlssBloomBlurTarget);
+        dlssInputs.dlssBloomBlur2Target = const_cast<InternalTarget*>(&m_dlssBloomBlur2Target);
+        dlssInputs.dlssBloomHistoryTarget = const_cast<InternalTarget*>(&m_dlssBloomHistoryTarget);
+        dlssInputs.dlssBloomTemporalTarget =
+            const_cast<InternalTarget*>(&m_dlssBloomTemporalTarget);
+        dlssInputs.bloomExtractShader = m_bloomExtractShader.get();
+        dlssInputs.bloomBlurShader = m_bloomBlurShader.get();
+        dlssInputs.bloomTemporalShader = m_bloomTemporalShader.get();
+        dlssInputs.tonemapShader = m_tonemapShader.get();
+        dlssInputs.fallbackTonemapInputs.hdrColorSrv = hdrColorSrv;
+        dlssInputs.fallbackTonemapInputs.bloomSrv = bloomSrv;
+        dlssInputs.fallbackTonemapInputs.texelSize = texelSize;
+        dlssInputs.fallbackTonemapInputs.exposure = m_exposure;
+        dlssInputs.fallbackTonemapInputs.tonemapMode = static_cast<int>(m_tonemapMode);
+        dlssInputs.fallbackTonemapInputs.bloomEnabled = m_bloomEnabled;
+        dlssInputs.fallbackTonemapInputs.bloomIntensity = m_bloomIntensity;
+        dlssInputs.fallbackTonemapInputs.tonemapShader = m_tonemapShader.get();
+        dlssInputs.patchPathTracerSkyMotion = [this]() { return PatchPathTracerSkyMotion(); };
+        dlssInputs.generateRrGuides = [this]() { GenerateRrGuides(); };
+        dlssInputs.drawPathTracerGridOverlay =
+            [this, &camera](PostProcessTarget& target, const int width, const int height)
             {
                 DrawPathTracerGridOverlayOntoHdrTarget(
                     camera,
-                    const_cast<InternalTarget&>(m_dlssOutputTarget),
-                    viewportWidth,
-                    viewportHeight);
-            }
+                    static_cast<InternalTarget&>(target),
+                    width,
+                    height);
+            };
 
-            std::uintptr_t displayBloomSrv = 0;
-            if (m_bloomEnabled && m_dlssBloomExtractTarget.srvCpuHandle != 0)
-            {
-                SceneRenderTrace::Scope bloomScope("dlss display bloom");
-                const int bloomWidth = std::max(1, viewportWidth / 2);
-                const int bloomHeight = std::max(1, viewportHeight / 2);
-                const glm::vec2 displayTexelSize(
-                    1.0f / static_cast<float>(viewportWidth),
-                    1.0f / static_cast<float>(viewportHeight));
-                const glm::vec2 bloomTexelSize(
-                    1.0f / static_cast<float>(bloomWidth),
-                    1.0f / static_cast<float>(bloomHeight));
-                const float bloomClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-
-                m_bloomExtractShader->SetInt("uHdrColor", 0);
-                m_bloomExtractShader->SetFloat("uThreshold", m_bloomThreshold);
-                m_bloomExtractShader->SetFloat("uSoftKnee", m_bloomSoftKnee);
-                m_bloomExtractShader->SetFloat("uExposure", m_exposure);
-                m_bloomExtractShader->SetFloat("uFullTexelSizeX", displayTexelSize.x);
-                m_bloomExtractShader->SetFloat("uFullTexelSizeY", displayTexelSize.y);
-                const bool useMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
-                m_bloomExtractShader->SetFloat("uUseMaterialGbuffer", useMaterialGbuffer ? 1.0f : 0.0f);
-                m_bloomExtractShader->BindTextureSlot(0, m_dlssOutputTarget.srvCpuHandle);
-                if (useMaterialGbuffer)
-                {
-                    m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-                    m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
-                }
-                DrawFullscreenToTarget(
-                    *m_bloomExtractShader,
-                    const_cast<InternalTarget&>(m_dlssBloomExtractTarget),
-                    bloomWidth,
-                    bloomHeight,
-                    bloomClear);
-
-                const auto drawDlssBloomBlur =
-                    [&](InternalTarget& target, const std::uintptr_t inputSrv, const float dirX, const float dirY)
-                {
-                    m_bloomBlurShader->Use(false, false);
-                    m_bloomBlurShader->SetFloat("uDirectionX", dirX);
-                    m_bloomBlurShader->SetFloat("uDirectionY", dirY);
-                    m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-                    m_bloomBlurShader->BindTextureSlot(0, inputSrv);
-                    DrawFullscreenToTarget(
-                        *m_bloomBlurShader,
-                        const_cast<InternalTarget&>(target),
-                        bloomWidth,
-                        bloomHeight,
-                        bloomClear);
-                };
-
-                drawDlssBloomBlur(
-                    const_cast<InternalTarget&>(m_dlssBloomBlurTarget),
-                    m_dlssBloomExtractTarget.srvCpuHandle,
-                    bloomTexelSize.x,
-                    0.0f);
-                drawDlssBloomBlur(
-                    const_cast<InternalTarget&>(m_dlssBloomBlur2Target),
-                    m_dlssBloomBlurTarget.srvCpuHandle,
-                    0.0f,
-                    bloomTexelSize.y);
-                drawDlssBloomBlur(
-                    const_cast<InternalTarget&>(m_dlssBloomBlurTarget),
-                    m_dlssBloomBlur2Target.srvCpuHandle,
-                    bloomTexelSize.x,
-                    0.0f);
-                drawDlssBloomBlur(
-                    const_cast<InternalTarget&>(m_dlssBloomBlur2Target),
-                    m_dlssBloomBlurTarget.srvCpuHandle,
-                    0.0f,
-                    bloomTexelSize.y);
-
-                const bool guidesMatchDisplay =
-                    m_width == viewportWidth && m_height == viewportHeight
-                    && m_sceneFramebuffer->HasVelocity()
-                    && m_dlssBloomTemporalTarget.srvCpuHandle != 0;
-                if (guidesMatchDisplay)
-                {
-                    const float bloomWarmupFactor = m_dlssBloomHistoryValid
-                        ? std::min(1.0f, static_cast<float>(m_dlssBloomTemporalWarmupFrames) / 4.0f)
-                        : 0.0f;
-                    m_bloomTemporalShader->Use(false, false);
-                    m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
-                    m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
-                    m_bloomTemporalShader->SetFloat("uHistoryValid", m_dlssBloomHistoryValid ? 1.0f : 0.0f);
-                    m_bloomTemporalShader->SetFloat("uDepthThreshold", m_bloomDepthThreshold);
-                    m_bloomTemporalShader->SetFloat("uTexelSizeX", bloomTexelSize.x);
-                    m_bloomTemporalShader->SetFloat("uTexelSizeY", bloomTexelSize.y);
-                    m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
-                    m_bloomTemporalShader->BindTextureSlot(0, m_dlssBloomBlur2Target.srvCpuHandle);
-                    m_bloomTemporalShader->BindTextureSlot(1, m_dlssBloomHistoryTarget.srvCpuHandle);
-                    m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
-                    m_bloomTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-                    DrawFullscreenToTarget(
-                        *m_bloomTemporalShader,
-                        const_cast<InternalTarget&>(m_dlssBloomTemporalTarget),
-                        bloomWidth,
-                        bloomHeight,
-                        bloomClear);
-                    displayBloomSrv = m_dlssBloomTemporalTarget.srvCpuHandle;
-                    std::swap(
-                        const_cast<InternalTarget&>(m_dlssBloomHistoryTarget),
-                        const_cast<InternalTarget&>(m_dlssBloomTemporalTarget));
-                    m_dlssBloomHistoryValid = true;
-                    ++m_dlssBloomTemporalWarmupFrames;
-                }
-                else
-                {
-                    displayBloomSrv = m_dlssBloomBlur2Target.srvCpuHandle;
-                }
-
-                bloomScope.Success();
-            }
-
-            {
-                SceneRenderTrace::Scope tonemapScope("tonemap (dlss display)");
-                const int bloomHalfWidth = std::max(1, viewportWidth / 2);
-                const int bloomHalfHeight = std::max(1, viewportHeight / 2);
-                const glm::vec2 bloomTexelSize(
-                    1.0f / static_cast<float>(bloomHalfWidth),
-                    1.0f / static_cast<float>(bloomHalfHeight));
-                BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-                m_tonemapShader->Use(false, true);
-                m_tonemapShader->SetInt("uHdrColor", 0);
-                m_tonemapShader->SetFloat("uExposure", m_exposure);
-                m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
-                m_tonemapShader->SetInt("uUseBloom", displayBloomSrv != 0 ? 1 : 0);
-                m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
-                m_tonemapShader->SetFloat("uBloomTexelSizeX", bloomTexelSize.x * 2.0f);
-                m_tonemapShader->SetFloat("uBloomTexelSizeY", bloomTexelSize.y * 2.0f);
-                m_tonemapShader->SetInt("uBloom", 1);
-                m_tonemapShader->BindTextureSlot(0, m_dlssOutputTarget.srvCpuHandle);
-                if (displayBloomSrv != 0)
-                {
-                    m_tonemapShader->BindTextureSlot(1, displayBloomSrv);
-                }
-                DrawFullscreenPass(*m_tonemapShader, true);
-                tonemapScope.Success();
-            }
-
-            const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = displayBloomSrv;
-        }
-        else
+        DlssResolvePassOutputs dlssOutputs{};
+        DlssResolvePass::Execute(BuildPostProcessContext(), dlssInputs, dlssOutputs);
+        if (dlssOutputs.pathTracerDlssResolvedThisFrame)
         {
-            SceneRenderTrace::Scope fallbackScope("dlss fallback tonemap");
-            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-            runTonemapPass(false);
-            fallbackScope.Success();
-            const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = 0;
+            const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = true;
         }
-
-        dlssSection.Success();
+        const_cast<ScreenSpaceEffects*>(this)->m_dlssHistoryValid = dlssOutputs.dlssHistoryValid;
+        const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomHistoryValid = dlssOutputs.dlssBloomHistoryValid;
+        const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomTemporalWarmupFrames =
+            dlssOutputs.dlssBloomTemporalWarmupFrames;
+        const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = dlssOutputs.prevFrameBloomSrv;
     }
     else if (needsLdrIntermediate && ldrTargetReady)
     {
@@ -4088,73 +3715,26 @@ void ScreenSpaceEffects::Apply(
             tonemapScope.Success();
         }
 
-        if (useFxaa)
-        {
-            SceneRenderTrace::Section aaOutputSection("aa-output");
-            SceneRenderTrace::Scope fxaaScope("fxaa");
-            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-            m_fxaaShader->Use(false, true);
-            m_fxaaShader->SetFloat("uTexelSizeX", texelSize.x);
-            m_fxaaShader->SetFloat("uTexelSizeY", texelSize.y);
-            m_fxaaShader->SetFloat("uSubpixQuality", m_fxaaSubpixQuality);
-            m_fxaaShader->SetFloat("uEdgeThreshold", m_fxaaEdgeThreshold);
-            m_fxaaShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
-            DrawFullscreenPass(*m_fxaaShader, true);
-            fxaaScope.Success();
-            aaOutputSection.Success();
-        }
-        else if (useSmaa)
-        {
-            SceneRenderTrace::Section aaOutputSection("aa-output");
-            SceneRenderTrace::Scope smaaScope("smaa");
-            m_smaaEdgeShader->Use(false, true);
-            m_smaaEdgeShader->SetFloat("uTexelSizeX", texelSize.x);
-            m_smaaEdgeShader->SetFloat("uTexelSizeY", texelSize.y);
-            m_smaaEdgeShader->SetFloat("uThreshold", m_smaaThreshold);
-            m_smaaEdgeShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
-            DrawFullscreenToTarget(
-                *m_smaaEdgeShader,
-                const_cast<InternalTarget&>(m_smaaEdgeTarget),
-                m_width,
-                m_height,
-                ldrClear,
-                true);
-
-            m_smaaNeighborShader->Use(false, true);
-            m_smaaNeighborShader->SetFloat("uTexelSizeX", texelSize.x);
-            m_smaaNeighborShader->SetFloat("uTexelSizeY", texelSize.y);
-            m_smaaNeighborShader->SetFloat("uSearchSteps", static_cast<float>(m_smaaSearchSteps));
-            m_smaaNeighborShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
-            m_smaaNeighborShader->BindTextureSlot(1, m_smaaEdgeTarget.srvCpuHandle);
-            DrawFullscreenToTarget(
-                *m_smaaNeighborShader,
-                const_cast<InternalTarget&>(m_smaaOutputTarget),
-                m_width,
-                m_height,
-                ldrClear,
-                true);
-
-            blitLdrToViewport(m_smaaOutputTarget.srvCpuHandle);
-            smaaScope.Success();
-            aaOutputSection.Success();
-        }
-        else if (useSsaa && (m_width != viewportWidth || m_height != viewportHeight))
-        {
-            SceneRenderTrace::Section aaOutputSection("aa-output");
-            SceneRenderTrace::Scope ssaaScope("ssaa blit");
-            blitLdrToViewport(m_ldrTonemapTarget.srvCpuHandle);
-            ssaaScope.Success();
-            aaOutputSection.Success();
-        }
-        else
-        {
-            SceneRenderTrace::Scope blitScope("ldr blit to viewport");
-            BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-            m_downsampleShader->Use(false, true);
-            m_downsampleShader->BindTextureSlot(0, m_ldrTonemapTarget.srvCpuHandle);
-            DrawFullscreenPass(*m_downsampleShader, true);
-            blitScope.Success();
-        }
+        LdrAntiAliasingInputs ldrAaInputs{};
+        ldrAaInputs.useFxaa = useFxaa;
+        ldrAaInputs.useSmaa = useSmaa;
+        ldrAaInputs.useSsaa = useSsaa;
+        ldrAaInputs.viewportWidth = viewportWidth;
+        ldrAaInputs.viewportHeight = viewportHeight;
+        ldrAaInputs.texelSize = texelSize;
+        ldrAaInputs.ldrTonemapSrv = m_ldrTonemapTarget.srvCpuHandle;
+        ldrAaInputs.fxaaSubpixQuality = m_fxaaSubpixQuality;
+        ldrAaInputs.fxaaEdgeThreshold = m_fxaaEdgeThreshold;
+        ldrAaInputs.smaaThreshold = m_smaaThreshold;
+        ldrAaInputs.smaaSearchSteps = m_smaaSearchSteps;
+        ldrAaInputs.fxaaShader = m_fxaaShader.get();
+        ldrAaInputs.smaaEdgeShader = m_smaaEdgeShader.get();
+        ldrAaInputs.smaaNeighborShader = m_smaaNeighborShader.get();
+        ldrAaInputs.downsampleShader = m_downsampleShader.get();
+        ldrAaInputs.smaaEdgeTarget = const_cast<InternalTarget*>(&m_smaaEdgeTarget);
+        ldrAaInputs.smaaOutputTarget = const_cast<InternalTarget*>(&m_smaaOutputTarget);
+        ldrAaInputs.outputTarget = outputTarget;
+        AntiAliasingPass::ExecuteLdrAntiAliasing(BuildPostProcessContext(), ldrAaInputs);
 
         tonemapSection.Success();
     }

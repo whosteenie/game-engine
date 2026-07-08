@@ -500,6 +500,8 @@ add_executable(game-engine
     src/engine/rendering/post/BloomTonemapPass.cpp
     src/engine/rendering/post/ScreenSpaceReflectionPass.cpp
     src/engine/rendering/post/ScreenSpaceGiPass.cpp
+    src/engine/rendering/post/AntiAliasingPass.cpp
+    src/engine/rendering/post/DlssResolvePass.cpp
 
     src/engine/rendering/DxrSettings.cpp
 

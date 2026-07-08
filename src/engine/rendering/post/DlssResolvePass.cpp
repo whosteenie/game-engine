@@ -1,0 +1,397 @@
+#include "engine/rendering/post/DlssResolvePass.h"
+
+#include "engine/camera/Camera.h"
+#include "engine/platform/SceneRenderTrace.h"
+#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/Shader.h"
+#include "engine/rhi/GfxContext.h"
+
+#include <d3d12.h>
+
+#include <glm/gtc/type_ptr.hpp>
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace
+{
+    void TransitionResource(
+        ID3D12GraphicsCommandList* commandList,
+        ID3D12Resource* resource,
+        const D3D12_RESOURCE_STATES before,
+        const D3D12_RESOURCE_STATES after)
+    {
+        if (before == after || resource == nullptr)
+        {
+            return;
+        }
+
+        D3D12_RESOURCE_BARRIER barrier{};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource = resource;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrier.Transition.StateBefore = before;
+        barrier.Transition.StateAfter = after;
+        commandList->ResourceBarrier(1, &barrier);
+    }
+
+    glm::vec2 JitterNdcToPixels(const glm::vec2& jitterNdc, const int width, const int height)
+    {
+        return glm::vec2(
+            jitterNdc.x * 0.5f * static_cast<float>(width),
+            -jitterNdc.y * 0.5f * static_cast<float>(height));
+    }
+
+    glm::vec2 DlssMvecScale()
+    {
+        return glm::vec2(-0.5f, 0.5f);
+    }
+
+    float DlssExposureScaleFromEv(const float exposureEv)
+    {
+        return std::exp2(exposureEv);
+    }
+
+    bool DetectDlssCameraCut(const glm::mat4& currView, const MotionVectorFrameState& mvState)
+    {
+        if (!mvState.historyValid)
+        {
+            return false;
+        }
+
+        const glm::mat4 viewToViewPrev = mvState.prevView * glm::inverse(currView);
+        const glm::vec3 translation(viewToViewPrev[3]);
+        constexpr float kCutThresholdWorldUnits = 2.0f;
+        if (glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits)
+        {
+            return true;
+        }
+
+        const glm::mat3 rotation{
+            glm::vec3(viewToViewPrev[0]),
+            glm::vec3(viewToViewPrev[1]),
+            glm::vec3(viewToViewPrev[2])};
+        const float trace = rotation[0][0] + rotation[1][1] + rotation[2][2];
+        constexpr float kRotationTraceThreshold = 2.999f;
+        return trace < kRotationTraceThreshold;
+    }
+}
+
+void DlssResolvePass::Execute(
+    const PostProcessContext& context,
+    const DlssResolvePassInputs& inputs,
+    DlssResolvePassOutputs& outputs)
+{
+    outputs.dlssRan = false;
+    outputs.pathTracerDlssResolvedThisFrame = false;
+    outputs.dlssHistoryValid = inputs.dlssHistoryValid;
+    outputs.dlssBloomHistoryValid = inputs.dlssBloomHistoryValid;
+    outputs.dlssBloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
+    outputs.prevFrameBloomSrv = 0;
+
+    if (inputs.camera == nullptr || inputs.sceneFramebuffer == nullptr
+        || inputs.outputTarget == nullptr || inputs.dlssOutputTarget == nullptr
+        || inputs.dlssOutputTarget->resource == nullptr
+        || context.renderWidth <= 0 || inputs.viewportWidth <= 0)
+    {
+        return;
+    }
+
+    SceneRenderTrace::Section dlssSection("dlss");
+
+    DlssContext& dlss = DlssContext::Get();
+    const bool dlssUsable = dlss.IsReady() && dlss.IsRuntimeInitialized()
+        && dlss.IsDlssSupported() && inputs.sceneFramebuffer->HasVelocity()
+        && inputs.sceneFramebuffer->GetDepthResource() != nullptr;
+
+    void* hdrInputResource = nullptr;
+    std::uint32_t hdrInputState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    const bool pathTracerDlssActive =
+        inputs.pathTracerActive
+        && inputs.pathTracerConvergenceMode == PtConvergenceMode::RealTime
+        && inputs.pathTracerOutputResource != nullptr
+        && inputs.dxrPathTracerOutputSrv != 0;
+    if (pathTracerDlssActive)
+    {
+        hdrInputResource = inputs.pathTracerOutputResource;
+        hdrInputState = inputs.pathTracerOutputResourceState;
+    }
+    else if (inputs.hdrCompositeTarget != nullptr
+        && inputs.hdrColorSrv == inputs.hdrCompositeTarget->srvCpuHandle
+        && inputs.hdrCompositeTarget->resource != nullptr)
+    {
+        hdrInputResource = inputs.hdrCompositeTarget->resource;
+        hdrInputState = inputs.hdrCompositeTarget->resourceState;
+    }
+    else
+    {
+        hdrInputResource = inputs.sceneFramebuffer->GetColorResource(0);
+    }
+
+    if (dlssUsable && hdrInputResource != nullptr)
+    {
+        SceneRenderTrace::Scope evalScope("dlss evaluate");
+        const GfxContext::GpuTimerScope gpuScopeDlss("DLSS");
+        auto* commandList =
+            static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+
+        inputs.sceneFramebuffer->EnsureShaderResourceState();
+        constexpr std::uint32_t kPixelSrv =
+            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+        if (pathTracerDlssActive && hdrInputState != kPixelSrv)
+        {
+            TransitionResource(
+                commandList,
+                static_cast<ID3D12Resource*>(hdrInputResource),
+                static_cast<D3D12_RESOURCE_STATES>(hdrInputState),
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            hdrInputState = kPixelSrv;
+        }
+
+        auto* dlssOut = static_cast<ID3D12Resource*>(inputs.dlssOutputTarget->resource);
+        TransitionResource(
+            commandList,
+            dlssOut,
+            static_cast<D3D12_RESOURCE_STATES>(inputs.dlssOutputTarget->resourceState),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        inputs.dlssOutputTarget->resourceState =
+            static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+        DlssFrameInputs in{};
+        in.commandList = commandList;
+        in.colorInput = hdrInputResource;
+        in.colorInputState = hdrInputState;
+        in.colorOutput = dlssOut;
+        in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        in.depth = inputs.sceneFramebuffer->GetDepthResource();
+        in.depthState = kPixelSrv;
+        void* motionInput = inputs.sceneFramebuffer->GetColorResource(4);
+        std::uint32_t motionInputState = kPixelSrv;
+        if (pathTracerDlssActive && inputs.patchPathTracerSkyMotion
+            && inputs.patchPathTracerSkyMotion())
+        {
+            if (inputs.ptDlssMotionTarget != nullptr)
+            {
+                motionInput = inputs.ptDlssMotionTarget->resource;
+                motionInputState = inputs.ptDlssMotionTarget->resourceState;
+            }
+        }
+        in.motionVectors = motionInput;
+        in.motionVectorsState = motionInputState;
+        in.renderWidth = static_cast<unsigned int>(context.renderWidth);
+        in.renderHeight = static_cast<unsigned int>(context.renderHeight);
+        in.displayWidth = static_cast<unsigned int>(inputs.dlssOutputTarget->width);
+        in.displayHeight = static_cast<unsigned int>(inputs.dlssOutputTarget->height);
+        in.quality = inputs.quality;
+        in.colorIsHdr = true;
+        in.depthInverted = false;
+
+        const glm::mat4 view = inputs.camera->GetViewMatrix();
+        const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
+        in.reset = !inputs.dlssHistoryValid || !inputs.motionVectorState.historyValid || cameraCut;
+        if (cameraCut)
+        {
+            outputs.dlssHistoryValid = false;
+        }
+
+        const glm::vec2 mvecScale = DlssMvecScale();
+        in.mvecScaleX = mvecScale.x;
+        in.mvecScaleY = mvecScale.y;
+
+        const glm::vec2 jitterPixels = JitterNdcToPixels(
+            inputs.camera->GetProjectionJitter(), context.renderWidth, context.renderHeight);
+        in.jitterX = jitterPixels.x;
+        in.jitterY = jitterPixels.y;
+
+        in.exposureScale = DlssExposureScaleFromEv(inputs.exposure);
+        in.preExposure = 1.0f;
+        in.sharpness = inputs.dlssSharpness;
+
+        const glm::mat4 unjitteredProj = inputs.camera->GetUnjitteredProjectionMatrix();
+        const glm::mat4 currViewProj = unjitteredProj * view;
+        const glm::mat4 clipToPrevClip = inputs.motionVectorState.historyValid
+            ? inputs.motionVectorState.prevViewProjection * glm::inverse(currViewProj)
+            : glm::mat4(1.0f);
+        std::memcpy(in.cameraViewToClip, glm::value_ptr(unjitteredProj), sizeof(float) * 16);
+        const glm::mat4 clipToView = glm::inverse(unjitteredProj);
+        std::memcpy(in.clipToCameraView, glm::value_ptr(clipToView), sizeof(float) * 16);
+        std::memcpy(in.clipToPrevClip, glm::value_ptr(clipToPrevClip), sizeof(float) * 16);
+        const glm::mat4 prevClipToClip = glm::inverse(clipToPrevClip);
+        std::memcpy(in.prevClipToClip, glm::value_ptr(prevClipToClip), sizeof(float) * 16);
+
+        in.cameraNear = inputs.camera->GetNearPlane();
+        in.cameraFar = inputs.camera->GetFarPlane();
+        in.cameraFovVertical = glm::radians(inputs.camera->GetFov());
+        in.cameraAspect = inputs.camera->GetAspect();
+        const glm::vec3 camPos = inputs.camera->GetPosition();
+        const glm::vec3 camFwd = inputs.camera->GetFront();
+        const glm::vec3 camRight(view[0][0], view[1][0], view[2][0]);
+        const glm::vec3 camUp(view[0][1], view[1][1], view[2][1]);
+        in.cameraPos[0] = camPos.x;
+        in.cameraPos[1] = camPos.y;
+        in.cameraPos[2] = camPos.z;
+        in.cameraForward[0] = camFwd.x;
+        in.cameraForward[1] = camFwd.y;
+        in.cameraForward[2] = camFwd.z;
+        in.cameraRight[0] = camRight.x;
+        in.cameraRight[1] = camRight.y;
+        in.cameraRight[2] = camRight.z;
+        in.cameraUp[0] = camUp.x;
+        in.cameraUp[1] = camUp.y;
+        in.cameraUp[2] = camUp.z;
+
+        const bool pathTracerRealTimeRr =
+            pathTracerDlssActive
+            && inputs.pathTracerConvergenceMode == PtConvergenceMode::RealTime;
+        const bool useRr = dlss.IsRrSupported()
+            && inputs.sceneFramebuffer->HasMaterialGbuffer()
+            && inputs.rrNormalRoughnessTarget != nullptr
+            && inputs.rrNormalRoughnessTarget->resource != nullptr
+            && (inputs.rayReconstructionActive || pathTracerRealTimeRr);
+        if (useRr && inputs.generateRrGuides)
+        {
+            inputs.generateRrGuides();
+            in.useRayReconstruction = true;
+            in.diffuseAlbedo = inputs.rrDiffuseAlbedoTarget->resource;
+            in.diffuseAlbedoState = inputs.rrDiffuseAlbedoTarget->resourceState;
+            in.specularAlbedo = inputs.rrSpecularAlbedoTarget->resource;
+            in.specularAlbedoState = inputs.rrSpecularAlbedoTarget->resourceState;
+            in.normalRoughness = inputs.rrNormalRoughnessTarget->resource;
+            in.normalRoughnessState = inputs.rrNormalRoughnessTarget->resourceState;
+            const bool ptSpecGuideActive =
+                pathTracerRealTimeRr && inputs.dxrPathTracerOutputSrv != 0;
+            if ((inputs.dxrReflectionSrv != 0 || ptSpecGuideActive)
+                && inputs.rrSpecularHitDistanceTarget != nullptr
+                && inputs.rrSpecularHitDistanceTarget->resource != nullptr)
+            {
+                in.specularHitDistance = inputs.rrSpecularHitDistanceTarget->resource;
+                in.specularHitDistanceState = inputs.rrSpecularHitDistanceTarget->resourceState;
+            }
+            std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
+            const glm::mat4 viewToWorld = glm::inverse(view);
+            std::memcpy(in.cameraViewToWorld, glm::value_ptr(viewToWorld), sizeof(float) * 16);
+        }
+
+        outputs.dlssRan = dlss.Evaluate(in);
+        GfxContext::Get().RebindFrameDescriptorHeaps();
+
+        if (outputs.dlssRan && pathTracerDlssActive)
+        {
+            outputs.pathTracerDlssResolvedThisFrame = true;
+        }
+
+        if (outputs.dlssRan)
+        {
+            TransitionResource(
+                commandList,
+                dlssOut,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            inputs.dlssOutputTarget->resourceState = kPixelSrv;
+            outputs.dlssHistoryValid = true;
+        }
+        else
+        {
+            TransitionResource(
+                commandList,
+                dlssOut,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            inputs.dlssOutputTarget->resourceState = kPixelSrv;
+            outputs.dlssHistoryValid = false;
+        }
+        evalScope.Success();
+    }
+
+    if (outputs.dlssRan)
+    {
+        if (pathTracerDlssActive && inputs.pathTracerGridOverlayEnabled
+            && inputs.drawPathTracerGridOverlay)
+        {
+            inputs.drawPathTracerGridOverlay(
+                *inputs.dlssOutputTarget,
+                inputs.viewportWidth,
+                inputs.viewportHeight);
+        }
+
+        std::uintptr_t displayBloomSrv = 0;
+        if (inputs.bloomEnabled && inputs.dlssBloomExtractTarget != nullptr
+            && inputs.dlssBloomExtractTarget->srvCpuHandle != 0)
+        {
+            DisplayResBloomInputs bloomInputs{};
+            bloomInputs.hdrColorSrv = inputs.dlssOutputTarget->srvCpuHandle;
+            bloomInputs.displayWidth = inputs.viewportWidth;
+            bloomInputs.displayHeight = inputs.viewportHeight;
+            bloomInputs.renderWidth = context.renderWidth;
+            bloomInputs.renderHeight = context.renderHeight;
+            bloomInputs.exposure = inputs.exposure;
+            bloomInputs.bloomThreshold = inputs.bloomThreshold;
+            bloomInputs.bloomSoftKnee = inputs.bloomSoftKnee;
+            bloomInputs.bloomBlurRadius = inputs.bloomBlurRadius;
+            bloomInputs.bloomTemporalBlendFactor = inputs.bloomTemporalBlendFactor;
+            bloomInputs.bloomSameUvBlendFactor = inputs.bloomSameUvBlendFactor;
+            bloomInputs.bloomDepthThreshold = inputs.bloomDepthThreshold;
+            bloomInputs.useMaterialGbuffer = inputs.sceneFramebuffer->HasMaterialGbuffer();
+            if (bloomInputs.useMaterialGbuffer)
+            {
+                bloomInputs.material0Srv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
+                    GBufferSlot::MaterialAlbedoRough);
+                bloomInputs.material1Srv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
+                    GBufferSlot::MaterialMetallic);
+            }
+            bloomInputs.hasVelocity = inputs.sceneFramebuffer->HasVelocity();
+            bloomInputs.velocitySrv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
+                GBufferSlot::MotionVelocity);
+            bloomInputs.depthSrv = inputs.sceneFramebuffer->GetDepthSrvCpuHandle();
+            bloomInputs.bloomExtractShader = inputs.bloomExtractShader;
+            bloomInputs.bloomBlurShader = inputs.bloomBlurShader;
+            bloomInputs.bloomTemporalShader = inputs.bloomTemporalShader;
+            bloomInputs.bloomExtractTarget = inputs.dlssBloomExtractTarget;
+            bloomInputs.bloomBlurTarget = inputs.dlssBloomBlurTarget;
+            bloomInputs.bloomBlur2Target = inputs.dlssBloomBlur2Target;
+            bloomInputs.bloomTemporalTarget = inputs.dlssBloomTemporalTarget;
+            bloomInputs.bloomHistoryTarget = inputs.dlssBloomHistoryTarget;
+            bloomInputs.bloomHistoryValid = inputs.dlssBloomHistoryValid;
+            bloomInputs.bloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
+
+            DisplayResBloomOutputs bloomOutputs{};
+            if (BloomTonemapPass::ExecuteDisplayResBloom(context, bloomInputs, bloomOutputs))
+            {
+                displayBloomSrv = bloomOutputs.bloomSrv;
+                outputs.dlssBloomHistoryValid = bloomOutputs.bloomHistoryValid;
+                outputs.dlssBloomTemporalWarmupFrames = bloomOutputs.bloomTemporalWarmupFrames;
+            }
+        }
+
+        BloomTonemapPass::ExecuteTonemapDlssDisplay(
+            context,
+            inputs.outputTarget,
+            inputs.viewportWidth,
+            inputs.viewportHeight,
+            inputs.dlssOutputTarget->srvCpuHandle,
+            displayBloomSrv,
+            inputs.exposure,
+            inputs.tonemapMode,
+            inputs.bloomIntensity,
+            inputs.tonemapShader);
+
+        outputs.prevFrameBloomSrv = displayBloomSrv;
+    }
+    else
+    {
+        SceneRenderTrace::Scope fallbackScope("dlss fallback tonemap");
+        BloomTonemapPass::ExecuteTonemapToViewport(
+            context,
+            inputs.outputTarget,
+            inputs.viewportWidth,
+            inputs.viewportHeight,
+            inputs.fallbackTonemapInputs);
+        fallbackScope.Success();
+        outputs.prevFrameBloomSrv = 0;
+    }
+
+    dlssSection.Success();
+}
