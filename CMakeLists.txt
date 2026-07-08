@@ -494,6 +494,11 @@ add_executable(game-engine
 
     src/engine/rendering/ScreenSpaceEffects.cpp
     src/engine/rendering/ScreenSpaceEffectsSettings.cpp
+    src/engine/rendering/post/PostProcessDraw.cpp
+    src/engine/rendering/post/DxrDebugBlitPass.cpp
+    src/engine/rendering/post/AmbientOcclusionPass.cpp
+    src/engine/rendering/post/BloomTonemapPass.cpp
+    src/engine/rendering/post/ScreenSpaceReflectionPass.cpp
 
     src/engine/rendering/DxrSettings.cpp
 

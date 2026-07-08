@@ -11,6 +11,11 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rendering/post/AmbientOcclusionPass.h"
+#include "engine/rendering/post/BloomTonemapPass.h"
+#include "engine/rendering/post/DxrDebugBlitPass.h"
+#include "engine/rendering/post/ScreenSpaceReflectionPass.h"
+#include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 
@@ -79,28 +84,6 @@ namespace
          1.0f,  1.0f, 1.0f, 0.0f,
         -1.0f,  1.0f, 0.0f, 0.0f,
     };
-
-    bool IsLdrRenderTargetFormat(const int format)
-    {
-        return format == static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM)
-            || format == static_cast<int>(DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
-    }
-
-    bool IsSingleChannelRenderTargetFormat(const int format)
-    {
-        return format == static_cast<int>(DXGI_FORMAT_R16_FLOAT);
-    }
-
-    void ResolveFullscreenPipelineFlags(
-        const int targetFormat,
-        const bool viewportLdrOverride,
-        bool& outViewportLdr,
-        bool& outSingleChannelRtv)
-    {
-        outViewportLdr = viewportLdrOverride || IsLdrRenderTargetFormat(targetFormat);
-        outSingleChannelRtv =
-            !outViewportLdr && IsSingleChannelRenderTargetFormat(targetFormat);
-    }
 
     float SrgbChannelToLinear(float channel)
     {
@@ -716,7 +699,8 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::RrGuidesFragmentShader,
           // s0 = point clamp (G-buffer reads)
-          ShaderSamplerOverrides{(1u << 0), true}))
+          ShaderSamplerOverrides{(1u << 0), true})),
+      m_draw(m_quadVb)
 {
     SceneRenderTrace::Section initSection("sse-init");
     {
@@ -2075,21 +2059,12 @@ void ScreenSpaceEffects::BlitRtDispatchSmokeDebug(
     const int viewportWidth,
     const int viewportHeight) const
 {
-    if (m_debugMode != RenderDebugMode::RtDispatchSmoke || m_dxrSmokeDebugSrv == 0
-        || outputTarget == nullptr)
-    {
-        return;
-    }
-
-    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-    m_debugChannelShader->Use(false, true);
-    m_debugChannelShader->SetInt("uOutputRgb", 1);
-    m_debugChannelShader->SetInt("uOutputAlpha", 0);
-    m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
-    m_debugChannelShader->SetInt("uInput", 0);
-    m_debugChannelShader->BindTextureSlot(0, m_dxrSmokeDebugSrv);
-    m_debugChannelShader->FlushUniforms();
-    DrawFullscreenQuad();
+    DxrDebugBlitInputs inputs{};
+    inputs.debugMode = m_debugMode;
+    inputs.debugChannelShader = m_debugChannelShader.get();
+    inputs.dxrSmokeDebugSrv = m_dxrSmokeDebugSrv;
+    DxrDebugBlitPass::BlitDispatchSmoke(
+        BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
 void ScreenSpaceEffects::BlitRtPrimaryDebug(
@@ -2098,39 +2073,15 @@ void ScreenSpaceEffects::BlitRtPrimaryDebug(
     const int viewportHeight,
     const float maxTraceDistance) const
 {
-    if (!IsRtPrimaryDebugMode(m_debugMode) || !IsRtPrimaryDebugBlitReady()
-        || m_dxrPrimaryOutputSrv == 0 || m_dxrPrimaryMetadataSrv == 0
-        || outputTarget == nullptr)
-    {
-        return;
-    }
-
-    int viewMode = 0;
-    switch (m_debugMode)
-    {
-    case RenderDebugMode::RtPrimaryHit:
-        viewMode = 0;
-        break;
-    case RenderDebugMode::RtPrimaryDepth:
-        viewMode = 1;
-        break;
-    case RenderDebugMode::RtPrimaryNormal:
-        viewMode = 2;
-        break;
-    default:
-        return;
-    }
-
-    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-    m_dxrPrimaryDebugShader->Use(false, true);
-    m_dxrPrimaryDebugShader->SetInt("uViewMode", viewMode);
-    m_dxrPrimaryDebugShader->SetFloat("uMaxTraceDistance", maxTraceDistance);
-    m_dxrPrimaryDebugShader->SetInt("uPrimaryOutput", 0);
-    m_dxrPrimaryDebugShader->SetInt("uPrimaryMetadata", 1);
-    m_dxrPrimaryDebugShader->BindTextureSlot(0, m_dxrPrimaryOutputSrv);
-    m_dxrPrimaryDebugShader->BindTextureSlot(1, m_dxrPrimaryMetadataSrv);
-    m_dxrPrimaryDebugShader->FlushUniforms();
-    DrawFullscreenQuad();
+    DxrDebugBlitInputs inputs{};
+    inputs.debugMode = m_debugMode;
+    inputs.dxrPrimaryDebugShader = m_dxrPrimaryDebugShader.get();
+    inputs.dxrPrimaryOutputSrv = m_dxrPrimaryOutputSrv;
+    inputs.dxrPrimaryMetadataSrv = m_dxrPrimaryMetadataSrv;
+    inputs.primaryDebugBlitReady = IsRtPrimaryDebugBlitReady();
+    inputs.maxTraceDistance = maxTraceDistance;
+    DxrDebugBlitPass::BlitPrimary(
+        BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
 void ScreenSpaceEffects::SetDxrPathTracerDisplay(
@@ -2400,59 +2351,17 @@ void ScreenSpaceEffects::BlitRtReflectionDebug(
     const int viewportWidth,
     const int viewportHeight) const
 {
-    if (!IsRtReflectionDebugMode(m_debugMode) || m_dxrReflectionSrv == 0 || outputTarget == nullptr)
-    {
-        return;
-    }
-
-    // RtSpecReplacement is rendered by the composite debug branch inside Apply(), not here.
-    if (m_debugMode == RenderDebugMode::RtSpecReplacement)
-    {
-        return;
-    }
-
-    const bool showHitDistance = m_debugMode == RenderDebugMode::RtReflectionConfidence;
-    const bool showDenoised = m_debugMode == RenderDebugMode::RtReflectionDenoised;
-
-    // Denoised view = the D6 resolve preview: denoised radiance on hits, fresh env from the
-    // raw buffer on miss/sky pixels (NRD leaves stale reprojected history there, which smears
-    // the skybox under camera motion). Falls back to the raw buffer if no denoised output.
-    if (showDenoised && m_dxrReflectionDenoisedSrv != 0)
-    {
-        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-        m_rtReflectionResolveShader->Use(false, true);
-        m_rtReflectionResolveShader->SetInt("uDenoised", 0);
-        m_rtReflectionResolveShader->SetInt("uRaw", 1);
-        m_rtReflectionResolveShader->SetVec2(
-            "uUvScale",
-            glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
-        m_rtReflectionResolveShader->SetFloat("uMaxTraceDistance", m_dxrReflectionMaxTraceDistance);
-        m_rtReflectionResolveShader->BindTextureSlot(0, m_dxrReflectionDenoisedSrv);
-        m_rtReflectionResolveShader->BindTextureSlot(1, m_dxrReflectionSrv);
-        m_rtReflectionResolveShader->FlushUniforms();
-        DrawFullscreenQuad();
-        return;
-    }
-
-    const std::uintptr_t sourceSrv = m_dxrReflectionSrv;
-
-    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-    m_debugChannelShader->Use(false, true);
-    m_debugChannelShader->SetInt("uInput", 0);
-    m_debugChannelShader->SetInt("uOutputRgb", showHitDistance ? 0 : 1);
-    m_debugChannelShader->SetInt("uOutputAlpha", showHitDistance ? 1 : 0);
-    // Alpha now carries raw hit distance (RELAX packing); normalize for display.
-    m_debugChannelShader->SetFloat(
-        "uAlphaScale",
-        m_dxrReflectionMaxTraceDistance > 0.0f ? 1.0f / m_dxrReflectionMaxTraceDistance : 1.0f);
-    // The reflection texture can be larger than the last dispatch (quality shrink keeps the
-    // bigger allocation); sample only the freshly written region.
-    m_debugChannelShader->SetVec2(
-        "uUvScale",
-        glm::vec2(m_dxrReflectionUvScaleX, m_dxrReflectionUvScaleY));
-    m_debugChannelShader->BindTextureSlot(0, sourceSrv);
-    m_debugChannelShader->FlushUniforms();
-    DrawFullscreenQuad();
+    DxrDebugBlitInputs inputs{};
+    inputs.debugMode = m_debugMode;
+    inputs.debugChannelShader = m_debugChannelShader.get();
+    inputs.rtReflectionResolveShader = m_rtReflectionResolveShader.get();
+    inputs.dxrReflectionSrv = m_dxrReflectionSrv;
+    inputs.dxrReflectionDenoisedSrv = m_dxrReflectionDenoisedSrv;
+    inputs.dxrReflectionUvScaleX = m_dxrReflectionUvScaleX;
+    inputs.dxrReflectionUvScaleY = m_dxrReflectionUvScaleY;
+    inputs.dxrReflectionMaxTraceDistance = m_dxrReflectionMaxTraceDistance;
+    DxrDebugBlitPass::BlitReflection(
+        BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
 void ScreenSpaceEffects::BlitRtShadowDebug(
@@ -2460,30 +2369,15 @@ void ScreenSpaceEffects::BlitRtShadowDebug(
     const int viewportWidth,
     const int viewportHeight) const
 {
-    if (!IsRtShadowDebugMode(m_debugMode) || outputTarget == nullptr)
-    {
-        return;
-    }
-
-    // Denoised view uses the SIGMA output (square-unpacked); raw view uses the 1-spp penumbra
-    // buffer mapped to a binary mask. Denoised falls back to raw when the denoiser is off.
-    const bool wantDenoised = m_debugMode == RenderDebugMode::RtShadowDenoised;
-    const bool useDenoised = wantDenoised && m_dxrShadowDenoisedSrv != 0;
-    const std::uintptr_t sourceSrv = useDenoised ? m_dxrShadowDenoisedSrv : m_dxrShadowPenumbraSrv;
-    if (sourceSrv == 0)
-    {
-        return;
-    }
-
-    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-    m_dxrShadowDebugShader->Use(false, true);
-    m_dxrShadowDebugShader->SetInt("uInput", 0);
-    m_dxrShadowDebugShader->SetInt("uRawPenumbra", useDenoised ? 0 : 1);
-    m_dxrShadowDebugShader->SetVec2(
-        "uUvScale", glm::vec2(m_dxrShadowUvScaleX, m_dxrShadowUvScaleY));
-    m_dxrShadowDebugShader->BindTextureSlot(0, sourceSrv);
-    m_dxrShadowDebugShader->FlushUniforms();
-    DrawFullscreenQuad();
+    DxrDebugBlitInputs inputs{};
+    inputs.debugMode = m_debugMode;
+    inputs.dxrShadowDebugShader = m_dxrShadowDebugShader.get();
+    inputs.dxrShadowPenumbraSrv = m_dxrShadowPenumbraSrv;
+    inputs.dxrShadowDenoisedSrv = m_dxrShadowDenoisedSrv;
+    inputs.dxrShadowUvScaleX = m_dxrShadowUvScaleX;
+    inputs.dxrShadowUvScaleY = m_dxrShadowUvScaleY;
+    DxrDebugBlitPass::BlitShadow(
+        BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
 void ScreenSpaceEffects::BlitRtGiDebug(
@@ -2491,64 +2385,28 @@ void ScreenSpaceEffects::BlitRtGiDebug(
     const int viewportWidth,
     const int viewportHeight) const
 {
-    if (!IsRtGiDebugMode(m_debugMode) || outputTarget == nullptr)
+    DxrDebugBlitInputs inputs{};
+    inputs.debugMode = m_debugMode;
+    inputs.debugChannelShader = m_debugChannelShader.get();
+    inputs.dxrGiInjectShader = m_dxrGiInjectShader.get();
+    inputs.dxrGiRawSrv = m_dxrGiRawSrv;
+    inputs.dxrGiDenoisedSrv = m_dxrGiDenoisedSrv;
+    inputs.dxrGiUvScaleX = m_dxrGiUvScaleX;
+    inputs.dxrGiUvScaleY = m_dxrGiUvScaleY;
+    inputs.dxrGiStrength = m_dxrGiStrength;
+    if (m_sceneFramebuffer != nullptr)
     {
-        return;
+        inputs.sceneHasMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+        inputs.sceneIndirectSrv =
+            m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting);
+        inputs.sceneDepthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+        inputs.sceneMaterial0Srv =
+            m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+        inputs.sceneMaterial1Srv =
+            m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic);
     }
-
-    // RtGiInject visualizes the injected delta (albedo * gi * strength): re-run the inject shader
-    // in debug mode straight to the output. Requires the scene MRTs.
-    if (m_debugMode == RenderDebugMode::RtGiInject)
-    {
-        const std::uintptr_t giInjectSrv =
-            m_dxrGiDenoisedSrv != 0 ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
-        if (giInjectSrv == 0 || m_sceneFramebuffer == nullptr
-            || !m_sceneFramebuffer->HasMaterialGbuffer())
-        {
-            return;
-        }
-
-        BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-        m_dxrGiInjectShader->Use(false, true);
-        m_dxrGiInjectShader->SetInt("uIndirectMap", 0);
-        m_dxrGiInjectShader->SetInt("uGiDenoisedMap", 1);
-        m_dxrGiInjectShader->SetInt("uDepthMap", 2);
-        m_dxrGiInjectShader->SetInt("uMaterial0Map", 3);
-        m_dxrGiInjectShader->SetInt("uMaterial1Map", 4);
-        m_dxrGiInjectShader->SetVec2(
-            "uGiUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
-        m_dxrGiInjectShader->SetFloat("uStrength", m_dxrGiStrength);
-        m_dxrGiInjectShader->SetInt("uDebugGiInject", 1);
-        m_dxrGiInjectShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
-        m_dxrGiInjectShader->BindTextureSlot(1, giInjectSrv);
-        m_dxrGiInjectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_dxrGiInjectShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-        m_dxrGiInjectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
-        m_dxrGiInjectShader->FlushUniforms();
-        DrawFullscreenQuad();
-        return;
-    }
-
-    // RtGiRaw / RtGiDenoised: straight rgb visualization of the GI radiance buffer.
-    const bool wantDenoised = m_debugMode == RenderDebugMode::RtGiDenoised;
-    const std::uintptr_t sourceSrv =
-        (wantDenoised && m_dxrGiDenoisedSrv != 0) ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
-    if (sourceSrv == 0)
-    {
-        return;
-    }
-
-    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
-    m_debugChannelShader->Use(false, true);
-    m_debugChannelShader->SetInt("uInput", 0);
-    m_debugChannelShader->SetInt("uOutputRgb", 1);
-    m_debugChannelShader->SetInt("uOutputAlpha", 0);
-    m_debugChannelShader->SetFloat("uAlphaScale", 1.0f);
-    m_debugChannelShader->SetVec2(
-        "uUvScale", glm::vec2(m_dxrGiUvScaleX, m_dxrGiUvScaleY));
-    m_debugChannelShader->BindTextureSlot(0, sourceSrv);
-    m_debugChannelShader->FlushUniforms();
-    DrawFullscreenQuad();
+    DxrDebugBlitPass::BlitGi(
+        BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
 void ScreenSpaceEffects::GenerateRrGuides() const
@@ -2656,17 +2514,12 @@ void ScreenSpaceEffects::BlitRrGuideDebug(
 
 void ScreenSpaceEffects::DrawFullscreenQuad() const
 {
-    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-    commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_quadVb.BindVertex(0, 4 * static_cast<std::uint32_t>(sizeof(float)));
-    commandList->DrawInstanced(6, 1, 0, 0);
+    m_draw.DrawFullscreenQuad();
 }
 
 void ScreenSpaceEffects::DrawFullscreenPass(Shader& shader, const bool viewportLdr) const
 {
-    shader.BindPipeline(false, viewportLdr, false, false, false, false);
-    shader.FlushUniforms();
-    DrawFullscreenQuad();
+    m_draw.DrawFullscreenPass(shader, viewportLdr);
 }
 
 void ScreenSpaceEffects::DrawFullscreenToTarget(
@@ -2677,50 +2530,7 @@ void ScreenSpaceEffects::DrawFullscreenToTarget(
     const float clearColor[4],
     const bool viewportLdr) const
 {
-    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-    auto* resource = static_cast<ID3D12Resource*>(target.resource);
-
-    const D3D12_RESOURCE_STATES renderTargetState = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    const D3D12_RESOURCE_STATES shaderResourceState = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-    D3D12_RESOURCE_STATES beforeState = static_cast<D3D12_RESOURCE_STATES>(target.resourceState);
-    if (beforeState == D3D12_RESOURCE_STATE_COMMON)
-    {
-        beforeState = shaderResourceState;
-    }
-    TransitionResource(
-        commandList,
-        resource,
-        beforeState,
-        renderTargetState);
-    target.resourceState = static_cast<std::uint32_t>(renderTargetState);
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{ GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex) };
-
-    D3D12_VIEWPORT viewport{};
-    viewport.Width = static_cast<float>(width);
-    viewport.Height = static_cast<float>(height);
-    viewport.MaxDepth = 1.0f;
-    D3D12_RECT scissor{0, 0, width, height};
-
-    commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-    commandList->RSSetViewports(1, &viewport);
-    commandList->RSSetScissorRects(1, &scissor);
-    commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-
-    bool useLdrPipeline = viewportLdr;
-    bool useSingleChannelPipeline = false;
-    ResolveFullscreenPipelineFlags(target.format, viewportLdr, useLdrPipeline, useSingleChannelPipeline);
-    shader.BindPipeline(false, useLdrPipeline, false, false, false, useSingleChannelPipeline);
-    shader.FlushUniforms();
-    DrawFullscreenQuad();
-
-    commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
-    TransitionResource(
-        commandList,
-        resource,
-        renderTargetState,
-        shaderResourceState);
-    target.resourceState = static_cast<std::uint32_t>(shaderResourceState);
+    m_draw.DrawFullscreenToTarget(shader, target, width, height, clearColor, viewportLdr);
 }
 
 void ScreenSpaceEffects::BindOutputTarget(
@@ -2728,32 +2538,12 @@ void ScreenSpaceEffects::BindOutputTarget(
     const int viewportWidth,
     const int viewportHeight) const
 {
-    int outputWidth = viewportWidth;
-    int outputHeight = viewportHeight;
+    m_draw.BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+}
 
-    if (outputTarget != nullptr)
-    {
-        GfxContext::Get().SetBoundOutputFramebuffer(outputTarget);
-        outputTarget->BindDrawTarget(false);
-        if (outputTarget->GetWidth() > 0 && outputTarget->GetHeight() > 0)
-        {
-            outputWidth = outputTarget->GetWidth();
-            outputHeight = outputTarget->GetHeight();
-        }
-    }
-    else
-    {
-        GfxContext::Get().BindSwapChainRenderTarget(false);
-    }
-
-    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-    D3D12_VIEWPORT viewport{};
-    viewport.Width = static_cast<float>(outputWidth);
-    viewport.Height = static_cast<float>(outputHeight);
-    viewport.MaxDepth = 1.0f;
-    D3D12_RECT scissor{0, 0, outputWidth, outputHeight};
-    commandList->RSSetViewports(1, &viewport);
-    commandList->RSSetScissorRects(1, &scissor);
+PostProcessContext ScreenSpaceEffects::BuildPostProcessContext() const
+{
+    return PostProcessContext{m_draw, m_width, m_height};
 }
 
 void ScreenSpaceEffects::Apply(
@@ -2792,115 +2582,42 @@ void ScreenSpaceEffects::Apply(
 
     if (runSsao || runGtao)
     {
-        const float ssaoClear[] = {1.0f, 1.0f, 1.0f, 1.0f};
+        AmbientOcclusionPassInputs aoInputs{};
+        aoInputs.runSsao = runSsao;
+        aoInputs.runGtao = runGtao;
+        aoInputs.projectionMatrix = projectionMatrix;
+        aoInputs.inverseProjectionMatrix = inverseProjectionMatrix;
+        aoInputs.viewMatrix = camera.GetViewMatrix();
+        aoInputs.texelSize = texelSize;
+        aoInputs.nearPlane = camera.GetNearPlane();
+        aoInputs.farPlane = camera.GetFarPlane();
+        aoInputs.hasGeometryNormals = m_sceneFramebuffer->HasGeometryNormals();
+        aoInputs.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+        aoInputs.normalSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal);
+        aoInputs.noiseSrv = m_noiseTexture.srvCpuHandle;
+        aoInputs.ssaoRadius = m_ssaoRadius;
+        aoInputs.ssaoBias = m_ssaoBias;
+        aoInputs.ssaoShaderDebugMode = m_ssaoShaderDebugMode;
+        aoInputs.kernelSamples = m_kernelSamples.data();
+        aoInputs.kernelSampleCount = KernelSampleCount;
+        aoInputs.gtaoRadius = m_gtaoRadius;
+        aoInputs.gtaoThickness = m_gtaoThickness;
+        aoInputs.gtaoFalloff = m_gtaoFalloff;
+        aoInputs.gtaoDirections = m_gtaoDirections;
+        aoInputs.gtaoSteps = m_gtaoSteps;
+        aoInputs.gtaoDenoiseEnabled = m_gtaoDenoiseEnabled;
+        aoInputs.ssaoBlurDepthThreshold = m_ssaoBlurDepthThreshold;
+        aoInputs.ssaoShader = m_ssaoShader.get();
+        aoInputs.gtaoShader = m_gtaoShader.get();
+        aoInputs.blurShader = m_blurShader.get();
+        aoInputs.ssaoTarget = const_cast<InternalTarget*>(&m_ssaoTarget);
+        aoInputs.ssaoBlurTarget = const_cast<InternalTarget*>(&m_ssaoBlurTarget);
+        aoInputs.gtaoRawTarget = const_cast<InternalTarget*>(&m_gtaoRawTarget);
 
-        if (runSsao)
-        {
-            glm::vec4 packedKernelSamples[KernelSampleCount];
-            for (int sampleIndex = 0; sampleIndex < KernelSampleCount; ++sampleIndex)
-            {
-                packedKernelSamples[sampleIndex] =
-                    glm::vec4(m_kernelSamples[static_cast<std::size_t>(sampleIndex)], 0.0f);
-            }
-
-            m_ssaoShader->Use(false);
-            m_ssaoShader->SetInt("uDepthMap", 0);
-            m_ssaoShader->SetInt("uNormalMap", 1);
-            m_ssaoShader->SetInt("uNoiseMap", 2);
-            m_ssaoShader->SetInt(
-                "uUseGeometryNormals",
-                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
-            m_ssaoShader->SetMat4("uProjection", projectionMatrix);
-            m_ssaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-            m_ssaoShader->SetMat4("uView", camera.GetViewMatrix());
-            m_ssaoShader->SetFloat("uRadius", m_ssaoRadius);
-            m_ssaoShader->SetFloat("uBias", m_ssaoBias);
-            m_ssaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
-            m_ssaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
-            m_ssaoShader->SetInt("uKernelSize", KernelSampleCount);
-            m_ssaoShader->SetInt("uDebugMode", m_ssaoShaderDebugMode);
-            m_ssaoShader->SetVec4Array("uSamples", packedKernelSamples, KernelSampleCount);
-            m_ssaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            m_ssaoShader->BindTextureSlot(2, m_noiseTexture.srvCpuHandle);
-            DrawFullscreenToTarget(*m_ssaoShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
-        }
-        else
-        {
-            m_gtaoShader->Use(false);
-            m_gtaoShader->SetInt("uDepthMap", 0);
-            m_gtaoShader->SetInt("uNormalMap", 1);
-            m_gtaoShader->SetMat4("uProjection", projectionMatrix);
-            m_gtaoShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-            m_gtaoShader->SetMat4("uView", camera.GetViewMatrix());
-            m_gtaoShader->SetVec2(
-                "uProjectionScale",
-                glm::vec2(projectionMatrix[0][0], projectionMatrix[1][1]));
-            m_gtaoShader->SetFloat("uRadius", m_gtaoRadius);
-            m_gtaoShader->SetFloat("uThickness", m_gtaoThickness);
-            m_gtaoShader->SetFloat("uFalloff", m_gtaoFalloff);
-            m_gtaoShader->SetFloat("uNearPlane", camera.GetNearPlane());
-            m_gtaoShader->SetFloat("uFarPlane", camera.GetFarPlane());
-            m_gtaoShader->SetInt("uDirections", m_gtaoDirections);
-            m_gtaoShader->SetInt("uSteps", m_gtaoSteps);
-            m_gtaoShader->SetInt(
-                "uUseGeometryNormals",
-                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
-            m_gtaoShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_gtaoShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            DrawFullscreenToTarget(
-                *m_gtaoShader,
-                const_cast<InternalTarget&>(m_gtaoRawTarget),
-                m_width,
-                m_height,
-                ssaoClear);
-            aoCompositeSrv = m_gtaoRawTarget.srvCpuHandle;
-        }
-
-        if ((runSsao && m_ssaoShaderDebugMode == 0) || (runGtao && m_gtaoDenoiseEnabled))
-        {
-            m_blurShader->Use(false);
-            m_blurShader->SetInt("uInput", 0);
-            m_blurShader->SetInt("uDepthMap", 1);
-            m_blurShader->SetInt("uNormalMap", 2);
-            m_blurShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-            m_blurShader->SetVec2("uTexelSize", texelSize);
-            m_blurShader->SetFloat("uDepthThreshold", m_ssaoBlurDepthThreshold);
-            m_blurShader->SetFloat("uBlurSpread", runGtao ? 0.8f : 1.0f);
-            m_blurShader->SetFloat("uNormalPower", runGtao ? 8.0f : 4.0f);
-            m_blurShader->SetInt(
-                "uUseNormalWeight",
-                m_sceneFramebuffer->HasGeometryNormals() ? 1 : 0);
-
-            m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
-            m_blurShader->BindTextureSlot(0, runGtao ? m_gtaoRawTarget.srvCpuHandle : m_ssaoTarget.srvCpuHandle);
-            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
-
-            m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
-            m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
-            m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
-
-            if (runSsao)
-            {
-                m_blurShader->SetFloat("uBlurSpread", 2.5f);
-                m_blurShader->SetVec2("uBlurDirection", glm::vec2(1.0f, 0.0f));
-                m_blurShader->BindTextureSlot(0, m_ssaoTarget.srvCpuHandle);
-                m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-                DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoBlurTarget), m_width, m_height, ssaoClear);
-
-                m_blurShader->SetVec2("uBlurDirection", glm::vec2(0.0f, 1.0f));
-                m_blurShader->BindTextureSlot(0, m_ssaoBlurTarget.srvCpuHandle);
-                m_blurShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-                m_blurShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-                DrawFullscreenToTarget(*m_blurShader, const_cast<InternalTarget&>(m_ssaoTarget), m_width, m_height, ssaoClear);
-            }
-            aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
-        }
+        AmbientOcclusionPassOutputs aoOutputs{};
+        aoOutputs.aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
+        AmbientOcclusionPass::Execute(BuildPostProcessContext(), aoInputs, aoOutputs);
+        aoCompositeSrv = aoOutputs.aoCompositeSrv;
     }
 
     const bool useShadowFactorComposite = m_sceneFramebuffer->HasShadowFactor() && !pbrDebugActive;
@@ -2981,478 +2698,113 @@ void ScreenSpaceEffects::Apply(
         radianceScope.Success();
     }
 
-    const bool wantsSsr = m_ssrEnabled || IsSsrDebugMode(m_debugMode);
-
-    const bool runSsrSceneColorAssembly =
-        wantsSsr &&
-        !pbrDebugActive &&
-        m_sceneFramebuffer->HasSplitLighting() &&
-        m_sceneFramebuffer->HasShadowFactor() &&
-        m_ssrSceneColorTarget.resource != nullptr;
-
-    const_cast<ScreenSpaceEffects*>(this)->m_ssrSceneColorRanLastFrame = runSsrSceneColorAssembly;
-
-    if (runSsrSceneColorAssembly)
-    {
-        SceneRenderTrace::Scope ssrSceneColorScope("ssr scene color");
-        // Bloom halos in reflections: use LAST frame's bloom output (bloom runs after SSR).
-        // m_prevFrameBloomSrv is reset whenever bloom targets are recreated, so a zero value
-        // means "no valid bloom yet" and disables the term.
-        const bool useBloomInReflections =
-            m_bloomEnabled && m_prevFrameBloomSrv != 0;
-        m_ssrSceneColorShader->Use(false);
-        m_ssrSceneColorShader->SetInt("uDirectLighting", 0);
-        m_ssrSceneColorShader->SetInt("uSunShadowMap", 1);
-        m_ssrSceneColorShader->SetInt("uDepthMap", 2);
-        m_ssrSceneColorShader->SetInt("uIndirectLighting", 3);
-        m_ssrSceneColorShader->SetInt("uPrevBloom", 4);
-        m_ssrSceneColorShader->SetInt(
-            "uUseShadowFactor",
-            useShadowFactorComposite ? 1 : 0);
-        // SSR-11: reflect indirect/ambient too (RT1 is same-frame data at this point).
-        m_ssrSceneColorShader->SetInt("uUseIndirect", 1);
-        m_ssrSceneColorShader->SetFloat(
-            "uBloomIntensity",
-            useBloomInReflections ? m_bloomIntensity : 0.0f);
-        m_ssrSceneColorShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
-        m_ssrSceneColorShader->BindTextureSlot(1, shadowFactorSrv);
-        m_ssrSceneColorShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrSceneColorShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
-        m_ssrSceneColorShader->BindTextureSlot(
-            4,
-            useBloomInReflections ? m_prevFrameBloomSrv
-                                  : m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting));
-        DrawFullscreenToTarget(
-            *m_ssrSceneColorShader,
-            const_cast<InternalTarget&>(m_ssrSceneColorTarget),
-            m_ssrSceneColorTarget.width,
-            m_ssrSceneColorTarget.height,
-            radianceClear);
-        ssrSceneColorScope.Success();
-    }
-
-    const bool runSsrTrace =
-        wantsSsr &&
-        runSsrSceneColorAssembly &&
-        !pbrDebugActive &&
-        m_sceneFramebuffer->HasSplitLighting() &&
-        m_sceneFramebuffer->HasGeometryNormals() &&
-        m_sceneFramebuffer->HasMaterialGbuffer() &&
-        m_ssrSceneColorTarget.resource != nullptr &&
-        m_ssrTraceTarget.resource != nullptr &&
-        (m_ssrEnabled || IsSsrTraceDebugMode(m_debugMode) || IsSsrDenoiseDebugMode(m_debugMode)
-         || IsSsrCompositeDebugMode(m_debugMode));
-
-    const_cast<ScreenSpaceEffects*>(this)->m_ssrTraceRanLastFrame = runSsrTrace;
-    const_cast<ScreenSpaceEffects*>(this)->m_lastSsrSpatialSrv = 0;
-    const_cast<ScreenSpaceEffects*>(this)->m_lastSsrVarianceSrv = 0;
-    const_cast<ScreenSpaceEffects*>(this)->m_lastSsrDenoiseSrv = 0;
-    const_cast<ScreenSpaceEffects*>(this)->m_lastSsrResolvedSrv = 0;
-
-    if (runSsrTrace)
-    {
-        SceneRenderTrace::Scope ssrTraceScope("ssr trace");
-        m_ssrTraceShader->Use(false);
-        m_ssrTraceShader->SetInt("uDepthMap", 0);
-        m_ssrTraceShader->SetInt("uNormalMap", 1);
-        m_ssrTraceShader->SetInt("uMaterial0Map", 2);
-        m_ssrTraceShader->SetInt("uSceneColorMap", 3);
-        m_ssrTraceShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssrTraceShader->SetMat4("uProjection", projectionMatrix);
-        m_ssrTraceShader->SetMat4("uView", camera.GetViewMatrix());
-        m_ssrTraceShader->SetFloat("uMaxTraceDistance", m_ssrMaxTraceDistance);
-        m_ssrTraceShader->SetInt("uStepCount", m_ssrStepCount);
-        m_ssrTraceShader->SetFloat("uThickness", m_ssrThickness);
-        m_ssrTraceShader->SetFloat("uRoughnessCutoff", m_ssrRoughnessCutoff);
-        m_ssrTraceShader->SetFloat("uFrameIndex", static_cast<float>(m_ssrFrameIndex));
-        m_ssrTraceShader->SetFloat("uStepExponent", m_ssrStepExponent);
-        m_ssrTraceShader->SetInt("uSampleCount", m_ssrSampleCount);
-        // SSR-08: the trace target and its scene-color input run at trace resolution
-        // (m_ssrTraceResolutionScale), so the manual bilinear/edge-penalty footprints in
-        // ssr_trace.ps.hlsl need the trace-res texel size, not the full render-res one.
-        m_ssrTraceShader->SetVec2(
-            "uTexelSize",
-            glm::vec2(
-                1.0f / static_cast<float>(std::max(m_ssrTraceTarget.width, 1)),
-                1.0f / static_cast<float>(std::max(m_ssrTraceTarget.height, 1))));
-        m_ssrTraceShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrTraceShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-        m_ssrTraceShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-        m_ssrTraceShader->BindTextureSlot(3, m_ssrSceneColorTarget.srvCpuHandle);
-        DrawFullscreenToTarget(
-            *m_ssrTraceShader,
-            const_cast<InternalTarget&>(m_ssrTraceTarget),
-            m_ssrTraceTarget.width,
-            m_ssrTraceTarget.height,
-            radianceClear);
-        ++m_ssrFrameIndex;
-        ssrTraceScope.Success();
-    }
-
-    const bool runSsrDenoise =
-        runSsrTrace &&
-        (m_ssrDenoiseEnabled || IsSsrDenoiseDebugMode(m_debugMode)) &&
-        m_ssrSpatialTarget.resource != nullptr &&
-        m_ssrSpatialBlurTarget.resource != nullptr &&
-        m_ssrVarianceHistoryTarget.resource != nullptr &&
-        m_ssrVarianceTemporalTarget.resource != nullptr;
-
-    const_cast<ScreenSpaceEffects*>(this)->m_ssrDenoiseRanLastFrame = runSsrDenoise;
-
-    std::uintptr_t ssrDenoiseInputSrv = m_ssrTraceTarget.srvCpuHandle;
-    std::uintptr_t ssrVarianceSrv = 0;
-    if (runSsrDenoise)
-    {
-        SceneRenderTrace::Scope ssrSvgfScope("ssr svgf");
-        const float temporalClear[] = {0.0f, 0.0f, 0.0f, 0.0f};
-        const glm::vec2 traceTexelSize(
-            1.0f / static_cast<float>(m_ssrTraceTarget.width),
-            1.0f / static_cast<float>(m_ssrTraceTarget.height));
-        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
-        commandList->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
-        m_sceneFramebuffer->RestoreDepthShaderResource();
-
-        const bool useMotionVectors = m_sceneFramebuffer->HasVelocity();
-        const bool runSsrTemporal =
-            m_ssrHistoryTarget.resource != nullptr && m_ssrTemporalTarget.resource != nullptr;
-
-        const_cast<ScreenSpaceEffects*>(this)->m_ssrTemporalRanLastFrame = runSsrTemporal;
-
-        if (runSsrTemporal && useMotionVectors)
-        {
-            SceneRenderTrace::Scope ssrTemporalScope("ssr svgf temporal color");
-            const glm::mat4 viewMatrix = camera.GetViewMatrix();
-            const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-            const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
-            const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
-                ? m_motionVectorFrameState.prevViewProjection
-                : unjitteredProjection * viewMatrix;
-
-            m_ssrSvgfTemporalShader->Use(false);
-            m_ssrSvgfTemporalShader->SetInt("uCurrentTrace", 0);
-            m_ssrSvgfTemporalShader->SetInt("uHistoryTrace", 1);
-            m_ssrSvgfTemporalShader->SetInt("uVelocity", 2);
-            m_ssrSvgfTemporalShader->SetInt("uDepth", 3);
-            m_ssrSvgfTemporalShader->SetInt("uNormalMap", 4);
-            m_ssrSvgfTemporalShader->SetInt("uHistoryDepth", 5);
-            m_ssrSvgfTemporalShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-            m_ssrSvgfTemporalShader->SetMat4("uInvViewProj", invViewProjCurr);
-            m_ssrSvgfTemporalShader->SetMat4("uPrevViewProj", prevViewProj);
-            m_ssrSvgfTemporalShader->SetFloat("uBlendFactor", m_ssrTemporalBlendFactor);
-            m_ssrSvgfTemporalShader->SetFloat("uSameUvBlendFactor", m_ssrSameUvBlendFactor);
-            m_ssrSvgfTemporalShader->SetFloat("uHistoryValid", m_ssrHistoryValid ? 1.0f : 0.0f);
-            m_ssrSvgfTemporalShader->SetFloat("uDepthThreshold", m_ssrDepthThreshold);
-            m_ssrSvgfTemporalShader->SetFloat("uTexelSizeX", traceTexelSize.x);
-            m_ssrSvgfTemporalShader->SetFloat("uTexelSizeY", traceTexelSize.y);
-            m_ssrSvgfTemporalShader->BindTextureSlot(0, ssrDenoiseInputSrv);
-            m_ssrSvgfTemporalShader->BindTextureSlot(1, m_ssrHistoryTarget.srvCpuHandle);
-            m_ssrSvgfTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
-            m_ssrSvgfTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssrSvgfTemporalShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            m_ssrSvgfTemporalShader->BindTextureSlot(5, m_ssrHistoryDepthTarget.srvCpuHandle);
-            DrawFullscreenToTarget(
-                *m_ssrSvgfTemporalShader,
-                const_cast<InternalTarget&>(m_ssrTemporalTarget),
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                temporalClear);
-
-            // SSR-06 follow-up: maintain the depth history in the motion-vector path too
-            // (previously only the fallback path wrote it, so the MV path had nothing valid
-            // to test disocclusion against). Runs AFTER the temporal draw so the pass above
-            // reads last frame's depth before it is overwritten with this frame's.
-            m_giDepthHistoryShader->Use(false);
-            m_giDepthHistoryShader->SetInt("uDepth", 0);
-            m_giDepthHistoryShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(
-                *m_giDepthHistoryShader,
-                const_cast<InternalTarget&>(m_ssrHistoryDepthTarget),
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                temporalClear);
-            ssrTemporalScope.Success();
-        }
-        else if (runSsrTemporal)
-        {
-            SceneRenderTrace::Scope ssrTemporalScope("ssr svgf temporal color");
-            const glm::mat4 viewMatrix = camera.GetViewMatrix();
-            const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-            const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
-            const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
-                ? m_motionVectorFrameState.prevViewProjection
-                : unjitteredProjection * viewMatrix;
-
-            m_temporalReprojectShader->Use(false);
-            m_temporalReprojectShader->SetInt("uCurrentRadiance", 0);
-            m_temporalReprojectShader->SetInt("uHistoryRadiance", 1);
-            m_temporalReprojectShader->SetInt("uDepth", 2);
-            m_temporalReprojectShader->SetInt("uHistoryDepth", 3);
-            m_temporalReprojectShader->SetMat4("uInvViewProj", invViewProjCurr);
-            m_temporalReprojectShader->SetMat4("uPrevViewProj", prevViewProj);
-            m_temporalReprojectShader->SetFloat("uBlendFactor", m_ssrTemporalBlendFactor);
-            m_temporalReprojectShader->SetFloat(
-                "uHistoryValid",
-                m_ssrHistoryValid && m_motionVectorFrameState.historyValid ? 1.0f : 0.0f);
-            m_temporalReprojectShader->SetFloat("uTexelSizeX", traceTexelSize.x);
-            m_temporalReprojectShader->SetFloat("uTexelSizeY", traceTexelSize.y);
-            m_temporalReprojectShader->SetFloat("uDepthRejectThreshold", m_ssrDepthThreshold);
-            m_temporalReprojectShader->BindTextureSlot(0, ssrDenoiseInputSrv);
-            m_temporalReprojectShader->BindTextureSlot(1, m_ssrHistoryTarget.srvCpuHandle);
-            m_temporalReprojectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_temporalReprojectShader->BindTextureSlot(3, m_ssrHistoryDepthTarget.srvCpuHandle);
-            DrawFullscreenToTarget(
-                *m_temporalReprojectShader,
-                const_cast<InternalTarget&>(m_ssrTemporalTarget),
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                temporalClear);
-
-            m_giDepthHistoryShader->Use(false);
-            m_giDepthHistoryShader->SetInt("uDepth", 0);
-            m_giDepthHistoryShader->BindTextureSlot(0, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(
-                *m_giDepthHistoryShader,
-                const_cast<InternalTarget&>(m_ssrHistoryDepthTarget),
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                temporalClear);
-            ssrTemporalScope.Success();
-        }
-
-        if (runSsrTemporal)
-        {
-            SceneRenderTrace::Scope ssrVarianceScope("ssr svgf temporal variance");
-            const glm::mat4 viewMatrix = camera.GetViewMatrix();
-            const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-            const glm::mat4 invViewProjCurr = glm::inverse(unjitteredProjection * viewMatrix);
-            const glm::mat4 prevViewProj = m_motionVectorFrameState.historyValid
-                ? m_motionVectorFrameState.prevViewProjection
-                : unjitteredProjection * viewMatrix;
-
-            m_ssrSvgfVarianceTemporalShader->Use(false);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uCurrentTrace", 0);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uFilteredColor", 1);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uHistoryVariance", 2);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uVelocity", 3);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uDepth", 4);
-            m_ssrSvgfVarianceTemporalShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-            m_ssrSvgfVarianceTemporalShader->SetMat4("uInvViewProj", invViewProjCurr);
-            m_ssrSvgfVarianceTemporalShader->SetMat4("uPrevViewProj", prevViewProj);
-            m_ssrSvgfVarianceTemporalShader->SetInt("uUseMotionVectors", useMotionVectors ? 1 : 0);
-            m_ssrSvgfVarianceTemporalShader->SetFloat("uBlendFactor", m_ssrTemporalBlendFactor);
-            m_ssrSvgfVarianceTemporalShader->SetFloat("uHistoryValid", m_ssrHistoryValid ? 1.0f : 0.0f);
-            m_ssrSvgfVarianceTemporalShader->SetFloat("uDepthThreshold", m_ssrDepthThreshold);
-            m_ssrSvgfVarianceTemporalShader->SetFloat("uTexelSizeX", traceTexelSize.x);
-            m_ssrSvgfVarianceTemporalShader->SetFloat("uTexelSizeY", traceTexelSize.y);
-            m_ssrSvgfVarianceTemporalShader->BindTextureSlot(0, ssrDenoiseInputSrv);
-            m_ssrSvgfVarianceTemporalShader->BindTextureSlot(1, m_ssrTemporalTarget.srvCpuHandle);
-            m_ssrSvgfVarianceTemporalShader->BindTextureSlot(2, m_ssrVarianceHistoryTarget.srvCpuHandle);
-            if (useMotionVectors)
-            {
-                m_ssrSvgfVarianceTemporalShader->BindTextureSlot(
-                    3,
-                    m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
-            }
-            else
-            {
-                m_ssrSvgfVarianceTemporalShader->BindTextureSlot(
-                    3,
-                    m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            }
-            m_ssrSvgfVarianceTemporalShader->BindTextureSlot(4, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(
-                *m_ssrSvgfVarianceTemporalShader,
-                const_cast<InternalTarget&>(m_ssrVarianceTemporalTarget),
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                temporalClear);
-            ssrVarianceScope.Success();
-
-            std::swap(
-                const_cast<InternalTarget&>(m_ssrHistoryTarget),
-                const_cast<InternalTarget&>(m_ssrTemporalTarget));
-            std::swap(
-                const_cast<InternalTarget&>(m_ssrVarianceHistoryTarget),
-                const_cast<InternalTarget&>(m_ssrVarianceTemporalTarget));
-            m_ssrHistoryValid = true;
-            ssrDenoiseInputSrv = m_ssrHistoryTarget.srvCpuHandle;
-            ssrVarianceSrv = m_ssrVarianceHistoryTarget.srvCpuHandle;
-            const_cast<ScreenSpaceEffects*>(this)->m_lastSsrTemporalSrv = ssrDenoiseInputSrv;
-            const_cast<ScreenSpaceEffects*>(this)->m_lastSsrVarianceSrv = ssrVarianceSrv;
-        }
-
-        SceneRenderTrace::Scope ssrAtrousScope("ssr svgf atrous");
-        m_ssrSvgfAtrousShader->Use(false);
-        m_ssrSvgfAtrousShader->SetInt("uColor", 0);
-        m_ssrSvgfAtrousShader->SetInt("uVariance", 1);
-        m_ssrSvgfAtrousShader->SetInt("uDepthMap", 2);
-        m_ssrSvgfAtrousShader->SetInt("uNormalMap", 3);
-        m_ssrSvgfAtrousShader->SetInt("uMaterial0Map", 4);
-        m_ssrSvgfAtrousShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssrSvgfAtrousShader->SetVec2("uTexelSize", traceTexelSize);
-        m_ssrSvgfAtrousShader->SetFloat("uDepthThreshold", m_ssrSpatialDepthThreshold);
-        m_ssrSvgfAtrousShader->SetFloat("uBlurSpread", m_ssrSpatialBlurSpread);
-        m_ssrSvgfAtrousShader->SetFloat("uRoughnessSpreadMin", m_ssrRoughnessSpreadMin);
-        m_ssrSvgfAtrousShader->SetFloat("uRoughnessSpreadMax", m_ssrRoughnessSpreadMax);
-        m_ssrSvgfAtrousShader->SetFloat("uNormalPower", 16.0f);
-        m_ssrSvgfAtrousShader->SetFloat("uPhiEpsilon", m_ssrSvgfPhiEpsilon);
-        m_ssrSvgfAtrousShader->SetFloat("uFilterStrength", m_ssrSvgfFilterStrength);
-
-        static constexpr float kSsrSvgfAtrousStepScales[] = {1.0f, 2.0f, 4.0f, 8.0f};
-        std::uintptr_t atrousInputSrv = ssrDenoiseInputSrv;
-        bool writeToBlurTarget = true;
-        bool recordedSpatialDebug = false;
-        for (const float stepScale : kSsrSvgfAtrousStepScales)
-        {
-            InternalTarget& outputTarget = writeToBlurTarget
-                ? const_cast<InternalTarget&>(m_ssrSpatialBlurTarget)
-                : const_cast<InternalTarget&>(m_ssrSpatialTarget);
-            m_ssrSvgfAtrousShader->SetFloat("uStepScale", stepScale);
-            m_ssrSvgfAtrousShader->BindTextureSlot(0, atrousInputSrv);
-            m_ssrSvgfAtrousShader->BindTextureSlot(1, ssrVarianceSrv);
-            m_ssrSvgfAtrousShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            m_ssrSvgfAtrousShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-            m_ssrSvgfAtrousShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-            DrawFullscreenToTarget(
-                *m_ssrSvgfAtrousShader,
-                outputTarget,
-                m_ssrTraceTarget.width,
-                m_ssrTraceTarget.height,
-                radianceClear);
-            atrousInputSrv = outputTarget.srvCpuHandle;
-            if (!recordedSpatialDebug)
-            {
-                const_cast<ScreenSpaceEffects*>(this)->m_lastSsrSpatialSrv = atrousInputSrv;
-                recordedSpatialDebug = true;
-            }
-            writeToBlurTarget = !writeToBlurTarget;
-        }
-
-        ssrDenoiseInputSrv = atrousInputSrv;
-        ssrAtrousScope.Success();
-        ssrSvgfScope.Success();
-    }
-    else
-    {
-        const_cast<ScreenSpaceEffects*>(this)->m_ssrTemporalRanLastFrame = false;
-    }
-
-    const_cast<ScreenSpaceEffects*>(this)->m_lastSsrDenoiseSrv = ssrDenoiseInputSrv;
-
-    const bool runSsrUpscale =
-        runSsrDenoise &&
-        m_ssrTraceResolutionScale < 1.0f &&
-        m_ssrResolvedTarget.resource != nullptr;
-
-    if (runSsrUpscale)
-    {
-        SceneRenderTrace::Scope ssrUpscaleScope("ssr upscale");
-        m_ssrUpscaleShader->Use(false);
-        m_ssrUpscaleShader->SetInt("uTraceMap", 0);
-        m_ssrUpscaleShader->SetInt("uDepthMap", 1);
-        m_ssrUpscaleShader->SetInt("uNormalMap", 2);
-        m_ssrUpscaleShader->SetInt("uMaterial0Map", 3);
-        m_ssrUpscaleShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssrUpscaleShader->SetVec2("uTexelSize", texelSize);
-        m_ssrUpscaleShader->SetFloat("uDepthThreshold", m_ssrSpatialDepthThreshold);
-        m_ssrUpscaleShader->SetFloat("uNormalPower", 8.0f);
-        m_ssrUpscaleShader->SetFloat("uRoughnessSpreadMin", 0.75f);
-        m_ssrUpscaleShader->SetFloat("uRoughnessSpreadMax", 1.75f);
-        m_ssrUpscaleShader->BindTextureSlot(0, ssrDenoiseInputSrv);
-        m_ssrUpscaleShader->BindTextureSlot(1, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrUpscaleShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-        m_ssrUpscaleShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-        DrawFullscreenToTarget(
-            *m_ssrUpscaleShader,
-            const_cast<InternalTarget&>(m_ssrResolvedTarget),
-            m_width,
-            m_height,
-            radianceClear);
-        const_cast<ScreenSpaceEffects*>(this)->m_lastSsrResolvedSrv = m_ssrResolvedTarget.srvCpuHandle;
-        ssrUpscaleScope.Success();
-    }
-    else if (runSsrDenoise && ssrDenoiseInputSrv != 0)
-    {
-        const_cast<ScreenSpaceEffects*>(this)->m_lastSsrResolvedSrv = ssrDenoiseInputSrv;
-    }
-
-    else if (runSsrTrace && m_ssrTraceTarget.srvCpuHandle != 0)
-    {
-        const_cast<ScreenSpaceEffects*>(this)->m_lastSsrResolvedSrv = m_ssrTraceTarget.srvCpuHandle;
-    }
-
-    // D6: RT specular composite and SSR spec composite are mutually exclusive — only one
-    // may adjust spec IBL in RT1 per frame (dxr-groundwork.md pipeline rule). The composite now
-    // runs whenever its feature is ENABLED (not only when a fresh trace exists): the PBR raster
-    // omits spec IBL from RT1 in that case (uOmitSpecularIbl), so a composite MUST add it back —
-    // falling back to pure IBL (uHasRtTrace/uHasSsrTrace = 0) when there is no fresh trace.
-    const bool rtHasFreshTrace = m_dxrReflectionSrv != 0;
     const bool rtCompositeWanted = m_dxrReflectionCompositeEnabled;
+
+    ScreenSpaceReflectionPassInputs ssrInputs{};
+    ssrInputs.pbrDebugActive = pbrDebugActive;
+    ssrInputs.useShadowFactorComposite = useShadowFactorComposite;
+    ssrInputs.rtCompositeWanted = rtCompositeWanted;
+    ssrInputs.ssrEnabled = m_ssrEnabled;
+    ssrInputs.wantsSsr = m_ssrEnabled || IsSsrDebugMode(m_debugMode);
+    ssrInputs.isSsrTraceDebug = IsSsrTraceDebugMode(m_debugMode);
+    ssrInputs.isSsrDenoiseDebug = IsSsrDenoiseDebugMode(m_debugMode);
+    ssrInputs.isSsrCompositeDebug = IsSsrCompositeDebugMode(m_debugMode);
+    ssrInputs.ssrSpecReplacementDebug =
+        !m_ssrEnabled && m_debugMode == RenderDebugMode::SsrSpecReplacement;
+    ssrInputs.sceneHasSplitLighting = m_sceneFramebuffer->HasSplitLighting();
+    ssrInputs.sceneHasShadowFactor = m_sceneFramebuffer->HasShadowFactor();
+    ssrInputs.sceneHasGeometryNormals = m_sceneFramebuffer->HasGeometryNormals();
+    ssrInputs.sceneHasMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+    ssrInputs.sceneHasVelocity = m_sceneFramebuffer->HasVelocity();
+    ssrInputs.projectionMatrix = projectionMatrix;
+    ssrInputs.inverseProjectionMatrix = inverseProjectionMatrix;
+    ssrInputs.unjitteredProjectionMatrix = camera.GetUnjitteredProjectionMatrix();
+    ssrInputs.viewMatrix = camera.GetViewMatrix();
+    ssrInputs.texelSize = texelSize;
+    ssrInputs.motionVectorState = m_motionVectorFrameState;
+    ssrInputs.shadowFactorSrv = shadowFactorSrv;
+    ssrInputs.directLightingSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::DirectLighting);
+    ssrInputs.indirectLightingSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting);
+    ssrInputs.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+    ssrInputs.normalSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal);
+    ssrInputs.material0Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+    ssrInputs.material1Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic);
+    ssrInputs.velocitySrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity);
+    ssrInputs.bloomEnabled = m_bloomEnabled;
+    ssrInputs.bloomIntensity = m_bloomIntensity;
+    ssrInputs.prevFrameBloomSrv = m_prevFrameBloomSrv;
+    ssrInputs.ssrMaxTraceDistance = m_ssrMaxTraceDistance;
+    ssrInputs.ssrStepCount = m_ssrStepCount;
+    ssrInputs.ssrThickness = m_ssrThickness;
+    ssrInputs.ssrRoughnessCutoff = m_ssrRoughnessCutoff;
+    ssrInputs.ssrStepExponent = m_ssrStepExponent;
+    ssrInputs.ssrSampleCount = m_ssrSampleCount;
+    ssrInputs.ssrDenoiseEnabled = m_ssrDenoiseEnabled;
+    ssrInputs.ssrTraceResolutionScale = m_ssrTraceResolutionScale;
+    ssrInputs.ssrTemporalBlendFactor = m_ssrTemporalBlendFactor;
+    ssrInputs.ssrSameUvBlendFactor = m_ssrSameUvBlendFactor;
+    ssrInputs.ssrDepthThreshold = m_ssrDepthThreshold;
+    ssrInputs.ssrSpatialDepthThreshold = m_ssrSpatialDepthThreshold;
+    ssrInputs.ssrSpatialBlurSpread = m_ssrSpatialBlurSpread;
+    ssrInputs.ssrRoughnessSpreadMin = m_ssrRoughnessSpreadMin;
+    ssrInputs.ssrRoughnessSpreadMax = m_ssrRoughnessSpreadMax;
+    ssrInputs.ssrSvgfPhiEpsilon = m_ssrSvgfPhiEpsilon;
+    ssrInputs.ssrSvgfFilterStrength = m_ssrSvgfFilterStrength;
+    ssrInputs.ssrStrength = m_ssrStrength;
+    ssrInputs.ssrFrameIndex = m_ssrFrameIndex;
+    ssrInputs.ssrHistoryValid = m_ssrHistoryValid;
+    if (environmentMap.GetIBL().IsReady())
+    {
+        const IBL& ibl = environmentMap.GetIBL();
+        ssrInputs.iblReady = true;
+        ssrInputs.environmentIntensity = ibl.GetEnvironmentIntensity();
+        ssrInputs.maxReflectionLod = ibl.GetMaxReflectionLod();
+        ssrInputs.prefilterMapSrv = ibl.GetPrefilterMapSrvCpuHandle();
+        ssrInputs.brdfLutSrv = ibl.GetBrdfLutSrvCpuHandle();
+    }
+    ssrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+    ssrInputs.ssrSceneColorShader = m_ssrSceneColorShader.get();
+    ssrInputs.ssrTraceShader = m_ssrTraceShader.get();
+    ssrInputs.ssrSvgfTemporalShader = m_ssrSvgfTemporalShader.get();
+    ssrInputs.temporalReprojectShader = m_temporalReprojectShader.get();
+    ssrInputs.giDepthHistoryShader = m_giDepthHistoryShader.get();
+    ssrInputs.ssrSvgfVarianceTemporalShader = m_ssrSvgfVarianceTemporalShader.get();
+    ssrInputs.ssrSvgfAtrousShader = m_ssrSvgfAtrousShader.get();
+    ssrInputs.ssrUpscaleShader = m_ssrUpscaleShader.get();
+    ssrInputs.ssrIndirectShader = m_ssrIndirectShader.get();
+    ssrInputs.ssrSceneColorTarget = const_cast<InternalTarget*>(&m_ssrSceneColorTarget);
+    ssrInputs.ssrTraceTarget = const_cast<InternalTarget*>(&m_ssrTraceTarget);
+    ssrInputs.ssrSpatialTarget = const_cast<InternalTarget*>(&m_ssrSpatialTarget);
+    ssrInputs.ssrSpatialBlurTarget = const_cast<InternalTarget*>(&m_ssrSpatialBlurTarget);
+    ssrInputs.ssrHistoryTarget = const_cast<InternalTarget*>(&m_ssrHistoryTarget);
+    ssrInputs.ssrTemporalTarget = const_cast<InternalTarget*>(&m_ssrTemporalTarget);
+    ssrInputs.ssrVarianceHistoryTarget = const_cast<InternalTarget*>(&m_ssrVarianceHistoryTarget);
+    ssrInputs.ssrVarianceTemporalTarget = const_cast<InternalTarget*>(&m_ssrVarianceTemporalTarget);
+    ssrInputs.ssrHistoryDepthTarget = const_cast<InternalTarget*>(&m_ssrHistoryDepthTarget);
+    ssrInputs.ssrResolvedTarget = const_cast<InternalTarget*>(&m_ssrResolvedTarget);
+    ssrInputs.ssrIndirectTarget = const_cast<InternalTarget*>(&m_ssrIndirectTarget);
+
+    ScreenSpaceReflectionPassOutputs ssrOutputs{};
+    ScreenSpaceReflectionPass::Execute(BuildPostProcessContext(), ssrInputs, ssrOutputs);
+
+    m_ssrSceneColorRanLastFrame = ssrOutputs.ssrSceneColorRanLastFrame;
+    m_ssrTraceRanLastFrame = ssrOutputs.ssrTraceRanLastFrame;
+    m_ssrDenoiseRanLastFrame = ssrOutputs.ssrDenoiseRanLastFrame;
+    m_ssrTemporalRanLastFrame = ssrOutputs.ssrTemporalRanLastFrame;
+    m_lastSsrSpatialSrv = ssrOutputs.lastSsrSpatialSrv;
+    m_lastSsrTemporalSrv = ssrOutputs.lastSsrTemporalSrv;
+    m_lastSsrVarianceSrv = ssrOutputs.lastSsrVarianceSrv;
+    m_lastSsrDenoiseSrv = ssrOutputs.lastSsrDenoiseSrv;
+    m_lastSsrResolvedSrv = ssrOutputs.lastSsrResolvedSrv;
+    m_ssrFrameIndex = ssrOutputs.ssrFrameIndex;
+    m_ssrHistoryValid = ssrOutputs.ssrHistoryValid;
+    const bool runSsrIndirect = ssrOutputs.ssrIndirectRan;
+    std::uintptr_t indirectCompositeSrv = ssrOutputs.indirectCompositeSrv;
+
+    const bool rtHasFreshTrace = m_dxrReflectionSrv != 0;
     const bool rtCompositeDebugOnly =
         !rtCompositeWanted && m_debugMode == RenderDebugMode::RtSpecReplacement
         && m_dxrReflectionSrv != 0;
-
-    const bool ssrHasFreshTrace = m_lastSsrResolvedSrv != 0;
-    const bool runSsrIndirect =
-        !pbrDebugActive &&
-        !rtCompositeWanted &&
-        m_sceneFramebuffer->HasSplitLighting() &&
-        m_sceneFramebuffer->HasMaterialGbuffer() &&
-        m_ssrIndirectTarget.resource != nullptr &&
-        environmentMap.GetIBL().IsReady() &&
-        (m_ssrEnabled || IsSsrCompositeDebugMode(m_debugMode));
-
-    std::uintptr_t indirectCompositeSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting);
-    if (runSsrIndirect)
-    {
-        SceneRenderTrace::Scope ssrIndirectScope("ssr indirect composite");
-        const float indirectClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-        const glm::mat4 viewMatrix = camera.GetViewMatrix();
-        const glm::mat4 invView = glm::inverse(viewMatrix);
-        const IBL& ibl = environmentMap.GetIBL();
-
-        m_ssrIndirectShader->Use(false);
-        m_ssrIndirectShader->SetInt("uIndirectMap", 0);
-        m_ssrIndirectShader->SetInt("uSsrMap", 1);
-        m_ssrIndirectShader->SetInt("uDepthMap", 2);
-        m_ssrIndirectShader->SetInt("uNormalMap", 3);
-        m_ssrIndirectShader->SetInt("uMaterial0Map", 4);
-        m_ssrIndirectShader->SetInt("uMaterial1Map", 5);
-        m_ssrIndirectShader->SetInt("uPrefilterMap", 6);
-        m_ssrIndirectShader->SetInt("uBrdfLut", 7);
-        m_ssrIndirectShader->SetMat4("uInvProjection", inverseProjectionMatrix);
-        m_ssrIndirectShader->SetMat4("uInvView", invView);
-        m_ssrIndirectShader->SetFloat("uEnvironmentIntensity", ibl.GetEnvironmentIntensity());
-        m_ssrIndirectShader->SetFloat("uMaxReflectionLod", ibl.GetMaxReflectionLod());
-        m_ssrIndirectShader->SetFloat("uSsrStrength", m_ssrStrength);
-        m_ssrIndirectShader->SetFloat("uReceiverFadeDistance", m_ssrMaxTraceDistance);
-        m_ssrIndirectShader->SetInt(
-            "uDebugSpecReplacement",
-            (!m_ssrEnabled && m_debugMode == RenderDebugMode::SsrSpecReplacement) ? 1 : 0);
-        m_ssrIndirectShader->SetInt("uHasSsrTrace", ssrHasFreshTrace ? 1 : 0);
-        m_ssrIndirectShader->BindTextureSlot(0, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
-        // Fall back to a valid texture (RT1) when there is no fresh SSR resolve; uHasSsrTrace=0
-        // forces the weight to 0 so the sample is ignored and pure IBL is added.
-        m_ssrIndirectShader->BindTextureSlot(
-            1, ssrHasFreshTrace ? m_lastSsrResolvedSrv : m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::IndirectLighting));
-        m_ssrIndirectShader->BindTextureSlot(2, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-        m_ssrIndirectShader->BindTextureSlot(3, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::ShadingNormal));
-        m_ssrIndirectShader->BindTextureSlot(4, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-        m_ssrIndirectShader->BindTextureSlot(5, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
-        m_ssrIndirectShader->BindTextureSlot(6, ibl.GetPrefilterMapSrvCpuHandle());
-        m_ssrIndirectShader->BindTextureSlot(7, ibl.GetBrdfLutSrvCpuHandle());
-        DrawFullscreenToTarget(
-            *m_ssrIndirectShader,
-            const_cast<InternalTarget&>(m_ssrIndirectTarget),
-            m_width,
-            m_height,
-            indirectClear);
-        if (m_ssrEnabled)
-        {
-            indirectCompositeSrv = m_ssrIndirectTarget.srvCpuHandle;
-        }
-        ssrIndirectScope.Success();
-    }
 
     // D6 — RT specular composite: replace the recomputed spec IBL in RT1 with the denoised
     // RT reflection wherever the raw trace has a valid (non-miss) hit distance. Standalone
@@ -3965,118 +3317,48 @@ void ScreenSpaceEffects::Apply(
     std::uintptr_t bloomSrv = 0;
     if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !effectiveWantDlss)
     {
-        SceneRenderTrace::Section bloomSection("bloom");
-        SceneRenderTrace::Scope bloomExtractScope("bloom extract");
-        const int bloomWidth = std::max(1, m_width / 2);
-        const int bloomHeight = std::max(1, m_height / 2);
-        const glm::vec2 bloomTexelSize(
-            1.0f / static_cast<float>(bloomWidth),
-            1.0f / static_cast<float>(bloomHeight));
-        const float bloomClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
-
-        m_bloomExtractShader->SetInt("uHdrColor", 0);
-        m_bloomExtractShader->SetFloat("uThreshold", m_bloomThreshold);
-        m_bloomExtractShader->SetFloat("uSoftKnee", m_bloomSoftKnee);
-        m_bloomExtractShader->SetFloat("uExposure", m_exposure);
-        m_bloomExtractShader->SetFloat("uFullTexelSizeX", texelSize.x);
-        m_bloomExtractShader->SetFloat("uFullTexelSizeY", texelSize.y);
-        const bool useMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
-        m_bloomExtractShader->SetFloat("uUseMaterialGbuffer", useMaterialGbuffer ? 1.0f : 0.0f);
-        m_bloomExtractShader->BindTextureSlot(0, hdrColorSrv);
-        if (useMaterialGbuffer)
+        RenderResBloomInputs bloomInputs{};
+        bloomInputs.hdrColorSrv = hdrColorSrv;
+        bloomInputs.fullTexelSize = texelSize;
+        bloomInputs.exposure = m_exposure;
+        bloomInputs.bloomThreshold = m_bloomThreshold;
+        bloomInputs.bloomSoftKnee = m_bloomSoftKnee;
+        bloomInputs.bloomBlurRadius = m_bloomBlurRadius;
+        bloomInputs.bloomTemporalBlendFactor = m_bloomTemporalBlendFactor;
+        bloomInputs.bloomSameUvBlendFactor = m_bloomSameUvBlendFactor;
+        bloomInputs.bloomDepthThreshold = m_bloomDepthThreshold;
+        bloomInputs.useMaterialGbuffer = m_sceneFramebuffer->HasMaterialGbuffer();
+        if (bloomInputs.useMaterialGbuffer)
         {
-            m_bloomExtractShader->BindTextureSlot(1, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough));
-            m_bloomExtractShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic));
+            bloomInputs.material0Srv =
+                m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough);
+            bloomInputs.material1Srv =
+                m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic);
         }
-        DrawFullscreenToTarget(
-            *m_bloomExtractShader,
-            const_cast<InternalTarget&>(m_bloomExtractTarget),
-            bloomWidth,
-            bloomHeight,
-            bloomClear);
-        bloomExtractScope.Success();
+        bloomInputs.hasVelocity = m_sceneFramebuffer->HasVelocity();
+        bloomInputs.velocitySrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity);
+        bloomInputs.depthSrv = m_sceneFramebuffer->GetDepthSrvCpuHandle();
+        bloomInputs.bloomExtractShader = m_bloomExtractShader.get();
+        bloomInputs.bloomBlurShader = m_bloomBlurShader.get();
+        bloomInputs.bloomTemporalShader = m_bloomTemporalShader.get();
+        bloomInputs.bloomExtractTarget = const_cast<InternalTarget*>(&m_bloomExtractTarget);
+        bloomInputs.bloomBlurTarget = const_cast<InternalTarget*>(&m_bloomBlurTarget);
+        bloomInputs.bloomBlur2Target = const_cast<InternalTarget*>(&m_bloomBlur2Target);
+        bloomInputs.bloomTemporalTarget = const_cast<InternalTarget*>(&m_bloomTemporalTarget);
+        bloomInputs.bloomHistoryTarget = const_cast<InternalTarget*>(&m_bloomHistoryTarget);
+        bloomInputs.bloomHistoryValid = m_bloomHistoryValid;
+        bloomInputs.bloomTemporalWarmupFrames = m_bloomTemporalWarmupFrames;
 
-        SceneRenderTrace::Scope bloomBlurScope("bloom blur");
-        const auto drawBloomBlurPass =
-            [&](InternalTarget& target, const std::uintptr_t inputSrv, const float dirX, const float dirY)
+        RenderResBloomOutputs bloomOutputs{};
+        if (BloomTonemapPass::ExecuteRenderResBloom(
+                BuildPostProcessContext(), bloomInputs, bloomOutputs))
         {
-            m_bloomBlurShader->Use(false, false);
-            m_bloomBlurShader->SetFloat("uDirectionX", dirX);
-            m_bloomBlurShader->SetFloat("uDirectionY", dirY);
-            m_bloomBlurShader->SetFloat("uBlurRadius", m_bloomBlurRadius);
-            m_bloomBlurShader->BindTextureSlot(0, inputSrv);
-            DrawFullscreenToTarget(
-                *m_bloomBlurShader,
-                const_cast<InternalTarget&>(target),
-                bloomWidth,
-                bloomHeight,
-                bloomClear);
-        };
-
-        drawBloomBlurPass(
-            const_cast<InternalTarget&>(m_bloomBlurTarget),
-            m_bloomExtractTarget.srvCpuHandle,
-            bloomTexelSize.x,
-            0.0f);
-        drawBloomBlurPass(
-            const_cast<InternalTarget&>(m_bloomBlur2Target),
-            m_bloomBlurTarget.srvCpuHandle,
-            0.0f,
-            bloomTexelSize.y);
-        drawBloomBlurPass(
-            const_cast<InternalTarget&>(m_bloomBlurTarget),
-            m_bloomBlur2Target.srvCpuHandle,
-            bloomTexelSize.x,
-            0.0f);
-        drawBloomBlurPass(
-            const_cast<InternalTarget&>(m_bloomBlur2Target),
-            m_bloomBlurTarget.srvCpuHandle,
-            0.0f,
-            bloomTexelSize.y);
-        bloomBlurScope.Success();
-
-        if (m_sceneFramebuffer->HasVelocity() && m_bloomTemporalTarget.srvCpuHandle != 0)
-        {
-            SceneRenderTrace::Scope bloomTemporalScope("bloom temporal");
-            const float bloomWarmupFactor = m_bloomHistoryValid
-                ? std::min(1.0f, static_cast<float>(m_bloomTemporalWarmupFrames) / 4.0f)
-                : 0.0f;
-            m_bloomTemporalShader->Use(false, false);
-            m_bloomTemporalShader->SetFloat("uBlendFactor", m_bloomTemporalBlendFactor);
-            m_bloomTemporalShader->SetFloat("uSameUvBlendFactor", m_bloomSameUvBlendFactor);
-            m_bloomTemporalShader->SetFloat("uHistoryValid", m_bloomHistoryValid ? 1.0f : 0.0f);
-            m_bloomTemporalShader->SetFloat("uDepthThreshold", m_bloomDepthThreshold);
-            m_bloomTemporalShader->SetFloat("uTexelSizeX", bloomTexelSize.x);
-            m_bloomTemporalShader->SetFloat("uTexelSizeY", bloomTexelSize.y);
-            m_bloomTemporalShader->SetFloat("uWarmupFactor", bloomWarmupFactor);
-            m_bloomTemporalShader->BindTextureSlot(0, m_bloomBlur2Target.srvCpuHandle);
-            m_bloomTemporalShader->BindTextureSlot(1, m_bloomHistoryTarget.srvCpuHandle);
-            m_bloomTemporalShader->BindTextureSlot(2, m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity));
-            m_bloomTemporalShader->BindTextureSlot(3, m_sceneFramebuffer->GetDepthSrvCpuHandle());
-            DrawFullscreenToTarget(
-                *m_bloomTemporalShader,
-                const_cast<InternalTarget&>(m_bloomTemporalTarget),
-                bloomWidth,
-                bloomHeight,
-                bloomClear);
-
-            bloomSrv = m_bloomTemporalTarget.srvCpuHandle;
-
-            std::swap(
-                const_cast<InternalTarget&>(m_bloomHistoryTarget),
-                const_cast<InternalTarget&>(m_bloomTemporalTarget));
-            m_bloomHistoryValid = true;
-            ++m_bloomTemporalWarmupFrames;
-            bloomTemporalScope.Success();
+            bloomSrv = bloomOutputs.bloomSrv;
+            m_bloomHistoryValid = bloomOutputs.bloomHistoryValid;
+            m_bloomTemporalWarmupFrames = bloomOutputs.bloomTemporalWarmupFrames;
+            // Remember this frame's final bloom for next frame's ssr_scene_color (halo term).
+            const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = bloomSrv;
         }
-        else
-        {
-            bloomSrv = m_bloomBlur2Target.srvCpuHandle;
-        }
-
-        bloomSection.Success();
-        // Remember this frame's final bloom for next frame's ssr_scene_color (halo term).
-        const_cast<ScreenSpaceEffects*>(this)->m_prevFrameBloomSrv = bloomSrv;
     }
     else
     {
@@ -4533,33 +3815,26 @@ void ScreenSpaceEffects::Apply(
     const float ldrClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
 
     auto runTonemapPass = [&](const bool drawToLdrTarget) {
-        m_tonemapShader->Use(false, true);
-        m_tonemapShader->SetInt("uHdrColor", 0);
-        m_tonemapShader->SetFloat("uExposure", m_exposure);
-        m_tonemapShader->SetInt("uTonemapMode", static_cast<int>(m_tonemapMode));
-        m_tonemapShader->SetInt("uUseBloom", m_bloomEnabled ? 1 : 0);
-        m_tonemapShader->SetFloat("uBloomIntensity", m_bloomIntensity);
-        m_tonemapShader->SetFloat("uBloomTexelSizeX", texelSize.x * 2.0f);
-        m_tonemapShader->SetFloat("uBloomTexelSizeY", texelSize.y * 2.0f);
-        m_tonemapShader->SetInt("uBloom", 1);
-        m_tonemapShader->BindTextureSlot(0, hdrColorSrv);
-        if (m_bloomEnabled)
-        {
-            m_tonemapShader->BindTextureSlot(1, bloomSrv);
-        }
+        TonemapPassInputs tonemapInputs{};
+        tonemapInputs.hdrColorSrv = hdrColorSrv;
+        tonemapInputs.bloomSrv = bloomSrv;
+        tonemapInputs.texelSize = texelSize;
+        tonemapInputs.exposure = m_exposure;
+        tonemapInputs.tonemapMode = static_cast<int>(m_tonemapMode);
+        tonemapInputs.bloomEnabled = m_bloomEnabled;
+        tonemapInputs.bloomIntensity = m_bloomIntensity;
+        tonemapInputs.tonemapShader = m_tonemapShader.get();
+        tonemapInputs.ldrTonemapTarget = const_cast<InternalTarget*>(&m_ldrTonemapTarget);
+
+        const PostProcessContext postContext = BuildPostProcessContext();
         if (drawToLdrTarget)
         {
-            DrawFullscreenToTarget(
-                *m_tonemapShader,
-                const_cast<InternalTarget&>(m_ldrTonemapTarget),
-                m_width,
-                m_height,
-                ldrClear,
-                true);
+            BloomTonemapPass::ExecuteTonemapToLdrTarget(postContext, tonemapInputs);
         }
         else
         {
-            DrawFullscreenPass(*m_tonemapShader, true);
+            BloomTonemapPass::ExecuteTonemapToViewport(
+                postContext, outputTarget, viewportWidth, viewportHeight, tonemapInputs);
         }
     };
 

@@ -6,6 +6,9 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/SsaoDiagnostics.h"
+#include "engine/rendering/post/PostProcessContext.h"
+#include "engine/rendering/post/PostProcessDraw.h"
+#include "engine/rendering/post/PostProcessTarget.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
@@ -430,29 +433,8 @@ public:
     const SsaoDiagnosticsSnapshot& GetSsaoDiagnostics() const;
 
 private:
-    struct InternalDepthTarget
-    {
-        void* resource = nullptr;
-        void* allocation = nullptr;
-        std::uint32_t dsvIndex = UINT32_MAX;
-        int width = 0;
-        int height = 0;
-        mutable std::uint32_t resourceState = 0;
-    };
-
-    struct InternalTarget
-    {
-        void* resource = nullptr;
-        void* allocation = nullptr;
-        std::uint32_t srvIndex = UINT32_MAX;
-        std::uintptr_t srvCpuHandle = 0;
-        std::uint32_t rtvIndex = UINT32_MAX;
-        int width = 0;
-        int height = 0;
-        int format = 0;
-        // Tracked D3D12 resource state; 0 means pixel-shader-resource (set in CreateInternalTarget).
-        mutable std::uint32_t resourceState = 0;
-    };
+    using InternalTarget = PostProcessTarget;
+    using InternalDepthTarget = PostProcessDepthTarget;
 
     // RR1: populate the DLSS-RR material guide targets (diffuse/specular albedo, normal-roughness)
     // from the G-buffer at render res. Cheap 3-pass; called only when RR (or an RR-guide debug
@@ -527,8 +509,10 @@ private:
         const char* ssaoDebugViewSource,
         std::uintptr_t hdrColorSrv,
         std::uintptr_t shadowFactorSrv) const;
+    PostProcessContext BuildPostProcessContext() const;
 
     GpuBuffer m_quadVb;
+    mutable PostProcessDraw m_draw;
     InternalTarget m_noiseTexture;
     InternalTarget m_ssaoTarget;
     InternalTarget m_ssaoBlurTarget;
