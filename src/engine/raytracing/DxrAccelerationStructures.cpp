@@ -155,20 +155,33 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
         }
     }
 
+    for (const std::uint32_t srvIndex : m_prevTransformsSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
+    }
+
     m_geometryLookupSrvIndices.fill(UINT32_MAX);
     m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
     m_sceneIndicesSrvIndices.fill(UINT32_MAX);
     m_materialSrvIndices.fill(UINT32_MAX);
+    m_prevTransformsSrvIndices.fill(UINT32_MAX);
 
     m_geometryLookupStaging.Release();
     m_materialStaging.Release();
     m_sceneVertexFloatsStaging.Release();
     m_sceneIndicesStaging.Release();
+    m_prevTransformsStaging.Release();
     m_geometryLookupGpu.Release();
     m_materialGpu.Release();
     m_sceneVertexFloatsGpu.Release();
     m_sceneIndicesGpu.Release();
+    m_prevTransformsGpu.Release();
     m_uploadedGeometryFingerprint.fill(0);
+    m_prevTransformsUploadFrame.fill(0);
+    m_prevTransformsCapacityCount = 0;
     m_geometryObjectCount = 0;
 }
 
@@ -529,6 +542,96 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         indexBytes);
 
     m_uploadedGeometryFingerprint[frameIndex] = fingerprint;
+    return true;
+}
+
+// P4b: per-frame upload (no fingerprint gate — matrices change whenever anything moves and the
+// buffer must always describe the PREVIOUS frame). Rows are the transposed-agnostic encoding
+// documented on DxrPrevInstanceTransformEntry.
+bool DxrAccelerationStructures::UploadPrevInstanceTransforms(
+    const std::vector<glm::mat4>& prevWorldMatrices,
+    void* commandList)
+{
+    auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(commandList);
+    if (d3dCommandList == nullptr || prevWorldMatrices.empty()
+        || !GfxContext::Get().IsInitialized())
+    {
+        return false;
+    }
+
+    std::vector<DxrPrevInstanceTransformEntry> entries(prevWorldMatrices.size());
+    for (std::size_t objectIndex = 0; objectIndex < prevWorldMatrices.size(); ++objectIndex)
+    {
+        const glm::mat4& m = prevWorldMatrices[objectIndex];
+        DxrPrevInstanceTransformEntry& entry = entries[objectIndex];
+        for (int column = 0; column < 4; ++column)
+        {
+            entry.row0[column] = m[column][0];
+            entry.row1[column] = m[column][1];
+            entry.row2[column] = m[column][2];
+        }
+    }
+
+    const std::uint64_t byteSize = entries.size() * sizeof(DxrPrevInstanceTransformEntry);
+    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+
+    const bool sameCapacity = m_prevTransformsCapacityCount == entries.size()
+        && m_prevTransformsStaging.GetCapacity() >= byteSize
+        && m_prevTransformsGpu.GetCapacity() >= byteSize
+        && m_prevTransformsSrvIndices[frameIndex] != UINT32_MAX;
+    if (!sameCapacity)
+    {
+        if (!m_prevTransformsStaging.EnsureCapacity(byteSize)
+            || !m_prevTransformsGpu.EnsureCapacity(byteSize))
+        {
+            return false;
+        }
+
+        auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+        if (device == nullptr)
+        {
+            return false;
+        }
+
+        for (std::uint32_t slotIndex = 0; slotIndex < GfxContext::FrameCount; ++slotIndex)
+        {
+            if (m_prevTransformsSrvIndices[slotIndex] == UINT32_MAX)
+            {
+                m_prevTransformsSrvIndices[slotIndex] = GfxContext::Get().AllocateOffscreenSrv();
+                if (m_prevTransformsSrvIndices[slotIndex] == UINT32_MAX)
+                {
+                    return false;
+                }
+            }
+
+            D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
+            srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_prevTransformsSrvIndices[slotIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Buffer.FirstElement = 0;
+            srvDesc.Buffer.NumElements = static_cast<UINT>(entries.size());
+            srvDesc.Buffer.StructureByteStride = sizeof(DxrPrevInstanceTransformEntry);
+            device->CreateShaderResourceView(
+                m_prevTransformsGpu.Slot(slotIndex).resource, &srvDesc, srvHandle);
+        }
+
+        m_prevTransformsCapacityCount = entries.size();
+    }
+
+    DxrGpuResource& upload = m_prevTransformsStaging.Slot(frameIndex);
+    void* mapped = nullptr;
+    if (FAILED(upload.resource->Map(0, nullptr, &mapped)))
+    {
+        return false;
+    }
+    std::memcpy(mapped, entries.data(), byteSize);
+    upload.resource->Unmap(0, nullptr);
+
+    CopyDxrUploadToSrvBuffer(d3dCommandList, upload, m_prevTransformsGpu.Slot(frameIndex), byteSize);
+
+    m_prevTransformsUploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
     return true;
 }
 

@@ -32,7 +32,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float g_SunAngularTanRadius;
     float g_GiStrength;
     uint g_HasGiTrace;
-    float3 _PadUnjitteredViewProj;
+    float4 _PadUnjitteredViewProj;
     float4x4 g_UnjitteredViewProj;
     float4x4 g_PrevViewProj;
 };

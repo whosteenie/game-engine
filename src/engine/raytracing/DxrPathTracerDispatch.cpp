@@ -111,7 +111,11 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
     const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
-    const glm::mat4 invViewProj = glm::inverse(viewProj);
+    // Real-time / DLSS: primary rays through pixel-center unjittered frustum so the traced hit,
+    // unjittered MVs, and jittered HW depth describe one consistent surface point per pixel.
+    const glm::mat4 invViewProj = frameInputs.centerPrimaryRays
+        ? glm::inverse(unjitteredViewProj)
+        : glm::inverse(viewProj);
     const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
         ? frameInputs.prevViewProjection
         : unjitteredViewProj;
@@ -155,6 +159,19 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.giStrength = std::clamp(ptAmbientStrength, 0.0f, 2.0f);
     constants.paddingUnjitteredViewProj[0] =
         static_cast<float>(std::clamp(ptAmbientAoRayCount, 0, 8));
+    // P4b: _PadUnjitteredViewProj.y = per-instance prev-transform buffer valid this frame
+    // (object+camera motion in the PT MV output; else camera-only reprojection fallback).
+    const std::uint32_t prevTransformsSrvIndex =
+        accelerationStructures.GetPrevInstanceTransformsSrvIndex();
+    constants.paddingUnjitteredViewProj[1] =
+        prevTransformsSrvIndex != UINT32_MAX ? 1.0f : 0.0f;
+    // _PadUnjitteredViewProj.z = ray-cone pixel spread angle (radians/pixel) for albedo LOD.
+    constants.paddingUnjitteredViewProj[2] =
+        2.0f * std::tan(glm::radians(camera.GetFov()) * 0.5f)
+        / static_cast<float>(std::max(height, 1));
+    // _PadUnjitteredViewProj.w = motion history valid (lit.vs uTemporalHistoryValid parity).
+    constants.paddingUnjitteredViewProj[3] =
+        frameInputs.motionHistoryValid ? 1.0f : 0.0f;
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.
@@ -181,6 +198,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.indirectSrvCpuHandle = frameInputs.indirectSrvCpuHandle;
     dispatchInputs.prefilterSrvCpuHandle = frameInputs.prefilterSrvCpuHandle;
     dispatchInputs.velocitySrvCpuHandle = frameInputs.velocitySrvCpuHandle;
+    dispatchInputs.prevInstanceTransformsSrvIndex = prevTransformsSrvIndex;
 
     if (!m_dispatchContext.DispatchPathTracer(
             commandList4,
@@ -253,6 +271,21 @@ std::uintptr_t DxrPathTracerDispatch::GetPathTracerMotionSrvCpuHandle() const
 ID3D12Resource* DxrPathTracerDispatch::GetPathTracerMotionResource() const
 {
     return m_dispatchContext.GetPathTracerMotionResource();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerDiffuseAlbedoSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerDiffuseAlbedoSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerSpecularAlbedoSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerSpecularAlbedoSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
 }
 
 std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState() const

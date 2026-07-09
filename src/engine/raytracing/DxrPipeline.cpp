@@ -750,9 +750,8 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
     return true;
 }
 
-// Phase P0/P1 path-tracer RTPSO (devdoc/dxr/path-tracing.md). P1 reuses the reflection global
-// root signature (material table + bindless + env cube) and MaxTraceRecursionDepth = 2 for shadow
-// rays from the closest-hit shader.
+// Phase P0/P1 path-tracer RTPSO (devdoc/dxr/path-tracing.md). P4b: uses the path-tracer global
+// root signature (reflection layout + t14 prev-instance transforms + u4-u6 RR guide outputs).
 bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 {
     outError.clear();
@@ -768,7 +767,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 
     try
     {
-        m_globalRootSignature = DxrRootSignature::CreateReflectionGlobalRootSignature();
+        m_globalRootSignature = DxrRootSignature::CreatePathTracerGlobalRootSignature();
     }
     catch (const std::exception& exception)
     {
@@ -832,7 +831,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     }
 
     SmokeRtpsoSubobjects subobjects{};
-    subobjects.shaderConfig.MaxPayloadSizeInBytes = 48;
+    subobjects.shaderConfig.MaxPayloadSizeInBytes = 64;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
     subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
 

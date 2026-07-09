@@ -76,6 +76,17 @@ struct DlssResolvePassInputs
     std::function<bool()> patchPathTracerSkyMotion;
     std::function<void()> generateRrGuides;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
+
+    // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT
+    // bounce-0 material guides into the rr* targets and/or resolves PT depth into
+    // ptDlssDepthTarget per ptRrBundleMode, returning ready bits (1 = guides, 2 = depth).
+    // ptRrBundleMode: 0 = full PT (all-or-nothing), 1 = raster bundle, 2 = PT guides only,
+    // 3 = PT depth+motion, 4 = PT depth only, 5 = PT motion only (2-5 are diagnostic mixes).
+    std::function<std::uint32_t()> preparePathTracerRrBundle;
+    int ptRrBundleMode = 0;
+    PostProcessDepthTarget* ptDlssDepthTarget = nullptr;
+    void* pathTracerMotionResource = nullptr;
+    std::uint32_t pathTracerMotionResourceState = 0;
 };
 
 struct DlssResolvePassOutputs

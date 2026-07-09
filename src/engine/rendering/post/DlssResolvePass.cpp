@@ -1,6 +1,7 @@
 #include "engine/rendering/post/DlssResolvePass.h"
 
 #include "engine/camera/Camera.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Shader.h"
@@ -165,17 +166,64 @@ void DlssResolvePass::Execute(
         in.colorInputState = hdrInputState;
         in.colorOutput = dlssOut;
         in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-        in.depth = inputs.sceneFramebuffer->GetDepthResource();
-        in.depthState = kPixelSrv;
+
+        // P4b PT RR bundle selection (devdoc/dxr/pt/full-rr-guides.md + gi-shimmer.md switchboard).
+        // The prepare callback runs the PT-side work its mode requires and reports ready bits;
+        // depth and motion swap here accordingly. Mode 0 is all-or-nothing (prepare returns 0 on
+        // any failure); modes 2-5 intentionally mix PT/raster inputs for shimmer isolation.
+        std::uint32_t ptBundleReady = 0;
+        if (pathTracerDlssActive && inputs.preparePathTracerRrBundle)
+        {
+            ptBundleReady = inputs.preparePathTracerRrBundle();
+        }
+        const int bundleMode = inputs.ptRrBundleMode;
+        const bool usePtDepth = (ptBundleReady & 2u) != 0
+            && inputs.ptDlssDepthTarget != nullptr
+            && inputs.ptDlssDepthTarget->resource != nullptr;
+        // Modes 0/3/5 feed PT motion (vertex-interpolated clip-space in path_tracer.hlsl).
+        // Modes 1/2/4 keep raster geometry MVs; pt_sky_motion_patch merges PT sky on misses.
+        const bool usePtMotion = pathTracerDlssActive
+            && inputs.pathTracerMotionResource != nullptr
+            && (bundleMode == 5
+                || bundleMode == 3
+                || (bundleMode == 0 && usePtDepth && (ptBundleReady & 1u) != 0u));
+
         void* motionInput = inputs.sceneFramebuffer->GetGBufferColorResource(GBufferSlot::MotionVelocity);
         std::uint32_t motionInputState = kPixelSrv;
-        if (pathTracerDlssActive && inputs.patchPathTracerSkyMotion
-            && inputs.patchPathTracerSkyMotion())
+
+        if (usePtDepth)
         {
-            if (inputs.ptDlssMotionTarget != nullptr)
+            in.depth = inputs.ptDlssDepthTarget->resource;
+            in.depthState = inputs.ptDlssDepthTarget->resourceState;
+        }
+        else
+        {
+            in.depth = inputs.sceneFramebuffer->GetDepthResource();
+            in.depthState = kPixelSrv;
+        }
+
+        if (usePtMotion)
+        {
+            motionInput = inputs.pathTracerMotionResource;
+            motionInputState = inputs.pathTracerMotionResourceState;
+        }
+        else if (pathTracerDlssActive && inputs.patchPathTracerSkyMotion
+            && inputs.patchPathTracerSkyMotion()
+            && inputs.ptDlssMotionTarget != nullptr)
+        {
+            motionInput = inputs.ptDlssMotionTarget->resource;
+            motionInputState = inputs.ptDlssMotionTarget->resourceState;
+        }
+
+        if (pathTracerDlssActive && bundleMode == 0 && !usePtDepth)
+        {
+            static bool loggedFallbackOnce = false;
+            if (!loggedFallbackOnce)
             {
-                motionInput = inputs.ptDlssMotionTarget->resource;
-                motionInputState = inputs.ptDlssMotionTarget->resourceState;
+                loggedFallbackOnce = true;
+                EngineLog::Warn(
+                    "dlss",
+                    "path tracer full RR bundle unavailable - using raster guide fallback");
             }
         }
         in.motionVectors = motionInput;

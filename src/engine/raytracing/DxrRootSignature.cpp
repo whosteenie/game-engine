@@ -5,6 +5,7 @@
 
 #include <d3d12.h>
 #include <stdexcept>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -16,6 +17,7 @@ namespace
     ID3D12RootSignature* g_primaryDebugLocalRootSignature = nullptr;
     ID3D12RootSignature* g_reflectionRootSignature = nullptr;
     ID3D12RootSignature* g_reflectionLocalRootSignature = nullptr;
+    ID3D12RootSignature* g_pathTracerRootSignature = nullptr;
     ID3D12RootSignature* g_shadowRootSignature = nullptr;
     ID3D12RootSignature* g_shadowLocalRootSignature = nullptr;
 
@@ -312,118 +314,141 @@ ID3D12RootSignature* DxrRootSignature::CreatePrimaryDebugLocalRootSignature()
     return g_primaryDebugLocalRootSignature;
 }
 
-// Phase D4/D5 reflections: CBV b0, SRV tables t0-t11, UAV tables u0-u3 (radiance+hitDist,
+namespace
+{
+    // Shared hit-shading global root signature layout: CBV b0, per-register SRV tables
+    // t0..t(srvCount-1), per-register UAV tables u0..u(uavCount-1), bindless SRV heap (space1),
+    // static linear-clamp s0 + linear-wrap s1. Used by reflections/GI (t0-t13, u0-u3) and the
+    // path tracer (t0-t14 adds prev-instance transforms, u0-u6 adds RR guide outputs — P4b).
+    void SerializeHitShadingGlobalRootSignatureBlob(
+        const std::uint32_t srvCount,
+        const std::uint32_t uavCount,
+        const char* errorContext,
+        ComPtr<ID3DBlob>& outBlob)
+    {
+        std::vector<D3D12_DESCRIPTOR_RANGE1> srvRanges(srvCount);
+        for (std::uint32_t registerIndex = 0; registerIndex < srvCount; ++registerIndex)
+        {
+            srvRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            srvRanges[registerIndex].NumDescriptors = 1;
+            srvRanges[registerIndex].BaseShaderRegister = registerIndex;
+            srvRanges[registerIndex].RegisterSpace = 0;
+            srvRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+            srvRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+        }
+
+        std::vector<D3D12_DESCRIPTOR_RANGE1> uavRanges(uavCount);
+        for (std::uint32_t registerIndex = 0; registerIndex < uavCount; ++registerIndex)
+        {
+            uavRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+            uavRanges[registerIndex].NumDescriptors = 1;
+            uavRanges[registerIndex].BaseShaderRegister = registerIndex;
+            uavRanges[registerIndex].RegisterSpace = 0;
+            uavRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+            uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+        }
+
+        // Bindless: unbounded SRV array over the whole shader-visible heap (space1), for per-object
+        // albedo texture sampling in the closest-hit. g_BindlessTextures[] in hit_shading.hlsli.
+        D3D12_DESCRIPTOR_RANGE1 bindlessRange{};
+        bindlessRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        bindlessRange.NumDescriptors = UINT_MAX; // unbounded
+        bindlessRange.BaseShaderRegister = 0;
+        bindlessRange.RegisterSpace = 1;
+        bindlessRange.OffsetInDescriptorsFromTableStart = 0;
+        bindlessRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
+
+        const std::uint32_t paramCount = 1 + srvCount + uavCount + 1;
+        const std::uint32_t bindlessParam = 1 + srvCount + uavCount;
+        std::vector<D3D12_ROOT_PARAMETER1> rootParams(paramCount);
+        rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        rootParams[0].Descriptor.ShaderRegister = 0;
+        rootParams[0].Descriptor.RegisterSpace = 0;
+        rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        for (std::uint32_t srvIndex = 0; srvIndex < srvCount; ++srvIndex)
+        {
+            rootParams[1 + srvIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rootParams[1 + srvIndex].DescriptorTable.NumDescriptorRanges = 1;
+            rootParams[1 + srvIndex].DescriptorTable.pDescriptorRanges = &srvRanges[srvIndex];
+            rootParams[1 + srvIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+
+        for (std::uint32_t uavIndex = 0; uavIndex < uavCount; ++uavIndex)
+        {
+            rootParams[1 + srvCount + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rootParams[1 + srvCount + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
+            rootParams[1 + srvCount + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
+            rootParams[1 + srvCount + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+
+        rootParams[bindlessParam].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[bindlessParam].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[bindlessParam].DescriptorTable.pDescriptorRanges = &bindlessRange;
+        rootParams[bindlessParam].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_STATIC_SAMPLER_DESC staticSamplers[2]{};
+        D3D12_STATIC_SAMPLER_DESC& linearClampSampler = staticSamplers[0];
+        linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        linearClampSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        linearClampSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        linearClampSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        linearClampSampler.MaxAnisotropy = 1;
+        linearClampSampler.MaxLOD = D3D12_FLOAT32_MAX;
+        linearClampSampler.ShaderRegister = 0;
+        linearClampSampler.RegisterSpace = 0;
+        linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_STATIC_SAMPLER_DESC& linearWrapSampler = staticSamplers[1];
+        linearWrapSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        linearWrapSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        linearWrapSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        linearWrapSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        linearWrapSampler.MaxAnisotropy = 1;
+        linearWrapSampler.MaxLOD = D3D12_FLOAT32_MAX;
+        linearWrapSampler.ShaderRegister = 1;
+        linearWrapSampler.RegisterSpace = 0;
+        linearWrapSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
+        rootDesc.NumParameters = paramCount;
+        rootDesc.pParameters = rootParams.data();
+        rootDesc.NumStaticSamplers = 2;
+        rootDesc.pStaticSamplers = staticSamplers;
+        rootDesc.Flags =
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+            D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+        D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc{};
+        versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+        versionedDesc.Desc_1_1 = rootDesc;
+
+        ComPtr<ID3DBlob> signatureError;
+        ThrowIfFailed(
+            D3D12SerializeVersionedRootSignature(&versionedDesc, &outBlob, &signatureError),
+            errorContext);
+    }
+}
+
+// Phase D4/D5 reflections: CBV b0, SRV tables t0-t13, UAV tables u0-u3 (radiance+hitDist,
 // viewZ, normal+roughness, motion — NRD guide outputs), static linear-clamp s0.
 // See devdoc/dxr/reflections.md for the binding table.
 void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
-    constexpr std::uint32_t kSrvCount = 14;
-    constexpr std::uint32_t kUavCount = 4;
+    SerializeHitShadingGlobalRootSignatureBlob(
+        14, 4, "D3D12SerializeVersionedRootSignature failed for DXR reflections", outBlob);
+}
 
-    D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
-    for (std::uint32_t registerIndex = 0; registerIndex < kSrvCount; ++registerIndex)
-    {
-        srvRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        srvRanges[registerIndex].NumDescriptors = 1;
-        srvRanges[registerIndex].BaseShaderRegister = registerIndex;
-        srvRanges[registerIndex].RegisterSpace = 0;
-        srvRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-        srvRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
-    }
-
-    D3D12_DESCRIPTOR_RANGE1 uavRanges[kUavCount]{};
-    for (std::uint32_t registerIndex = 0; registerIndex < kUavCount; ++registerIndex)
-    {
-        uavRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
-        uavRanges[registerIndex].NumDescriptors = 1;
-        uavRanges[registerIndex].BaseShaderRegister = registerIndex;
-        uavRanges[registerIndex].RegisterSpace = 0;
-        uavRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-        uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
-    }
-
-    // Bindless: unbounded SRV array over the whole shader-visible heap (space1), for per-object
-    // albedo texture sampling in the closest-hit. g_BindlessTextures[] in reflections.hlsl.
-    D3D12_DESCRIPTOR_RANGE1 bindlessRange{};
-    bindlessRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    bindlessRange.NumDescriptors = UINT_MAX; // unbounded
-    bindlessRange.BaseShaderRegister = 0;
-    bindlessRange.RegisterSpace = 1;
-    bindlessRange.OffsetInDescriptorsFromTableStart = 0;
-    bindlessRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
-
-    constexpr std::uint32_t kParamCount = 1 + kSrvCount + kUavCount + 1;
-    constexpr std::uint32_t kBindlessParam = 1 + kSrvCount + kUavCount;
-    D3D12_ROOT_PARAMETER1 rootParams[kParamCount]{};
-    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
-    rootParams[0].Descriptor.ShaderRegister = 0;
-    rootParams[0].Descriptor.RegisterSpace = 0;
-    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    for (std::uint32_t srvIndex = 0; srvIndex < kSrvCount; ++srvIndex)
-    {
-        rootParams[1 + srvIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[1 + srvIndex].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[1 + srvIndex].DescriptorTable.pDescriptorRanges = &srvRanges[srvIndex];
-        rootParams[1 + srvIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    }
-
-    for (std::uint32_t uavIndex = 0; uavIndex < kUavCount; ++uavIndex)
-    {
-        rootParams[1 + kSrvCount + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[1 + kSrvCount + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[1 + kSrvCount + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
-        rootParams[1 + kSrvCount + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-    }
-
-    rootParams[kBindlessParam].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    rootParams[kBindlessParam].DescriptorTable.NumDescriptorRanges = 1;
-    rootParams[kBindlessParam].DescriptorTable.pDescriptorRanges = &bindlessRange;
-    rootParams[kBindlessParam].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_STATIC_SAMPLER_DESC staticSamplers[2]{};
-    D3D12_STATIC_SAMPLER_DESC& linearClampSampler = staticSamplers[0];
-    linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    linearClampSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    linearClampSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    linearClampSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
-    linearClampSampler.MaxAnisotropy = 1;
-    linearClampSampler.MaxLOD = D3D12_FLOAT32_MAX;
-    linearClampSampler.ShaderRegister = 0;
-    linearClampSampler.RegisterSpace = 0;
-    linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_STATIC_SAMPLER_DESC& linearWrapSampler = staticSamplers[1];
-    linearWrapSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-    linearWrapSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    linearWrapSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    linearWrapSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-    linearWrapSampler.MaxAnisotropy = 1;
-    linearWrapSampler.MaxLOD = D3D12_FLOAT32_MAX;
-    linearWrapSampler.ShaderRegister = 1;
-    linearWrapSampler.RegisterSpace = 0;
-    linearWrapSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
-    rootDesc.NumParameters = kParamCount;
-    rootDesc.pParameters = rootParams;
-    rootDesc.NumStaticSamplers = 2;
-    rootDesc.pStaticSamplers = staticSamplers;
-    rootDesc.Flags =
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
-
-    D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc{};
-    versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    versionedDesc.Desc_1_1 = rootDesc;
-
-    ComPtr<ID3DBlob> signatureError;
-    ThrowIfFailed(
-        D3D12SerializeVersionedRootSignature(&versionedDesc, &outBlob, &signatureError),
-        "D3D12SerializeVersionedRootSignature failed for DXR reflections");
+// P4b path tracer: reflection layout plus t14 (prev-instance transforms for object motion) and
+// u4-u6 (diffuse albedo / specular albedo / normal-roughness RR guides). The reflection signature
+// stays at t0-t13 / u0-u3 — never widen it (see devdoc/dxr/pt/full-rr-guides.md).
+void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
+{
+    SerializeHitShadingGlobalRootSignatureBlob(
+        15, 7, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()
@@ -455,6 +480,46 @@ ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()
     g_reflectionRootSignature = rootSignature.Detach();
     g_reflectionRootSignature->AddRef();
     return g_reflectionRootSignature;
+}
+
+ID3D12RootSignature* DxrRootSignature::CreatePathTracerGlobalRootSignature()
+{
+    if (g_pathTracerRootSignature != nullptr)
+    {
+        g_pathTracerRootSignature->AddRef();
+        return g_pathTracerRootSignature;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr)
+    {
+        throw std::runtime_error("CreatePathTracerGlobalRootSignature: GfxContext not initialized");
+    }
+
+    ComPtr<ID3DBlob> signatureBlob;
+    SerializePathTracerGlobalRootSignature(signatureBlob);
+
+    ComPtr<ID3D12RootSignature> rootSignature;
+    ThrowIfFailed(
+        device->CreateRootSignature(
+            0,
+            signatureBlob->GetBufferPointer(),
+            signatureBlob->GetBufferSize(),
+            IID_PPV_ARGS(&rootSignature)),
+        "CreateRootSignature failed for DXR path tracer");
+
+    g_pathTracerRootSignature = rootSignature.Detach();
+    g_pathTracerRootSignature->AddRef();
+    return g_pathTracerRootSignature;
+}
+
+void DxrRootSignature::ReleasePathTracerGlobalRootSignature()
+{
+    if (g_pathTracerRootSignature != nullptr)
+    {
+        g_pathTracerRootSignature->Release();
+        g_pathTracerRootSignature = nullptr;
+    }
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionLocalRootSignature()

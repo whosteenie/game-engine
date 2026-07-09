@@ -103,6 +103,9 @@ void DxrDispatchContext::Release()
 
     RetireOrDestroyReflectionTexture(m_ptDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
 
     ReleaseRetiredReflectionOutputs();
     for (ReflectionTexture& texture : m_reflectionTextures)
@@ -658,6 +661,9 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         m_primaryMetadataResourceState = 0;
         RetireOrDestroyReflectionTexture(m_ptDepthTexture);
         RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+        RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
+        RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
+        RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
     }
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
@@ -756,33 +762,48 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         return false;
     }
 
-    if (m_ptDepthTexture.resource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
+    if (m_ptDepthTexture.resource != nullptr && m_ptNormalRoughnessTexture.resource != nullptr
+        && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
         return true;
     }
 
     RetireOrDestroyReflectionTexture(m_ptDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
 
-    if (!CreateReflectionTexture(
-            width,
-            height,
-            static_cast<std::uint32_t>(DXGI_FORMAT_R32_FLOAT),
-            m_ptDepthTexture,
-            outError))
+    // Formats match the RR internal targets they are copied into (rr_guides parity —
+    // devdoc/dxr/pt/full-rr-guides.md buffer contract).
+    struct GuideDesc
     {
-        return false;
-    }
-
-    if (!CreateReflectionTexture(
-            width,
-            height,
-            static_cast<std::uint32_t>(DXGI_FORMAT_R16G16B16A16_FLOAT),
-            m_ptMotionTexture,
-            outError))
+        DXGI_FORMAT format;
+        ReflectionTexture* texture;
+    };
+    const GuideDesc guides[] = {
+        {DXGI_FORMAT_R32_FLOAT, &m_ptDepthTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptMotionTexture},
+        {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptDiffuseAlbedoTexture},
+        {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptSpecularAlbedoTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptNormalRoughnessTexture},
+    };
+    for (const GuideDesc& guide : guides)
     {
-        RetireOrDestroyReflectionTexture(m_ptDepthTexture);
-        return false;
+        if (!CreateReflectionTexture(
+                width,
+                height,
+                static_cast<std::uint32_t>(guide.format),
+                *guide.texture,
+                outError))
+        {
+            RetireOrDestroyReflectionTexture(m_ptDepthTexture);
+            RetireOrDestroyReflectionTexture(m_ptMotionTexture);
+            RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
+            RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
+            RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+            return false;
+        }
     }
 
     return true;
@@ -1809,14 +1830,36 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptMotionTexture.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
     }
 
+    ReflectionTexture* const ptGuideTextures[] = {
+        &m_ptDiffuseAlbedoTexture, &m_ptSpecularAlbedoTexture, &m_ptNormalRoughnessTexture};
+    for (ReflectionTexture* guide : ptGuideTextures)
+    {
+        if (guide->state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+        {
+            TransitionResource(
+                static_cast<ID3D12GraphicsCommandList*>(commandList),
+                guide->resource,
+                static_cast<D3D12_RESOURCE_STATES>(guide->state),
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            guide->state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+    }
+
     const DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    constexpr std::uint32_t kReflectionSrvCount = 14;
+    // Path-tracer root signature: t0-t14 (reflection set + prev-instance transforms).
+    constexpr std::uint32_t kPathTracerSrvCount = 15;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
         ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
         : srvIndicesFromHandles[5];
-    const std::uint32_t srvHeapIndices[kReflectionSrvCount] = {
+    // t14 needs a valid descriptor even when instance motion is unavailable (the shader is told
+    // via constants and never reads it then) — geometry lookup is a safe placeholder buffer SRV.
+    const std::uint32_t prevTransformsSrvIndex =
+        inputs.prevInstanceTransformsSrvIndex != UINT32_MAX
+            ? inputs.prevInstanceTransformsSrvIndex
+            : inputs.geometryLookupSrvIndex;
+    const std::uint32_t srvHeapIndices[kPathTracerSrvCount] = {
         m_tlasSrvIndex,
         srvIndicesFromHandles[0],
         srvIndicesFromHandles[1],
@@ -1830,7 +1873,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         srvIndicesFromHandles[6],
         srvIndicesFromHandles[7],
         inputs.materialSrvIndex,
-        giSrvIndex};
+        giSrvIndex,
+        prevTransformsSrvIndex};
 
     if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
     {
@@ -1838,20 +1882,24 @@ bool DxrDispatchContext::DispatchPathTracer(
         return false;
     }
 
-    recorder.BindSrvTables(1, srvHeapIndices, kReflectionSrvCount);
+    recorder.BindSrvTables(1, srvHeapIndices, kPathTracerSrvCount);
 
-    constexpr std::uint32_t kReflectionUavCount = 4;
-    const std::uint32_t pathTracerUavIndices[kReflectionUavCount] = {
+    // Path-tracer root signature: u0-u6 (P4b adds the RR material guides).
+    constexpr std::uint32_t kPathTracerUavCount = 7;
+    const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
         m_primaryMetadataUavIndex,
-        m_ptMotionTexture.uavIndex};
-    for (std::uint32_t uavIndex = 0; uavIndex < kReflectionUavCount; ++uavIndex)
+        m_ptMotionTexture.uavIndex,
+        m_ptDiffuseAlbedoTexture.uavIndex,
+        m_ptSpecularAlbedoTexture.uavIndex,
+        m_ptNormalRoughnessTexture.uavIndex};
+    for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(pathTracerUavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + kReflectionSrvCount + uavIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(1 + kPathTracerSrvCount + uavIndex, uavTableHandle);
     }
 
     {
@@ -1859,7 +1907,7 @@ bool DxrDispatchContext::DispatchPathTracer(
         const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
             srvHeap->GetGPUDescriptorHandleForHeapStart();
         commandList->SetComputeRootDescriptorTable(
-            1 + kReflectionSrvCount + kReflectionUavCount, bindlessHandle);
+            1 + kPathTracerSrvCount + kPathTracerUavCount, bindlessHandle);
     }
 
     if (inputs.tlasResource != nullptr)
@@ -1887,6 +1935,16 @@ bool DxrDispatchContext::DispatchPathTracer(
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         kAllShaderRead);
     m_ptMotionTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    for (ReflectionTexture* guide : ptGuideTextures)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), guide->resource);
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            guide->resource,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+            kAllShaderRead);
+        guide->state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
     TransitionResource(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_primaryOutputResource,

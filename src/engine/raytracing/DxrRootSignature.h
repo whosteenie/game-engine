@@ -63,7 +63,7 @@ struct ReflectionDispatchConstants
     float giStrength = 1.0f;
     std::uint32_t hasGiTrace = 0;
     // Path-tracer-only (P4): unjittered matrices for primary-hit motion vectors (DLSS-RR).
-    float paddingUnjitteredViewProj[3] = {};
+    float paddingUnjitteredViewProj[4] = {};
     float unjitteredViewProj[16] = {};
     float prevViewProj[16] = {};
 };
@@ -94,6 +94,7 @@ void SerializeSmokeLocalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob)
 void SerializePrimaryDebugGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializePrimaryDebugLocalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializeReflectionGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
+void SerializePathTracerGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 void SerializeShadowGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
 ID3D12RootSignature* CreateSmokeGlobalRootSignature();
 ID3D12RootSignature* CreateSmokeLocalRootSignature();
@@ -101,6 +102,7 @@ ID3D12RootSignature* CreatePrimaryDebugGlobalRootSignature();
 ID3D12RootSignature* CreatePrimaryDebugLocalRootSignature();
 ID3D12RootSignature* CreateReflectionGlobalRootSignature();
 ID3D12RootSignature* CreateReflectionLocalRootSignature();
+ID3D12RootSignature* CreatePathTracerGlobalRootSignature();
 ID3D12RootSignature* CreateShadowGlobalRootSignature();
 ID3D12RootSignature* CreateShadowLocalRootSignature();
 void ReleaseSmokeGlobalRootSignature();
@@ -109,6 +111,7 @@ void ReleasePrimaryDebugGlobalRootSignature();
 void ReleasePrimaryDebugLocalRootSignature();
 void ReleaseReflectionGlobalRootSignature();
 void ReleaseReflectionLocalRootSignature();
+void ReleasePathTracerGlobalRootSignature();
 void ReleaseShadowGlobalRootSignature();
 void ReleaseShadowLocalRootSignature();
 

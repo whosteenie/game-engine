@@ -11,6 +11,8 @@
 #include <string>
 #include <vector>
 
+#include <glm/mat4x4.hpp>
+
 class Scene;
 struct ID3D12Resource;
 
@@ -36,6 +38,17 @@ struct DxrMaterialEntry
     std::uint32_t albedoUvOffsetFloats = UINT32_MAX;
     std::uint32_t pad0 = 0;
     std::uint32_t pad1 = 0;
+};
+
+// P4b: per-instance previous-frame object-to-world transform, indexed by TLAS InstanceID
+// (== scene object index). Stored as explicit rows (row_i = (m[0][i], m[1][i], m[2][i], m[3][i]))
+// so the HLSL side reconstructs prevWorld = (dot(row0, p), dot(row1, p), dot(row2, p)) without
+// depending on matrix packing rules. Layout must match PrevInstanceTransform in path_tracer.hlsl.
+struct DxrPrevInstanceTransformEntry
+{
+    float row0[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+    float row1[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    float row2[4] = {0.0f, 0.0f, 1.0f, 0.0f};
 };
 
 class DxrAccelerationStructures
@@ -80,6 +93,23 @@ public:
     }
     std::size_t GetGeometryObjectCount() const { return m_geometryObjectCount; }
 
+    // P4b: upload previous-frame object-to-world matrices (indexed by scene object index ==
+    // InstanceID) for path-tracer object motion vectors. Must be recorded on the frame's command
+    // list BEFORE the PT dispatch, with the matrices as they were BEFORE this frame's advance.
+    // Returns false (and leaves the SRV stale) on allocation failure.
+    bool UploadPrevInstanceTransforms(
+        const std::vector<glm::mat4>& prevWorldMatrices,
+        void* commandList);
+
+    // Valid only for the frame UploadPrevInstanceTransforms ran; UINT32_MAX otherwise.
+    std::uint32_t GetPrevInstanceTransformsSrvIndex() const
+    {
+        const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+        return m_prevTransformsUploadFrame[frameIndex] == GfxContext::Get().GetSubmissionFrameNumber()
+            ? m_prevTransformsSrvIndices[frameIndex]
+            : UINT32_MAX;
+    }
+
     void Release();
 
 private:
@@ -118,6 +148,14 @@ private:
     std::array<std::uint32_t, GfxContext::FrameCount> m_materialSrvIndices{
         UINT32_MAX,
         UINT32_MAX};
+    // P4b prev-instance transforms (t14): per-frame upload → default-heap SRV ring.
+    DxrUploadRing m_prevTransformsStaging{};
+    DxrSrvBufferRing m_prevTransformsGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_prevTransformsSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_prevTransformsUploadFrame{};
+    std::size_t m_prevTransformsCapacityCount = 0;
     std::size_t m_geometryObjectCount = 0;
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
     std::uint64_t m_builtTlasTopologyFingerprint = 0;

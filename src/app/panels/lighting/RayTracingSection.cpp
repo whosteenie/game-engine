@@ -197,6 +197,33 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Real-time: 1 spp path trace denoised via DLSS Ray Reconstruction.");
             }
 
+            // Diagnostic switchboard (devdoc/dxr/pt/gi-shimmer.md): which RR inputs come from the
+            // PT vs raster. Direct set, no undo — this is a debug control, not scene state.
+            int rrBundleMode = dxrSettings.GetPtRrBundleMode();
+            const char* rrBundleLabels[] = {
+                "Full PT (depth+motion+guides)",
+                "Raster bundle (stable fallback)",
+                "PT guides only",
+                "PT depth+motion",
+                "PT depth only",
+                "PT motion only"};
+            if (ImGui::Combo(
+                    "RR inputs (debug)",
+                    &rrBundleMode,
+                    rrBundleLabels,
+                    IM_ARRAYSIZE(rrBundleLabels)))
+            {
+                dxrSettings.SetPtRrBundleMode(rrBundleMode);
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Shimmer isolation: pick which DLSS-RR inputs come from the path tracer vs the\n"
+                    "raster G-buffer. 'Raster bundle' is the previous stable configuration.\n"
+                    "Full PT uses merged motion (raster geometry + PT sky); modes 3/5 use raw PT\n"
+                    "motion for diagnosis only.");
+            }
+
             int ptMaxBounces = dxrSettings.GetPtMaxBounces();
             UndoableRendererSliderInt(
                 "PT max bounces",

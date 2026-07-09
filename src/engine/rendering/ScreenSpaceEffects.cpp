@@ -1667,6 +1667,80 @@ bool ScreenSpaceEffects::PatchPathTracerSkyMotion() const
     return PathTracerDisplayPass::PatchSkyMotion(BuildPostProcessContext(), inputs);
 }
 
+std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
+{
+    // Return bits: 1 = PT material guides copied into the rr* targets, 2 = PT D24 depth resolved.
+    constexpr std::uint32_t kGuidesReady = 1u;
+    constexpr std::uint32_t kDepthReady = 2u;
+
+    m_ptFullGuidesThisFrame = false;
+    const int mode = m_ptRrBundleMode;
+    if (mode == 1 || !m_pathTracerActive
+        || m_pathTracerConvergenceMode != PtConvergenceMode::RealTime
+        || m_width <= 0 || m_height <= 0)
+    {
+        return 0;
+    }
+
+    const bool wantGuides = mode == 0 || mode == 2;
+    const bool wantDepth = mode == 0 || mode == 3 || mode == 4;
+    std::uint32_t ready = 0;
+
+    if (wantDepth)
+    {
+        if (ResolvePathTracerDlssDepth())
+        {
+            ready |= kDepthReady;
+        }
+        else if (mode == 0)
+        {
+            return 0; // full bundle is all-or-nothing (never a partial swap)
+        }
+    }
+
+    if (wantGuides)
+    {
+        const bool guidesAvailable = m_pathTracerDiffuseAlbedoSrv != 0
+            && m_pathTracerSpecularAlbedoSrv != 0 && m_pathTracerNormalRoughnessSrv != 0
+            && m_downsampleShader != nullptr
+            && m_rrDiffuseAlbedoTarget.resource != nullptr
+            && m_rrSpecularAlbedoTarget.resource != nullptr
+            && m_rrNormalRoughnessTarget.resource != nullptr;
+        if (!guidesAvailable)
+        {
+            return mode == 0 ? 0u : ready; // full bundle: all-or-nothing
+        }
+
+        // Copy the PT bounce-0 guides into the RR internal targets (format-identical blits) so
+        // the DLSS evaluate and the RR guide debug views keep reading the same targets as the
+        // raster path. GenerateRrGuides skips its raster modes via m_ptFullGuidesThisFrame.
+        SceneRenderTrace::Scope guideCopyScope("pt rr guides copy");
+        const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        const std::pair<std::uintptr_t, InternalTarget*> copies[] = {
+            {m_pathTracerDiffuseAlbedoSrv, const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget)},
+            {m_pathTracerSpecularAlbedoSrv, const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget)},
+            {m_pathTracerNormalRoughnessSrv, const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget)},
+        };
+        for (const auto& copy : copies)
+        {
+            m_downsampleShader->Use(false, false);
+            m_downsampleShader->BindTextureSlot(0, copy.first);
+            DrawFullscreenToTarget(*m_downsampleShader, *copy.second, m_width, m_height, clear);
+        }
+        guideCopyScope.Success();
+
+        m_ptFullGuidesThisFrame = true;
+        ready |= kGuidesReady;
+    }
+
+    return ready;
+}
+
+void ScreenSpaceEffects::SetPtRrBundleMode(const int mode)
+{
+    m_ptRrBundleMode = mode;
+}
+
 void ScreenSpaceEffects::EndScenePass() const
 {
     if (m_sceneFramebuffer->UsesMsaa() && m_sceneFramebuffer->GetMsaaDepthSrvCpuHandle() != 0)
@@ -1749,7 +1823,10 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     void* const motionResource,
     const std::uint32_t motionResourceState,
     const std::uintptr_t depthSrv,
-    const std::uintptr_t motionSrv)
+    const std::uintptr_t motionSrv,
+    const std::uintptr_t diffuseAlbedoSrv,
+    const std::uintptr_t specularAlbedoSrv,
+    const std::uintptr_t normalRoughnessSrv)
 {
     if (!active)
     {
@@ -1768,6 +1845,10 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerMotionResource = motionResource;
     m_pathTracerMotionResourceState = motionResourceState;
     m_pathTracerMotionSrv = motionSrv;
+    m_pathTracerDiffuseAlbedoSrv = diffuseAlbedoSrv;
+    m_pathTracerSpecularAlbedoSrv = specularAlbedoSrv;
+    m_pathTracerNormalRoughnessSrv = normalRoughnessSrv;
+    m_ptFullGuidesThisFrame = false;
     m_pathTracerDlssResolvedThisFrame = false;
 }
 
@@ -1993,6 +2074,12 @@ void ScreenSpaceEffects::GenerateRrGuides() const
     };
     for (const auto& pass : passes)
     {
+        // P4b: the rr* material targets were already filled from the PT bounce-0 guides this
+        // frame — regenerating from the raster G-buffer would reintroduce the mixed bundle.
+        if (m_ptFullGuidesThisFrame)
+        {
+            break;
+        }
         m_rrGuidesShader->Use(false);
         m_rrGuidesShader->SetInt("uNormalMap", 0);
         m_rrGuidesShader->SetInt("uMaterial0Map", 1);

@@ -10,6 +10,21 @@ RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = specul
 RWTexture2D<float> g_DepthOutput : register(u1); // hyperbolic depth [0,1] at primary hit (DLSS)
 RWTexture2D<uint2> g_Metadata : register(u2);  // (instanceId+1, primitiveIndex)
 RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) at primary hit, matches RT4
+// P4b bounce-0 RR material guides (devdoc/dxr/pt/full-rr-guides.md): the same hit that seeds the
+// integrator produces every DLSS-RR guide, so color and guides agree at the sub-pixel level.
+RWTexture2D<float4> g_DiffuseAlbedoGuide : register(u4);   // RGBA8: albedo·(1−metallic)
+RWTexture2D<float4> g_SpecularAlbedoGuide : register(u5);  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
+RWTexture2D<float4> g_NormalRoughnessGuide : register(u6); // RGBA16F: world normal xyz + roughness w
+
+// P4b: previous-frame object-to-world rows per instance (indexed by InstanceID == object index).
+// Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
+struct PrevInstanceTransform
+{
+    float4 row0;
+    float4 row1;
+    float4 row2;
+};
+StructuredBuffer<PrevInstanceTransform> g_PrevInstanceTransforms : register(t14);
 
 // Path-tracer-only packing in reflection cbuffer fields this pass does not otherwise use.
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
@@ -17,6 +32,13 @@ RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) a
 #define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
 #define g_PtAmbientStrength g_GiStrength
 #define g_PtAmbientAoRayCount uint(round(saturate(_PadUnjitteredViewProj.x)))
+#define kPtHasInstanceMotion (_PadUnjitteredViewProj.y > 0.5)
+// Ray-cone pixel spread angle (radians/pixel ≈ 2·tan(fovY/2)/renderHeight) for albedo texture LOD.
+// Mip-0 sampling flickers at texel frequency under DLSS jitter; with P4b the albedo GUIDE comes
+// from the PT, and RR remodulates its output with that guide, imprinting the flicker on screen.
+#define g_PtPixelSpreadAngle max(_PadUnjitteredViewProj.z, 1e-6)
+// Matches lit.vs uTemporalHistoryValid: when false, prevClip = currClip (zero motion).
+#define kPtMotionHistoryValid (_PadUnjitteredViewProj.w > 0.5)
 
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
@@ -39,6 +61,14 @@ struct Payload
     uint primitiveIndex;
     uint hit;
     float2 barycentrics;
+    // Ray-cone LOD constant for the hit triangle's albedo texture: 0.5·log2(texelArea/worldArea)
+    // (RTG ch. 20). Computed in closest-hit (needs ObjectToWorld); 0 for untextured materials.
+    float triangleLod;
+    // Primary-surface motion/depth from closest-hit: raster-style clip-space interpolation of the
+    // hit triangle's vertices (lit.vs currClip/prevClip → pbr.ps ComputeMotionNdc). Per-hit world
+    // reprojection shimmers under DLSS-RR because perspective needs clip-space interpolation.
+    float2 primaryMotionNdc;
+    float primaryDepth;
 };
 
 float2 PixelToClipXY(float2 texCoord)
@@ -53,6 +83,38 @@ float2 ComputeMotionNdc(float4 currClip, float4 prevClip)
     return currNdc - prevNdc;
 }
 
+float3 PrevWorldFromObject(uint instanceId, float3 objectPos)
+{
+    const PrevInstanceTransform prev = g_PrevInstanceTransforms[instanceId];
+    const float4 p = float4(objectPos, 1.0);
+    return float3(dot(prev.row0, p), dot(prev.row1, p), dot(prev.row2, p));
+}
+
+// DLSS-RR specular albedo guide (Integration Guide appendix, [Ray Tracing Gems ch. 32]):
+// preintegrated environment BRDF — NOT raw F0. alpha = roughness².
+float3 EnvBRDFApprox2(float3 specularColor, float alpha, float NoV)
+{
+    NoV = abs(NoV);
+    float4 X;
+    X.x = 1.0;
+    X.y = NoV;
+    X.z = NoV * NoV;
+    X.w = NoV * X.z;
+    float4 Y;
+    Y.x = 1.0;
+    Y.y = alpha;
+    Y.z = alpha * alpha;
+    Y.w = alpha * Y.z;
+    const float2x2 M1 = float2x2(0.99044, -1.28514, 1.29678, -0.755907);
+    const float3x3 M2 = float3x3(1.0, 2.92338, 59.4188, 20.3225, -27.0302, 222.592, 121.563, 626.13, 316.627);
+    const float2x2 M3 = float2x2(0.0365463, 3.32707, 9.0632, -9.04756);
+    const float3x3 M4 = float3x3(1.0, 3.59685, -1.36772, 9.04401, -16.3174, 9.22949, 5.56589, 19.7886, -20.2123);
+    float bias = dot(mul(M1, X.xy), Y.xy) * rcp(dot(mul(M2, X.xyw), Y.xyw));
+    float scale = dot(mul(M3, X.xy), Y.xy) * rcp(dot(mul(M4, X.xzw), Y.xyw));
+    bias *= saturate(specularColor.g * 50.0); // NVIDIA hack for specular reflectance of 0
+    return mad(specularColor, max(0.0, scale), max(0.0, bias));
+}
+
 void ResetPayload(inout Payload payload)
 {
     payload.normal = float3(0.0, 0.0, 1.0);
@@ -61,6 +123,57 @@ void ResetPayload(inout Payload payload)
     payload.primitiveIndex = 0;
     payload.hit = 0;
     payload.barycentrics = 0.0.xx;
+    payload.triangleLod = 0.0;
+    payload.primaryMotionNdc = 0.0.xx;
+    payload.primaryDepth = 1.0;
+}
+
+// Matches lit.vs + pbr.ps: interpolate unjittered curr/prev clip per vertex for MVs; DLSS depth
+// uses jittered clip z/w at the same hit (HW-depth convention, motionVectorsJittered = false).
+void ComputeVertexInterpolatedPrimarySurface(
+    out float2 motionNdc,
+    out float primaryDepth,
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+    const float w = 1.0 - barycentrics.x - barycentrics.y;
+    const float3 bary = float3(w, barycentrics.x, barycentrics.y);
+
+    const float3x4 objectToWorld = ObjectToWorld3x4();
+    float4 currClipUnj = 0.0.xxxx;
+    float4 prevClipUnj = 0.0.xxxx;
+    float4 currClipJit = 0.0.xxxx;
+
+    const uint indices[3] = { i0, i1, i2 };
+    [unroll]
+    for (uint vi = 0u; vi < 3u; ++vi)
+    {
+        const float3 objectPos = LoadObjectPosition(geo, indices[vi]);
+        const float3 currWorld = mul(objectToWorld, float4(objectPos, 1.0)).xyz;
+        float3 prevWorld = currWorld;
+        if (kPtHasInstanceMotion)
+        {
+            prevWorld = PrevWorldFromObject(instanceId, objectPos);
+        }
+
+        currClipUnj += mul(g_UnjitteredViewProj, float4(currWorld, 1.0)) * bary[vi];
+        prevClipUnj += mul(g_PrevViewProj, float4(prevWorld, 1.0)) * bary[vi];
+        currClipJit += mul(g_ViewProj, float4(currWorld, 1.0)) * bary[vi];
+    }
+
+    if (!kPtMotionHistoryValid)
+    {
+        prevClipUnj = currClipUnj;
+    }
+
+    motionNdc = ComputeMotionNdc(currClipUnj, prevClipUnj);
+    primaryDepth = saturate(currClipJit.z / max(currClipJit.w, 1e-6));
 }
 
 // GGX VNDF half-vector sampling (Heitz 2018) — same as reflections.hlsl.
@@ -152,7 +265,10 @@ float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel
     return visSum / float(kPtSoftSunSampleCount);
 }
 
-float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycentrics)
+// Ray-cone filtered albedo (RTG ch. 20): lod = triangleLod + log2(coneWidth) − log2(n·v).
+// Matches the raster path's mip-filtered footprint closely enough that the albedo value is stable
+// under sub-pixel jitter — required for the P4b diffuse-albedo GUIDE, which RR remodulates with.
+float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycentrics, float albedoLod)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
     const MaterialEntry material = g_Materials[instanceId];
@@ -164,10 +280,16 @@ float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycent
             ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
         const float3 texel =
             g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
-                .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
+                .SampleLevel(g_LinearWrapSampler, hitUv, max(albedoLod, 0.0)).rgb;
         albedo *= texel;
     }
     return albedo;
+}
+
+float ComputeAlbedoLod(Payload payload, float coneWidth, float3 rayDirection)
+{
+    const float nDotD = max(saturate(dot(payload.normal, -rayDirection)), 0.05);
+    return payload.triangleLod + log2(max(coneWidth, 1e-6)) - log2(nDotD);
 }
 
 float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, uint rayCount)
@@ -325,6 +447,8 @@ void PathTracerRayGen()
     float primaryDepth = 1.0;
     float2 primaryMotion = 0.0.xx;
     float specHitDistGuide = g_MaxTraceDistance;
+    // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
+    float pathConeWidth = 0.0;
     // Roughness of the surface that launched the current ray — drives env mip on miss, matching
     // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
     // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
@@ -346,12 +470,22 @@ void PathTracerRayGen()
         {
             if (bounce == 0u)
             {
-                // Sky pixel: reprojection motion for the view ray (raster sky does not write RT4).
+                // Sky pixel: camera-only reprojection (raster sky keeps MV=0; PT supplies finite anchor).
                 const float3 skyAnchor = g_CameraPos + ray.Direction * (g_MaxTraceDistance * 0.5);
-                const float4 currClip = mul(g_UnjitteredViewProj, float4(skyAnchor, 1.0));
-                const float4 prevClip = mul(g_PrevViewProj, float4(skyAnchor, 1.0));
-                primaryMotion = ComputeMotionNdc(currClip, prevClip);
+                float4 currClipUnj = mul(g_UnjitteredViewProj, float4(skyAnchor, 1.0));
+                float4 prevClipUnj = mul(g_PrevViewProj, float4(skyAnchor, 1.0));
+                if (!kPtMotionHistoryValid)
+                {
+                    prevClipUnj = currClipUnj;
+                }
+                primaryMotion = ComputeMotionNdc(currClipUnj, prevClipUnj);
                 primaryDepth = 1.0;
+
+                // Sky RR guides: (0.5, 0.5, 0.5) albedo per the DLSS-RR Integration Guide §3.4.2
+                // (white/black diffuse and zero specular are known-bad — devdoc/dxr/pt/sky-motion.md).
+                g_DiffuseAlbedoGuide[pixel] = float4(0.5, 0.5, 0.5, 1.0);
+                g_SpecularAlbedoGuide[pixel] = float4(0.5, 0.5, 0.5, 1.0);
+                g_NormalRoughnessGuide[pixel] = float4(0.0, 0.0, 1.0, 1.0);
             }
 
             if (addEnvOnMiss)
@@ -361,9 +495,14 @@ void PathTracerRayGen()
             break;
         }
 
+        pathConeWidth += g_PtPixelSpreadAngle * payload.hitDistance;
+
         const MaterialEntry material = g_Materials[payload.instanceId];
         const float3 albedo = SampleSurfaceAlbedo(
-            payload.instanceId, payload.primitiveIndex, payload.barycentrics);
+            payload.instanceId,
+            payload.primitiveIndex,
+            payload.barycentrics,
+            ComputeAlbedoLod(payload, pathConeWidth, ray.Direction));
         const float3 hitNormal = payload.normal;
         const float3 viewDir = -ray.Direction;
         const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
@@ -391,10 +530,17 @@ void PathTracerRayGen()
             primaryHit = true;
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
-            const float4 currClip = mul(g_UnjitteredViewProj, float4(hitPos, 1.0));
-            const float4 prevClip = mul(g_PrevViewProj, float4(hitPos, 1.0));
-            primaryMotion = ComputeMotionNdc(currClip, prevClip);
-            primaryDepth = saturate(currClip.z / max(currClip.w, 1e-6));
+            primaryMotion = payload.primaryMotionNdc;
+            primaryDepth = payload.primaryDepth;
+
+            // P4b RR material guides from the SAME hit that seeds the integrator. Encodings match
+            // rr_guides.ps.hlsl modes 0-2, except specular albedo uses the NVIDIA-documented
+            // preintegrated form (Integration Guide appendix) instead of raw F0.
+            const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
+            g_DiffuseAlbedoGuide[pixel] = float4(albedo * (1.0 - material.metallic), 1.0);
+            g_SpecularAlbedoGuide[pixel] = float4(
+                EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotVPrimary), 1.0);
+            g_NormalRoughnessGuide[pixel] = float4(normalize(hitNormal), material.roughness);
 
             // Stable RR4 spec hit-distance guide (devdoc/dxr/pt/rr4-spec-hitdist.md): trace ONE
             // DETERMINISTIC mirror ray from the primary hit (no RNG) so DLSS-RR can reproject
@@ -498,6 +644,49 @@ void PathTracerMiss(inout Payload payload)
     payload.hitDistance = g_MaxTraceDistance;
 }
 
+// Per-triangle ray-cone LOD constant (RTG ch. 20): 0.5·log2(albedo texel area / world area).
+// Needs ObjectToWorld3x4, so it must run in the closest-hit; the raygen adds the per-path terms.
+float ComputeTriangleAlbedoLodConstant(uint instanceId, uint primitiveIndex)
+{
+    const MaterialEntry material = g_Materials[instanceId];
+    if (material.albedoTexIndex == 0xFFFFFFFFu || material.albedoUvOffsetFloats == 0xFFFFFFFFu)
+    {
+        return 0.0;
+    }
+
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+
+    const float3x4 objectToWorld = ObjectToWorld3x4();
+    const float3 w0 = mul(objectToWorld, float4(LoadObjectPosition(geo, i0), 1.0)).xyz;
+    const float3 w1 = mul(objectToWorld, float4(LoadObjectPosition(geo, i1), 1.0)).xyz;
+    const float3 w2 = mul(objectToWorld, float4(LoadObjectPosition(geo, i2), 1.0)).xyz;
+    const float worldArea = 0.5 * length(cross(w1 - w0, w2 - w0));
+
+    const float2 uv0 = LoadObjectUv(geo, i0, material.albedoUvOffsetFloats);
+    const float2 uv1 = LoadObjectUv(geo, i1, material.albedoUvOffsetFloats);
+    const float2 uv2 = LoadObjectUv(geo, i2, material.albedoUvOffsetFloats);
+    const float2 e1 = uv1 - uv0;
+    const float2 e2 = uv2 - uv0;
+    const float uvArea = 0.5 * abs(e1.x * e2.y - e1.y * e2.x);
+
+    uint texWidth;
+    uint texHeight;
+    g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
+        .GetDimensions(texWidth, texHeight);
+    const float texelArea = uvArea * float(texWidth) * float(texHeight);
+
+    if (worldArea <= 1e-12 || texelArea <= 1e-12)
+    {
+        return 0.0;
+    }
+
+    return 0.5 * log2(texelArea / worldArea);
+}
+
 [shader("closesthit")]
 void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
@@ -529,4 +718,11 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     payload.hitDistance = hitT;
     payload.normal = hitNormal;
     payload.barycentrics = attribs.barycentrics;
+    payload.triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
+    ComputeVertexInterpolatedPrimarySurface(
+        payload.primaryMotionNdc,
+        payload.primaryDepth,
+        instanceId,
+        primitiveIndex,
+        attribs.barycentrics);
 }

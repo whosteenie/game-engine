@@ -78,6 +78,9 @@ public:
         std::uintptr_t prefilterSrvCpuHandle = 0;
         std::uintptr_t velocitySrvCpuHandle = 0; // RT4, NRD motion guide source
         std::uintptr_t giDenoisedSrvCpuHandle = 0; // RELAX_DIFFUSE for screen-space hit lookup (t13)
+        // P4b path tracer only (t14): per-instance previous object-to-world rows for object
+        // motion vectors. UINT32_MAX = unavailable (shader falls back to camera-only reprojection).
+        std::uint32_t prevInstanceTransformsSrvIndex = UINT32_MAX;
     };
 
     // Phase D5 (devdoc/dxr/nrd-integration.md): everything the NRD backend needs to denoise
@@ -213,6 +216,10 @@ public:
     std::uintptr_t GetPathTracerMotionSrvCpuHandle() const { return m_ptMotionTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerMotionResource() const { return m_ptMotionTexture.resource; }
     std::uint32_t GetPathTracerMotionResourceState() const { return m_ptMotionTexture.state; }
+    // P4b bounce-0 RR material guides (u4-u6), left in pixel/non-pixel shader read after dispatch.
+    std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle() const { return m_ptDiffuseAlbedoTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const { return m_ptSpecularAlbedoTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }
@@ -306,6 +313,10 @@ private:
     // P4 path-tracer DLSS guides (primary-hit depth + motion).
     ReflectionTexture m_ptDepthTexture{};
     ReflectionTexture m_ptMotionTexture{};
+    // P4b bounce-0 RR material guides (devdoc/dxr/pt/full-rr-guides.md).
+    ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
+    ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
+    ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
 
     static constexpr int kReflectionTextureCount = 5;
     // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised

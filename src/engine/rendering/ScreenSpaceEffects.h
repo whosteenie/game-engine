@@ -112,8 +112,13 @@ public:
         void* motionResource = nullptr,
         std::uint32_t motionResourceState = 0,
         std::uintptr_t depthSrv = 0,
-        std::uintptr_t motionSrv = 0);
+        std::uintptr_t motionSrv = 0,
+        std::uintptr_t diffuseAlbedoSrv = 0,
+        std::uintptr_t specularAlbedoSrv = 0,
+        std::uintptr_t normalRoughnessSrv = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
+    // Diagnostic RR-input switchboard (DxrSettings::GetPtRrBundleMode; devdoc/dxr/pt/gi-shimmer.md).
+    void SetPtRrBundleMode(int mode);
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
     // Editor grid drawn into HDR before bloom when path tracing is active (not into the PT trace).
@@ -476,6 +481,11 @@ private:
     bool ResolvePathTracerDlssDepth() const;
     // Real-time PT: patch sky pixels in the motion buffer (raster MV + PT sky MV from metadata).
     bool PatchPathTracerSkyMotion() const;
+    // P4b: prepare the PT-side RR inputs the current bundle mode asks for (copy bounce-0 material
+    // guides into the rr* targets, resolve PT depth to D24). Returns ready bits (1 = guides,
+    // 2 = depth); full mode (0) is all-or-nothing. Sets m_ptFullGuidesThisFrame when guides copied
+    // so GenerateRrGuides skips raster modes 0-2. See devdoc/dxr/pt/full-rr-guides.md.
+    std::uint32_t PreparePathTracerRrBundle() const;
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
@@ -699,6 +709,14 @@ private:
     std::uintptr_t m_pathTracerMotionSrv = 0;
     void* m_pathTracerMotionResource = nullptr;
     std::uint32_t m_pathTracerMotionResourceState = 0;
+    // P4b bounce-0 RR material guide SRVs (devdoc/dxr/pt/full-rr-guides.md).
+    std::uintptr_t m_pathTracerDiffuseAlbedoSrv = 0;
+    std::uintptr_t m_pathTracerSpecularAlbedoSrv = 0;
+    std::uintptr_t m_pathTracerNormalRoughnessSrv = 0;
+    // True after PreparePathTracerRrBundle copied PT guides into the rr* targets this frame:
+    // GenerateRrGuides must then skip its raster material modes (0-2) to avoid overwriting them.
+    mutable bool m_ptFullGuidesThisFrame = false;
+    int m_ptRrBundleMode = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
     mutable bool m_pathTracerPostIntegrated = false;
     PathTracerGridOverlayFn m_pathTracerGridOverlayDraw;

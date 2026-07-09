@@ -83,6 +83,10 @@ public:
     std::uintptr_t GetPathTracerMotionSrvCpuHandle() const;
     ID3D12Resource* GetPathTracerMotionResource() const;
     std::uint32_t GetPathTracerMotionResourceState() const;
+    // P4b bounce-0 RR material guides (devdoc/dxr/pt/full-rr-guides.md).
+    std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle() const;
+    std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const;
+    std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const;
     bool HasValidOutput() const;
 
 private:

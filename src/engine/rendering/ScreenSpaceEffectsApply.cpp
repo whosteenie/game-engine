@@ -338,6 +338,13 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.fallbackTonemapInputs.tonemapShader = m_tonemapShader.get();
     dlssInputs.patchPathTracerSkyMotion = [this]() { return PatchPathTracerSkyMotion(); };
     dlssInputs.generateRrGuides = [this]() { GenerateRrGuides(); };
+    // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to
+    // per the bundle mode (devdoc/dxr/pt/full-rr-guides.md; gi-shimmer.md switchboard).
+    dlssInputs.preparePathTracerRrBundle = [this]() { return PreparePathTracerRrBundle(); };
+    dlssInputs.ptRrBundleMode = m_ptRrBundleMode;
+    dlssInputs.ptDlssDepthTarget = const_cast<InternalDepthTarget*>(&m_ptDlssDepthTarget);
+    dlssInputs.pathTracerMotionResource = m_pathTracerMotionResource;
+    dlssInputs.pathTracerMotionResourceState = m_pathTracerMotionResourceState;
     dlssInputs.drawPathTracerGridOverlay =
         [this, camera = state.camera](PostProcessTarget& target, const int width, const int height)
         {

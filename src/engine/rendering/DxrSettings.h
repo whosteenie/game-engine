@@ -67,6 +67,17 @@ public:
     int GetPtAmbientAoRayCount() const { return m_ptAmbientAoRayCount; }
     void SetPtAmbientAoRayCount(const int rays);
 
+    // Diagnostic switchboard for the P4b shimmer hunt (devdoc/dxr/pt/gi-shimmer.md): which
+    // DLSS-RR inputs come from the path tracer vs the raster G-buffer in real-time PT mode.
+    // 0 = Full PT (depth + PT motion + guides), 1 = Raster bundle (stable fallback),
+    // 2 = PT guides only, 3 = PT depth + PT motion (diagnostic), 4 = PT depth only,
+    // 5 = PT motion only (diagnostic). Modes 2-5 are intentionally mixed bundles.
+    int GetPtRrBundleMode() const { return m_ptRrBundleMode; }
+    void SetPtRrBundleMode(const int mode)
+    {
+        m_ptRrBundleMode = mode < 0 ? 0 : (mode > 5 ? 5 : mode);
+    }
+
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
 
@@ -152,6 +163,7 @@ private:
     bool m_ptFireflyClamp = true;
     float m_ptAmbientStrength = 1.0f;
     int m_ptAmbientAoRayCount = 0;
+    int m_ptRrBundleMode = 0;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

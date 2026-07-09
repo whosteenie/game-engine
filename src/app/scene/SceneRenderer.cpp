@@ -735,6 +735,7 @@ void SceneRenderer::RecordDxrPass(
     {
         const bool pathTracerShow =
             pathTracingActive && m_dxrPathTracerDispatch->HasValidOutput();
+        m_activeScreenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
         m_activeScreenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle() : 0,
@@ -747,7 +748,10 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResource() : nullptr,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle() : 0);
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDiffuseAlbedoSrvCpuHandle() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerSpecularAlbedoSrvCpuHandle() : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle() : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
@@ -1232,6 +1236,17 @@ void SceneRenderer::RenderGeometryPass(
 
     if (usePostProcess)
     {
+        // P4b: the path tracer needs the PREVIOUS frame's object-to-world matrices for object
+        // motion vectors, and RecordDxrPass runs after this advance — upload them first. The copy
+        // is recorded on this frame's command list ahead of the PT dispatch that reads it (t14).
+        if (m_dxrSettings.IsPathTracingActive() && m_dxrAccelerationStructures != nullptr
+            && !(*m_activePreviousWorldMatrices).empty())
+        {
+            m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
+                *m_activePreviousWorldMatrices,
+                GfxContext::Get().GetCommandList());
+        }
+
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {
             (*m_activePreviousWorldMatrices)[objectIndex] =
