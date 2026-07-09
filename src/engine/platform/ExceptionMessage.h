@@ -9,7 +9,44 @@
 std::string SanitizeLogText(std::string_view text, std::string_view fallbackIfEmpty = "Unknown error");
 
 // Best-effort exception.what() for logging and UI. Never returns an empty string.
-std::string SafeExceptionMessage(const std::exception& exception);
+std::string SafeExceptionMessageImpl(const char* what, const char* mangledTypeName);
 
 // phase + exception, e.g. "OpenProject: Failed to open file".
-std::string FormatExceptionContext(const char* context, const std::exception& exception);
+std::string FormatExceptionContextImpl(
+    const char* context,
+    const char* what,
+    const char* mangledTypeName);
+
+// Template wrappers avoid MSVC catch-handler stdext::exception vs std::exception link mismatches
+// when app code and engine-render.lib are built as separate targets.
+template <typename ExceptionType>
+std::string SafeExceptionMessage(const ExceptionType& exception)
+{
+    const char* what = nullptr;
+    try
+    {
+        what = exception.what();
+    }
+    catch (...)
+    {
+        what = nullptr;
+    }
+
+    return SafeExceptionMessageImpl(what, typeid(exception).name());
+}
+
+template <typename ExceptionType>
+std::string FormatExceptionContext(const char* context, const ExceptionType& exception)
+{
+    const char* what = nullptr;
+    try
+    {
+        what = exception.what();
+    }
+    catch (...)
+    {
+        what = nullptr;
+    }
+
+    return FormatExceptionContextImpl(context, what, typeid(exception).name());
+}

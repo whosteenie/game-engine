@@ -306,8 +306,9 @@ target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
 
 
 
-add_executable(game-engine
+include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
 
+set(GAME_ENGINE_APP_SOURCES
     src/main.cpp
 
     src/app/core/Application.cpp
@@ -315,41 +316,29 @@ add_executable(game-engine
     src/app/editor/EditorSettings.cpp
     src/app/editor/TuningSectionState.cpp
 
-
     src/app/editor/EditorDockSpace.cpp
-
     src/app/editor/EditorDockLayout.cpp
-
     src/app/editor/MainMenuBar.cpp
     src/app/editor/EditorTopToolbar.cpp
-
     src/app/editor/EditorClipboard.cpp
     src/app/editor/EditorMouseWrapping.cpp
 
     src/app/undo/UndoCommand.cpp
-
     src/app/undo/UndoStack.cpp
 
     src/app/project/SceneDocument.cpp
-
     src/app/project/SceneSubtreeArchive.cpp
-
     src/app/project/ProjectChooser.cpp
-
     src/app/project/ProjectEditorState.cpp
-
     src/app/project/ProjectSession.cpp
 
     src/app/core/PlayModeController.cpp
-
     src/app/core/PhysicsWorld.cpp
 
     src/app/scene/SceneComponentCatalog.cpp
-
     src/app/project/SceneProjectIO.cpp
 
     src/app/panels/ProjectFilesPanel.cpp
-
     src/app/panels/LightingPanel.cpp
     src/app/panels/lighting/LightingPanelShared.cpp
     src/app/panels/lighting/LightingPanelUi.cpp
@@ -372,25 +361,18 @@ add_executable(game-engine
     src/app/editor/OffscreenViewportPanel.cpp
 
     src/app/panels/SceneHierarchyPanel.cpp
-
     src/app/panels/SceneInspectorPanel.cpp
 
     src/app/inspector/InspectorEditMode.cpp
-
     src/app/inspector/InspectorMultiEdit.cpp
-
     src/app/inspector/InspectorTransform.cpp
 
     src/app/panels/SceneToolbarPanel.cpp
-
     src/app/panels/SceneViewportPanel.cpp
-
     src/app/panels/GameViewportPanel.cpp
 
     src/app/scene/SceneEditor.cpp
-
     src/app/scene/SceneEditingController.cpp
-
     src/app/scene/Scene.cpp
     src/app/scene/SceneHierarchyOps.cpp
     src/app/scene/SceneImportService.cpp
@@ -402,192 +384,28 @@ add_executable(game-engine
     src/app/scene/SceneSpawnService.cpp
     src/app/scene/SceneSpawnBuilders.cpp
     src/app/scene/SceneCamera.cpp
-
-    src/engine/camera/Camera.cpp
-
-    src/engine/platform/ImGuiLayer.cpp
-
-    src/engine/platform/ImGuiFonts.cpp
-
-    src/engine/platform/NativeProgressWindow.cpp
-
-    src/engine/platform/Input.cpp
-
-    src/engine/platform/InputDiagnostics.cpp
-    src/engine/platform/EngineLog.cpp
-    src/engine/platform/EngineDiagnostics.cpp
-    src/engine/platform/CrashHandler.cpp
-    src/engine/platform/ExceptionMessage.cpp
-    src/engine/platform/FrameDiagnostics.cpp
-    src/engine/platform/ProjectLoadTrace.cpp
-    src/engine/platform/SceneRenderTrace.cpp
-    src/engine/platform/RenderPathDiagnostics.cpp
-
-    src/engine/rhi/GfxContext.cpp
-    src/engine/rhi/GpuProfiler.cpp
-    src/engine/rhi/DlssContext.cpp
-    src/engine/rhi/HresultFormat.cpp
-
-    src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
-
-    src/engine/rhi/d3d12/GpuBuffer.cpp
-    src/engine/rhi/d3d12/HlslCompiler.cpp
-
-    src/engine/lighting/Light.cpp
-
-    src/engine/components/LightComponent.cpp
-    src/engine/components/CameraComponent.cpp
-
-    src/engine/components/ColliderComponent.cpp
-
-    src/engine/components/RigidBodyComponent.cpp
-
-    src/engine/lighting/SceneLighting.cpp
-
-    src/engine/scene/InspectorComponentOrder.cpp
-    src/engine/scene/InspectorComponentOrderJson.cpp
-    src/engine/scene/RotationUtils.cpp
-    src/engine/scene/SceneObject.cpp
-
-    src/engine/scene/SceneObjectComponents.cpp
-
-    src/engine/scene/Transform.cpp
-
-    src/engine/scene/ScenePicker.cpp
-
-    src/engine/scene/SceneHierarchy.cpp
-
-    src/engine/scene/ScenePrimitive.cpp
-
-    src/engine/gizmos/GizmoGeometry.cpp
-
-    src/engine/gizmos/GizmoDraw.cpp
-
-    src/engine/gizmos/CameraGizmoRenderer.cpp
-
-    src/engine/gizmos/LightGizmoRenderer.cpp
-
-    src/engine/gizmos/ColliderGizmoRenderer.cpp
-
-    src/engine/gizmos/SelectionRenderer.cpp
-
-    src/engine/lighting/ShadowMapMath.cpp
-    src/engine/lighting/LightingProbe.cpp
-    src/engine/lighting/CascadedShadowMap.cpp
-    src/engine/rendering/RenderDebug.cpp
-
-    src/engine/lighting/IBL.cpp
-    src/engine/lighting/EnvironmentMap.cpp
-    src/engine/lighting/IrradianceSh.cpp
-
-    src/engine/rendering/Material.cpp
-
-    src/engine/rendering/Texture.cpp
-
-    src/engine/assets/TextureCache.cpp
-
-    src/engine/rendering/MaterialTextures.cpp
-
-    src/engine/rendering/Mesh.cpp
-
-    src/engine/rendering/GridRenderer.cpp
-    src/engine/rendering/SkyboxRenderer.cpp
-
-    src/engine/assets/ModelImporter.cpp
-    src/engine/assets/TangentSpace.cpp
-
-    src/engine/assets/StbImage.cpp
-
-    src/engine/assets/ProjectAssets.cpp
-
-    src/engine/assets/FileDialog.cpp
-
-    src/engine/rendering/Renderer.cpp
-
-    src/engine/rendering/Framebuffer.cpp
-
-    src/engine/rendering/ScreenSpaceEffects.cpp
-    src/engine/rendering/ScreenSpaceEffectsApply.cpp
-    src/engine/rendering/ScreenSpaceEffectsSettings.cpp
-    src/engine/rendering/post/PostProcessDraw.cpp
-    src/engine/rendering/post/DxrDebugBlitPass.cpp
-    src/engine/rendering/post/AmbientOcclusionPass.cpp
-    src/engine/rendering/post/BloomTonemapPass.cpp
-    src/engine/rendering/post/ScreenSpaceReflectionPass.cpp
-    src/engine/rendering/post/ScreenSpaceGiPass.cpp
-    src/engine/rendering/post/AntiAliasingPass.cpp
-    src/engine/rendering/post/DlssResolvePass.cpp
-    src/engine/rendering/post/PathTracerDisplayPass.cpp
-    src/engine/rendering/post/ScreenCompositePass.cpp
-    src/engine/rendering/post/PostProcessDebugPass.cpp
-
-    src/engine/rendering/DxrSettings.cpp
-
-    src/engine/lighting/DirectionalShadowSettings.cpp
-
-    src/engine/raytracing/DxrContext.cpp
-    src/engine/raytracing/DxrGpuResource.cpp
-    src/engine/raytracing/Blas.cpp
-    src/engine/raytracing/BlasCache.cpp
-    src/engine/raytracing/Tlas.cpp
-    src/engine/raytracing/DxrAccelerationStructures.cpp
-    src/engine/raytracing/DxrShaderCache.cpp
-    src/engine/raytracing/DxrRootSignature.cpp
-    src/engine/raytracing/DxrPipeline.cpp
-    src/engine/raytracing/ShaderBindingTable.cpp
-    src/engine/raytracing/DxrDispatchContext.cpp
-    src/engine/raytracing/DxrDispatchBase.cpp
-    src/engine/raytracing/DxrSmokeDispatch.cpp
-    src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
-    src/engine/raytracing/DxrPathTracerDispatch.cpp
-    src/engine/raytracing/DxrReflectionsDispatch.cpp
-    src/engine/raytracing/DxrShadowsDispatch.cpp
-    src/engine/raytracing/DxrGiDispatch.cpp
-    src/engine/raytracing/NrdCommon.cpp
-    src/engine/raytracing/NrdDenoiser.cpp
-    src/engine/raytracing/NrdShadowDenoiser.cpp
-
-    src/engine/rendering/Shader.cpp
-
-    src/engine/rendering/ShaderCache.cpp
-
-    src/primitives/Cube.cpp
-
-    src/primitives/PrimitiveMeshUtils.cpp
-
-    src/primitives/Sphere.cpp
-
-    src/primitives/Cylinder.cpp
-
-    src/primitives/Capsule.cpp
-
-    src/primitives/Plane.cpp
-
 )
 
+add_executable(game-engine ${GAME_ENGINE_APP_SOURCES})
 
-
-target_include_directories(game-engine PRIVATE vendor/stb vendor/IconFontCppHeaders src ${tinygltf_SOURCE_DIR})
-
-
+target_include_directories(game-engine PRIVATE
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
 
 target_link_libraries(game-engine PRIVATE
-    glfw
-    glm::glm
+    engine-render
+    engine-dxr
     imgui_lib
     imguizmo_lib
     nlohmann_json::nlohmann_json
     Jolt
-    D3D12MemoryAllocator
-    mikktspace
-    NRD
-    d3d12
-    dxgi
-    dxguid
-    dxcompiler
 )
 
-target_compile_definitions(game-engine PRIVATE NOMINMAX)
+if(WIN32)
+    target_link_libraries(game-engine PRIVATE comctl32)
+endif()
 
 # Streamline (DLSS SR, Phase S0): headers only + copy the prebuilt SL/DLSS plugin DLLs next to the
 # exe. We do NOT statically link sl.interposer.lib — it exports DXGI/D3D entry points that would
@@ -596,7 +414,6 @@ target_compile_definitions(game-engine PRIVATE NOMINMAX)
 # changes for the non-DLSS pipeline.
 if(GAME_ENGINE_HAS_DLSS)
     target_include_directories(game-engine PRIVATE "${STREAMLINE_INCLUDE_DIR}")
-    target_compile_definitions(game-engine PRIVATE GAME_ENGINE_ENABLE_DLSS)
 
     # DLSS Super Resolution + Ray Reconstruction runtime set. We copy only these plugins (not
     # reflex, dlss_g, nis, imgui, deepdvc, directsr, …) — copying every plugin makes SL map+ignore
@@ -618,19 +435,9 @@ if(GAME_ENGINE_HAS_DLSS)
     endforeach()
 endif()
 
-if(GAME_ENGINE_D3D12_DEBUG_LAYER)
-    target_compile_definitions(game-engine PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
-endif()
-
 if(MSVC)
     target_link_options(game-engine PRIVATE "$<$<CONFIG:Debug>:/MAP:FULL>")
-    # Dbghelp's import lib requests the static CRT (libcmt); the project uses the dynamic CRT, so
-    # tell the linker to ignore the static one and avoid the LNK4098 conflict.
     target_link_options(game-engine PRIVATE /NODEFAULTLIB:libcmt)
-endif()
-
-if(WIN32)
-    target_link_libraries(game-engine PRIVATE comdlg32 shell32 ole32 comctl32 Dbghelp)
 endif()
 
 # DXC is linked at build time but loaded at runtime — copy vendored or SDK redist DLLs next to the exe.
@@ -748,84 +555,18 @@ option(GAME_ENGINE_BUILD_D3D12_RENDER_TESTS
     OFF)
 
 if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
-    set(D3D12_RENDER_TEST_SOURCES
+    add_executable(d3d12-render-tests
         tests/d3d12_render_tests.cpp
         tests/d3d12_test_harness.cpp
-        src/engine/rhi/GfxContext.cpp
-        src/engine/rhi/GpuProfiler.cpp
-        src/engine/rhi/DlssContext.cpp
-        src/engine/rhi/HresultFormat.cpp
-        src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
-        src/engine/rhi/d3d12/GpuBuffer.cpp
-    src/engine/rhi/d3d12/HlslCompiler.cpp
-        src/engine/raytracing/DxrContext.cpp
-        src/engine/raytracing/DxrGpuResource.cpp
-        src/engine/raytracing/Blas.cpp
-        src/engine/raytracing/BlasCache.cpp
-        src/engine/raytracing/Tlas.cpp
-        src/engine/raytracing/DxrShaderCache.cpp
-        src/engine/raytracing/DxrRootSignature.cpp
-        src/engine/raytracing/DxrPipeline.cpp
-        src/engine/raytracing/ShaderBindingTable.cpp
-        src/engine/raytracing/DxrDispatchContext.cpp
-        src/engine/rendering/Framebuffer.cpp
-        src/engine/rendering/Shader.cpp
-        src/engine/rendering/ShaderCache.cpp
-        src/engine/rendering/Mesh.cpp
-        src/engine/rendering/Material.cpp
-        src/engine/rendering/MaterialTextures.cpp
-        src/engine/rendering/Texture.cpp
-        src/engine/assets/TextureCache.cpp
-        src/engine/assets/StbImage.cpp
-        src/engine/assets/TangentSpace.cpp
-        src/engine/camera/Camera.cpp
-        src/engine/platform/Input.cpp
-        src/engine/lighting/SceneLighting.cpp
-        src/engine/lighting/Light.cpp
-        src/engine/lighting/IBL.cpp
-        src/engine/lighting/EnvironmentMap.cpp
-        src/engine/lighting/IrradianceSh.cpp
-        src/engine/lighting/CascadedShadowMap.cpp
-        src/engine/lighting/ShadowMapMath.cpp
-        src/engine/rendering/GridRenderer.cpp
-        src/engine/rendering/SkyboxRenderer.cpp
-        src/engine/gizmos/GizmoDraw.cpp
-        src/engine/platform/FrameDiagnostics.cpp
-        src/engine/platform/EngineDiagnostics.cpp
-        src/engine/platform/EngineLog.cpp
-        src/engine/platform/ExceptionMessage.cpp
-        src/engine/platform/SceneRenderTrace.cpp
-        src/engine/platform/CrashHandler.cpp
-    src/engine/platform/RenderPathDiagnostics.cpp
-        src/engine/rendering/RenderDebug.cpp
-        src/primitives/Cube.cpp
-        src/primitives/Plane.cpp
-        src/primitives/Sphere.cpp
-        src/primitives/PrimitiveMeshUtils.cpp
     )
 
-    add_executable(d3d12-render-tests ${D3D12_RENDER_TEST_SOURCES})
-
-    target_include_directories(d3d12-render-tests PRIVATE src tests vendor/stb ${json_SOURCE_DIR}/include)
+    target_include_directories(d3d12-render-tests PRIVATE tests ${json_SOURCE_DIR}/include)
     target_link_libraries(d3d12-render-tests PRIVATE
-        glfw
-        glm::glm
+        engine-dxr
         imgui_lib
-        mikktspace
         nlohmann_json::nlohmann_json
-        D3D12MemoryAllocator
-        d3d12
-        dxgi
-        dxguid
-        dxcompiler
     )
-    target_compile_definitions(d3d12-render-tests PRIVATE NOMINMAX)
-    if(GAME_ENGINE_D3D12_DEBUG_LAYER)
-        target_compile_definitions(d3d12-render-tests PRIVATE GAME_ENGINE_D3D12_DEBUG_LAYER)
-    endif()
     if(MSVC)
-        # CrashHandler pulls in Dbghelp, whose import lib requests the static CRT (libcmt); this
-        # project uses the dynamic CRT, so ignore the static one to avoid the LNK4098 conflict.
         target_link_options(d3d12-render-tests PRIVATE /NODEFAULTLIB:libcmt)
     endif()
     game_engine_copy_dxc_runtime(d3d12-render-tests)

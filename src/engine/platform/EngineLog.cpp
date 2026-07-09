@@ -106,9 +106,13 @@ namespace EngineLog
         WriteLine(category != nullptr ? category : "trace", "breadcrumb", message);
     }
 
-    void LogException(const char* category, const char* phase, const std::exception& exception)
+    void LogExceptionImpl(
+        const char* category,
+        const char* phase,
+        const char* what,
+        const char* mangledTypeName)
     {
-        const std::string message = FormatExceptionContext(phase, exception);
+        const std::string message = FormatExceptionContextImpl(phase, what, mangledTypeName);
         Error(category, message);
     }
 

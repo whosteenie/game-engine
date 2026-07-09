@@ -253,16 +253,16 @@ std::string SanitizeLogText(const std::string_view text, const std::string_view 
     return sanitized;
 }
 
-std::string SafeExceptionMessage(const std::exception& exception)
+std::string SafeExceptionMessageImpl(const char* what, const char* mangledTypeName)
 {
     bool hadNonAscii = false;
     std::string message;
     try
     {
-        message = CopyExceptionWhat(exception.what(), &hadNonAscii);
+        message = CopyExceptionWhat(what, &hadNonAscii);
         if (message.empty() && hadNonAscii)
         {
-            message = DecodeUtf16LeAsUtf8(exception.what());
+            message = DecodeUtf16LeAsUtf8(what);
             if (!message.empty())
             {
                 hadNonAscii = false;
@@ -292,18 +292,17 @@ std::string SafeExceptionMessage(const std::exception& exception)
 
     if (message.empty())
     {
-        const std::string typeName = DemangleTypeName(typeid(exception).name());
+        const std::string typeName = DemangleTypeName(mangledTypeName);
         message = typeName;
         if (hadNonAscii)
         {
             try
             {
-                const char* rawWhat = exception.what();
-                if (rawWhat != nullptr)
+                if (what != nullptr)
                 {
-                    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(rawWhat);
+                    const unsigned char* bytes = reinterpret_cast<const unsigned char*>(what);
                     std::size_t byteLength = 0;
-                    for (; byteLength < 64 && rawWhat[byteLength] != '\0'; ++byteLength)
+                    for (; byteLength < 64 && what[byteLength] != '\0'; ++byteLength)
                     {
                     }
 
@@ -340,10 +339,13 @@ std::string SafeExceptionMessage(const std::exception& exception)
     return message;
 }
 
-std::string FormatExceptionContext(const char* context, const std::exception& exception)
+std::string FormatExceptionContextImpl(
+    const char* context,
+    const char* what,
+    const char* mangledTypeName)
 {
     const std::string contextText = SanitizeLogText(
         context != nullptr ? std::string_view(context) : std::string_view(),
         "operation");
-    return contextText + ": " + SafeExceptionMessage(exception);
+    return contextText + ": " + SafeExceptionMessageImpl(what, mangledTypeName);
 }
