@@ -40,6 +40,10 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float g_EmissiveLightPickWeightSum;
     float g_PtBloomHaloIntensity;
     float _PadPtEmissiveNee; // path-tracer-only: radiance isolate mode (see RenderDebug.h)
+    // PT-A: dual-frame refracted motion vectors (devdoc/dxr/pt/transmission-rr-guides.md).
+    float4x4 g_PrevInvViewProj;
+    float3 g_PrevCameraPos;
+    float _PadPrevCamera;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

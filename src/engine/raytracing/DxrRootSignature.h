@@ -71,6 +71,10 @@ struct ReflectionDispatchConstants
     float emissiveLightPickWeightSum = 0.0f;
     float ptBloomHaloIntensity = 0.0f;
     float ptDebugIsolateMode = 0.0f; // path-tracer-only radiance term isolation (see RenderDebug.h)
+    // PT-A transmission virtual motion: previous unjittered frustum + camera for dual-frame refract MV.
+    float prevInvViewProj[16] = {};
+    float prevCameraPos[3] = {};
+    float _padPrevCamera = 0.0f;
 };
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in

@@ -121,7 +121,11 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
         ? frameInputs.prevViewProjection
         : unjitteredViewProj;
+    const glm::mat4 prevInvViewProj = glm::inverse(prevViewProj);
     const glm::vec3 cameraPos = camera.GetPosition();
+    const glm::vec3 prevCameraPos = frameInputs.motionHistoryValid
+        ? frameInputs.prevCameraPos
+        : cameraPos;
 
     DxrRootSignature::ReflectionDispatchConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(width);
@@ -136,9 +140,16 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         glm::value_ptr(unjitteredViewProj),
         sizeof(constants.unjitteredViewProj));
     std::memcpy(constants.prevViewProj, glm::value_ptr(prevViewProj), sizeof(constants.prevViewProj));
+    std::memcpy(
+        constants.prevInvViewProj,
+        glm::value_ptr(prevInvViewProj),
+        sizeof(constants.prevInvViewProj));
     constants.cameraPos[0] = cameraPos.x;
     constants.cameraPos[1] = cameraPos.y;
     constants.cameraPos[2] = cameraPos.z;
+    constants.prevCameraPos[0] = prevCameraPos.x;
+    constants.prevCameraPos[1] = prevCameraPos.y;
+    constants.prevCameraPos[2] = prevCameraPos.z;
     constants.maxTraceDistance = maxTraceDistance;
     constants.environmentIntensity = frameInputs.environmentIntensity;
     constants.maxReflectionLod = frameInputs.maxReflectionLod;

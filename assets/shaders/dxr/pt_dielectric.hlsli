@@ -273,25 +273,51 @@ void SampleDielectricInterface(
     nextDir = normalize(refracted);
 }
 
-// DLSS-RR transmission guide: trace the refracted primary ray and return depth + motion of the
-// visible surface behind the glass (Omniverse "translucent virtual motion"; NVIDIA PSR blog §refraction).
-bool TraceTransmissionGuide(
+// Result of a deterministic refracted primary-ray trace for DLSS-RR transmission guides (PSR).
+struct TransmissionGuideHit
+{
+    bool valid;
+    float depth;
+    float2 motion;
+    uint instanceId;
+    uint primitiveIndex;
+    float2 barycentrics;
+    float3 normal;
+    float triangleLod;
+    float3 refractDir;
+    float refractedHitDistance;
+};
+
+// DLSS-RR transmission guide: trace the refracted primary ray and return depth, motion, and the
+// background hit payload needed for PSR-style material guides (Omniverse virtual motion; NVIDIA PSR).
+TransmissionGuideHit TraceTransmissionGuide(
     float3 hitPos,
     float3 hitNormal,
     float3 rayDir,
     float ior,
     bool thinWalled,
     float originBias,
-    uint excludeInstanceId,
-    out float guideDepth,
-    out float2 guideMotion)
+    uint excludeInstanceId)
 {
+    TransmissionGuideHit result;
+    result.valid = false;
+    result.depth = 1.0;
+    result.motion = 0.0.xx;
+    result.instanceId = 0u;
+    result.primitiveIndex = 0u;
+    result.barycentrics = 0.0.xx;
+    result.normal = float3(0.0, 0.0, 1.0);
+    result.triangleLod = 0.0;
+    result.refractDir = rayDir;
+    result.refractedHitDistance = 0.0;
+
     float3 refractDir;
     if (!ComputeDielectricRefractDir(hitNormal, rayDir, ior, thinWalled, false, refractDir))
     {
-        return false;
+        return result;
     }
 
+    result.refractDir = refractDir;
     float3 guideOrigin = hitPos + refractDir * originBias;
     [unroll]
     for (uint attempt = 0u; attempt < 2u; ++attempt)
@@ -307,22 +333,28 @@ bool TraceTransmissionGuide(
         TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
         if (guidePayload.hit == 0)
         {
-            return false;
+            return result;
         }
 
         if (guidePayload.instanceId != excludeInstanceId)
         {
-            guideDepth = guidePayload.primaryDepth;
-            guideMotion = guidePayload.primaryMotionNdc;
-            return true;
+            result.valid = true;
+            result.depth = guidePayload.primaryDepth;
+            result.motion = guidePayload.primaryMotionNdc;
+            result.instanceId = guidePayload.instanceId;
+            result.primitiveIndex = guidePayload.primitiveIndex;
+            result.barycentrics = guidePayload.barycentrics;
+            result.normal = guidePayload.normal;
+            result.triangleLod = guidePayload.triangleLod;
+            result.refractedHitDistance = guidePayload.hitDistance;
+            return result;
         }
 
-        // Scaled-cube panes: refracted guide can self-hit the shell back face — push through once.
         const float3 shellHitPos = guideOrigin + refractDir * guidePayload.hitDistance;
         guideOrigin = shellHitPos + refractDir * kThinShellMinExitBias;
     }
 
-    return false;
+    return result;
 }
 
 // Sun / shadow rays that refract through glass instead of treating it as opaque.

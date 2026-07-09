@@ -305,6 +305,135 @@ float ComputeAlbedoLod(Payload payload, float coneWidth, float3 rayDirection)
     return payload.triangleLod + log2(max(coneWidth, 1e-6)) - log2(nDotD);
 }
 
+// P4b RR material guides — encoding must match full-rr-guides.md / rr_guides.ps.hlsl modes 0–2.
+void ComputePtPrimaryRrMaterialGuides(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 hitNormal,
+    float3 viewDir,
+    float albedoLod,
+    out float3 diffuseGuide,
+    out float3 specGuide,
+    out float3 guideNormal,
+    out float guideRoughness)
+{
+    const MaterialEntry material = g_Materials[instanceId];
+    const float3 albedo = SampleSurfaceAlbedo(instanceId, primitiveIndex, barycentrics, albedoLod);
+    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+    const float dielectricWeight = DielectricWeight(material.transmission, material.metallic);
+    const float nDotV = saturate(dot(hitNormal, viewDir));
+
+    const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic) * (1.0 - dielectricWeight);
+    diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(material.metallic));
+    const float dielectricSpec = FresnelDielectric(
+        nDotV,
+        1.0 / max(material.indexOfRefraction, 1.0));
+    const float3 opaqueSpecGuide = max(
+        EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotV),
+        0.04.xxx);
+    specGuide = lerp(
+        opaqueSpecGuide,
+        float3(dielectricSpec, dielectricSpec, dielectricSpec),
+        dielectricWeight);
+    guideNormal = normalize(hitNormal);
+    guideRoughness = material.roughness;
+}
+
+float ComputeTransmissionGuideAlbedoLod(TransmissionGuideHit guide, float coneWidth)
+{
+    const float nDotD = max(saturate(dot(guide.normal, -guide.refractDir)), 0.05);
+    return guide.triangleLod + log2(max(coneWidth, 1e-6)) - log2(nDotD);
+}
+
+float2 ComputeSkyAnchorMotion(float3 anchorDirection)
+{
+    const float3 skyAnchor = g_CameraPos + anchorDirection * (g_MaxTraceDistance * 0.5);
+    float4 currClipUnj = mul(g_UnjitteredViewProj, float4(skyAnchor, 1.0));
+    float4 prevClipUnj = mul(g_PrevViewProj, float4(skyAnchor, 1.0));
+    if (!kPtMotionHistoryValid)
+    {
+        prevClipUnj = currClipUnj;
+    }
+    return ComputeMotionNdc(currClipUnj, prevClipUnj);
+}
+
+// Dual-frame refracted motion: replay prev-camera primary → glass → refract → background, then
+// project both world hits (Omniverse translucent virtual motion). Fixes rotation smear through panes.
+float2 ComputeTransmissionVirtualMotion(
+    uint2 pixel,
+    float3 glassHitPos,
+    float3 primaryRayDir,
+    TransmissionGuideHit currGuide,
+    float originBias)
+{
+    if (!kPtMotionHistoryValid)
+    {
+        return currGuide.valid ? currGuide.motion : 0.0.xx;
+    }
+
+    if (!currGuide.valid)
+    {
+        return ComputeSkyAnchorMotion(currGuide.refractDir);
+    }
+
+    const float3 worldCurr =
+        glassHitPos + currGuide.refractDir * (originBias + currGuide.refractedHitDistance);
+
+    const float2 clipXY = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
+    const float4 prevFarH = mul(g_PrevInvViewProj, float4(clipXY, 1.0, 1.0));
+    const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
+
+    RayDesc prevPrimaryRay;
+    prevPrimaryRay.Origin = g_PrevCameraPos;
+    prevPrimaryRay.Direction = prevRayDir;
+    prevPrimaryRay.TMin = 0.001;
+    prevPrimaryRay.TMax = g_MaxTraceDistance;
+
+    Payload prevPrimaryPayload;
+    ResetPayload(prevPrimaryPayload);
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimaryPayload);
+    if (prevPrimaryPayload.hit == 0)
+    {
+        return ComputeSkyAnchorMotion(currGuide.refractDir);
+    }
+
+    const float3 prevGlassHitPos = g_PrevCameraPos + prevRayDir * prevPrimaryPayload.hitDistance;
+    const MaterialEntry prevGlassMat = g_Materials[prevPrimaryPayload.instanceId];
+    const float prevDielectricWeight =
+        DielectricWeight(prevGlassMat.transmission, prevGlassMat.metallic);
+    if (prevDielectricWeight < 0.01)
+    {
+        return currGuide.motion;
+    }
+
+    const float prevNdotV = saturate(dot(prevPrimaryPayload.normal, -prevRayDir));
+    const float prevOriginBias =
+        max(prevPrimaryPayload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - prevNdotV));
+    const bool prevThinPane = prevGlassMat.thinWalled > 0.5;
+
+    const TransmissionGuideHit prevGuide = TraceTransmissionGuide(
+        prevGlassHitPos,
+        prevPrimaryPayload.normal,
+        prevRayDir,
+        prevGlassMat.indexOfRefraction,
+        prevThinPane,
+        prevThinPane ? max(prevOriginBias, kThinShellMinExitBias) : prevOriginBias,
+        prevPrimaryPayload.instanceId);
+
+    if (!prevGuide.valid)
+    {
+        return ComputeSkyAnchorMotion(prevGuide.refractDir);
+    }
+
+    const float3 worldPrev =
+        prevGlassHitPos + prevGuide.refractDir * (prevOriginBias + prevGuide.refractedHitDistance);
+
+    const float4 currClipUnj = mul(g_UnjitteredViewProj, float4(worldCurr, 1.0));
+    const float4 prevClipUnj = mul(g_PrevViewProj, float4(worldPrev, 1.0));
+    return ComputeMotionNdc(currClipUnj, prevClipUnj);
+}
+
 float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, uint rayCount)
 {
     if (rayCount == 0u)
@@ -957,9 +1086,26 @@ void PathTracerRayGen()
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
             const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
-            // Glass: DLSS-RR needs motion + depth of the refracted surface behind the pane, not the
-            // glass surface itself and not MV=0 (that was a stopgap that causes smearing). See NVIDIA
-            // PSR blog + Omniverse translucency virtual motion.
+            const float albedoLodPrimary = ComputeAlbedoLod(payload, pathConeWidth, ray.Direction);
+
+            float3 diffuseGuide;
+            float3 specGuide;
+            float3 guideNormal;
+            float guideRoughness;
+            ComputePtPrimaryRrMaterialGuides(
+                payload.instanceId,
+                payload.primitiveIndex,
+                payload.barycentrics,
+                hitNormal,
+                viewDir,
+                albedoLodPrimary,
+                diffuseGuide,
+                specGuide,
+                guideNormal,
+                guideRoughness);
+
+            // Glass: PSR-style transmission guides — depth, motion, and material guides describe the
+            // refracted background surface, not the glass polygon (devdoc/dxr/pt/transmission-rr-guides.md).
             if (dielectricWeight > 0.01)
             {
                 specHitDistGuide = g_MaxTraceDistance;
@@ -967,35 +1113,58 @@ void PathTracerRayGen()
                 const float guideOriginBias =
                     max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
                 const bool thinPane = material.thinWalled > 0.5;
+                const float shellBias = thinPane ? max(guideOriginBias, kThinShellMinExitBias) : guideOriginBias;
                 const float transmitFresnel = FresnelDielectric(
                     nDotVPrimary,
                     1.0 / max(material.indexOfRefraction, 1.0));
                 const float transmitWeight = saturate(1.0 - transmitFresnel);
 
-                float guideDepth = 1.0;
-                float2 guideMotion = 0.0.xx;
-                bool hasGuide = TraceTransmissionGuide(
+                const TransmissionGuideHit txGuide = TraceTransmissionGuide(
                     hitPos,
                     hitNormal,
                     ray.Direction,
                     material.indexOfRefraction,
                     thinPane,
-                    thinPane ? max(guideOriginBias, kThinShellMinExitBias) : guideOriginBias,
-                    payload.instanceId,
-                    guideDepth,
-                    guideMotion);
+                    shellBias,
+                    payload.instanceId);
 
-                if (hasGuide)
+                const float2 virtualMotion = ComputeTransmissionVirtualMotion(
+                    pixel, hitPos, ray.Direction, txGuide, shellBias);
+
+                if (txGuide.valid)
                 {
-                    primaryDepth = guideDepth;
-                    // Prefer refracted-surface motion when transmission dominates; keep surface MV at
-                    // grazing angles where reflection is visible (NVIDIA blog heuristic).
-                    primaryMotion = lerp(payload.primaryMotionNdc, guideMotion, transmitWeight);
+                    primaryDepth = txGuide.depth;
+                    primaryMotion = lerp(payload.primaryMotionNdc, virtualMotion, transmitWeight);
+
+                    float3 bgDiffuse;
+                    float3 bgSpec;
+                    float3 bgNormal;
+                    float bgRoughness;
+                    const float3 bgViewDir = -txGuide.refractDir;
+                    ComputePtPrimaryRrMaterialGuides(
+                        txGuide.instanceId,
+                        txGuide.primitiveIndex,
+                        txGuide.barycentrics,
+                        txGuide.normal,
+                        bgViewDir,
+                        ComputeTransmissionGuideAlbedoLod(txGuide, pathConeWidth),
+                        bgDiffuse,
+                        bgSpec,
+                        bgNormal,
+                        bgRoughness);
+
+                    diffuseGuide = lerp(diffuseGuide, bgDiffuse, transmitWeight);
+                    specGuide = lerp(specGuide, bgSpec, transmitWeight);
+                    guideNormal = normalize(lerp(guideNormal, bgNormal, transmitWeight));
+                    guideRoughness = lerp(guideRoughness, bgRoughness, transmitWeight);
                 }
                 else
                 {
                     primaryDepth = 1.0;
-                    primaryMotion = lerp(payload.primaryMotionNdc, 0.0.xx, transmitWeight);
+                    primaryMotion = lerp(payload.primaryMotionNdc, virtualMotion, transmitWeight);
+                    const float3 skyGuide = float3(0.5, 0.5, 0.5);
+                    diffuseGuide = lerp(diffuseGuide, skyGuide, transmitWeight);
+                    specGuide = lerp(specGuide, skyGuide, transmitWeight);
                 }
             }
             else
@@ -1003,24 +1172,9 @@ void PathTracerRayGen()
                 primaryDepth = payload.primaryDepth;
             }
 
-            // P4b RR material guides from the SAME hit that seeds the integrator. Encodings match
-            // rr_guides.ps.hlsl modes 0-2, except specular albedo uses the NVIDIA-documented
-            // preintegrated form (Integration Guide appendix) instead of raw F0.
-            const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic) * (1.0 - dielectricWeight);
-            const float3 diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(material.metallic));
-            const float dielectricSpec = FresnelDielectric(
-                nDotVPrimary,
-                1.0 / max(material.indexOfRefraction, 1.0));
-            const float3 opaqueSpecGuide = max(
-                EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotVPrimary),
-                0.04.xxx);
-            const float3 specGuide = lerp(
-                opaqueSpecGuide,
-                float3(dielectricSpec, dielectricSpec, dielectricSpec),
-                dielectricWeight);
             g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
             g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
-            g_NormalRoughnessGuide[pixel] = float4(normalize(hitNormal), material.roughness);
+            g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
 
             // Stable RR4 spec hit-distance guide (devdoc/dxr/pt/rr4-spec-hitdist.md): trace ONE
             // DETERMINISTIC mirror ray from the primary hit (no RNG) so DLSS-RR can reproject

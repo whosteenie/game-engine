@@ -655,6 +655,15 @@ void SceneRenderer::RecordDxrPass(
             ptInputs.prevViewProjection = motionState.historyValid
                 ? motionState.prevViewProjection
                 : camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+            if (motionState.historyValid)
+            {
+                ptInputs.prevCameraPos = glm::vec3(
+                    glm::inverse(motionState.prevView) * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f));
+            }
+            else
+            {
+                ptInputs.prevCameraPos = camera.GetPosition();
+            }
         }
         ptInputs.centerPrimaryRays = !m_dxrSettings.IsPtReferenceConvergence();
         ptInputs.sunDirection = glm::normalize(GetSunDirection());

@@ -37,6 +37,7 @@ public:
         float sunAngularRadiusDegrees = 0.27f;
         std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse sky irradiance (ambient floor)
         glm::mat4 prevViewProjection{1.0f};
+        glm::vec3 prevCameraPos{0.0f};
         bool motionHistoryValid = false;
         // Real-time (DLSS): pixel-center primary rays only. Reference: sub-pixel jitter for accumulation.
         bool centerPrimaryRays = false;
