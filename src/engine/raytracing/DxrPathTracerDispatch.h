@@ -91,6 +91,9 @@ public:
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const;
     bool HasValidOutput() const;
 
+    // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.
+    void ResetAccumulation() { m_frameIndex = 0; }
+
 private:
     bool EnsurePipeline(std::string& outError);
 

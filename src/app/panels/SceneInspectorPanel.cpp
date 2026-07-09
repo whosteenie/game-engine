@@ -364,6 +364,35 @@ namespace
         }
         HandleMaterialFieldEditEvents(editContext);
 
+        float transmission = material.GetTransmission();
+        if (ImGui::SliderFloat("Transmission", &transmission, 0.0f, 1.0f))
+        {
+            material.SetTransmission(transmission);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "0 = opaque. 1 = dielectric glass (path-traced Fresnel + refraction). "
+                "Metals fade this out via (1 - metallic). Solid meshes act as lenses; "
+                "thin panes need Double sided.");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
+        float ior = material.GetIndexOfRefraction();
+        if (ImGui::SliderFloat("IOR", &ior, 1.0f, 3.0f))
+        {
+            material.SetIndexOfRefraction(ior);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Index of refraction. Air = 1.0 (no bending). Window glass ~1.5. "
+                "Diamond ~2.4. Edits reset path-tracer noise so the image reconverges.");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
         glm::vec3 emissive = material.GetEmissive();
         EditorWidgets::SanitizeSignedZero(emissive);
         if (ImGui::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))

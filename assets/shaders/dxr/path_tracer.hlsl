@@ -63,10 +63,6 @@ static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
-static const float kMirrorRoughnessCutoff = 0.03; // match reflections.hlsl mirror path
-// RR4 stable spec hit-distance guide (devdoc/dxr/pt/rr4-spec-hitdist.md): only reflective-enough
-// primary surfaces emit a finite hit distance; rougher/diffuse surfaces report "no reflection".
-static const float kReflectionGuideRoughnessCutoff = 0.6; // match hybrid g_RoughnessCutoff default
 
 struct Payload
 {
@@ -591,7 +587,201 @@ float3 EvaluateDirectEmissive(
         / max(pickPdf * pdfArea, 1e-8);
 }
 
-bool SampleNextBounceDirection(
+// Continuous glass weight: transmission fades out as metallic rises (metals are opaque conductors).
+float DielectricWeight(float transmission, float metallic)
+{
+    return saturate(transmission) * (1.0 - saturate(metallic));
+}
+
+// PT-A: unpolarized Fresnel reflectance for dielectric interfaces (air ↔ material).
+float FresnelDielectric(float cosThetaI, float eta)
+{
+    const float cosI = abs(cosThetaI);
+    const float sin2T = eta * eta * (1.0 - cosI * cosI);
+    if (sin2T >= 1.0)
+    {
+        return 1.0;
+    }
+
+    const float cosT = sqrt(max(1.0 - sin2T, 0.0));
+    const float rPar = (eta * cosI - cosT) / max(eta * cosI + cosT, 1e-6);
+    const float rPerp = (cosI - eta * cosT) / max(cosI + eta * cosT, 1e-6);
+    return saturate(0.5 * (rPar * rPar + rPerp * rPerp));
+}
+
+bool RefractSnell(float3 wi, float3 n, float eta, out float3 wt)
+{
+    // wi points away from the surface along the incoming path; n faces the incident medium.
+    float cosI = dot(wi, n);
+    if (cosI < 0.0)
+    {
+        n = -n;
+        cosI = -cosI;
+    }
+
+    const float sin2T = eta * eta * (1.0 - cosI * cosI);
+    if (sin2T > 1.0)
+    {
+        wt = 0.0.xxx;
+        return false;
+    }
+
+    const float cosT = sqrt(max(1.0 - sin2T, 0.0));
+    wt = eta * wi - (eta * cosI + cosT) * n;
+    return dot(wt, wt) > 1e-8;
+}
+
+// Map material roughness to environment cube mip without crushing HDRIs to black at 1.0.
+float EnvironmentMipRoughness(float roughness)
+{
+    const float r = saturate(roughness);
+    return r * r * 0.35;
+}
+
+// Transmitted rays blur via direction perturbation; keep env LOD low so sky stays visible.
+float TransmissionMissEnvRoughness(float roughness, float dielectricWeight)
+{
+    const float mip = EnvironmentMipRoughness(roughness);
+    return lerp(mip, min(mip, 0.05), saturate(dielectricWeight));
+}
+
+// Build refracted direction for a dielectric interface (no throughput bookkeeping).
+bool ComputeDielectricRefractDir(
+    float3 hitNormal,
+    float3 rayDir,
+    float ior,
+    bool pathInMedium,
+    out float3 refractDir)
+{
+    const float3 wi = -rayDir;
+    float3 n = hitNormal;
+    if (dot(wi, n) < 0.0)
+    {
+        n = -n;
+    }
+
+    const float iorClamped = max(ior, 1.0);
+    const float eta = pathInMedium ? iorClamped : (1.0 / iorClamped);
+    float3 refracted;
+    if (!RefractSnell(wi, n, eta, refracted))
+    {
+        return false;
+    }
+
+    refractDir = normalize(refracted);
+    return true;
+}
+
+// One-bounce mirror trace for Fresnel reflection on dielectric interfaces (no stochastic split).
+float3 TraceDielectricReflectContrib(
+    float3 hitPos,
+    float3 hitNormal,
+    float3 reflectDir,
+    float envRoughness,
+    uint excludeInstanceId)
+{
+    const float nDotV = saturate(dot(hitNormal, -reflectDir));
+    const float bias = max(0.01, 0.01 * (1.0 + 2.0 * (1.0 - nDotV)));
+    RayDesc reflectRay;
+    reflectRay.Origin = hitPos + hitNormal * bias;
+    reflectRay.Direction = reflectDir;
+    reflectRay.TMin = 0.001;
+    reflectRay.TMax = g_MaxTraceDistance;
+
+    Payload reflectPayload;
+    ResetPayload(reflectPayload);
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, reflectRay, reflectPayload);
+    if (reflectPayload.hit != 0)
+    {
+        // Self-hits on thin glass (front face reflects into back face) read as bogus gray albedo.
+        if (reflectPayload.instanceId == excludeInstanceId)
+        {
+            return SampleEnvironment(reflectDir, envRoughness);
+        }
+
+        const MaterialEntry hitMaterial = g_Materials[reflectPayload.instanceId];
+        const float3 emissive = hitMaterial.emissive;
+        if (max(emissive.r, max(emissive.g, emissive.b)) > 1e-4)
+        {
+            return emissive;
+        }
+    }
+
+    return SampleEnvironment(reflectDir, envRoughness);
+}
+
+// Fresnel reflect (traced) + Snell refract (path continuation). No stochastic Fresnel roulette —
+// avoids per-pixel reflect/refract speckle that reads as double vision at 1 spp.
+void SampleDielectricInterface(
+    float3 hitPos,
+    float3 hitNormal,
+    float3 rayDir,
+    float roughness,
+    float ior,
+    bool pathInMedium,
+    uint instanceId,
+    float2 roughXi,
+    out float3 fresnelReflectRadiance,
+    out float3 nextDir,
+    out bool outPathInMedium,
+    out float scatterPdf,
+    inout float3 throughput)
+{
+    fresnelReflectRadiance = 0.0.xxx;
+
+    const float3 wi = -rayDir;
+    float3 n = hitNormal;
+    if (dot(wi, n) < 0.0)
+    {
+        n = -n;
+    }
+
+    const float iorClamped = max(ior, 1.0);
+    const float eta = pathInMedium ? iorClamped : (1.0 / iorClamped);
+    const bool enteringMedium = !pathInMedium;
+    const float cosThetaI = dot(wi, n);
+    const float fresnel = FresnelDielectric(cosThetaI, eta);
+    const float3 reflectDir = normalize(reflect(wi, n));
+    const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
+
+    outPathInMedium = pathInMedium;
+    scatterPdf = 1.0;
+
+    if (fresnel > 1e-6)
+    {
+        fresnelReflectRadiance = fresnel
+            * TraceDielectricReflectContrib(hitPos, n, reflectDir, envRough, instanceId);
+    }
+
+    throughput *= max(1.0 - fresnel, 1e-6);
+
+    if ((1.0 - fresnel) < 1e-4)
+    {
+        nextDir = reflectDir;
+        return;
+    }
+
+    float3 refracted;
+    if (!RefractSnell(wi, n, eta, refracted))
+    {
+        nextDir = reflectDir;
+        throughput = 0.0.xxx;
+        return;
+    }
+
+    nextDir = normalize(refracted);
+    outPathInMedium = enteringMedium;
+
+    const float rough2 = roughness * roughness;
+    if (rough2 > 0.0)
+    {
+        const float3 perturb = CosineSampleHemisphere(nextDir, roughXi);
+        nextDir = normalize(lerp(nextDir, perturb, rough2));
+    }
+}
+
+// Opaque GGX + cosine hemisphere. No mirror fast-path — roughness 0 is handled by GGX delta limit.
+void SampleOpaqueInterface(
     uint2 pixel,
     uint bounceIndex,
     float3 hitNormal,
@@ -600,58 +790,122 @@ bool SampleNextBounceDirection(
     float3 diffuseAlbedo,
     float roughness,
     float metallic,
+    float2 xi2d,
+    float lobeXi,
     out float3 nextDir,
     out bool isSpecular,
     out float scatterPdf,
     inout float3 throughput)
 {
-    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
+    const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
     const float3 specularEnergy =
-        FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(roughness, 0.55));
+        FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(ggxRoughness, 0.55));
 
     float specProb = saturate(max(specularEnergy.r, max(specularEnergy.g, specularEnergy.b)));
-    specProb = lerp(specProb, 1.0, metallic);
+    specProb = lerp(specProb, 1.0, saturate(metallic));
 
-    // Mirror surfaces: deterministic perfect reflection (same threshold as reflections.hlsl).
-    // Stochastic lobe selection + VNDF at roughness 0 is a poor delta-BSDF approximation and
-    // breaks sky/mirror-in-mirror paths that need a stable reflect(view, normal) direction.
-    if (roughness <= kMirrorRoughnessCutoff)
-    {
-        isSpecular = true;
-        nextDir = normalize(reflect(-viewDir, hitNormal));
-        if (dot(nextDir, hitNormal) <= 1e-4)
-        {
-            nextDir = normalize(reflect(-viewDir, hitNormal));
-        }
-        scatterPdf = 1.0;
-        throughput *= f0 / max(specProb, 1e-3);
-        return true;
-    }
-
-    const float lobeXi = xi.z;
-    const bool traceSpecular = (lobeXi < specProb) && (roughness < 0.95);
+    // Metals never use the diffuse lobe (diffuseAlbedo = 0 when metallic). Always specular GGX.
+    const bool traceSpecular = (metallic > 0.5) || ((lobeXi < specProb) && (ggxRoughness < 0.95));
 
     if (traceSpecular)
     {
-        const float3 halfVector = SampleGgxVndfHalfVector(hitNormal, viewDir, roughness, xi.xy);
+        const float3 halfVector = SampleGgxVndfHalfVector(hitNormal, viewDir, ggxRoughness, xi2d);
         nextDir = normalize(reflect(-viewDir, halfVector));
         if (dot(nextDir, hitNormal) <= 1e-4)
         {
             nextDir = normalize(reflect(-viewDir, hitNormal));
         }
-        scatterPdf = specProb;
-        throughput *= f0 / max(specProb, 1e-3);
+        scatterPdf = max(specProb, 1e-6);
+        throughput *= f0 / scatterPdf;
     }
     else
     {
-        nextDir = CosineSampleHemisphere(hitNormal, xi.xy);
+        nextDir = CosineSampleHemisphere(hitNormal, xi2d);
         const float cosTheta = saturate(dot(hitNormal, nextDir));
-        scatterPdf = (1.0 - specProb) * cosTheta / kPi;
-        throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-3);
+        scatterPdf = max((1.0 - specProb) * cosTheta / kPi, 1e-6);
+        throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-6);
     }
 
     isSpecular = traceSpecular;
-    return traceSpecular;
+}
+
+// Unified material bounce: one stochastic lobe pick weighted by transmission·(1−metallic), then
+// dielectric Fresnel/Snell or opaque GGX. Sliders interpolate smoothly — no hard cutoffs.
+bool SampleMaterialBounce(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 hitPos,
+    float3 hitNormal,
+    float3 rayDir,
+    float3 viewDir,
+    float3 f0,
+    float3 diffuseAlbedo,
+    float roughness,
+    float metallic,
+    float transmission,
+    float ior,
+    bool pathInMedium,
+    uint instanceId,
+    out float3 nextDir,
+    out bool isSpecular,
+    out bool outPathInMedium,
+    out float scatterPdf,
+    out float3 interfaceAddRadiance,
+    inout float3 throughput)
+{
+    const float dielectricWeight = DielectricWeight(transmission, metallic);
+    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
+
+    outPathInMedium = pathInMedium;
+    isSpecular = false;
+    scatterPdf = 1.0;
+    interfaceAddRadiance = 0.0.xxx;
+
+    if (dielectricWeight > 0.0 && xi.w < dielectricWeight)
+    {
+        throughput /= max(dielectricWeight, 1e-6);
+        const float3 throughputAtInterface = throughput;
+        float3 fresnelReflect = 0.0.xxx;
+        SampleDielectricInterface(
+            hitPos,
+            hitNormal,
+            rayDir,
+            roughness,
+            ior,
+            pathInMedium,
+            instanceId,
+            xi.xy,
+            fresnelReflect,
+            nextDir,
+            outPathInMedium,
+            scatterPdf,
+            throughput);
+        interfaceAddRadiance = throughputAtInterface * fresnelReflect;
+        isSpecular = true;
+        return true;
+    }
+
+    if (dielectricWeight > 0.0)
+    {
+        throughput /= max(1.0 - dielectricWeight, 1e-6);
+    }
+
+    SampleOpaqueInterface(
+        pixel,
+        bounceIndex,
+        hitNormal,
+        viewDir,
+        f0,
+        diffuseAlbedo,
+        roughness,
+        metallic,
+        xi.xy,
+        xi.z,
+        nextDir,
+        isSpecular,
+        scatterPdf,
+        throughput);
+    return isSpecular;
 }
 
 float3 SelectPtDebugRadiance(
@@ -777,6 +1031,7 @@ void PathTracerRayGen()
     // purely and always adds it on miss.
     bool addEnvOnMiss = true;
     float lastScatterPdf = 1.0;
+    bool pathInMedium = false;
 
     float3 termDirectSun = 0.0.xxx;
     float3 termDirectEmissive = 0.0.xxx;
@@ -816,7 +1071,8 @@ void PathTracerRayGen()
 
             if (addEnvOnMiss)
             {
-                radiance += throughput * SampleEnvironment(ray.Direction, missEnvRoughness);
+                radiance += throughput
+                    * SampleEnvironment(ray.Direction, missEnvRoughness);
             }
             break;
         }
@@ -835,9 +1091,12 @@ void PathTracerRayGen()
         const float3 shadowOrigin = hitPos + hitNormal * max(payload.hitDistance * 0.001, 0.002);
 
         const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+        const float dielectricWeight =
+            DielectricWeight(material.transmission, material.metallic);
         const float3 specularEnergy =
             FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(material.roughness, 0.55));
-        const float3 diffuseAlbedo = albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+        const float3 diffuseAlbedo =
+            albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic) * (1.0 - dielectricWeight);
 
         const float emissiveLuminance = max(material.emissive.r, max(material.emissive.g, material.emissive.b));
         if (emissiveLuminance > 1e-4)
@@ -880,20 +1139,63 @@ void PathTracerRayGen()
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
-            primaryDepth = payload.primaryDepth;
+            const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
+            // Glass: refracted content is at a different depth than the surface. Trace a deterministic
+            // refract ray for DLSS depth; zero MV avoids translation smear from surface reprojection.
+            if (dielectricWeight > 0.01)
+            {
+                primaryMotion = 0.0.xx;
+                specHitDistGuide = g_MaxTraceDistance;
+
+                float3 refractDir;
+                if (ComputeDielectricRefractDir(
+                        hitNormal,
+                        ray.Direction,
+                        material.indexOfRefraction,
+                        false,
+                        refractDir))
+                {
+                    const float guideOriginBias =
+                        max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
+                    RayDesc depthRay;
+                    depthRay.Origin = hitPos + refractDir * guideOriginBias;
+                    depthRay.Direction = refractDir;
+                    depthRay.TMin = 0.001;
+                    depthRay.TMax = g_MaxTraceDistance;
+
+                    Payload depthPayload;
+                    ResetPayload(depthPayload);
+                    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, depthRay, depthPayload);
+                    if (depthPayload.hit != 0 && depthPayload.instanceId != payload.instanceId)
+                    {
+                        primaryDepth = depthPayload.primaryDepth;
+                    }
+                    else
+                    {
+                        primaryDepth = 1.0;
+                    }
+                }
+            }
+            else
+            {
+                primaryDepth = payload.primaryDepth;
+            }
 
             // P4b RR material guides from the SAME hit that seeds the integrator. Encodings match
             // rr_guides.ps.hlsl modes 0-2, except specular albedo uses the NVIDIA-documented
             // preintegrated form (Integration Guide appendix) instead of raw F0.
-            const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
-            const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic);
-            // Metals/mirrors: zero diffuse guide confuses RR demodulation at silhouettes (gi-shimmer F8).
-            const float3 diffuseGuide = (material.metallic > 0.9 || material.roughness < kMirrorRoughnessCutoff)
-                ? float3(0.5, 0.5, 0.5)
-                : diffuseGuideAlbedo;
-            const float3 specGuide = max(
+            const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic) * (1.0 - dielectricWeight);
+            const float3 diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(material.metallic));
+            const float dielectricSpec = FresnelDielectric(
+                nDotVPrimary,
+                1.0 / max(material.indexOfRefraction, 1.0));
+            const float3 opaqueSpecGuide = max(
                 EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotVPrimary),
                 0.04.xxx);
+            const float3 specGuide = lerp(
+                opaqueSpecGuide,
+                float3(dielectricSpec, dielectricSpec, dielectricSpec),
+                dielectricWeight);
             g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
             g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
             g_NormalRoughnessGuide[pixel] = float4(normalize(hitNormal), material.roughness);
@@ -903,7 +1205,11 @@ void PathTracerRayGen()
             // reflections at their virtual depth without wobble. Reflective surfaces only; rougher /
             // diffuse / miss report g_MaxTraceDistance ("no specular reprojection"). Independent of
             // the stochastic radiance bounce chosen below.
-            if (material.roughness < kReflectionGuideRoughnessCutoff)
+            // Scale out as dielectric weight rises — glass refraction must not use a mirror guide.
+            const float mirrorGuideWeight =
+                (1.0 - dielectricWeight)
+                * (1.0 - smoothstep(0.45, 0.65, material.roughness));
+            if (mirrorGuideWeight > 0.0)
             {
                 // Match the grazing-aware bounce offset — shadowOrigin self-intersects at silhouettes
                 // and reports ~0 hit distance, which RR reads as black sliding rims (F8).
@@ -920,7 +1226,8 @@ void PathTracerRayGen()
                 TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
                 if (guidePayload.hit != 0)
                 {
-                    specHitDistGuide = max(guidePayload.hitDistance, 0.05);
+                    const float finiteGuide = max(guidePayload.hitDistance, 0.05);
+                    specHitDistGuide = lerp(g_MaxTraceDistance, finiteGuide, mirrorGuideWeight);
                 }
                 else
                 {
@@ -935,9 +1242,13 @@ void PathTracerRayGen()
             // hall-of-mirrors fade instead of black). The DIFFUSE tail is covered by primary-hit SH
             // in real-time, or added here in reference mode. Only fires for paths that did not escape.
             const float terminalNdotV = saturate(dot(hitNormal, viewDir));
-            radiance += throughput
-                * SampleEnvironment(reflect(-viewDir, hitNormal), material.roughness)
+            const float3 reflectTail =
+                SampleEnvironment(reflect(-viewDir, hitNormal), TransmissionMissEnvRoughness(material.roughness, dielectricWeight))
                 * EnvBrdfApprox(f0, material.roughness, terminalNdotV);
+            const float3 transmitTail = SampleEnvironment(
+                ray.Direction,
+                TransmissionMissEnvRoughness(material.roughness, dielectricWeight));
+            radiance += throughput * lerp(reflectTail, transmitTail, dielectricWeight);
             if (!kPtCenterPrimaryRays)
             {
                 radiance += throughput * diffuseAlbedo * EvaluateDiffuseIrradianceSh(hitNormal) / kPi
@@ -949,27 +1260,38 @@ void PathTracerRayGen()
         float3 nextDir;
         bool isSpecular = false;
         float scatterPdf = 1.0;
-        SampleNextBounceDirection(
+        float3 interfaceAddRadiance = 0.0.xxx;
+        const bool pathInMediumBefore = pathInMedium;
+        SampleMaterialBounce(
             pixel,
             bounce,
+            hitPos,
             hitNormal,
+            ray.Direction,
             viewDir,
             f0,
             diffuseAlbedo,
             material.roughness,
             material.metallic,
+            material.transmission,
+            material.indexOfRefraction,
+            pathInMedium,
+            payload.instanceId,
             nextDir,
             isSpecular,
+            pathInMedium,
             scatterPdf,
+            interfaceAddRadiance,
             throughput);
+        radiance += interfaceAddRadiance;
 
         lastScatterPdf = scatterPdf;
 
         // Real-time: specular bounces add env on miss; diffuse bounces use primary-hit SH only.
-        // Reference: always add the true sky.
-        addEnvOnMiss = kPtCenterPrimaryRays ? isSpecular : true;
+        // Reference: always add the true sky. Transmitted rays always see through on miss.
+        addEnvOnMiss = kPtCenterPrimaryRays ? (isSpecular || pathInMedium) : true;
 
-        missEnvRoughness = material.roughness;
+        missEnvRoughness = TransmissionMissEnvRoughness(material.roughness, dielectricWeight);
 
         if (kPtRussianRouletteEnabled && bounce >= kRussianRouletteStartBounce)
         {
@@ -985,7 +1307,13 @@ void PathTracerRayGen()
         }
 
         const float nDotV = saturate(dot(hitNormal, viewDir));
-        ray.Origin = hitPos + hitNormal * max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV));
+        const float originBias = max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV));
+        ray.Origin = hitPos + nextDir * originBias;
+        // Thin glass: after exiting the medium, push origin farther to skip the back face.
+        if (dielectricWeight > 0.01 && pathInMediumBefore && !pathInMedium)
+        {
+            ray.Origin = hitPos + nextDir * max(originBias, 0.02);
+        }
         ray.Direction = nextDir;
     }
 

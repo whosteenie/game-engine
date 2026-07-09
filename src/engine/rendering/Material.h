@@ -52,10 +52,14 @@ public:
     const glm::vec3& GetAlbedo() const;
     float GetRoughness() const;
     float GetMetallic() const;
+    float GetTransmission() const;
+    float GetIndexOfRefraction() const;
 
     void SetAlbedo(const glm::vec3& albedo);
     void SetRoughness(float roughness);
     void SetMetallic(float metallic);
+    void SetTransmission(float transmission);
+    void SetIndexOfRefraction(float indexOfRefraction);
 
     const glm::vec3& GetEmissive() const;
     void SetEmissive(const glm::vec3& emissive);
@@ -121,6 +125,8 @@ private:
     glm::vec3 m_albedo;
     float m_roughness;
     float m_metallic;
+    float m_transmission = 0.0f;
+    float m_indexOfRefraction = 1.5f;
     glm::vec3 m_emissive{0.0f};
 
     mutable std::shared_ptr<Texture> m_albedoMap;

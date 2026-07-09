@@ -36,8 +36,8 @@ struct DxrMaterialEntry
     // within the interleaved vertex stride.
     std::uint32_t albedoTexIndex = UINT32_MAX;
     std::uint32_t albedoUvOffsetFloats = UINT32_MAX;
-    std::uint32_t pad0 = 0;
-    std::uint32_t pad1 = 0;
+    float transmission = 0.0f; // 0 = opaque, 1 = fully transmissive (PT-A glass)
+    float indexOfRefraction = 1.5f;
 };
 
 // P4b: per-instance previous-frame object-to-world transform, indexed by TLAS InstanceID
@@ -130,6 +130,9 @@ public:
     std::uint32_t GetEmissiveLightCount() const { return m_emissiveLightCount; }
     float GetEmissiveLightPickWeightSum() const { return m_emissiveLightPickWeightSum; }
 
+    // True once after mesh/material geometry buffers were re-uploaded; clears on read.
+    bool ConsumeGeometryContentReupload();
+
     // Valid only for the frame UploadEmissiveLights ran; UINT32_MAX otherwise.
     std::uint32_t GetEmissiveLightsSrvIndex() const
     {
@@ -199,6 +202,7 @@ private:
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
     std::uint64_t m_builtTlasTopologyFingerprint = 0;
     std::uint64_t m_builtTlasTransformFingerprint = 0;
+    bool m_pendingGeometryContentReupload = false;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);
 };

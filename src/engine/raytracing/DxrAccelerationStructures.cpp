@@ -77,6 +77,8 @@ namespace
             fingerprint = HashFloatBits(fingerprint, emissive.z);
             fingerprint = HashFloatBits(fingerprint, material.GetMetallic());
             fingerprint = HashFloatBits(fingerprint, material.GetRoughness());
+            fingerprint = HashFloatBits(fingerprint, material.GetTransmission());
+            fingerprint = HashFloatBits(fingerprint, material.GetIndexOfRefraction());
             fingerprint = HashCombine(fingerprint, material.GetAlbedoMapSrvIndex());
         }
 
@@ -119,6 +121,13 @@ namespace
 DxrAccelerationStructures::~DxrAccelerationStructures()
 {
     Release();
+}
+
+bool DxrAccelerationStructures::ConsumeGeometryContentReupload()
+{
+    const bool pending = m_pendingGeometryContentReupload;
+    m_pendingGeometryContentReupload = false;
+    return pending;
 }
 
 void DxrAccelerationStructures::ReleaseGeometryBuffers()
@@ -283,11 +292,14 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 
     const std::uint64_t fingerprint = ComputeDxrGeometryFingerprint(scene);
     const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
-    if (m_uploadedGeometryFingerprint[frameIndex] == fingerprint
-        && m_geometryLookupSrvIndices[frameIndex] != UINT32_MAX)
+    const bool geometryContentChanged = m_uploadedGeometryFingerprint[frameIndex] != fingerprint
+        || m_geometryLookupSrvIndices[frameIndex] == UINT32_MAX;
+    if (!geometryContentChanged)
     {
         return true;
     }
+
+    m_pendingGeometryContentReupload = true;
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(objects.size());
     std::vector<DxrMaterialEntry> materialEntries(objects.size());
@@ -360,8 +372,10 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         materialEntry.emissive[1] = emissive.y;
         materialEntry.emissive[2] = emissive.z;
         materialEntry.roughness = material.GetRoughness();
+        materialEntry.transmission = material.GetTransmission();
+        materialEntry.indexOfRefraction = material.GetIndexOfRefraction();
 
-        // Bindless albedo texture: textured meshes carry their color in the albedo map, not the
+        // Bindless albedo texture:
         // constant. UV0 sits at float offset 6 in the interleaved stride (pos3 + normal3 + uv0).
         const std::uint32_t albedoTexIndex = material.GetAlbedoMapSrvIndex();
         if (albedoTexIndex != UINT32_MAX && vertexStrideFloats >= 8)

@@ -65,8 +65,8 @@ struct MaterialEntry
     float roughness;
     uint albedoTexIndex;        // absolute bindless SRV heap index; 0xFFFFFFFF = none
     uint albedoUvOffsetFloats;  // UV0 float offset within the vertex stride
-    uint _pad0;
-    uint _pad1;
+    float transmission;         // 0 = opaque, 1 = glass (PT-A)
+    float indexOfRefraction;    // dielectric IOR (air = 1.0); default ~1.5 glass
 };
 
 StructuredBuffer<MaterialEntry> g_Materials : register(t12);

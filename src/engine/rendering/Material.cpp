@@ -420,6 +420,16 @@ float Material::GetMetallic() const
     return m_metallic;
 }
 
+float Material::GetTransmission() const
+{
+    return m_transmission;
+}
+
+float Material::GetIndexOfRefraction() const
+{
+    return m_indexOfRefraction;
+}
+
 void Material::SetAlbedo(const glm::vec3& albedo)
 {
     m_albedo = albedo;
@@ -433,6 +443,16 @@ void Material::SetRoughness(float roughness)
 void Material::SetMetallic(float metallic)
 {
     m_metallic = metallic;
+}
+
+void Material::SetTransmission(float transmission)
+{
+    m_transmission = std::clamp(transmission, 0.0f, 1.0f);
+}
+
+void Material::SetIndexOfRefraction(float indexOfRefraction)
+{
+    m_indexOfRefraction = std::clamp(indexOfRefraction, 1.0f, 3.0f);
 }
 
 const glm::vec3& Material::GetEmissive() const
@@ -669,6 +689,8 @@ bool Material::ContentEquals(const Material& other) const
     return m_albedo == other.m_albedo
         && FloatsEqual(m_roughness, other.m_roughness)
         && FloatsEqual(m_metallic, other.m_metallic)
+        && FloatsEqual(m_transmission, other.m_transmission)
+        && FloatsEqual(m_indexOfRefraction, other.m_indexOfRefraction)
         && m_emissive == other.m_emissive
         && m_doubleSided == other.m_doubleSided
         && HasAlbedoMap() == other.HasAlbedoMap()
@@ -704,6 +726,8 @@ std::unique_ptr<Material> Material::Clone() const
     copy->SetRoughnessTexCoordSet(m_roughnessTexCoordSet);
     copy->SetEmissiveTexCoordSet(m_emissiveTexCoordSet);
     copy->SetEmissive(m_emissive);
+    copy->SetTransmission(m_transmission);
+    copy->SetIndexOfRefraction(m_indexOfRefraction);
     copy->SetDoubleSided(m_doubleSided);
 
     if (!m_albedoMapPath.empty())
@@ -796,6 +820,8 @@ nlohmann::json MaterialToJson(const Material& material, const MaterialStoredPath
         {"albedo", Vec3ToJson(material.GetAlbedo())},
         {"roughness", material.GetRoughness()},
         {"metallic", material.GetMetallic()},
+        {"transmission", material.GetTransmission()},
+        {"indexOfRefraction", material.GetIndexOfRefraction()},
         {"emissive", Vec3ToJson(material.GetEmissive())},
         {"doubleSided", material.IsDoubleSided()},
         {"maps", maps},
@@ -833,6 +859,8 @@ std::unique_ptr<Material> MaterialFromJson(
 
     material->SetDoubleSided(value.value("doubleSided", false));
     material->SetEmissive(emissive);
+    material->SetTransmission(value.value("transmission", 0.0f));
+    material->SetIndexOfRefraction(value.value("indexOfRefraction", 1.5f));
 
     if (value.contains("texCoordSets"))
     {
