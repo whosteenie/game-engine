@@ -6,6 +6,8 @@
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/ShaderCache.h"
+#include "engine/raytracing/DxrRootSignature.h"
+#include "engine/raytracing/DxrShaderCache.h"
 
 #include <d3d12.h>
 #include <imgui.h>
@@ -149,6 +151,16 @@ void D3d12TestSession::ReleaseCachedEnvironmentIbl()
     m_environmentIbl.reset();
 }
 
+void DrainDeferredTestGpuResources()
+{
+    if (!GfxContext::Get().IsInitialized())
+    {
+        return;
+    }
+
+    GfxContext::Get().WaitForGpuIdle();
+}
+
 void FinalizeD3d12TestSession()
 {
     if (!GfxContext::Get().IsInitialized())
@@ -160,7 +172,13 @@ void FinalizeD3d12TestSession()
     Material::ReleaseGlobalGpuResources();
     TextureCache::Get().Clear();
     ShaderCache::Clear();
-    GfxContext::Get().WaitForGpuIdle();
+    DxrShaderCache::Clear();
+    DxrRootSignature::ReleaseSmokeGlobalRootSignature();
+    DxrRootSignature::ReleaseSmokeLocalRootSignature();
+
+    // DXR/BLAS/TLAS frees are deferred to the submission fence; flush them before the
+    // D3D12MA allocator is destroyed in GfxContext::Shutdown().
+    GfxContext::Get().PrepareForDeviceShutdown();
 }
 
 void BindOffscreenTarget(Framebuffer& framebuffer, bool clearAttachments, bool bindDepthStencil);

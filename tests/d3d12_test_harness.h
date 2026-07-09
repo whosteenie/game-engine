@@ -59,6 +59,9 @@ void EndEditorPass(Framebuffer& framebuffer, bool compositeViewportInImGui = fal
 // Presents one swapchain frame the same way Application::Render does for the project picker.
 void PresentEditorSwapchainFrame();
 
+// Drain deferred D3D12MA releases after explicitly calling Release() on DXR objects.
+void DrainDeferredTestGpuResources();
+
 // Drain the GPU and process deferred resource releases. Call after explicitly releasing
 // test-owned DXR/GPU objects (Blas, Tlas, DxrDispatchContext, etc.) and before
 // D3d12TestContext::Shutdown(). Stack destructors for those objects run after Shutdown

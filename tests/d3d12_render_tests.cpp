@@ -1866,6 +1866,14 @@ namespace render_tests
 
         EndOffscreenPass();
         (void)framebuffer.Resize(0, 0);
+
+        tlas.Release();
+        cubeBlas.Release();
+        planeBlas.Release();
+        scratch.Release();
+        plane.reset();
+        cube.reset();
+        DrainDeferredTestGpuResources();
     }
 
     float HalfToFloat(const std::uint16_t half)
@@ -2088,6 +2096,7 @@ namespace render_tests
         scratch.Release();
         plane.reset();
         (void)framebuffer.Resize(0, 0);
+        DrainDeferredTestGpuResources();
     }
 
     void RegisterGpuRenderTests(std::vector<gpu_render_tests::TestEntry>& outTests)
