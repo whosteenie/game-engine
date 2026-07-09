@@ -81,6 +81,38 @@ namespace
 
         return fingerprint;
     }
+
+    std::uint64_t ComputeDxrTlasTopologyFingerprint(
+        const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& instances)
+    {
+        std::uint64_t fingerprint = HashCombine(0, instances.size());
+        for (const D3D12_RAYTRACING_INSTANCE_DESC& instance : instances)
+        {
+            fingerprint = HashCombine(fingerprint, instance.InstanceID);
+            fingerprint = HashCombine(fingerprint, instance.AccelerationStructure);
+            fingerprint = HashCombine(fingerprint, static_cast<std::uint64_t>(instance.Flags));
+        }
+
+        return fingerprint;
+    }
+
+    std::uint64_t ComputeDxrTlasTransformFingerprint(
+        const std::vector<D3D12_RAYTRACING_INSTANCE_DESC>& instances)
+    {
+        std::uint64_t fingerprint = HashCombine(0, instances.size());
+        for (const D3D12_RAYTRACING_INSTANCE_DESC& instance : instances)
+        {
+            for (std::uint32_t row = 0; row < 3; ++row)
+            {
+                for (std::uint32_t col = 0; col < 4; ++col)
+                {
+                    fingerprint = HashFloatBits(fingerprint, instance.Transform[row][col]);
+                }
+            }
+        }
+
+        return fingerprint;
+    }
 }
 
 DxrAccelerationStructures::~DxrAccelerationStructures()
@@ -149,6 +181,8 @@ void DxrAccelerationStructures::Release()
     m_scratchHighWaterMark = 0;
     m_scratchResourceState = 0;
     m_anyBlasBuiltThisFrame = false;
+    m_builtTlasTopologyFingerprint = 0;
+    m_builtTlasTransformFingerprint = 0;
 }
 
 void DxrAccelerationStructures::EnsureScratchBufferReadyForBuild(
@@ -726,12 +760,31 @@ void DxrAccelerationStructures::EnsureScene(
     {
         SceneRenderTrace::Scope tlasScope("dxr-tlas-build");
         DxrBreadcrumb("AS tlas-build begin");
-        if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
+
+        const std::uint64_t topologyFingerprint = ComputeDxrTlasTopologyFingerprint(instances);
+        const std::uint64_t transformFingerprint = ComputeDxrTlasTransformFingerprint(instances);
+        const bool skipTlasBuild = !instances.empty()
+            && m_tlas.IsBuilt()
+            && !m_anyBlasBuiltThisFrame
+            && topologyFingerprint == m_builtTlasTopologyFingerprint
+            && transformFingerprint == m_builtTlasTransformFingerprint;
+
+        if (skipTlasBuild)
+        {
+            DxrBreadcrumb("AS tlas-build skipped (unchanged)");
+        }
+        else if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
         {
             DxrBreadcrumb("AS tlas-build failed");
             m_diagnostics.buildStatus = "FAILED: " + error;
             return;
         }
+        else
+        {
+            m_builtTlasTopologyFingerprint = topologyFingerprint;
+            m_builtTlasTransformFingerprint = transformFingerprint;
+        }
+
         DxrBreadcrumb("AS tlas-build end");
         tlasScope.Success();
     }

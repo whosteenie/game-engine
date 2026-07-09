@@ -120,6 +120,8 @@ private:
         UINT32_MAX};
     std::size_t m_geometryObjectCount = 0;
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
+    std::uint64_t m_builtTlasTopologyFingerprint = 0;
+    std::uint64_t m_builtTlasTransformFingerprint = 0;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);
 };
