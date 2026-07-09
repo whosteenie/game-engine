@@ -1978,7 +1978,17 @@ namespace
         test::ExpectNear(rgba[1], 0.0f, 0.05f, "DXR smoke output G should match magenta");
         test::ExpectNear(rgba[2], 1.0f, 0.05f, "DXR smoke output B should match magenta");
 
+        // Release before GfxContext shutdown — these destructors defer D3D12MA frees and run
+        // after D3d12TestContext::Shutdown() if we rely on scope exit alone.
+        dispatchContext.Release();
+        shaderBindingTable.Release();
+        pipeline.Release();
+        tlas.Release();
+        planeBlas.Release();
+        scratch.Release();
+        plane.reset();
         (void)framebuffer.Resize(0, 0);
+        FinalizeD3d12TestSession();
         context.Shutdown();
     }
 }

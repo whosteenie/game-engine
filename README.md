@@ -18,6 +18,60 @@ Optional: copy `dxcompiler.dll` and `dxil.dll` into `vendor/dxc/x64/` before bui
 
 Shaders are HLSL compiled at runtime with DXC (Shader Model 6.0). Albedo textures use `DXGI_FORMAT_R8G8B8A8_UNORM_SRGB`; linear maps (normal, roughness, AO) use `DXGI_FORMAT_R8G8B8A8_UNORM`.
 
+### D3D12 debug layer (optional)
+
+The D3D12 debug layer is **off by default**. It only activates in **Debug** builds when enabled at configure time:
+
+```powershell
+# Enable (reconfigure, then rebuild Debug)
+cmake -S . -B build -DGAME_ENGINE_D3D12_DEBUG_LAYER=ON
+cmake --build build --config Debug --target game-engine
+
+# Disable again
+cmake -S . -B build -DGAME_ENGINE_D3D12_DEBUG_LAYER=OFF
+cmake --build build --config Debug --target game-engine
+```
+
+Validation messages and GPU-based validation slow things down noticeably; use this when debugging D3D12 lifetime or barrier issues. Release builds ignore the flag.
+
+## Tests
+
+### CPU tests (fast — run these routinely)
+
+Registered with CTest; no GPU window required.
+
+```powershell
+cmake --build build --config Debug --target engine-tests descriptor-heap-tests
+
+# Run directly (stdout shows pass/fail lines)
+.\build\Debug\engine-tests.exe
+.\build\Debug\descriptor-heap-tests.exe
+
+# Or via CTest from the build directory
+cd build
+ctest -C Debug --output-on-failure
+ctest -C Debug -R engine-tests --output-on-failure
+ctest -C Debug -R descriptor-heap-tests --output-on-failure
+```
+
+`engine-tests` covers shadow math, lighting probes, color space, rotation utils, DXR settings JSON, and related CPU-side checks. `descriptor-heap-tests` covers the fixed descriptor heap allocator.
+
+### GPU render tests (manual, slower)
+
+Requires a real D3D12 device and RTX for the DXR smoke test. **Not** part of default CTest.
+
+```powershell
+cmake -S . -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
+cmake --build build --config Debug --target d3d12-render-tests
+
+.\build\Debug\d3d12-render-tests.exe
+echo Exit code: $LASTEXITCODE
+```
+
+On success you should see `All D3D12 render tests passed.` and exit code `0`. Failures print `FAIL: ...` lines to stderr. If hardware does not support DXR, the smoke test prints `SKIP: DXR dispatch smoke (no RTX tier)` and still exits `0`.
+
+See [devdoc/testing/renderer-tests-plan.md](devdoc/testing/renderer-tests-plan.md) for the full inventory and roadmap.
+
 ## Renderer
 
 ### Core lighting

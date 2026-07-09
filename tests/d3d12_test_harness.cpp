@@ -95,6 +95,14 @@ void D3d12TestContext::Shutdown()
     glfwTerminate();
 }
 
+void FinalizeD3d12TestSession()
+{
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().WaitForGpuIdle();
+    }
+}
+
 void BindOffscreenTarget(Framebuffer& framebuffer, bool clearAttachments, bool bindDepthStencil);
 
 void BeginOffscreenPass(Framebuffer& framebuffer, const bool bindDepthStencil, const bool waitForGpu)
