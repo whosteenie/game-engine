@@ -1340,8 +1340,6 @@ void Application::Render()
 
     if (editorActive || presentingProjectLoad)
     {
-        GfxContext::Get().WaitForSwapchainFrames();
-
         if (Scene* editorScene = GetEditorTargetScene())
         {
             RunApplicationPhase("apply-deferred-renderer-settings", [&]() {

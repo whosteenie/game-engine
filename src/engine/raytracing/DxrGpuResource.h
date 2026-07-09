@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine/rhi/GfxContext.h"
+
+#include <array>
 #include <cstdint>
 
 #include <d3d12.h>
@@ -30,6 +33,21 @@ bool CreateDxrDefaultBuffer(
 bool CreateDxrScratchBuffer(std::uint64_t sizeInBytes, DxrGpuResource& outResource);
 
 bool CreateDxrUploadBuffer(std::uint64_t sizeInBytes, DxrGpuResource& outResource);
+
+// CRASH-02: one upload buffer per frame-in-flight so CPU writes cannot race GPU reads.
+class DxrUploadRing
+{
+public:
+    void Release();
+    DxrGpuResource& Slot(std::uint32_t frameIndex);
+    const DxrGpuResource& Slot(std::uint32_t frameIndex) const;
+    bool EnsureCapacity(std::uint64_t sizeInBytes);
+    std::uint64_t GetCapacity() const { return m_capacity; }
+
+private:
+    std::array<DxrGpuResource, GfxContext::FrameCount> m_slots{};
+    std::uint64_t m_capacity = 0;
+};
 
 void TransitionResource(
     ID3D12GraphicsCommandList* commandList,

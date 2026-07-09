@@ -146,6 +146,52 @@ bool CreateDxrUploadBuffer(const std::uint64_t sizeInBytes, DxrGpuResource& outR
     return true;
 }
 
+void DxrUploadRing::Release()
+{
+    for (DxrGpuResource& slot : m_slots)
+    {
+        slot.Release();
+    }
+
+    m_capacity = 0;
+}
+
+DxrGpuResource& DxrUploadRing::Slot(const std::uint32_t frameIndex)
+{
+    return m_slots[frameIndex % GfxContext::FrameCount];
+}
+
+const DxrGpuResource& DxrUploadRing::Slot(const std::uint32_t frameIndex) const
+{
+    return m_slots[frameIndex % GfxContext::FrameCount];
+}
+
+bool DxrUploadRing::EnsureCapacity(const std::uint64_t sizeInBytes)
+{
+    if (sizeInBytes == 0)
+    {
+        return false;
+    }
+
+    if (sizeInBytes <= m_capacity)
+    {
+        return true;
+    }
+
+    Release();
+    for (DxrGpuResource& slot : m_slots)
+    {
+        if (!CreateDxrUploadBuffer(sizeInBytes, slot))
+        {
+            Release();
+            return false;
+        }
+    }
+
+    m_capacity = m_slots[0].sizeInBytes;
+    return true;
+}
+
 void TransitionResource(
     ID3D12GraphicsCommandList* commandList,
     ID3D12Resource* resource,

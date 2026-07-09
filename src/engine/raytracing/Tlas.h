@@ -34,7 +34,7 @@ public:
 
 private:
     DxrGpuResource m_result{};
-    DxrGpuResource m_instanceUpload{};
+    DxrUploadRing m_instanceUploadRing{};
     std::uint32_t m_instanceCount = 0;
     bool m_built = false;
 };

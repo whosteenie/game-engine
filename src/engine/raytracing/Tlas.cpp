@@ -4,6 +4,7 @@
 #include "engine/raytracing/DxrHeaders.h"
 #include "engine/raytracing/DxrContext.h"
 #include "engine/raytracing/DxrGpuResource.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <d3d12.h>
 
@@ -23,7 +24,7 @@ std::uint64_t Tlas::GetGpuVirtualAddress() const
 void Tlas::Release()
 {
     m_result.Release();
-    m_instanceUpload.Release();
+    m_instanceUploadRing.Release();
     m_built = false;
     m_instanceCount = 0;
 }
@@ -57,32 +58,30 @@ bool Tlas::Build(
 
     const std::uint64_t instanceUploadSize =
         static_cast<std::uint64_t>(instanceCount) * sizeof(D3D12_RAYTRACING_INSTANCE_DESC);
-    if (m_instanceUpload.sizeInBytes < instanceUploadSize)
+    if (!m_instanceUploadRing.EnsureCapacity(instanceUploadSize))
     {
-        m_instanceUpload.Release();
-        if (!CreateDxrUploadBuffer(instanceUploadSize, m_instanceUpload))
-        {
-            outError = "failed to allocate TLAS instance upload buffer";
-            return false;
-        }
+        outError = "failed to allocate TLAS instance upload buffer";
+        return false;
     }
 
+    DxrGpuResource& instanceUpload =
+        m_instanceUploadRing.Slot(GfxContext::Get().GetFrameIndex());
     void* mapped = nullptr;
-    if (FAILED(m_instanceUpload.resource->Map(0, nullptr, &mapped)))
+    if (FAILED(instanceUpload.resource->Map(0, nullptr, &mapped)))
     {
         outError = "failed to map TLAS instance upload buffer";
         return false;
     }
 
     std::memcpy(mapped, instances.data(), static_cast<std::size_t>(instanceUploadSize));
-    m_instanceUpload.resource->Unmap(0, nullptr);
+    instanceUpload.resource->Unmap(0, nullptr);
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlasInputs{};
     tlasInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
     tlasInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
     tlasInputs.NumDescs = instanceCount;
     tlasInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    tlasInputs.InstanceDescs = m_instanceUpload.GetGpuVirtualAddress();
+    tlasInputs.InstanceDescs = instanceUpload.GetGpuVirtualAddress();
 
     D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO prebuildInfo{};
     device5->GetRaytracingAccelerationStructurePrebuildInfo(&tlasInputs, &prebuildInfo);

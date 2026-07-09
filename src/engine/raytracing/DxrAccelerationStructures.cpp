@@ -29,34 +29,47 @@ DxrAccelerationStructures::~DxrAccelerationStructures()
 void DxrAccelerationStructures::ReleaseGeometryBuffers()
 {
     // CRASH-03: defer descriptor-slot recycling — in-flight rays may still read these.
-    if (m_geometryLookupSrvIndex != UINT32_MAX)
+    for (const std::uint32_t srvIndex : m_geometryLookupSrvIndices)
     {
-        GfxContext::Get().DeferredFreeOffscreenSrv(m_geometryLookupSrvIndex);
-        m_geometryLookupSrvIndex = UINT32_MAX;
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
     }
 
-    if (m_sceneVertexFloatsSrvIndex != UINT32_MAX)
+    for (const std::uint32_t srvIndex : m_sceneVertexFloatsSrvIndices)
     {
-        GfxContext::Get().DeferredFreeOffscreenSrv(m_sceneVertexFloatsSrvIndex);
-        m_sceneVertexFloatsSrvIndex = UINT32_MAX;
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
     }
 
-    if (m_sceneIndicesSrvIndex != UINT32_MAX)
+    for (const std::uint32_t srvIndex : m_sceneIndicesSrvIndices)
     {
-        GfxContext::Get().DeferredFreeOffscreenSrv(m_sceneIndicesSrvIndex);
-        m_sceneIndicesSrvIndex = UINT32_MAX;
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
     }
 
-    if (m_materialSrvIndex != UINT32_MAX)
+    for (const std::uint32_t srvIndex : m_materialSrvIndices)
     {
-        GfxContext::Get().DeferredFreeOffscreenSrv(m_materialSrvIndex);
-        m_materialSrvIndex = UINT32_MAX;
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
     }
 
-    m_geometryLookupBuffer.Release();
-    m_materialBuffer.Release();
-    m_sceneVertexFloatsBuffer.Release();
-    m_sceneIndicesBuffer.Release();
+    m_geometryLookupSrvIndices.fill(UINT32_MAX);
+    m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
+    m_sceneIndicesSrvIndices.fill(UINT32_MAX);
+    m_materialSrvIndices.fill(UINT32_MAX);
+
+    m_geometryLookupRing.Release();
+    m_materialRing.Release();
+    m_sceneVertexFloatsRing.Release();
+    m_sceneIndicesRing.Release();
     m_geometryObjectCount = 0;
 }
 
@@ -228,11 +241,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
 
     const bool sameLayout =
         m_geometryObjectCount == objects.size()
-        && m_geometryLookupBuffer.sizeInBytes
+        && m_geometryLookupRing.GetCapacity()
             >= sizeof(DxrGeometryLookupEntry) * objects.size()
-        && m_materialBuffer.sizeInBytes >= sizeof(DxrMaterialEntry) * objects.size()
-        && m_sceneVertexFloatsBuffer.sizeInBytes >= vertexFloats.size() * sizeof(float)
-        && m_sceneIndicesBuffer.sizeInBytes >= indices.size() * sizeof(std::uint32_t);
+        && m_materialRing.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
+        && m_sceneVertexFloatsRing.GetCapacity() >= vertexFloats.size() * sizeof(float)
+        && m_sceneIndicesRing.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
 
     if (!sameLayout)
     {
@@ -243,27 +256,31 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
-        if (!CreateDxrUploadBuffer(lookupBytes, m_geometryLookupBuffer)
-            || !CreateDxrUploadBuffer(materialBytes, m_materialBuffer)
-            || !CreateDxrUploadBuffer(vertexBytes, m_sceneVertexFloatsBuffer)
-            || !CreateDxrUploadBuffer(indexBytes, m_sceneIndicesBuffer))
+        if (!m_geometryLookupRing.EnsureCapacity(lookupBytes)
+            || !m_materialRing.EnsureCapacity(materialBytes)
+            || !m_sceneVertexFloatsRing.EnsureCapacity(vertexBytes)
+            || !m_sceneIndicesRing.EnsureCapacity(indexBytes))
         {
             outError = "failed to allocate DXR geometry lookup buffers";
             ReleaseGeometryBuffers();
             return false;
         }
 
-        m_geometryLookupSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-        m_materialSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-        m_sceneVertexFloatsSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-        m_sceneIndicesSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
-        if (m_geometryLookupSrvIndex == UINT32_MAX || m_materialSrvIndex == UINT32_MAX
-            || m_sceneVertexFloatsSrvIndex == UINT32_MAX
-            || m_sceneIndicesSrvIndex == UINT32_MAX)
+        for (std::uint32_t frameIndex = 0; frameIndex < GfxContext::FrameCount; ++frameIndex)
         {
-            outError = "failed to allocate DXR geometry lookup SRV descriptors";
-            ReleaseGeometryBuffers();
-            return false;
+            m_geometryLookupSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
+            m_materialSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
+            m_sceneVertexFloatsSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
+            m_sceneIndicesSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
+            if (m_geometryLookupSrvIndices[frameIndex] == UINT32_MAX
+                || m_materialSrvIndices[frameIndex] == UINT32_MAX
+                || m_sceneVertexFloatsSrvIndices[frameIndex] == UINT32_MAX
+                || m_sceneIndicesSrvIndices[frameIndex] == UINT32_MAX)
+            {
+                outError = "failed to allocate DXR geometry lookup SRV descriptors";
+                ReleaseGeometryBuffers();
+                return false;
+            }
         }
 
         auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
@@ -274,74 +291,96 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
             return false;
         }
 
-        D3D12_CPU_DESCRIPTOR_HANDLE lookupHandle{};
-        lookupHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_geometryLookupSrvIndex);
-        D3D12_SHADER_RESOURCE_VIEW_DESC lookupSrvDesc{};
-        lookupSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        lookupSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-        lookupSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        lookupSrvDesc.Buffer.FirstElement = 0;
-        lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
-        lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
-        device->CreateShaderResourceView(m_geometryLookupBuffer.resource, &lookupSrvDesc, lookupHandle);
+        for (std::uint32_t frameIndex = 0; frameIndex < GfxContext::FrameCount; ++frameIndex)
+        {
+            D3D12_CPU_DESCRIPTOR_HANDLE lookupHandle{};
+            lookupHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_geometryLookupSrvIndices[frameIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC lookupSrvDesc{};
+            lookupSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            lookupSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            lookupSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            lookupSrvDesc.Buffer.FirstElement = 0;
+            lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+            lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
+            device->CreateShaderResourceView(
+                m_geometryLookupRing.Slot(frameIndex).resource,
+                &lookupSrvDesc,
+                lookupHandle);
 
-        D3D12_CPU_DESCRIPTOR_HANDLE materialHandle{};
-        materialHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_materialSrvIndex);
-        D3D12_SHADER_RESOURCE_VIEW_DESC materialSrvDesc{};
-        materialSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        materialSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
-        materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        materialSrvDesc.Buffer.FirstElement = 0;
-        materialSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
-        materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
-        device->CreateShaderResourceView(m_materialBuffer.resource, &materialSrvDesc, materialHandle);
+            D3D12_CPU_DESCRIPTOR_HANDLE materialHandle{};
+            materialHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_materialSrvIndices[frameIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC materialSrvDesc{};
+            materialSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            materialSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            materialSrvDesc.Buffer.FirstElement = 0;
+            materialSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+            materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
+            device->CreateShaderResourceView(
+                m_materialRing.Slot(frameIndex).resource,
+                &materialSrvDesc,
+                materialHandle);
 
-        D3D12_CPU_DESCRIPTOR_HANDLE vertexHandle{};
-        vertexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneVertexFloatsSrvIndex);
-        D3D12_SHADER_RESOURCE_VIEW_DESC vertexSrvDesc{};
-        vertexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        vertexSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
-        vertexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        vertexSrvDesc.Buffer.FirstElement = 0;
-        vertexSrvDesc.Buffer.NumElements = static_cast<UINT>(vertexFloats.size());
-        device->CreateShaderResourceView(m_sceneVertexFloatsBuffer.resource, &vertexSrvDesc, vertexHandle);
+            D3D12_CPU_DESCRIPTOR_HANDLE vertexHandle{};
+            vertexHandle.ptr =
+                GfxContext::Get().GetSrvCpuHandle(m_sceneVertexFloatsSrvIndices[frameIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC vertexSrvDesc{};
+            vertexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            vertexSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+            vertexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            vertexSrvDesc.Buffer.FirstElement = 0;
+            vertexSrvDesc.Buffer.NumElements = static_cast<UINT>(vertexFloats.size());
+            device->CreateShaderResourceView(
+                m_sceneVertexFloatsRing.Slot(frameIndex).resource,
+                &vertexSrvDesc,
+                vertexHandle);
 
-        D3D12_CPU_DESCRIPTOR_HANDLE indexHandle{};
-        indexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneIndicesSrvIndex);
-        D3D12_SHADER_RESOURCE_VIEW_DESC indexSrvDesc{};
-        indexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-        indexSrvDesc.Format = DXGI_FORMAT_R32_UINT;
-        indexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-        indexSrvDesc.Buffer.FirstElement = 0;
-        indexSrvDesc.Buffer.NumElements = static_cast<UINT>(indices.size());
-        device->CreateShaderResourceView(m_sceneIndicesBuffer.resource, &indexSrvDesc, indexHandle);
+            D3D12_CPU_DESCRIPTOR_HANDLE indexHandle{};
+            indexHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_sceneIndicesSrvIndices[frameIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC indexSrvDesc{};
+            indexSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            indexSrvDesc.Format = DXGI_FORMAT_R32_UINT;
+            indexSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            indexSrvDesc.Buffer.FirstElement = 0;
+            indexSrvDesc.Buffer.NumElements = static_cast<UINT>(indices.size());
+            device->CreateShaderResourceView(
+                m_sceneIndicesRing.Slot(frameIndex).resource,
+                &indexSrvDesc,
+                indexHandle);
+        }
 
         m_geometryObjectCount = objects.size();
     }
 
+    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+    DxrGpuResource& geometryLookupUpload = m_geometryLookupRing.Slot(frameIndex);
+    DxrGpuResource& materialUpload = m_materialRing.Slot(frameIndex);
+    DxrGpuResource& vertexUpload = m_sceneVertexFloatsRing.Slot(frameIndex);
+    DxrGpuResource& indexUpload = m_sceneIndicesRing.Slot(frameIndex);
+
     void* mapped = nullptr;
-    if (SUCCEEDED(m_geometryLookupBuffer.resource->Map(0, nullptr, &mapped)))
+    if (SUCCEEDED(geometryLookupUpload.resource->Map(0, nullptr, &mapped)))
     {
         std::memcpy(mapped, lookupEntries.data(), lookupEntries.size() * sizeof(DxrGeometryLookupEntry));
-        m_geometryLookupBuffer.resource->Unmap(0, nullptr);
+        geometryLookupUpload.resource->Unmap(0, nullptr);
     }
 
-    if (SUCCEEDED(m_materialBuffer.resource->Map(0, nullptr, &mapped)))
+    if (SUCCEEDED(materialUpload.resource->Map(0, nullptr, &mapped)))
     {
         std::memcpy(mapped, materialEntries.data(), materialEntries.size() * sizeof(DxrMaterialEntry));
-        m_materialBuffer.resource->Unmap(0, nullptr);
+        materialUpload.resource->Unmap(0, nullptr);
     }
 
-    if (SUCCEEDED(m_sceneVertexFloatsBuffer.resource->Map(0, nullptr, &mapped)))
+    if (SUCCEEDED(vertexUpload.resource->Map(0, nullptr, &mapped)))
     {
         std::memcpy(mapped, vertexFloats.data(), vertexFloats.size() * sizeof(float));
-        m_sceneVertexFloatsBuffer.resource->Unmap(0, nullptr);
+        vertexUpload.resource->Unmap(0, nullptr);
     }
 
-    if (SUCCEEDED(m_sceneIndicesBuffer.resource->Map(0, nullptr, &mapped)))
+    if (SUCCEEDED(indexUpload.resource->Map(0, nullptr, &mapped)))
     {
         std::memcpy(mapped, indices.data(), indices.size() * sizeof(std::uint32_t));
-        m_sceneIndicesBuffer.resource->Unmap(0, nullptr);
+        indexUpload.resource->Unmap(0, nullptr);
     }
 
     return true;

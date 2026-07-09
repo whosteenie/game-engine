@@ -4,7 +4,9 @@
 #include "engine/raytracing/DxrDiagnostics.h"
 #include "engine/raytracing/DxrGpuResource.h"
 #include "engine/raytracing/Tlas.h"
+#include "engine/rhi/GfxContext.h"
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -52,11 +54,30 @@ public:
     std::uint64_t GetTlasGpuVirtualAddress() const { return m_tlas.GetGpuVirtualAddress(); }
     ID3D12Resource* GetTlasResource() const { return m_tlas.GetResultResource(); }
 
-    std::uint32_t GetGeometryLookupSrvIndex() const { return m_geometryLookupSrvIndex; }
-    std::uint32_t GetSceneVertexFloatsSrvIndex() const { return m_sceneVertexFloatsSrvIndex; }
-    std::uint32_t GetSceneIndicesSrvIndex() const { return m_sceneIndicesSrvIndex; }
-    std::uint32_t GetMaterialSrvIndex() const { return m_materialSrvIndex; }
-    bool HasGeometryLookup() const { return m_geometryLookupSrvIndex != UINT32_MAX; }
+    std::uint32_t GetGeometryLookupSrvIndex() const
+    {
+        return m_geometryLookupSrvIndices[GfxContext::Get().GetFrameIndex()];
+    }
+
+    std::uint32_t GetSceneVertexFloatsSrvIndex() const
+    {
+        return m_sceneVertexFloatsSrvIndices[GfxContext::Get().GetFrameIndex()];
+    }
+
+    std::uint32_t GetSceneIndicesSrvIndex() const
+    {
+        return m_sceneIndicesSrvIndices[GfxContext::Get().GetFrameIndex()];
+    }
+
+    std::uint32_t GetMaterialSrvIndex() const
+    {
+        return m_materialSrvIndices[GfxContext::Get().GetFrameIndex()];
+    }
+
+    bool HasGeometryLookup() const
+    {
+        return m_geometryLookupSrvIndices[GfxContext::Get().GetFrameIndex()] != UINT32_MAX;
+    }
     std::size_t GetGeometryObjectCount() const { return m_geometryObjectCount; }
 
     void Release();
@@ -74,14 +95,22 @@ private:
     std::uint32_t m_scratchResourceState = 0;
     bool m_anyBlasBuiltThisFrame = false;
 
-    DxrGpuResource m_geometryLookupBuffer{};
-    DxrGpuResource m_sceneVertexFloatsBuffer{};
-    DxrGpuResource m_sceneIndicesBuffer{};
-    DxrGpuResource m_materialBuffer{};
-    std::uint32_t m_geometryLookupSrvIndex = UINT32_MAX;
-    std::uint32_t m_sceneVertexFloatsSrvIndex = UINT32_MAX;
-    std::uint32_t m_sceneIndicesSrvIndex = UINT32_MAX;
-    std::uint32_t m_materialSrvIndex = UINT32_MAX;
+    DxrUploadRing m_geometryLookupRing{};
+    DxrUploadRing m_sceneVertexFloatsRing{};
+    DxrUploadRing m_sceneIndicesRing{};
+    DxrUploadRing m_materialRing{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_geometryLookupSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_sceneVertexFloatsSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_sceneIndicesSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_materialSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
     std::size_t m_geometryObjectCount = 0;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);

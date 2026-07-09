@@ -164,6 +164,7 @@ public:
     std::uint8_t GetSupportedMsaaSampleCountsMask() const { return m_supportedMsaaSampleCountsMask; }
     bool IsMsaaSampleCountSupported(int sampleCount) const;
     bool IsFrameRecording() const { return m_frameRecording; }
+    std::uint32_t GetFrameIndex() const { return m_frameIndex; }
 
     // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
     bool IsRaytracingSupported() const;
