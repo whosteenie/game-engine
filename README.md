@@ -93,6 +93,8 @@ cmake --build build --config Debug --target d3d12-render-tests
 # Via CTest (from build directory; never runs unless you pass -L gpu)
 cd build
 ctest -C Debug -L gpu-smoke --output-on-failure
+ctest -C Debug -L gpu-pbr --output-on-failure
+ctest -C Debug -L gpu-dxr --output-on-failure
 ctest -C Debug -L gpu --output-on-failure
 ```
 

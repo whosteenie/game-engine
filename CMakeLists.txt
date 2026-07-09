@@ -593,4 +593,16 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         LABELS "gpu;gpu-smoke"
         TIMEOUT 120
         WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
+
+    add_test(NAME gpu-pbr COMMAND d3d12-render-tests --tier=2)
+    set_tests_properties(gpu-pbr PROPERTIES
+        LABELS "gpu;gpu-pbr"
+        TIMEOUT 180
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
+
+    add_test(NAME gpu-dxr COMMAND d3d12-render-tests --tier=4)
+    set_tests_properties(gpu-dxr PROPERTIES
+        LABELS "gpu;gpu-dxr"
+        TIMEOUT 180
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
 endif()
