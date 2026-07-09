@@ -5,8 +5,11 @@
 struct SystemResourceSnapshot
 {
     float processCpuPercent = 0.0f;
-    float gpuUtilizationPercent = -1.0f;
-    bool gpuUtilizationAvailable = false;
+    // Windows perf counter (max across GPU Engine instances); -1 when unavailable.
+    float gpuSystemUtilizationPercent = -1.0f;
+    bool gpuSystemUtilizationAvailable = false;
+    // Instrumented GPU pass time as a fraction of the last frame wall time (0-100).
+    float gpuInstrumentedFramePercent = -1.0f;
 
     std::uint64_t processWorkingSetBytes = 0;
     std::uint64_t processPrivateBytes = 0;

@@ -1,5 +1,6 @@
 #include "app/panels/lighting/LightingPanelUi.h"
 
+#include "app/editor/EditorWidgets.h"
 #include "app/scene/SceneRenderer.h"
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/RenderDebug.h"
@@ -9,33 +10,14 @@
 
 namespace LightingPanelUi
 {
-    TextWrapScope::TextWrapScope()
-    {
-        const float wrapWidth = ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x;
-        if (wrapWidth > 0.0f)
-        {
-            ImGui::PushTextWrapPos(wrapWidth);
-            m_active = true;
-        }
-    }
-
-    TextWrapScope::~TextWrapScope()
-    {
-        if (m_active)
-        {
-            ImGui::PopTextWrapPos();
-        }
-    }
-
     void DrawWrappedNote(const char* text)
     {
-        const TextWrapScope wrap;
-        ImGui::TextDisabled("%s", text);
+        EditorWidgets::TextWrappedDisabled(text);
     }
 
     void DrawWrappedHelp(const char* text)
     {
-        const TextWrapScope wrap;
+        const EditorWidgets::TextWrapScope wrap;
         ImGui::TextWrapped("%s", text);
     }
 

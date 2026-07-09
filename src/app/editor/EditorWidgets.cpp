@@ -47,4 +47,28 @@ namespace EditorWidgets
         }
         return changed;
     }
+
+    TextWrapScope::TextWrapScope()
+    {
+        const float wrapWidth = ImGui::GetCursorPos().x + ImGui::GetContentRegionAvail().x;
+        if (wrapWidth > 0.0f)
+        {
+            ImGui::PushTextWrapPos(wrapWidth);
+            m_active = true;
+        }
+    }
+
+    TextWrapScope::~TextWrapScope()
+    {
+        if (m_active)
+        {
+            ImGui::PopTextWrapPos();
+        }
+    }
+
+    void TextWrappedDisabled(const char* text)
+    {
+        const TextWrapScope wrap;
+        ImGui::TextDisabled("%s", text);
+    }
 }

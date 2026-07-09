@@ -5,18 +5,6 @@ class ScreenSpaceEffects;
 
 namespace LightingPanelUi
 {
-    struct TextWrapScope
-    {
-        TextWrapScope();
-        ~TextWrapScope();
-
-        TextWrapScope(const TextWrapScope&) = delete;
-        TextWrapScope& operator=(const TextWrapScope&) = delete;
-
-    private:
-        bool m_active = false;
-    };
-
     void DrawWrappedNote(const char* text);
     void DrawWrappedHelp(const char* text);
 

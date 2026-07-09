@@ -2,6 +2,10 @@
 
 #include "engine/rhi/GfxContext.h"
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -13,6 +17,90 @@
 #pragma comment(lib, "Psapi.lib")
 #pragma comment(lib, "Pdh.lib")
 #endif
+
+namespace
+{
+#ifdef _WIN32
+    bool ReadPdhCounterMaxPercent(PDH_HCOUNTER counter, float& outMaxPercent)
+    {
+        DWORD bufferSize = 0;
+        DWORD itemCount = 0;
+        PDH_STATUS status = PdhGetFormattedCounterArrayW(
+            counter,
+            PDH_FMT_DOUBLE | PDH_FMT_NOCAP100,
+            &bufferSize,
+            &itemCount,
+            nullptr);
+        if (status != PDH_MORE_DATA)
+        {
+            PDH_FMT_COUNTERVALUE singleValue{};
+            status = PdhGetFormattedCounterValue(counter, PDH_FMT_DOUBLE | PDH_FMT_NOCAP100, nullptr, &singleValue);
+            if (status != ERROR_SUCCESS
+                || (singleValue.CStatus != PDH_CSTATUS_VALID_DATA
+                    && singleValue.CStatus != PDH_CSTATUS_NEW_DATA))
+            {
+                return false;
+            }
+
+            outMaxPercent = static_cast<float>(singleValue.doubleValue);
+            return true;
+        }
+
+        std::vector<std::uint8_t> buffer(bufferSize);
+        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM_W*>(buffer.data());
+        status = PdhGetFormattedCounterArrayW(
+            counter,
+            PDH_FMT_DOUBLE | PDH_FMT_NOCAP100,
+            &bufferSize,
+            &itemCount,
+            items);
+        if (status != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        double maxPercent = 0.0;
+        bool found = false;
+        for (DWORD index = 0; index < itemCount; ++index)
+        {
+            const PDH_FMT_COUNTERVALUE& value = items[index].FmtValue;
+            if (value.CStatus != PDH_CSTATUS_VALID_DATA && value.CStatus != PDH_CSTATUS_NEW_DATA)
+            {
+                continue;
+            }
+
+            maxPercent = std::max(maxPercent, value.doubleValue);
+            found = true;
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        outMaxPercent = static_cast<float>(maxPercent);
+        return true;
+    }
+
+    bool TryAddGpuUtilizationCounter(PDH_HQUERY query, PDH_HCOUNTER* outCounter)
+    {
+        static const wchar_t* kCounterPaths[] = {
+            L"\\GPU Engine(*engtype_3D*)\\Utilization Percentage",
+            L"\\GPU Engine(*)\\Utilization Percentage",
+        };
+
+        for (const wchar_t* path : kCounterPaths)
+        {
+            if (PdhAddEnglishCounterW(query, path, 0, outCounter) == ERROR_SUCCESS)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+#endif
+}
 
 struct SystemResourcesMonitor::Impl
 {
@@ -27,6 +115,8 @@ struct SystemResourcesMonitor::Impl
     PDH_HCOUNTER gpuCounter = nullptr;
     bool gpuCounterReady = false;
     bool gpuCounterPrimed = false;
+    float gpuSystemEma = 0.0f;
+    int gpuSystemSampleCount = 0;
 #endif
 };
 
@@ -41,12 +131,7 @@ SystemResourcesMonitor::SystemResourcesMonitor()
 
     if (PdhOpenQueryW(nullptr, 0, &m_impl->gpuQuery) == ERROR_SUCCESS)
     {
-        const PDH_STATUS addStatus = PdhAddEnglishCounterW(
-            m_impl->gpuQuery,
-            L"\\GPU Engine(*)\\Utilization Percentage",
-            0,
-            &m_impl->gpuCounter);
-        if (addStatus == ERROR_SUCCESS)
+        if (TryAddGpuUtilizationCounter(m_impl->gpuQuery, &m_impl->gpuCounter))
         {
             m_impl->gpuCounterReady = true;
             PdhCollectQueryData(m_impl->gpuQuery);
@@ -72,8 +157,12 @@ SystemResourcesMonitor::~SystemResourcesMonitor()
     delete m_impl;
 }
 
-void SystemResourcesMonitor::OnFrame(const double /*deltaTimeSeconds*/)
+void SystemResourcesMonitor::OnFrame(const double deltaTimeSeconds)
 {
+    m_snapshot.gpuSystemUtilizationAvailable = false;
+    m_snapshot.gpuSystemUtilizationPercent = -1.0f;
+    m_snapshot.gpuInstrumentedFramePercent = -1.0f;
+
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS_EX processMemory{};
     processMemory.cb = sizeof(processMemory);
@@ -151,19 +240,22 @@ void SystemResourcesMonitor::OnFrame(const double /*deltaTimeSeconds*/)
         {
             if (m_impl->gpuCounterPrimed)
             {
-                PDH_FMT_COUNTERVALUE counterValue{};
-                if (PdhGetFormattedCounterValue(
-                        m_impl->gpuCounter,
-                        PDH_FMT_DOUBLE,
-                        nullptr,
-                        &counterValue)
-                    == ERROR_SUCCESS
-                    && (counterValue.CStatus == PDH_CSTATUS_VALID_DATA
-                        || counterValue.CStatus == PDH_CSTATUS_NEW_DATA))
+                float maxPercent = 0.0f;
+                if (ReadPdhCounterMaxPercent(m_impl->gpuCounter, maxPercent))
                 {
-                    m_snapshot.gpuUtilizationPercent =
-                        static_cast<float>(counterValue.doubleValue);
-                    m_snapshot.gpuUtilizationAvailable = true;
+                    constexpr float kSmoothing = 0.15f;
+                    if (m_impl->gpuSystemSampleCount == 0)
+                    {
+                        m_impl->gpuSystemEma = maxPercent;
+                    }
+                    else
+                    {
+                        m_impl->gpuSystemEma =
+                            m_impl->gpuSystemEma * (1.0f - kSmoothing) + maxPercent * kSmoothing;
+                    }
+                    ++m_impl->gpuSystemSampleCount;
+                    m_snapshot.gpuSystemUtilizationPercent = m_impl->gpuSystemEma;
+                    m_snapshot.gpuSystemUtilizationAvailable = true;
                 }
             }
             else
@@ -182,8 +274,18 @@ void SystemResourcesMonitor::OnFrame(const double /*deltaTimeSeconds*/)
         m_snapshot.gpuLocalBudgetBytes = gpuMemory.localBudgetBytes;
         m_snapshot.d3d12LocalAllocatedBytes = gpuMemory.d3d12LocalAllocatedBytes;
         m_snapshot.gpuMemoryValid = gpuMemory.valid;
+
+        const float gpuTotalMs = GfxContext::Get().GetGpuTotalMs();
+        if (deltaTimeSeconds > 0.0 && gpuTotalMs > 0.0f)
+        {
+            m_snapshot.gpuInstrumentedFramePercent = std::clamp(
+                gpuTotalMs / static_cast<float>(deltaTimeSeconds * 1000.0) * 100.0f,
+                0.0f,
+                100.0f);
+        }
     }
 #else
+    (void)deltaTimeSeconds;
     (void)m_impl;
 #endif
 }

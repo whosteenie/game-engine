@@ -303,6 +303,28 @@ namespace
         std::snprintf(overlay, sizeof(overlay), "%.0f%%", usage * 100.0f);
         ImGui::ProgressBar(usage, ImVec2(-1.0f, 0.0f), overlay);
     }
+
+    void DrawPercentRow(const char* label, const float percent, const bool available)
+    {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(label);
+        ImGui::TableNextColumn();
+        if (available && percent >= 0.0f)
+        {
+            ImGui::Text("%.0f%%", percent);
+            ImGui::TableNextColumn();
+            ImGui::ProgressBar(
+                std::clamp(percent / 100.0f, 0.0f, 1.0f),
+                ImVec2(-1.0f, 0.0f));
+        }
+        else
+        {
+            ImGui::TextDisabled("N/A");
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("-");
+        }
+    }
 }
 
 void PerformancePanel::OnFrame(const double deltaTimeSeconds)
@@ -410,7 +432,7 @@ void PerformancePanel::Draw(
             0.0f,
             std::max(m_maxFrameMs, 33.3f),
             plotSize);
-        ImGui::TextDisabled("Rolling window: last %d frames", kHistorySize);
+        EditorWidgets::TextWrappedDisabled("Rolling window: last 120 frames");
     }
 
     if (ImGui::CollapsingHeader("System resources", ImGuiTreeNodeFlags_DefaultOpen))
@@ -448,26 +470,44 @@ void PerformancePanel::Draw(
 
             if (resources.gpuMemoryValid)
             {
-                const std::uint64_t vramTotal =
-                    resources.gpuDedicatedTotalBytes > 0
-                        ? resources.gpuDedicatedTotalBytes
-                        : resources.gpuLocalBudgetBytes;
-                DrawUsageRow("VRAM (process)", resources.gpuLocalUsageBytes, vramTotal);
+                const std::uint64_t vramBarTotal =
+                    resources.gpuLocalBudgetBytes > 0
+                        ? resources.gpuLocalBudgetBytes
+                        : resources.gpuDedicatedTotalBytes;
+                DrawUsageRow(
+                    "VRAM (process)",
+                    resources.gpuLocalUsageBytes,
+                    vramBarTotal > 0 ? vramBarTotal : 1);
 
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextUnformatted("D3D12 allocated");
-                ImGui::TableNextColumn();
-                char allocatedText[32];
-                FormatByteSize(resources.d3d12LocalAllocatedBytes, allocatedText, sizeof(allocatedText));
-                ImGui::TextUnformatted(allocatedText);
-                ImGui::TableNextColumn();
-                const float d3d12Share =
-                    vramTotal > 0
-                        ? static_cast<float>(resources.d3d12LocalAllocatedBytes)
-                            / static_cast<float>(vramTotal)
-                        : 0.0f;
-                ImGui::ProgressBar(d3d12Share, ImVec2(-1.0f, 0.0f));
+                if (resources.gpuDedicatedTotalBytes > 0 && resources.gpuLocalBudgetBytes > 0)
+                {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::TextUnformatted("VRAM (dedicated)");
+                    ImGui::TableNextColumn();
+                    char usedText[32];
+                    char dedicatedText[32];
+                    FormatByteSize(resources.gpuLocalUsageBytes, usedText, sizeof(usedText));
+                    FormatByteSize(
+                        resources.gpuDedicatedTotalBytes,
+                        dedicatedText,
+                        sizeof(dedicatedText));
+                    ImGui::Text("%s / %s", usedText, dedicatedText);
+                    ImGui::TableNextColumn();
+                    const float dedicatedUsage = static_cast<float>(resources.gpuLocalUsageBytes)
+                        / static_cast<float>(resources.gpuDedicatedTotalBytes);
+                    char overlay[16];
+                    std::snprintf(overlay, sizeof(overlay), "%.0f%%", dedicatedUsage * 100.0f);
+                    ImGui::ProgressBar(
+                        std::clamp(dedicatedUsage, 0.0f, 1.0f),
+                        ImVec2(-1.0f, 0.0f),
+                        overlay);
+                }
+
+                DrawUsageRow(
+                    "D3D12 allocated",
+                    resources.d3d12LocalAllocatedBytes,
+                    vramBarTotal > 0 ? vramBarTotal : resources.gpuDedicatedTotalBytes);
             }
             else
             {
@@ -476,36 +516,31 @@ void PerformancePanel::Draw(
                 ImGui::TextUnformatted("VRAM");
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("GPU not ready");
-            }
-
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::TextUnformatted("GPU load");
-            ImGui::TableNextColumn();
-            if (resources.gpuUtilizationAvailable)
-            {
-                ImGui::Text("%.0f%%", resources.gpuUtilizationPercent);
-                ImGui::TableNextColumn();
-                ImGui::ProgressBar(
-                    std::clamp(resources.gpuUtilizationPercent / 100.0f, 0.0f, 1.0f),
-                    ImVec2(-1.0f, 0.0f));
-            }
-            else
-            {
-                ImGui::TextDisabled("N/A");
                 ImGui::TableNextColumn();
                 ImGui::TextDisabled("-");
             }
+
+            DrawPercentRow(
+                "GPU load (system)",
+                resources.gpuSystemUtilizationPercent,
+                resources.gpuSystemUtilizationAvailable);
+            DrawPercentRow(
+                "GPU frame (instrumented)",
+                resources.gpuInstrumentedFramePercent,
+                resources.gpuInstrumentedFramePercent >= 0.0f);
 
             ImGui::EndTable();
         }
 
         if (GfxContext::Get().IsInitialized())
         {
-            ImGui::TextDisabled("GPU: %s", GfxContext::Get().GetAdapterDescription().c_str());
+            EditorWidgets::TextWrappedDisabled(
+                ("GPU: " + GfxContext::Get().GetAdapterDescription()).c_str());
         }
-        ImGui::TextDisabled(
-            "VRAM usage is per-process (DXGI). GPU load uses Windows perf counters when available.");
+        EditorWidgets::TextWrappedDisabled(
+            "VRAM is process footprint (DXGI/D3D12MA), not instantaneous load. It stays flat while "
+            "resolution and assets are unchanged. GPU frame % is instrumented pass time / wall frame; "
+            "system GPU load uses Windows perf counters (3D engines).");
     }
 
     if (ImGui::CollapsingHeader("GPU passes", ImGuiTreeNodeFlags_DefaultOpen))
@@ -513,8 +548,9 @@ void PerformancePanel::Draw(
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         if (timings.empty())
         {
-            ImGui::TextDisabled("No GPU timing data yet.");
-            ImGui::TextDisabled("(timestamp queries unavailable or first frames)");
+            EditorWidgets::TextWrappedDisabled("No GPU timing data yet.");
+            EditorWidgets::TextWrappedDisabled(
+                "(timestamp queries unavailable or first frames)");
         }
         else
         {
@@ -541,8 +577,9 @@ void PerformancePanel::Draw(
             }
 
             ImGui::Text("GPU total (top-level passes): %.3f ms", gpuTotalMs);
-            ImGui::TextDisabled(
-                "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not double-counted.");
+            EditorWidgets::TextWrappedDisabled(
+                "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
+                "double-counted.");
         }
     }
 

@@ -26,4 +26,18 @@ namespace EditorWidgets
 
     bool ColorEditVec3(const char* label, glm::vec3& value);
     bool SliderVec3(const char* label, glm::vec3& value, float min, float max);
+
+    struct TextWrapScope
+    {
+        TextWrapScope();
+        ~TextWrapScope();
+
+        TextWrapScope(const TextWrapScope&) = delete;
+        TextWrapScope& operator=(const TextWrapScope&) = delete;
+
+    private:
+        bool m_active = false;
+    };
+
+    void TextWrappedDisabled(const char* text);
 }
