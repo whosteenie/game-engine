@@ -1462,18 +1462,31 @@ void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, cons
 
 namespace
 {
+    float RadicalInverse(const std::uint32_t index, const std::uint32_t base)
+    {
+        float result = 0.0f;
+        float fraction = 1.0f;
+        std::uint32_t i = index;
+        while (i > 0)
+        {
+            fraction /= static_cast<float>(base);
+            result += fraction * static_cast<float>(i % base);
+            i /= base;
+        }
+        return result;
+    }
+
+    // Halton(2,3) sub-pixel jitter for TAA/DLSS. DLSS-RR Integration Guide §3.6 recommends ≥32
+    // distinct phases; 64-cycle procedural sequence (no table, no short repeat).
     glm::vec2 HaltonJitter(const int frameIndex, const int width, const int height)
     {
-        static constexpr float kHalton23[][2] = {
-            {0.0f, 0.0f},         {0.5f, 0.333333f},    {0.25f, 0.666667f},   {0.75f, 0.111111f},
-            {0.125f, 0.444444f},  {0.625f, 0.777778f},  {0.375f, 0.222222f},  {0.875f, 0.555556f},
-            {0.0625f, 0.888889f}, {0.5625f, 0.037037f}, {0.3125f, 0.37037f},  {0.8125f, 0.703704f},
-            {0.1875f, 0.148148f}, {0.6875f, 0.481481f}, {0.4375f, 0.814815f}, {0.9375f, 0.259259f},
-        };
-
-        const int sampleIndex = frameIndex % 16;
-        const float jitterX = ((kHalton23[sampleIndex][0] - 0.5f) * 2.0f) / static_cast<float>(width);
-        const float jitterY = ((kHalton23[sampleIndex][1] - 0.5f) * 2.0f) / static_cast<float>(height);
+        static constexpr int kPhaseCount = 64;
+        const std::uint32_t sampleIndex =
+            static_cast<std::uint32_t>(frameIndex % kPhaseCount);
+        const float haltonX = RadicalInverse(sampleIndex, 2);
+        const float haltonY = RadicalInverse(sampleIndex, 3);
+        const float jitterX = ((haltonX - 0.5f) * 2.0f) / static_cast<float>(width);
+        const float jitterY = ((haltonY - 0.5f) * 2.0f) / static_cast<float>(height);
         return glm::vec2(jitterX, jitterY);
     }
 }
