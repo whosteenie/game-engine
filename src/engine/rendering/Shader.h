@@ -22,6 +22,8 @@ struct ShaderSamplerOverrides
     // Forces CLAMP addressing on every register (post-process reads must not wrap across
     // screen or LUT edges).
     bool clampAllRegisters = false;
+    // Bit N forces sN to MIN_MAG_MIP_LINEAR + CLAMP (HDR equirect environment reads).
+    std::uint32_t linearClampRegisterMask = 0;
 };
 
 class Shader

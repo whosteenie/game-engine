@@ -23,7 +23,8 @@ namespace
 SkyboxRenderer::SkyboxRenderer()
     : m_shader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::SkyBackgroundFragmentShader))
+          EngineConstants::SkyBackgroundFragmentShader,
+          ShaderSamplerOverrides{0, false, 1u << 0}))
 {
     m_quadVertexBuffer.Create(
         GpuBuffer::Type::Vertex,

@@ -400,7 +400,8 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           ShaderSamplerOverrides{(1u << 1) | (1u << 2), true})),
       m_compositeShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::ScreenCompositeFragmentShader)),
+          EngineConstants::ScreenCompositeFragmentShader,
+          ShaderSamplerOverrides{0, false, 1u << 5})),
       m_bloomExtractShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::BloomExtractFragmentShader)),
@@ -465,7 +466,8 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::RadianceDebugFragmentShader)),
       m_temporalReprojectShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
-          EngineConstants::TemporalReprojectFragmentShader)),
+          EngineConstants::TemporalReprojectFragmentShader,
+          ShaderSamplerOverrides{1u << 2, false, 0})),
       m_giDepthHistoryShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GiDepthHistoryFragmentShader)),
