@@ -11,7 +11,15 @@ namespace gpu_render_tests
     constexpr int kTierEditor = 3;
     constexpr int kTierDxr = 4;
     constexpr int kTierPathTracing = 5;
-    constexpr int kTierFull = 6;
+    constexpr int kTierMax = kTierPathTracing;
+
+    enum class TierSelectionMode
+    {
+        Through,
+        Exact,
+        Custom,
+        All,
+    };
 
     struct TestEntry
     {
@@ -23,7 +31,10 @@ namespace gpu_render_tests
 
     struct RunOptions
     {
-        int maxTier = kTierSmoke;
+        TierSelectionMode tierMode = TierSelectionMode::Through;
+        int throughTier = kTierSmoke;
+        int exactTier = kTierSmoke;
+        std::vector<int> customTiers;
         std::string filter;
         bool listOnly = false;
         bool showHelp = false;
@@ -32,6 +43,9 @@ namespace gpu_render_tests
     RunOptions ParseCommandLine(int argc, char** argv);
     void PrintHelp();
     void PrintTestList(const std::vector<TestEntry>& tests, const RunOptions& options);
+
+    bool EntryMatchesTierSelection(int entryTier, const RunOptions& options);
+    bool SelectionIncludesTierAtLeast(const RunOptions& options, int minTier);
 
     const std::vector<TestEntry>& GetTestRegistry();
     int Run(const RunOptions& options);

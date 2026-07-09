@@ -10,7 +10,10 @@ param(
     [string]$Config = "Debug",
     [ValidateSet("", "Cpu", "Gpu", "All", "List", "Build")]
     [string]$Run = "",
-    [int]$Tier = 1
+    [int]$Tier = 1,
+    [ValidateSet("", "Through", "Exact", "All", "Custom")]
+    [string]$GpuMode = "Through",
+    [string]$Tiers = ""
 )
 
 Set-StrictMode -Version Latest
@@ -217,21 +220,132 @@ function Get-CpuTestList {
     return $tests
 }
 
+function Get-GpuTierCliArguments {
+    param(
+        [ValidateSet("Through", "Exact", "All", "Custom")]
+        [string]$Mode,
+        [int]$Tier = 1,
+        [string]$Tiers = ""
+    )
+
+    switch ($Mode) {
+        "Through" { return @("--through=$Tier") }
+        "Exact"   { return @("--tier=$Tier") }
+        "All"     { return @("--all") }
+        "Custom"  { return @("--tiers=$Tiers") }
+    }
+}
+
+function Get-GpuRunLabel {
+    param(
+        [ValidateSet("Through", "Exact", "All", "Custom")]
+        [string]$Mode,
+        [int]$Tier = 1,
+        [string]$Tiers = ""
+    )
+
+    switch ($Mode) {
+        "Through" { return ("gpu tiers 1..{0}" -f $Tier) }
+        "Exact"   { return ("gpu tier {0} only" -f $Tier) }
+        "All"     { return "gpu all tiers" }
+        "Custom"  { return ("gpu tiers {0}" -f $Tiers) }
+    }
+}
+
+function Read-TierSetExpression {
+    param([string]$Prompt = "Tier set (e.g. 1,2,4 or 1-3,5)")
+
+    while ($true) {
+        $raw = Read-Host $Prompt
+        if ([string]::IsNullOrWhiteSpace($raw)) {
+            return $null
+        }
+
+        $trimmed = $raw.Trim()
+        if ($trimmed -eq '0') {
+            return $null
+        }
+
+        $normalized = ($trimmed -replace '\s', '')
+        if ($normalized -match '^(?i)(all|\d+(-\d+)?(,\d+(-\d+)?)*)$') {
+            return $trimmed
+        }
+
+        Write-Host "Enter 0 (back), a comma-separated tier list (spaces OK), range, or 'all'." -ForegroundColor DarkYellow
+    }
+}
+
+function Read-GpuRunSelection {
+    Write-Host ""
+    Write-Host " GPU run mode:" -ForegroundColor Cyan
+    Write-Host "  1) Cumulative through tier N (tiers 1..N)"
+    Write-Host "  2) Only tier N"
+    Write-Host "  3) All tiers"
+    Write-Host "  4) Custom tier set (e.g. 1,2,4 or 1-3,5)"
+    Write-Host "   0) Back"
+
+    $mode = Read-IntChoice -Prompt "Mode [0=back, 1-4] (default 1)" -Min 1 -Max 4 -Default 1 -AllowBack
+    if ($null -eq $mode) {
+        return $null
+    }
+
+    if ($mode -eq 3) {
+        return [pscustomobject]@{
+            Label     = Get-GpuRunLabel -Mode All
+            Arguments = Get-GpuTierCliArguments -Mode All
+        }
+    }
+
+    if ($mode -eq 4) {
+        $tierSet = Read-TierSetExpression -Prompt "Tier set [0=back] (e.g. 1,2,4)"
+        if ($null -eq $tierSet) {
+            return $null
+        }
+
+        return [pscustomobject]@{
+            Label     = Get-GpuRunLabel -Mode Custom -Tiers $tierSet
+            Arguments = Get-GpuTierCliArguments -Mode Custom -Tiers $tierSet
+        }
+    }
+
+    $tier = Read-IntChoice -Prompt "Tier [0=back, 1-5] (default 1)" -Min 1 -Max 5 -Default 1 -AllowBack
+    if ($null -eq $tier) {
+        return $null
+    }
+
+    if ($mode -eq 1) {
+        return [pscustomobject]@{
+            Label     = Get-GpuRunLabel -Mode Through -Tier $tier
+            Arguments = Get-GpuTierCliArguments -Mode Through -Tier $tier
+        }
+    }
+
+    return [pscustomobject]@{
+        Label     = Get-GpuRunLabel -Mode Exact -Tier $tier
+        Arguments = Get-GpuTierCliArguments -Mode Exact -Tier $tier
+    }
+}
+
 function Get-GpuTestList {
-    param([int]$MaxTier = 6)
+    param([int]$MaxTier = 0)
 
     $tests = @()
     if (-not (Test-Path -LiteralPath $GpuRenderTestsExe)) {
-        return ,$tests
+        return $tests
     }
 
     Push-Location $ExeDir
     try {
-        $run = Invoke-NativeCommand -ExePath $GpuRenderTestsExe -Arguments @("--tier=$MaxTier", "--list")
+        $run = Invoke-NativeCommand -ExePath $GpuRenderTestsExe -Arguments @("--all", "--list")
         foreach ($line in $run.Lines) {
             if ($line -match '^T(\d+)\s+(\S+)\s+\[([^\]]+)\]') {
+                $tier = [int]$Matches[1]
+                if ($MaxTier -gt 0 -and $tier -gt $MaxTier) {
+                    continue
+                }
+
                 $tests += [pscustomobject]@{
-                    Tier  = [int]$Matches[1]
+                    Tier  = $tier
                     Name  = $Matches[2]
                     Label = $Matches[3]
                     Kind  = "gpu"
@@ -356,12 +470,13 @@ function Invoke-AllGpuTests {
         return
     }
 
-    $tier = Read-IntChoice -Prompt "GPU max tier [0=back, 1=smoke .. 6=all] (default 1)" -Min 1 -Max 6 -Default 1 -AllowBack
-    if ($null -eq $tier) {
+    $selection = Read-GpuRunSelection
+    if ($null -eq $selection) {
         return
     }
+
     $sessionWatch = [System.Diagnostics.Stopwatch]::StartNew()
-    $result = Invoke-TestExecutable -Label ("gpu tier 1..{0}" -f $tier) -ExePath $GpuRenderTestsExe -Arguments @("--tier=$tier")
+    $result = Invoke-TestExecutable -Label $selection.Label -ExePath $GpuRenderTestsExe -Arguments $selection.Arguments
     $sessionWatch.Stop()
     Show-SessionSummary -Results @($result) -TotalDuration $sessionWatch.Elapsed
 }
@@ -374,11 +489,12 @@ function Invoke-Everything {
     )
 
     if (Test-Path -LiteralPath $GpuRenderTestsExe) {
-        $tier = Read-IntChoice -Prompt "GPU max tier for full run [0=back, 1-6] (default 1)" -Min 1 -Max 6 -Default 1 -AllowBack
-        if ($null -eq $tier) {
+        $selection = Read-GpuRunSelection
+        if ($null -eq $selection) {
             return
         }
-        $results += Invoke-TestExecutable -Label ("gpu tier 1..{0}" -f $tier) -ExePath $GpuRenderTestsExe -Arguments @("--tier=$tier")
+
+        $results += Invoke-TestExecutable -Label $selection.Label -ExePath $GpuRenderTestsExe -Arguments $selection.Arguments
     }
     else {
         Write-Host "Skipping GPU (d3d12-render-tests not built)." -ForegroundColor DarkYellow
@@ -425,7 +541,7 @@ function Invoke-PickGpuTest {
         return
     }
 
-    $maxTier = Read-IntChoice -Prompt "List tests up to tier [0=back, 1-6] (default 6)" -Min 1 -Max 6 -Default 6 -AllowBack
+    $maxTier = Read-IntChoice -Prompt "List tests up to tier [0=back, 1-5] (default 5)" -Min 1 -Max 5 -Default 5 -AllowBack
     if ($null -eq $maxTier) {
         return
     }
@@ -508,8 +624,18 @@ try {
                     Write-Host "d3d12-render-tests.exe is not built." -ForegroundColor Red
                     exit 1
                 }
+
+                $gpuMode = if ([string]::IsNullOrWhiteSpace($GpuMode)) { "Through" } else { $GpuMode }
+                if ($gpuMode -eq "Custom" -and [string]::IsNullOrWhiteSpace($Tiers)) {
+                    Write-Host "GpuMode Custom requires -Tiers (e.g. -Tiers '1,2,4')." -ForegroundColor Red
+                    exit 1
+                }
+
                 $sessionWatch = [System.Diagnostics.Stopwatch]::StartNew()
-                $result = Invoke-TestExecutable -Label ("gpu tier 1..{0}" -f $Tier) -ExePath $GpuRenderTestsExe -Arguments @("--tier=$Tier")
+                $result = Invoke-TestExecutable `
+                    -Label (Get-GpuRunLabel -Mode $gpuMode -Tier $Tier -Tiers $Tiers) `
+                    -ExePath $GpuRenderTestsExe `
+                    -Arguments (Get-GpuTierCliArguments -Mode $gpuMode -Tier $Tier -Tiers $Tiers)
                 $sessionWatch.Stop()
                 Show-SessionSummary -Results @($result) -TotalDuration $sessionWatch.Elapsed
                 if ($result.ExitCode -ne 0 -or $result.Passed -ne $result.Total) { exit 1 }

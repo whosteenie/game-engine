@@ -43,7 +43,9 @@ Validation messages and GPU-based validation slow things down noticeably; use th
 
 # Non-interactive (useful for scripts / quick runs):
 .\scripts\run-tests.ps1 -Run Cpu
-.\scripts\run-tests.ps1 -Run Gpu -Tier 1
+.\scripts\run-tests.ps1 -Run Gpu -Tier 1                  # cumulative smoke (default GpuMode=Through)
+.\scripts\run-tests.ps1 -Run Gpu -GpuMode Exact -Tier 4        # gpu-dxr only
+.\scripts\run-tests.ps1 -Run Gpu -GpuMode Custom -Tiers "1, 2, 4"
 .\scripts\run-tests.ps1 -Run List
 ```
 
@@ -79,10 +81,14 @@ cmake --build build --config Debug --target d3d12-render-tests
 
 # Tier 1 smoke (default) — shared D3D12 session, 32×32 offscreen for boolean draw tests
 .\build\Debug\d3d12-render-tests.exe
-.\build\Debug\d3d12-render-tests.exe --tier=1
+.\build\Debug\d3d12-render-tests.exe --through=1
+.\build\Debug\d3d12-render-tests.exe --tier=4          # gpu-dxr only (2 tests)
+.\build\Debug\d3d12-render-tests.exe --through=2       # tiers 1..2 (cumulative)
+.\build\Debug\d3d12-render-tests.exe --tiers=1,3       # smoke + editor tiers only
+.\build\Debug\d3d12-render-tests.exe --tiers=2-4
 .\build\Debug\d3d12-render-tests.exe --filter=TestPbr*
 .\build\Debug\d3d12-render-tests.exe --list
-.\build\Debug\d3d12-render-tests.exe --all          # every tier (slow)
+.\build\Debug\d3d12-render-tests.exe --all             # every registered test
 
 # Via CTest (from build directory; never runs unless you pass -L gpu)
 cd build
@@ -90,7 +96,7 @@ ctest -C Debug -L gpu-smoke --output-on-failure
 ctest -C Debug -L gpu --output-on-failure
 ```
 
-**Tiers:** `1` gpu-smoke (clear/draw/upload), `2` gpu-pbr (PBR/IBL/shadows), `3` gpu-editor (present/ImGui), `4` gpu-dxr (BLAS/TLAS/dispatch). `--tier=N` runs tiers 1 through N.
+**Tiers:** `1` gpu-smoke, `2` gpu-pbr, `3` gpu-editor, `4` gpu-dxr, `5` gpu-dxr-pt (future). Use `--tier=N` for a single tier, `--through=N` for cumulative 1..N, `--tiers=EXPR` for ranges/sets (`1,3`, `2-4`, `1-3,5`), or `--all`.
 
 On success you should see `[PASS]` lines per test and `N/N tests passed.` with exit code `0`. Failures print `[FAIL]` and assertion details to stderr. DXR tests print `SKIP: ... (no RTX tier)` and exit `0` when hardware lacks ray tracing.
 
