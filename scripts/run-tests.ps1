@@ -214,7 +214,7 @@ function Get-CpuTestList {
         $tests += [pscustomobject]@{ Name = "fixed_descriptor_heap"; Suite = "descriptor-heap-tests"; Kind = "cpu" }
     }
 
-    return ,$tests
+    return $tests
 }
 
 function Get-GpuTestList {
@@ -243,7 +243,7 @@ function Get-GpuTestList {
         Pop-Location
     }
 
-    return ,$tests
+    return $tests
 }
 
 function Show-AvailableTests {
@@ -302,7 +302,8 @@ function Read-IntChoice {
         [string]$Prompt,
         [int]$Min,
         [int]$Max,
-        [int]$Default
+        [int]$Default,
+        [switch]$AllowBack
     )
 
     while ($true) {
@@ -312,11 +313,30 @@ function Read-IntChoice {
         }
 
         $value = 0
-        if ([int]::TryParse($raw, [ref]$value) -and $value -ge $Min -and $value -le $Max) {
+        if (-not [int]::TryParse($raw, [ref]$value)) {
+            if ($AllowBack) {
+                Write-Host ("Enter 0 (back) or a number between {0} and {1}." -f $Min, $Max) -ForegroundColor DarkYellow
+            }
+            else {
+                Write-Host ("Enter a number between {0} and {1}." -f $Min, $Max) -ForegroundColor DarkYellow
+            }
+            continue
+        }
+
+        if ($AllowBack -and $value -eq 0) {
+            return $null
+        }
+
+        if ($value -ge $Min -and $value -le $Max) {
             return $value
         }
 
-        Write-Host ("Enter a number between {0} and {1}." -f $Min, $Max) -ForegroundColor DarkYellow
+        if ($AllowBack) {
+            Write-Host ("Enter 0 (back) or a number between {0} and {1}." -f $Min, $Max) -ForegroundColor DarkYellow
+        }
+        else {
+            Write-Host ("Enter a number between {0} and {1}." -f $Min, $Max) -ForegroundColor DarkYellow
+        }
     }
 }
 
@@ -336,7 +356,10 @@ function Invoke-AllGpuTests {
         return
     }
 
-    $tier = Read-IntChoice -Prompt "GPU max tier [1=smoke .. 6=all] (default 1)" -Min 1 -Max 6 -Default 1
+    $tier = Read-IntChoice -Prompt "GPU max tier [0=back, 1=smoke .. 6=all] (default 1)" -Min 1 -Max 6 -Default 1 -AllowBack
+    if ($null -eq $tier) {
+        return
+    }
     $sessionWatch = [System.Diagnostics.Stopwatch]::StartNew()
     $result = Invoke-TestExecutable -Label ("gpu tier 1..{0}" -f $tier) -ExePath $GpuRenderTestsExe -Arguments @("--tier=$tier")
     $sessionWatch.Stop()
@@ -351,7 +374,10 @@ function Invoke-Everything {
     )
 
     if (Test-Path -LiteralPath $GpuRenderTestsExe) {
-        $tier = Read-IntChoice -Prompt "GPU max tier for full run [1-6] (default 1)" -Min 1 -Max 6 -Default 1
+        $tier = Read-IntChoice -Prompt "GPU max tier for full run [0=back, 1-6] (default 1)" -Min 1 -Max 6 -Default 1 -AllowBack
+        if ($null -eq $tier) {
+            return
+        }
         $results += Invoke-TestExecutable -Label ("gpu tier 1..{0}" -f $tier) -ExePath $GpuRenderTestsExe -Arguments @("--tier=$tier")
     }
     else {
@@ -363,7 +389,7 @@ function Invoke-Everything {
 }
 
 function Invoke-PickCpuTest {
-    $cpuTests = @(Get-CpuTestList)
+    $cpuTests = Get-CpuTestList
     if ($cpuTests.Count -eq 0) {
         Write-Host "No CPU tests available." -ForegroundColor DarkYellow
         return
@@ -374,8 +400,12 @@ function Invoke-PickCpuTest {
         $test = $cpuTests[$i]
         Write-Host ('  {0,2}) {1,-36} [{2}]' -f ($i + 1), $test.Name, $test.Suite)
     }
+    Write-Host "   0) Back"
 
-    $choice = Read-IntChoice -Prompt ("Pick test [1-{0}]" -f $cpuTests.Count) -Min 1 -Max $cpuTests.Count -Default 1
+    $choice = Read-IntChoice -Prompt ("Pick test [0=back, 1-{0}]" -f $cpuTests.Count) -Min 1 -Max $cpuTests.Count -Default 1 -AllowBack
+    if ($null -eq $choice) {
+        return
+    }
     $picked = $cpuTests[$choice - 1]
 
     $sessionWatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -395,8 +425,12 @@ function Invoke-PickGpuTest {
         return
     }
 
-    $maxTier = Read-IntChoice -Prompt "List tests up to tier [1-6] (default 6)" -Min 1 -Max 6 -Default 6
-    $gpuTests = @(Get-GpuTestList -MaxTier $maxTier)
+    $maxTier = Read-IntChoice -Prompt "List tests up to tier [0=back, 1-6] (default 6)" -Min 1 -Max 6 -Default 6 -AllowBack
+    if ($null -eq $maxTier) {
+        return
+    }
+
+    $gpuTests = Get-GpuTestList -MaxTier $maxTier
     if ($gpuTests.Count -eq 0) {
         Write-Host "No GPU tests listed." -ForegroundColor DarkYellow
         return
@@ -407,8 +441,12 @@ function Invoke-PickGpuTest {
         $test = $gpuTests[$i]
         Write-Host ('  {0,2}) T{1} {2,-32} [{3}]' -f ($i + 1), $test.Tier, $test.Name, $test.Label)
     }
+    Write-Host "   0) Back"
 
-    $choice = Read-IntChoice -Prompt ("Pick test [1-{0}]" -f $gpuTests.Count) -Min 1 -Max $gpuTests.Count -Default 1
+    $choice = Read-IntChoice -Prompt ("Pick test [0=back, 1-{0}]" -f $gpuTests.Count) -Min 1 -Max $gpuTests.Count -Default 1 -AllowBack
+    if ($null -eq $choice) {
+        return
+    }
     $picked = $gpuTests[$choice - 1]
 
     $sessionWatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -488,7 +526,7 @@ try {
         $choice = Read-IntChoice -Prompt "Choice" -Min 0 -Max 7 -Default 1
 
         switch ($choice) {
-            0 { break }
+            0 { return }
             1 { Invoke-AllCpuTests }
             2 { Invoke-AllGpuTests }
             3 { Invoke-Everything }

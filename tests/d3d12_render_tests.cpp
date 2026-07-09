@@ -1778,23 +1778,61 @@ namespace render_tests
 
     void TestImGuiMouseTracksGlfwCursor()
     {
+        GLFWwindow* window = GetD3d12TestSession().context.window;
 
-        glfwFocusWindow(GetD3d12TestSession().context.window);
+        // ImGui_ImplGlfw_UpdateMouseData only polls glfwGetCursorPos while the GLFW window
+        // is focused. Long swapchain-present loops can leave stale io.MousePos from the
+        // physical cursor when focus is lost on the hidden test window.
+        glfwShowWindow(window);
+        for (int attempt = 0; attempt < 10; ++attempt)
+        {
+            glfwFocusWindow(window);
+            glfwPollEvents();
+            if (glfwGetWindowAttrib(window, GLFW_FOCUSED) != 0)
+            {
+                break;
+            }
+
+            ImGui_ImplGlfw_Sleep(20);
+        }
+
+        ImGui_ImplGlfw_WindowFocusCallback(window, 1);
+        ImGui_ImplGlfw_CursorEnterCallback(window, 0);
         glfwPollEvents();
 
-        glfwSetCursorPos(GetD3d12TestSession().context.window, 100.0, 120.0);
-        glfwPollEvents();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        const ImVec2 firstMousePos = ImGui::GetIO().MousePos;
-        ImGui::Render();
+        const auto sampleImGuiMouse = [&](const double x, const double y) -> ImVec2 {
+            glfwSetCursorPos(window, x, y);
+            glfwPollEvents();
 
-        glfwSetCursorPos(GetD3d12TestSession().context.window, 280.0, 220.0);
-        glfwPollEvents();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        const ImVec2 secondMousePos = ImGui::GetIO().MousePos;
-        ImGui::Render();
+            ImGui_ImplDX12_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            if (ImGuiIO* io = &ImGui::GetIO())
+            {
+                io->DisplaySize = ImVec2(
+                    static_cast<float>(GfxContext::Get().GetWidth()),
+                    static_cast<float>(GfxContext::Get().GetHeight()));
+                io->DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+            }
+            ImGui::NewFrame();
+            const ImVec2 mousePos = ImGui::GetIO().MousePos;
+            ImGui::Render();
+            return mousePos;
+        };
+
+        const ImVec2 firstMousePos = sampleImGuiMouse(100.0, 120.0);
+        const ImVec2 secondMousePos = sampleImGuiMouse(280.0, 220.0);
+
+        test::ExpectTrue(
+            glfwGetWindowAttrib(window, GLFW_FOCUSED) != 0,
+            "GLFW test window should be focused for ImGui mouse polling");
+
+        double glfwX = 0.0;
+        double glfwY = 0.0;
+        glfwGetCursorPos(window, &glfwX, &glfwY);
+        test::ExpectNear(static_cast<float>(glfwX), 280.0f, 2.0f, "GLFW cursor X should reflect SetCursorPos");
+        test::ExpectNear(static_cast<float>(glfwY), 220.0f, 2.0f, "GLFW cursor Y should reflect SetCursorPos");
+
+        glfwHideWindow(window);
 
         test::ExpectNear(firstMousePos.x, 100.0f, 2.0f, "ImGui mouse X should track GLFW cursor");
         test::ExpectNear(firstMousePos.y, 120.0f, 2.0f, "ImGui mouse Y should track GLFW cursor");
