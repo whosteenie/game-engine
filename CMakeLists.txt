@@ -533,7 +533,7 @@ add_executable(engine-tests
     src/engine/lighting/DirectionalShadowSettings.cpp
 )
 
-target_include_directories(engine-tests PRIVATE src)
+target_include_directories(engine-tests PRIVATE src tests)
 target_link_libraries(engine-tests PRIVATE glm::glm nlohmann_json::nlohmann_json)
 add_test(NAME engine-tests COMMAND engine-tests)
 

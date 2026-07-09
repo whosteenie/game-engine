@@ -60,7 +60,7 @@
 #include <sstream>
 #include <vector>
 
-namespace
+namespace render_tests
 {
     constexpr int kFramebufferSize = 256;
 
@@ -1991,17 +1991,45 @@ namespace
         FinalizeD3d12TestSession();
         context.Shutdown();
     }
+
+    void RunAllD3d12RenderTests()
+    {
+        test::RunTest("TransientUploadAllocates", TestTransientUploadAllocates);
+        test::RunTest("OffscreenManualRedClear", TestOffscreenManualRedClear);
+        test::RunTest("LineDrawWithoutDepthBinding", TestLineDrawWithoutDepthBinding);
+        test::RunTest("GridMrtDraw", TestGridMrtDraw);
+        test::RunTest("ShaderUniformRegistration", TestShaderUniformRegistration);
+        test::RunTest("FramebufferClear", TestFramebufferClear);
+        test::RunTest("GizmoLineDraw", TestGizmoLineDraw);
+        test::RunTest("IdentityClipSpaceTriangle", TestIdentityClipSpaceTriangle);
+        test::RunTest("SolidTriangleDraw", TestSolidTriangleDraw);
+        test::RunTest("GridDraw", TestGridDraw);
+        test::RunTest("PbrCubeDraw", TestPbrCubeDraw);
+        test::RunTest("ClearReadbackDirectVsEditor", TestClearReadbackDirectVsEditor);
+        test::RunTest("EditorRenderingPath", TestEditorRenderingPath);
+        test::RunTest("PbrAlbedoRetainsColor", TestPbrAlbedoRetainsColor);
+        test::RunTest("PbrWithRenderedShadowCascades", TestPbrWithRenderedShadowCascades);
+        test::RunTest("MaterialLayerUniformAlbedo", TestMaterialLayerUniformAlbedo);
+        test::RunTest("MaterialLayerAmbientIbl", TestMaterialLayerAmbientIbl);
+        test::RunTest("DirectDiffuseGeomStableAcrossOrbitCameras", TestDirectDiffuseGeomStableAcrossOrbitCameras);
+        test::RunTest("DiffuseIblStableAtSpherePole", TestDiffuseIblStableAtSpherePole);
+        test::RunTest("WoodCubeDirectLightingViewSensitivity", TestWoodCubeDirectLightingViewSensitivity);
+        test::RunTest("MultiFrameOffscreenSyncStability", TestMultiFrameOffscreenSyncStability);
+        test::RunTest("DescriptorBudget", TestDescriptorBudget);
+        test::RunTest("ApplicationPathAfterBulkMeshUpload", TestApplicationPathAfterBulkMeshUpload);
+        test::RunTest("SwapchainPresentLoopStability", TestSwapchainPresentLoopStability);
+        test::RunTest("ResizeDuringSwapchainPresentLoop", TestResizeDuringSwapchainPresentLoop);
+        test::RunTest("ImGuiMouseTracksGlfwCursor", TestImGuiMouseTracksGlfwCursor);
+        test::RunTest("DxrAccelerationStructuresSmoke", TestDxrAccelerationStructuresSmoke);
+        test::RunTest("DxrDispatchSmoke", TestDxrDispatchSmoke);
+    }
 }
 
 int main()
 {
     test::ResetFailures();
-    TestDxrDispatchSmoke();
-
-    if (test::FailureCount() == 0)
-    {
-        std::cout << "All D3D12 render tests passed.\n";
-    }
-
+    test::ResetTestRun();
+    render_tests::RunAllD3d12RenderTests();
+    test::PrintSummary();
     return test::ExitCode();
 }
