@@ -192,6 +192,81 @@ bool DxrUploadRing::EnsureCapacity(const std::uint64_t sizeInBytes)
     return true;
 }
 
+void DxrSrvBufferRing::Release()
+{
+    for (DxrGpuResource& slot : m_slots)
+    {
+        slot.Release();
+    }
+
+    m_capacity = 0;
+}
+
+DxrGpuResource& DxrSrvBufferRing::Slot(const std::uint32_t frameIndex)
+{
+    return m_slots[frameIndex % GfxContext::FrameCount];
+}
+
+const DxrGpuResource& DxrSrvBufferRing::Slot(const std::uint32_t frameIndex) const
+{
+    return m_slots[frameIndex % GfxContext::FrameCount];
+}
+
+bool DxrSrvBufferRing::EnsureCapacity(const std::uint64_t sizeInBytes)
+{
+    if (sizeInBytes == 0)
+    {
+        return false;
+    }
+
+    if (sizeInBytes <= m_capacity)
+    {
+        return true;
+    }
+
+    Release();
+    for (DxrGpuResource& slot : m_slots)
+    {
+        if (!CreateDxrDefaultBuffer(
+                sizeInBytes,
+                false,
+                slot,
+                D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE))
+        {
+            Release();
+            return false;
+        }
+    }
+
+    m_capacity = m_slots[0].sizeInBytes;
+    return true;
+}
+
+void CopyDxrUploadToSrvBuffer(
+    ID3D12GraphicsCommandList* commandList,
+    const DxrGpuResource& upload,
+    DxrGpuResource& srvBuffer,
+    const std::uint64_t byteSize)
+{
+    if (commandList == nullptr || upload.resource == nullptr || srvBuffer.resource == nullptr
+        || byteSize == 0)
+    {
+        return;
+    }
+
+    TransitionResource(
+        commandList,
+        srvBuffer.resource,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+        D3D12_RESOURCE_STATE_COPY_DEST);
+    commandList->CopyBufferRegion(srvBuffer.resource, 0, upload.resource, 0, byteSize);
+    TransitionResource(
+        commandList,
+        srvBuffer.resource,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+}
+
 void TransitionResource(
     ID3D12GraphicsCommandList* commandList,
     ID3D12Resource* resource,

@@ -84,7 +84,10 @@ public:
 
 private:
     bool EnsureScratchBuffer(std::uint64_t requiredBytes, std::string& outError);
-    bool EnsureGeometryBuffers(const Scene& scene, std::string& outError);
+    bool EnsureGeometryBuffers(
+        const Scene& scene,
+        ID3D12GraphicsCommandList* commandList,
+        std::string& outError);
     void ReleaseGeometryBuffers();
 
     DxrDiagnostics m_diagnostics{};
@@ -95,10 +98,14 @@ private:
     std::uint32_t m_scratchResourceState = 0;
     bool m_anyBlasBuiltThisFrame = false;
 
-    DxrUploadRing m_geometryLookupRing{};
-    DxrUploadRing m_sceneVertexFloatsRing{};
-    DxrUploadRing m_sceneIndicesRing{};
-    DxrUploadRing m_materialRing{};
+    DxrUploadRing m_geometryLookupStaging{};
+    DxrUploadRing m_sceneVertexFloatsStaging{};
+    DxrUploadRing m_sceneIndicesStaging{};
+    DxrUploadRing m_materialStaging{};
+    DxrSrvBufferRing m_geometryLookupGpu{};
+    DxrSrvBufferRing m_sceneVertexFloatsGpu{};
+    DxrSrvBufferRing m_sceneIndicesGpu{};
+    DxrSrvBufferRing m_materialGpu{};
     std::array<std::uint32_t, GfxContext::FrameCount> m_geometryLookupSrvIndices{
         UINT32_MAX,
         UINT32_MAX};
@@ -112,6 +119,7 @@ private:
         UINT32_MAX,
         UINT32_MAX};
     std::size_t m_geometryObjectCount = 0;
+    std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);
 };

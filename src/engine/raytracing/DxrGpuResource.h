@@ -49,6 +49,27 @@ private:
     std::uint64_t m_capacity = 0;
 };
 
+// DEFAULT-heap buffers in SRV read state; paired with DxrUploadRing staging (DXR-05).
+class DxrSrvBufferRing
+{
+public:
+    void Release();
+    DxrGpuResource& Slot(std::uint32_t frameIndex);
+    const DxrGpuResource& Slot(std::uint32_t frameIndex) const;
+    bool EnsureCapacity(std::uint64_t sizeInBytes);
+    std::uint64_t GetCapacity() const { return m_capacity; }
+
+private:
+    std::array<DxrGpuResource, GfxContext::FrameCount> m_slots{};
+    std::uint64_t m_capacity = 0;
+};
+
+void CopyDxrUploadToSrvBuffer(
+    ID3D12GraphicsCommandList* commandList,
+    const DxrGpuResource& upload,
+    DxrGpuResource& srvBuffer,
+    std::uint64_t byteSize);
+
 void TransitionResource(
     ID3D12GraphicsCommandList* commandList,
     ID3D12Resource* resource,

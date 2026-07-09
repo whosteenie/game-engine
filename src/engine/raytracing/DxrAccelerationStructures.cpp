@@ -21,6 +21,68 @@
 
 #include <glm/glm.hpp>
 
+namespace
+{
+    std::uint64_t HashCombine(const std::uint64_t seed, const std::uint64_t value)
+    {
+        return seed ^ (value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
+    }
+
+    std::uint64_t HashFloatBits(const std::uint64_t seed, const float value)
+    {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        return HashCombine(seed, static_cast<std::uint64_t>(bits));
+    }
+
+    // Fingerprint of mesh/material/layout inputs to EnsureGeometryBuffers. Transform changes
+    // are excluded so moving objects does not trigger a full geometry re-upload (DXR-05).
+    std::uint64_t ComputeDxrGeometryFingerprint(const Scene& scene)
+    {
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+        std::uint64_t fingerprint = HashCombine(0, objects.size());
+
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        {
+            const SceneObject& object = objects[objectIndex];
+            fingerprint = HashCombine(fingerprint, objectIndex);
+            fingerprint = HashCombine(fingerprint, object.IsRenderable() ? 1u : 0u);
+            if (!object.IsRenderable())
+            {
+                continue;
+            }
+
+            Mesh* mesh = object.GetMesh();
+            fingerprint = HashCombine(
+                fingerprint,
+                reinterpret_cast<std::uintptr_t>(mesh));
+            if (mesh == nullptr)
+            {
+                continue;
+            }
+
+            fingerprint = HashCombine(fingerprint, mesh->GetPositions().size());
+            fingerprint = HashCombine(fingerprint, mesh->GetIndices().size());
+            fingerprint = HashCombine(fingerprint, mesh->GetFloatsPerVertex());
+
+            const Material& material = object.GetMaterial();
+            const glm::vec3 albedo = material.GetAlbedo();
+            const glm::vec3 emissive = material.GetEmissive();
+            fingerprint = HashFloatBits(fingerprint, albedo.x);
+            fingerprint = HashFloatBits(fingerprint, albedo.y);
+            fingerprint = HashFloatBits(fingerprint, albedo.z);
+            fingerprint = HashFloatBits(fingerprint, emissive.x);
+            fingerprint = HashFloatBits(fingerprint, emissive.y);
+            fingerprint = HashFloatBits(fingerprint, emissive.z);
+            fingerprint = HashFloatBits(fingerprint, material.GetMetallic());
+            fingerprint = HashFloatBits(fingerprint, material.GetRoughness());
+            fingerprint = HashCombine(fingerprint, material.GetAlbedoMapSrvIndex());
+        }
+
+        return fingerprint;
+    }
+}
+
 DxrAccelerationStructures::~DxrAccelerationStructures()
 {
     Release();
@@ -66,10 +128,15 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_sceneIndicesSrvIndices.fill(UINT32_MAX);
     m_materialSrvIndices.fill(UINT32_MAX);
 
-    m_geometryLookupRing.Release();
-    m_materialRing.Release();
-    m_sceneVertexFloatsRing.Release();
-    m_sceneIndicesRing.Release();
+    m_geometryLookupStaging.Release();
+    m_materialStaging.Release();
+    m_sceneVertexFloatsStaging.Release();
+    m_sceneIndicesStaging.Release();
+    m_geometryLookupGpu.Release();
+    m_materialGpu.Release();
+    m_sceneVertexFloatsGpu.Release();
+    m_sceneIndicesGpu.Release();
+    m_uploadedGeometryFingerprint.fill(0);
     m_geometryObjectCount = 0;
 }
 
@@ -138,13 +205,24 @@ bool DxrAccelerationStructures::EnsureScratchBuffer(
     return true;
 }
 
-bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::string& outError)
+bool DxrAccelerationStructures::EnsureGeometryBuffers(
+    const Scene& scene,
+    ID3D12GraphicsCommandList* commandList,
+    std::string& outError)
 {
     outError.clear();
     const std::vector<SceneObject>& objects = scene.GetObjects();
     if (objects.empty())
     {
         ReleaseGeometryBuffers();
+        return true;
+    }
+
+    const std::uint64_t fingerprint = ComputeDxrGeometryFingerprint(scene);
+    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+    if (m_uploadedGeometryFingerprint[frameIndex] == fingerprint
+        && m_geometryLookupSrvIndices[frameIndex] != UINT32_MAX)
+    {
         return true;
     }
 
@@ -241,11 +319,15 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
 
     const bool sameLayout =
         m_geometryObjectCount == objects.size()
-        && m_geometryLookupRing.GetCapacity()
+        && m_geometryLookupStaging.GetCapacity()
             >= sizeof(DxrGeometryLookupEntry) * objects.size()
-        && m_materialRing.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
-        && m_sceneVertexFloatsRing.GetCapacity() >= vertexFloats.size() * sizeof(float)
-        && m_sceneIndicesRing.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
+        && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
+        && m_sceneVertexFloatsStaging.GetCapacity() >= vertexFloats.size() * sizeof(float)
+        && m_sceneIndicesStaging.GetCapacity() >= indices.size() * sizeof(std::uint32_t)
+        && m_geometryLookupGpu.GetCapacity() >= sizeof(DxrGeometryLookupEntry) * objects.size()
+        && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
+        && m_sceneVertexFloatsGpu.GetCapacity() >= vertexFloats.size() * sizeof(float)
+        && m_sceneIndicesGpu.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
 
     if (!sameLayout)
     {
@@ -256,10 +338,14 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
-        if (!m_geometryLookupRing.EnsureCapacity(lookupBytes)
-            || !m_materialRing.EnsureCapacity(materialBytes)
-            || !m_sceneVertexFloatsRing.EnsureCapacity(vertexBytes)
-            || !m_sceneIndicesRing.EnsureCapacity(indexBytes))
+        if (!m_geometryLookupStaging.EnsureCapacity(lookupBytes)
+            || !m_materialStaging.EnsureCapacity(materialBytes)
+            || !m_sceneVertexFloatsStaging.EnsureCapacity(vertexBytes)
+            || !m_sceneIndicesStaging.EnsureCapacity(indexBytes)
+            || !m_geometryLookupGpu.EnsureCapacity(lookupBytes)
+            || !m_materialGpu.EnsureCapacity(materialBytes)
+            || !m_sceneVertexFloatsGpu.EnsureCapacity(vertexBytes)
+            || !m_sceneIndicesGpu.EnsureCapacity(indexBytes))
         {
             outError = "failed to allocate DXR geometry lookup buffers";
             ReleaseGeometryBuffers();
@@ -303,7 +389,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
             lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
             lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
             device->CreateShaderResourceView(
-                m_geometryLookupRing.Slot(frameIndex).resource,
+                m_geometryLookupGpu.Slot(frameIndex).resource,
                 &lookupSrvDesc,
                 lookupHandle);
 
@@ -317,7 +403,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
             materialSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
             materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
             device->CreateShaderResourceView(
-                m_materialRing.Slot(frameIndex).resource,
+                m_materialGpu.Slot(frameIndex).resource,
                 &materialSrvDesc,
                 materialHandle);
 
@@ -331,7 +417,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
             vertexSrvDesc.Buffer.FirstElement = 0;
             vertexSrvDesc.Buffer.NumElements = static_cast<UINT>(vertexFloats.size());
             device->CreateShaderResourceView(
-                m_sceneVertexFloatsRing.Slot(frameIndex).resource,
+                m_sceneVertexFloatsGpu.Slot(frameIndex).resource,
                 &vertexSrvDesc,
                 vertexHandle);
 
@@ -344,7 +430,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
             indexSrvDesc.Buffer.FirstElement = 0;
             indexSrvDesc.Buffer.NumElements = static_cast<UINT>(indices.size());
             device->CreateShaderResourceView(
-                m_sceneIndicesRing.Slot(frameIndex).resource,
+                m_sceneIndicesGpu.Slot(frameIndex).resource,
                 &indexSrvDesc,
                 indexHandle);
         }
@@ -352,11 +438,15 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         m_geometryObjectCount = objects.size();
     }
 
-    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
-    DxrGpuResource& geometryLookupUpload = m_geometryLookupRing.Slot(frameIndex);
-    DxrGpuResource& materialUpload = m_materialRing.Slot(frameIndex);
-    DxrGpuResource& vertexUpload = m_sceneVertexFloatsRing.Slot(frameIndex);
-    DxrGpuResource& indexUpload = m_sceneIndicesRing.Slot(frameIndex);
+    DxrGpuResource& geometryLookupUpload = m_geometryLookupStaging.Slot(frameIndex);
+    DxrGpuResource& materialUpload = m_materialStaging.Slot(frameIndex);
+    DxrGpuResource& vertexUpload = m_sceneVertexFloatsStaging.Slot(frameIndex);
+    DxrGpuResource& indexUpload = m_sceneIndicesStaging.Slot(frameIndex);
+
+    const std::uint64_t lookupBytes = lookupEntries.size() * sizeof(DxrGeometryLookupEntry);
+    const std::uint64_t materialBytes = materialEntries.size() * sizeof(DxrMaterialEntry);
+    const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
+    const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
     void* mapped = nullptr;
     if (SUCCEEDED(geometryLookupUpload.resource->Map(0, nullptr, &mapped)))
@@ -383,6 +473,28 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(const Scene& scene, std::s
         indexUpload.resource->Unmap(0, nullptr);
     }
 
+    CopyDxrUploadToSrvBuffer(
+        commandList,
+        geometryLookupUpload,
+        m_geometryLookupGpu.Slot(frameIndex),
+        lookupBytes);
+    CopyDxrUploadToSrvBuffer(
+        commandList,
+        materialUpload,
+        m_materialGpu.Slot(frameIndex),
+        materialBytes);
+    CopyDxrUploadToSrvBuffer(
+        commandList,
+        vertexUpload,
+        m_sceneVertexFloatsGpu.Slot(frameIndex),
+        vertexBytes);
+    CopyDxrUploadToSrvBuffer(
+        commandList,
+        indexUpload,
+        m_sceneIndicesGpu.Slot(frameIndex),
+        indexBytes);
+
+    m_uploadedGeometryFingerprint[frameIndex] = fingerprint;
     return true;
 }
 
@@ -635,7 +747,10 @@ void DxrAccelerationStructures::EnsureScene(
     m_diagnostics.lastBuildTimeMs =
         std::chrono::duration<double, std::milli>(buildEnd - buildStart).count();
 
-    if (!EnsureGeometryBuffers(scene, error))
+    if (!EnsureGeometryBuffers(
+            scene,
+            static_cast<ID3D12GraphicsCommandList*>(commandList4),
+            error))
     {
         m_diagnostics.buildStatus = "FAILED: " + error;
         return;
