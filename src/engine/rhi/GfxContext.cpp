@@ -744,6 +744,7 @@ void GfxContext::BeginFrame()
     }
 
     ProcessPendingResize();
+    ++m_submissionFrameNumber;
     FrameContext& frame = m_impl->Frames[m_frameIndex];
     FrameDiagnostics::LogPhase("BeginFrame-wait");
     const std::uint64_t frameWaitFence =

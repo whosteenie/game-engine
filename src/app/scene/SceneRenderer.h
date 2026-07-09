@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/scene/Scene.h"
+#include "app/scene/RenderViewport.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/SceneLighting.h"
 
@@ -61,7 +62,8 @@ public:
         int viewportWidth,
         int viewportHeight,
         std::uintptr_t targetFramebuffer,
-        const SceneRenderOptions& options);
+        const SceneRenderOptions& options,
+        RenderViewport renderViewport = RenderViewport::SceneView);
 
     const SceneLighting& GetLighting() const;
     SceneLighting& GetLighting();
@@ -121,6 +123,9 @@ public:
 
     void WarmUpDxrPipelineIfNeeded();
     void PrepareFrameGpuResources();
+    // Must run before BeginFrame — constructing ScreenSpaceEffects uploads shaders via ExecuteImmediate.
+    void PrepareGameViewGpuResources();
+    void InvalidateGameViewMotionOnPlayStop();
 
 private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
@@ -169,6 +174,10 @@ private:
         std::uintptr_t depthSrvCpuHandle,
         bool usePostProcess);
     void SyncEffectiveMaterialMipBias() const;
+    void EnsureGameViewScreenSpaceEffects();
+    void SyncGameViewScreenSpaceSettings();
+    void MaybeInvalidateStaleViewportTemporalState(RenderViewport viewport);
+    void InvalidateViewportTemporalState(RenderViewport viewport);
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
@@ -178,6 +187,8 @@ private:
     std::unique_ptr<CascadedShadowMap> m_shadowMap;
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
+    std::unique_ptr<ScreenSpaceEffects> m_gameViewScreenSpaceEffects;
+    ScreenSpaceEffects* m_activeScreenSpaceEffects = nullptr;
     std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
     std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
     std::unique_ptr<DxrPrimaryDebugDispatch> m_dxrPrimaryDebugDispatch;
@@ -192,6 +203,10 @@ private:
     float m_textureMipBias = 0.0f;
     SceneLighting m_lighting;
     mutable std::vector<glm::mat4> m_previousWorldMatrices;
+    mutable std::vector<glm::mat4> m_gameViewPreviousWorldMatrices;
+    std::uint64_t m_sceneViewLastSubmissionFrame = 0;
+    std::uint64_t m_gameViewLastSubmissionFrame = 0;
+    std::vector<glm::mat4>* m_activePreviousWorldMatrices = nullptr;
     mutable GpuResourceState m_gpuResourceState = GpuResourceState::NotStarted;
     mutable std::string m_gpuResourcesInitError;
     nlohmann::json m_pendingRendererSettings;

@@ -769,18 +769,15 @@ void DxrAccelerationStructures::EnsureScene(
             && topologyFingerprint == m_builtTlasTopologyFingerprint
             && transformFingerprint == m_builtTlasTransformFingerprint;
 
-        if (skipTlasBuild)
+        if (!skipTlasBuild)
         {
-            DxrBreadcrumb("AS tlas-build skipped (unchanged)");
-        }
-        else if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
-        {
-            DxrBreadcrumb("AS tlas-build failed");
-            m_diagnostics.buildStatus = "FAILED: " + error;
-            return;
-        }
-        else
-        {
+            if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
+            {
+                DxrBreadcrumb("AS tlas-build failed");
+                m_diagnostics.buildStatus = "FAILED: " + error;
+                return;
+            }
+
             m_builtTlasTopologyFingerprint = topologyFingerprint;
             m_builtTlasTransformFingerprint = transformFingerprint;
         }

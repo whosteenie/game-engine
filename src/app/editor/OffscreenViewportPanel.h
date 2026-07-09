@@ -21,6 +21,7 @@ namespace OffscreenViewportPanel
         ImVec2 compositeMin{};
         ImVec2 compositeMax{};
         bool hasCompositeTarget = false;
+        bool hasReadyCompositeFrame = false;
     };
 
     struct ViewportRegion
@@ -38,6 +39,7 @@ namespace OffscreenViewportPanel
     std::uintptr_t GetColorTexture(const State& state);
     void EnsureFramebufferSized(const State& state);
     void ClearRenderTarget(const State& state);
+    bool CanCompositeFrame(const State& state, bool willRenderThisFrame);
     void CompositeRenderedFrame(State& state);
 
     bool UpdateRenderSize(State& state, const ImVec2& available);

@@ -8,7 +8,7 @@
 class GameViewportPanel
 {
 public:
-    void Draw(bool hasSceneCamera);
+    void Draw(bool hasSceneCamera, bool willRenderThisFrame);
 
     void CompositeRenderedFrame();
 

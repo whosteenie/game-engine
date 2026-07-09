@@ -12,7 +12,7 @@ class Scene;
 class SceneViewportPanel
 {
 public:
-    void Draw(Camera& camera, const Scene& scene);
+    void Draw(Camera& camera, const Scene& scene, bool willRenderThisFrame);
 
     void CompositeRenderedFrame();
 

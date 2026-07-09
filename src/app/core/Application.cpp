@@ -785,6 +785,10 @@ void Application::Update(double deltaTime)
         {
             m_playModeDiscardUndoStack.Clear();
             m_wasPlayModeActive = playActive;
+            if (!playActive && m_scene != nullptr)
+            {
+                m_scene->GetRenderer().InvalidateGameViewMotionOnPlayStop();
+            }
         }
 
         m_mainMenuBar->Draw(
@@ -838,10 +842,23 @@ void Application::Update(double deltaTime)
         const bool hasGameSceneCamera =
             gameScene != nullptr && SceneCamera::SceneHasActiveCamera(*gameScene);
 
+        const bool gameViewWillRender =
+            EditorPanelConstraints::IsViewportTabSelected("Game View")
+            && m_gameViewportPanel->ShowPanel()
+            && hasGameSceneCamera
+            && gameScene != nullptr
+            && gameScene->GetRenderer().IsGpuResourcesReady();
+
+        const bool sceneViewWillRender =
+            EditorPanelConstraints::IsViewportTabSelected("Scene View")
+            && m_sceneViewportPanel->ShowPanel()
+            && editorScene != nullptr
+            && editorScene->GetRenderer().IsGpuResourcesReady();
+
         EditorPanelConstraints::SyncViewportDockVisibleWindow("Scene View", "Game View");
 
-        m_gameViewportPanel->Draw(hasGameSceneCamera);
-        m_sceneViewportPanel->Draw(*m_camera, *editorScene);
+        m_gameViewportPanel->Draw(hasGameSceneCamera, gameViewWillRender);
+        m_sceneViewportPanel->Draw(*m_camera, *editorScene, sceneViewWillRender);
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
         m_projectFilesPanel->Draw(*m_projectSession);
@@ -1349,6 +1366,26 @@ void Application::Render()
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
         }
+
+        if (EditorPanelConstraints::IsViewportTabSelected("Game View")
+            && m_gameViewportPanel->HasValidRenderTarget())
+        {
+            RunApplicationPhase("prepare-game-view-gpu", [&]() {
+                Scene* gameScene = m_scene.get();
+                if (m_playModeController.IsActive())
+                {
+                    if (Scene* runtimeScene = m_playModeController.GetRuntimeScene())
+                    {
+                        gameScene = runtimeScene;
+                    }
+                }
+
+                if (gameScene != nullptr)
+                {
+                    gameScene->GetRenderer().PrepareGameViewGpuResources();
+                }
+            });
+        }
     }
 
     m_gfxFrameActive = true;
@@ -1378,7 +1415,9 @@ void Application::Render()
                     *m_camera,
                     m_sceneViewportPanel->GetRenderWidth(),
                     m_sceneViewportPanel->GetRenderHeight(),
-                    m_sceneViewportPanel->GetFramebuffer());
+                    m_sceneViewportPanel->GetFramebuffer(),
+                    SceneRenderOptions{},
+                    RenderViewport::SceneView);
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
                 if (presentingProjectLoad)
@@ -1435,7 +1474,8 @@ void Application::Render()
                             gameViewWidth,
                             gameViewHeight,
                             m_gameViewportPanel->GetFramebuffer(),
-                            gameViewOptions);
+                            gameViewOptions,
+                            RenderViewport::GameView);
                         m_gameViewportPanel->CompositeRenderedFrame();
                     }
                 }

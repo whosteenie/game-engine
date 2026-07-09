@@ -1829,6 +1829,23 @@ void ScreenSpaceEffects::ResetPathTracerAccumulation()
     m_ptAccumSumDisplaySrv = 0;
 }
 
+void ScreenSpaceEffects::InvalidateMotionHistory() const
+{
+    m_motionVectorFrameState = {};
+    m_radianceHistoryValid = false;
+    m_giFrameIndex = 0;
+    m_giPrevViewProjection = glm::mat4(1.0f);
+    m_ssrHistoryValid = false;
+    m_ssrFrameIndex = 0;
+}
+
+void ScreenSpaceEffects::InvalidateAllTemporalState() const
+{
+    ResetTaaHistory();
+    InvalidateTemporalHistory();
+    const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerAccumulation();
+}
+
 void ScreenSpaceEffects::AccumulatePathTracerReference(
     const PathTracerHistoryKey& historyKey,
     const std::uintptr_t currentFrameSrv,

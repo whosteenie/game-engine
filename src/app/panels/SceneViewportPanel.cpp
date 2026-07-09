@@ -100,14 +100,17 @@ void SceneViewportPanel::DrawViewGizmo(
     m_wasUsingViewManipulate = usingViewManipulate;
 }
 
-void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
+void SceneViewportPanel::Draw(Camera& camera, const Scene& scene, const bool willRenderThisFrame)
 {
     OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Scene View", m_viewport.showPanel))
     {
-        OffscreenViewportPanel::OnPanelHidden(m_viewport);
+        if (!m_viewport.showPanel)
+        {
+            OffscreenViewportPanel::OnPanelHidden(m_viewport);
+        }
         m_wasUsingViewManipulate = false;
         return;
     }
@@ -115,8 +118,13 @@ void SceneViewportPanel::Draw(Camera& camera, const Scene& scene)
     const ImVec2 available = ImGui::GetContentRegionAvail();
     OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
 
+    if (HasValidRenderTarget())
+    {
+        EnsureFramebufferSized();
+    }
+
     const bool canCompositeFrame =
-        m_viewport.framebuffer.IsValid() && m_viewport.framebuffer.GetColorTexture() != 0;
+        OffscreenViewportPanel::CanCompositeFrame(m_viewport, willRenderThisFrame);
     const OffscreenViewportPanel::ViewportRegion region =
         OffscreenViewportPanel::DrawViewportRegion(m_viewport, available, canCompositeFrame);
     if (!canCompositeFrame)

@@ -13,6 +13,7 @@
 #include "engine/scene/SceneObjectId.h"
 
 #include "app/scene/SceneSelection.h"
+#include "app/scene/RenderViewport.h"
 #include "app/project/SceneImportedMeshPool.h"
 #include "app/scene/SceneSpawnService.h"
 
@@ -71,7 +72,8 @@ public:
         int viewportWidth,
         int viewportHeight,
         std::uintptr_t targetFramebuffer = 0,
-        const SceneRenderOptions& options = SceneRenderOptions{}) const;
+        const SceneRenderOptions& options = SceneRenderOptions{},
+        RenderViewport renderViewport = RenderViewport::SceneView) const;
 
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();

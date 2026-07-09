@@ -23,6 +23,7 @@ namespace OffscreenViewportPanel
     {
         state.renderWidth = 0;
         state.renderHeight = 0;
+        state.hasReadyCompositeFrame = false;
     }
 
     bool HasValidRenderTarget(const State& state)
@@ -58,6 +59,16 @@ namespace OffscreenViewportPanel
         }
     }
 
+    bool CanCompositeFrame(const State& state, const bool willRenderThisFrame)
+    {
+        if (!state.framebuffer.IsValid() || state.framebuffer.GetColorTexture() == 0)
+        {
+            return false;
+        }
+
+        return state.hasReadyCompositeFrame || willRenderThisFrame;
+    }
+
     void CompositeRenderedFrame(State& state)
     {
         if (!state.hasCompositeTarget
@@ -72,6 +83,7 @@ namespace OffscreenViewportPanel
 
         const ImTextureID textureId = static_cast<ImTextureID>(state.framebuffer.GetColorTexture());
         state.compositeDrawList->AddImage(textureId, state.compositeMin, state.compositeMax);
+        state.hasReadyCompositeFrame = true;
         state.hasCompositeTarget = false;
         state.compositeDrawList = nullptr;
     }
@@ -91,6 +103,7 @@ namespace OffscreenViewportPanel
         {
             state.renderWidth = requestedWidth;
             state.renderHeight = requestedHeight;
+            state.hasReadyCompositeFrame = false;
             return true;
         }
 
@@ -111,6 +124,16 @@ namespace OffscreenViewportPanel
             state.compositeMin = cursor;
             state.compositeMax = regionMax;
             state.hasCompositeTarget = true;
+
+            // Show the last composited frame immediately so tab switches do not flash gray
+            // while the GPU render for this frame is still in flight.
+            if (state.hasReadyCompositeFrame)
+            {
+                state.framebuffer.EnsureShaderResourceState();
+                const ImTextureID textureId =
+                    static_cast<ImTextureID>(state.framebuffer.GetColorTexture());
+                drawList->AddImage(textureId, cursor, regionMax);
+            }
         }
 
         ViewportRegion region{};

@@ -165,6 +165,8 @@ public:
     bool IsMsaaSampleCountSupported(int sampleCount) const;
     bool IsFrameRecording() const { return m_frameRecording; }
     std::uint32_t GetFrameIndex() const { return m_frameIndex; }
+    // Monotonic counter incremented once per BeginFrame (not the swapchain ring index).
+    std::uint64_t GetSubmissionFrameNumber() const { return m_submissionFrameNumber; }
 
     // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
     bool IsRaytracingSupported() const;
@@ -221,6 +223,7 @@ private:
     Impl* m_impl = nullptr;
 
     std::uint32_t m_frameIndex = 0;
+    std::uint64_t m_submissionFrameNumber = 0;
     std::uint64_t m_fenceValues[FrameCount] = {};
     // Monotonic fence for immediate uploads; never aliased into swapchain frame fences.
     std::uint64_t m_submissionFenceValue = 0;

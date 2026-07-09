@@ -747,11 +747,18 @@ void Scene::SetShowGrid(bool showGrid)
 
 void Scene::Render(
     const Camera& camera,
-    int viewportWidth,
-    int viewportHeight,
-    std::uintptr_t targetFramebuffer,
-    const SceneRenderOptions& options) const
+    const int viewportWidth,
+    const int viewportHeight,
+    const std::uintptr_t targetFramebuffer,
+    const SceneRenderOptions& options,
+    const RenderViewport renderViewport) const
 {
     const_cast<SceneRenderer&>(GetRenderer()).Render(
-        *this, camera, viewportWidth, viewportHeight, targetFramebuffer, options);
+        *this,
+        camera,
+        viewportWidth,
+        viewportHeight,
+        targetFramebuffer,
+        options,
+        renderViewport);
 }

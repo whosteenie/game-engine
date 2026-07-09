@@ -126,6 +126,9 @@ public:
         int height);
     std::uint32_t GetPathTracerAccumSampleCount() const { return m_ptAccumSampleCount; }
     void ResetPathTracerAccumulation();
+    void InvalidateAllTemporalState() const;
+    // Motion/object discontinuity without resetting DLSS/TAA jitter history (play stop).
+    void InvalidateMotionHistory() const;
     void BlitPathTracer(
         const Framebuffer* outputTarget,
         int viewportWidth,

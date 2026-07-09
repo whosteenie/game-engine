@@ -29,22 +29,30 @@ void GameViewportPanel::ClearRenderTarget() const
     OffscreenViewportPanel::ClearRenderTarget(m_viewport);
 }
 
-void GameViewportPanel::Draw(const bool hasSceneCamera)
+void GameViewportPanel::Draw(const bool hasSceneCamera, const bool willRenderThisFrame)
 {
     OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Game View", m_viewport.showPanel))
     {
-        OffscreenViewportPanel::OnPanelHidden(m_viewport);
+        if (!m_viewport.showPanel)
+        {
+            OffscreenViewportPanel::OnPanelHidden(m_viewport);
+        }
         return;
     }
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
     OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
 
-    const bool canCompositeFrame =
-        hasSceneCamera && m_viewport.framebuffer.IsValid() && m_viewport.framebuffer.GetColorTexture() != 0;
+    if (hasSceneCamera && HasValidRenderTarget())
+    {
+        EnsureFramebufferSized();
+    }
+
+    const bool canCompositeFrame = hasSceneCamera
+        && OffscreenViewportPanel::CanCompositeFrame(m_viewport, willRenderThisFrame);
     const OffscreenViewportPanel::ViewportRegion region =
         OffscreenViewportPanel::DrawViewportRegion(m_viewport, available, canCompositeFrame);
     if (!canCompositeFrame)
