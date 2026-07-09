@@ -39,7 +39,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     uint g_EmissiveLightCount;
     float g_EmissiveLightPickWeightSum;
     float g_PtBloomHaloIntensity;
-    float _PadPtEmissiveNee;
+    float _PadPtEmissiveNee; // path-tracer-only: radiance isolate mode (see RenderDebug.h)
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

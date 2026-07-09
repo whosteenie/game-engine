@@ -142,6 +142,24 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RR guide: specular albedo";
     case RenderDebugMode::RrNormalRoughness:
         return "RR guide: normal-roughness";
+    case RenderDebugMode::PtIsolateDirectSun:
+        return "PT isolate: direct sun";
+    case RenderDebugMode::PtIsolateDirectEmissive:
+        return "PT isolate: emissive NEE";
+    case RenderDebugMode::PtIsolateSurfaceEmissive:
+        return "PT isolate: surface emissive";
+    case RenderDebugMode::PtIsolateAmbient:
+        return "PT isolate: SH ambient";
+    case RenderDebugMode::PtIsolateAoVisibility:
+        return "PT isolate: AO visibility";
+    case RenderDebugMode::PtIsolateSunVisibility:
+        return "PT isolate: sun visibility";
+    case RenderDebugMode::PtIsolateIndirect:
+        return "PT isolate: indirect only";
+    case RenderDebugMode::PtIsolatePreClamp:
+        return "PT isolate: pre-clamp radiance";
+    case RenderDebugMode::PtIsolateSpecHitDist:
+        return "PT isolate: spec hit distance";
     default:
         return "Unknown";
     }
@@ -314,6 +332,42 @@ bool IsRrGuideDebugMode(const RenderDebugMode mode)
         return true;
     default:
         return false;
+    }
+}
+
+bool IsPtIsolateDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::PtIsolateDirectSun:
+    case RenderDebugMode::PtIsolateDirectEmissive:
+    case RenderDebugMode::PtIsolateSurfaceEmissive:
+    case RenderDebugMode::PtIsolateAmbient:
+    case RenderDebugMode::PtIsolateAoVisibility:
+    case RenderDebugMode::PtIsolateSunVisibility:
+    case RenderDebugMode::PtIsolateIndirect:
+    case RenderDebugMode::PtIsolatePreClamp:
+    case RenderDebugMode::PtIsolateSpecHitDist:
+        return true;
+    default:
+        return false;
+    }
+}
+
+int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::PtIsolateDirectSun: return 1;
+    case RenderDebugMode::PtIsolateDirectEmissive: return 2;
+    case RenderDebugMode::PtIsolateSurfaceEmissive: return 3;
+    case RenderDebugMode::PtIsolateAmbient: return 4;
+    case RenderDebugMode::PtIsolateAoVisibility: return 5;
+    case RenderDebugMode::PtIsolateSunVisibility: return 6;
+    case RenderDebugMode::PtIsolateIndirect: return 7;
+    case RenderDebugMode::PtIsolatePreClamp: return 8;
+    case RenderDebugMode::PtIsolateSpecHitDist: return 9;
+    default: return 0;
     }
 }
 

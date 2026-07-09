@@ -59,7 +59,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool ptFireflyClamp,
     const float ptAmbientStrength,
     const int ptAmbientAoRayCount,
-    const float ptBloomHaloIntensity)
+    const float ptBloomHaloIntensity,
+    const int ptDebugIsolateMode)
 {
     m_dispatchedThisFrame = false;
 
@@ -176,6 +177,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptBloomHaloIntensity = std::max(ptBloomHaloIntensity, 0.0f);
+    constants.ptDebugIsolateMode =
+        static_cast<float>(std::clamp(ptDebugIsolateMode, 0, 9));
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.

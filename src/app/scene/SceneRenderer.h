@@ -77,6 +77,9 @@ public:
     ScreenSpaceEffects& GetScreenSpaceEffects();
     const ScreenSpaceEffects& GetScreenSpaceEffects() const;
 
+    void SetRenderDebugMode(RenderDebugMode mode);
+    RenderDebugMode GetRenderDebugMode() const;
+
     DxrSettings& GetDxrSettings();
     const DxrSettings& GetDxrSettings() const;
 

@@ -119,6 +119,18 @@ namespace
         RenderDebugMode::RrNormalRoughness,
     };
 
+    const RenderDebugMode kPtIsolateModes[] = {
+        RenderDebugMode::PtIsolateDirectSun,
+        RenderDebugMode::PtIsolateDirectEmissive,
+        RenderDebugMode::PtIsolateSurfaceEmissive,
+        RenderDebugMode::PtIsolateAmbient,
+        RenderDebugMode::PtIsolateAoVisibility,
+        RenderDebugMode::PtIsolateSunVisibility,
+        RenderDebugMode::PtIsolateIndirect,
+        RenderDebugMode::PtIsolatePreClamp,
+        RenderDebugMode::PtIsolateSpecHitDist,
+    };
+
     const DebugViewCategory kDebugViewCategories[] = {
         {"Final image", kFinalImageModes, IM_ARRAYSIZE(kFinalImageModes)},
         {"Lighting & composite", kLightingModes, IM_ARRAYSIZE(kLightingModes)},
@@ -131,6 +143,7 @@ namespace
         {"SSR", kSsrModes, IM_ARRAYSIZE(kSsrModes)},
         {"Ray tracing", kRayTracingModes, IM_ARRAYSIZE(kRayTracingModes)},
         {"DLSS RR guides", kRrGuideModes, IM_ARRAYSIZE(kRrGuideModes)},
+        {"Path tracer isolate", kPtIsolateModes, IM_ARRAYSIZE(kPtIsolateModes)},
     };
 
     int FindCategoryIndexForMode(const RenderDebugMode mode)
@@ -182,14 +195,14 @@ namespace
         ScreenSpaceEffects& screenSpaceEffects,
         SceneRenderer& renderer)
     {
-        screenSpaceEffects.SetDebugMode(selectedMode);
+        renderer.SetRenderDebugMode(selectedMode);
         if ((IsRtPrimaryDebugMode(selectedMode) || IsRtReflectionDebugMode(selectedMode)
              || IsRtShadowDebugMode(selectedMode) || IsRtGiDebugMode(selectedMode))
             && renderer.GetDxrSettings().IsEnabled()
             && !GfxContext::Get().IsFrameRecording())
         {
             renderer.WarmUpDxrPipelineIfNeeded();
-            screenSpaceEffects.ResetRtPrimaryDebugBlitSettle();
+            renderer.GetScreenSpaceEffects().ResetRtPrimaryDebugBlitSettle();
         }
     }
 
@@ -315,6 +328,11 @@ namespace LightingPanelWidgets
                 || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled);
         }
 
+        if (IsPtIsolateDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled;
+        }
+
         if (!IsDxrDebugMode(mode))
         {
             return true;
@@ -366,6 +384,18 @@ namespace LightingPanelWidgets
         if (IsRrGuideDebugMode(mode))
         {
             return "Requires DLSS Ray Reconstruction to be enabled.";
+        }
+
+        if (IsPtIsolateDebugMode(mode))
+        {
+            if (!postEnabled)
+            {
+                return "Enable post-processing first.";
+            }
+            if (!pathTracingActive)
+            {
+                return "Enable path tracing first.";
+            }
         }
 
         if (!postEnabled)
@@ -506,6 +536,16 @@ namespace LightingPanelWidgets
         case RenderDebugMode::RrSpecularAlbedo:
         case RenderDebugMode::RrNormalRoughness:
             return "DLSS Ray Reconstruction material guide buffers fed to Streamline.";
+        case RenderDebugMode::PtIsolateDirectSun:
+        case RenderDebugMode::PtIsolateDirectEmissive:
+        case RenderDebugMode::PtIsolateSurfaceEmissive:
+        case RenderDebugMode::PtIsolateAmbient:
+        case RenderDebugMode::PtIsolateAoVisibility:
+        case RenderDebugMode::PtIsolateSunVisibility:
+        case RenderDebugMode::PtIsolateIndirect:
+        case RenderDebugMode::PtIsolatePreClamp:
+        case RenderDebugMode::PtIsolateSpecHitDist:
+            return "Raw PT term (DLSS/RR/bloom off). Scalar views (AO, sun vis, spec hit dist) are smooth; radiance views are noisy 1 spp. Sky is black except indirect / pre-clamp.";
         default:
             return nullptr;
         }
@@ -517,7 +557,7 @@ namespace LightingPanelWidgets
         static int modeIndexInCategory = 0;
         static RenderDebugMode lastSyncedMode = RenderDebugMode::None;
 
-        const RenderDebugMode activeMode = screenSpaceEffects.GetDebugMode();
+        const RenderDebugMode activeMode = renderer.GetRenderDebugMode();
         if (!IsDebugViewModeAvailable(activeMode, renderer, screenSpaceEffects))
         {
             ApplyDebugViewSelection(RenderDebugMode::None, screenSpaceEffects, renderer);
@@ -547,7 +587,7 @@ namespace LightingPanelWidgets
         const DebugViewCategory& selectedCategory = kDebugViewCategories[categoryIndex];
         if (DrawModeCombo(selectedCategory, modeIndexInCategory, screenSpaceEffects, renderer))
         {
-            lastSyncedMode = screenSpaceEffects.GetDebugMode();
+            lastSyncedMode = renderer.GetRenderDebugMode();
             changed = true;
         }
 

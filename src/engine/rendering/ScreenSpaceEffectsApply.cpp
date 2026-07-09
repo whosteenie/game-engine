@@ -98,7 +98,8 @@ void ScreenSpaceEffects::InitApplyFrame(
         || m_antiAliasingMode == AntiAliasingMode::DLSS;
     state.pathTracerReferenceActive =
         m_pathTracerActive && m_pathTracerConvergenceMode == PtConvergenceMode::Reference;
-    state.effectiveWantDlss = state.wantDlss && !state.pathTracerReferenceActive;
+    state.effectiveWantDlss =
+        state.wantDlss && !state.pathTracerReferenceActive && !IsPtIsolateDebugMode(m_debugMode);
 
     const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = false;
     const_cast<ScreenSpaceEffects*>(this)->m_pathTracerPostIntegrated = false;
@@ -563,7 +564,8 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
     }
 
     state.bloomSrv = 0;
-    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !state.effectiveWantDlss)
+    if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !state.effectiveWantDlss
+        && !IsPtIsolateDebugMode(m_debugMode))
     {
         const GfxContext::GpuTimerScope gpuScopeBloom("Post-process/Bloom");
         RenderResBloomInputs bloomInputs{};

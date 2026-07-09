@@ -66,7 +66,8 @@ public:
         bool ptFireflyClamp,
         float ptAmbientStrength,
         int ptAmbientAoRayCount,
-        float ptBloomHaloIntensity = 0.0f);
+        float ptBloomHaloIntensity = 0.0f,
+        int ptDebugIsolateMode = 0);
 
     void Release();
 

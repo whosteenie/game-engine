@@ -51,6 +51,8 @@ StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
 #define g_PtPixelSpreadAngle max(_PadUnjitteredViewProj.z, 1e-6)
 // Matches lit.vs uTemporalHistoryValid: when false, prevClip = currClip (zero motion).
 #define kPtMotionHistoryValid (_PadUnjitteredViewProj.w > 0.5)
+// Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*).
+#define g_PtDebugIsolateMode uint(round(saturate(_PadPtEmissiveNee)))
 
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
@@ -346,6 +348,24 @@ float3 EvaluateRealTimeDiffuseAmbient(
         * g_PtAmbientStrength;
 }
 
+float TracePrimarySunVisibility(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 hitNormal,
+    float3 shadowOrigin)
+{
+    const float3 sunL = normalize(g_SunDirection);
+    const float ndotl = saturate(dot(hitNormal, sunL));
+    if (ndotl <= 0.0)
+    {
+        return 0.0;
+    }
+
+    return (g_SunAngularTanRadius > 1e-6)
+        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, pixel, bounceIndex + kPtSoftSunRngSalt)
+        : TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+}
+
 float3 EvaluateDirectSun(
     uint2 pixel,
     uint bounceIndex,
@@ -360,9 +380,7 @@ float3 EvaluateDirectSun(
         return 0.0.xxx;
     }
 
-    const float sunVis = (g_SunAngularTanRadius > 1e-6)
-        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, pixel, bounceIndex + kPtSoftSunRngSalt)
-        : TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, hitNormal, shadowOrigin);
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
     return diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
 }
@@ -636,6 +654,82 @@ bool SampleNextBounceDirection(
     return traceSpecular;
 }
 
+float3 SelectPtDebugRadiance(
+    uint isolateMode,
+    bool primaryHit,
+    float3 radiance,
+    float3 radiancePreClamp,
+    float3 termDirectSun,
+    float3 termDirectEmissive,
+    float3 termSurfaceEmissive,
+    float3 termAmbient,
+    float primaryAoVis,
+    float primarySunVis,
+    float specHitDistGuide)
+{
+    if (isolateMode == 0u)
+    {
+        return radiance;
+    }
+
+    // Sky pixels: only show the environment for views that include miss/sky transport.
+    // Surface-only terms use black sky so they do not look like the full composite.
+    if (!primaryHit)
+    {
+        if (isolateMode == 7u || isolateMode == 8u)
+        {
+            return radiancePreClamp;
+        }
+        return 0.0.xxx;
+    }
+
+    if (isolateMode == 1u)
+    {
+        return termDirectSun;
+    }
+    if (isolateMode == 2u)
+    {
+        return termDirectEmissive * float3(1.0, 0.65, 1.0);
+    }
+    if (isolateMode == 3u)
+    {
+        return termSurfaceEmissive;
+    }
+    if (isolateMode == 4u)
+    {
+        return termAmbient * float3(0.65, 0.8, 1.0);
+    }
+    if (isolateMode == 5u)
+    {
+        const float v = saturate(primaryAoVis * 4.0);
+        return float3(v * 0.2, v, v * 0.25);
+    }
+    if (isolateMode == 6u)
+    {
+        const float v = saturate(primarySunVis * 4.0);
+        return float3(v, v * 0.85, v * 0.15);
+    }
+    if (isolateMode == 7u)
+    {
+        return max(
+            radiancePreClamp - termDirectSun - termDirectEmissive - termSurfaceEmissive
+                - termAmbient,
+            0.0.xxx);
+    }
+    if (isolateMode == 8u)
+    {
+        return radiancePreClamp;
+    }
+    if (isolateMode == 9u)
+    {
+        const float normalizedDist = saturate(specHitDistGuide / max(g_MaxTraceDistance, 1e-4));
+        const float v = 1.0 - normalizedDist;
+        return float3(v, v * 0.35, 0.0);
+    }
+
+    return radiancePreClamp;
+}
+
 [shader("raygeneration")]
 void PathTracerRayGen()
 {
@@ -683,6 +777,13 @@ void PathTracerRayGen()
     // purely and always adds it on miss.
     bool addEnvOnMiss = true;
     float lastScatterPdf = 1.0;
+
+    float3 termDirectSun = 0.0.xxx;
+    float3 termDirectEmissive = 0.0.xxx;
+    float3 termSurfaceEmissive = 0.0.xxx;
+    float3 termAmbient = 0.0.xxx;
+    float primaryAoVis = 1.0;
+    float primarySunVis = 0.0;
 
     [loop]
     for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
@@ -745,20 +846,32 @@ void PathTracerRayGen()
             const float misHit = (pickPdf > 0.0 && lastScatterPdf > 0.0)
                 ? BalanceHeuristic(lastScatterPdf, pickPdf)
                 : 1.0;
-            radiance += throughput * EmissiveWithBloomHalo(material.emissive) * misHit;
+            const float3 surfaceEmissive = EmissiveWithBloomHalo(material.emissive) * misHit;
+            radiance += throughput * surfaceEmissive;
+            termSurfaceEmissive += throughput * surfaceEmissive;
         }
 
-        radiance += throughput * EvaluateDirectSun(
+        const float3 sunContrib = EvaluateDirectSun(
             pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
-        radiance += throughput * EvaluateDirectEmissive(
+        radiance += throughput * sunContrib;
+        termDirectSun += throughput * sunContrib;
+
+        const float3 emissiveContrib = EvaluateDirectEmissive(
             pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
+        radiance += throughput * emissiveContrib;
+        termDirectEmissive += throughput * emissiveContrib;
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
         if (kPtCenterPrimaryRays && bounce == 0u)
         {
-            radiance += throughput
-                * EvaluateRealTimeDiffuseAmbient(pixel, diffuseAlbedo, hitNormal, shadowOrigin);
+            primaryAoVis =
+                TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormal, g_PtAmbientAoRayCount);
+            primarySunVis = TracePrimarySunVisibility(pixel, bounce, hitNormal, shadowOrigin);
+            const float3 ambientContrib =
+                EvaluateRealTimeDiffuseAmbient(pixel, diffuseAlbedo, hitNormal, shadowOrigin);
+            radiance += throughput * ambientContrib;
+            termAmbient += throughput * ambientContrib;
         }
 
         if (bounce == 0u)
@@ -876,11 +989,26 @@ void PathTracerRayGen()
         ray.Direction = nextDir;
     }
 
-    if (kPtFireflyClampEnabled)
+    const float3 radiancePreClamp = radiance;
+    if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
     {
         radiance = ClampRadiance(radiance);
     }
-    g_Output[pixel] = float4(radiance, specHitDistGuide);
+
+    const float3 displayRadiance = SelectPtDebugRadiance(
+        g_PtDebugIsolateMode,
+        primaryHit,
+        radiance,
+        radiancePreClamp,
+        termDirectSun,
+        termDirectEmissive,
+        termSurfaceEmissive,
+        termAmbient,
+        primaryAoVis,
+        primarySunVis,
+        specHitDistGuide);
+
+    g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     g_DepthOutput[pixel] = primaryDepth;
     g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);
     g_Metadata[pixel] = primaryHit

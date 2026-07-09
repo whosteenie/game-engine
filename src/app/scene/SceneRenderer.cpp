@@ -708,7 +708,8 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetPtAmbientAoRayCount(),
             m_activeScreenSpaceEffects->IsBloomEnabled()
                 ? m_activeScreenSpaceEffects->GetBloomIntensity()
-                : 0.0f);
+                : 0.0f,
+            PtDebugIsolateModeFromRenderDebug(debugMode));
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
@@ -1685,6 +1686,28 @@ const ScreenSpaceEffects& SceneRenderer::GetScreenSpaceEffects() const
     return *m_screenSpaceEffects;
 }
 
+void SceneRenderer::SetRenderDebugMode(const RenderDebugMode mode)
+{
+    EnsureGpuResources();
+    if (m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->SetDebugMode(mode);
+    }
+    if (m_gameViewScreenSpaceEffects != nullptr)
+    {
+        m_gameViewScreenSpaceEffects->SetDebugMode(mode);
+    }
+}
+
+RenderDebugMode SceneRenderer::GetRenderDebugMode() const
+{
+    if (m_screenSpaceEffects != nullptr)
+    {
+        return m_screenSpaceEffects->GetDebugMode();
+    }
+    return RenderDebugMode::None;
+}
+
 DxrSettings& SceneRenderer::GetDxrSettings()
 {
     return m_dxrSettings;
@@ -1844,6 +1867,8 @@ void SceneRenderer::SyncGameViewScreenSpaceSettings()
     {
         m_gameViewScreenSpaceEffects->SetMsaaSampleCount(aaSettings.msaaSampleCount);
     }
+
+    m_gameViewScreenSpaceEffects->SetDebugMode(m_screenSpaceEffects->GetDebugMode());
 }
 
 void SceneRenderer::SetTextureMipBias(const float mipBias)

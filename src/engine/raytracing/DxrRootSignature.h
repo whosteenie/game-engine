@@ -70,7 +70,7 @@ struct ReflectionDispatchConstants
     std::uint32_t emissiveLightCount = 0;
     float emissiveLightPickWeightSum = 0.0f;
     float ptBloomHaloIntensity = 0.0f;
-    float emissivePad = 0.0f;
+    float ptDebugIsolateMode = 0.0f; // path-tracer-only radiance term isolation (see RenderDebug.h)
 };
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in

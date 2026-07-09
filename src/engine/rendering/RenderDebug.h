@@ -71,6 +71,16 @@ enum class RenderDebugMode
     RrDiffuseAlbedo,
     RrSpecularAlbedo,
     RrNormalRoughness,
+    // Path-tracer radiance isolation (devdoc/dxr/pt/crevice-darkening.md optional debug views).
+    PtIsolateDirectSun,
+    PtIsolateDirectEmissive,
+    PtIsolateSurfaceEmissive,
+    PtIsolateAmbient,
+    PtIsolateAoVisibility,
+    PtIsolateSunVisibility,
+    PtIsolateIndirect,
+    PtIsolatePreClamp,
+    PtIsolateSpecHitDist,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -89,5 +99,7 @@ bool IsRtReflectionDebugMode(RenderDebugMode mode);
 bool IsRtShadowDebugMode(RenderDebugMode mode);
 bool IsRtGiDebugMode(RenderDebugMode mode);
 bool IsRrGuideDebugMode(RenderDebugMode mode);
+bool IsPtIsolateDebugMode(RenderDebugMode mode);
+int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);
