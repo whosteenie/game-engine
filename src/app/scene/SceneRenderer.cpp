@@ -705,7 +705,10 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.IsPtRussianRouletteEnabled(),
             m_dxrSettings.IsPtFireflyClampEnabled(),
             m_dxrSettings.GetPtAmbientStrength(),
-            m_dxrSettings.GetPtAmbientAoRayCount());
+            m_dxrSettings.GetPtAmbientAoRayCount(),
+            m_activeScreenSpaceEffects->IsBloomEnabled()
+                ? m_activeScreenSpaceEffects->GetBloomIntensity()
+                : 0.0f);
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())

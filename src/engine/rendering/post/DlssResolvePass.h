@@ -87,6 +87,9 @@ struct DlssResolvePassInputs
     PostProcessDepthTarget* ptDlssDepthTarget = nullptr;
     void* pathTracerMotionResource = nullptr;
     std::uint32_t pathTracerMotionResourceState = 0;
+    // P4b: PT primary depth (R32) and motion SRVs for bloom temporal when DLSS uses the PT bundle.
+    std::uintptr_t pathTracerDepthSrv = 0;
+    std::uintptr_t pathTracerMotionSrv = 0;
 };
 
 struct DlssResolvePassOutputs

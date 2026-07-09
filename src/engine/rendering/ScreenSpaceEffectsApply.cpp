@@ -345,6 +345,8 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.ptDlssDepthTarget = const_cast<InternalDepthTarget*>(&m_ptDlssDepthTarget);
     dlssInputs.pathTracerMotionResource = m_pathTracerMotionResource;
     dlssInputs.pathTracerMotionResourceState = m_pathTracerMotionResourceState;
+    dlssInputs.pathTracerDepthSrv = m_pathTracerDepthSrv;
+    dlssInputs.pathTracerMotionSrv = m_pathTracerMotionSrv;
     dlssInputs.drawPathTracerGridOverlay =
         [this, camera = state.camera](PostProcessTarget& target, const int width, const int height)
         {

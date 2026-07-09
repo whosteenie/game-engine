@@ -38,7 +38,8 @@ cbuffer ReflectionDispatchConstants : register(b0)
     // F2 path-tracer-only: emissive NEE (zero for non-PT dispatches).
     uint g_EmissiveLightCount;
     float g_EmissiveLightPickWeightSum;
-    float2 _PadPtEmissiveNee;
+    float g_PtBloomHaloIntensity;
+    float _PadPtEmissiveNee;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

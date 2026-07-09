@@ -69,7 +69,8 @@ struct ReflectionDispatchConstants
     // F2 path-tracer-only: emissive NEE light list (t15). Zero for non-PT dispatches.
     std::uint32_t emissiveLightCount = 0;
     float emissiveLightPickWeightSum = 0.0f;
-    float emissivePad[2] = {};
+    float ptBloomHaloIntensity = 0.0f;
+    float emissivePad = 0.0f;
 };
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in

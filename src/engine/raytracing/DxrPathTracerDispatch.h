@@ -65,7 +65,8 @@ public:
         bool ptRussianRoulette,
         bool ptFireflyClamp,
         float ptAmbientStrength,
-        int ptAmbientAoRayCount);
+        int ptAmbientAoRayCount,
+        float ptBloomHaloIntensity = 0.0f);
 
     void Release();
 

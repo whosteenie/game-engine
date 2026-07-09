@@ -107,6 +107,8 @@ void DlssResolvePass::Execute(
         && inputs.pathTracerConvergenceMode == PtConvergenceMode::RealTime
         && inputs.pathTracerOutputResource != nullptr
         && inputs.dxrPathTracerOutputSrv != 0;
+    bool ptBloomTemporalMotion = false;
+    bool ptBloomTemporalDepth = false;
     if (pathTracerDlssActive)
     {
         hdrInputResource = inputs.pathTracerOutputResource;
@@ -180,6 +182,8 @@ void DlssResolvePass::Execute(
             && (bundleMode == 5
                 || bundleMode == 3
                 || (bundleMode == 0 && usePtDepth && (ptBundleReady & 1u) != 0u));
+        ptBloomTemporalMotion = usePtMotion;
+        ptBloomTemporalDepth = usePtDepth;
 
         void* motionInput = inputs.sceneFramebuffer->GetGBufferColorResource(GBufferSlot::MotionVelocity);
         std::uint32_t motionInputState = kPixelSrv;
@@ -354,6 +358,9 @@ void DlssResolvePass::Execute(
 
     if (outputs.dlssRan)
     {
+        // DLSS evaluate applies exposureScale; bloom/tonemap must not re-apply EV (F6).
+        constexpr float kPostDlssExposureEv = 0.0f;
+
         if (pathTracerDlssActive && inputs.pathTracerGridOverlayEnabled
             && inputs.drawPathTracerGridOverlay)
         {
@@ -368,20 +375,23 @@ void DlssResolvePass::Execute(
         if (inputs.bloomEnabled && inputs.dlssBloomExtractTarget != nullptr
             && inputs.dlssBloomExtractTarget->srvCpuHandle != 0)
         {
+            // DLSS evaluate applies exposureScale; bloom/tonemap must not re-apply EV (F6).
             DisplayResBloomInputs bloomInputs{};
             bloomInputs.hdrColorSrv = inputs.dlssOutputTarget->srvCpuHandle;
             bloomInputs.displayWidth = inputs.viewportWidth;
             bloomInputs.displayHeight = inputs.viewportHeight;
             bloomInputs.renderWidth = context.renderWidth;
             bloomInputs.renderHeight = context.renderHeight;
-            bloomInputs.exposure = inputs.exposure;
+            bloomInputs.exposure = kPostDlssExposureEv;
             bloomInputs.bloomThreshold = inputs.bloomThreshold;
             bloomInputs.bloomSoftKnee = inputs.bloomSoftKnee;
             bloomInputs.bloomBlurRadius = inputs.bloomBlurRadius;
             bloomInputs.bloomTemporalBlendFactor = inputs.bloomTemporalBlendFactor;
             bloomInputs.bloomSameUvBlendFactor = inputs.bloomSameUvBlendFactor;
             bloomInputs.bloomDepthThreshold = inputs.bloomDepthThreshold;
-            bloomInputs.useMaterialGbuffer = inputs.sceneFramebuffer->HasMaterialGbuffer();
+            // PT HDR disagrees with raster gbuffer — attenuation caused dark rims on mirrors.
+            bloomInputs.useMaterialGbuffer =
+                inputs.sceneFramebuffer->HasMaterialGbuffer() && !pathTracerDlssActive;
             if (bloomInputs.useMaterialGbuffer)
             {
                 bloomInputs.material0Srv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
@@ -389,10 +399,17 @@ void DlssResolvePass::Execute(
                 bloomInputs.material1Srv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
                     GBufferSlot::MaterialMetallic);
             }
-            bloomInputs.hasVelocity = inputs.sceneFramebuffer->HasVelocity();
-            bloomInputs.velocitySrv = inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(
-                GBufferSlot::MotionVelocity);
-            bloomInputs.depthSrv = inputs.sceneFramebuffer->GetDepthSrvCpuHandle();
+            const bool usePtBloomTemporalGuides = pathTracerDlssActive && ptBloomTemporalMotion
+                && ptBloomTemporalDepth && inputs.pathTracerMotionSrv != 0
+                && inputs.pathTracerDepthSrv != 0;
+            bloomInputs.hasVelocity = usePtBloomTemporalGuides
+                || inputs.sceneFramebuffer->HasVelocity();
+            bloomInputs.velocitySrv = usePtBloomTemporalGuides
+                ? inputs.pathTracerMotionSrv
+                : inputs.sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MotionVelocity);
+            bloomInputs.depthSrv = usePtBloomTemporalGuides
+                ? inputs.pathTracerDepthSrv
+                : inputs.sceneFramebuffer->GetDepthSrvCpuHandle();
             bloomInputs.bloomExtractShader = inputs.bloomExtractShader;
             bloomInputs.bloomBlurShader = inputs.bloomBlurShader;
             bloomInputs.bloomTemporalShader = inputs.bloomTemporalShader;
@@ -425,7 +442,7 @@ void DlssResolvePass::Execute(
                 inputs.viewportHeight,
                 inputs.dlssOutputTarget->srvCpuHandle,
                 displayBloomSrv,
-                inputs.exposure,
+                kPostDlssExposureEv,
                 inputs.tonemapMode,
                 inputs.bloomIntensity,
                 inputs.tonemapShader);
