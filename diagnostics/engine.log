@@ -1,0 +1,1 @@
+2026-07-09 02:55:14 [warn] [hlsl] Shader compile failed: assets/shaders/fullscreen.vs.hlsl (vs_5_0) error: invalid profile vs_5_0 (truncated)

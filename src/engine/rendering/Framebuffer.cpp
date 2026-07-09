@@ -1767,11 +1767,16 @@ bool Framebuffer::ReadbackColorPixel(const int x, const int y, float outRgba[4])
     auto* colorResource = static_cast<ID3D12Resource*>(m_colorResources[0]);
     const DXGI_FORMAT colorFormat = ColorFormatForAttachment(0, m_colorMode);
     const bool isUnorm8 = colorFormat == DXGI_FORMAT_R8G8B8A8_UNORM;
-    const UINT64 kReadbackSize = isUnorm8 ? 4ull : sizeof(std::uint16_t) * 4ull;
+    const UINT64 kPixelByteSize = isUnorm8 ? 4ull : sizeof(std::uint16_t) * 4ull;
+    constexpr UINT64 kPlacedFootprintAlignment = 512u;
+    const UINT64 readbackBufferSize =
+        ((kPixelByteSize + kPlacedFootprintAlignment - 1) / kPlacedFootprintAlignment)
+        * kPlacedFootprintAlignment;
+    const UINT rowPitch = static_cast<UINT>(readbackBufferSize);
 
     D3D12_RESOURCE_DESC readbackDesc{};
     readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    readbackDesc.Width = kReadbackSize;
+    readbackDesc.Width = readbackBufferSize;
     readbackDesc.Height = 1;
     readbackDesc.DepthOrArraySize = 1;
     readbackDesc.MipLevels = 1;
@@ -1823,7 +1828,7 @@ bool Framebuffer::ReadbackColorPixel(const int x, const int y, float outRgba[4])
         destination.PlacedFootprint.Footprint.Width = 1;
         destination.PlacedFootprint.Footprint.Height = 1;
         destination.PlacedFootprint.Footprint.Depth = 1;
-        destination.PlacedFootprint.Footprint.RowPitch = static_cast<UINT>(kReadbackSize);
+        destination.PlacedFootprint.Footprint.RowPitch = rowPitch;
 
         const UINT left = static_cast<UINT>(clampedX);
         const UINT top = static_cast<UINT>(clampedY);
@@ -1839,7 +1844,7 @@ bool Framebuffer::ReadbackColorPixel(const int x, const int y, float outRgba[4])
         commandList->ResourceBarrier(1, &fromCopy);
     });
 
-    D3D12_RANGE readRange{0, static_cast<SIZE_T>(kReadbackSize)};
+    D3D12_RANGE readRange{0, static_cast<SIZE_T>(kPixelByteSize)};
     void* mapped = nullptr;
     if (FAILED(readbackResource->Map(0, &readRange, &mapped)))
     {

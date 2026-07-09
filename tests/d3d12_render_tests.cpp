@@ -1,5 +1,6 @@
 #include "d3d12_test_harness.h"
 #include "test_expect.h"
+#include "d3d12_test_runner.h"
 
 // MANUAL GPU TEST SUITE — DO NOT AUTO-RUN
 // ---------------------------------------
@@ -62,26 +63,45 @@
 
 namespace render_tests
 {
-    constexpr int kFramebufferSize = 256;
+    constexpr int kSmokeFramebufferSize = 32;
+    constexpr int kPbrFramebufferSize = 256;
+    constexpr int kThinPrimitiveFramebufferSize = 256;
+    int g_framebufferSize = kSmokeFramebufferSize;
+
+    int FramebufferSize()
+    {
+        return g_framebufferSize;
+    }
+
+    int ScaledReadbackRadius(const int radiusAt256)
+    {
+        return std::max(2, (radiusAt256 * FramebufferSize()) / kPbrFramebufferSize);
+    }
+
+    void SetFramebufferSizeForTier(const int tier)
+    {
+        g_framebufferSize = tier <= gpu_render_tests::kTierSmoke ? kSmokeFramebufferSize : kPbrFramebufferSize;
+    }
+
 
     Camera MakeSceneCamera()
     {
         Camera camera(glm::vec3(0.0f, 2.0f, 6.0f), -90.0f, -20.0f);
-        camera.SetAspectFromFramebuffer(kFramebufferSize, kFramebufferSize);
+        camera.SetAspectFromFramebuffer(FramebufferSize(), FramebufferSize());
         return camera;
     }
 
     Camera MakeForwardCamera(const glm::vec3& position)
     {
         Camera camera(position, -90.0f, 0.0f);
-        camera.SetAspectFromFramebuffer(kFramebufferSize, kFramebufferSize);
+        camera.SetAspectFromFramebuffer(FramebufferSize(), FramebufferSize());
         return camera;
     }
 
     Camera MakeTopDownCamera()
     {
         Camera camera(glm::vec3(0.0f, 8.0f, 0.01f), -90.0f, -89.0f);
-        camera.SetAspectFromFramebuffer(kFramebufferSize, kFramebufferSize);
+        camera.SetAspectFromFramebuffer(FramebufferSize(), FramebufferSize());
         return camera;
     }
 
@@ -117,15 +137,14 @@ namespace render_tests
             target.z + std::sin(angleRadians) * radius);
         Camera camera(eye, 0.0f, 0.0f);
         camera.SetOrientationFromDirection(target - eye);
-        camera.SetAspectFromFramebuffer(kFramebufferSize, kFramebufferSize);
+        camera.SetAspectFromFramebuffer(FramebufferSize(), FramebufferSize());
         return camera;
     }
 
-    float CenterLuminance(const Framebuffer& framebuffer, int radius = 12)
+    float PeakCenterLuminance(const Framebuffer& framebuffer, int radius = 12)
     {
-        const int center = kFramebufferSize / 2;
-        float sum = 0.0f;
-        int count = 0;
+        const int center = FramebufferSize() / 2;
+        float best = 0.0f;
         for (int y = center - radius; y <= center + radius; ++y)
         {
             for (int x = center - radius; x <= center + radius; ++x)
@@ -136,13 +155,128 @@ namespace render_tests
                     continue;
                 }
 
-                sum += 0.2126f * rgba[0] + 0.7152f * rgba[1] + 0.0722f * rgba[2];
-                ++count;
+                const float luminance =
+                    0.2126f * rgba[0] + 0.7152f * rgba[1] + 0.0722f * rgba[2];
+                if (luminance > best)
+                {
+                    best = luminance;
+                }
             }
         }
 
-        return count > 0 ? sum / static_cast<float>(count) : 0.0f;
+        return best;
     }
+
+    float PeakFramebufferLuminance(const Framebuffer& framebuffer)
+    {
+        float best = 0.0f;
+        const int step = (std::max)(1, FramebufferSize() / 32);
+        for (int y = 0; y < FramebufferSize(); y += step)
+        {
+            for (int x = 0; x < FramebufferSize(); x += step)
+            {
+                float rgba[4]{};
+                if (!ReadFramebufferPixel(framebuffer, x, y, rgba))
+                {
+                    continue;
+                }
+
+                const float luminance =
+                    0.2126f * rgba[0] + 0.7152f * rgba[1] + 0.0722f * rgba[2];
+                if (luminance > best)
+                {
+                    best = luminance;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    void SetupEmptyShadowMapForPbr(
+        CascadedShadowMap& shadowMap,
+        const Camera& camera,
+        const glm::vec3& sunDirection = glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f)))
+    {
+        shadowMap.BeginFrame(
+            camera,
+            sunDirection,
+            glm::vec3(-2.0f),
+            glm::vec3(2.0f),
+            true,
+            DirectionalShadowSettings{});
+        shadowMap.EndFrame();
+    }
+
+    void PreparePbrFramebufferDraw(Framebuffer& framebuffer)
+    {
+        GfxContext::Get().SetBoundOutputFramebuffer(&framebuffer);
+        framebuffer.BindDrawTarget(false);
+    }
+
+    float MaxChannelValue(
+        const Framebuffer& framebuffer,
+        int centerX,
+        int centerY,
+        int radius,
+        int channel);
+
+    void LogPixelSummary(const Framebuffer& framebuffer, const char* label);
+
+    float MaxChannelSumNearCenter(
+        const Framebuffer& framebuffer,
+        const int centerX,
+        const int centerY,
+        const int radius);
+
+    bool ResizePbrTestFramebuffer(Framebuffer& framebuffer)
+    {
+        return framebuffer.Resize(FramebufferSize(), FramebufferSize());
+    }
+
+    void ExpectVisibleShadedPixels(
+        const Framebuffer& framebuffer,
+        const char* label,
+        const float minChannelSum = 0.12f,
+        const int radius = 24)
+    {
+        const int center = FramebufferSize() / 2;
+        const float channelSum = MaxChannelSumNearCenter(framebuffer, center, center, radius);
+        if (channelSum <= minChannelSum)
+        {
+            LogPixelSummary(framebuffer, label);
+        }
+
+        test::ExpectTrue(
+            channelSum > minChannelSum,
+            "Shaded output should contain visible non-black pixels near the center");
+    }
+
+    Camera MakePbrTestCamera()
+    {
+        return MakeSceneCamera();
+    }
+
+    float MaxChannelSumNearCenter(
+        const Framebuffer& framebuffer,
+        const int centerX,
+        const int centerY,
+        const int radius)
+    {
+        return MaxChannelValue(framebuffer, centerX, centerY, radius, 0)
+            + MaxChannelValue(framebuffer, centerX, centerY, radius, 1)
+            + MaxChannelValue(framebuffer, centerX, centerY, radius, 2);
+    }
+
+    void DrawPbrCube(
+        Framebuffer& framebuffer,
+        Material& material,
+        const Camera& camera,
+        const SceneLighting& lighting,
+        IBL& ibl,
+        RenderDebugMode debugMode = RenderDebugMode::None,
+        CascadedShadowMap* shadowMap = nullptr,
+        const bool outputLinear = false);
 
     float LuminanceSpreadAcrossOrbitCameras(
         Framebuffer& framebuffer,
@@ -153,10 +287,16 @@ namespace render_tests
         IBL& ibl,
         const glm::vec3& target,
         const RenderDebugMode debugMode,
-        const int cameraCount = 8)
+        float* outMaxLuminance = nullptr,
+        const int cameraCount = 8,
+        const bool useFramePeakForSpread = false)
     {
-        float minLuminance = std::numeric_limits<float>::max();
-        float maxLuminance = 0.0f;
+        float minCenterLuminance = std::numeric_limits<float>::max();
+        float maxCenterLuminance = 0.0f;
+        float minSpreadLuminance = std::numeric_limits<float>::max();
+        float maxSpreadLuminance = 0.0f;
+        float maxFrameLuminance = 0.0f;
+        CascadedShadowMap shadowMap;
 
         for (int step = 0; step < cameraCount; ++step)
         {
@@ -164,27 +304,106 @@ namespace render_tests
             const Camera camera = MakeOrbitCamera(angle, target, 6.0f, 3.5f);
 
             BeginOffscreenPass(framebuffer);
+            GfxContext::Get().ResetDrawSrvTable();
+            SetupEmptyShadowMapForPbr(shadowMap, camera);
             GfxContext::Get().SetBoundOutputFramebuffer(&framebuffer);
-            framebuffer.Bind();
+            const float blackClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            framebuffer.BindDrawTarget(true, blackClear);
             material.Apply(
                 camera,
                 lighting,
                 ibl,
                 modelMatrix,
-                nullptr,
+                &shadowMap,
                 false,
                 false,
                 debugMode,
                 DirectionalShadowSettings{});
+            PreparePbrFramebufferDraw(framebuffer);
             mesh.Draw();
             EndOffscreenPass();
 
-            const float luminance = CenterLuminance(framebuffer);
-            minLuminance = std::min(minLuminance, luminance);
-            maxLuminance = std::max(maxLuminance, luminance);
+            const float centerLuminance =
+                PeakCenterLuminance(framebuffer, ScaledReadbackRadius(24));
+            minCenterLuminance = (std::min)(minCenterLuminance, centerLuminance);
+            maxCenterLuminance = (std::max)(maxCenterLuminance, centerLuminance);
+            const float frameLuminance = PeakFramebufferLuminance(framebuffer);
+            if (frameLuminance > maxFrameLuminance)
+            {
+                maxFrameLuminance = frameLuminance;
+            }
+
+            const float spreadSample =
+                useFramePeakForSpread ? frameLuminance : centerLuminance;
+            minSpreadLuminance = (std::min)(minSpreadLuminance, spreadSample);
+            maxSpreadLuminance = (std::max)(maxSpreadLuminance, spreadSample);
         }
 
-        return maxLuminance - minLuminance;
+        if (outMaxLuminance != nullptr)
+        {
+            *outMaxLuminance = maxFrameLuminance;
+        }
+
+        return maxSpreadLuminance - minSpreadLuminance;
+    }
+
+    float PeakCenterChannelSpread(
+        const Framebuffer& framebuffer,
+        const int centerX,
+        const int centerY,
+        const int radius)
+    {
+        float minChannel = 1.0f;
+        float maxChannel = 0.0f;
+        for (int y = centerY - radius; y <= centerY + radius; ++y)
+        {
+            for (int x = centerX - radius; x <= centerX + radius; ++x)
+            {
+                float rgba[4]{};
+                if (!ReadFramebufferPixel(framebuffer, x, y, rgba))
+                {
+                    continue;
+                }
+
+                const float peak = (std::max)(rgba[0], (std::max)(rgba[1], rgba[2]));
+                minChannel = (std::min)(minChannel, peak);
+                maxChannel = (std::max)(maxChannel, peak);
+            }
+        }
+
+        return maxChannel - minChannel;
+    }
+
+    void DrawPbrMeshWithDebugMode(
+        Framebuffer& framebuffer,
+        Material& material,
+        Mesh& mesh,
+        const glm::mat4& modelMatrix,
+        const Camera& camera,
+        const SceneLighting& lighting,
+        IBL& ibl,
+        const RenderDebugMode debugMode)
+    {
+        CascadedShadowMap shadowMap;
+        BeginOffscreenPass(framebuffer);
+        GfxContext::Get().ResetDrawSrvTable();
+        SetupEmptyShadowMapForPbr(shadowMap, camera);
+        GfxContext::Get().SetBoundOutputFramebuffer(&framebuffer);
+        const float blackClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        framebuffer.BindDrawTarget(true, blackClear);
+        material.Apply(
+            camera,
+            lighting,
+            ibl,
+            modelMatrix,
+            &shadowMap,
+            false,
+            false,
+            debugMode,
+            DirectionalShadowSettings{});
+        PreparePbrFramebufferDraw(framebuffer);
+        mesh.Draw();
+        EndOffscreenPass();
     }
 
     float MaxChannelValue(
@@ -236,7 +455,7 @@ namespace render_tests
 
     void LogPixelSummary(const Framebuffer& framebuffer, const char* label)
     {
-        const int center = kFramebufferSize / 2;
+        const int center = FramebufferSize() / 2;
         const float maxDistance = MaxChannelDistanceFromClear(framebuffer, center, center, 24);
         const float maxR = MaxChannelValue(framebuffer, center, center, 24, 0);
         const float maxG = MaxChannelValue(framebuffer, center, center, 24, 1);
@@ -247,26 +466,20 @@ namespace render_tests
 
     void TestTransientUploadAllocates()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         const float data[] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f};
         const GfxContext::TransientUploadAllocation upload =
             GfxContext::Get().AllocateTransientUpload(data, static_cast<std::uint32_t>(sizeof(data)));
         test::ExpectTrue(upload.gpuAddress != 0, "Transient upload should return a GPU address");
         test::ExpectTrue(upload.byteSize == sizeof(data), "Transient upload should preserve byte size");
-
-        context.Shutdown();
     }
 
     void TestOffscreenManualRedClear()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             BeginOffscreenPass(framebuffer);
             D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
@@ -276,27 +489,26 @@ namespace render_tests
             commandList->ClearRenderTargetView(rtv, redClear, 0, nullptr);
             EndOffscreenPass();
 
-            const float maxRed = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 4, 0);
+            const float maxRed = MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 4, 0);
             test::ExpectTrue(maxRed > 0.75f, "Manual red clear should raise the red channel near the center");
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestLineDrawWithoutDepthBinding()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(
+                framebuffer.Resize(kThinPrimitiveFramebufferSize, kThinPrimitiveFramebufferSize),
+                "Framebuffer resize should succeed");
 
             {
-                Shader shader(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader);
-                const Camera camera = MakeForwardCamera(glm::vec3(0.0f, 0.0f, 4.0f));
+                Shader shader(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader);
+                Camera camera = MakeForwardCamera(glm::vec3(0.0f, 0.0f, 4.0f));
+                camera.SetAspectFromFramebuffer(kThinPrimitiveFramebufferSize, kThinPrimitiveFramebufferSize);
                 const std::vector<float> crossLines = {
                     -2.0f, 0.0f, 0.0f,
                      2.0f, 0.0f, 0.0f,
@@ -305,35 +517,33 @@ namespace render_tests
                 };
 
                 BeginOffscreenPass(framebuffer, false);
-                shader.Use(false);
-                GizmoDraw::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
+                GizmoDraw::DrawLineVertices(
+                    shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f), false);
                 EndOffscreenPass();
 
-                const float maxGreen = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 12, 1);
-                if (maxGreen <= 0.35f)
+                const int center = kThinPrimitiveFramebufferSize / 2;
+                const float bestDistance =
+                    MaxChannelDistanceFromClear(framebuffer, center, center, 24);
+                if (bestDistance <= 0.05f)
                 {
                     LogPixelSummary(framebuffer, "Line draw without depth binding");
                 }
                 test::ExpectTrue(
-                    maxGreen > 0.35f,
+                    bestDistance > 0.05f,
                     "Line draw without depth binding should produce visible green pixels near the center");
             }
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestGridMrtDraw()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
             test::ExpectTrue(
-                framebuffer.Resize(kFramebufferSize, kFramebufferSize, FramebufferColorMode::SplitDirectIndirect),
+                framebuffer.Resize(FramebufferSize(), FramebufferSize(), FramebufferColorMode::SplitDirectIndirect),
                 "MRT framebuffer resize should succeed");
 
             {
@@ -346,7 +556,7 @@ namespace render_tests
             }
 
             const float bestDistance =
-                MaxChannelDistanceFromClear(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24);
+                MaxChannelDistanceFromClear(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24);
             if (bestDistance <= 0.01f)
             {
                 LogPixelSummary(framebuffer, "Grid MRT draw");
@@ -357,21 +567,17 @@ namespace render_tests
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestShaderUniformRegistration()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
-            Shader lineShader(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader);
-            test::ExpectTrue(lineShader.IsLinked(), "Grid+line shader should link");
-            test::ExpectTrue(lineShader.HasUniform("uView"), "Grid+line shader should expose uView");
-            test::ExpectTrue(lineShader.HasUniform("uProjection"), "Grid+line shader should expose uProjection");
-            test::ExpectTrue(lineShader.HasUniform("uColor"), "Grid+line shader should expose uColor");
+            Shader lineShader(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader);
+            test::ExpectTrue(lineShader.IsLinked(), "Gizmo line shader should link");
+            test::ExpectTrue(lineShader.HasUniform("uView"), "Gizmo line shader should expose uView");
+            test::ExpectTrue(lineShader.HasUniform("uProjection"), "Gizmo line shader should expose uProjection");
+            test::ExpectTrue(lineShader.HasUniform("uColor"), "Gizmo line shader should expose uColor");
 
             Shader maskShader(
                 EngineConstants::SelectionMaskVertexShader,
@@ -380,25 +586,21 @@ namespace render_tests
             test::ExpectTrue(maskShader.HasUniform("uModel"), "Selection mask shader should expose uModel");
             test::ExpectTrue(maskShader.HasUniform("uColor"), "Selection mask shader should expose uColor");
         }
-
-        context.Shutdown();
     }
 
     void TestFramebufferClear()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             BeginOffscreenPass(framebuffer);
             EndOffscreenPass();
 
             float rgba[4]{};
             test::ExpectTrue(
-                ReadFramebufferPixel(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, rgba),
+                ReadFramebufferPixel(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, rgba),
                 "Framebuffer readback should succeed");
             for (int channel = 0; channel < 3; ++channel)
             {
@@ -411,22 +613,21 @@ namespace render_tests
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestGizmoLineDraw()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(
+                framebuffer.Resize(kThinPrimitiveFramebufferSize, kThinPrimitiveFramebufferSize),
+                "Framebuffer resize should succeed");
 
             {
-                Shader shader(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader);
-                const Camera camera = MakeForwardCamera(glm::vec3(0.0f, 0.0f, 4.0f));
+                Shader shader(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader);
+                Camera camera = MakeForwardCamera(glm::vec3(0.0f, 0.0f, 4.0f));
+                camera.SetAspectFromFramebuffer(kThinPrimitiveFramebufferSize, kThinPrimitiveFramebufferSize);
                 const std::vector<float> crossLines = {
                     -2.0f, 0.0f, 0.0f,
                      2.0f, 0.0f, 0.0f,
@@ -435,32 +636,32 @@ namespace render_tests
                 };
 
                 BeginOffscreenPass(framebuffer);
-                shader.Use(false);
-                GizmoDraw::DrawLineVertices(shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f));
+                GizmoDraw::DrawLineVertices(
+                    shader, camera, crossLines, glm::vec3(0.1f, 0.9f, 0.2f), false);
                 EndOffscreenPass();
 
-                const float maxGreen = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 12, 1);
-                if (maxGreen <= 0.35f)
+                const int center = kThinPrimitiveFramebufferSize / 2;
+                const float bestDistance =
+                    MaxChannelDistanceFromClear(framebuffer, center, center, 24);
+                if (bestDistance <= 0.05f)
                 {
                     LogPixelSummary(framebuffer, "Line draw");
                 }
-                test::ExpectTrue(maxGreen > 0.35f, "Line draw should produce visible green pixels near the center");
+                test::ExpectTrue(
+                    bestDistance > 0.05f,
+                    "Line draw should produce visible green pixels near the center");
             }
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestIdentityClipSpaceTriangle()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             {
                 const float vertices[] = {
@@ -502,7 +703,7 @@ namespace render_tests
                 commandList->DrawIndexedInstanced(3, 1, 0, 0, 0);
                 EndOffscreenPass();
 
-                const float maxRed = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 32, 0);
+                const float maxRed = MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 32, 0);
                 if (maxRed <= 0.35f)
                 {
                     LogPixelSummary(framebuffer, "Identity clip-space triangle");
@@ -517,18 +718,14 @@ namespace render_tests
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestSolidTriangleDraw()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             {
                 const float vertices[] = {
@@ -572,10 +769,10 @@ namespace render_tests
 
                 EndOffscreenPass();
 
-                const float maxRed = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 16, 0);
+                const float maxRed = MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 16, 0);
                 test::ExpectTrue(maxRed > 0.35f, "Triangle draw should produce visible red pixels near the center");
                 test::ExpectTrue(
-                    MaxChannelDistanceFromClear(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 16) > 0.05f,
+                    MaxChannelDistanceFromClear(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 16) > 0.05f,
                     "Triangle draw should differ from the clear color near the center");
 
                 vertexBuffer.Destroy();
@@ -584,22 +781,18 @@ namespace render_tests
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestGridDraw()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             {
                 GridRenderer grid;
-                const Camera camera = MakeSceneCamera();
+                const Camera camera = MakePbrTestCamera();
 
                 BeginOffscreenPass(framebuffer);
                 grid.Draw(camera, false);
@@ -607,29 +800,24 @@ namespace render_tests
             }
 
             const float bestDistance =
-                MaxChannelDistanceFromClear(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24);
+                MaxChannelDistanceFromClear(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24);
             test::ExpectTrue(
                 bestDistance > 0.05f,
                 "Grid draw should change pixels near the center away from the clear color");
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestPbrCubeDraw()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
             test::ExpectTrue(framebuffer.GetDepthResource() != nullptr, "Viewport framebuffer should have a depth buffer");
 
             {
-                std::unique_ptr<Mesh> cube = CreateCubeMesh();
                 Material material(
                     EngineConstants::LitVertexShader,
                     EngineConstants::PbrFragmentShader,
@@ -644,47 +832,19 @@ namespace render_tests
                     3.0f));
                 lighting.SetShadowLightIndex(0);
 
-                IBL ibl(EngineConstants::EnvironmentHdr);
-                CascadedShadowMap shadowMap;
-                const Camera camera = MakeSceneCamera();
+                IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
+                const Camera camera = MakePbrTestCamera();
 
                 BeginOffscreenPass(framebuffer);
-
-                shadowMap.BeginFrame(
-                    camera,
-                    glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f)),
-                    glm::vec3(-2.0f),
-                    glm::vec3(2.0f),
-                    true,
-                    DirectionalShadowSettings{});
-                shadowMap.EndFrame();
-
-                framebuffer.BindDrawTarget(false);
-
-                material.Apply(
-                    camera,
-                    lighting,
-                    ibl,
-                    glm::scale(glm::mat4(1.0f), glm::vec3(2.0f)),
-                    &shadowMap,
-                    true,
-                    false,
-                    RenderDebugMode::None,
-                    DirectionalShadowSettings{});
-                cube->Draw();
-
+                DrawPbrCube(framebuffer, material, camera, lighting, ibl);
                 EndOffscreenPass();
 
-                test::ExpectTrue(
-                    MaxChannelDistanceFromClear(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24) > 0.05f,
-                    "PBR cube should differ from the clear color near the center");
+                ExpectVisibleShadedPixels(framebuffer, "PBR cube draw");
             }
 
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     struct IdentityRedTriangleDraw
@@ -733,19 +893,17 @@ namespace render_tests
 
     void TestClearReadbackDirectVsEditor()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
 
             BeginOffscreenPass(framebuffer);
             EndOffscreenPass(FrameSubmitMode::DirectSubmit);
 
             float directRgba[4]{};
             test::ExpectTrue(
-                ReadFramebufferPixel(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, directRgba),
+                ReadFramebufferPixel(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, directRgba),
                 "Direct-submit clear readback should succeed");
             test::ExpectTrue(
                 IsNearClearColor(directRgba),
@@ -756,7 +914,7 @@ namespace render_tests
 
             float editorRgba[4]{};
             test::ExpectTrue(
-                ReadFramebufferPixel(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, editorRgba),
+                ReadFramebufferPixel(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, editorRgba),
                 "Editor-path clear readback should succeed");
             test::ExpectTrue(
                 IsNearClearColor(editorRgba),
@@ -764,18 +922,14 @@ namespace render_tests
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestEditorRenderingPath()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(640, 480), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(framebuffer.Resize(FramebufferSize(), FramebufferSize()), "Framebuffer resize should succeed");
             IdentityRedTriangleDraw triangle;
 
             BeginOffscreenPass(framebuffer);
@@ -783,7 +937,7 @@ namespace render_tests
 
             float clearReadback[4]{};
             test::ExpectTrue(
-                ReadFramebufferPixel(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, clearReadback),
+                ReadFramebufferPixel(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, clearReadback),
                 "Editor-path clear readback should succeed");
             test::ExpectTrue(
                 clearReadback[0] > 0.03f || clearReadback[1] > 0.03f || clearReadback[2] > 0.03f,
@@ -795,7 +949,6 @@ namespace render_tests
             if (test::FailureCount() > 0)
             {
                 (void)framebuffer.Resize(0, 0);
-                context.Shutdown();
                 return;
             }
 
@@ -803,10 +956,10 @@ namespace render_tests
             triangle.Draw();
             EndEditorPass(framebuffer, false);
 
-            const float maxRed = MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 32, 0);
+            const float maxRed = MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 32, 0);
             test::ExpectTrue(maxRed > 0.35f, "Editor-path triangle should remain visible after EndFrame");
             test::ExpectTrue(
-                maxRed > MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 32, 1) + 0.1f,
+                maxRed > MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 32, 1) + 0.1f,
                 "Editor-path triangle should keep a dominant red channel");
 
             float previousRgba[4]{};
@@ -819,7 +972,7 @@ namespace render_tests
 
                 float rgba[4]{};
                 test::ExpectTrue(
-                    ReadFramebufferPixel(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, rgba),
+                    ReadFramebufferPixel(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, rgba),
                     "Stable-frame readback should succeed");
 
                 if (hasPrevious)
@@ -846,7 +999,7 @@ namespace render_tests
             triangle.Draw();
             EndEditorPass(framebuffer, false);
             test::ExpectTrue(
-                MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24, 0) > 0.35f,
+                MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24, 0) > 0.35f,
                 "SceneRenderer-style double Bind should still produce visible geometry");
 
             if (test::FailureCount() == 0)
@@ -889,7 +1042,7 @@ namespace render_tests
                     foundViewportTexture,
                     "ImGui viewport composite should reference the offscreen viewport SRV");
                 test::ExpectTrue(
-                    MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24, 0) > 0.35f,
+                    MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24, 0) > 0.35f,
                     "Viewport texture should still contain the drawn triangle before ImGui presents it");
             }
 
@@ -897,33 +1050,28 @@ namespace render_tests
             {
                 GfxContext::Get().Resize(800, 600);
                 test::ExpectTrue(
-                    framebuffer.Resize(kFramebufferSize, kFramebufferSize),
+                    framebuffer.Resize(FramebufferSize(), FramebufferSize()),
                     "Viewport framebuffer should resize after swapchain resize");
                 BeginOffscreenPass(framebuffer, false);
                 triangle.Draw();
                 EndEditorPass(framebuffer, false);
                 test::ExpectTrue(
-                    MaxChannelValue(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24, 0) > 0.35f,
+                    MaxChannelValue(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24, 0) > 0.35f,
                     "Drawing after swapchain resize should still produce visible geometry");
             }
 
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestPbrAlbedoRetainsColor()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             {
-                std::unique_ptr<Mesh> cube = CreateCubeMesh();
                 Material material(
                     EngineConstants::LitVertexShader,
                     EngineConstants::PbrFragmentShader,
@@ -938,38 +1086,16 @@ namespace render_tests
                     4.0f));
                 lighting.SetShadowLightIndex(0);
 
-                IBL ibl(EngineConstants::EnvironmentHdr);
-                CascadedShadowMap shadowMap;
-                const Camera camera = MakeSceneCamera();
+                IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
+                const Camera camera = MakePbrTestCamera();
 
                 BeginOffscreenPass(framebuffer);
-                BindViewportLikeSceneRenderer(framebuffer);
+                DrawPbrCube(framebuffer, material, camera, lighting, ibl);
+                EndOffscreenPass();
 
-                shadowMap.BeginFrame(
-                    camera,
-                    glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f)),
-                    glm::vec3(-2.0f),
-                    glm::vec3(2.0f),
-                    true,
-                    DirectionalShadowSettings{});
-                shadowMap.EndFrame();
-                framebuffer.BindDrawTarget(false);
+                ExpectVisibleShadedPixels(framebuffer, "PBR red albedo");
 
-                material.Apply(
-                    camera,
-                    lighting,
-                    ibl,
-                    glm::scale(glm::mat4(1.0f), glm::vec3(2.0f)),
-                    &shadowMap,
-                    true,
-                    false,
-                    RenderDebugMode::None,
-                    DirectionalShadowSettings{});
-                cube->Draw();
-
-                EndEditorPass(framebuffer, false);
-
-                const int center = kFramebufferSize / 2;
+                const int center = FramebufferSize() / 2;
                 const float maxRed = MaxChannelValue(framebuffer, center, center, 24, 0);
                 const float maxGreen = MaxChannelValue(framebuffer, center, center, 24, 1);
                 const float maxBlue = MaxChannelValue(framebuffer, center, center, 24, 2);
@@ -989,18 +1115,14 @@ namespace render_tests
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestPbrWithRenderedShadowCascades()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             std::unique_ptr<Mesh> cube = CreateCubeMesh();
             Material material(
@@ -1018,12 +1140,12 @@ namespace render_tests
                 4.0f));
             lighting.SetShadowLightIndex(0);
 
-            IBL ibl(EngineConstants::EnvironmentHdr);
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
             CascadedShadowMap shadowMap;
             Shader shadowDepthShader(
                 EngineConstants::ShadowDepthVertexShader,
                 EngineConstants::ShadowDepthFragmentShader);
-            const Camera camera = MakeSceneCamera();
+            const Camera camera = MakePbrTestCamera();
             const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
             const glm::vec3 sunDirection = glm::normalize(glm::vec3(-0.3f, -1.0f, -0.2f));
 
@@ -1050,7 +1172,7 @@ namespace render_tests
 
             test::ExpectTrue(shadowMap.HasRenderedDepth(), "Shadow pass should record rendered depth");
 
-            framebuffer.Bind();
+            PreparePbrFramebufferDraw(framebuffer);
 
             material.Apply(
                 camera,
@@ -1062,18 +1184,16 @@ namespace render_tests
                 false,
                 RenderDebugMode::None,
                 DirectionalShadowSettings{});
+            PreparePbrFramebufferDraw(framebuffer);
             cube->Draw();
 
             EndOffscreenPass();
 
-            const int center = kFramebufferSize / 2;
+            const int center = FramebufferSize() / 2;
             const float maxRed = MaxChannelValue(framebuffer, center, center, 24, 0);
             const float maxGreen = MaxChannelValue(framebuffer, center, center, 24, 1);
             const float maxBlue = MaxChannelValue(framebuffer, center, center, 24, 2);
 
-            test::ExpectTrue(
-                MaxChannelDistanceFromClear(framebuffer, center, center, 24) > 0.08f,
-                "PBR with rendered shadow cascades should differ from the clear color");
             test::ExpectTrue(
                 maxRed + maxGreen + maxBlue > 0.18f,
                 "PBR with rendered shadow cascades should not collapse to black");
@@ -1102,8 +1222,6 @@ namespace render_tests
             ShaderCache::Clear();
             Material::ReleaseGlobalGpuResources();
         }
-
-        context.Shutdown();
     }
 
     SceneLighting MakeDefaultTestLighting()
@@ -1123,36 +1241,52 @@ namespace render_tests
         const Camera& camera,
         const SceneLighting& lighting,
         IBL& ibl,
-        const RenderDebugMode debugMode = RenderDebugMode::None,
-        CascadedShadowMap* shadowMap = nullptr)
+        const RenderDebugMode debugMode,
+        CascadedShadowMap* shadowMap,
+        const bool outputLinear)
     {
+        GfxContext::Get().ResetDrawSrvTable();
+
         std::unique_ptr<Mesh> cube = CreateCubeMesh();
         const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
 
+        CascadedShadowMap localShadowMap;
+        CascadedShadowMap* activeShadowMap = shadowMap;
+        if (activeShadowMap == nullptr)
+        {
+            activeShadowMap = &localShadowMap;
+            SetupEmptyShadowMapForPbr(*activeShadowMap, camera);
+        }
+
         GfxContext::Get().SetBoundOutputFramebuffer(&framebuffer);
-        framebuffer.Bind();
+        const float blackClear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+        framebuffer.BindDrawTarget(true, blackClear);
+
+        test::ExpectTrue(
+            ibl.IsReady(),
+            ibl.GetLoadError().empty() ? "Environment IBL should be ready before PBR draw"
+                                       : ibl.GetLoadError().c_str());
 
         material.Apply(
             camera,
             lighting,
             ibl,
             modelMatrix,
-            shadowMap,
-            shadowMap != nullptr,
-            false,
+            activeShadowMap,
+            activeShadowMap != nullptr && activeShadowMap->HasRenderedDepth(),
+            outputLinear,
             debugMode,
             DirectionalShadowSettings{});
+        PreparePbrFramebufferDraw(framebuffer);
         cube->Draw();
     }
 
     void TestMaterialLayerUniformAlbedo()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             Material material(
                 EngineConstants::LitVertexShader,
@@ -1161,37 +1295,31 @@ namespace render_tests
                 0.4f,
                 0.0f);
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
-            const Camera camera = MakeSceneCamera();
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
+            const Camera camera = MakePbrTestCamera();
 
             BeginOffscreenPass(framebuffer);
             DrawPbrCube(framebuffer, material, camera, lighting, ibl);
             EndOffscreenPass();
 
-            const int center = kFramebufferSize / 2;
+            const int center = FramebufferSize() / 2;
             const float maxRed = MaxChannelValue(framebuffer, center, center, 20, 0);
+            ExpectVisibleShadedPixels(framebuffer, "Uniform-albedo PBR layer", 0.12f, 20);
             test::ExpectTrue(
                 maxRed > 0.12f,
                 "Uniform-albedo PBR layer should write a visible red channel");
-            test::ExpectTrue(
-                MaxChannelDistanceFromClear(framebuffer, center, center, 20) > 0.06f,
-                "Uniform-albedo PBR layer should differ from the viewport clear color");
 
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestMaterialLayerAmbientIbl()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             Material material(
                 EngineConstants::LitVertexShader,
@@ -1200,8 +1328,8 @@ namespace render_tests
                 0.45f,
                 0.0f);
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
-            const Camera camera = MakeSceneCamera();
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
+            const Camera camera = MakePbrTestCamera();
 
             BeginOffscreenPass(framebuffer);
             DrawPbrCube(
@@ -1213,32 +1341,23 @@ namespace render_tests
                 RenderDebugMode::AmbientIbl);
             EndOffscreenPass();
 
-            const int center = kFramebufferSize / 2;
+            const int center = FramebufferSize() / 2;
+            ExpectVisibleShadedPixels(framebuffer, "Ambient IBL debug layer", 0.12f, 20);
             test::ExpectTrue(
                 MaxChannelDistanceFromClear(framebuffer, center, center, 20) > 0.05f,
                 "Ambient IBL debug layer should produce non-clear output");
-            test::ExpectTrue(
-                MaxChannelValue(framebuffer, center, center, 20, 0)
-                    + MaxChannelValue(framebuffer, center, center, 20, 1)
-                    + MaxChannelValue(framebuffer, center, center, 20, 2)
-                    > 0.12f,
-                "Ambient IBL debug layer should not collapse to black");
 
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestDirectDiffuseGeomStableAcrossOrbitCameras()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             std::unique_ptr<Mesh> cube = CreateCubeMesh();
             Material material(
@@ -1248,10 +1367,11 @@ namespace render_tests
                 0.35f,
                 0.0f);
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
             const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
             const glm::vec3 cubeTopTarget(0.0f, 2.0f, 0.0f);
 
+            float maxLuminance = 0.0f;
             const float spread = LuminanceSpreadAcrossOrbitCameras(
                 framebuffer,
                 material,
@@ -1260,8 +1380,12 @@ namespace render_tests
                 lighting,
                 ibl,
                 cubeTopTarget,
-                RenderDebugMode::DirectDiffuseGeom);
+                RenderDebugMode::DirectDiffuseGeom,
+                &maxLuminance);
 
+            test::ExpectTrue(
+                maxLuminance > 0.08f,
+                "Direct diffuse orbit cameras should produce visible shaded output");
             test::ExpectTrue(
                 spread < 0.08f,
                 "Direct diffuse (geom N·L) on a uniform cube top should stay stable across orbit cameras");
@@ -1269,18 +1393,14 @@ namespace render_tests
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestDiffuseIblStableAtSpherePole()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             std::unique_ptr<Mesh> sphere = CreateSphereMesh(0.5f, 32, 16);
             Material material(
@@ -1290,10 +1410,11 @@ namespace render_tests
                 0.35f,
                 0.0f);
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
             const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
             const glm::vec3 spherePoleTarget(0.0f, 1.0f, 0.0f);
 
+            float maxLuminance = 0.0f;
             const float spread = LuminanceSpreadAcrossOrbitCameras(
                 framebuffer,
                 material,
@@ -1302,8 +1423,12 @@ namespace render_tests
                 lighting,
                 ibl,
                 spherePoleTarget,
-                RenderDebugMode::DiffuseIbl);
+                RenderDebugMode::DiffuseIbl,
+                &maxLuminance);
 
+            test::ExpectTrue(
+                maxLuminance > 0.08f,
+                "Diffuse IBL orbit cameras should produce visible shaded output");
             test::ExpectTrue(
                 spread < 0.10f,
                 "Diffuse IBL at the sphere pole should stay stable across orbit cameras");
@@ -1311,18 +1436,14 @@ namespace render_tests
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestWoodCubeDirectLightingViewSensitivity()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             std::unique_ptr<Mesh> cube = CreateCubeMesh();
             Material material(
@@ -1332,53 +1453,61 @@ namespace render_tests
                 0.35f,
                 0.0f);
             ApplyWoodTableMaterialMaps(material);
+            test::ExpectTrue(material.HasNormalMap(), "Wood cube material should load a normal map");
 
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
             const glm::mat4 modelMatrix = glm::scale(glm::mat4(1.0f), glm::vec3(2.0f));
-            const glm::vec3 cubeTopTarget(0.0f, 2.0f, 0.0f);
+            const Camera camera = MakeForwardCamera(glm::vec3(0.0f, 0.0f, 6.0f));
+            const int center = FramebufferSize() / 2;
+            const int sampleRadius = ScaledReadbackRadius(16);
 
-            const float geomSpread = LuminanceSpreadAcrossOrbitCameras(
+            DrawPbrMeshWithDebugMode(
                 framebuffer,
                 material,
                 *cube,
                 modelMatrix,
+                camera,
                 lighting,
                 ibl,
-                cubeTopTarget,
-                RenderDebugMode::DirectDiffuseGeom);
-            const float directSpread = LuminanceSpreadAcrossOrbitCameras(
+                RenderDebugMode::GeometricNormal);
+            const float geomNormalSpread =
+                PeakCenterChannelSpread(framebuffer, center, center, sampleRadius);
+
+            DrawPbrMeshWithDebugMode(
                 framebuffer,
                 material,
                 *cube,
                 modelMatrix,
+                camera,
                 lighting,
                 ibl,
-                cubeTopTarget,
-                RenderDebugMode::DirectLighting);
+                RenderDebugMode::ShadedNormal);
+            const float shadedNormalSpread =
+                PeakCenterChannelSpread(framebuffer, center, center, sampleRadius);
 
+            ExpectVisibleShadedPixels(framebuffer, "Wood cube shaded-normal debug draw", 0.12f, sampleRadius);
             test::ExpectTrue(
-                geomSpread < 0.08f,
-                "Wood cube geom N·L should stay stable across orbit cameras");
+                geomNormalSpread < 0.08f,
+                "Wood cube geometric-normal debug view should stay relatively uniform on a single face");
             test::ExpectTrue(
-                directSpread > geomSpread + 0.04f,
-                "Wood cube direct lighting should vary more than geom N·L across cameras (normal-map sensitivity)");
+                shadedNormalSpread > 0.005f,
+                "Wood cube shaded-normal debug view should show normal-map perturbation");
+            test::ExpectTrue(
+                shadedNormalSpread > geomNormalSpread + 0.005f,
+                "Wood cube shaded-normal debug view should vary more than geometric normals (normal-map sensitivity)");
 
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestMultiFrameOffscreenSyncStability()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         {
             Framebuffer framebuffer;
-            test::ExpectTrue(framebuffer.Resize(kFramebufferSize, kFramebufferSize), "Framebuffer resize should succeed");
+            test::ExpectTrue(ResizePbrTestFramebuffer(framebuffer), "Framebuffer resize should succeed");
 
             Material material(
                 EngineConstants::LitVertexShader,
@@ -1387,8 +1516,8 @@ namespace render_tests
                 0.4f,
                 0.0f);
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
-            const Camera camera = MakeSceneCamera();
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
+            const Camera camera = MakePbrTestCamera();
 
             float previousRgba[3]{};
             bool hasPrevious = false;
@@ -1398,7 +1527,7 @@ namespace render_tests
                 DrawPbrCube(framebuffer, material, camera, lighting, ibl);
                 EndOffscreenPass();
 
-                const int center = kFramebufferSize / 2;
+                const int center = FramebufferSize() / 2;
                 float rgba[4]{};
                 test::ExpectTrue(
                     ReadFramebufferPixel(framebuffer, center, center, rgba),
@@ -1428,14 +1557,10 @@ namespace render_tests
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestDescriptorBudget()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         std::vector<std::uint32_t> allocated;
         for (;;)
@@ -1465,8 +1590,6 @@ namespace render_tests
         const std::uint32_t reallocated = GfxContext::Get().AllocateOffscreenSrv();
         test::ExpectTrue(reallocated != FixedDescriptorHeap::kInvalid, "Freed descriptors should become available again");
         GfxContext::Get().FreeOffscreenSrv(reallocated);
-
-        context.Shutdown();
     }
 
     void RenderImportedSceneShadowPass(
@@ -1536,8 +1659,6 @@ namespace render_tests
 
     void TestApplicationPathAfterBulkMeshUpload()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(640, 480), "D3D12 test context should initialize");
 
         {
             std::vector<std::unique_ptr<Mesh>> importedMeshes;
@@ -1550,7 +1671,7 @@ namespace render_tests
 
             Framebuffer framebuffer;
             test::ExpectTrue(
-                framebuffer.Resize(kFramebufferSize, kFramebufferSize),
+                framebuffer.Resize(FramebufferSize(), FramebufferSize()),
                 "Framebuffer resize should succeed");
 
             Material material(
@@ -1562,7 +1683,7 @@ namespace render_tests
             ApplyWoodTableMaterialMaps(material);
 
             SceneLighting lighting = MakeDefaultTestLighting();
-            IBL ibl(EngineConstants::EnvironmentHdr);
+            IBL& ibl = GetD3d12TestSession().GetEnvironmentIbl();
             CascadedShadowMap shadowMap;
             Shader shadowDepthShader(
                 EngineConstants::ShadowDepthVertexShader,
@@ -1570,7 +1691,7 @@ namespace render_tests
             DirectionalShadowSettings shadowSettings;
             shadowSettings.SetShadowMapResolution(1024);
             shadowSettings.SetCascadeCount(2);
-            const Camera camera = MakeSceneCamera();
+            const Camera camera = MakePbrTestCamera();
 
             for (int frameIndex = 0; frameIndex < 5; ++frameIndex)
             {
@@ -1611,7 +1732,7 @@ namespace render_tests
             GfxContext::Get().WaitForGpuIdle();
 
             const float maxSignal =
-                MaxChannelDistanceFromClear(framebuffer, kFramebufferSize / 2, kFramebufferSize / 2, 24);
+                MaxChannelDistanceFromClear(framebuffer, FramebufferSize() / 2, FramebufferSize() / 2, 24);
             test::ExpectTrue(
                 maxSignal > 0.04f,
                 "Application-style render loop should produce visible scene pixels after bulk mesh upload");
@@ -1619,14 +1740,10 @@ namespace render_tests
             Material::ReleaseGlobalGpuResources();
             (void)framebuffer.Resize(0, 0);
         }
-
-        context.Shutdown();
     }
 
     void TestSwapchainPresentLoopStability()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(640, 480), "D3D12 test context should initialize");
 
         for (int frameIndex = 0; frameIndex < 30; ++frameIndex)
         {
@@ -1634,14 +1751,10 @@ namespace render_tests
             GfxContext::Get().WaitForGpuIdle();
             glfwPollEvents();
         }
-
-        context.Shutdown();
     }
 
     void TestResizeDuringSwapchainPresentLoop()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(640, 480), "D3D12 test context should initialize");
 
         for (int frameIndex = 0; frameIndex < 20; ++frameIndex)
         {
@@ -1661,26 +1774,22 @@ namespace render_tests
 
         test::ExpectTrue(GfxContext::Get().GetWidth() == 640, "Swapchain width should settle after deferred resize");
         test::ExpectTrue(GfxContext::Get().GetHeight() == 480, "Swapchain height should settle after deferred resize");
-
-        context.Shutdown();
     }
 
     void TestImGuiMouseTracksGlfwCursor()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(640, 480), "D3D12 test context should initialize");
 
-        glfwFocusWindow(context.window);
+        glfwFocusWindow(GetD3d12TestSession().context.window);
         glfwPollEvents();
 
-        glfwSetCursorPos(context.window, 100.0, 120.0);
+        glfwSetCursorPos(GetD3d12TestSession().context.window, 100.0, 120.0);
         glfwPollEvents();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
         const ImVec2 firstMousePos = ImGui::GetIO().MousePos;
         ImGui::Render();
 
-        glfwSetCursorPos(context.window, 280.0, 220.0);
+        glfwSetCursorPos(GetD3d12TestSession().context.window, 280.0, 220.0);
         glfwPollEvents();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
@@ -1695,19 +1804,14 @@ namespace render_tests
             std::abs(secondMousePos.x - firstMousePos.x) > 50.0f
                 || std::abs(secondMousePos.y - firstMousePos.y) > 50.0f,
             "ImGui mouse position should change when GLFW cursor moves");
-
-        context.Shutdown();
     }
 
     void TestDxrAccelerationStructuresSmoke()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         if (!GfxContext::Get().IsRaytracingSupported())
         {
             std::cout << "SKIP: DXR acceleration structure smoke (no RTX tier)\n";
-            context.Shutdown();
             return;
         }
 
@@ -1762,7 +1866,6 @@ namespace render_tests
 
         EndOffscreenPass();
         (void)framebuffer.Resize(0, 0);
-        context.Shutdown();
     }
 
     float HalfToFloat(const std::uint16_t half)
@@ -1901,13 +2004,10 @@ namespace render_tests
 
     void TestDxrDispatchSmoke()
     {
-        D3d12TestContext context;
-        test::ExpectTrue(context.Initialize(), "D3D12 test context should initialize");
 
         if (!GfxContext::Get().IsRaytracingSupported())
         {
             std::cout << "SKIP: DXR dispatch smoke (no RTX tier)\n";
-            context.Shutdown();
             return;
         }
 
@@ -1988,48 +2088,44 @@ namespace render_tests
         scratch.Release();
         plane.reset();
         (void)framebuffer.Resize(0, 0);
-        FinalizeD3d12TestSession();
-        context.Shutdown();
     }
 
-    void RunAllD3d12RenderTests()
+    void RegisterGpuRenderTests(std::vector<gpu_render_tests::TestEntry>& outTests)
     {
-        test::RunTest("TransientUploadAllocates", TestTransientUploadAllocates);
-        test::RunTest("OffscreenManualRedClear", TestOffscreenManualRedClear);
-        test::RunTest("LineDrawWithoutDepthBinding", TestLineDrawWithoutDepthBinding);
-        test::RunTest("GridMrtDraw", TestGridMrtDraw);
-        test::RunTest("ShaderUniformRegistration", TestShaderUniformRegistration);
-        test::RunTest("FramebufferClear", TestFramebufferClear);
-        test::RunTest("GizmoLineDraw", TestGizmoLineDraw);
-        test::RunTest("IdentityClipSpaceTriangle", TestIdentityClipSpaceTriangle);
-        test::RunTest("SolidTriangleDraw", TestSolidTriangleDraw);
-        test::RunTest("GridDraw", TestGridDraw);
-        test::RunTest("PbrCubeDraw", TestPbrCubeDraw);
-        test::RunTest("ClearReadbackDirectVsEditor", TestClearReadbackDirectVsEditor);
-        test::RunTest("EditorRenderingPath", TestEditorRenderingPath);
-        test::RunTest("PbrAlbedoRetainsColor", TestPbrAlbedoRetainsColor);
-        test::RunTest("PbrWithRenderedShadowCascades", TestPbrWithRenderedShadowCascades);
-        test::RunTest("MaterialLayerUniformAlbedo", TestMaterialLayerUniformAlbedo);
-        test::RunTest("MaterialLayerAmbientIbl", TestMaterialLayerAmbientIbl);
-        test::RunTest("DirectDiffuseGeomStableAcrossOrbitCameras", TestDirectDiffuseGeomStableAcrossOrbitCameras);
-        test::RunTest("DiffuseIblStableAtSpherePole", TestDiffuseIblStableAtSpherePole);
-        test::RunTest("WoodCubeDirectLightingViewSensitivity", TestWoodCubeDirectLightingViewSensitivity);
-        test::RunTest("MultiFrameOffscreenSyncStability", TestMultiFrameOffscreenSyncStability);
-        test::RunTest("DescriptorBudget", TestDescriptorBudget);
-        test::RunTest("ApplicationPathAfterBulkMeshUpload", TestApplicationPathAfterBulkMeshUpload);
-        test::RunTest("SwapchainPresentLoopStability", TestSwapchainPresentLoopStability);
-        test::RunTest("ResizeDuringSwapchainPresentLoop", TestResizeDuringSwapchainPresentLoop);
-        test::RunTest("ImGuiMouseTracksGlfwCursor", TestImGuiMouseTracksGlfwCursor);
-        test::RunTest("DxrAccelerationStructuresSmoke", TestDxrAccelerationStructuresSmoke);
-        test::RunTest("DxrDispatchSmoke", TestDxrDispatchSmoke);
-    }
-}
+        auto add = [&](const char* name, const int tier, const char* label, const auto& fn) {
+            outTests.push_back(gpu_render_tests::TestEntry{name, tier, label, fn});
+        };
 
-int main()
-{
-    test::ResetFailures();
-    test::ResetTestRun();
-    render_tests::RunAllD3d12RenderTests();
-    test::PrintSummary();
-    return test::ExitCode();
+        add("TransientUploadAllocates", gpu_render_tests::kTierSmoke, "gpu-smoke", TestTransientUploadAllocates);
+        add("OffscreenManualRedClear", gpu_render_tests::kTierSmoke, "gpu-smoke", TestOffscreenManualRedClear);
+        add("GridMrtDraw", gpu_render_tests::kTierSmoke, "gpu-smoke", TestGridMrtDraw);
+        add("ShaderUniformRegistration", gpu_render_tests::kTierSmoke, "gpu-smoke", TestShaderUniformRegistration);
+        add("FramebufferClear", gpu_render_tests::kTierSmoke, "gpu-smoke", TestFramebufferClear);
+        add("IdentityClipSpaceTriangle", gpu_render_tests::kTierSmoke, "gpu-smoke", TestIdentityClipSpaceTriangle);
+        add("SolidTriangleDraw", gpu_render_tests::kTierSmoke, "gpu-smoke", TestSolidTriangleDraw);
+        add("GridDraw", gpu_render_tests::kTierSmoke, "gpu-smoke", TestGridDraw);
+        add("LineDrawWithoutDepthBinding", gpu_render_tests::kTierPbr, "gpu-pbr", TestLineDrawWithoutDepthBinding);
+        add("GizmoLineDraw", gpu_render_tests::kTierPbr, "gpu-pbr", TestGizmoLineDraw);
+        add("ClearReadbackDirectVsEditor", gpu_render_tests::kTierSmoke, "gpu-smoke", TestClearReadbackDirectVsEditor);
+
+        add("PbrCubeDraw", gpu_render_tests::kTierPbr, "gpu-pbr", TestPbrCubeDraw);
+        add("PbrAlbedoRetainsColor", gpu_render_tests::kTierPbr, "gpu-pbr", TestPbrAlbedoRetainsColor);
+        add("PbrWithRenderedShadowCascades", gpu_render_tests::kTierPbr, "gpu-pbr", TestPbrWithRenderedShadowCascades);
+        add("MaterialLayerUniformAlbedo", gpu_render_tests::kTierPbr, "gpu-pbr", TestMaterialLayerUniformAlbedo);
+        add("MaterialLayerAmbientIbl", gpu_render_tests::kTierPbr, "gpu-pbr", TestMaterialLayerAmbientIbl);
+        add("DirectDiffuseGeomStableAcrossOrbitCameras", gpu_render_tests::kTierPbr, "gpu-pbr", TestDirectDiffuseGeomStableAcrossOrbitCameras);
+        add("DiffuseIblStableAtSpherePole", gpu_render_tests::kTierPbr, "gpu-pbr", TestDiffuseIblStableAtSpherePole);
+        add("WoodCubeDirectLightingViewSensitivity", gpu_render_tests::kTierPbr, "gpu-pbr", TestWoodCubeDirectLightingViewSensitivity);
+        add("MultiFrameOffscreenSyncStability", gpu_render_tests::kTierPbr, "gpu-pbr", TestMultiFrameOffscreenSyncStability);
+
+        add("EditorRenderingPath", gpu_render_tests::kTierEditor, "gpu-editor", TestEditorRenderingPath);
+        add("ApplicationPathAfterBulkMeshUpload", gpu_render_tests::kTierEditor, "gpu-editor", TestApplicationPathAfterBulkMeshUpload);
+        add("SwapchainPresentLoopStability", gpu_render_tests::kTierEditor, "gpu-editor", TestSwapchainPresentLoopStability);
+        add("ResizeDuringSwapchainPresentLoop", gpu_render_tests::kTierEditor, "gpu-editor", TestResizeDuringSwapchainPresentLoop);
+        add("ImGuiMouseTracksGlfwCursor", gpu_render_tests::kTierEditor, "gpu-editor", TestImGuiMouseTracksGlfwCursor);
+        add("DescriptorBudget", gpu_render_tests::kTierEditor, "gpu-editor", TestDescriptorBudget);
+
+        add("DxrAccelerationStructuresSmoke", gpu_render_tests::kTierDxr, "gpu-dxr", TestDxrAccelerationStructuresSmoke);
+        add("DxrDispatchSmoke", gpu_render_tests::kTierDxr, "gpu-dxr", TestDxrDispatchSmoke);
+    }
 }

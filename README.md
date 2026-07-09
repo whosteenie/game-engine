@@ -36,6 +36,19 @@ Validation messages and GPU-based validation slow things down noticeably; use th
 
 ## Tests
 
+### Interactive runner (recommended)
+
+```powershell
+.\scripts\run-tests.ps1
+
+# Non-interactive (useful for scripts / quick runs):
+.\scripts\run-tests.ps1 -Run Cpu
+.\scripts\run-tests.ps1 -Run Gpu -Tier 1
+.\scripts\run-tests.ps1 -Run List
+```
+
+Menu-driven runner with green `[PASS]` / red `[FAIL]` output and a final `x/y tests passed in …` summary. Supports all CPU tests, GPU tiers, individual test selection, and listing what's available.
+
 ### CPU tests (fast — run these routinely)
 
 Registered with CTest; no GPU window required.
@@ -45,30 +58,41 @@ cmake --build build --config Debug --target engine-tests descriptor-heap-tests
 
 # Run directly (stdout shows pass/fail lines)
 .\build\Debug\engine-tests.exe
+.\build\Debug\engine-tests.exe --list
+.\build\Debug\engine-tests.exe --filter=material
 .\build\Debug\descriptor-heap-tests.exe
 
-# Or via CTest from the build directory
+# Or via CTest from the build directory (CPU only by default)
 cd build
-ctest -C Debug --output-on-failure
-ctest -C Debug -R engine-tests --output-on-failure
-ctest -C Debug -R descriptor-heap-tests --output-on-failure
+ctest -C Debug -L cpu --output-on-failure
 ```
 
-`engine-tests` covers shadow math, lighting probes, color space, rotation utils, DXR settings JSON, and related CPU-side checks. `descriptor-heap-tests` covers the fixed descriptor heap allocator.
+`engine-tests` covers shadow math, lighting probes, materials, guide encoding, shader compile smoke, and related CPU-side checks. `descriptor-heap-tests` covers the fixed descriptor heap allocator.
 
-### GPU render tests (manual, slower)
+### GPU render tests (opt-in)
 
-Requires a real D3D12 device and RTX for the DXR smoke test. **Not** part of default CTest.
+Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest` — use the `gpu` label explicitly.
 
 ```powershell
 cmake -S . -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
 cmake --build build --config Debug --target d3d12-render-tests
 
+# Tier 1 smoke (default) — shared D3D12 session, 32×32 offscreen for boolean draw tests
 .\build\Debug\d3d12-render-tests.exe
-echo Exit code: $LASTEXITCODE
+.\build\Debug\d3d12-render-tests.exe --tier=1
+.\build\Debug\d3d12-render-tests.exe --filter=TestPbr*
+.\build\Debug\d3d12-render-tests.exe --list
+.\build\Debug\d3d12-render-tests.exe --all          # every tier (slow)
+
+# Via CTest (from build directory; never runs unless you pass -L gpu)
+cd build
+ctest -C Debug -L gpu-smoke --output-on-failure
+ctest -C Debug -L gpu --output-on-failure
 ```
 
-On success you should see `All D3D12 render tests passed.` and exit code `0`. Failures print `FAIL: ...` lines to stderr. If hardware does not support DXR, the smoke test prints `SKIP: DXR dispatch smoke (no RTX tier)` and still exits `0`.
+**Tiers:** `1` gpu-smoke (clear/draw/upload), `2` gpu-pbr (PBR/IBL/shadows), `3` gpu-editor (present/ImGui), `4` gpu-dxr (BLAS/TLAS/dispatch). `--tier=N` runs tiers 1 through N.
+
+On success you should see `[PASS]` lines per test and `N/N tests passed.` with exit code `0`. Failures print `[FAIL]` and assertion details to stderr. DXR tests print `SKIP: ... (no RTX tier)` and exit `0` when hardware lacks ray tracing.
 
 See [devdoc/testing/renderer-tests-plan.md](devdoc/testing/renderer-tests-plan.md) for the full inventory and roadmap.
 

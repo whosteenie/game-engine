@@ -513,6 +513,7 @@ endif()
 enable_testing()
 
 add_executable(engine-tests
+    tests/engine_tests_main.cpp
     tests/shadow_map_math_test.cpp
     tests/irradiance_sh_test.cpp
     tests/color_space_test.cpp
@@ -521,21 +522,28 @@ add_executable(engine-tests
     tests/directional_shadow_settings_test.cpp
     tests/dxr_acceleration_structure_test.cpp
     tests/dxr_shader_infrastructure_test.cpp
-    src/engine/lighting/ShadowMapMath.cpp
-    src/engine/lighting/LightingProbe.cpp
-    src/engine/lighting/IrradianceSh.cpp
-    src/engine/scene/RotationUtils.cpp
-    src/engine/scene/Transform.cpp
-    src/engine/platform/ExceptionMessage.cpp
-    src/engine/platform/EngineDiagnostics.cpp
-    src/engine/platform/EngineLog.cpp
-    src/engine/rendering/DxrSettings.cpp
-    src/engine/lighting/DirectionalShadowSettings.cpp
+    tests/material_test.cpp
+    tests/guide_encoding_test.cpp
+    tests/shader_compile_test.cpp
 )
 
 target_include_directories(engine-tests PRIVATE src tests)
-target_link_libraries(engine-tests PRIVATE glm::glm nlohmann_json::nlohmann_json)
+target_link_libraries(engine-tests PRIVATE engine-render)
+if(MSVC)
+    target_link_options(engine-tests PRIVATE /NODEFAULTLIB:libcmt)
+endif()
+game_engine_copy_dxc_runtime(engine-tests)
+
+add_custom_command(TARGET engine-tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets"
+        "$<TARGET_FILE_DIR:engine-tests>/assets"
+    COMMENT "Copying assets for engine-tests")
+
 add_test(NAME engine-tests COMMAND engine-tests)
+set_tests_properties(engine-tests PROPERTIES
+    LABELS "cpu"
+    WORKING_DIRECTORY $<TARGET_FILE_DIR:engine-tests>)
 
 add_executable(descriptor-heap-tests
     tests/descriptor_heap_test.cpp
@@ -544,6 +552,7 @@ add_executable(descriptor-heap-tests
 
 target_include_directories(descriptor-heap-tests PRIVATE src tests)
 add_test(NAME descriptor-heap-tests COMMAND descriptor-heap-tests)
+set_tests_properties(descriptor-heap-tests PROPERTIES LABELS "cpu")
 
 # GPU render integration tests (manual only).
 # Heavy: creates a real D3D12 device/window and can run for a long time.
@@ -558,6 +567,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
     add_executable(d3d12-render-tests
         tests/d3d12_render_tests.cpp
         tests/d3d12_test_harness.cpp
+        tests/d3d12_test_runner.cpp
     )
 
     target_include_directories(d3d12-render-tests PRIVATE tests ${json_SOURCE_DIR}/include)
@@ -577,5 +587,10 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
             "$<TARGET_FILE_DIR:d3d12-render-tests>/assets"
         COMMENT "Copying assets for d3d12-render-tests")
 
-    # Intentionally NOT registered with CTest — run the .exe manually when needed.
+    # GPU tests are opt-in (require D3D12 device). Default CTest only runs cpu label.
+    add_test(NAME gpu-smoke COMMAND d3d12-render-tests --tier=1)
+    set_tests_properties(gpu-smoke PROPERTIES
+        LABELS "gpu;gpu-smoke"
+        TIMEOUT 120
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
 endif()

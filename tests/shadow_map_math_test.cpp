@@ -4,9 +4,6 @@
 #include <array>
 #include <cmath>
 #include <vector>
-#include <cstdlib>
-#include <iostream>
-
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/lighting/LightingProbe.h"
 #include "engine/platform/ExceptionMessage.h"
@@ -490,32 +487,4 @@ namespace engine_tests_internal
         ExpectNear(intersectionMax.y, 2.0f, 1e-4f, "Intersection max Y");
     }
 
-    void RunAllEngineTests()
-    {
-        test::RunTest("shadow_map_math", RunShadowMapMathTests);
-        test::RunTest("lighting_probe", RunLightingProbeTests);
-        test::RunTest("exception_message", RunExceptionMessageTests);
-        test::RunTest("irradiance_sh", [] { RunIrradianceShTests(test::FailureCount()); });
-        test::RunTest("color_space", [] { RunColorSpaceTests(test::FailureCount()); });
-        test::RunTest("rotation_utils", [] { RunRotationUtilsTests(test::FailureCount()); });
-        test::RunTest("dxr_settings", [] { RunDxrSettingsTests(test::FailureCount()); });
-        test::RunTest(
-            "directional_shadow_settings",
-            [] { RunDirectionalShadowSettingsTests(test::FailureCount()); });
-        test::RunTest(
-            "dxr_acceleration_structure",
-            [] { RunDxrAccelerationStructureTests(test::FailureCount()); });
-        test::RunTest(
-            "dxr_shader_infrastructure",
-            [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });
-    }
-}
-
-int main()
-{
-    test::ResetFailures();
-    test::ResetTestRun();
-    engine_tests_internal::RunAllEngineTests();
-    test::PrintSummary();
-    return test::ExitCode();
 }

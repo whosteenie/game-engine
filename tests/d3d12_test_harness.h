@@ -7,6 +7,10 @@
 
 #include <GLFW/glfw3.h>
 
+#include <memory>
+
+class IBL;
+
 struct D3d12TestContext
 {
     GLFWwindow* window = nullptr;
@@ -15,6 +19,27 @@ struct D3d12TestContext
     bool Initialize(int width = 640, int height = 480);
     void Shutdown();
 };
+
+// One GLFW/D3D12/ImGui session shared across the entire test run (Phase C harness).
+class D3d12TestSession
+{
+public:
+    D3d12TestContext context;
+
+    bool EnsureInitialized(int width = 640, int height = 480);
+    void Shutdown();
+
+    // Loads EngineConstants::EnvironmentHdr on first use (tier 2+ tests only).
+    IBL& GetEnvironmentIbl();
+
+    // Releases GPU-heavy environment resources before global cache teardown.
+    void ReleaseCachedEnvironmentIbl();
+
+private:
+    std::unique_ptr<IBL> m_environmentIbl;
+};
+
+D3d12TestSession& GetD3d12TestSession();
 
 enum class FrameSubmitMode
 {

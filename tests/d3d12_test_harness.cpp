@@ -1,6 +1,11 @@
 #include "d3d12_test_harness.h"
 
+#include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/lighting/IBL.h"
+#include "engine/rendering/Constants.h"
+#include "engine/rendering/Material.h"
+#include "engine/rendering/ShaderCache.h"
 
 #include <d3d12.h>
 #include <imgui.h>
@@ -95,12 +100,67 @@ void D3d12TestContext::Shutdown()
     glfwTerminate();
 }
 
-void FinalizeD3d12TestSession()
+namespace
 {
-    if (GfxContext::Get().IsInitialized())
+    D3d12TestSession g_testSession;
+}
+
+D3d12TestSession& GetD3d12TestSession()
+{
+    return g_testSession;
+}
+
+bool D3d12TestSession::EnsureInitialized(const int width, const int height)
+{
+    if (context.gfxInitialized)
     {
+        return true;
+    }
+
+    return context.Initialize(width, height);
+}
+
+void D3d12TestSession::Shutdown()
+{
+    m_environmentIbl.reset();
+    context.Shutdown();
+}
+
+IBL& D3d12TestSession::GetEnvironmentIbl()
+{
+    if (m_environmentIbl == nullptr)
+    {
+        m_environmentIbl = std::make_unique<IBL>(EngineConstants::EnvironmentHdr);
+    }
+
+    if (!m_environmentIbl->IsReady() && context.gfxInitialized && GfxContext::Get().IsInitialized())
+    {
+        // IBL baking uses ExecuteImmediate, which cannot run while a frame is open.
+        GfxContext::Get().WaitForGpuIdle();
+        (void)m_environmentIbl->GetEnvironmentCubemapSrvCpuHandle();
         GfxContext::Get().WaitForGpuIdle();
     }
+
+    return *m_environmentIbl;
+}
+
+void D3d12TestSession::ReleaseCachedEnvironmentIbl()
+{
+    m_environmentIbl.reset();
+}
+
+void FinalizeD3d12TestSession()
+{
+    if (!GfxContext::Get().IsInitialized())
+    {
+        return;
+    }
+
+    GetD3d12TestSession().ReleaseCachedEnvironmentIbl();
+    Material::ReleaseGlobalGpuResources();
+    TextureCache::Get().Clear();
+    ShaderCache::Clear();
+    GfxContext::Get().WaitForGpuIdle();
 }
 
 void BindOffscreenTarget(Framebuffer& framebuffer, bool clearAttachments, bool bindDepthStencil);
