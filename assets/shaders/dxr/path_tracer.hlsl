@@ -105,17 +105,6 @@ float3 SampleGgxVndfHalfVector(float3 normal, float3 viewWorld, float roughness,
         tangent * halfTangent.x + bitangent * halfTangent.y + normal * halfTangent.z);
 }
 
-float3 CosineSampleHemisphere(float3 normal, float2 xi)
-{
-    float3 tangent;
-    float3 bitangent;
-    BuildTangentFrame(normal, tangent, bitangent);
-    const float radius = sqrt(saturate(xi.x));
-    const float phi = 2.0 * kPi * xi.y;
-    const float z = sqrt(max(1.0 - xi.x, 0.0));
-    return normalize(tangent * (radius * cos(phi)) + bitangent * (radius * sin(phi)) + normal * z);
-}
-
 float TraceVisibility(float3 origin, float3 direction, float tMax)
 {
     RayDesc ray;

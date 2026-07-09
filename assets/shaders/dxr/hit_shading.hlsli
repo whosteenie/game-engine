@@ -1,15 +1,14 @@
 // DXR shared hit-shading core (Phase D9, devdoc/dxr/diffuse-gi.md).
-// Self-contained shared portion for the diffuse-GI trace: the same analytic material shading the
-// reflection closest-hit uses (material table + bindless albedo + sun N·L + SH ambient + emissive),
-// plus the geometry accessors, RNG, and environment sampling both raygens share.
+// Single source for reflection and diffuse-GI closest-hit material evaluation: geometry
+// accessors, RNG, environment sampling, and ShadeHit(). reflections.hlsl includes this
+// header and adds reflection-specific trace logic (GGX, visibility, GI bounce).
 //
-// NOTE: reflections.hlsl keeps its OWN copy of these helpers (it is validated and left untouched);
-// this header is the single source only for the GI pass. The cbuffer layout here MUST stay
-// byte-identical to DxrRootSignature::ReflectionDispatchConstants (GI reuses that root signature
-// and constants struct wholesale — the GGX-specific fields simply go unused for diffuse GI).
+// The cbuffer layout MUST stay byte-identical to DxrRootSignature::ReflectionDispatchConstants.
 
 #ifndef DXR_HIT_SHADING_HLSLI
 #define DXR_HIT_SHADING_HLSLI
+
+#include "dxr_geometry_types.hlsli"
 
 cbuffer ReflectionDispatchConstants : register(b0)
 {
@@ -43,17 +42,11 @@ Texture2D<float> g_DepthMap : register(t1);
 Texture2D<float4> g_NormalMap : register(t2);    // shading normal (RT2)
 Texture2D<float4> g_Material0Map : register(t3); // albedo.rgb + roughness.a (RT5)
 
-struct GeometryLookupEntry
-{
-    uint vertexFloatOffset;
-    uint vertexStrideFloats;
-    uint indexUintOffset;
-    uint _pad0;
-};
-
 StructuredBuffer<GeometryLookupEntry> g_GeometryLookup : register(t4);
 StructuredBuffer<float> g_SceneVertexFloats : register(t5);
 StructuredBuffer<uint> g_SceneIndices : register(t6);
+
+#include "dxr_geometry.hlsli"
 
 TextureCube<float4> g_PrefilterMap : register(t10);
 Texture2D<float4> g_VelocityMap : register(t11); // RT4 motion NDC (curr - prev)
@@ -80,13 +73,7 @@ SamplerState g_LinearClampSampler : register(s0);
 SamplerState g_LinearWrapSampler : register(s1); // tiling albedo UVs
 
 static const float kPi = 3.14159265;
-static const uint kHitKindTriangleBackFace = 255u;
 static const float kMaxRadiance = 64.0;
-
-float2 DepthUvToClipXY(float2 texCoord)
-{
-    return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
-}
 
 // Integer PCG hash (pcg3d, Jarzynski & Olano). Frame-varying — a static per-pixel sequence
 // makes the temporal denoiser converge TO the noise (RTQ-01).
@@ -101,6 +88,13 @@ uint3 Pcg3d(uint3 v)
     v.y += v.z * v.x;
     v.z += v.x * v.y;
     return v;
+}
+
+// Decorrelated per pixel, per frame, per sample. [0; 1).
+float2 RandomXi(uint2 pixel, uint frameIndex, uint sampleIndex)
+{
+    const uint3 hash = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
+    return float2(hash.xy & 0x00FFFFFFu) * (1.0 / 16777216.0);
 }
 
 // Four decorrelated randoms per sample: xy = lobe sample, zw = sub-pixel ray-setup jitter.
@@ -150,34 +144,6 @@ float3 SampleEnvironment(float3 direction, float roughness)
         direction,
         roughness * g_MaxReflectionLod).rgb * g_EnvironmentIntensity;
     return min(radiance, 65504.0.xxx); // clamp fp16 Inf (huge HDR sun) to finite at the source
-}
-
-float3 LoadObjectPosition(GeometryLookupEntry geo, uint vertexIndex)
-{
-    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats;
-    return float3(
-        g_SceneVertexFloats[base + 0],
-        g_SceneVertexFloats[base + 1],
-        g_SceneVertexFloats[base + 2]);
-}
-
-float3 ComputeWorldGeometricNormal(GeometryLookupEntry geo, uint primitiveIndex)
-{
-    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
-    const uint i0 = g_SceneIndices[indexBase + 0];
-    const uint i1 = g_SceneIndices[indexBase + 1];
-    const uint i2 = g_SceneIndices[indexBase + 2];
-
-    const float3 p0 = LoadObjectPosition(geo, i0);
-    const float3 p1 = LoadObjectPosition(geo, i1);
-    const float3 p2 = LoadObjectPosition(geo, i2);
-
-    const float3x4 objectToWorld = ObjectToWorld3x4();
-    const float3 w0 = mul(objectToWorld, float4(p0, 1.0)).xyz;
-    const float3 w1 = mul(objectToWorld, float4(p1, 1.0)).xyz;
-    const float3 w2 = mul(objectToWorld, float4(p2, 1.0)).xyz;
-
-    return normalize(cross(w1 - w0, w2 - w0));
 }
 
 float3 LoadObjectNormal(GeometryLookupEntry geo, uint vertexIndex)
@@ -268,6 +234,23 @@ float3 FresnelSchlickRoughnessGi(float cosTheta, float3 f0, float roughness)
 {
     const float3 maxReflection = max(1.0.xxx - roughness, f0);
     return f0 + (maxReflection - f0) * pow(saturate(1.0 - cosTheta), 5.0);
+}
+
+float3 FresnelSchlickRoughnessReflection(float cosTheta, float3 f0, float roughness)
+{
+    return FresnelSchlickRoughnessGi(cosTheta, f0, roughness);
+}
+
+// Cosine-weighted hemisphere direction about a normal (Malley's method) for ambient occlusion.
+float3 CosineSampleHemisphere(float3 normal, float2 xi)
+{
+    float3 tangent;
+    float3 bitangent;
+    BuildTangentFrame(normal, tangent, bitangent);
+    const float radius = sqrt(saturate(xi.x));
+    const float phi = 2.0 * kPi * xi.y;
+    const float z = sqrt(max(1.0 - xi.x, 0.0));
+    return normalize(tangent * (radius * cos(phi)) + bitangent * (radius * sin(phi)) + normal * z);
 }
 
 // Analytic split-sum environment BRDF (Karis, "Physically Based Shading on Mobile"). Same term the

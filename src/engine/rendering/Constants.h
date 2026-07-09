@@ -17,9 +17,7 @@ namespace EngineConstants
     inline constexpr const char* SsrDebugFragmentShader = "assets/shaders/ssr_debug.ps.hlsl";
     inline constexpr const char* SsrTraceFragmentShader = "assets/shaders/ssr_trace.ps.hlsl";
     inline constexpr const char* SsrTraceDebugFragmentShader = "assets/shaders/ssr_trace_debug.ps.hlsl";
-    inline constexpr const char* SsrDenoiseSpatialFragmentShader = "assets/shaders/ssr_denoise_spatial.ps.hlsl";
     inline constexpr const char* SsrDenoiseDebugFragmentShader = "assets/shaders/ssr_denoise_debug.ps.hlsl";
-    inline constexpr const char* SsrTemporalFragmentShader = "assets/shaders/ssr_temporal.ps.hlsl";
     inline constexpr const char* SsrSvgfTemporalFragmentShader = "assets/shaders/ssr_svgf_temporal.ps.hlsl";
     inline constexpr const char* SsrSvgfVarianceTemporalFragmentShader =
         "assets/shaders/ssr_svgf_variance_temporal.ps.hlsl";

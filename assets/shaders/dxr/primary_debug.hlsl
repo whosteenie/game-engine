@@ -18,19 +18,13 @@ RWTexture2D<uint2> g_PrimaryMetadata : register(u1);
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
 Texture2D<float> g_DepthMap : register(t1);
 
-struct GeometryLookupEntry
-{
-    uint vertexFloatOffset;
-    uint vertexStrideFloats;
-    uint indexUintOffset;
-    uint _pad0;
-};
+#include "dxr_geometry_types.hlsli"
 
 StructuredBuffer<GeometryLookupEntry> g_GeometryLookup : register(t2);
 StructuredBuffer<float> g_SceneVertexFloats : register(t3);
 StructuredBuffer<uint> g_SceneIndices : register(t4);
 
-static const uint kHitKindTriangleBackFace = 255u;
+#include "dxr_geometry.hlsli"
 
 // DXR-04: primary visibility must return the CLOSEST hit. The previous implementation used
 // RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH (which returns *any* hit, not the closest) and then
@@ -49,39 +43,6 @@ struct Payload
     uint hit;
     uint _pad;
 };
-
-float2 DepthUvToClipXY(float2 texCoord)
-{
-    return float2(texCoord.x * 2.0 - 1.0, 1.0 - texCoord.y * 2.0);
-}
-
-float3 LoadObjectPosition(GeometryLookupEntry geo, uint vertexIndex)
-{
-    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats;
-    return float3(
-        g_SceneVertexFloats[base + 0],
-        g_SceneVertexFloats[base + 1],
-        g_SceneVertexFloats[base + 2]);
-}
-
-float3 ComputeWorldGeometricNormal(GeometryLookupEntry geo, uint primitiveIndex)
-{
-    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
-    const uint i0 = g_SceneIndices[indexBase + 0];
-    const uint i1 = g_SceneIndices[indexBase + 1];
-    const uint i2 = g_SceneIndices[indexBase + 2];
-
-    const float3 p0 = LoadObjectPosition(geo, i0);
-    const float3 p1 = LoadObjectPosition(geo, i1);
-    const float3 p2 = LoadObjectPosition(geo, i2);
-
-    const float3x4 objectToWorld = ObjectToWorld3x4();
-    const float3 w0 = mul(objectToWorld, float4(p0, 1.0)).xyz;
-    const float3 w1 = mul(objectToWorld, float4(p1, 1.0)).xyz;
-    const float3 w2 = mul(objectToWorld, float4(p2, 1.0)).xyz;
-
-    return normalize(cross(w1 - w0, w2 - w0));
-}
 
 void ResetPayload(inout Payload payload)
 {
