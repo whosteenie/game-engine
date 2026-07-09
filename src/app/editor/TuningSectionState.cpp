@@ -95,15 +95,14 @@ namespace TuningSectionState
             seeded = persisted->second;
         }
 
-        // FirstUseEver applies the seed only when ImGui has no stored state (fresh session / after a
-        // layout reset), so persisted values load on startup while in-session user toggles win.
-        ImGui::SetNextItemOpen(seeded, ImGuiCond_FirstUseEver);
+        // NoSavedSettings: dock/imgui.ini window state must not override our custom handler.
+        ImGui::SetNextItemOpen(seeded, ImGuiCond_Always);
         const bool open = ImGui::CollapsingHeader(label);
 
         const auto current = g_sectionOpen.find(key);
         if (current == g_sectionOpen.end())
         {
-            g_sectionOpen[key] = open;  // initial capture matches the seed; nothing to persist yet
+            g_sectionOpen[key] = open;
         }
         else if (current->second != open)
         {

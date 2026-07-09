@@ -1059,8 +1059,24 @@ void HandleMaterialFieldEditEvents(MaterialEditContext& context)
         return;
     }
 
-    if (ImGui::IsItemActivated() && !context.sessionOpen)
+    if (ImGui::IsItemActivated())
     {
+        if (context.sessionOpen)
+        {
+            // Commit the previous widget's edit when focus moves to another material field
+            // without a deactivate (common when clicking between sliders).
+            ObjectMaterialMap after = CaptureObjectMaterials(*context.scene, context.objectIndices);
+            if (!AreObjectMaterialMapsEqual(context.pendingBefore, after))
+            {
+                PushObjectMaterials(
+                    *context.undoStack,
+                    std::move(context.pendingBefore),
+                    std::move(after),
+                    context.commandName);
+            }
+            context.sessionOpen = false;
+        }
+
         context.pendingBefore = CaptureObjectMaterials(*context.scene, context.objectIndices);
         context.sessionOpen = true;
     }

@@ -773,9 +773,16 @@ void PathTracerRayGen()
             // rr_guides.ps.hlsl modes 0-2, except specular albedo uses the NVIDIA-documented
             // preintegrated form (Integration Guide appendix) instead of raw F0.
             const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
-            g_DiffuseAlbedoGuide[pixel] = float4(albedo * (1.0 - material.metallic), 1.0);
-            g_SpecularAlbedoGuide[pixel] = float4(
-                EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotVPrimary), 1.0);
+            const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic);
+            // Metals/mirrors: zero diffuse guide confuses RR demodulation at silhouettes (gi-shimmer F8).
+            const float3 diffuseGuide = (material.metallic > 0.9 || material.roughness < kMirrorRoughnessCutoff)
+                ? float3(0.5, 0.5, 0.5)
+                : diffuseGuideAlbedo;
+            const float3 specGuide = max(
+                EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotVPrimary),
+                0.04.xxx);
+            g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
+            g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
             g_NormalRoughnessGuide[pixel] = float4(normalize(hitNormal), material.roughness);
 
             // Stable RR4 spec hit-distance guide (devdoc/dxr/pt/rr4-spec-hitdist.md): trace ONE
@@ -785,8 +792,12 @@ void PathTracerRayGen()
             // the stochastic radiance bounce chosen below.
             if (material.roughness < kReflectionGuideRoughnessCutoff)
             {
+                // Match the grazing-aware bounce offset — shadowOrigin self-intersects at silhouettes
+                // and reports ~0 hit distance, which RR reads as black sliding rims (F8).
+                const float guideOriginBias =
+                    max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
                 RayDesc guideRay;
-                guideRay.Origin = shadowOrigin;
+                guideRay.Origin = hitPos + hitNormal * guideOriginBias;
                 guideRay.Direction = normalize(reflect(ray.Direction, hitNormal));
                 guideRay.TMin = 0.001;
                 guideRay.TMax = g_MaxTraceDistance;
@@ -794,8 +805,14 @@ void PathTracerRayGen()
                 Payload guidePayload;
                 ResetPayload(guidePayload);
                 TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
-                specHitDistGuide =
-                    (guidePayload.hit != 0) ? guidePayload.hitDistance : g_MaxTraceDistance;
+                if (guidePayload.hit != 0)
+                {
+                    specHitDistGuide = max(guidePayload.hitDistance, 0.05);
+                }
+                else
+                {
+                    specHitDistGuide = g_MaxTraceDistance;
+                }
             }
         }
 
