@@ -86,6 +86,12 @@ SamplerState g_LinearWrapSampler : register(s1); // tiling albedo UVs
 static const float kPi = 3.14159265;
 static const float kMaxRadiance = 64.0;
 
+// Per-frame stride for the RNG sample-index axis. Must exceed the largest sampleIndex/salt any pass
+// passes in a single frame (PT's highest is the ambient-AO salt ~135, plus the internal +32 in
+// RandomXi4 -> ~167) so frame N's high salts never alias into frame N+1's low salts. 1024 leaves
+// ample headroom; PCG hashes the product, so wrap after ~4M frames is irrelevant.
+static const uint kRngFrameStride = 1024u;
+
 // Integer PCG hash (pcg3d, Jarzynski & Olano). Frame-varying — a static per-pixel sequence
 // makes the temporal denoiser converge TO the noise (RTQ-01).
 uint3 Pcg3d(uint3 v)
@@ -104,15 +110,15 @@ uint3 Pcg3d(uint3 v)
 // Decorrelated per pixel, per frame, per sample. [0; 1).
 float2 RandomXi(uint2 pixel, uint frameIndex, uint sampleIndex)
 {
-    const uint3 hash = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
+    const uint3 hash = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * kRngFrameStride + sampleIndex));
     return float2(hash.xy & 0x00FFFFFFu) * (1.0 / 16777216.0);
 }
 
 // Four decorrelated randoms per sample: xy = lobe sample, zw = sub-pixel ray-setup jitter.
 float4 RandomXi4(uint2 pixel, uint frameIndex, uint sampleIndex)
 {
-    const uint3 hashA = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * 64u + sampleIndex));
-    const uint3 hashB = Pcg3d(uint3(pixel.y ^ 0x9E3779B9u, pixel.x, frameIndex * 64u + sampleIndex + 32u));
+    const uint3 hashA = Pcg3d(uint3(pixel.x, pixel.y, frameIndex * kRngFrameStride + sampleIndex));
+    const uint3 hashB = Pcg3d(uint3(pixel.y ^ 0x9E3779B9u, pixel.x, frameIndex * kRngFrameStride + sampleIndex + 32u));
     return float4(
         float2(hashA.xy & 0x00FFFFFFu) * (1.0 / 16777216.0),
         float2(hashB.xy & 0x00FFFFFFu) * (1.0 / 16777216.0));

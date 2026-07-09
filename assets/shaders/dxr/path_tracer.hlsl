@@ -38,12 +38,18 @@ struct EmissiveLightEntry
 };
 StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
 
+// The shared cbuffer field g_SamplesPerPixel carries the PT max-bounce count (reused verbatim; the
+// reflection/GI passes read it as an actual sample count). Alias it for readable PT intent.
+#define g_MaxBounces g_SamplesPerPixel
+
 // Path-tracer-only packing in reflection cbuffer fields this pass does not otherwise use.
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
 #define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
 #define g_PtAmbientStrength g_GiStrength
-#define g_PtAmbientAoRayCount uint(round(saturate(_PadUnjitteredViewProj.x)))
+// Host packs a 0..8 integer as a float (DxrPathTracerDispatch clamps it). saturate() would collapse
+// every non-zero setting to a single ray — clamp to the real [0,8] range instead.
+#define g_PtAmbientAoRayCount uint(round(clamp(_PadUnjitteredViewProj.x, 0.0, 8.0)))
 #define kPtHasInstanceMotion (_PadUnjitteredViewProj.y > 0.5)
 // Ray-cone pixel spread angle (radians/pixel ≈ 2·tan(fovY/2)/renderHeight) for albedo texture LOD.
 // Mip-0 sampling flickers at texel frequency under DLSS jitter; with P4b the albedo GUIDE comes
@@ -51,8 +57,10 @@ StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
 #define g_PtPixelSpreadAngle max(_PadUnjitteredViewProj.z, 1e-6)
 // Matches lit.vs uTemporalHistoryValid: when false, prevClip = currClip (zero motion).
 #define kPtMotionHistoryValid (_PadUnjitteredViewProj.w > 0.5)
-// Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*).
-#define g_PtDebugIsolateMode uint(round(saturate(_PadPtEmissiveNee)))
+// Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
+// 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
+// views unreachable — clamp to the real [0,9] range instead.
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 9.0)))
 
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
@@ -942,7 +950,9 @@ void PathTracerRayGen()
     const float3 farWorld = farH.xyz / farH.w;
     const float3 cameraRayDir = normalize(farWorld - g_CameraPos);
 
-    const uint maxBounces = clamp(g_SamplesPerPixel, 1u, 8u);
+    // Match the host clamp (DxrSettings 1..16) and the reflection/GI passes; previously capped at 8,
+    // so slider values 9..16 silently did nothing.
+    const uint maxBounces = clamp(g_MaxBounces, 1u, 16u);
 
     float3 radiance = 0.0.xxx;
     float3 throughput = 1.0.xxx;
