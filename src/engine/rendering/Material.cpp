@@ -430,6 +430,11 @@ float Material::GetIndexOfRefraction() const
     return m_indexOfRefraction;
 }
 
+bool Material::IsThinWalled() const
+{
+    return m_thinWalled;
+}
+
 void Material::SetAlbedo(const glm::vec3& albedo)
 {
     m_albedo = albedo;
@@ -453,6 +458,11 @@ void Material::SetTransmission(float transmission)
 void Material::SetIndexOfRefraction(float indexOfRefraction)
 {
     m_indexOfRefraction = std::clamp(indexOfRefraction, 1.0f, 3.0f);
+}
+
+void Material::SetThinWalled(bool thinWalled)
+{
+    m_thinWalled = thinWalled;
 }
 
 const glm::vec3& Material::GetEmissive() const
@@ -691,6 +701,7 @@ bool Material::ContentEquals(const Material& other) const
         && FloatsEqual(m_metallic, other.m_metallic)
         && FloatsEqual(m_transmission, other.m_transmission)
         && FloatsEqual(m_indexOfRefraction, other.m_indexOfRefraction)
+        && m_thinWalled == other.m_thinWalled
         && m_emissive == other.m_emissive
         && m_doubleSided == other.m_doubleSided
         && HasAlbedoMap() == other.HasAlbedoMap()
@@ -728,6 +739,7 @@ std::unique_ptr<Material> Material::Clone() const
     copy->SetEmissive(m_emissive);
     copy->SetTransmission(m_transmission);
     copy->SetIndexOfRefraction(m_indexOfRefraction);
+    copy->SetThinWalled(m_thinWalled);
     copy->SetDoubleSided(m_doubleSided);
 
     if (!m_albedoMapPath.empty())
@@ -822,6 +834,7 @@ nlohmann::json MaterialToJson(const Material& material, const MaterialStoredPath
         {"metallic", material.GetMetallic()},
         {"transmission", material.GetTransmission()},
         {"indexOfRefraction", material.GetIndexOfRefraction()},
+        {"thinWalled", material.IsThinWalled()},
         {"emissive", Vec3ToJson(material.GetEmissive())},
         {"doubleSided", material.IsDoubleSided()},
         {"maps", maps},
@@ -861,6 +874,7 @@ std::unique_ptr<Material> MaterialFromJson(
     material->SetEmissive(emissive);
     material->SetTransmission(value.value("transmission", 0.0f));
     material->SetIndexOfRefraction(value.value("indexOfRefraction", 1.5f));
+    material->SetThinWalled(value.value("thinWalled", false));
 
     if (value.contains("texCoordSets"))
     {

@@ -79,6 +79,7 @@ namespace
             fingerprint = HashFloatBits(fingerprint, material.GetRoughness());
             fingerprint = HashFloatBits(fingerprint, material.GetTransmission());
             fingerprint = HashFloatBits(fingerprint, material.GetIndexOfRefraction());
+            fingerprint = HashCombine(fingerprint, material.IsThinWalled() ? 1u : 0u);
             fingerprint = HashCombine(fingerprint, material.GetAlbedoMapSrvIndex());
         }
 
@@ -374,6 +375,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         materialEntry.roughness = material.GetRoughness();
         materialEntry.transmission = material.GetTransmission();
         materialEntry.indexOfRefraction = material.GetIndexOfRefraction();
+        materialEntry.thinWalled = material.IsThinWalled() ? 1.0f : 0.0f;
 
         // Bindless albedo texture:
         // constant. UV0 sits at float offset 6 in the interleaved stride (pos3 + normal3 + uv0).

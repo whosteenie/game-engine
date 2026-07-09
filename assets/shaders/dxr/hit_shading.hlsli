@@ -67,6 +67,8 @@ struct MaterialEntry
     uint albedoUvOffsetFloats;  // UV0 float offset within the vertex stride
     float transmission;         // 0 = opaque, 1 = glass (PT-A)
     float indexOfRefraction;    // dielectric IOR (air = 1.0); default ~1.5 glass
+    float thinWalled;           // 1 = thin slab (pane); 0 = solid volume (lens)
+    float _padDielectric;
 };
 
 StructuredBuffer<MaterialEntry> g_Materials : register(t12);

@@ -373,9 +373,26 @@ namespace
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(
-                "0 = opaque. 1 = dielectric glass (path-traced Fresnel + refraction). "
-                "Metals fade this out via (1 - metallic). Solid meshes act as lenses; "
-                "thin panes need Double sided.");
+                "0 = opaque. 1 = clear glass.\n"
+                "Window pane: use a Plane mesh + Thin walled + Double sided.\n"
+                "Avoid scaled cubes — edge faces cause dark/rainbow rims.\n"
+                "Bottle/cup/lens: leave Thin walled off (solid volume).");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
+        bool thinWalled = material.IsThinWalled();
+        if (ImGui::Checkbox("Thin walled (pane)", &thinWalled))
+        {
+            material.SetThinWalled(thinWalled);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "glTF thicknessFactor = 0: zero-thickness window glass.\n"
+                "Enter + exit refraction in one bounce — use for flat panes only.\n"
+                "Not for cups, bottles, or solid lenses (leave off).\n"
+                "Pair with Double sided on single-plane meshes.");
         }
         HandleMaterialFieldEditEvents(editContext);
 

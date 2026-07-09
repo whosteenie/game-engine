@@ -229,6 +229,8 @@ float3 SampleGgxVndfHalfVector(float3 normal, float3 viewWorld, float roughness,
         tangent * halfTangent.x + bitangent * halfTangent.y + normal * halfTangent.z);
 }
 
+#include "pt_dielectric.hlsli"
+
 float TraceVisibility(float3 origin, float3 direction, float tMax)
 {
     RayDesc ray;
@@ -270,7 +272,7 @@ float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel
         const float2 disk = float2(diskRadius * cos(diskPhi), diskRadius * sin(diskPhi));
         const float3 rayDir = normalize(
             sunDir + (tangent * disk.x + bitangent * disk.y) * g_SunAngularTanRadius);
-        visSum += TraceVisibility(origin, rayDir, g_MaxTraceDistance);
+        visSum += TraceTransmissiveVisibility(origin, rayDir, g_MaxTraceDistance);
     }
 
     return visSum / float(kPtSoftSunSampleCount);
@@ -359,7 +361,7 @@ float TracePrimarySunVisibility(
 
     return (g_SunAngularTanRadius > 1e-6)
         ? TraceSoftSunVisibility(shadowOrigin, hitNormal, pixel, bounceIndex + kPtSoftSunRngSalt)
-        : TraceVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+        : TraceTransmissiveVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
 }
 
 float3 EvaluateDirectSun(
@@ -587,199 +589,6 @@ float3 EvaluateDirectEmissive(
         / max(pickPdf * pdfArea, 1e-8);
 }
 
-// Continuous glass weight: transmission fades out as metallic rises (metals are opaque conductors).
-float DielectricWeight(float transmission, float metallic)
-{
-    return saturate(transmission) * (1.0 - saturate(metallic));
-}
-
-// PT-A: unpolarized Fresnel reflectance for dielectric interfaces (air ↔ material).
-float FresnelDielectric(float cosThetaI, float eta)
-{
-    const float cosI = abs(cosThetaI);
-    const float sin2T = eta * eta * (1.0 - cosI * cosI);
-    if (sin2T >= 1.0)
-    {
-        return 1.0;
-    }
-
-    const float cosT = sqrt(max(1.0 - sin2T, 0.0));
-    const float rPar = (eta * cosI - cosT) / max(eta * cosI + cosT, 1e-6);
-    const float rPerp = (cosI - eta * cosT) / max(cosI + eta * cosT, 1e-6);
-    return saturate(0.5 * (rPar * rPar + rPerp * rPerp));
-}
-
-bool RefractSnell(float3 wi, float3 n, float eta, out float3 wt)
-{
-    // wi points away from the surface along the incoming path; n faces the incident medium.
-    float cosI = dot(wi, n);
-    if (cosI < 0.0)
-    {
-        n = -n;
-        cosI = -cosI;
-    }
-
-    const float sin2T = eta * eta * (1.0 - cosI * cosI);
-    if (sin2T > 1.0)
-    {
-        wt = 0.0.xxx;
-        return false;
-    }
-
-    const float cosT = sqrt(max(1.0 - sin2T, 0.0));
-    wt = eta * wi - (eta * cosI + cosT) * n;
-    return dot(wt, wt) > 1e-8;
-}
-
-// Map material roughness to environment cube mip without crushing HDRIs to black at 1.0.
-float EnvironmentMipRoughness(float roughness)
-{
-    const float r = saturate(roughness);
-    return r * r * 0.35;
-}
-
-// Transmitted rays blur via direction perturbation; keep env LOD low so sky stays visible.
-float TransmissionMissEnvRoughness(float roughness, float dielectricWeight)
-{
-    const float mip = EnvironmentMipRoughness(roughness);
-    return lerp(mip, min(mip, 0.05), saturate(dielectricWeight));
-}
-
-// Build refracted direction for a dielectric interface (no throughput bookkeeping).
-bool ComputeDielectricRefractDir(
-    float3 hitNormal,
-    float3 rayDir,
-    float ior,
-    bool pathInMedium,
-    out float3 refractDir)
-{
-    const float3 wi = -rayDir;
-    float3 n = hitNormal;
-    if (dot(wi, n) < 0.0)
-    {
-        n = -n;
-    }
-
-    const float iorClamped = max(ior, 1.0);
-    const float eta = pathInMedium ? iorClamped : (1.0 / iorClamped);
-    float3 refracted;
-    if (!RefractSnell(wi, n, eta, refracted))
-    {
-        return false;
-    }
-
-    refractDir = normalize(refracted);
-    return true;
-}
-
-// One-bounce mirror trace for Fresnel reflection on dielectric interfaces (no stochastic split).
-float3 TraceDielectricReflectContrib(
-    float3 hitPos,
-    float3 hitNormal,
-    float3 reflectDir,
-    float envRoughness,
-    uint excludeInstanceId)
-{
-    const float nDotV = saturate(dot(hitNormal, -reflectDir));
-    const float bias = max(0.01, 0.01 * (1.0 + 2.0 * (1.0 - nDotV)));
-    RayDesc reflectRay;
-    reflectRay.Origin = hitPos + hitNormal * bias;
-    reflectRay.Direction = reflectDir;
-    reflectRay.TMin = 0.001;
-    reflectRay.TMax = g_MaxTraceDistance;
-
-    Payload reflectPayload;
-    ResetPayload(reflectPayload);
-    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, reflectRay, reflectPayload);
-    if (reflectPayload.hit != 0)
-    {
-        // Self-hits on thin glass (front face reflects into back face) read as bogus gray albedo.
-        if (reflectPayload.instanceId == excludeInstanceId)
-        {
-            return SampleEnvironment(reflectDir, envRoughness);
-        }
-
-        const MaterialEntry hitMaterial = g_Materials[reflectPayload.instanceId];
-        const float3 emissive = hitMaterial.emissive;
-        if (max(emissive.r, max(emissive.g, emissive.b)) > 1e-4)
-        {
-            return emissive;
-        }
-    }
-
-    return SampleEnvironment(reflectDir, envRoughness);
-}
-
-// Fresnel reflect (traced) + Snell refract (path continuation). No stochastic Fresnel roulette —
-// avoids per-pixel reflect/refract speckle that reads as double vision at 1 spp.
-void SampleDielectricInterface(
-    float3 hitPos,
-    float3 hitNormal,
-    float3 rayDir,
-    float roughness,
-    float ior,
-    bool pathInMedium,
-    uint instanceId,
-    float2 roughXi,
-    out float3 fresnelReflectRadiance,
-    out float3 nextDir,
-    out bool outPathInMedium,
-    out float scatterPdf,
-    inout float3 throughput)
-{
-    fresnelReflectRadiance = 0.0.xxx;
-
-    const float3 wi = -rayDir;
-    float3 n = hitNormal;
-    if (dot(wi, n) < 0.0)
-    {
-        n = -n;
-    }
-
-    const float iorClamped = max(ior, 1.0);
-    const float eta = pathInMedium ? iorClamped : (1.0 / iorClamped);
-    const bool enteringMedium = !pathInMedium;
-    const float cosThetaI = dot(wi, n);
-    const float fresnel = FresnelDielectric(cosThetaI, eta);
-    const float3 reflectDir = normalize(reflect(wi, n));
-    const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
-
-    outPathInMedium = pathInMedium;
-    scatterPdf = 1.0;
-
-    if (fresnel > 1e-6)
-    {
-        fresnelReflectRadiance = fresnel
-            * TraceDielectricReflectContrib(hitPos, n, reflectDir, envRough, instanceId);
-    }
-
-    throughput *= max(1.0 - fresnel, 1e-6);
-
-    if ((1.0 - fresnel) < 1e-4)
-    {
-        nextDir = reflectDir;
-        return;
-    }
-
-    float3 refracted;
-    if (!RefractSnell(wi, n, eta, refracted))
-    {
-        nextDir = reflectDir;
-        throughput = 0.0.xxx;
-        return;
-    }
-
-    nextDir = normalize(refracted);
-    outPathInMedium = enteringMedium;
-
-    const float rough2 = roughness * roughness;
-    if (rough2 > 0.0)
-    {
-        const float3 perturb = CosineSampleHemisphere(nextDir, roughXi);
-        nextDir = normalize(lerp(nextDir, perturb, rough2));
-    }
-}
-
 // Opaque GGX + cosine hemisphere. No mirror fast-path — roughness 0 is handled by GGX delta limit.
 void SampleOpaqueInterface(
     uint2 pixel,
@@ -844,6 +653,7 @@ bool SampleMaterialBounce(
     float metallic,
     float transmission,
     float ior,
+    bool thinWalled,
     bool pathInMedium,
     uint instanceId,
     out float3 nextDir,
@@ -872,6 +682,7 @@ bool SampleMaterialBounce(
             rayDir,
             roughness,
             ior,
+            thinWalled,
             pathInMedium,
             instanceId,
             xi.xy,
@@ -1032,6 +843,7 @@ void PathTracerRayGen()
     bool addEnvOnMiss = true;
     float lastScatterPdf = 1.0;
     bool pathInMedium = false;
+    float3 mediumTint = 1.0.xxx;
 
     float3 termDirectSun = 0.0.xxx;
     float3 termDirectEmissive = 0.0.xxx;
@@ -1090,6 +902,11 @@ void PathTracerRayGen()
         const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
         const float3 shadowOrigin = hitPos + hitNormal * max(payload.hitDistance * 0.001, 0.002);
 
+        if (pathInMedium && bounce > 0u)
+        {
+            throughput *= BeerLambertMediumAttenuation(mediumTint, payload.hitDistance);
+        }
+
         const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
         const float dielectricWeight =
             DielectricWeight(material.transmission, material.metallic);
@@ -1140,40 +957,45 @@ void PathTracerRayGen()
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
             const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
-            // Glass: refracted content is at a different depth than the surface. Trace a deterministic
-            // refract ray for DLSS depth; zero MV avoids translation smear from surface reprojection.
+            // Glass: DLSS-RR needs motion + depth of the refracted surface behind the pane, not the
+            // glass surface itself and not MV=0 (that was a stopgap that causes smearing). See NVIDIA
+            // PSR blog + Omniverse translucency virtual motion.
             if (dielectricWeight > 0.01)
             {
-                primaryMotion = 0.0.xx;
                 specHitDistGuide = g_MaxTraceDistance;
 
-                float3 refractDir;
-                if (ComputeDielectricRefractDir(
-                        hitNormal,
-                        ray.Direction,
-                        material.indexOfRefraction,
-                        false,
-                        refractDir))
-                {
-                    const float guideOriginBias =
-                        max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
-                    RayDesc depthRay;
-                    depthRay.Origin = hitPos + refractDir * guideOriginBias;
-                    depthRay.Direction = refractDir;
-                    depthRay.TMin = 0.001;
-                    depthRay.TMax = g_MaxTraceDistance;
+                const float guideOriginBias =
+                    max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
+                const bool thinPane = material.thinWalled > 0.5;
+                const float transmitFresnel = FresnelDielectric(
+                    nDotVPrimary,
+                    1.0 / max(material.indexOfRefraction, 1.0));
+                const float transmitWeight = saturate(1.0 - transmitFresnel);
 
-                    Payload depthPayload;
-                    ResetPayload(depthPayload);
-                    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, depthRay, depthPayload);
-                    if (depthPayload.hit != 0 && depthPayload.instanceId != payload.instanceId)
-                    {
-                        primaryDepth = depthPayload.primaryDepth;
-                    }
-                    else
-                    {
-                        primaryDepth = 1.0;
-                    }
+                float guideDepth = 1.0;
+                float2 guideMotion = 0.0.xx;
+                bool hasGuide = TraceTransmissionGuide(
+                    hitPos,
+                    hitNormal,
+                    ray.Direction,
+                    material.indexOfRefraction,
+                    thinPane,
+                    thinPane ? max(guideOriginBias, kThinShellMinExitBias) : guideOriginBias,
+                    payload.instanceId,
+                    guideDepth,
+                    guideMotion);
+
+                if (hasGuide)
+                {
+                    primaryDepth = guideDepth;
+                    // Prefer refracted-surface motion when transmission dominates; keep surface MV at
+                    // grazing angles where reflection is visible (NVIDIA blog heuristic).
+                    primaryMotion = lerp(payload.primaryMotionNdc, guideMotion, transmitWeight);
+                }
+                else
+                {
+                    primaryDepth = 1.0;
+                    primaryMotion = lerp(payload.primaryMotionNdc, 0.0.xx, transmitWeight);
                 }
             }
             else
@@ -1275,6 +1097,7 @@ void PathTracerRayGen()
             material.metallic,
             material.transmission,
             material.indexOfRefraction,
+            material.thinWalled > 0.5,
             pathInMedium,
             payload.instanceId,
             nextDir,
@@ -1283,6 +1106,14 @@ void PathTracerRayGen()
             scatterPdf,
             interfaceAddRadiance,
             throughput);
+        if (pathInMedium && !pathInMediumBefore && material.thinWalled < 0.5)
+        {
+            mediumTint = albedo;
+        }
+        else if (!pathInMedium && pathInMediumBefore)
+        {
+            mediumTint = 1.0.xxx;
+        }
         radiance += interfaceAddRadiance;
 
         lastScatterPdf = scatterPdf;
@@ -1308,9 +1139,14 @@ void PathTracerRayGen()
 
         const float nDotV = saturate(dot(hitNormal, viewDir));
         const float originBias = max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV));
+        const bool thinPane = material.thinWalled > 0.5 && dielectricWeight > 0.01;
         ray.Origin = hitPos + nextDir * originBias;
-        // Thin glass: after exiting the medium, push origin farther to skip the back face.
-        if (dielectricWeight > 0.01 && pathInMediumBefore && !pathInMedium)
+        if (thinPane)
+        {
+            // Thin slab is zero-thickness; escape any physical shell (scaled-cube panes) before continuing.
+            ray.Origin = hitPos + nextDir * max(originBias, kThinShellMinExitBias);
+        }
+        else if (dielectricWeight > 0.01 && pathInMediumBefore && !pathInMedium)
         {
             ray.Origin = hitPos + nextDir * max(originBias, 0.02);
         }

@@ -54,12 +54,14 @@ public:
     float GetMetallic() const;
     float GetTransmission() const;
     float GetIndexOfRefraction() const;
+    bool IsThinWalled() const;
 
     void SetAlbedo(const glm::vec3& albedo);
     void SetRoughness(float roughness);
     void SetMetallic(float metallic);
     void SetTransmission(float transmission);
     void SetIndexOfRefraction(float indexOfRefraction);
+    void SetThinWalled(bool thinWalled);
 
     const glm::vec3& GetEmissive() const;
     void SetEmissive(const glm::vec3& emissive);
@@ -127,6 +129,7 @@ private:
     float m_metallic;
     float m_transmission = 0.0f;
     float m_indexOfRefraction = 1.5f;
+    bool m_thinWalled = false;
     glm::vec3 m_emissive{0.0f};
 
     mutable std::shared_ptr<Texture> m_albedoMap;

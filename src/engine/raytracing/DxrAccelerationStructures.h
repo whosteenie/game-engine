@@ -38,6 +38,8 @@ struct DxrMaterialEntry
     std::uint32_t albedoUvOffsetFloats = UINT32_MAX;
     float transmission = 0.0f; // 0 = opaque, 1 = fully transmissive (PT-A glass)
     float indexOfRefraction = 1.5f;
+    float thinWalled = 0.0f; // 1 = thin slab (window pane); 0 = solid volume (lens)
+    float _padDielectric = 0.0f;
 };
 
 // P4b: per-instance previous-frame object-to-world transform, indexed by TLAS InstanceID
