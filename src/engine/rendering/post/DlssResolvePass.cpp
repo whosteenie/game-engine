@@ -54,6 +54,9 @@ namespace
         return std::exp2(exposureEv);
     }
 
+    // DLSS reset on large translation only. Rotation is NOT a cut — valid motion vectors carry
+    // camera rotation; the old trace-based rotation branch (~1.8°/frame) pulsed RR history during
+    // ordinary look-around (gi-shimmer.md F7).
     bool DetectDlssCameraCut(const glm::mat4& currView, const MotionVectorFrameState& mvState)
     {
         if (!mvState.historyValid)
@@ -64,18 +67,8 @@ namespace
         const glm::mat4 viewToViewPrev = mvState.prevView * glm::inverse(currView);
         const glm::vec3 translation(viewToViewPrev[3]);
         constexpr float kCutThresholdWorldUnits = 2.0f;
-        if (glm::dot(translation, translation) > kCutThresholdWorldUnits * kCutThresholdWorldUnits)
-        {
-            return true;
-        }
-
-        const glm::mat3 rotation{
-            glm::vec3(viewToViewPrev[0]),
-            glm::vec3(viewToViewPrev[1]),
-            glm::vec3(viewToViewPrev[2])};
-        const float trace = rotation[0][0] + rotation[1][1] + rotation[2][2];
-        constexpr float kRotationTraceThreshold = 2.999f;
-        return trace < kRotationTraceThreshold;
+        return glm::dot(translation, translation)
+            > kCutThresholdWorldUnits * kCutThresholdWorldUnits;
     }
 }
 
