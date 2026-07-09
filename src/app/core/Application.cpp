@@ -381,7 +381,7 @@ Application::~Application()
     // Release all D3D12MA-backed resources before the global allocator shuts down.
     if (GfxContext::Get().IsInitialized())
     {
-        GfxContext::Get().WaitForGpuIdle();
+        GfxContext::Get().PrepareForDeviceShutdown();
 
         if (m_playModeController.IsActive() && m_scene != nullptr && m_projectSession != nullptr
             && m_projectSession->HasActiveProject())
@@ -402,6 +402,7 @@ Application::~Application()
         RenderingPipelineCache::InvalidateAll();
         Material::ReleaseGlobalGpuResources();
         Texture::ReleaseUploadResources();
+        GfxContext::Get().PrepareForDeviceShutdown();
     }
 
     m_imguiLayer.reset();

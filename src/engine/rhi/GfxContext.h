@@ -32,6 +32,8 @@ public:
     void Shutdown();
     bool IsInitialized() const { return m_impl != nullptr; }
     void WaitForGpuIdle();
+    // Full device idle + deferred-release flush for teardown (ImGui upload queue, command list reset).
+    void PrepareForDeviceShutdown();
     // Waits for submitted swapchain frames without stalling on upload/readback fences.
     void WaitForSwapchainFrames(bool pumpWindowEvents = true);
 
@@ -212,6 +214,7 @@ private:
     GfxContext() = default;
 
     void WaitForGpu();
+    void WaitForImGuiUploadQueueIdle();
     void ProcessDeferredDestroys(bool flushAll);
     std::uint64_t DeferredDestroyFenceValue() const;
     void WaitForFenceValue(std::uint64_t fenceValue, bool pumpWindowEvents = true);

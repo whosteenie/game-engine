@@ -60,7 +60,7 @@ ImGuiLayer::~ImGuiLayer()
 
     if (GfxContext::Get().IsInitialized())
     {
-        GfxContext::Get().WaitForGpuIdle();
+        GfxContext::Get().PrepareForDeviceShutdown();
     }
 
     // DX12 must shut down before GLFW: ImGui_ImplDX12_Init always sets main viewport
@@ -68,6 +68,10 @@ ImGuiLayer::~ImGuiLayer()
     if (ImGui::GetIO().BackendRendererUserData != nullptr)
     {
         ImGui_ImplDX12_Shutdown();
+        if (GfxContext::Get().IsInitialized())
+        {
+            GfxContext::Get().PrepareForDeviceShutdown();
+        }
     }
 
     if (ImGui::GetIO().BackendPlatformUserData != nullptr)

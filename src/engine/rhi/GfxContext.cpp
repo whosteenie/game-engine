@@ -552,7 +552,24 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     return true;
 }
 
-void GfxContext::Shutdown()
+void GfxContext::WaitForImGuiUploadQueueIdle()
+{
+    if (m_impl == nullptr || m_impl->ImGuiUploadQueue == nullptr || m_impl->Fence == nullptr)
+    {
+        return;
+    }
+
+    const std::uint64_t fenceValue = AllocateNextFenceValue(m_submissionFenceValue);
+    if (FAILED(m_impl->ImGuiUploadQueue->Signal(m_impl->Fence.Get(), fenceValue)))
+    {
+        return;
+    }
+
+    m_submissionFenceValue = std::max(m_submissionFenceValue, fenceValue);
+    WaitForFenceValue(fenceValue);
+}
+
+void GfxContext::PrepareForDeviceShutdown()
 {
     if (m_impl == nullptr)
     {
@@ -560,6 +577,19 @@ void GfxContext::Shutdown()
     }
 
     WaitForGpu();
+    WaitForImGuiUploadQueueIdle();
+    ResetCommandListForTeardown();
+    ProcessDeferredDestroys(true);
+}
+
+void GfxContext::Shutdown()
+{
+    if (m_impl == nullptr)
+    {
+        return;
+    }
+
+    PrepareForDeviceShutdown();
     // Drop swapchain back-buffer refs before Streamline teardown (upgraded swapchains must have
     // zero outstanding references when slShutdown runs).
     ReleaseRenderTargets();
@@ -567,15 +597,17 @@ void GfxContext::Shutdown()
     const bool swapChainOwnedByStreamline = DlssContext::Get().IsSwapChainUpgraded();
     // DLSS/Streamline (S0): shut SL down while the device is still alive.
     DlssContext::Get().Shutdown();
+    // slShutdown / NGX teardown can enqueue device work; wait again before releasing heaps.
+    WaitForGpu();
+    WaitForImGuiUploadQueueIdle();
+    ResetCommandListForTeardown();
+    ProcessDeferredDestroys(true);
     // slUpgradeInterface hands ownership of the proxy swapchain to Streamline; slShutdown destroys
     // it. Detach so ~ComPtr does not Release() an already-freed object (shutdown access violation).
     if (swapChainOwnedByStreamline)
     {
         m_impl->SwapChain.Detach();
     }
-
-    // GPU is idle and no further submissions will happen: flush everything unconditionally.
-    ProcessDeferredDestroys(true);
     m_gpuProfiler.Shutdown();
 
     for (TransientUploadArena& arena : m_impl->TransientUploadArenas)
@@ -1084,6 +1116,16 @@ bool GfxContext::IsShaderVisibleSrvCpuHandle(const std::uintptr_t cpuHandle) con
         return false;
     }
 
+    if (m_impl->RtvHeap != nullptr)
+    {
+        const SIZE_T rtvStart = m_impl->RtvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+        const SIZE_T rtvEnd = rtvStart + static_cast<SIZE_T>(FrameCount) * m_impl->RtvDescriptorSize;
+        if (cpuHandle >= rtvStart && cpuHandle < rtvEnd)
+        {
+            return false;
+        }
+    }
+
     if (m_impl->OffscreenRtvHeap != nullptr)
     {
         const SIZE_T rtvStart = m_impl->OffscreenRtvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
@@ -1386,10 +1428,15 @@ void GfxContext::AllocSrvDescriptorForImGui(void* out_cpu_handle, void* out_gpu_
 
 void GfxContext::FreeSrvDescriptorFromCpuHandle(const std::uintptr_t cpu_handle_ptr)
 {
+    if (m_impl == nullptr || cpu_handle_ptr == 0 || !IsShaderVisibleSrvCpuHandle(cpu_handle_ptr))
+    {
+        return;
+    }
+
     const D3D12_CPU_DESCRIPTOR_HANDLE heapStart = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
     const std::uint32_t index = static_cast<std::uint32_t>(
         (cpu_handle_ptr - heapStart.ptr) / m_impl->SrvDescriptorSize);
-    FreeOffscreenSrv(index);
+    DeferredFreeOffscreenSrv(index);
 }
 
 void GfxContext::CreateSrvForTexture(
@@ -1881,6 +1928,7 @@ bool GfxContext::IsDeviceRemoved(std::string* outReason) const
 void GfxContext::WaitForGpuIdle()
 {
     WaitForGpu();
+    WaitForImGuiUploadQueueIdle();
     ProcessDeferredDestroys(false);
 }
 
