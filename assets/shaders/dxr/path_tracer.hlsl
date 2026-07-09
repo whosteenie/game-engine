@@ -26,6 +26,18 @@ struct PrevInstanceTransform
 };
 StructuredBuffer<PrevInstanceTransform> g_PrevInstanceTransforms : register(t14);
 
+// F2/F2b emissive NEE: compact list of emissive instances (world-space AABB area lights).
+struct EmissiveLightEntry
+{
+    float3 boundsMin;
+    float pickWeight;
+    float3 boundsMax;
+    float surfaceArea;
+    float3 emissive;
+    uint instanceId;
+};
+StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
+
 // Path-tracer-only packing in reflection cbuffer fields this pass does not otherwise use.
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
@@ -42,6 +54,7 @@ StructuredBuffer<PrevInstanceTransform> g_PrevInstanceTransforms : register(t14)
 
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
+static const uint kPtEmissiveNeeSalt = 96u;
 static const uint kPtSoftSunSampleCount = 4u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
@@ -354,6 +367,196 @@ float3 EvaluateDirectSun(
     return diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
 }
 
+float BalanceHeuristic(float pdfA, float pdfB)
+{
+    const float denom = pdfA + pdfB;
+    return denom > 1e-6 ? pdfA / denom : 1.0;
+}
+
+float EmissiveLightPickPdf(uint instanceId)
+{
+    if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0)
+    {
+        return 0.0;
+    }
+
+    [loop]
+    for (uint lightIndex = 0u; lightIndex < g_EmissiveLightCount; ++lightIndex)
+    {
+        if (g_EmissiveLights[lightIndex].instanceId == instanceId)
+        {
+            return g_EmissiveLights[lightIndex].pickWeight / g_EmissiveLightPickWeightSum;
+        }
+    }
+    return 0.0;
+}
+
+// Uniform sample on an axis-aligned box shell; pdfArea is 1 / total surface area.
+void SampleUniformPointOnAabbSurface(
+    float3 boundsMin,
+    float3 boundsMax,
+    float3 xi,
+    out float3 surfacePoint,
+    out float3 faceNormal,
+    out float pdfArea)
+{
+    const float3 size = max(boundsMax - boundsMin, 0.0.xxx);
+    const float areaPosX = size.y * size.z;
+    const float areaNegX = areaPosX;
+    const float areaPosY = size.x * size.z;
+    const float areaNegY = areaPosY;
+    const float areaPosZ = size.x * size.y;
+    const float areaNegZ = areaPosZ;
+    const float totalArea = 2.0 * (areaPosX + areaPosY + areaPosZ);
+
+    if (totalArea <= 1e-8)
+    {
+        surfacePoint = 0.5 * (boundsMin + boundsMax);
+        faceNormal = float3(0.0, 1.0, 0.0);
+        pdfArea = 1.0;
+        return;
+    }
+
+    pdfArea = 1.0 / totalArea;
+    float facePick = xi.x * totalArea;
+
+    if (facePick < areaPosX)
+    {
+        faceNormal = float3(1.0, 0.0, 0.0);
+        surfacePoint = float3(
+            boundsMax.x,
+            lerp(boundsMin.y, boundsMax.y, xi.y),
+            lerp(boundsMin.z, boundsMax.z, xi.z));
+        return;
+    }
+    facePick -= areaPosX;
+
+    if (facePick < areaNegX)
+    {
+        faceNormal = float3(-1.0, 0.0, 0.0);
+        surfacePoint = float3(
+            boundsMin.x,
+            lerp(boundsMin.y, boundsMax.y, xi.y),
+            lerp(boundsMin.z, boundsMax.z, xi.z));
+        return;
+    }
+    facePick -= areaNegX;
+
+    if (facePick < areaPosY)
+    {
+        faceNormal = float3(0.0, 1.0, 0.0);
+        surfacePoint = float3(
+            lerp(boundsMin.x, boundsMax.x, xi.y),
+            boundsMax.y,
+            lerp(boundsMin.z, boundsMax.z, xi.z));
+        return;
+    }
+    facePick -= areaPosY;
+
+    if (facePick < areaNegY)
+    {
+        faceNormal = float3(0.0, -1.0, 0.0);
+        surfacePoint = float3(
+            lerp(boundsMin.x, boundsMax.x, xi.y),
+            boundsMin.y,
+            lerp(boundsMin.z, boundsMax.z, xi.z));
+        return;
+    }
+    facePick -= areaNegY;
+
+    if (facePick < areaPosZ)
+    {
+        faceNormal = float3(0.0, 0.0, 1.0);
+        surfacePoint = float3(
+            lerp(boundsMin.x, boundsMax.x, xi.y),
+            lerp(boundsMin.y, boundsMax.y, xi.z),
+            boundsMax.z);
+        return;
+    }
+
+    faceNormal = float3(0.0, 0.0, -1.0);
+    surfacePoint = float3(
+        lerp(boundsMin.x, boundsMax.x, xi.y),
+        lerp(boundsMin.y, boundsMax.y, xi.z),
+        boundsMin.z);
+}
+
+// One emissive area-light sample per bounce (AABB surface + shadow ray). MIS vs cosine hemisphere.
+float3 EvaluateDirectEmissive(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 diffuseAlbedo,
+    float3 hitNormal,
+    float3 shadowOrigin)
+{
+    if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float4 xiPick = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEmissiveNeeSalt);
+    const float4 xiSurface = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEmissiveNeeSalt + 1u);
+
+    float pick = xiPick.x * g_EmissiveLightPickWeightSum;
+    uint lightIndex = g_EmissiveLightCount - 1u;
+    [loop]
+    for (uint i = 0u; i < g_EmissiveLightCount; ++i)
+    {
+        pick -= g_EmissiveLights[i].pickWeight;
+        if (pick <= 0.0)
+        {
+            lightIndex = i;
+            break;
+        }
+    }
+
+    const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
+
+    float3 lightPoint;
+    float3 faceNormal;
+    float pdfArea;
+    SampleUniformPointOnAabbSurface(
+        light.boundsMin,
+        light.boundsMax,
+        xiSurface.xyz,
+        lightPoint,
+        faceNormal,
+        pdfArea);
+
+    float3 toLight = lightPoint - shadowOrigin;
+    const float dist2 = max(dot(toLight, toLight), 1e-8);
+    const float dist = sqrt(dist2);
+    const float3 wi = toLight / dist;
+
+    const float cosThetaReceiver = saturate(dot(hitNormal, wi));
+    if (cosThetaReceiver <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float cosThetaEmitter = saturate(dot(faceNormal, -wi));
+    if (cosThetaEmitter <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float visibility = TraceVisibility(shadowOrigin, wi, dist - 0.001);
+    if (visibility <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float pickPdf = light.pickWeight / g_EmissiveLightPickWeightSum;
+    const float pdfSolidAngle = pickPdf * pdfArea * dist2 / max(cosThetaEmitter, 1e-6);
+    const float pdfBsdf = cosThetaReceiver / kPi;
+    const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
+
+    const float3 bsdf = diffuseAlbedo / kPi;
+    const float geometryTerm = cosThetaReceiver * cosThetaEmitter / dist2;
+
+    return bsdf * light.emissive * geometryTerm * visibility * misWeight / max(pickPdf * pdfArea, 1e-8);
+}
+
 bool SampleNextBounceDirection(
     uint2 pixel,
     uint bounceIndex,
@@ -365,6 +568,7 @@ bool SampleNextBounceDirection(
     float metallic,
     out float3 nextDir,
     out bool isSpecular,
+    out float scatterPdf,
     inout float3 throughput)
 {
     const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
@@ -385,6 +589,7 @@ bool SampleNextBounceDirection(
         {
             nextDir = normalize(reflect(-viewDir, hitNormal));
         }
+        scatterPdf = 1.0;
         throughput *= f0 / max(specProb, 1e-3);
         return true;
     }
@@ -400,11 +605,14 @@ bool SampleNextBounceDirection(
         {
             nextDir = normalize(reflect(-viewDir, hitNormal));
         }
+        scatterPdf = specProb;
         throughput *= f0 / max(specProb, 1e-3);
     }
     else
     {
         nextDir = CosineSampleHemisphere(hitNormal, xi.xy);
+        const float cosTheta = saturate(dot(hitNormal, nextDir));
+        scatterPdf = (1.0 - specProb) * cosTheta / kPi;
         throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-3);
     }
 
@@ -458,6 +666,7 @@ void PathTracerRayGen()
     // SPECULAR bounces still add the env on miss (background + reflections). Reference traces the sky
     // purely and always adds it on miss.
     bool addEnvOnMiss = true;
+    float lastScatterPdf = 1.0;
 
     [loop]
     for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
@@ -513,8 +722,19 @@ void PathTracerRayGen()
             FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(material.roughness, 0.55));
         const float3 diffuseAlbedo = albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
 
-        radiance += throughput * material.emissive;
+        const float emissiveLuminance = max(material.emissive.r, max(material.emissive.g, material.emissive.b));
+        if (emissiveLuminance > 1e-4)
+        {
+            const float pickPdf = EmissiveLightPickPdf(payload.instanceId);
+            const float misHit = (pickPdf > 0.0 && lastScatterPdf > 0.0)
+                ? BalanceHeuristic(lastScatterPdf, pickPdf)
+                : 1.0;
+            radiance += throughput * material.emissive * misHit;
+        }
+
         radiance += throughput * EvaluateDirectSun(
+            pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
+        radiance += throughput * EvaluateDirectEmissive(
             pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
@@ -582,6 +802,7 @@ void PathTracerRayGen()
 
         float3 nextDir;
         bool isSpecular = false;
+        float scatterPdf = 1.0;
         SampleNextBounceDirection(
             pixel,
             bounce,
@@ -593,7 +814,10 @@ void PathTracerRayGen()
             material.metallic,
             nextDir,
             isSpecular,
+            scatterPdf,
             throughput);
+
+        lastScatterPdf = scatterPdf;
 
         // Real-time: specular bounces add env on miss; diffuse bounces use primary-hit SH only.
         // Reference: always add the true sky.

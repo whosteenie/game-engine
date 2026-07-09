@@ -51,6 +51,19 @@ struct DxrPrevInstanceTransformEntry
     float row2[4] = {0.0f, 0.0f, 1.0f, 0.0f};
 };
 
+// F2/F2b emissive NEE: one entry per emissive scene instance (world-space AABB area light).
+// Layout must match EmissiveLightEntry in assets/shaders/dxr/path_tracer.hlsl.
+struct DxrEmissiveLightEntry
+{
+    float boundsMin[3] = {0.0f, 0.0f, 0.0f};
+    float pickWeight = 0.0f;
+    float boundsMax[3] = {0.0f, 0.0f, 0.0f};
+    float surfaceArea = 0.0f;
+    float emissive[3] = {0.0f, 0.0f, 0.0f};
+    std::uint32_t instanceId = 0;
+};
+static_assert(sizeof(DxrEmissiveLightEntry) == 48);
+
 class DxrAccelerationStructures
 {
 public:
@@ -110,6 +123,22 @@ public:
             : UINT32_MAX;
     }
 
+    // F2: upload emissive instance list for path-tracer NEE. Must be recorded on this frame's
+    // command list BEFORE the PT dispatch that reads it (t15).
+    bool UploadEmissiveLights(const Scene& scene, void* commandList);
+
+    std::uint32_t GetEmissiveLightCount() const { return m_emissiveLightCount; }
+    float GetEmissiveLightPickWeightSum() const { return m_emissiveLightPickWeightSum; }
+
+    // Valid only for the frame UploadEmissiveLights ran; UINT32_MAX otherwise.
+    std::uint32_t GetEmissiveLightsSrvIndex() const
+    {
+        const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+        return m_emissiveLightsUploadFrame[frameIndex] == GfxContext::Get().GetSubmissionFrameNumber()
+            ? m_emissiveLightsSrvIndices[frameIndex]
+            : UINT32_MAX;
+    }
+
     void Release();
 
 private:
@@ -156,6 +185,16 @@ private:
         UINT32_MAX};
     std::array<std::uint64_t, GfxContext::FrameCount> m_prevTransformsUploadFrame{};
     std::size_t m_prevTransformsCapacityCount = 0;
+    // F2 emissive NEE (t15): compact list of emissive instances rebuilt every PT frame.
+    DxrUploadRing m_emissiveLightsStaging{};
+    DxrSrvBufferRing m_emissiveLightsGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_emissiveLightsSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveLightsUploadFrame{};
+    std::size_t m_emissiveLightsCapacityCount = 0;
+    std::uint32_t m_emissiveLightCount = 0;
+    float m_emissiveLightPickWeightSum = 0.0f;
     std::size_t m_geometryObjectCount = 0;
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
     std::uint64_t m_builtTlasTopologyFingerprint = 0;

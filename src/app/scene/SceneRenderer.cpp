@@ -1239,11 +1239,16 @@ void SceneRenderer::RenderGeometryPass(
         // P4b: the path tracer needs the PREVIOUS frame's object-to-world matrices for object
         // motion vectors, and RecordDxrPass runs after this advance — upload them first. The copy
         // is recorded on this frame's command list ahead of the PT dispatch that reads it (t14).
-        if (m_dxrSettings.IsPathTracingActive() && m_dxrAccelerationStructures != nullptr
-            && !(*m_activePreviousWorldMatrices).empty())
+        if (m_dxrSettings.IsPathTracingActive() && m_dxrAccelerationStructures != nullptr)
         {
-            m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
-                *m_activePreviousWorldMatrices,
+            if (!(*m_activePreviousWorldMatrices).empty())
+            {
+                m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
+                    *m_activePreviousWorldMatrices,
+                    GfxContext::Get().GetCommandList());
+            }
+            m_dxrAccelerationStructures->UploadEmissiveLights(
+                scene,
                 GfxContext::Get().GetCommandList());
         }
 

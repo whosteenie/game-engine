@@ -35,6 +35,10 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float4 _PadUnjitteredViewProj;
     float4x4 g_UnjitteredViewProj;
     float4x4 g_PrevViewProj;
+    // F2 path-tracer-only: emissive NEE (zero for non-PT dispatches).
+    uint g_EmissiveLightCount;
+    float g_EmissiveLightPickWeightSum;
+    float2 _PadPtEmissiveNee;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

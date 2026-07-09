@@ -1848,8 +1848,8 @@ bool DxrDispatchContext::DispatchPathTracer(
     const DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    // Path-tracer root signature: t0-t14 (reflection set + prev-instance transforms).
-    constexpr std::uint32_t kPathTracerSrvCount = 15;
+    // Path-tracer root signature: t0-t15 (reflection set + prev transforms + emissive NEE).
+    constexpr std::uint32_t kPathTracerSrvCount = 16;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
         ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
         : srvIndicesFromHandles[5];
@@ -1858,6 +1858,10 @@ bool DxrDispatchContext::DispatchPathTracer(
     const std::uint32_t prevTransformsSrvIndex =
         inputs.prevInstanceTransformsSrvIndex != UINT32_MAX
             ? inputs.prevInstanceTransformsSrvIndex
+            : inputs.geometryLookupSrvIndex;
+    const std::uint32_t emissiveLightsSrvIndex =
+        inputs.emissiveLightsSrvIndex != UINT32_MAX
+            ? inputs.emissiveLightsSrvIndex
             : inputs.geometryLookupSrvIndex;
     const std::uint32_t srvHeapIndices[kPathTracerSrvCount] = {
         m_tlasSrvIndex,
@@ -1874,7 +1878,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         srvIndicesFromHandles[7],
         inputs.materialSrvIndex,
         giSrvIndex,
-        prevTransformsSrvIndex};
+        prevTransformsSrvIndex,
+        emissiveLightsSrvIndex};
 
     if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
     {

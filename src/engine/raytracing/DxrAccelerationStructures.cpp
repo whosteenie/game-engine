@@ -17,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <unordered_set>
 
 #include <glm/glm.hpp>
@@ -163,25 +164,40 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
         }
     }
 
+    for (const std::uint32_t srvIndex : m_emissiveLightsSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
+    }
+
     m_geometryLookupSrvIndices.fill(UINT32_MAX);
     m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
     m_sceneIndicesSrvIndices.fill(UINT32_MAX);
     m_materialSrvIndices.fill(UINT32_MAX);
     m_prevTransformsSrvIndices.fill(UINT32_MAX);
+    m_emissiveLightsSrvIndices.fill(UINT32_MAX);
 
     m_geometryLookupStaging.Release();
     m_materialStaging.Release();
     m_sceneVertexFloatsStaging.Release();
     m_sceneIndicesStaging.Release();
     m_prevTransformsStaging.Release();
+    m_emissiveLightsStaging.Release();
     m_geometryLookupGpu.Release();
     m_materialGpu.Release();
     m_sceneVertexFloatsGpu.Release();
     m_sceneIndicesGpu.Release();
     m_prevTransformsGpu.Release();
+    m_emissiveLightsGpu.Release();
     m_uploadedGeometryFingerprint.fill(0);
     m_prevTransformsUploadFrame.fill(0);
+    m_emissiveLightsUploadFrame.fill(0);
     m_prevTransformsCapacityCount = 0;
+    m_emissiveLightsCapacityCount = 0;
+    m_emissiveLightCount = 0;
+    m_emissiveLightPickWeightSum = 0.0f;
     m_geometryObjectCount = 0;
 }
 
@@ -632,6 +648,175 @@ bool DxrAccelerationStructures::UploadPrevInstanceTransforms(
     CopyDxrUploadToSrvBuffer(d3dCommandList, upload, m_prevTransformsGpu.Slot(frameIndex), byteSize);
 
     m_prevTransformsUploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
+    return true;
+}
+
+namespace
+{
+    float EmissiveLuminance(const glm::vec3& emissive)
+    {
+        return 0.2126f * emissive.x + 0.7152f * emissive.y + 0.0722f * emissive.z;
+    }
+
+    float AabbSurfaceArea(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
+    {
+        const glm::vec3 size = glm::max(boundsMax - boundsMin, glm::vec3(0.0f));
+        return 2.0f * (size.x * size.y + size.x * size.z + size.y * size.z);
+    }
+} // namespace
+
+bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* commandList)
+{
+    auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(commandList);
+    if (d3dCommandList == nullptr || !GfxContext::Get().IsInitialized())
+    {
+        m_emissiveLightCount = 0;
+        m_emissiveLightPickWeightSum = 0.0f;
+        return false;
+    }
+
+    static constexpr float kEmissiveThreshold = 0.01f;
+
+    std::vector<DxrEmissiveLightEntry> entries;
+    const auto& objects = scene.GetObjects();
+    entries.reserve(objects.size());
+
+    float pickWeightSum = 0.0f;
+    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    {
+        const SceneObject& object = objects[objectIndex];
+        if (!object.IsRenderable())
+        {
+            continue;
+        }
+
+        Mesh* mesh = object.GetMesh();
+        if (mesh == nullptr)
+        {
+            continue;
+        }
+
+        const glm::vec3 emissive = object.GetMaterial().GetEmissive();
+        const float luminance = EmissiveLuminance(emissive);
+        if (luminance < kEmissiveThreshold)
+        {
+            continue;
+        }
+
+        const std::vector<glm::vec3>& positions = mesh->GetPositions();
+        if (positions.empty())
+        {
+            continue;
+        }
+
+        const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+        glm::vec3 worldMin(std::numeric_limits<float>::max());
+        glm::vec3 worldMax(std::numeric_limits<float>::lowest());
+        for (const glm::vec3& position : positions)
+        {
+            const glm::vec3 worldPosition = glm::vec3(worldMatrix * glm::vec4(position, 1.0f));
+            worldMin = glm::min(worldMin, worldPosition);
+            worldMax = glm::max(worldMax, worldPosition);
+        }
+
+        const float surfaceArea =
+            std::max(AabbSurfaceArea(worldMin, worldMax), 1e-4f);
+        const float pickWeight = luminance * surfaceArea;
+        pickWeightSum += pickWeight;
+
+        DxrEmissiveLightEntry& entry = entries.emplace_back();
+        entry.boundsMin[0] = worldMin.x;
+        entry.boundsMin[1] = worldMin.y;
+        entry.boundsMin[2] = worldMin.z;
+        entry.pickWeight = pickWeight;
+        entry.boundsMax[0] = worldMax.x;
+        entry.boundsMax[1] = worldMax.y;
+        entry.boundsMax[2] = worldMax.z;
+        entry.surfaceArea = surfaceArea;
+        entry.emissive[0] = emissive.x;
+        entry.emissive[1] = emissive.y;
+        entry.emissive[2] = emissive.z;
+        entry.instanceId = static_cast<std::uint32_t>(objectIndex);
+    }
+
+    m_emissiveLightCount = static_cast<std::uint32_t>(entries.size());
+    m_emissiveLightPickWeightSum = pickWeightSum;
+
+    if (entries.empty())
+    {
+        m_emissiveLightsUploadFrame[GfxContext::Get().GetFrameIndex()] =
+            GfxContext::Get().GetSubmissionFrameNumber();
+        return true;
+    }
+
+    const std::uint64_t byteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
+    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+
+    const bool sameCapacity = m_emissiveLightsCapacityCount == entries.size()
+        && m_emissiveLightsStaging.GetCapacity() >= byteSize
+        && m_emissiveLightsGpu.GetCapacity() >= byteSize
+        && m_emissiveLightsSrvIndices[frameIndex] != UINT32_MAX;
+    if (!sameCapacity)
+    {
+        if (!m_emissiveLightsStaging.EnsureCapacity(byteSize)
+            || !m_emissiveLightsGpu.EnsureCapacity(byteSize))
+        {
+            m_emissiveLightCount = 0;
+            m_emissiveLightPickWeightSum = 0.0f;
+            return false;
+        }
+
+        auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+        if (device == nullptr)
+        {
+            m_emissiveLightCount = 0;
+            m_emissiveLightPickWeightSum = 0.0f;
+            return false;
+        }
+
+        for (std::uint32_t slotIndex = 0; slotIndex < GfxContext::FrameCount; ++slotIndex)
+        {
+            if (m_emissiveLightsSrvIndices[slotIndex] == UINT32_MAX)
+            {
+                m_emissiveLightsSrvIndices[slotIndex] = GfxContext::Get().AllocateOffscreenSrv();
+                if (m_emissiveLightsSrvIndices[slotIndex] == UINT32_MAX)
+                {
+                    m_emissiveLightCount = 0;
+                    m_emissiveLightPickWeightSum = 0.0f;
+                    return false;
+                }
+            }
+
+            D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
+            srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_emissiveLightsSrvIndices[slotIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Buffer.FirstElement = 0;
+            srvDesc.Buffer.NumElements = static_cast<UINT>(entries.size());
+            srvDesc.Buffer.StructureByteStride = sizeof(DxrEmissiveLightEntry);
+            device->CreateShaderResourceView(
+                m_emissiveLightsGpu.Slot(slotIndex).resource, &srvDesc, srvHandle);
+        }
+
+        m_emissiveLightsCapacityCount = entries.size();
+    }
+
+    DxrGpuResource& upload = m_emissiveLightsStaging.Slot(frameIndex);
+    void* mapped = nullptr;
+    if (FAILED(upload.resource->Map(0, nullptr, &mapped)))
+    {
+        m_emissiveLightCount = 0;
+        m_emissiveLightPickWeightSum = 0.0f;
+        return false;
+    }
+    std::memcpy(mapped, entries.data(), byteSize);
+    upload.resource->Unmap(0, nullptr);
+
+    CopyDxrUploadToSrvBuffer(d3dCommandList, upload, m_emissiveLightsGpu.Slot(frameIndex), byteSize);
+
+    m_emissiveLightsUploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
     return true;
 }
 

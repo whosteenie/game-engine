@@ -172,6 +172,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     // _PadUnjitteredViewProj.w = motion history valid (lit.vs uTemporalHistoryValid parity).
     constants.paddingUnjitteredViewProj[3] =
         frameInputs.motionHistoryValid ? 1.0f : 0.0f;
+    constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
+    constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.
@@ -199,6 +201,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.prefilterSrvCpuHandle = frameInputs.prefilterSrvCpuHandle;
     dispatchInputs.velocitySrvCpuHandle = frameInputs.velocitySrvCpuHandle;
     dispatchInputs.prevInstanceTransformsSrvIndex = prevTransformsSrvIndex;
+    dispatchInputs.emissiveLightsSrvIndex = accelerationStructures.GetEmissiveLightsSrvIndex();
 
     if (!m_dispatchContext.DispatchPathTracer(
             commandList4,
