@@ -1979,6 +1979,13 @@ void ScreenSpaceEffects::GenerateRrGuides() const
     const std::uintptr_t material0Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialAlbedoRough); // RT5 albedo+rough
     const std::uintptr_t material1Srv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::MaterialMetallic); // RT6 metallic
 
+    // Real-time PT skips the raster skybox, so sky pixels carry G-buffer clear values — a BLACK
+    // diffuse albedo that breaks RR demodulation and smears the sky under rotation. Patch sky pixels
+    // (PT primary-miss metadata, same signal as the sky motion patch) to the emissive convention.
+    const bool ptSkyGuides = m_pathTracerActive
+        && m_pathTracerConvergenceMode == PtConvergenceMode::RealTime
+        && m_dxrPathTracerMetadataSrv != 0;
+
     const std::pair<InternalTarget*, int> passes[] = {
         {const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget), 0},
         {const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget), 1},
@@ -1992,6 +1999,7 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         m_rrGuidesShader->SetInt("uMaterial1Map", 2);
         m_rrGuidesShader->SetInt("uGuideMode", pass.second);
         m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", 0);
+        m_rrGuidesShader->SetInt("uPatchPtSkyGuides", ptSkyGuides ? 1 : 0);
         m_rrGuidesShader->SetFloat("uReflectionUvScaleX", m_dxrReflectionUvScaleX);
         m_rrGuidesShader->SetFloat("uReflectionUvScaleY", m_dxrReflectionUvScaleY);
         m_rrGuidesShader->BindTextureSlot(0, normalSrv);
@@ -1999,6 +2007,9 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         m_rrGuidesShader->BindTextureSlot(2, material1Srv);
         // t3 (reflection) is unused in modes 0-2 but must be a valid descriptor; bind a placeholder.
         m_rrGuidesShader->BindTextureSlot(3, m_dxrReflectionSrv != 0 ? m_dxrReflectionSrv : normalSrv);
+        // t4 (PT metadata) likewise needs a valid descriptor when the patch is inactive.
+        m_rrGuidesShader->BindTextureSlot(
+            4, ptSkyGuides ? m_dxrPathTracerMetadataSrv : normalSrv);
         DrawFullscreenToTarget(*m_rrGuidesShader, *pass.first, m_width, m_height, clear);
     }
 
@@ -2015,6 +2026,9 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         m_rrGuidesShader->Use(false);
         m_rrGuidesShader->SetInt("uGuideMode", 3);
         m_rrGuidesShader->SetInt("uUsePathTracerHitDistance", ptSpecGuide ? 1 : 0);
+        // Sky patch does not apply to mode 3: PT output .a already reports max trace distance
+        // ("no specular reprojection") for primary misses.
+        m_rrGuidesShader->SetInt("uPatchPtSkyGuides", 0);
         // PT output is full render res (uv scale 1); the hybrid reflection buffer may be quality-scaled.
         m_rrGuidesShader->SetFloat("uReflectionUvScaleX", ptSpecGuide ? 1.0f : m_dxrReflectionUvScaleX);
         m_rrGuidesShader->SetFloat("uReflectionUvScaleY", ptSpecGuide ? 1.0f : m_dxrReflectionUvScaleY);
@@ -2022,6 +2036,7 @@ void ScreenSpaceEffects::GenerateRrGuides() const
         m_rrGuidesShader->BindTextureSlot(1, material0Srv);
         m_rrGuidesShader->BindTextureSlot(2, material1Srv);
         m_rrGuidesShader->BindTextureSlot(3, hitDistSrv);
+        m_rrGuidesShader->BindTextureSlot(4, normalSrv);      // t4 placeholder (patch inactive)
         DrawFullscreenToTarget(
             *m_rrGuidesShader, const_cast<InternalTarget&>(m_rrSpecularHitDistanceTarget),
             m_width, m_height, clear);

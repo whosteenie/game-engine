@@ -14,11 +14,17 @@
 //  - Spec hit distance is the raw reflection ray length in world units (miss = max trace distance),
 //    exactly as the reflection trace packs it into radiance.a — RR uses it to reproject/sharpen
 //    reflections. Written to a single-channel (R16_FLOAT) target so channel choice is unambiguous.
+//  - Sky (real-time PT only): the raster skybox is skipped, so sky pixels hold G-buffer CLEAR values —
+//    including a black diffuse albedo that breaks RR demodulation on the brightest pixels of the frame
+//    (sky smears under rotation even with correct motion vectors). PT primary-miss metadata identifies
+//    sky; emit the DLSS-RR guide convention for sky instead: (0.5, 0.5, 0.5) diffuse AND specular
+//    albedo (Integration Guide 3.4.2), roughness 1.
 
 Texture2D uNormalMap : register(t0);    // RT2 shading normal (world space)
 Texture2D uMaterial0Map : register(t1); // albedo.rgb + roughness.a (RT5)
 Texture2D uMaterial1Map : register(t2); // metallic.r + emissive.gba (RT6)
 Texture2D uReflectionRaw : register(t3); // raw RT reflection radiance.rgb + hit distance.a (mode 3)
+Texture2D<uint2> uPtMetadata : register(t4); // PT primary metadata (instanceId + 1; 0 = sky/miss)
 
 SamplerState uPointSampler : register(s0);
 
@@ -28,6 +34,7 @@ cbuffer PerPixel : register(b0)
     float uReflectionUvScaleX; // render-res UV -> reflection-buffer UV (reflection may be quality-scaled)
     float uReflectionUvScaleY;
     int uUsePathTracerHitDistance; // mode 3: sample primary-hit distance from PT output (t3) at full UV
+    int uPatchPtSkyGuides; // modes 0-2: real-time PT sky pixels get emissive-convention guides (t4)
 };
 
 struct PSInput
@@ -39,6 +46,20 @@ struct PSInput
 float4 main(PSInput input) : SV_Target
 {
     const float2 uv = input.texCoord;
+
+    // DLSS-RR Integration Guide 3.4.2: "A common integration error is to leave sky pixels
+    // uncleared. A good default albedo for sky is (0.5, 0.5, 0.5)." Zero specular albedo is a
+    // degenerate case the SDK hacks around (appendix EnvBRDFApprox2) — never emit it for sky.
+    if (uPatchPtSkyGuides != 0 && uGuideMode != 3
+        && uPtMetadata.Load(int3(int2(input.position.xy), 0)).x == 0u)
+    {
+        if (uGuideMode == 0 || uGuideMode == 1)
+        {
+            return float4(0.5, 0.5, 0.5, 1.0); // NVIDIA-recommended neutral sky albedo
+        }
+        return float4(0.0, 0.0, 1.0, 1.0); // stable normal, roughness 1
+    }
+
     const float4 material0 = uMaterial0Map.Sample(uPointSampler, uv);
     const float3 albedo = material0.rgb;
     const float roughness = material0.a;
