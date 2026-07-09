@@ -8,6 +8,12 @@
 
 namespace test
 {
+    inline void SyncTestOutput()
+    {
+        std::cout << std::flush;
+        std::cerr << std::flush;
+    }
+
     inline int& FailureCount()
     {
         static int count = 0;
@@ -31,6 +37,7 @@ namespace test
         if (!condition)
         {
             std::cerr << "FAIL: " << message << "\n";
+            SyncTestOutput();
             ++FailureCount();
         }
     }
@@ -40,6 +47,7 @@ namespace test
         if (std::abs(actual - expected) > tolerance)
         {
             std::cerr << "FAIL: " << message << " (actual=" << actual << " expected=" << expected << ")\n";
+            SyncTestOutput();
             ++FailureCount();
         }
     }
@@ -49,6 +57,7 @@ namespace test
         if (haystack.find(needle) == std::string::npos)
         {
             std::cerr << "FAIL: " << message << " (haystack=\"" << haystack << "\")\n";
+            SyncTestOutput();
             ++FailureCount();
         }
     }
@@ -76,12 +85,14 @@ namespace test
         catch (const std::exception& exception)
         {
             std::cerr << "[FAIL] " << name << " (exception: " << exception.what() << ")\n";
+            SyncTestOutput();
             ++FailureCount();
             return;
         }
         catch (...)
         {
             std::cerr << "[FAIL] " << name << " (unknown exception)\n";
+            SyncTestOutput();
             ++FailureCount();
             return;
         }
@@ -89,11 +100,13 @@ namespace test
         if (FailureCount() > failuresBefore)
         {
             std::cerr << "[FAIL] " << name << "\n";
+            SyncTestOutput();
             return;
         }
 
         ++TestPassCount();
         std::cout << "[PASS] " << name << "\n";
+        SyncTestOutput();
     }
 
     inline void PrintSummary()
@@ -114,6 +127,8 @@ namespace test
         {
             std::cerr << FailureCount() << " assertion(s) failed.\n";
         }
+
+        SyncTestOutput();
     }
 
     inline int ExitCode()

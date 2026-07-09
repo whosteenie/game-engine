@@ -45,7 +45,10 @@ function Invoke-NativeCommand {
             $line = Convert-ProcessOutputLine $_
             [void]$lines.Add($line)
             if ($EmitLines) {
-                Write-TestLine $line
+                # Summary is shown once by Show-SessionSummary after the run completes.
+                if ($line -notmatch '^\d+/\d+ tests passed') {
+                    Write-TestLine $line
+                }
             }
         }
 
@@ -149,7 +152,6 @@ function Invoke-TestExecutable {
         }
     }
 
-    Write-Host ""
     Write-Host "==> $Label" -ForegroundColor Cyan
     if ($Arguments.Count -gt 0) {
         Write-Host ("    {0} {1}" -f (Split-Path -Leaf $ExePath), ($Arguments -join ' ')) -ForegroundColor DarkGray
@@ -276,7 +278,6 @@ function Read-TierSetExpression {
 }
 
 function Read-GpuRunSelection {
-    Write-Host ""
     Write-Host " GPU run mode:" -ForegroundColor Cyan
     Write-Host "  1) Cumulative through tier N (tiers 1..N)"
     Write-Host "  2) Only tier N"
@@ -361,7 +362,6 @@ function Get-GpuTestList {
 }
 
 function Show-AvailableTests {
-    Write-Host ""
     Write-Host "CPU tests:" -ForegroundColor Cyan
     $cpuTests = Get-CpuTestList
     if ($cpuTests.Count -eq 0) {
@@ -511,7 +511,6 @@ function Invoke-PickCpuTest {
         return
     }
 
-    Write-Host ""
     for ($i = 0; $i -lt $cpuTests.Count; $i++) {
         $test = $cpuTests[$i]
         Write-Host ('  {0,2}) {1,-36} [{2}]' -f ($i + 1), $test.Name, $test.Suite)
@@ -552,7 +551,6 @@ function Invoke-PickGpuTest {
         return
     }
 
-    Write-Host ""
     for ($i = 0; $i -lt $gpuTests.Count; $i++) {
         $test = $gpuTests[$i]
         Write-Host ('  {0,2}) T{1} {2,-32} [{3}]' -f ($i + 1), $test.Tier, $test.Name, $test.Label)
@@ -583,7 +581,6 @@ function Invoke-BuildTestTargets {
         }
     }
 
-    Write-Host ""
     Write-Host ("Building: {0}" -f ($targets -join ", ")) -ForegroundColor Cyan
     Push-Location $RepoRoot
     try {
@@ -600,8 +597,13 @@ function Invoke-BuildTestTargets {
     }
 }
 
-function Show-Menu {
+function Write-MenuSeparator {
     Write-Host ""
+    Write-Host ("  {0}" -f ('-' * 38)) -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Show-Menu {
     Write-Host " 1) Run all CPU tests"
     Write-Host " 2) Run all GPU tests (pick tier)"
     Write-Host " 3) Run everything (CPU + GPU)"
@@ -647,12 +649,26 @@ try {
         }
     }
 
+    $showSeparatorBeforeMenu = $false
     while ($true) {
+        if ($showSeparatorBeforeMenu) {
+            Write-MenuSeparator
+        }
+        else {
+            Write-Host ""
+        }
+
         Show-Menu
         $choice = Read-IntChoice -Prompt "Choice" -Min 0 -Max 7 -Default 1
 
+        if ($choice -eq 0) {
+            return
+        }
+
+        Write-MenuSeparator
+        $showSeparatorBeforeMenu = $true
+
         switch ($choice) {
-            0 { return }
             1 { Invoke-AllCpuTests }
             2 { Invoke-AllGpuTests }
             3 { Invoke-Everything }
