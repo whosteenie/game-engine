@@ -173,6 +173,17 @@ public:
     int GetRaytracingTier() const { return m_raytracingTier; }
     const std::string& GetAdapterDescription() const { return m_adapterDescription; }
 
+    struct GpuMemoryInfo
+    {
+        std::uint64_t dedicatedTotalBytes = 0;
+        std::uint64_t localUsageBytes = 0;
+        std::uint64_t localBudgetBytes = 0;
+        std::uint64_t d3d12LocalAllocatedBytes = 0;
+        std::uint64_t d3d12LocalBlockBytes = 0;
+        bool valid = false;
+    };
+    GpuMemoryInfo QueryGpuMemoryInfo() const;
+
     void LogD3D12InfoQueueMessages(const char* context);
 
     // Per-pass GPU timing (timestamp queries). Scopes are recorded on the active frame command
@@ -239,5 +250,6 @@ private:
     std::uint8_t m_supportedMsaaSampleCountsMask = 0;
     int m_raytracingTier = 0;
     std::string m_adapterDescription;
+    std::uint64_t m_adapterDedicatedVideoMemory = 0;
     GpuProfiler m_gpuProfiler;
 };

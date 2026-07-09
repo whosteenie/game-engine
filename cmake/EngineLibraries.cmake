@@ -17,6 +17,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/platform/ProjectLoadTrace.cpp
     src/engine/platform/SceneRenderTrace.cpp
     src/engine/platform/RenderPathDiagnostics.cpp
+    src/engine/platform/SystemResources.cpp
 
     src/engine/rhi/GfxContext.cpp
     src/engine/rhi/GpuProfiler.cpp

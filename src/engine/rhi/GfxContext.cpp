@@ -315,6 +315,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         DXGI_ADAPTER_DESC1 adapterDesc{};
         m_impl->Adapter->GetDesc1(&adapterDesc);
         m_adapterDescription = GfxContextDetail::WideToUtf8(adapterDesc.Description);
+        m_adapterDedicatedVideoMemory = adapterDesc.DedicatedVideoMemory;
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
         if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
@@ -1037,6 +1038,26 @@ void* GfxContext::GetSrvHeap() const
 D3D12MA::Allocator* GfxContext::GetMemoryAllocator() const
 {
     return m_impl != nullptr ? m_impl->MemoryAllocator : nullptr;
+}
+
+GfxContext::GpuMemoryInfo GfxContext::QueryGpuMemoryInfo() const
+{
+    GpuMemoryInfo info{};
+    info.dedicatedTotalBytes = m_adapterDedicatedVideoMemory;
+    if (m_impl == nullptr || m_impl->MemoryAllocator == nullptr)
+    {
+        return info;
+    }
+
+    D3D12MA::Budget localBudget{};
+    D3D12MA::Budget nonLocalBudget{};
+    m_impl->MemoryAllocator->GetBudget(&localBudget, &nonLocalBudget);
+    info.localUsageBytes = localBudget.UsageBytes;
+    info.localBudgetBytes = localBudget.BudgetBytes;
+    info.d3d12LocalAllocatedBytes = localBudget.Stats.AllocationBytes;
+    info.d3d12LocalBlockBytes = localBudget.Stats.BlockBytes;
+    info.valid = true;
+    return info;
 }
 
 std::uint32_t GfxContext::GetSrvDescriptorSize() const

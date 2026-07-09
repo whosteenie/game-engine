@@ -46,7 +46,7 @@ public:
     float GetTotalMs() const { return m_totalMs; }
 
 private:
-    static constexpr std::uint32_t kMaxScopesPerFrame = 32;
+    static constexpr std::uint32_t kMaxScopesPerFrame = 48;
     static constexpr std::uint32_t kQueriesPerFrame = kMaxScopesPerFrame * 2;
 
     struct Slice

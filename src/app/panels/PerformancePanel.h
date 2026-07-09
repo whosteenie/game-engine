@@ -1,5 +1,7 @@
 #pragma once
 
+#include "engine/platform/SystemResources.h"
+
 #include <cstdint>
 
 class Scene;
@@ -30,4 +32,5 @@ private:
     mutable float m_maxFrameMs = 0.0f;
     mutable float m_sumFrameMs = 0.0f;
     mutable std::uint64_t m_frameCounter = 0;
+    SystemResourcesMonitor m_systemResources;
 };

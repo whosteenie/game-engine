@@ -355,6 +355,7 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
 
     if (state.runSsao || state.runGtao)
     {
+        const GfxContext::GpuTimerScope gpuScopeAo("Post-process/AO");
         FillAmbientOcclusionInputs(state);
         AmbientOcclusionPassOutputs aoOutputs{};
         aoOutputs.aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
@@ -362,85 +363,99 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
         state.aoCompositeSrv = aoOutputs.aoCompositeSrv;
     }
 
-    ScreenCompositePrePassInputs prePassInputs{};
-    prePassInputs.pbrDebugActive = state.pbrDebugActive;
-    prePassInputs.useShadowFactorComposite = state.useShadowFactorComposite;
-    prePassInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
-    prePassInputs.texelSize = state.texelSize;
-    prePassInputs.shadowSettings = state.shadowSettings;
-    prePassInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-    prePassInputs.shadowFactorSrv = state.shadowFactorSrv;
-    prePassInputs.shadowBlurShader = m_shadowBlurShader.get();
-    prePassInputs.radianceAssemblyShader = m_radianceAssemblyShader.get();
-    prePassInputs.shadowBlurTarget = const_cast<InternalTarget*>(&m_shadowBlurTarget);
-    prePassInputs.shadowBlur2Target = const_cast<InternalTarget*>(&m_shadowBlur2Target);
-    prePassInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
+    {
+        const GfxContext::GpuTimerScope gpuScopeShadowPrep("Post-process/Shadow prep");
+        ScreenCompositePrePassInputs prePassInputs{};
+        prePassInputs.pbrDebugActive = state.pbrDebugActive;
+        prePassInputs.useShadowFactorComposite = state.useShadowFactorComposite;
+        prePassInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
+        prePassInputs.texelSize = state.texelSize;
+        prePassInputs.shadowSettings = state.shadowSettings;
+        prePassInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+        prePassInputs.shadowFactorSrv = state.shadowFactorSrv;
+        prePassInputs.shadowBlurShader = m_shadowBlurShader.get();
+        prePassInputs.radianceAssemblyShader = m_radianceAssemblyShader.get();
+        prePassInputs.shadowBlurTarget = const_cast<InternalTarget*>(&m_shadowBlurTarget);
+        prePassInputs.shadowBlur2Target = const_cast<InternalTarget*>(&m_shadowBlur2Target);
+        prePassInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
 
-    ScreenCompositePrePassOutputs prePassOutputs{};
-    ScreenCompositePass::ExecutePreReflection(postContext, prePassInputs, prePassOutputs);
-    state.shadowFactorSrv = prePassOutputs.shadowFactorSrv;
-    state.runRadianceAssembly = prePassOutputs.runRadianceAssembly;
+        ScreenCompositePrePassOutputs prePassOutputs{};
+        ScreenCompositePass::ExecutePreReflection(postContext, prePassInputs, prePassOutputs);
+        state.shadowFactorSrv = prePassOutputs.shadowFactorSrv;
+        state.runRadianceAssembly = prePassOutputs.runRadianceAssembly;
+    }
 
-    FillScreenSpaceReflectionInputs(state);
-    ScreenSpaceReflectionPassOutputs ssrOutputs{};
-    ScreenSpaceReflectionPass::Execute(postContext, state.ssrInputs, ssrOutputs);
+    {
+        const GfxContext::GpuTimerScope gpuScopeSsr("Post-process/SSR");
+        FillScreenSpaceReflectionInputs(state);
+        ScreenSpaceReflectionPassOutputs ssrOutputs{};
+        ScreenSpaceReflectionPass::Execute(postContext, state.ssrInputs, ssrOutputs);
 
-    m_ssrSceneColorRanLastFrame = ssrOutputs.ssrSceneColorRanLastFrame;
-    m_ssrTraceRanLastFrame = ssrOutputs.ssrTraceRanLastFrame;
-    m_ssrDenoiseRanLastFrame = ssrOutputs.ssrDenoiseRanLastFrame;
-    m_ssrTemporalRanLastFrame = ssrOutputs.ssrTemporalRanLastFrame;
-    m_lastSsrSpatialSrv = ssrOutputs.lastSsrSpatialSrv;
-    m_lastSsrTemporalSrv = ssrOutputs.lastSsrTemporalSrv;
-    m_lastSsrVarianceSrv = ssrOutputs.lastSsrVarianceSrv;
-    m_lastSsrDenoiseSrv = ssrOutputs.lastSsrDenoiseSrv;
-    m_lastSsrResolvedSrv = ssrOutputs.lastSsrResolvedSrv;
-    m_ssrFrameIndex = ssrOutputs.ssrFrameIndex;
-    m_ssrHistoryValid = ssrOutputs.ssrHistoryValid;
-    state.runSsrIndirect = ssrOutputs.ssrIndirectRan;
-    state.indirectCompositeSrv = ssrOutputs.indirectCompositeSrv;
+        m_ssrSceneColorRanLastFrame = ssrOutputs.ssrSceneColorRanLastFrame;
+        m_ssrTraceRanLastFrame = ssrOutputs.ssrTraceRanLastFrame;
+        m_ssrDenoiseRanLastFrame = ssrOutputs.ssrDenoiseRanLastFrame;
+        m_ssrTemporalRanLastFrame = ssrOutputs.ssrTemporalRanLastFrame;
+        m_lastSsrSpatialSrv = ssrOutputs.lastSsrSpatialSrv;
+        m_lastSsrTemporalSrv = ssrOutputs.lastSsrTemporalSrv;
+        m_lastSsrVarianceSrv = ssrOutputs.lastSsrVarianceSrv;
+        m_lastSsrDenoiseSrv = ssrOutputs.lastSsrDenoiseSrv;
+        m_lastSsrResolvedSrv = ssrOutputs.lastSsrResolvedSrv;
+        m_ssrFrameIndex = ssrOutputs.ssrFrameIndex;
+        m_ssrHistoryValid = ssrOutputs.ssrHistoryValid;
+        state.runSsrIndirect = ssrOutputs.ssrIndirectRan;
+        state.indirectCompositeSrv = ssrOutputs.indirectCompositeSrv;
+    }
 
-    ScreenCompositeDxrInputs dxrInputs{};
-    dxrInputs.pbrDebugActive = state.pbrDebugActive;
-    dxrInputs.rtCompositeWanted = state.rtCompositeWanted;
-    dxrInputs.rtCompositeDebugOnly = state.rtCompositeDebugOnly;
-    dxrInputs.rtHasFreshTrace = state.rtHasFreshTrace;
-    dxrInputs.runRtGiInject = state.runRtGiInject;
-    dxrInputs.giHasFreshTrace = state.giHasFreshTrace;
-    dxrInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
-    dxrInputs.camera = state.camera;
-    dxrInputs.environmentMap = state.environmentMap;
-    dxrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-    dxrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
-    dxrInputs.dxrReflectionSrv = m_dxrReflectionSrv;
-    dxrInputs.dxrReflectionDenoisedSrv = m_dxrReflectionDenoisedSrv;
-    dxrInputs.dxrReflectionMaxTraceDistance = m_dxrReflectionMaxTraceDistance;
-    dxrInputs.dxrReflectionRoughnessCutoff = m_dxrReflectionRoughnessCutoff;
-    dxrInputs.dxrReflectionUvScaleX = m_dxrReflectionUvScaleX;
-    dxrInputs.dxrReflectionUvScaleY = m_dxrReflectionUvScaleY;
-    dxrInputs.giInjectSrv = state.giInjectSrv;
-    dxrInputs.dxrGiStrength = m_dxrGiStrength;
-    dxrInputs.dxrGiUvScaleX = m_dxrGiUvScaleX;
-    dxrInputs.dxrGiUvScaleY = m_dxrGiUvScaleY;
-    dxrInputs.dxrIndirectShader = m_dxrIndirectShader.get();
-    dxrInputs.dxrGiInjectShader = m_dxrGiInjectShader.get();
-    dxrInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
-    dxrInputs.rtGiInjectTarget = const_cast<InternalTarget*>(&m_rtGiInjectTarget);
+    {
+        const GfxContext::GpuTimerScope gpuScopeRtComposite("Post-process/RT composite");
+        ScreenCompositeDxrInputs dxrInputs{};
+        dxrInputs.pbrDebugActive = state.pbrDebugActive;
+        dxrInputs.rtCompositeWanted = state.rtCompositeWanted;
+        dxrInputs.rtCompositeDebugOnly = state.rtCompositeDebugOnly;
+        dxrInputs.rtHasFreshTrace = state.rtHasFreshTrace;
+        dxrInputs.runRtGiInject = state.runRtGiInject;
+        dxrInputs.giHasFreshTrace = state.giHasFreshTrace;
+        dxrInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
+        dxrInputs.camera = state.camera;
+        dxrInputs.environmentMap = state.environmentMap;
+        dxrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+        dxrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
+        dxrInputs.dxrReflectionSrv = m_dxrReflectionSrv;
+        dxrInputs.dxrReflectionDenoisedSrv = m_dxrReflectionDenoisedSrv;
+        dxrInputs.dxrReflectionMaxTraceDistance = m_dxrReflectionMaxTraceDistance;
+        dxrInputs.dxrReflectionRoughnessCutoff = m_dxrReflectionRoughnessCutoff;
+        dxrInputs.dxrReflectionUvScaleX = m_dxrReflectionUvScaleX;
+        dxrInputs.dxrReflectionUvScaleY = m_dxrReflectionUvScaleY;
+        dxrInputs.giInjectSrv = state.giInjectSrv;
+        dxrInputs.dxrGiStrength = m_dxrGiStrength;
+        dxrInputs.dxrGiUvScaleX = m_dxrGiUvScaleX;
+        dxrInputs.dxrGiUvScaleY = m_dxrGiUvScaleY;
+        dxrInputs.dxrIndirectShader = m_dxrIndirectShader.get();
+        dxrInputs.dxrGiInjectShader = m_dxrGiInjectShader.get();
+        dxrInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
+        dxrInputs.rtGiInjectTarget = const_cast<InternalTarget*>(&m_rtGiInjectTarget);
 
-    ScreenCompositeDxrOutputs dxrOutputs{};
-    ScreenCompositePass::ExecuteDxrIndirectChain(postContext, dxrInputs, dxrOutputs);
-    state.indirectCompositeSrv = dxrOutputs.indirectCompositeSrv;
-    state.runRtIndirect = dxrOutputs.runRtIndirect;
+        ScreenCompositeDxrOutputs dxrOutputs{};
+        ScreenCompositePass::ExecuteDxrIndirectChain(postContext, dxrInputs, dxrOutputs);
+        state.indirectCompositeSrv = dxrOutputs.indirectCompositeSrv;
+        state.runRtIndirect = dxrOutputs.runRtIndirect;
+    }
 
-    FillScreenSpaceGiInputs(state);
-    ScreenSpaceGiPassOutputs ssgiOutputs{};
-    ScreenSpaceGiPass::Execute(postContext, state.ssgiInputs, ssgiOutputs);
+    {
+        const GfxContext::GpuTimerScope gpuScopeSsgi("Post-process/SSGI");
+        FillScreenSpaceGiInputs(state);
+        ScreenSpaceGiPassOutputs ssgiOutputs{};
+        ScreenSpaceGiPass::Execute(postContext, state.ssgiInputs, ssgiOutputs);
 
-    m_giFrameIndex = ssgiOutputs.giFrameIndex;
-    m_radianceHistoryValid = ssgiOutputs.radianceHistoryValid;
-    m_lastSsgiInjectSrv = ssgiOutputs.lastSsgiInjectSrv;
-    state.runSsgiTrace = ssgiOutputs.runSsgiTrace;
+        m_giFrameIndex = ssgiOutputs.giFrameIndex;
+        m_radianceHistoryValid = ssgiOutputs.radianceHistoryValid;
+        m_lastSsgiInjectSrv = ssgiOutputs.lastSsgiInjectSrv;
+        state.runSsgiTrace = ssgiOutputs.runSsgiTrace;
+    }
 
-    ScreenCompositeHdrInputs hdrInputs{};
+    {
+        const GfxContext::GpuTimerScope gpuScopeHdrComposite("Post-process/HDR composite");
+        ScreenCompositeHdrInputs hdrInputs{};
     hdrInputs.pbrDebugActive = state.pbrDebugActive;
     hdrInputs.runAo = state.runAo;
     hdrInputs.runGtao = state.runGtao;
@@ -467,38 +482,43 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
     hdrInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
     hdrInputs.hdrCompositeTarget = const_cast<InternalTarget*>(&m_hdrCompositeTarget);
 
-    ScreenCompositeHdrOutputs hdrOutputs{};
-    ScreenCompositePass::ExecuteHdrComposite(postContext, hdrInputs, hdrOutputs);
-    state.hdrColorSrv = hdrOutputs.hdrColorSrv;
-    state.hdrColorSource = hdrOutputs.hdrColorSource;
-    state.compositeRan = hdrOutputs.compositeRan;
+        ScreenCompositeHdrOutputs hdrOutputs{};
+        ScreenCompositePass::ExecuteHdrComposite(postContext, hdrInputs, hdrOutputs);
+        state.hdrColorSrv = hdrOutputs.hdrColorSrv;
+        state.hdrColorSource = hdrOutputs.hdrColorSource;
+        state.compositeRan = hdrOutputs.compositeRan;
+    }
 
-    TaaPassInputs taaInputs{};
-    taaInputs.useTaa = state.useTaa;
-    taaInputs.hdrColorSrv = state.hdrColorSrv;
-    taaInputs.texelSize = state.texelSize;
-    taaInputs.viewMatrix = state.camera->GetViewMatrix();
-    taaInputs.unjitteredProjectionMatrix = state.camera->GetUnjitteredProjectionMatrix();
-    taaInputs.motionVectorState = m_motionVectorFrameState;
-    taaInputs.taaBlendFactor = m_taaBlendFactor;
-    taaInputs.taaHistoryValid = m_taaHistoryValid;
-    taaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-    taaInputs.taaShader = m_taaShader.get();
-    taaInputs.taaHistoryTarget = const_cast<InternalTarget*>(&m_taaHistoryTarget);
-    taaInputs.taaResolveTarget = const_cast<InternalTarget*>(&m_taaResolveTarget);
-
-    TaaPassOutputs taaOutputs{};
-    AntiAliasingPass::ExecuteTaa(postContext, taaInputs, taaOutputs);
-    if (taaOutputs.ran)
     {
-        state.hdrColorSrv = taaOutputs.hdrColorSrv;
-        state.hdrColorSource = "hdr_taa";
-        const_cast<ScreenSpaceEffects*>(this)->m_taaHistoryValid = taaOutputs.taaHistoryValid;
+        const GfxContext::GpuTimerScope gpuScopeTaa("Post-process/TAA");
+        TaaPassInputs taaInputs{};
+        taaInputs.useTaa = state.useTaa;
+        taaInputs.hdrColorSrv = state.hdrColorSrv;
+        taaInputs.texelSize = state.texelSize;
+        taaInputs.viewMatrix = state.camera->GetViewMatrix();
+        taaInputs.unjitteredProjectionMatrix = state.camera->GetUnjitteredProjectionMatrix();
+        taaInputs.motionVectorState = m_motionVectorFrameState;
+        taaInputs.taaBlendFactor = m_taaBlendFactor;
+        taaInputs.taaHistoryValid = m_taaHistoryValid;
+        taaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+        taaInputs.taaShader = m_taaShader.get();
+        taaInputs.taaHistoryTarget = const_cast<InternalTarget*>(&m_taaHistoryTarget);
+        taaInputs.taaResolveTarget = const_cast<InternalTarget*>(&m_taaResolveTarget);
+
+        TaaPassOutputs taaOutputs{};
+        AntiAliasingPass::ExecuteTaa(postContext, taaInputs, taaOutputs);
+        if (taaOutputs.ran)
+        {
+            state.hdrColorSrv = taaOutputs.hdrColorSrv;
+            state.hdrColorSource = "hdr_taa";
+            const_cast<ScreenSpaceEffects*>(this)->m_taaHistoryValid = taaOutputs.taaHistoryValid;
+        }
     }
 
     if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !state.effectiveWantDlss
         && !IsPbrMaterialDebugMode(m_debugMode))
     {
+        const GfxContext::GpuTimerScope gpuScopePtIntegrate("Post-process/Path tracer integrate");
         const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
         const_cast<ScreenSpaceEffects*>(this)->ResizeInternalTarget(
             const_cast<ScreenSpaceEffects*>(this)->m_hdrCompositeTarget,
@@ -536,6 +556,7 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
     state.bloomSrv = 0;
     if (m_bloomEnabled && !IsPbrMaterialDebugMode(m_debugMode) && !state.effectiveWantDlss)
     {
+        const GfxContext::GpuTimerScope gpuScopeBloom("Post-process/Bloom");
         RenderResBloomInputs bloomInputs{};
         bloomInputs.hdrColorSrv = state.hdrColorSrv;
         bloomInputs.fullTexelSize = state.texelSize;
@@ -661,6 +682,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
         };
 
     PostProcessDebugPassOutputs debugOutputs{};
+    const GfxContext::GpuTimerScope gpuScopeDebug("Post-process/Debug view");
     const bool earlyOut = PostProcessDebugPass::TryExecute(
         postContext, debugInputs, debugOutputs);
     if (debugOutputs.ssaoDebugViewSource != nullptr)
@@ -742,12 +764,15 @@ void ScreenSpaceEffects::RunApplyPresentationStage(ApplyFrameState& state) const
     {
         SceneRenderTrace::Section tonemapSection("tonemap");
         {
+            const GfxContext::GpuTimerScope gpuScopeTonemap("Post-process/Tonemap");
             SceneRenderTrace::Scope tonemapScope("tonemap to ldr");
             runTonemapPass(true);
             tonemapScope.Success();
         }
 
-        LdrAntiAliasingInputs ldrAaInputs{};
+        {
+            const GfxContext::GpuTimerScope gpuScopeLdrAa("Post-process/LDR AA");
+            LdrAntiAliasingInputs ldrAaInputs{};
         ldrAaInputs.useFxaa = useFxaa;
         ldrAaInputs.useSmaa = useSmaa;
         ldrAaInputs.useSsaa = useSsaa;
@@ -767,16 +792,20 @@ void ScreenSpaceEffects::RunApplyPresentationStage(ApplyFrameState& state) const
         ldrAaInputs.smaaOutputTarget = const_cast<InternalTarget*>(&m_smaaOutputTarget);
         ldrAaInputs.outputTarget = state.outputTarget;
         AntiAliasingPass::ExecuteLdrAntiAliasing(postContext, ldrAaInputs);
+        }
 
         tonemapSection.Success();
     }
     else
     {
         SceneRenderTrace::Section tonemapSection("tonemap");
-        SceneRenderTrace::Scope tonemapScope("tonemap direct");
-        BindOutputTarget(state.outputTarget, state.viewportWidth, state.viewportHeight);
-        runTonemapPass(false);
-        tonemapScope.Success();
+        {
+            const GfxContext::GpuTimerScope gpuScopeTonemap("Post-process/Tonemap");
+            SceneRenderTrace::Scope tonemapScope("tonemap direct");
+            BindOutputTarget(state.outputTarget, state.viewportWidth, state.viewportHeight);
+            runTonemapPass(false);
+            tonemapScope.Success();
+        }
         tonemapSection.Success();
     }
 }

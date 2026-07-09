@@ -766,7 +766,7 @@ void SceneRenderer::RecordDxrPass(
         && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
         DxrBreadcrumb("render: gi DispatchIfEnabled begin");
-        const GfxContext::GpuTimerScope gpuScopeGi("RT diffuse GI");
+        const GfxContext::GpuTimerScope gpuScopeGi("Path tracer/RT diffuse GI");
 
         float giQualityScale = 0.75f; // Medium
         switch (m_dxrSettings.GetReflectionsQuality())
@@ -876,7 +876,7 @@ void SceneRenderer::RecordDxrPass(
         && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
         DxrBreadcrumb("render: reflections DispatchIfEnabled begin");
-        const GfxContext::GpuTimerScope gpuScopeReflections("RT reflections");
+        const GfxContext::GpuTimerScope gpuScopeReflections("Path tracer/RT reflections");
 
         float qualityScale = 0.75f; // Medium
         switch (m_dxrSettings.GetReflectionsQuality())
@@ -993,7 +993,7 @@ void SceneRenderer::RecordDxrPass(
     if (shadowsWanted && usePostProcess && m_activeScreenSpaceEffects != nullptr)
     {
         DxrBreadcrumb("render: shadows DispatchIfEnabled begin");
-        const GfxContext::GpuTimerScope gpuScopeShadows("RT shadows");
+        const GfxContext::GpuTimerScope gpuScopeShadows("Path tracer/RT shadows");
 
         DxrShadowsDispatch::FrameInputs shadowInputs{};
         shadowInputs.depthSrvCpuHandle = depthSrvCpuHandle;
@@ -1298,7 +1298,6 @@ void SceneRenderer::RenderPostProcessPass(
 
     {
         SceneRenderTrace::Scope applyScope("ScreenSpaceEffects::Apply");
-        const GfxContext::GpuTimerScope gpuScopePost("Post-process");
         m_activeScreenSpaceEffects->Apply(
             camera,
             viewportWidth,
