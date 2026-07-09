@@ -1,6 +1,7 @@
 #include "d3d12_test_harness.h"
 #include "test_expect.h"
 #include "d3d12_test_runner.h"
+#include "pt_test_harness.h"
 
 // MANUAL GPU TEST SUITE — DO NOT AUTO-RUN
 // ---------------------------------------
@@ -65,6 +66,7 @@ namespace render_tests
 {
     constexpr int kSmokeFramebufferSize = 32;
     constexpr int kPbrFramebufferSize = 256;
+    constexpr int kPtFramebufferSize = 128;
     constexpr int kThinPrimitiveFramebufferSize = 256;
     int g_framebufferSize = kSmokeFramebufferSize;
 
@@ -80,7 +82,18 @@ namespace render_tests
 
     void SetFramebufferSizeForTier(const int tier)
     {
-        g_framebufferSize = tier <= gpu_render_tests::kTierSmoke ? kSmokeFramebufferSize : kPbrFramebufferSize;
+        if (tier <= gpu_render_tests::kTierSmoke)
+        {
+            g_framebufferSize = kSmokeFramebufferSize;
+        }
+        else if (tier >= gpu_render_tests::kTierPathTracing)
+        {
+            g_framebufferSize = kPtFramebufferSize;
+        }
+        else
+        {
+            g_framebufferSize = kPbrFramebufferSize;
+        }
     }
 
 
@@ -2048,6 +2061,266 @@ namespace render_tests
         return true;
     }
 
+    Camera MakePtGlassCamera(const float yawDegrees = -90.0f)
+    {
+        Camera camera(glm::vec3(0.0f, 0.0f, 4.0f), yawDegrees, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        return camera;
+    }
+
+    struct PtGlassTestFixture
+    {
+        MinimalPtGlassScene scene;
+        PtDummyGbufferBindings gbuffer;
+        PtDispatchStack stack;
+        DxrGpuResource scratch{};
+        IBL* environmentIbl = nullptr;
+        std::string lastError;
+
+        bool Setup(const bool includeGlassPane = true)
+        {
+            lastError.clear();
+            if (!GfxContext::Get().IsRaytracingSupported())
+            {
+                return false;
+            }
+
+            environmentIbl = &GetD3d12TestSession().GetEnvironmentIbl();
+            test::ExpectTrue(environmentIbl->IsReady(), "PT glass tests require warmed environment IBL");
+
+            Framebuffer framebuffer;
+            test::ExpectTrue(
+                framebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize),
+                "PT glass framebuffer resize should succeed");
+            BeginOffscreenPass(framebuffer, false);
+
+            auto* commandList4 = DxrContext::Get().QueryCommandList4(GfxContext::Get().GetCommandList());
+            test::ExpectTrue(commandList4 != nullptr, "Command list 4 should be available for PT glass tests");
+            test::ExpectTrue(
+                CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch),
+                "PT glass scratch buffer alloc");
+
+            test::ExpectTrue(scene.Build(commandList4, scratch, includeGlassPane, lastError), lastError.c_str());
+            test::ExpectTrue(gbuffer.Create(lastError), lastError.c_str());
+            test::ExpectTrue(stack.EnsureReady(lastError), lastError.c_str());
+            return true;
+        }
+
+        void Teardown()
+        {
+            stack.Release();
+            gbuffer.Release();
+            scene.Release();
+            scratch.Release();
+            DrainDeferredTestGpuResources();
+        }
+    };
+
+    bool DispatchPtGlassFrame(
+        PtGlassTestFixture& fixture,
+        Camera& camera,
+        const glm::mat4& prevViewProjection,
+        const glm::vec3& prevCameraPos,
+        const bool motionHistoryValid,
+        const std::uint32_t frameIndex)
+    {
+        PtFrameDispatchParams params{};
+        params.scene = &fixture.scene;
+        params.gbuffer = &fixture.gbuffer;
+        params.stack = &fixture.stack;
+        params.environmentIbl = fixture.environmentIbl;
+        params.camera = &camera;
+        params.width = kPtFramebufferSize;
+        params.height = kPtFramebufferSize;
+        params.prevViewProjection = prevViewProjection;
+        params.prevCameraPos = prevCameraPos;
+        params.motionHistoryValid = motionHistoryValid;
+        params.frameIndex = frameIndex;
+
+        std::string dispatchError;
+        const bool dispatched = DispatchMinimalPathTracerFrame(params, dispatchError);
+        test::ExpectTrue(dispatched, dispatchError.c_str());
+        return dispatched;
+    }
+
+    void TestPtTransmissionGuideAlbedoBands()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission guide albedo bands (no RTX tier)\n";
+            return;
+        }
+
+        float baselineDiffuseR = 0.0f;
+        {
+            PtGlassTestFixture baseline;
+            if (baseline.Setup(false))
+            {
+                Camera camera(glm::vec3(0.0f, 0.0f, 2.0f), -90.0f, 0.0f);
+                camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+                const glm::mat4 unjitteredViewProj =
+                    camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+                if (DispatchPtGlassFrame(
+                        baseline,
+                        camera,
+                        unjitteredViewProj,
+                        camera.GetPosition(),
+                        false,
+                        0u))
+                {
+                    EndOffscreenPass();
+                    float diffuseGuide[4]{};
+                    if (ReadbackPtGuideCenterPixel(
+                            baseline.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
+                            baseline.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                            kPtFramebufferSize,
+                            kPtFramebufferSize,
+                            DXGI_FORMAT_R8G8B8A8_UNORM,
+                            diffuseGuide))
+                    {
+                        baselineDiffuseR = diffuseGuide[0];
+                        test::ExpectTrue(
+                            diffuseGuide[0] > 0.55f,
+                            "Opaque backdrop baseline should produce red diffuse guide band");
+                        test::ExpectTrue(
+                            diffuseGuide[1] < 0.25f,
+                            "Opaque backdrop baseline should keep diffuse guide G low");
+                    }
+                }
+                else
+                {
+                    EndOffscreenPass();
+                }
+            }
+            baseline.Teardown();
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup())
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera camera = MakePtGlassCamera();
+        const glm::mat4 unjitteredViewProj =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                unjitteredViewProj,
+                camera.GetPosition(),
+                false,
+                0u))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+
+        EndOffscreenPass();
+
+        float diffuseGuide[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
+                fixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                diffuseGuide),
+            "Diffuse albedo guide readback should succeed");
+
+        float normalGuide[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPathTracerNormalRoughnessResource(),
+                fixture.stack.dispatchContext.GetPathTracerNormalRoughnessResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                normalGuide),
+            "Normal-roughness guide readback should succeed");
+
+        test::ExpectTrue(normalGuide[3] < 0.08f, "Primary guide roughness should stay on glass pane");
+
+        // When the refracted guide trace hits the backdrop, diffuse picks up its red albedo band.
+        // Thin-shell cube panes may still miss (transmission-rr-guides.md); then expect sky fallback.
+        const bool backdropGuideBand =
+            diffuseGuide[0] > 0.55f && diffuseGuide[1] < 0.25f;
+        const bool skyFallbackBand =
+            diffuseGuide[0] > 0.42f && diffuseGuide[0] < 0.52f
+            && std::abs(diffuseGuide[0] - diffuseGuide[1]) < 0.03f;
+        test::ExpectTrue(
+            backdropGuideBand || skyFallbackBand,
+            "Through glass, diffuse guide should be backdrop red or neutral sky fallback");
+        if (baselineDiffuseR > 0.0f)
+        {
+            test::ExpectTrue(
+                diffuseGuide[0] < baselineDiffuseR - 0.2f,
+                "Through-glass diffuse guide should differ from a direct backdrop hit");
+        }
+        test::ExpectTrue(
+            normalGuide[2] > 0.5f,
+            "Through glass, normal guide Z should stay camera-facing on the pane");
+
+        fixture.Teardown();
+    }
+
+    void TestPtTransmissionVirtualMotionOnOrbit()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission virtual motion (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup())
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera prevCamera = MakePtGlassCamera(-90.0f);
+        const glm::mat4 prevViewProj =
+            prevCamera.GetUnjitteredProjectionMatrix() * prevCamera.GetViewMatrix();
+
+        Camera camera = MakePtGlassCamera(-75.0f);
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                prevViewProj,
+                prevCamera.GetPosition(),
+                true,
+                1u))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+
+        EndOffscreenPass();
+
+        float motionGuide[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                fixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                motionGuide),
+            "Motion guide readback should succeed");
+
+        const float motionMagnitude = std::sqrt(motionGuide[0] * motionGuide[0] + motionGuide[1] * motionGuide[1]);
+        test::ExpectTrue(
+            motionMagnitude > 0.002f,
+            "Virtual refracted motion should exceed threshold when camera orbits through glass pane");
+
+        fixture.Teardown();
+    }
+
     void TestDxrDispatchSmoke()
     {
 
@@ -2174,5 +2447,8 @@ namespace render_tests
 
         add("DxrAccelerationStructuresSmoke", gpu_render_tests::kTierDxr, "gpu-dxr", TestDxrAccelerationStructuresSmoke);
         add("DxrDispatchSmoke", gpu_render_tests::kTierDxr, "gpu-dxr", TestDxrDispatchSmoke);
+
+        add("PtTransmissionGuideAlbedoBands", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionGuideAlbedoBands);
+        add("PtTransmissionVirtualMotionOnOrbit", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionOnOrbit);
     }
 }

@@ -355,7 +355,7 @@ namespace gpu_render_tests
             << "  2 gpu-pbr     PBR, shadows, IBL stability\n"
             << "  3 gpu-editor  editor path, present, resize, ImGui\n"
             << "  4 gpu-dxr     BLAS/TLAS + dispatch smoke\n"
-            << "  5 gpu-dxr-pt  path tracing / glass (future tests)\n\n"
+            << "  5 gpu-dxr-pt  path tracing / glass / RR guides\n\n"
             << "Examples:\n"
             << "  d3d12-render-tests --tier=4\n"
             << "  d3d12-render-tests --through=2\n"

@@ -220,8 +220,12 @@ public:
     std::uint32_t GetPathTracerMotionResourceState() const { return m_ptMotionTexture.state; }
     // P4b bounce-0 RR material guides (u4-u6), left in pixel/non-pixel shader read after dispatch.
     std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle() const { return m_ptDiffuseAlbedoTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerDiffuseAlbedoResource() const { return m_ptDiffuseAlbedoTexture.resource; }
+    std::uint32_t GetPathTracerDiffuseAlbedoResourceState() const { return m_ptDiffuseAlbedoTexture.state; }
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const { return m_ptSpecularAlbedoTexture.srvCpuHandle; }
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerNormalRoughnessResource() const { return m_ptNormalRoughnessTexture.resource; }
+    std::uint32_t GetPathTracerNormalRoughnessResourceState() const { return m_ptNormalRoughnessTexture.state; }
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }

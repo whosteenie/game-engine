@@ -568,6 +568,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         tests/d3d12_render_tests.cpp
         tests/d3d12_test_harness.cpp
         tests/d3d12_test_runner.cpp
+        tests/pt_test_harness.cpp
     )
 
     target_include_directories(d3d12-render-tests PRIVATE tests ${json_SOURCE_DIR}/include)
@@ -604,5 +605,11 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
     set_tests_properties(gpu-dxr PROPERTIES
         LABELS "gpu;gpu-dxr"
         TIMEOUT 180
+        WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
+
+    add_test(NAME gpu-dxr-pt COMMAND d3d12-render-tests --tier=5)
+    set_tests_properties(gpu-dxr-pt PROPERTIES
+        LABELS "gpu;gpu-dxr-pt"
+        TIMEOUT 300
         WORKING_DIRECTORY $<TARGET_FILE_DIR:d3d12-render-tests>)
 endif()

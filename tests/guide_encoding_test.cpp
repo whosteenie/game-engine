@@ -152,6 +152,93 @@ namespace
 
         return ComputeMotionNdc(currClipUnj, prevClipUnj);
     }
+
+    // CPU mirror of bounce-0 transmission guide material selection in path_tracer.hlsl.
+    struct TransmissionGuideHitCpu
+    {
+        bool valid = false;
+        glm::vec3 backgroundNormal{0.0f, 0.0f, 1.0f};
+        glm::vec2 backgroundMotion{0.0f};
+        glm::vec2 virtualMotion{0.0f};
+    };
+
+    void ApplyTransmissionMaterialGuideSelection(
+        const GuideMaterial& surfaceMaterial,
+        const GuideMaterial& backgroundMaterial,
+        const glm::vec3& surfaceNormal,
+        const glm::vec3& backgroundNormal,
+        const glm::vec3& viewDir,
+        const glm::vec2& surfaceMotion,
+        const TransmissionGuideHitCpu& txGuide,
+        glm::vec3& diffuseGuide,
+        glm::vec3& specGuide,
+        glm::vec3& guideNormal,
+        float& guideRoughness,
+        glm::vec2& motionGuide)
+    {
+        ComputePtPrimaryRrMaterialGuides(
+            surfaceMaterial,
+            surfaceNormal,
+            viewDir,
+            diffuseGuide,
+            specGuide,
+            guideNormal,
+            guideRoughness);
+        motionGuide = surfaceMotion;
+
+        const float dielectricWeight =
+            DielectricWeight(surfaceMaterial.transmission, surfaceMaterial.metallic);
+        if (dielectricWeight <= 0.01f)
+        {
+            return;
+        }
+
+        const float nDotV = Saturate(glm::dot(surfaceNormal, viewDir));
+        const float transmitFresnel = FresnelDielectric(
+            nDotV,
+            1.0f / std::max(surfaceMaterial.indexOfRefraction, 1.0f));
+        const float transmitWeight = Saturate(1.0f - transmitFresnel);
+
+        if (txGuide.valid)
+        {
+            glm::vec3 bgDiffuse{};
+            glm::vec3 bgSpec{};
+            glm::vec3 bgNormal{};
+            float bgRoughness = 0.0f;
+            const glm::vec3 bgViewDir = glm::normalize(-viewDir);
+            ComputePtPrimaryRrMaterialGuides(
+                backgroundMaterial,
+                backgroundNormal,
+                bgViewDir,
+                bgDiffuse,
+                bgSpec,
+                bgNormal,
+                bgRoughness);
+
+            diffuseGuide = glm::mix(diffuseGuide, bgDiffuse, transmitWeight);
+            specGuide = glm::mix(specGuide, bgSpec, transmitWeight);
+            guideNormal = glm::normalize(glm::mix(guideNormal, bgNormal, transmitWeight));
+            guideRoughness = glm::mix(guideRoughness, bgRoughness, transmitWeight);
+            motionGuide = glm::mix(surfaceMotion, txGuide.virtualMotion, transmitWeight);
+            return;
+        }
+
+        const glm::vec3 skyGuide(0.5f);
+        diffuseGuide = glm::mix(diffuseGuide, skyGuide, transmitWeight);
+        specGuide = glm::mix(specGuide, skyGuide, transmitWeight);
+        motionGuide = glm::mix(surfaceMotion, txGuide.virtualMotion, transmitWeight);
+    }
+
+    glm::vec2 ComputeVirtualRefractedMotionFromWorldPoints(
+        const glm::mat4& currUnjitteredViewProj,
+        const glm::mat4& prevViewProj,
+        const glm::vec3& worldCurr,
+        const glm::vec3& worldPrev)
+    {
+        const glm::vec4 currClipUnj = currUnjitteredViewProj * glm::vec4(worldCurr, 1.0f);
+        const glm::vec4 prevClipUnj = prevViewProj * glm::vec4(worldPrev, 1.0f);
+        return ComputeMotionNdc(currClipUnj, prevClipUnj);
+    }
 }
 
 void RunGuideEncodingTests()
@@ -256,5 +343,143 @@ void RunGuideEncodingTests()
             true);
 
         test::ExpectTrue(std::abs(motion.x) > 1e-4f, "Sky anchor motion X should be non-zero when camera pans");
+    }
+
+    {
+        GuideMaterial glass{};
+        glass.transmission = 1.0f;
+        glass.indexOfRefraction = 1.5f;
+
+        GuideMaterial backdrop{};
+        backdrop.albedo = glm::vec3(0.85f, 0.12f, 0.08f);
+        backdrop.roughness = 0.35f;
+
+        const glm::vec3 glassNormal(0.0f, 0.0f, 1.0f);
+        const glm::vec3 backdropNormal(0.0f, 0.0f, 1.0f);
+        const glm::vec3 viewDir(0.0f, 0.0f, 1.0f);
+
+        TransmissionGuideHitCpu txGuide{};
+        txGuide.valid = true;
+        txGuide.backgroundNormal = backdropNormal;
+        txGuide.virtualMotion = glm::vec2(0.01f, 0.0f);
+
+        glm::vec3 diffuseGuide{};
+        glm::vec3 specGuide{};
+        glm::vec3 guideNormal{};
+        float guideRoughness = 0.0f;
+        glm::vec2 motionGuide{};
+
+        ApplyTransmissionMaterialGuideSelection(
+            glass,
+            backdrop,
+            glassNormal,
+            backdropNormal,
+            viewDir,
+            glm::vec2(0.0f),
+            txGuide,
+            diffuseGuide,
+            specGuide,
+            guideNormal,
+            guideRoughness,
+            motionGuide);
+
+        test::ExpectTrue(diffuseGuide.r > 0.7f, "Transmission guide should pick backdrop diffuse albedo R");
+        test::ExpectTrue(diffuseGuide.g < 0.25f, "Transmission guide should pick backdrop diffuse albedo G");
+        test::ExpectNear(guideNormal.z, backdropNormal.z, 1e-4f, "Transmission guide normal should lean to backdrop");
+        test::ExpectTrue(std::abs(motionGuide.x) > 1e-4f, "Transmission guide motion should use virtual refracted MV");
+    }
+
+    {
+        GuideMaterial opaque{};
+        opaque.albedo = glm::vec3(0.2f, 0.7f, 0.1f);
+        opaque.transmission = 0.0f;
+
+        GuideMaterial backdrop{};
+        backdrop.albedo = glm::vec3(1.0f, 0.0f, 0.0f);
+
+        const glm::vec3 normal(0.0f, 1.0f, 0.0f);
+        const glm::vec3 viewDir = glm::normalize(glm::vec3(0.0f, 1.0f, 0.0f));
+
+        TransmissionGuideHitCpu txGuide{};
+        txGuide.valid = true;
+
+        glm::vec3 diffuseGuide{};
+        glm::vec3 specGuide{};
+        glm::vec3 guideNormal{};
+        float guideRoughness = 0.0f;
+        glm::vec2 motionGuide{};
+
+        ApplyTransmissionMaterialGuideSelection(
+            opaque,
+            backdrop,
+            normal,
+            normal,
+            viewDir,
+            glm::vec2(0.0f),
+            txGuide,
+            diffuseGuide,
+            specGuide,
+            guideNormal,
+            guideRoughness,
+            motionGuide);
+
+        test::ExpectNear(diffuseGuide.r, opaque.albedo.r, 1e-4f, "Opaque surface ignores transmission guide backdrop");
+    }
+
+    {
+        GuideMaterial glass{};
+        glass.transmission = 1.0f;
+
+        const glm::vec3 glassNormal(0.0f, 0.0f, 1.0f);
+        const glm::vec3 viewDir(0.0f, 0.0f, 1.0f);
+
+        TransmissionGuideHitCpu txGuide{};
+        txGuide.valid = false;
+        txGuide.virtualMotion = glm::vec2(0.02f, 0.0f);
+
+        GuideMaterial unusedBackdrop{};
+        glm::vec3 diffuseGuide{};
+        glm::vec3 specGuide{};
+        glm::vec3 guideNormal{};
+        float guideRoughness = 0.0f;
+        glm::vec2 motionGuide{};
+
+        ApplyTransmissionMaterialGuideSelection(
+            glass,
+            unusedBackdrop,
+            glassNormal,
+            glassNormal,
+            viewDir,
+            glm::vec2(0.0f),
+            txGuide,
+            diffuseGuide,
+            specGuide,
+            guideNormal,
+            guideRoughness,
+            motionGuide);
+
+        test::ExpectNear(diffuseGuide.r, 0.5f, 0.05f, "Guide miss should fall back to neutral sky albedo");
+        test::ExpectTrue(std::abs(motionGuide.x) > 1e-4f, "Guide miss should still use virtual motion");
+    }
+
+    {
+        const glm::mat4 currView = glm::lookAt(glm::vec3(0.0f, 0.0f, 4.0f), glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 currProj = glm::perspective(glm::radians(60.0f), 1.0f, 0.1f, 100.0f);
+        const glm::mat4 currUnjViewProj = currProj * currView;
+
+        const glm::mat4 prevView =
+            glm::lookAt(glm::vec3(0.0f, 0.0f, 4.0f), glm::vec3(0.5f, 0.0f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 prevViewProj = currProj * prevView;
+
+        const glm::vec3 worldCurr(0.0f, 0.0f, -1.0f);
+        const glm::vec3 worldPrev(0.15f, 0.0f, -1.0f);
+
+        const glm::vec2 motion = ComputeVirtualRefractedMotionFromWorldPoints(
+            currUnjViewProj,
+            prevViewProj,
+            worldCurr,
+            worldPrev);
+
+        test::ExpectTrue(glm::length(motion) > 0.002f, "Virtual refracted MV should be non-zero under camera orbit");
     }
 }

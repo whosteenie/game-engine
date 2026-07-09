@@ -95,10 +95,11 @@ cd build
 ctest -C Debug -L gpu-smoke --output-on-failure
 ctest -C Debug -L gpu-pbr --output-on-failure
 ctest -C Debug -L gpu-dxr --output-on-failure
+ctest -C Debug -L gpu-dxr-pt --output-on-failure
 ctest -C Debug -L gpu --output-on-failure
 ```
 
-**Tiers:** `1` gpu-smoke, `2` gpu-pbr, `3` gpu-editor, `4` gpu-dxr, `5` gpu-dxr-pt (future). Use `--tier=N` for a single tier, `--through=N` for cumulative 1..N, `--tiers=EXPR` for ranges/sets (`1,3`, `2-4`, `1-3,5`), or `--all`.
+**Tiers:** `1` gpu-smoke, `2` gpu-pbr, `3` gpu-editor, `4` gpu-dxr, `5` gpu-dxr-pt. Use `--tier=N` for a single tier, `--through=N` for cumulative 1..N, `--tiers=EXPR` for ranges/sets (`1,3`, `2-4`, `1-3,5`), or `--all`.
 
 On success you should see `[PASS]` lines per test and `N/N tests passed.` with exit code `0`. Failures print `[FAIL]` and assertion details to stderr. DXR tests print `SKIP: ... (no RTX tier)` and exit `0` when hardware lacks ray tracing.
 
