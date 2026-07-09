@@ -2257,7 +2257,7 @@ void ScreenSpaceEffects::FinalizePendingSsaoGpuReadback() const
     if (m_sceneFramebuffer != nullptr && m_sceneFramebuffer->HasGeometryNormals())
     {
         if (ReadbackTextureCenterRgba16F(
-                m_sceneFramebuffer->GetColorResource(2),
+                m_sceneFramebuffer->GetGBufferColorResource(GBufferSlot::ShadingNormal),
                 m_width,
                 m_height,
                 centerX,

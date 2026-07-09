@@ -54,6 +54,7 @@ public:
     void EnsureShaderResourceState() const;
     std::uintptr_t GetColorSrvCpuHandle(int attachmentIndex = 0) const;
     std::uintptr_t GetGBufferSrvCpuHandle(GBufferSlot slot) const;
+    void* GetGBufferColorResource(GBufferSlot slot) const;
     std::uintptr_t GetDepthSrvCpuHandle() const;
     void* GetColorResource(int attachmentIndex = 0) const;
     void* GetDepthResource() const;

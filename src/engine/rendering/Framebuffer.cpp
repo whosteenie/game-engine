@@ -1627,6 +1627,11 @@ std::uintptr_t Framebuffer::GetGBufferSrvCpuHandle(const GBufferSlot slot) const
     return GetColorSrvCpuHandle(ToGBufferAttachmentIndex(slot));
 }
 
+void* Framebuffer::GetGBufferColorResource(const GBufferSlot slot) const
+{
+    return GetColorResource(ToGBufferAttachmentIndex(slot));
+}
+
 void Framebuffer::TransitionGBufferSlot(const GBufferSlot slot, const std::uint32_t newState) const
 {
     TransitionColorAttachment(ToGBufferAttachmentIndex(slot), newState);

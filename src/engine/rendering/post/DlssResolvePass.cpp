@@ -127,7 +127,7 @@ void DlssResolvePass::Execute(
     }
     else
     {
-        hdrInputResource = inputs.sceneFramebuffer->GetColorResource(0);
+        hdrInputResource = inputs.sceneFramebuffer->GetGBufferColorResource(GBufferSlot::DirectLighting);
     }
 
     if (dlssUsable && hdrInputResource != nullptr)
@@ -168,7 +168,7 @@ void DlssResolvePass::Execute(
         in.colorOutputState = static_cast<unsigned int>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         in.depth = inputs.sceneFramebuffer->GetDepthResource();
         in.depthState = kPixelSrv;
-        void* motionInput = inputs.sceneFramebuffer->GetColorResource(4);
+        void* motionInput = inputs.sceneFramebuffer->GetGBufferColorResource(GBufferSlot::MotionVelocity);
         std::uint32_t motionInputState = kPixelSrv;
         if (pathTracerDlssActive && inputs.patchPathTracerSkyMotion
             && inputs.patchPathTracerSkyMotion())
