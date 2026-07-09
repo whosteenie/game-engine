@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace
@@ -185,12 +186,64 @@ namespace
             nodes.begin(),
             nodes.end(),
             [](const GpuPassNode& left, const GpuPassNode& right) {
-                return DisplayGpuPassMilliseconds(left) > DisplayGpuPassMilliseconds(right);
+                return left.label < right.label;
             });
         for (GpuPassNode& node : nodes)
         {
             SortGpuPassChildren(node.children);
         }
+    }
+
+    void RefreshSmoothedGpuTimings(
+        const std::vector<GpuProfiler::Entry>& timings,
+        std::unordered_map<std::string, float>& smoothedMs,
+        const float smoothAlpha)
+    {
+        for (const GpuProfiler::Entry& entry : timings)
+        {
+            const auto existing = smoothedMs.find(entry.name);
+            if (existing == smoothedMs.end())
+            {
+                smoothedMs.emplace(entry.name, entry.milliseconds);
+                continue;
+            }
+
+            existing->second =
+                existing->second * (1.0f - smoothAlpha) + entry.milliseconds * smoothAlpha;
+        }
+
+        for (auto iterator = smoothedMs.begin(); iterator != smoothedMs.end();)
+        {
+            const bool stillPresent = std::any_of(
+                timings.begin(),
+                timings.end(),
+                [&](const GpuProfiler::Entry& entry) { return entry.name == iterator->first; });
+            if (!stillPresent)
+            {
+                iterator = smoothedMs.erase(iterator);
+            }
+            else
+            {
+                ++iterator;
+            }
+        }
+    }
+
+    std::vector<GpuProfiler::Entry> BuildSmoothedGpuTimings(
+        const std::vector<GpuProfiler::Entry>& timings,
+        const std::unordered_map<std::string, float>& smoothedMs)
+    {
+        std::vector<GpuProfiler::Entry> smoothed;
+        smoothed.reserve(timings.size());
+        for (const GpuProfiler::Entry& entry : timings)
+        {
+            const auto found = smoothedMs.find(entry.name);
+            smoothed.push_back(
+                GpuProfiler::Entry{
+                    entry.name,
+                    found != smoothedMs.end() ? found->second : entry.milliseconds});
+        }
+        return smoothed;
     }
 
     std::vector<GpuPassNode> BuildGpuPassTree(const std::vector<GpuProfiler::Entry>& timings)
@@ -233,7 +286,7 @@ namespace
         const float barFrac = maxPassMs > 0.0f ? milliseconds / maxPassMs : 0.0f;
         const float sharePct = gpuTotalMs > 0.0f ? milliseconds / gpuTotalMs * 100.0f : 0.0f;
         char overlay[16];
-        std::snprintf(overlay, sizeof(overlay), "%.0f%%", sharePct);
+        std::snprintf(overlay, sizeof(overlay), "%.1f%%", sharePct);
         ImGui::ProgressBar(barFrac, ImVec2(-1.0f, 0.0f), overlay);
     }
 
@@ -300,7 +353,7 @@ namespace
         const float usage =
             totalBytes > 0 ? static_cast<float>(usedBytes) / static_cast<float>(totalBytes) : 0.0f;
         char overlay[16];
-        std::snprintf(overlay, sizeof(overlay), "%.0f%%", usage * 100.0f);
+        std::snprintf(overlay, sizeof(overlay), "%.1f%%", usage * 100.0f);
         ImGui::ProgressBar(usage, ImVec2(-1.0f, 0.0f), overlay);
     }
 
@@ -312,7 +365,7 @@ namespace
         ImGui::TableNextColumn();
         if (available && percent >= 0.0f)
         {
-            ImGui::Text("%.0f%%", percent);
+            ImGui::Text("%.1f%%", percent);
             ImGui::TableNextColumn();
             ImGui::ProgressBar(
                 std::clamp(percent / 100.0f, 0.0f, 1.0f),
@@ -325,6 +378,108 @@ namespace
             ImGui::TextDisabled("-");
         }
     }
+}
+
+void PerformancePanel::SmoothResourceValue(
+    float& smoothed,
+    const float raw,
+    const float alpha,
+    const bool initialized)
+{
+    if (!initialized)
+    {
+        smoothed = raw;
+        return;
+    }
+
+    smoothed = smoothed * (1.0f - alpha) + raw * alpha;
+}
+
+void PerformancePanel::RefreshSmoothedSystemResources(
+    const SystemResourceSnapshot& snapshot,
+    const float alpha)
+{
+    const bool initialized = m_smoothedSystemResources.initialized;
+    SmoothResourceValue(
+        m_smoothedSystemResources.processCpuPercent,
+        snapshot.processCpuPercent,
+        alpha,
+        initialized);
+    SmoothResourceValue(
+        m_smoothedSystemResources.processWorkingSetBytes,
+        static_cast<float>(snapshot.processWorkingSetBytes),
+        alpha,
+        initialized);
+    SmoothResourceValue(
+        m_smoothedSystemResources.systemUsedRamBytes,
+        static_cast<float>(snapshot.systemUsedRamBytes),
+        alpha,
+        initialized);
+    SmoothResourceValue(
+        m_smoothedSystemResources.gpuLocalUsageBytes,
+        static_cast<float>(snapshot.gpuLocalUsageBytes),
+        alpha,
+        initialized);
+    SmoothResourceValue(
+        m_smoothedSystemResources.d3d12LocalAllocatedBytes,
+        static_cast<float>(snapshot.d3d12LocalAllocatedBytes),
+        alpha,
+        initialized);
+
+    m_smoothedSystemResources.gpuSystemUtilizationAvailable =
+        snapshot.gpuSystemUtilizationAvailable;
+    if (snapshot.gpuSystemUtilizationAvailable)
+    {
+        SmoothResourceValue(
+            m_smoothedSystemResources.gpuSystemUtilizationPercent,
+            snapshot.gpuSystemUtilizationPercent,
+            alpha,
+            initialized);
+    }
+
+    if (snapshot.gpuInstrumentedFramePercent >= 0.0f)
+    {
+        SmoothResourceValue(
+            m_smoothedSystemResources.gpuInstrumentedFramePercent,
+            snapshot.gpuInstrumentedFramePercent,
+            alpha,
+            initialized);
+    }
+
+    m_smoothedSystemResources.initialized = true;
+}
+
+SystemResourceSnapshot PerformancePanel::BuildDisplaySystemResources(
+    const SystemResourceSnapshot& snapshot) const
+{
+    if (!m_smoothedSystemResources.initialized)
+    {
+        return snapshot;
+    }
+
+    SystemResourceSnapshot smoothed = snapshot;
+    smoothed.processCpuPercent = m_smoothedSystemResources.processCpuPercent;
+    smoothed.processWorkingSetBytes = static_cast<std::uint64_t>(
+        std::max(0.0f, m_smoothedSystemResources.processWorkingSetBytes));
+    smoothed.systemUsedRamBytes = static_cast<std::uint64_t>(
+        std::max(0.0f, m_smoothedSystemResources.systemUsedRamBytes));
+    smoothed.gpuLocalUsageBytes = static_cast<std::uint64_t>(
+        std::max(0.0f, m_smoothedSystemResources.gpuLocalUsageBytes));
+    smoothed.d3d12LocalAllocatedBytes = static_cast<std::uint64_t>(
+        std::max(0.0f, m_smoothedSystemResources.d3d12LocalAllocatedBytes));
+    smoothed.gpuSystemUtilizationAvailable =
+        m_smoothedSystemResources.gpuSystemUtilizationAvailable;
+    if (m_smoothedSystemResources.gpuSystemUtilizationAvailable)
+    {
+        smoothed.gpuSystemUtilizationPercent =
+            m_smoothedSystemResources.gpuSystemUtilizationPercent;
+    }
+    if (m_smoothedSystemResources.gpuInstrumentedFramePercent >= 0.0f)
+    {
+        smoothed.gpuInstrumentedFramePercent =
+            m_smoothedSystemResources.gpuInstrumentedFramePercent;
+    }
+    return smoothed;
 }
 
 void PerformancePanel::OnFrame(const double deltaTimeSeconds)
@@ -352,6 +507,15 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
     }
 
     m_systemResources.OnFrame(deltaTimeSeconds);
+
+    ++m_gpuTimingSampleCounter;
+    if (m_gpuTimingSampleCounter >= kPerfSampleInterval)
+    {
+        m_gpuTimingSampleCounter = 0;
+        const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
+        RefreshSmoothedGpuTimings(timings, m_smoothedGpuPassMs, kPerfSmoothAlpha);
+        RefreshSmoothedSystemResources(m_systemResources.GetSnapshot(), kPerfSmoothAlpha);
+    }
 }
 
 void PerformancePanel::Draw(
@@ -437,7 +601,8 @@ void PerformancePanel::Draw(
 
     if (ImGui::CollapsingHeader("System resources", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        const SystemResourceSnapshot& resources = m_systemResources.GetSnapshot();
+        const SystemResourceSnapshot resources = BuildDisplaySystemResources(
+            m_systemResources.GetSnapshot());
 
         if (ImGui::BeginTable(
                 "perf_system_resources",
@@ -497,7 +662,7 @@ void PerformancePanel::Draw(
                     const float dedicatedUsage = static_cast<float>(resources.gpuLocalUsageBytes)
                         / static_cast<float>(resources.gpuDedicatedTotalBytes);
                     char overlay[16];
-                    std::snprintf(overlay, sizeof(overlay), "%.0f%%", dedicatedUsage * 100.0f);
+                    std::snprintf(overlay, sizeof(overlay), "%.1f%%", dedicatedUsage * 100.0f);
                     ImGui::ProgressBar(
                         std::clamp(dedicatedUsage, 0.0f, 1.0f),
                         ImVec2(-1.0f, 0.0f),
@@ -540,7 +705,7 @@ void PerformancePanel::Draw(
         EditorWidgets::TextWrappedDisabled(
             "VRAM is process footprint (DXGI/D3D12MA), not instantaneous load. It stays flat while "
             "resolution and assets are unchanged. GPU frame % is instrumented pass time / wall frame; "
-            "system GPU load uses Windows perf counters (3D engines).");
+            "system GPU load uses Windows perf counters (3D engines). Usage bars are smoothed (~8 Hz).");
     }
 
     if (ImGui::CollapsingHeader("GPU passes", ImGuiTreeNodeFlags_DefaultOpen))
@@ -554,7 +719,9 @@ void PerformancePanel::Draw(
         }
         else
         {
-            const std::vector<GpuPassNode> passTree = BuildGpuPassTree(timings);
+            const std::vector<GpuProfiler::Entry> displayTimings =
+                BuildSmoothedGpuTimings(timings, m_smoothedGpuPassMs);
+            const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
             const float gpuTotalMs = ComputeGpuRootTotalMs(passTree);
             const float maxPassMs = MaxGpuRootMilliseconds(passTree);
 
@@ -579,7 +746,7 @@ void PerformancePanel::Draw(
             ImGui::Text("GPU total (top-level passes): %.3f ms", gpuTotalMs);
             EditorWidgets::TextWrappedDisabled(
                 "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
-                "double-counted.");
+                "double-counted. Pass order is fixed; timings are smoothed (~8 Hz).");
         }
     }
 

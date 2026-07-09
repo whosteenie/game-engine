@@ -133,7 +133,6 @@ void DlssResolvePass::Execute(
     if (dlssUsable && hdrInputResource != nullptr)
     {
         SceneRenderTrace::Scope evalScope("dlss evaluate");
-        const GfxContext::GpuTimerScope gpuScopeDlss("DLSS");
         auto* commandList =
             static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
 
@@ -253,7 +252,10 @@ void DlssResolvePass::Execute(
             && (inputs.rayReconstructionActive || pathTracerRealTimeRr);
         if (useRr && inputs.generateRrGuides)
         {
-            inputs.generateRrGuides();
+            {
+                const GfxContext::GpuTimerScope gpuScopeRrGuides("DLSS/RR guides");
+                inputs.generateRrGuides();
+            }
             in.useRayReconstruction = true;
             in.diffuseAlbedo = inputs.rrDiffuseAlbedoTarget->resource;
             in.diffuseAlbedoState = inputs.rrDiffuseAlbedoTarget->resourceState;
@@ -275,33 +277,36 @@ void DlssResolvePass::Execute(
             std::memcpy(in.cameraViewToWorld, glm::value_ptr(viewToWorld), sizeof(float) * 16);
         }
 
-        outputs.dlssRan = dlss.Evaluate(in);
-        GfxContext::Get().RebindFrameDescriptorHeaps();
+        {
+            const GfxContext::GpuTimerScope gpuScopeEvaluate("DLSS/Evaluate");
+            outputs.dlssRan = dlss.Evaluate(in);
+            GfxContext::Get().RebindFrameDescriptorHeaps();
 
-        if (outputs.dlssRan && pathTracerDlssActive)
-        {
-            outputs.pathTracerDlssResolvedThisFrame = true;
-        }
+            if (outputs.dlssRan && pathTracerDlssActive)
+            {
+                outputs.pathTracerDlssResolvedThisFrame = true;
+            }
 
-        if (outputs.dlssRan)
-        {
-            TransitionResource(
-                commandList,
-                dlssOut,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            inputs.dlssOutputTarget->resourceState = kPixelSrv;
-            outputs.dlssHistoryValid = true;
-        }
-        else
-        {
-            TransitionResource(
-                commandList,
-                dlssOut,
-                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-            inputs.dlssOutputTarget->resourceState = kPixelSrv;
-            outputs.dlssHistoryValid = false;
+            if (outputs.dlssRan)
+            {
+                TransitionResource(
+                    commandList,
+                    dlssOut,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                inputs.dlssOutputTarget->resourceState = kPixelSrv;
+                outputs.dlssHistoryValid = true;
+            }
+            else
+            {
+                TransitionResource(
+                    commandList,
+                    dlssOut,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                inputs.dlssOutputTarget->resourceState = kPixelSrv;
+                outputs.dlssHistoryValid = false;
+            }
         }
         evalScope.Success();
     }
@@ -311,6 +316,7 @@ void DlssResolvePass::Execute(
         if (pathTracerDlssActive && inputs.pathTracerGridOverlayEnabled
             && inputs.drawPathTracerGridOverlay)
         {
+            const GfxContext::GpuTimerScope gpuScopePtOverlay("DLSS/PT overlay");
             inputs.drawPathTracerGridOverlay(
                 *inputs.dlssOutputTarget,
                 inputs.viewportWidth,
@@ -358,37 +364,46 @@ void DlssResolvePass::Execute(
             bloomInputs.bloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
 
             DisplayResBloomOutputs bloomOutputs{};
-            if (BloomTonemapPass::ExecuteDisplayResBloom(context, bloomInputs, bloomOutputs))
             {
-                displayBloomSrv = bloomOutputs.bloomSrv;
-                outputs.dlssBloomHistoryValid = bloomOutputs.bloomHistoryValid;
-                outputs.dlssBloomTemporalWarmupFrames = bloomOutputs.bloomTemporalWarmupFrames;
+                const GfxContext::GpuTimerScope gpuScopeDisplayBloom("DLSS/Display bloom");
+                if (BloomTonemapPass::ExecuteDisplayResBloom(context, bloomInputs, bloomOutputs))
+                {
+                    displayBloomSrv = bloomOutputs.bloomSrv;
+                    outputs.dlssBloomHistoryValid = bloomOutputs.bloomHistoryValid;
+                    outputs.dlssBloomTemporalWarmupFrames = bloomOutputs.bloomTemporalWarmupFrames;
+                }
             }
         }
 
-        BloomTonemapPass::ExecuteTonemapDlssDisplay(
-            context,
-            inputs.outputTarget,
-            inputs.viewportWidth,
-            inputs.viewportHeight,
-            inputs.dlssOutputTarget->srvCpuHandle,
-            displayBloomSrv,
-            inputs.exposure,
-            inputs.tonemapMode,
-            inputs.bloomIntensity,
-            inputs.tonemapShader);
+        {
+            const GfxContext::GpuTimerScope gpuScopeTonemap("DLSS/Tonemap");
+            BloomTonemapPass::ExecuteTonemapDlssDisplay(
+                context,
+                inputs.outputTarget,
+                inputs.viewportWidth,
+                inputs.viewportHeight,
+                inputs.dlssOutputTarget->srvCpuHandle,
+                displayBloomSrv,
+                inputs.exposure,
+                inputs.tonemapMode,
+                inputs.bloomIntensity,
+                inputs.tonemapShader);
+        }
 
         outputs.prevFrameBloomSrv = displayBloomSrv;
     }
     else
     {
         SceneRenderTrace::Scope fallbackScope("dlss fallback tonemap");
-        BloomTonemapPass::ExecuteTonemapToViewport(
-            context,
-            inputs.outputTarget,
-            inputs.viewportWidth,
-            inputs.viewportHeight,
-            inputs.fallbackTonemapInputs);
+        {
+            const GfxContext::GpuTimerScope gpuScopeFallback("DLSS/Fallback tonemap");
+            BloomTonemapPass::ExecuteTonemapToViewport(
+                context,
+                inputs.outputTarget,
+                inputs.viewportWidth,
+                inputs.viewportHeight,
+                inputs.fallbackTonemapInputs);
+        }
         fallbackScope.Success();
         outputs.prevFrameBloomSrv = 0;
     }
