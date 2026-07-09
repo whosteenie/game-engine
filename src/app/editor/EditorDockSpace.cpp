@@ -35,6 +35,8 @@ void EditorDockSpace::BuildLayoutIfNeeded()
 
 void EditorDockSpace::Begin(const float topToolbarHeight, const bool deferLayoutBuild)
 {
+    m_deferLayoutBuild = deferLayoutBuild;
+
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     ImVec2 hostPos = viewport->WorkPos;
     ImVec2 hostSize = viewport->WorkSize;
@@ -67,7 +69,10 @@ void EditorDockSpace::Begin(const float topToolbarHeight, const bool deferLayout
 
 void EditorDockSpace::CommitLayout()
 {
-    BuildLayoutIfNeeded();
+    if (!m_deferLayoutBuild)
+    {
+        BuildLayoutIfNeeded();
+    }
 }
 
 void EditorDockSpace::End()
@@ -77,6 +82,12 @@ void EditorDockSpace::End()
 
 void EditorDockSpace::AfterEditorPanels(const bool validateRestoredLayout)
 {
+    if (m_deferLayoutBuild)
+    {
+        m_deferLayoutBuild = false;
+        BuildLayoutIfNeeded();
+    }
+
     if (!m_layoutBuilt)
     {
         return;
@@ -85,7 +96,7 @@ void EditorDockSpace::AfterEditorPanels(const bool validateRestoredLayout)
     const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
     if (validateRestoredLayout)
     {
-        EditorDockLayout::RepairLayout(dockspaceId);
+        EditorDockLayout::ValidateRestoredLayout(dockspaceId);
     }
 
     EditorDockLayout::AllowViewportUndocking(dockspaceId);

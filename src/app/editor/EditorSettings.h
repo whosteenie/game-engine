@@ -23,9 +23,14 @@ public:
 
     static std::string GetSettingsFilePath();
     static std::string GetGlobalImGuiIniPath();
+    static std::string GetProjectImGuiIniPath(const std::string& projectRoot);
     static void EnsureAppDataDirectoryExists();
     static bool SaveGlobalEditorLayout();
+    static bool SaveProjectEditorLayout(const std::string& projectRoot);
+    static bool SaveEditorLayout(const std::string& projectRoot = {});
     static bool LoadGlobalEditorLayout();
+    static bool LoadProjectEditorLayout(const std::string& projectRoot);
+    static bool LoadEditorLayout(const std::string& projectRoot = {});
     static bool TryMigrateProjectEditorLayout(const std::string& projectRoot);
     static bool DeleteGlobalImGuiIni();
     static std::string NormalizeProjectFilePath(const std::string& projectFilePath);

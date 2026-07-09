@@ -366,7 +366,10 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
-    EditorSettings::SaveGlobalEditorLayout();
+    EditorSettings::SaveEditorLayout(
+        m_projectSession != nullptr && m_projectSession->HasActiveProject()
+            ? m_projectSession->GetProjectRootDirectory()
+            : std::string{});
 
     if (m_editorSettings)
     {
@@ -1159,7 +1162,7 @@ bool Application::TrySaveProject()
             return false;
         }
 
-        EditorSettings::SaveGlobalEditorLayout();
+        EditorSettings::SaveEditorLayout(m_projectSession->GetProjectRootDirectory());
         return true;
     }
 
@@ -1177,7 +1180,10 @@ bool Application::TrySaveProject()
     m_editorSettings->AddRecentProject(m_projectSession->GetProjectFilePath());
     m_editorSettings->SetLastNewProjectParentDirectoryFromProjectFile(m_projectSession->GetProjectFilePath());
     m_editorSettings->Save();
-    EditorSettings::SaveGlobalEditorLayout();
+    EditorSettings::SaveEditorLayout(
+        m_projectSession != nullptr && m_projectSession->HasActiveProject()
+            ? m_projectSession->GetProjectRootDirectory()
+            : std::string{});
     return true;
 }
 
@@ -1208,7 +1214,8 @@ void Application::EnsureEditorLayoutLoaded()
     {
         ImGui::ClearIniSettings();
         m_editorDockSpace->InvalidateBuiltLayout();
-        m_editorLayoutRestoredFromDisk = EditorSettings::LoadGlobalEditorLayout();
+        m_editorLayoutRestoredFromDisk = EditorSettings::LoadEditorLayout(
+            m_projectSession->HasActiveProject() ? m_projectSession->GetProjectRootDirectory() : std::string{});
         if (!m_editorLayoutRestoredFromDisk
             && m_projectSession->HasActiveProject()
             && EditorSettings::TryMigrateProjectEditorLayout(m_projectSession->GetProjectRootDirectory()))

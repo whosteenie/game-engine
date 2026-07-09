@@ -35,7 +35,7 @@ void ProjectSession::CloseProject()
 {
     if (m_hasActiveProject)
     {
-        EditorSettings::SaveGlobalEditorLayout();
+        EditorSettings::SaveEditorLayout(m_projectRootDirectory);
     }
 
     Material::ClearTexturePathResolver();

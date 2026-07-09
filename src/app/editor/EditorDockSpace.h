@@ -19,4 +19,5 @@ private:
 
     bool m_layoutBuilt = false;
     bool m_forceDefaultLayout = false;
+    bool m_deferLayoutBuild = false;
 };

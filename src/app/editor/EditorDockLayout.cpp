@@ -43,59 +43,17 @@ void EditorDockLayout::AllowViewportUndocking(const ImGuiID dockspaceId)
     }
 }
 
-namespace
-{
-    bool IsEditorPanelFloating(const char* windowName)
-    {
-        ImGuiWindow* window = ImGui::FindWindowByName(windowName);
-        if (window == nullptr)
-        {
-            return false;
-        }
-
-        return !window->DockIsActive;
-    }
-}
-
-bool EditorDockLayout::HasUndockedEditorPanels()
-{
-    static constexpr const char* kEditorPanelNames[] = {
-        "Game View",
-        "Scene View",
-        "Renderer Tuning",
-        "Inspector",
-        "Hierarchy",
-        "Project",
-    };
-
-    for (const char* panelName : kEditorPanelNames)
-    {
-        if (IsEditorPanelFloating(panelName))
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-void EditorDockLayout::RepairLayout(const ImGuiID dockspaceId)
+void EditorDockLayout::ValidateRestoredLayout(const ImGuiID dockspaceId)
 {
     ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
-    if (dockNode == nullptr || !dockNode->IsSplitNode())
+    if (dockNode != nullptr && dockNode->IsSplitNode())
     {
-        // Dock ini may not be applied until editor panels register on the first frame.
-        if (ImGui::FindWindowByName("Scene View") == nullptr
-            && ImGui::FindWindowByName("Hierarchy") == nullptr)
-        {
-            return;
-        }
-
-        BuildDefaultLayout(dockspaceId);
         return;
     }
 
-    if (!HasUndockedEditorPanels())
+    // Dock ini is applied after editor panels register; only rebuild when the tree is still missing.
+    if (ImGui::FindWindowByName("Scene View") == nullptr
+        && ImGui::FindWindowByName("Hierarchy") == nullptr)
     {
         return;
     }
