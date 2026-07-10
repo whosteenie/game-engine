@@ -5,6 +5,7 @@
 // MaxTraceRecursionDepth = 1 suffices. P1 direct-only shading is subsumed by the loop.
 
 #include "hit_shading.hlsli"
+#include "restir_pack.hlsli"
 
 RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = specular hit-distance guide (RR4)
 RWTexture2D<float> g_DepthOutput : register(u1); // hyperbolic depth [0,1] at primary hit (DLSS)
@@ -15,6 +16,9 @@ RWTexture2D<float4> g_MotionOutput : register(u3); // NDC motion (curr - prev) a
 RWTexture2D<float4> g_DiffuseAlbedoGuide : register(u4);   // RGBA8: albedo·(1−metallic)
 RWTexture2D<float4> g_SpecularAlbedoGuide : register(u5);  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
 RWTexture2D<float4> g_NormalRoughnessGuide : register(u6); // RGBA16F: world normal xyz + roughness w
+// G5/R1: first-indirect-vertex sample + M=1 reservoir (passthrough until R2 reuse).
+RWStructuredBuffer<RestirInitialSample> g_InitialSample : register(u7);
+RWStructuredBuffer<RestirReservoir> g_ReservoirCurrent : register(u8);
 
 // P4b: previous-frame object-to-world rows per instance (indexed by InstanceID == object index).
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -1105,6 +1109,7 @@ float3 SelectPtDebugRadiance(
     float3 termDirectEmissive,
     float3 termSurfaceEmissive,
     float3 termAmbient,
+    float3 termIndirect,
     float primaryAoVis,
     float primarySunVis,
     float specHitDistGuide)
@@ -1153,10 +1158,8 @@ float3 SelectPtDebugRadiance(
     }
     if (isolateMode == 7u)
     {
-        return max(
-            radiancePreClamp - termDirectSun - termDirectEmissive - termSurfaceEmissive
-                - termAmbient,
-            0.0.xxx);
+        // G5: structural indirect = throughputAfterFirstScatter * Lo_tail (not residual subtract).
+        return termIndirect;
     }
     if (isolateMode == 8u)
     {
@@ -1181,7 +1184,10 @@ void PathTracerRayGen()
         return;
     }
 
+    const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
+
     PathRng rng = InitPathRng(pixel, g_FrameIndex);
+    const uint pathSeed = rng.seed;
     const float4 primaryXi = PathRngNext4(rng);
     const float2 primaryOffset = kPtCenterPrimaryRays ? float2(0.5, 0.5) : primaryXi.zw;
     const float2 texCoord = (float2(pixel) + primaryOffset) / float2(g_OutputSize);
@@ -1195,8 +1201,19 @@ void PathTracerRayGen()
     // so slider values 9..16 silently did nothing.
     const uint maxBounces = clamp(g_MaxBounces, 1u, 16u);
 
-    float3 radiance = 0.0.xxx;
+    // G5: bounce-0 direct vs Lo_tail (bounce≥1) with local throughput reset after first scatter.
+    float3 directRadiance = 0.0.xxx;
+    float3 loTail = 0.0.xxx;
     float3 throughput = 1.0.xxx;
+    float3 throughputAfterFirstScatter = 1.0.xxx;
+    bool inTail = false;
+    bool haveInitialSample = false;
+    float3 sampleXs = 0.0.xxx;
+    float3 sampleNs = float3(0.0, 1.0, 0.0);
+    float samplePdf = 1.0;
+    uint sampleFlags = 0u;
+    float primaryRoughness = 1.0;
+    float primaryDielectricWeight = 0.0;
 
     RayDesc ray;
     ray.Origin = g_CameraPos;
@@ -1261,6 +1278,7 @@ void PathTracerRayGen()
                 g_NormalRoughnessGuide[pixel] = float4(0.0, 0.0, 1.0, 1.0);
             }
 
+            float3 missRadiance = 0.0.xxx;
             if (g_EnvLightImportanceCount > 0u)
             {
                 // Env NEE active: the miss-side env is the BSDF-sampling half of the env-lighting MIS
@@ -1273,12 +1291,25 @@ void PathTracerRayGen()
                 const float envMisPdf = EnvNeePdfForDirection(ray.Direction);
                 const float envMisWeight =
                     envMisPdf > 0.0 ? BalanceHeuristic(lastScatterPdf, envMisPdf) : 1.0;
-                radiance += throughput * SampleEnvEquirectRadiance(ray.Direction) * envMisWeight;
+                missRadiance = SampleEnvEquirectRadiance(ray.Direction) * envMisWeight;
             }
             else if (addEnvOnMiss)
             {
-                radiance += throughput
-                    * SampleEnvironment(ray.Direction, missEnvRoughness);
+                missRadiance = SampleEnvironment(ray.Direction, missEnvRoughness);
+            }
+
+            const float3 missContrib = throughput * missRadiance;
+            if (inTail)
+            {
+                loTail += missContrib;
+                if (!haveInitialSample)
+                {
+                    sampleFlags |= kRestirSampleNoReuse;
+                }
+            }
+            else
+            {
+                directRadiance += missContrib;
             }
             break;
         }
@@ -1311,6 +1342,15 @@ void PathTracerRayGen()
             throughput *= BeerLambertMediumAttenuation(mediumTint, payload.hitDistance);
         }
 
+        // First indirect vertex (xs): record once when the post-primary scatter lands.
+        if (inTail && !haveInitialSample)
+        {
+            sampleXs = hitPos;
+            sampleNs = hitNormal;
+            samplePdf = lastScatterPdf;
+            haveInitialSample = true;
+        }
+
         const float3 f0 = lerp(0.04.xxx, albedo, surfaceMetallic);
         const float dielectricWeight =
             DielectricWeight(material.transmission, surfaceMetallic);
@@ -1337,8 +1377,16 @@ void PathTracerRayGen()
                 : 0.0;
             const float misHit = pdfNee > 0.0 ? BalanceHeuristic(lastScatterPdf, pdfNee) : 1.0;
             const float3 surfaceEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor) * misHit;
-            radiance += throughput * surfaceEmissive;
-            termSurfaceEmissive += throughput * surfaceEmissive;
+            const float3 emissiveContrib = throughput * surfaceEmissive;
+            if (inTail)
+            {
+                loTail += emissiveContrib;
+            }
+            else
+            {
+                directRadiance += emissiveContrib;
+                termSurfaceEmissive += emissiveContrib;
+            }
         }
 
         const float sunVis = TracePrimarySunVisibility(rng, hitNormal, shadowOrigin);
@@ -1346,21 +1394,46 @@ void PathTracerRayGen()
             * EvaluateDirectSun(
                 viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, sunVis);
-        radiance += throughput * sunContrib;
-        termDirectSun += throughput * sunContrib;
+        const float3 sunPathContrib = throughput * sunContrib;
+        if (inTail)
+        {
+            loTail += sunPathContrib;
+        }
+        else
+        {
+            directRadiance += sunPathContrib;
+            termDirectSun += sunPathContrib;
+        }
 
-        const float3 emissiveContrib = opaqueWeight
+        const float3 emissiveNee = opaqueWeight
             * EvaluateDirectEmissive(
                 rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
-        radiance += throughput * emissiveContrib;
-        termDirectEmissive += throughput * emissiveContrib;
+        const float3 emissiveNeeContrib = throughput * emissiveNee;
+        if (inTail)
+        {
+            loTail += emissiveNeeContrib;
+        }
+        else
+        {
+            directRadiance += emissiveNeeContrib;
+            termDirectEmissive += emissiveNeeContrib;
+        }
 
-        const float3 envContrib = opaqueWeight
+        const float3 envNee = opaqueWeight
             * EvaluateDirectEnvironment(
                 rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
-        radiance += throughput * envContrib;
+        const float3 envNeeContrib = throughput * envNee;
+        if (inTail)
+        {
+            loTail += envNeeContrib;
+        }
+        else
+        {
+            // Bounce-0 env NEE is part of direct (no dedicated term AOV historically).
+            directRadiance += envNeeContrib;
+        }
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
@@ -1372,8 +1445,9 @@ void PathTracerRayGen()
             primarySunVis = sunVis;
             const float3 ambientContrib =
                 EvaluateRealTimeDiffuseAmbient(diffuseAlbedo, hitNormal, primaryAoVis);
-            radiance += throughput * ambientContrib;
-            termAmbient += throughput * ambientContrib;
+            const float3 ambientPathContrib = throughput * ambientContrib;
+            directRadiance += ambientPathContrib;
+            termAmbient += ambientPathContrib;
         }
 
         if (bounce == 0u)
@@ -1382,6 +1456,8 @@ void PathTracerRayGen()
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
+            primaryRoughness = surfaceRoughness;
+            primaryDielectricWeight = dielectricWeight;
             const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
             float3 diffuseGuide;
@@ -1535,11 +1611,20 @@ void PathTracerRayGen()
             const float3 transmitTail = SampleEnvironment(
                 ray.Direction,
                 TransmissionMissEnvRoughness(surfaceRoughness, dielectricWeight));
-            radiance += throughput * lerp(reflectTail, transmitTail, dielectricWeight);
+            float3 terminal = lerp(reflectTail, transmitTail, dielectricWeight);
             if (!kPtCenterPrimaryRays && g_EnvLightImportanceCount == 0u)
             {
-                radiance += throughput * diffuseAlbedo * EvaluateDiffuseIrradianceSh(hitNormal) / kPi
+                terminal += diffuseAlbedo * EvaluateDiffuseIrradianceSh(hitNormal) / kPi
                     * g_EnvironmentIntensity;
+            }
+            const float3 terminalContrib = throughput * terminal;
+            if (inTail)
+            {
+                loTail += terminalContrib;
+            }
+            else
+            {
+                directRadiance += terminalContrib;
             }
             break;
         }
@@ -1577,6 +1662,21 @@ void PathTracerRayGen()
 
         lastScatterPdf = scatterPdf;
 
+        // After the primary scatter: freeze connection throughput and start Lo_tail at xs with
+        // local throughput = 1 (ReSTIR GI / G5). Shade reconnects as t1 * Lo_tail.
+        if (bounce == 0u)
+        {
+            throughputAfterFirstScatter = throughput;
+            throughput = 1.0.xxx;
+            inTail = true;
+            if (primaryDielectricWeight > 0.01
+                || primaryRoughness <= kPtDeltaSpecularRoughness
+                || scatterPdf >= kDeltaScatterPdf * 0.5)
+            {
+                sampleFlags |= kRestirSampleNoReuse;
+            }
+        }
+
         // Real-time: specular bounces add env on miss; diffuse bounces use primary-hit SH only.
         // Reference: always add the true sky. Transmitted rays always see through on miss.
         addEnvOnMiss = kPtCenterPrimaryRays ? (isSpecular || pathInMedium) : true;
@@ -1585,8 +1685,12 @@ void PathTracerRayGen()
 
         if (kPtRussianRouletteEnabled && bounce >= kRussianRouletteStartBounce)
         {
+            // Measure full-path throughput for the kill probability (parity with pre-G5), but only
+            // divide the local Lo_tail throughput — shade still multiplies by t1.
+            const float3 rrMeasure =
+                inTail ? (throughputAfterFirstScatter * throughput) : throughput;
             const float rrProb = min(
-                max(throughput.r, max(throughput.g, throughput.b)),
+                max(rrMeasure.r, max(rrMeasure.g, rrMeasure.b)),
                 kRussianRouletteMaxProb);
             const float rrXi = PathRngNext(rng);
             if (rrProb <= 1e-4 || rrXi > rrProb)
@@ -1618,11 +1722,35 @@ void PathTracerRayGen()
         ray.Direction = nextDir;
     }
 
-    const float3 radiancePreClamp = radiance;
+    // G6: clamp Lo_tail before reservoir write; composite safety clamp remains below.
+    float3 loTailForStore = loTail;
+    if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
+    {
+        loTailForStore = ClampRadiance(loTail);
+    }
+
+    const float3 termIndirect = throughputAfterFirstScatter * loTail;
+    const float3 radiancePreClamp = directRadiance + termIndirect;
+    float3 radiance = directRadiance + throughputAfterFirstScatter * loTailForStore;
     if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
     {
         radiance = ClampRadiance(radiance);
     }
+
+    // R1 M=1 passthrough: write InitialSample + Reservoir (unused by shade until R2).
+    if (!haveInitialSample)
+    {
+        sampleFlags |= kRestirSampleNoReuse;
+    }
+    const RestirInitialSample initialSample = RestirMakeInitialSample(
+        sampleXs,
+        sampleNs,
+        loTailForStore,
+        samplePdf,
+        pathSeed,
+        sampleFlags);
+    g_InitialSample[pixelIndex] = initialSample;
+    g_ReservoirCurrent[pixelIndex] = RestirMakePassthroughReservoir(initialSample);
 
     const float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
@@ -1633,6 +1761,7 @@ void PathTracerRayGen()
         termDirectEmissive,
         termSurfaceEmissive,
         termAmbient,
+        termIndirect,
         primaryAoVis,
         primarySunVis,
         specHitDistGuide);

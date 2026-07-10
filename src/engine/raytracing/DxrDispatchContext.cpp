@@ -2150,8 +2150,16 @@ bool DxrDispatchContext::DispatchPathTracer(
 
     recorder.BindSrvTables(1, srvHeapIndices, kPathTracerSrvCount);
 
-    // Path-tracer root signature: u0-u6 (P4b adds the RR material guides).
-    constexpr std::uint32_t kPathTracerUavCount = 7;
+    if (!HasRestirBuffers()
+        || m_restirInitialSample.uavIndex == UINT32_MAX
+        || m_restirReservoirs[0].uavIndex == UINT32_MAX)
+    {
+        outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
+        return false;
+    }
+
+    // Path-tracer root signature: u0-u6 RR guides, u7 InitialSample, u8 Reservoir[0] (G5/R1).
+    constexpr std::uint32_t kPathTracerUavCount = 9;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -2159,7 +2167,9 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptMotionTexture.uavIndex,
         m_ptDiffuseAlbedoTexture.uavIndex,
         m_ptSpecularAlbedoTexture.uavIndex,
-        m_ptNormalRoughnessTexture.uavIndex};
+        m_ptNormalRoughnessTexture.uavIndex,
+        m_restirInitialSample.uavIndex,
+        m_restirReservoirs[0].uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
@@ -2186,6 +2196,10 @@ bool DxrDispatchContext::DispatchPathTracer(
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptMotionTexture.resource);
+    RecordDxrUavBarrier(
+        static_cast<ID3D12GraphicsCommandList*>(commandList), m_restirInitialSample.resource);
+    RecordDxrUavBarrier(
+        static_cast<ID3D12GraphicsCommandList*>(commandList), m_restirReservoirs[0].resource);
 
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;

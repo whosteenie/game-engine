@@ -767,6 +767,8 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 
     try
     {
+        // G5 widened PT UAVs 7→9; drop any stale singleton from an older layout in-process.
+        DxrRootSignature::ReleasePathTracerGlobalRootSignature();
         m_globalRootSignature = DxrRootSignature::CreatePathTracerGlobalRootSignature();
     }
     catch (const std::exception& exception)
