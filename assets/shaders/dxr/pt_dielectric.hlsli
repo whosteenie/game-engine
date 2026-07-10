@@ -148,7 +148,7 @@ float3 TraceDielectricReflectContrib(
     float envRoughness,
     uint excludeInstanceId)
 {
-    const float nDotV = saturate(dot(hitNormal, -reflectDir));
+    const float nDotV = saturate(dot(hitNormal, reflectDir));
     const float bias = max(0.01, 0.01 * (1.0 + 2.0 * (1.0 - nDotV)));
     RayDesc reflectRay;
     reflectRay.Origin = hitPos + hitNormal * bias;
@@ -222,7 +222,11 @@ void SampleDielectricInterface(
     const float fresnel = thinWalled
         ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
         : singleFaceFresnel;
-    const float3 reflectDir = normalize(reflect(wi, reflectN));
+    // Mirror reflection of the INCOMING ray about the interface normal. reflect() takes the incident
+    // direction (rayDir, into the surface); reflect(wi, ...) with wi = -rayDir returns the NEGATED
+    // reflection (pointing into the surface) — a long-standing sign bug that sent the glass reflection
+    // ray the wrong way (and internal TIR out through the wall instead of bouncing back in).
+    const float3 reflectDir = normalize(reflect(rayDir, reflectN));
     const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
 
     outPathInMedium = thinWalled ? false : pathInMedium;
@@ -306,8 +310,9 @@ struct TransmissionGuideHit
     float3 normal;
     float3 shadingNormal;
     float triangleLod;
-    float3 refractDir;
-    float refractedHitDistance;
+    float3 refractDir;          // direction of the FINAL segment that reached the background
+    float refractedHitDistance; // length of that final segment
+    float3 backgroundWorldPos;  // world position of the background hit (accounts for the bent path)
 };
 
 // DLSS-RR transmission guide: trace the refracted primary ray and return depth, motion, and the
@@ -333,6 +338,7 @@ TransmissionGuideHit TraceTransmissionGuide(
     result.triangleLod = 0.0;
     result.refractDir = rayDir;
     result.refractedHitDistance = 0.0;
+    result.backgroundWorldPos = hitPos;
 
     float3 refractDir;
     if (!ComputeDielectricRefractDir(hitNormal, rayDir, ior, thinWalled, false, refractDir))
@@ -342,8 +348,12 @@ TransmissionGuideHit TraceTransmissionGuide(
 
     result.refractDir = refractDir;
     float3 guideOrigin = hitPos + refractDir * originBias;
-    [unroll]
-    for (uint attempt = 0u; attempt < 2u; ++attempt)
+    // Solid volumes: the radiance path refracts at BOTH the entry and exit interfaces, so the guide
+    // must too. Previously it continued straight through the glass after the front-face refraction,
+    // landing on a DIFFERENT background point than the color — DLSS-RR then ghosts/doubles the
+    // through-glass image (worst on solid cubes/spheres; thin panes single-refract and are fine).
+    [loop]
+    for (uint attempt = 0u; attempt < 4u; ++attempt)
     {
         RayDesc guideRay;
         guideRay.Origin = guideOrigin;
@@ -356,8 +366,11 @@ TransmissionGuideHit TraceTransmissionGuide(
         TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
         if (guidePayload.hit == 0)
         {
+            result.refractDir = refractDir;
             return result;
         }
+
+        const float3 interfaceHitPos = guideOrigin + refractDir * guidePayload.hitDistance;
 
         if (guidePayload.instanceId != excludeInstanceId)
         {
@@ -370,14 +383,32 @@ TransmissionGuideHit TraceTransmissionGuide(
             result.normal = guidePayload.normal;
             result.shadingNormal = guidePayload.shadingNormal;
             result.triangleLod = guidePayload.triangleLod;
+            result.refractDir = refractDir;
             result.refractedHitDistance = guidePayload.hitDistance;
+            result.backgroundWorldPos = interfaceHitPos;
             return result;
         }
 
-        const float3 shellHitPos = guideOrigin + refractDir * guidePayload.hitDistance;
-        guideOrigin = shellHitPos + refractDir * kThinShellMinExitBias;
+        // Hit the same glass again — an internal interface (exit face of a solid volume, or the far
+        // side of a thin shell). Refract out (glass→air, eta = ior) so the continuation matches the
+        // radiance path's exit; on total internal reflection, bounce internally. Thin walls keep the
+        // straight-through direction (their radiance model transmits straight).
+        if (!thinWalled)
+        {
+            float3 exitDir;
+            if (RefractSnell(-refractDir, guidePayload.normal, max(ior, 1.0), exitDir))
+            {
+                refractDir = normalize(exitDir);
+            }
+            else
+            {
+                refractDir = normalize(reflect(refractDir, guidePayload.normal));
+            }
+        }
+        guideOrigin = interfaceHitPos + refractDir * kThinShellMinExitBias;
     }
 
+    result.refractDir = refractDir;
     return result;
 }
 

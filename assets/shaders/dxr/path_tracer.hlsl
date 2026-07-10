@@ -410,8 +410,9 @@ float2 ComputeTransmissionVirtualMotion(
         return ComputeSkyAnchorMotion(currGuide.refractDir);
     }
 
-    const float3 worldCurr =
-        glassHitPos + currGuide.refractDir * (originBias + currGuide.refractedHitDistance);
+    // True background hit position (the guide traced the full enter+exit path); reconstructing it as
+    // a single straight segment from the glass hit is wrong once the path bends through a solid.
+    const float3 worldCurr = currGuide.backgroundWorldPos;
 
     const float2 clipXY = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
     const float4 prevFarH = mul(g_PrevInvViewProj, float4(clipXY, 1.0, 1.0));
@@ -459,8 +460,7 @@ float2 ComputeTransmissionVirtualMotion(
         return ComputeSkyAnchorMotion(prevGuide.refractDir);
     }
 
-    const float3 worldPrev =
-        prevGlassHitPos + prevGuide.refractDir * (prevOriginBias + prevGuide.refractedHitDistance);
+    const float3 worldPrev = prevGuide.backgroundWorldPos;
 
     const float4 currClipUnj = mul(g_UnjitteredViewProj, float4(worldCurr, 1.0));
     const float4 prevClipUnj = mul(g_PrevViewProj, float4(worldPrev, 1.0));
