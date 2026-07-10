@@ -21,6 +21,7 @@ void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
 void RunRefractionTests();
+void RunBrdfEnergyTests();
 void RunShaderCompileTests();
 
 namespace
@@ -73,6 +74,7 @@ namespace
         maybeRun("material", RunMaterialTests);
         maybeRun("guide_encoding", RunGuideEncodingTests);
         maybeRun("refraction", RunRefractionTests);
+        maybeRun("brdf_energy", RunBrdfEnergyTests);
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

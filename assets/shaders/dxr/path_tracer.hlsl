@@ -726,14 +726,52 @@ float3 EvaluateDirectEmissive(
         / max(pickPdf * pdfArea, 1e-8);
 }
 
-// Opaque GGX + cosine hemisphere. No mirror fast-path — roughness 0 is handled by GGX delta limit.
+// GGX/Trowbridge-Reitz + height-correlated Smith helpers for the opaque BRDF estimator.
+// alpha MUST match SampleGgxVndfHalfVector's internal floor (1e-3) so the evaluated pdf corresponds
+// to the sampling distribution (a mismatch biases the estimator).
+float GgxD(float NoH, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-9);
+}
+
+float SmithG1(float NoX, float alpha)
+{
+    const float a2 = alpha * alpha;
+    return 2.0 * NoX / max(NoX + sqrt(a2 + (1.0 - a2) * NoX * NoX), 1e-9);
+}
+
+float SmithG2HeightCorrelated(float NoV, float NoL, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float lambdaV = NoL * sqrt(a2 + (1.0 - a2) * NoV * NoV);
+    const float lambdaL = NoV * sqrt(a2 + (1.0 - a2) * NoL * NoL);
+    return 2.0 * NoV * NoL / max(lambdaV + lambdaL, 1e-9);
+}
+
+// Plain Schlick Fresnel (no roughness ceiling — that raster-IBL hack, R4, does not belong in the PT
+// energy split). f0 = 0.04 dielectric / albedo metal.
+float3 FresnelSchlick(float cosTheta, float3 f0)
+{
+    const float m = saturate(1.0 - cosTheta);
+    const float m2 = m * m;
+    return f0 + (1.0.xxx - f0) * (m2 * m2 * m);
+}
+
+// Opaque BRDF bounce: stochastic diffuse/GGX-specular lobe pick, weighted by the FULL BRDF over the
+// mixture pdf — the one-sample MIS estimator (Veach 1997 §9.2.4). Specular carries the correct VNDF
+// estimator weight F(VoH)*G2/G1 (Heitz 2018), NOT constant f0; diffuse is Fresnel-attenuated by
+// (1-F) so diffuse+specular conserve energy (white furnace). scatterPdf returns the mixture
+// directional pdf for NEE MIS. No forced-lobe branches — the divisor is always the true selection
+// probability, so no lobe is over/under-weighted (B3).
 void SampleOpaqueInterface(
     uint2 pixel,
     uint bounceIndex,
     float3 hitNormal,
     float3 viewDir,
     float3 f0,
-    float3 diffuseAlbedo,
+    float3 albedo,
     float roughness,
     float metallic,
     float2 xi2d,
@@ -744,35 +782,71 @@ void SampleOpaqueInterface(
     inout float3 throughput)
 {
     const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
-    const float3 specularEnergy =
-        FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(ggxRoughness, 0.55));
+    const float alpha = max(ggxRoughness * ggxRoughness, 1e-3); // matches SampleGgxVndfHalfVector
+    const float NoV = saturate(dot(hitNormal, viewDir));
 
-    float specProb = saturate(max(specularEnergy.r, max(specularEnergy.g, specularEnergy.b)));
-    specProb = lerp(specProb, 1.0, saturate(metallic));
+    const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
 
-    // Metals never use the diffuse lobe (diffuseAlbedo = 0 when metallic). Always specular GGX.
-    const bool traceSpecular = (metallic > 0.5) || ((lobeXi < specProb) && (ggxRoughness < 0.95));
+    // View-side Fresnel — reused for the lobe-selection heuristic AND the energy-conserving diffuse
+    // weight below. Using F(NoV) (evaluated once) rather than the per-microfacet F(VoH) is what keeps
+    // diffuse+specular from gaining energy at grazing angles (verified by the white-furnace test).
+    const float3 fresnelNoV = FresnelSchlick(NoV, f0);
 
-    if (traceSpecular)
+    // Lobe selection probability: an importance-sampling heuristic — any value in (0,1) is unbiased
+    // (it only affects variance). Balance specular vs diffuse reflectance, bias toward specular for
+    // metals, and keep BOTH lobes samplable so the mixture pdf stays valid.
+    const float specLum = Luminance(fresnelNoV);
+    const float diffLum = Luminance(baseDiffuse);
+    float pSpec = specLum / max(specLum + diffLum, 1e-4);
+    pSpec = lerp(pSpec, 1.0, saturate(metallic));
+    pSpec = clamp(pSpec, 0.1, 0.9);
+
+    const bool sampledSpecular = (lobeXi < pSpec);
+    float3 l;
+    if (sampledSpecular)
     {
-        const float3 halfVector = SampleGgxVndfHalfVector(hitNormal, viewDir, ggxRoughness, xi2d);
-        nextDir = normalize(reflect(-viewDir, halfVector));
-        if (dot(nextDir, hitNormal) <= 1e-4)
-        {
-            nextDir = normalize(reflect(-viewDir, hitNormal));
-        }
-        scatterPdf = max(specProb, 1e-6);
-        throughput *= f0 / scatterPdf;
+        const float3 h = SampleGgxVndfHalfVector(hitNormal, viewDir, ggxRoughness, xi2d);
+        l = reflect(-viewDir, h);
     }
     else
     {
-        nextDir = CosineSampleHemisphere(hitNormal, xi2d);
-        const float cosTheta = saturate(dot(hitNormal, nextDir));
-        scatterPdf = max((1.0 - specProb) * cosTheta / kPi, 1e-6);
-        throughput *= diffuseAlbedo / max(1.0 - specProb, 1e-6);
+        l = CosineSampleHemisphere(hitNormal, xi2d);
     }
 
-    isSpecular = traceSpecular;
+    isSpecular = sampledSpecular;
+    nextDir = l;
+
+    const float NoL = dot(hitNormal, l);
+    if (NoL <= 1e-4 || NoV <= 1e-4)
+    {
+        // Sampled below the horizon (or grazing view): the BRDF is zero here, so terminate this
+        // sample (unbiased) rather than redirecting to a fake mirror direction as the old code did.
+        scatterPdf = 1.0;
+        throughput = 0.0.xxx;
+        return;
+    }
+
+    const float3 h = normalize(viewDir + l);
+    const float NoH = saturate(dot(hitNormal, h));
+    const float VoH = saturate(dot(viewDir, h));
+
+    const float d = GgxD(NoH, alpha);
+    const float g1 = SmithG1(NoV, alpha);
+    const float g2 = SmithG2HeightCorrelated(NoV, NoL, alpha);
+    const float3 fresnel = FresnelSchlick(VoH, f0);
+
+    // BRDF * cos(theta_l). Specular uses per-microfacet F(VoH); diffuse uses view-side F(NoV) so the
+    // two lobes conserve energy (a per-microfacet (1-F(VoH)) diffuse gains ~9% at grazing).
+    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-6);              // f_spec * NoL
+    const float3 diffCos = baseDiffuse * (1.0.xxx - fresnelNoV) * (NoL / kPi);   // f_diff * NoL, (1-F(NoV)) split
+
+    // Mixture directional pdf: VNDF for specular (= G1*D/(4*NoV)), cosine for diffuse.
+    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-6);
+    const float pdfDiff = NoL / kPi;
+    const float pdfMix = pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
+
+    throughput *= (specCos + diffCos) / max(pdfMix, 1e-9);
+    scatterPdf = pdfMix;
 }
 
 // Unified material bounce: one stochastic lobe pick weighted by transmission·(1−metallic), then
@@ -785,7 +859,7 @@ bool SampleMaterialBounce(
     float3 rayDir,
     float3 viewDir,
     float3 f0,
-    float3 diffuseAlbedo,
+    float3 albedo,
     float roughness,
     float metallic,
     float transmission,
@@ -844,7 +918,7 @@ bool SampleMaterialBounce(
         hitNormal,
         viewDir,
         f0,
-        diffuseAlbedo,
+        albedo,
         roughness,
         metallic,
         xi.xy,
@@ -1256,7 +1330,7 @@ void PathTracerRayGen()
             ray.Direction,
             viewDir,
             f0,
-            diffuseAlbedo,
+            albedo,
             material.roughness,
             material.metallic,
             material.transmission,

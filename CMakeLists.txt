@@ -525,6 +525,7 @@ add_executable(engine-tests
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
     tests/refraction_test.cpp
+    tests/brdf_energy_test.cpp
     tests/shader_compile_test.cpp
 )
 
