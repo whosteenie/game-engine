@@ -299,6 +299,15 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
     return probe.hit == 0 ? 1.0 : 0.0;
 }
 
+// Sun NEE visibility: opaque scenes use cheap any-hit; scenes with dielectrics keep
+// TraceTransmissiveVisibility so sunlight still transmits through windows onto floors.
+float TraceSunNeeVisibility(float3 origin, float3 direction, float tMax)
+{
+    return (g_SceneHasTransmission > 0.5)
+        ? TraceTransmissiveVisibility(origin, direction, tMax)
+        : TraceVisibility(origin, direction, tMax);
+}
+
 // Soft sun visibility: cone-jittered shadow rays matching shadows.hlsl / reflections.hlsl.
 float TraceSoftSunVisibility(
     float3 origin,
@@ -327,7 +336,7 @@ float TraceSoftSunVisibility(
         const float2 disk = float2(diskRadius * cos(diskPhi), diskRadius * sin(diskPhi));
         const float3 rayDir = normalize(
             sunDir + (tangent * disk.x + bitangent * disk.y) * g_SunAngularTanRadius);
-        visSum += TraceTransmissiveVisibility(origin, rayDir, g_MaxTraceDistance);
+        visSum += TraceSunNeeVisibility(origin, rayDir, g_MaxTraceDistance);
     }
 
     return visSum / float(count);
@@ -544,7 +553,7 @@ float TracePrimarySunVisibility(
 
     return (g_SunAngularTanRadius > 1e-6)
         ? TraceSoftSunVisibility(shadowOrigin, hitNormal, rng, softSunSampleCount)
-        : TraceTransmissiveVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
+        : TraceSunNeeVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
 }
 
 float BalanceHeuristic(float pdfA, float pdfB)
@@ -864,7 +873,10 @@ float3 EvaluateDirectEmissive(
         return 0.0.xxx;
     }
 
-    const float visibility = TraceTransmissiveVisibility(shadowOrigin, wi, dist - 0.001);
+    // Opaque any-hit: glass blocks emissive NEE like a wall. Sun keeps TraceSunNeeVisibility for
+    // window→floor lighting; emissive-through-glass via NEE is rarely noticeable and was the
+    // glass+emissive perf cliff (a0cc7f8). BSDF paths through glass still find emitters.
+    const float visibility = TraceVisibility(shadowOrigin, wi, dist - 0.001);
     if (visibility <= 0.0)
     {
         return 0.0.xxx;
@@ -915,7 +927,8 @@ float3 EvaluateDirectEnvironment(
         return 0.0.xxx;
     }
 
-    const float visibility = TraceTransmissiveVisibility(shadowOrigin, wi, g_MaxTraceDistance);
+    // Same opaque-fast policy as emissive NEE (see EvaluateDirectEmissive).
+    const float visibility = TraceVisibility(shadowOrigin, wi, g_MaxTraceDistance);
     if (visibility <= 0.0)
     {
         return 0.0.xxx;
@@ -1389,6 +1402,10 @@ void PathTracerRayGen()
 
         const float emissiveLuminance =
             max(surfaceEmissiveColor.r, max(surfaceEmissiveColor.g, surfaceEmissiveColor.b));
+        // Real-time: treat emitters as path terminals. Staring at a bright cube was paying full
+        // soft-sun + emissive + env NEE from the light surface and continuing high-throughput
+        // bounces — view-dependent ~2× PT cost with no glass. Reference keeps full paths.
+        const bool terminalEmissiveHit = kPtCenterPrimaryRays && emissiveLuminance > 1e-4;
         if (emissiveLuminance > 1e-4)
         {
             float emitterPickPdf;
@@ -1417,58 +1434,69 @@ void PathTracerRayGen()
         }
 
         // G7/P5: full soft-sun cone at the primary; 1 sample on the Lo_tail (and deeper).
-        const uint softSunSamples =
-            (bounce == 0u) ? kPtSoftSunSampleCount : kPtSoftSunSampleCountDeep;
-        const float sunVis =
-            TracePrimarySunVisibility(rng, hitNormal, shadowOrigin, softSunSamples);
-        const float3 sunContrib = opaqueWeight
-            * EvaluateDirectSun(
-                viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                hitNormal, sunVis);
-        const float3 sunPathContrib = throughput * sunContrib;
+        // Skip NEE on pure dielectrics. Real-time emissive terminals still get sun shading on the
+        // emitter surface (faces read as lit), but skip self-emissive/env NEE and further bounces.
+        float3 sunPathContrib = 0.0.xxx;
+        float3 emissiveNeeContrib = 0.0.xxx;
+        float3 envNeeContrib = 0.0.xxx;
+        float sunVis = 0.0;
+        if (opaqueWeight > 0.0)
+        {
+            if (!terminalEmissiveHit || bounce == 0u)
+            {
+                // Emitter terminals: 1 hard/soft sample is enough for face shading; full cone is for
+                // ordinary surfaces. Avoids the stare-at-cube soft-sun tax.
+                const uint softSunSamples = terminalEmissiveHit
+                    ? 1u
+                    : ((bounce == 0u) ? kPtSoftSunSampleCount : kPtSoftSunSampleCountDeep);
+                sunVis = TracePrimarySunVisibility(rng, hitNormal, shadowOrigin, softSunSamples);
+                const float3 sunContrib = opaqueWeight
+                    * EvaluateDirectSun(
+                        viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                        hitNormal, sunVis);
+                sunPathContrib = throughput * sunContrib;
+            }
+
+            if (!terminalEmissiveHit)
+            {
+                // Real-time emissive NEE only at bounce 0 — deeper bounces rely on BSDF+MIS hits.
+                const bool wantEmissiveNee = !kPtCenterPrimaryRays || bounce == 0u;
+                if (wantEmissiveNee)
+                {
+                    const float3 emissiveNee = opaqueWeight
+                        * EvaluateDirectEmissive(
+                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                            hitNormal, shadowOrigin);
+                    emissiveNeeContrib = throughput * emissiveNee;
+                }
+
+                const float3 envNee = opaqueWeight
+                    * EvaluateDirectEnvironment(
+                        rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                        hitNormal, shadowOrigin);
+                envNeeContrib = throughput * envNee;
+            }
+        }
         if (inTail)
         {
             loTail += sunPathContrib;
+            loTail += emissiveNeeContrib;
+            loTail += envNeeContrib;
         }
         else
         {
             directRadiance += sunPathContrib;
             termDirectSun += sunPathContrib;
-        }
-
-        const float3 emissiveNee = opaqueWeight
-            * EvaluateDirectEmissive(
-                rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                hitNormal, shadowOrigin);
-        const float3 emissiveNeeContrib = throughput * emissiveNee;
-        if (inTail)
-        {
-            loTail += emissiveNeeContrib;
-        }
-        else
-        {
             directRadiance += emissiveNeeContrib;
             termDirectEmissive += emissiveNeeContrib;
-        }
-
-        const float3 envNee = opaqueWeight
-            * EvaluateDirectEnvironment(
-                rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                hitNormal, shadowOrigin);
-        const float3 envNeeContrib = throughput * envNee;
-        if (inTail)
-        {
-            loTail += envNeeContrib;
-        }
-        else
-        {
             // Bounce-0 env NEE is part of direct (no dedicated term AOV historically).
             directRadiance += envNeeContrib;
         }
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
-        if (kPtCenterPrimaryRays && bounce == 0u)
+        // Skip on emissive terminals — AO/ambient on a light surface is wasted TraceRays.
+        if (kPtCenterPrimaryRays && bounce == 0u && !terminalEmissiveHit)
         {
             primaryAoVis =
                 TracePrimaryAmbientOcclusion(rng, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
@@ -1628,6 +1656,11 @@ void PathTracerRayGen()
                     specHitDistGuide = g_MaxTraceDistance;
                 }
             }
+        }
+
+        if (terminalEmissiveHit)
+        {
+            break;
         }
 
         if (bounce >= maxBounces)

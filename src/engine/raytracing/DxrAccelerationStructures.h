@@ -154,6 +154,8 @@ public:
 
     std::uint32_t GetEmissiveLightCount() const { return m_emissiveLightCount; }
     float GetEmissiveLightPickWeightSum() const { return m_emissiveLightPickWeightSum; }
+    // True when any renderable has dielectricWeight > 0 (transmission through glass for NEE shadows).
+    bool SceneHasTransmission() const { return m_sceneHasTransmission; }
 
     // True once after mesh/material geometry buffers were re-uploaded; clears on read.
     bool ConsumeGeometryContentReupload();
@@ -244,6 +246,8 @@ private:
     std::size_t m_emissiveTrianglesCapacityCount = 0;
     std::uint32_t m_emissiveLightCount = 0;
     float m_emissiveLightPickWeightSum = 0.0f;
+    // Any renderable with dielectricWeight > 0 — selects opaque vs transmissive NEE shadows.
+    bool m_sceneHasTransmission = false;
     std::size_t m_geometryObjectCount = 0;
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
     std::uint64_t m_builtTlasTopologyFingerprint = 0;

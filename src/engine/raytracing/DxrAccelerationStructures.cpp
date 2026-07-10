@@ -264,6 +264,7 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_emissiveTrianglesCapacityCount = 0;
     m_emissiveLightCount = 0;
     m_emissiveLightPickWeightSum = 0.0f;
+    m_sceneHasTransmission = false;
     m_geometryObjectCount = 0;
 }
 
@@ -850,6 +851,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
     {
         m_emissiveLightCount = 0;
         m_emissiveLightPickWeightSum = 0.0f;
+        m_sceneHasTransmission = false;
         return false;
     }
 
@@ -861,6 +863,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
     entries.reserve(objects.size());
 
     float pickWeightSum = 0.0f;
+    bool sceneHasTransmission = false;
     for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
     {
         const SceneObject& object = objects[objectIndex];
@@ -875,7 +878,17 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
             continue;
         }
 
-        const glm::vec3 emissive = object.GetMaterial().GetEmissive();
+        const Material& material = object.GetMaterial();
+        // Match DielectricWeight in pt_dielectric.hlsli — any glass that can refract NEE shadows.
+        const float dielectricWeight =
+            std::clamp(material.GetTransmission(), 0.0f, 1.0f)
+            * (1.0f - std::clamp(material.GetMetallic(), 0.0f, 1.0f));
+        if (dielectricWeight > 0.0f)
+        {
+            sceneHasTransmission = true;
+        }
+
+        const glm::vec3 emissive = material.GetEmissive();
         const float luminance = EmissiveLuminance(emissive);
         if (luminance < kEmissiveThreshold)
         {
@@ -960,6 +973,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
 
     m_emissiveLightCount = static_cast<std::uint32_t>(entries.size());
     m_emissiveLightPickWeightSum = pickWeightSum;
+    m_sceneHasTransmission = sceneHasTransmission;
 
     const std::uint64_t lightsByteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
     const std::uint64_t trianglesByteSize = triangles.size() * sizeof(DxrEmissiveTriangleEntry);

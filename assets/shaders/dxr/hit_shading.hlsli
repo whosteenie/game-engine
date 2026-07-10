@@ -43,7 +43,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     // PT-A: dual-frame refracted motion vectors (devdoc/dxr/pt/transmission-rr-guides.md).
     float4x4 g_PrevInvViewProj;
     float3 g_PrevCameraPos;
-    float _PadPrevCamera;
+    float g_SceneHasTransmission; // path-tracer-only: 1 => NEE uses TraceTransmissiveVisibility
     // F2 environment importance sampling (path tracer only).
     uint g_EnvLightImportanceCount;
     uint g_EnvIsCdfWidth;

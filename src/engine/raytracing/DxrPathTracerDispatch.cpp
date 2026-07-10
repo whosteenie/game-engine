@@ -192,6 +192,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         static_cast<float>(std::clamp(ptDebugIsolateMode, 0, 9));
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
+    // Opaque-fast NEE shadows when the scene has no dielectrics (a0cc7f8 regression fix).
+    constants.sceneHasTransmission =
+        accelerationStructures.SceneHasTransmission() ? 1.0f : 0.0f;
     // L2 SH diffuse sky irradiance — AO-gated at the primary hit in real-time mode.
     for (std::size_t i = 0; i < frameInputs.irradianceSh9.size(); ++i)
     {

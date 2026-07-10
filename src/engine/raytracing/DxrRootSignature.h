@@ -74,7 +74,8 @@ struct ReflectionDispatchConstants
     // PT-A transmission virtual motion: previous unjittered frustum + camera for dual-frame refract MV.
     float prevInvViewProj[16] = {};
     float prevCameraPos[3] = {};
-    float _padPrevCamera = 0.0f;
+    // Path-tracer-only: 1 when any dielectric can refract NEE shadows (else opaque any-hit).
+    float sceneHasTransmission = 0.0f;
     // F2 path-tracer-only: environment importance sampling (t16 CDF + t17 HDR equirect).
     std::uint32_t envLightImportanceCount = 0;
     std::uint32_t envIsCdfWidth = 0;
