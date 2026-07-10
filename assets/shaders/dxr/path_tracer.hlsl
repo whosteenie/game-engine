@@ -77,10 +77,13 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // views unreachable — clamp to the real [0,9] range instead.
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 9.0)))
 
+// Disjoint per-decision salt blocks (each leaves ≥16 headroom for +bounce/+sampleIndex within a
+// frame; kRngFrameStride = 1024 keeps them from aliasing across frames). Env NEE moved to 160 so it
+// no longer overlaps emissive (96 + bounce + 1) or ambient-AO (128) at deep bounces (C5).
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
 static const uint kPtEmissiveNeeSalt = 96u;
-static const uint kPtEnvNeeSalt = 112u;
+static const uint kPtEnvNeeSalt = 160u;
 static const uint kPtSoftSunSampleCount = 4u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
@@ -102,6 +105,7 @@ struct Payload
     uint instanceId;
     uint primitiveIndex;
     uint hit;
+    uint hitBackFace;      // 1 = ray hit the triangle's winding BACK face (emissive NEE can't reach it)
     float2 barycentrics;
     // Ray-cone LOD constant for the hit triangle's albedo texture: 0.5·log2(texelArea/worldArea)
     // (RTG ch. 20). Computed in closest-hit (needs ObjectToWorld); 0 for untextured materials.
@@ -165,6 +169,7 @@ void ResetPayload(inout Payload payload)
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
     payload.hit = 0;
+    payload.hitBackFace = 0;
     payload.barycentrics = 0.0.xx;
     payload.triangleLod = 0.0;
     payload.primaryMotionNdc = 0.0.xx;
@@ -862,8 +867,11 @@ float3 EvaluateDirectEmissive(
     const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
     const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
 
+    // EvaluateOpaqueBsdf already returns f * cosThetaReceiver, so the geometry term must carry ONLY
+    // the emitter cosine and 1/dist² — multiplying by cosThetaReceiver again dims area lights by an
+    // extra NoL and desyncs this NEE estimate from the BSDF-hit side of the MIS pair (C3).
     const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
-    const float geometryTerm = cosThetaReceiver * cosThetaEmitter / dist2;
+    const float geometryTerm = cosThetaEmitter / dist2;
 
     return bsdf * EmissiveWithBloomHalo(light.emissive) * geometryTerm * visibility * misWeight
         / max(pickPdf * pdfArea, 1e-8);
@@ -1267,7 +1275,21 @@ void PathTracerRayGen()
                 g_NormalRoughnessGuide[pixel] = float4(0.0, 0.0, 1.0, 1.0);
             }
 
-            if (addEnvOnMiss)
+            if (g_EnvLightImportanceCount > 0u)
+            {
+                // Env NEE active: the miss-side env is the BSDF-sampling half of the env-lighting MIS
+                // pair (or the direct sky for a camera/delta ray, where lastScatterPdf =
+                // kDeltaScatterPdf → weight ≈ 1). Sample the SHARP equirect — the same radiance the
+                // NEE side sees — so both strategies estimate one integrand (also removes the R1
+                // prefilter double-blur), and MIS-weight against the env NEE density. Previously the
+                // miss added the FULL env: specular double-counted in both modes, diffuse
+                // double-counted in reference and under-counted in real-time (C2).
+                const float envMisPdf = EnvNeePdfForDirection(ray.Direction);
+                const float envMisWeight =
+                    envMisPdf > 0.0 ? BalanceHeuristic(lastScatterPdf, envMisPdf) : 1.0;
+                radiance += throughput * SampleEnvEquirectRadiance(ray.Direction) * envMisWeight;
+            }
+            else if (addEnvOnMiss)
             {
                 radiance += throughput
                     * SampleEnvironment(ray.Direction, missEnvRoughness);
@@ -1318,9 +1340,14 @@ void PathTracerRayGen()
             float emitterPickPdf;
             float emitterArea;
             EmissiveLightLookup(payload.instanceId, emitterPickPdf, emitterArea);
+            // Triangle NEE only samples the emitter's winding front face, so a BSDF ray landing on the
+            // BACK face has no NEE partner and must take full weight — otherwise emissive panel back
+            // faces render MIS-dimmed (C6). Emission itself stays two-sided.
             const float cosEmitter = saturate(dot(hitNormal, viewDir));
-            const float pdfNee = EmissiveNeePdfSolidAngle(
-                emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter);
+            const float pdfNee = (payload.hitBackFace == 0u)
+                ? EmissiveNeePdfSolidAngle(
+                    emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter)
+                : 0.0;
             const float misHit = pdfNee > 0.0 ? BalanceHeuristic(lastScatterPdf, pdfNee) : 1.0;
             const float3 surfaceEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor) * misHit;
             radiance += throughput * surfaceEmissive;
@@ -1712,8 +1739,9 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const float3 rayDir = WorldRayDirection();
     const float hitT = RayTCurrent();
 
+    const bool hitBackFace = HitKind() == kHitKindTriangleBackFace;
     float3 hitNormal = ComputeWorldShadingNormal(geo, primitiveIndex, attribs.barycentrics);
-    if (HitKind() == kHitKindTriangleBackFace)
+    if (hitBackFace)
     {
         hitNormal = -hitNormal;
     }
@@ -1723,6 +1751,7 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     }
 
     payload.hit = 1;
+    payload.hitBackFace = hitBackFace ? 1u : 0u;
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;

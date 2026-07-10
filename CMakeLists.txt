@@ -528,6 +528,7 @@ add_executable(engine-tests
     tests/brdf_energy_test.cpp
     tests/mis_nee_test.cpp
     tests/env_importance_test.cpp
+    tests/nee_mis_integration_test.cpp
     tests/shader_compile_test.cpp
 )
 

@@ -831,7 +831,10 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     }
 
     SmokeRtpsoSubobjects subobjects{};
-    subobjects.shaderConfig.MaxPayloadSizeInBytes = 64;
+    // Must be >= the path_tracer.hlsl Payload struct size (17 DWORDs = 68 B, incl. the C6
+    // hitBackFace flag). When P1 (payload slimming / per-ray-type specialization) lands, that flag
+    // should be packed into a spare bit so this can drop back to 64.
+    subobjects.shaderConfig.MaxPayloadSizeInBytes = 68;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
     subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
 

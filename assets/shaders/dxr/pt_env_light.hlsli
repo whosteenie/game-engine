@@ -46,6 +46,25 @@ uint EnvIsFindCellIndex(float u)
     return min(lo, g_EnvLightImportanceCount - 1u);
 }
 
+// Directional pdf of the CDF sampler for a cell: P(cell) / cell-solid-angle. P(cell) is read straight
+// from the prefix-sum CDF (the exact discrete probability the sampler draws that cell with), so this
+// is the ACTUAL sampling density. The old code re-derived it as lum(dir)*cosLat*invSum/Ω, which (1)
+// included g_EnvironmentIntensity so it cancelled out of every NEE contribution, (2) ignored the CDF's
+// 95th-percentile luminance clamp so it lost energy in the brightest cells, and (3) used pointwise
+// luminance vs the cell-constant density (C4).
+float EnvNeeCellPdf(uint cellIndex)
+{
+    if (cellIndex >= g_EnvLightImportanceCount)
+    {
+        return 0.0;
+    }
+    const float cellProb = g_EnvImportanceCdf[cellIndex + 1u] - g_EnvImportanceCdf[cellIndex];
+    const uint iy = cellIndex / g_EnvIsCdfWidth;
+    const float v = (float(iy) + 0.5) / float(g_EnvIsCdfHeight);
+    const float solidAngle = EnvIsSolidAnglePerCell(EnvIsCosLatitude(v));
+    return cellProb / max(solidAngle, 1e-8);
+}
+
 float3 SampleEnvEquirectRadiance(float3 direction)
 {
     const float2 uv = DirectionToEquirectUv(normalize(direction));
@@ -84,6 +103,22 @@ float3 EnvNeeRadiance(float3 wi)
     return SampleEnvEquirectRadiance(wi);
 }
 
+// Env NEE sampling density along an arbitrary direction — the MIS partner the BSDF-sampling (miss)
+// side needs. Returns 0 inside the analytic sun cone: NEE deposits no radiance there (EnvNeeRadiance
+// zeroes it), so BSDF sampling owns that region and its miss-add must take full weight. Outside the
+// cone this matches the pdf SampleEnvLightDirection reports for the same cell.
+float EnvNeePdfForDirection(float3 dir)
+{
+    if (g_EnvLightImportanceCount == 0u || IsInAnalyticSunCone(dir))
+    {
+        return 0.0;
+    }
+    const float2 uv = DirectionToEquirectUv(normalize(dir));
+    const uint ix = min(uint(saturate(uv.x) * float(g_EnvIsCdfWidth)), g_EnvIsCdfWidth - 1u);
+    const uint iy = min(uint(saturate(uv.y) * float(g_EnvIsCdfHeight)), g_EnvIsCdfHeight - 1u);
+    return EnvNeeCellPdf(iy * g_EnvIsCdfWidth + ix);
+}
+
 bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle)
 {
     wi = float3(0.0, 1.0, 0.0);
@@ -104,12 +139,8 @@ bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle)
     const float v = (float(iy) + xi.z) / float(cdfH);
     wi = EquirectUvToDirection(float2(u, v));
 
-    const float cosLat = EnvIsCosLatitude(v);
-    const float3 radiance = EnvNeeRadiance(wi);
-    const float lum = dot(radiance, float3(0.2126, 0.7152, 0.0722));
-    const float weight = lum * cosLat;
-    const float solidAngle = EnvIsSolidAnglePerCell(cosLat);
-    pdfSolidAngle = weight * g_EnvLightImportanceInvWeightSum / max(solidAngle, 1e-8);
+    // Density of the cell the sampler actually drew (from the CDF), not a re-derived luminance.
+    pdfSolidAngle = EnvNeeCellPdf(cellIndex);
     return pdfSolidAngle > 0.0;
 }
 

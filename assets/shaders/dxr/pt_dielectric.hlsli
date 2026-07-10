@@ -274,13 +274,15 @@ void SampleDielectricInterface(
 
     if (chooseReflect)
     {
+        // Fresnel-proportional selection: the estimator weight is reflectance / P(reflect) = F/F = 1
+        // (and 1/1 = 1 for TIR). Throughput passes through unchanged. The previous `throughput /=
+        // fresnel` multiplied by 1/F — ≈ 25× energy gain on a normal-incidence glass reflection.
         nextDir = reflectDir;
         outPathInMedium = thinWalled ? false : pathInMedium;
-        throughput /= max(mustReflect ? 1.0 : fresnel, 1e-6);
         return;
     }
 
-    throughput /= max(1.0 - fresnel, 1e-6);
+    // Transmit weight = (1 - F) / P(transmit) = (1 - F)/(1 - F) = 1. No throughput scaling.
     nextDir = normalize(refracted);
     if (thinWalled)
     {
