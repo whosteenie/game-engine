@@ -69,6 +69,9 @@ public:
     // Absolute shader-visible SRV heap index of the albedo texture (for DXR bindless sampling).
     // Ensures the map is loaded; returns UINT32_MAX when there is no albedo texture.
     std::uint32_t GetAlbedoMapSrvIndex() const;
+    std::uint32_t GetNormalMapSrvIndex() const;
+    std::uint32_t GetRoughnessMapSrvIndex() const;
+    std::uint32_t GetEmissiveMapSrvIndex() const;
 
     void SetAlbedoMap(std::shared_ptr<Texture> texture, std::string path = {});
     void SetNormalMap(std::shared_ptr<Texture> texture, std::string path = {});

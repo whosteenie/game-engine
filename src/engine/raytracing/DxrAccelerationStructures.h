@@ -25,22 +25,31 @@ struct DxrGeometryLookupEntry
 };
 
 // Per-object material constants for in-hit reflection shading. Indexed by TLAS InstanceID
-// (== scene object index). Layout must match MaterialEntry in assets/shaders/dxr/reflections.hlsl.
+// (== scene object index). Layout must match MaterialEntry in assets/shaders/dxr/hit_shading.hlsli.
 struct DxrMaterialEntry
 {
     float albedo[3] = {0.5f, 0.5f, 0.5f};
     float metallic = 0.0f;
     float emissive[3] = {0.0f, 0.0f, 0.0f};
     float roughness = 1.0f;
-    // Bindless albedo texture (absolute SRV heap index; UINT32_MAX = none) + its UV float offset
-    // within the interleaved vertex stride.
+    // Bindless textures (absolute SRV heap index; UINT32_MAX = none) + UV float offsets
+    // within the interleaved vertex stride (6 = UV0, 8 = UV1).
     std::uint32_t albedoTexIndex = UINT32_MAX;
     std::uint32_t albedoUvOffsetFloats = UINT32_MAX;
+    std::uint32_t normalTexIndex = UINT32_MAX;
+    std::uint32_t normalUvOffsetFloats = UINT32_MAX;
+    std::uint32_t roughnessTexIndex = UINT32_MAX;
+    std::uint32_t roughnessUvOffsetFloats = UINT32_MAX;
+    std::uint32_t emissiveTexIndex = UINT32_MAX;
+    std::uint32_t emissiveUvOffsetFloats = UINT32_MAX;
+    std::uint32_t materialFlags = 0;
+    std::uint32_t tangentOffsetFloats = UINT32_MAX;
     float transmission = 0.0f; // 0 = opaque, 1 = fully transmissive (PT-A glass)
     float indexOfRefraction = 1.5f;
     float thinWalled = 0.0f; // 1 = thin slab (window pane); 0 = solid volume (lens)
     float _padDielectric = 0.0f;
 };
+static_assert(sizeof(DxrMaterialEntry) == 88);
 
 // P4b: per-instance previous-frame object-to-world transform, indexed by TLAS InstanceID
 // (== scene object index). Stored as explicit rows (row_i = (m[0][i], m[1][i], m[2][i], m[3][i]))

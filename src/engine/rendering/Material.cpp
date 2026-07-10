@@ -480,6 +480,36 @@ std::uint32_t Material::GetAlbedoMapSrvIndex() const
     return UINT32_MAX;
 }
 
+std::uint32_t Material::GetNormalMapSrvIndex() const
+{
+    EnsureMapsLoaded();
+    if (m_normalMap != nullptr && m_normalMap->IsValid())
+    {
+        return m_normalMap->GetSrvDescriptorIndex();
+    }
+    return UINT32_MAX;
+}
+
+std::uint32_t Material::GetRoughnessMapSrvIndex() const
+{
+    EnsureMapsLoaded();
+    if (m_roughnessMap != nullptr && m_roughnessMap->IsValid())
+    {
+        return m_roughnessMap->GetSrvDescriptorIndex();
+    }
+    return UINT32_MAX;
+}
+
+std::uint32_t Material::GetEmissiveMapSrvIndex() const
+{
+    EnsureMapsLoaded();
+    if (m_emissiveMap != nullptr && m_emissiveMap->IsValid())
+    {
+        return m_emissiveMap->GetSrvDescriptorIndex();
+    }
+    return UINT32_MAX;
+}
+
 void Material::SetEmissive(const glm::vec3& emissive)
 {
     m_emissive = glm::max(emissive, glm::vec3(0.0f));

@@ -96,7 +96,8 @@ static const float kDeltaScatterPdf = 1.0e10;
 
 struct Payload
 {
-    float3 normal;
+    float3 normal;         // interpolated vertex normal (world); use for shadow/AO bias
+    float3 shadingNormal;  // normal-map perturbed (world); from closest-hit only
     float hitDistance;
     uint instanceId;
     uint primitiveIndex;
@@ -159,6 +160,7 @@ float3 EnvBRDFApprox2(float3 specularColor, float alpha, float NoV)
 void ResetPayload(inout Payload payload)
 {
     payload.normal = float3(0.0, 0.0, 1.0);
+    payload.shadingNormal = float3(0.0, 0.0, 1.0);
     payload.hitDistance = 0.0;
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
@@ -321,10 +323,7 @@ float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycent
     {
         const float2 hitUv =
             ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
-        const float3 texel =
-            g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
-                .SampleLevel(g_LinearWrapSampler, hitUv, max(albedoLod, 0.0)).rgb;
-        albedo *= texel;
+        albedo *= SampleBindlessTextureRgb(material.albedoTexIndex, hitUv, albedoLod);
     }
     return albedo;
 }
@@ -337,37 +336,36 @@ float ComputeAlbedoLod(Payload payload, float coneWidth, float3 rayDirection)
 
 // P4b RR material guides — encoding must match full-rr-guides.md / rr_guides.ps.hlsl modes 0–2.
 void ComputePtPrimaryRrMaterialGuides(
-    uint instanceId,
-    uint primitiveIndex,
-    float2 barycentrics,
+    float3 albedo,
     float3 hitNormal,
+    float roughness,
+    float metallic,
+    float transmission,
+    float indexOfRefraction,
     float3 viewDir,
-    float albedoLod,
     out float3 diffuseGuide,
     out float3 specGuide,
     out float3 guideNormal,
     out float guideRoughness)
 {
-    const MaterialEntry material = g_Materials[instanceId];
-    const float3 albedo = SampleSurfaceAlbedo(instanceId, primitiveIndex, barycentrics, albedoLod);
-    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
-    const float dielectricWeight = DielectricWeight(material.transmission, material.metallic);
+    const float3 f0 = lerp(0.04.xxx, albedo, metallic);
+    const float dielectricWeight = DielectricWeight(transmission, metallic);
     const float nDotV = saturate(dot(hitNormal, viewDir));
 
-    const float3 diffuseGuideAlbedo = albedo * (1.0 - material.metallic) * (1.0 - dielectricWeight);
-    diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(material.metallic));
+    const float3 diffuseGuideAlbedo = albedo * (1.0 - metallic) * (1.0 - dielectricWeight);
+    diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(metallic));
     const float dielectricSpec = FresnelDielectric(
         nDotV,
-        1.0 / max(material.indexOfRefraction, 1.0));
+        1.0 / max(indexOfRefraction, 1.0));
     const float3 opaqueSpecGuide = max(
-        EnvBRDFApprox2(f0, material.roughness * material.roughness, nDotV),
+        EnvBRDFApprox2(f0, roughness * roughness, nDotV),
         0.04.xxx);
     specGuide = lerp(
         opaqueSpecGuide,
         float3(dielectricSpec, dielectricSpec, dielectricSpec),
         dielectricWeight);
     guideNormal = normalize(hitNormal);
-    guideRoughness = material.roughness;
+    guideRoughness = roughness;
 }
 
 float ComputeTransmissionGuideAlbedoLod(TransmissionGuideHit guide, float coneWidth)
@@ -487,7 +485,8 @@ float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, ui
 float3 EvaluateRealTimeDiffuseAmbient(
     uint2 pixel,
     float3 diffuseAlbedo,
-    float3 hitNormal,
+    float3 shadingNormal,
+    float3 aoNormal,
     float3 shadowOrigin)
 {
     // Environment IS NEE replaces the SH ambient floor when the CDF is bound (F2).
@@ -502,9 +501,10 @@ float3 EvaluateRealTimeDiffuseAmbient(
         return 0.0.xxx;
     }
 
+    // Contact AO uses the geometric normal (matches raster shadow/AO and crevice-darkening.md).
     const float aoVisibility =
-        TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormal, g_PtAmbientAoRayCount);
-    const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
+        TracePrimaryAmbientOcclusion(pixel, shadowOrigin, aoNormal, g_PtAmbientAoRayCount);
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(shadingNormal);
     return diffuseAlbedo * irradiance / kPi
         * aoVisibility
         * g_EnvironmentIntensity
@@ -672,7 +672,9 @@ float OpaqueBsdfLobeSelectionProbFromNoV(float NoV, float3 f0, float3 albedo, fl
     return clamp(pSpec, 0.1, 0.9);
 }
 
-// Full opaque BRDF * cos(theta_l) toward direction wi (diffuse + GGX specular).
+// Reject only when the light lies behind the tangent plane. Do not early-out on grazing view
+// (NoV → 0): raster uses a denominator floor (pbr.ps.hlsl CalcCookTorranceContribution) so
+// silhouettes stay lit when the sun is visible — a hard NoV cutoff drew black void rims.
 float3 EvaluateOpaqueBsdf(
     float3 hitNormal,
     float3 viewDir,
@@ -686,7 +688,7 @@ float3 EvaluateOpaqueBsdf(
     const float alpha = max(ggxRoughness * ggxRoughness, 1e-3);
     const float NoV = saturate(dot(hitNormal, viewDir));
     const float NoL = saturate(dot(hitNormal, wi));
-    if (NoL <= 1e-4 || NoV <= 1e-4)
+    if (NoL <= 0.0)
     {
         return 0.0.xxx;
     }
@@ -701,7 +703,7 @@ float3 EvaluateOpaqueBsdf(
     const float g2 = SmithG2HeightCorrelated(NoV, NoL, alpha);
     const float3 fresnel = FresnelSchlick(VoH, f0);
 
-    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-6);
+    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-4);
     const float3 diffCos = baseDiffuse * (1.0.xxx - fresnelNoV) * (NoL / kPi);
     return specCos + diffCos;
 }
@@ -720,7 +722,7 @@ float OpaqueBsdfPdf(
     const float alpha = max(ggxRoughness * ggxRoughness, 1e-3);
     const float NoV = saturate(dot(hitNormal, viewDir));
     const float NoL = saturate(dot(hitNormal, wi));
-    if (NoL <= 1e-4 || NoV <= 1e-4)
+    if (NoL <= 0.0)
     {
         return 0.0;
     }
@@ -731,12 +733,16 @@ float OpaqueBsdfPdf(
 
     const float d = GgxD(NoH, alpha);
     const float g1 = SmithG1(NoV, alpha);
-    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-6);
+    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-4);
     const float pdfDiff = NoL / kPi;
     return pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
 }
 
 // Sun NEE — full opaque BSDF toward the sun. Delta light: no MIS partner, weight 1.
+// Gate on the SHADING normal (like env/emissive NEE): with normal maps, bump walls stay lit beyond
+// the geometric terminator, and a geometric-normal gate chops them with a hard edge exactly at the
+// sun-visibility boundary. The traced shadow ray (from the geometric-offset origin) still provides
+// real occlusion, so light naturally falls off past the terminator instead of stepping to black.
 float3 EvaluateDirectSun(
     uint2 pixel,
     uint bounceIndex,
@@ -745,18 +751,18 @@ float3 EvaluateDirectSun(
     float3 albedo,
     float roughness,
     float metallic,
-    float3 hitNormal,
+    float3 shadingNormal,
     float3 shadowOrigin)
 {
     const float3 sunL = normalize(g_SunDirection);
-    if (dot(hitNormal, sunL) <= 0.0)
+    if (dot(shadingNormal, sunL) <= 0.0)
     {
         return 0.0.xxx;
     }
 
-    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, hitNormal, shadowOrigin);
+    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, shadingNormal, shadowOrigin);
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, sunL, f0, albedo, roughness, metallic);
+    const float3 bsdf = EvaluateOpaqueBsdf(shadingNormal, viewDir, sunL, f0, albedo, roughness, metallic);
     return bsdf * sunRadiance * sunVis;
 }
 
@@ -958,7 +964,7 @@ void SampleOpaqueInterface(
         nextDir = l;
 
         const float NoL = dot(hitNormal, l);
-        if (NoL <= 1e-4 || NoV <= 1e-4)
+        if (NoL <= 0.0)
         {
             scatterPdf = 1.0;
             throughput = 0.0.xxx;
@@ -984,10 +990,9 @@ void SampleOpaqueInterface(
     nextDir = l;
 
     const float NoL = dot(hitNormal, l);
-    if (NoL <= 1e-4 || NoV <= 1e-4)
+    if (NoL <= 0.0)
     {
-        // Sampled below the horizon (or grazing view): the BRDF is zero here, so terminate this
-        // sample (unbiased) rather than redirecting to a fake mirror direction as the old code did.
+        // Sampled below the horizon: terminate this path sample (unbiased).
         scatterPdf = 1.0;
         throughput = 0.0.xxx;
         return;
@@ -1004,11 +1009,11 @@ void SampleOpaqueInterface(
 
     // BRDF * cos(theta_l). Specular uses per-microfacet F(VoH); diffuse uses view-side F(NoV) so the
     // two lobes conserve energy (a per-microfacet (1-F(VoH)) diffuse gains ~9% at grazing).
-    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-6);              // f_spec * NoL
+    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-4);              // f_spec * NoL
     const float3 diffCos = baseDiffuse * (1.0.xxx - fresnelNoV) * (NoL / kPi);   // f_diff * NoL, (1-F(NoV)) split
 
     // Mixture directional pdf: VNDF for specular (= G1*D/(4*NoV)), cosine for diffuse.
-    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-6);
+    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-4);
     const float pdfDiff = NoL / kPi;
     const float pdfMix = pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
 
@@ -1273,30 +1278,41 @@ void PathTracerRayGen()
         pathConeWidth += g_PtPixelSpreadAngle * payload.hitDistance;
 
         const MaterialEntry material = g_Materials[payload.instanceId];
-        const float3 albedo = SampleSurfaceAlbedo(
+        const float3 hitNormalGeom = payload.normal;
+        const float3 hitNormal = payload.shadingNormal;
+        const float albedoLod = ComputeAlbedoLod(payload, pathConeWidth, ray.Direction);
+        float3 albedo;
+        float surfaceRoughness;
+        float surfaceMetallic;
+        float3 surfaceEmissiveColor;
+        ResolveSurfaceMaterialScalars(
             payload.instanceId,
             payload.primitiveIndex,
             payload.barycentrics,
-            ComputeAlbedoLod(payload, pathConeWidth, ray.Direction));
-        const float3 hitNormal = payload.normal;
+            albedoLod,
+            albedo,
+            surfaceRoughness,
+            surfaceMetallic,
+            surfaceEmissiveColor);
         const float3 viewDir = -ray.Direction;
         const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
-        const float3 shadowOrigin = hitPos + hitNormal * max(payload.hitDistance * 0.001, 0.002);
+        const float3 shadowOrigin = hitPos + hitNormalGeom * max(payload.hitDistance * 0.001, 0.002);
 
         if (pathInMedium && bounce > 0u)
         {
             throughput *= BeerLambertMediumAttenuation(mediumTint, payload.hitDistance);
         }
 
-        const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
+        const float3 f0 = lerp(0.04.xxx, albedo, surfaceMetallic);
         const float dielectricWeight =
-            DielectricWeight(material.transmission, material.metallic);
+            DielectricWeight(material.transmission, surfaceMetallic);
         const float3 specularEnergy =
-            FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(material.roughness, 0.55));
+            FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(surfaceRoughness, 0.55));
         const float3 diffuseAlbedo =
-            albedo * (1.0.xxx - specularEnergy) * (1.0 - material.metallic) * (1.0 - dielectricWeight);
+            albedo * (1.0.xxx - specularEnergy) * (1.0 - surfaceMetallic) * (1.0 - dielectricWeight);
 
-        const float emissiveLuminance = max(material.emissive.r, max(material.emissive.g, material.emissive.b));
+        const float emissiveLuminance =
+            max(surfaceEmissiveColor.r, max(surfaceEmissiveColor.g, surfaceEmissiveColor.b));
         if (emissiveLuminance > 1e-4)
         {
             float emitterPickPdf;
@@ -1306,7 +1322,7 @@ void PathTracerRayGen()
             const float pdfNee = EmissiveNeePdfSolidAngle(
                 emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter);
             const float misHit = pdfNee > 0.0 ? BalanceHeuristic(lastScatterPdf, pdfNee) : 1.0;
-            const float3 surfaceEmissive = EmissiveWithBloomHalo(material.emissive) * misHit;
+            const float3 surfaceEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor) * misHit;
             radiance += throughput * surfaceEmissive;
             termSurfaceEmissive += throughput * surfaceEmissive;
         }
@@ -1314,7 +1330,7 @@ void PathTracerRayGen()
         const float3 sunContrib = (dielectricWeight > 0.01)
             ? 0.0.xxx
             : EvaluateDirectSun(
-                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * sunContrib;
         termDirectSun += throughput * sunContrib;
@@ -1322,7 +1338,7 @@ void PathTracerRayGen()
         const float3 emissiveContrib = (dielectricWeight > 0.01)
             ? 0.0.xxx
             : EvaluateDirectEmissive(
-                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * emissiveContrib;
         termDirectEmissive += throughput * emissiveContrib;
@@ -1330,7 +1346,7 @@ void PathTracerRayGen()
         const float3 envContrib = (dielectricWeight > 0.01)
             ? 0.0.xxx
             : EvaluateDirectEnvironment(
-                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * envContrib;
 
@@ -1339,10 +1355,13 @@ void PathTracerRayGen()
         if (kPtCenterPrimaryRays && bounce == 0u)
         {
             primaryAoVis =
-                TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormal, g_PtAmbientAoRayCount);
+                TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
+            // Shading normal, matching EvaluateDirectSun — the AOV should show the visibility the
+            // radiance path actually uses.
             primarySunVis = TracePrimarySunVisibility(pixel, bounce, hitNormal, shadowOrigin);
             const float3 ambientContrib =
-                EvaluateRealTimeDiffuseAmbient(pixel, diffuseAlbedo, hitNormal, shadowOrigin);
+                EvaluateRealTimeDiffuseAmbient(
+                    pixel, diffuseAlbedo, hitNormal, hitNormalGeom, shadowOrigin);
             radiance += throughput * ambientContrib;
             termAmbient += throughput * ambientContrib;
         }
@@ -1353,20 +1372,20 @@ void PathTracerRayGen()
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
-            const float nDotVPrimary = saturate(dot(hitNormal, viewDir));
-            const float albedoLodPrimary = ComputeAlbedoLod(payload, pathConeWidth, ray.Direction);
+            const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
             float3 diffuseGuide;
             float3 specGuide;
             float3 guideNormal;
             float guideRoughness;
             ComputePtPrimaryRrMaterialGuides(
-                payload.instanceId,
-                payload.primitiveIndex,
-                payload.barycentrics,
+                albedo,
                 hitNormal,
+                surfaceRoughness,
+                surfaceMetallic,
+                material.transmission,
+                material.indexOfRefraction,
                 viewDir,
-                albedoLodPrimary,
                 diffuseGuide,
                 specGuide,
                 guideNormal,
@@ -1389,7 +1408,7 @@ void PathTracerRayGen()
 
                 const TransmissionGuideHit txGuide = TraceTransmissionGuide(
                     hitPos,
-                    hitNormal,
+                    hitNormalGeom,
                     ray.Direction,
                     material.indexOfRefraction,
                     thinPane,
@@ -1409,13 +1428,27 @@ void PathTracerRayGen()
                     float3 bgNormal;
                     float bgRoughness;
                     const float3 bgViewDir = -txGuide.refractDir;
-                    ComputePtPrimaryRrMaterialGuides(
+                    const MaterialEntry bgMaterial = g_Materials[txGuide.instanceId];
+                    float3 bgAlbedo;
+                    float bgMetallic;
+                    float3 bgEmissive;
+                    ResolveSurfaceMaterialScalars(
                         txGuide.instanceId,
                         txGuide.primitiveIndex,
                         txGuide.barycentrics,
-                        txGuide.normal,
-                        bgViewDir,
                         ComputeTransmissionGuideAlbedoLod(txGuide, pathConeWidth),
+                        bgAlbedo,
+                        bgRoughness,
+                        bgMetallic,
+                        bgEmissive);
+                    ComputePtPrimaryRrMaterialGuides(
+                        bgAlbedo,
+                        txGuide.shadingNormal,
+                        bgRoughness,
+                        bgMetallic,
+                        bgMaterial.transmission,
+                        bgMaterial.indexOfRefraction,
+                        bgViewDir,
                         bgDiffuse,
                         bgSpec,
                         bgNormal,
@@ -1452,7 +1485,7 @@ void PathTracerRayGen()
             // Scale out as dielectric weight rises — glass refraction must not use a mirror guide.
             const float mirrorGuideWeight =
                 (1.0 - dielectricWeight)
-                * (1.0 - smoothstep(0.45, 0.65, material.roughness));
+                * (1.0 - smoothstep(0.45, 0.65, surfaceRoughness));
             if (mirrorGuideWeight > 0.0)
             {
                 // Match the grazing-aware bounce offset — shadowOrigin self-intersects at silhouettes
@@ -1487,11 +1520,11 @@ void PathTracerRayGen()
             // in real-time, or added here in reference mode. Only fires for paths that did not escape.
             const float terminalNdotV = saturate(dot(hitNormal, viewDir));
             const float3 reflectTail =
-                SampleEnvironment(reflect(-viewDir, hitNormal), TransmissionMissEnvRoughness(material.roughness, dielectricWeight))
-                * EnvBrdfApprox(f0, material.roughness, terminalNdotV);
+                SampleEnvironment(reflect(-viewDir, hitNormal), TransmissionMissEnvRoughness(surfaceRoughness, dielectricWeight))
+                * EnvBrdfApprox(f0, surfaceRoughness, terminalNdotV);
             const float3 transmitTail = SampleEnvironment(
                 ray.Direction,
-                TransmissionMissEnvRoughness(material.roughness, dielectricWeight));
+                TransmissionMissEnvRoughness(surfaceRoughness, dielectricWeight));
             radiance += throughput * lerp(reflectTail, transmitTail, dielectricWeight);
             if (!kPtCenterPrimaryRays && g_EnvLightImportanceCount == 0u)
             {
@@ -1515,8 +1548,8 @@ void PathTracerRayGen()
             viewDir,
             f0,
             albedo,
-            material.roughness,
-            material.metallic,
+            surfaceRoughness,
+            surfaceMetallic,
             material.transmission,
             material.indexOfRefraction,
             material.thinWalled > 0.5,
@@ -1544,7 +1577,7 @@ void PathTracerRayGen()
         // Reference: always add the true sky. Transmitted rays always see through on miss.
         addEnvOnMiss = kPtCenterPrimaryRays ? (isSpecular || pathInMedium) : true;
 
-        missEnvRoughness = TransmissionMissEnvRoughness(material.roughness, dielectricWeight);
+        missEnvRoughness = TransmissionMissEnvRoughness(surfaceRoughness, dielectricWeight);
 
         if (kPtRussianRouletteEnabled && bounce >= kRussianRouletteStartBounce)
         {
@@ -1694,6 +1727,8 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;
     payload.normal = hitNormal;
+    payload.shadingNormal = ApplyWorldNormalMap(
+        instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
     payload.barycentrics = attribs.barycentrics;
     payload.triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
     ComputeVertexInterpolatedPrimarySurface(

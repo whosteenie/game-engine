@@ -125,7 +125,7 @@ namespace
             : CosineSampleHemisphere(n, u1, u2);
 
         const float NoL = glm::dot(n, l);
-        if (NoL <= 1e-4f || NoV <= 1e-4f)
+        if (NoL <= 0.0f)
         {
             return glm::vec3(0.0f);
         }
@@ -139,10 +139,10 @@ namespace
         const float g2 = SmithG2(NoV, NoL, alpha);
         const glm::vec3 fresnel = FresnelSchlick(VoH, f0);
 
-        const glm::vec3 specCos = d * g2 * fresnel / std::max(4.0f * NoV, 1e-6f);
+        const glm::vec3 specCos = d * g2 * fresnel / std::max(4.0f * NoV, 1e-4f);
         const glm::vec3 diffCos = baseDiffuse * (glm::vec3(1.0f) - fresnelNoV) * (NoL / kPi);
 
-        const float pdfSpec = g1 * d / std::max(4.0f * NoV, 1e-6f);
+        const float pdfSpec = g1 * d / std::max(4.0f * NoV, 1e-4f);
         const float pdfDiff = NoL / kPi;
         const float pdfMix = pSpec * pdfSpec + (1.0f - pSpec) * pdfDiff;
 

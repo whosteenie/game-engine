@@ -170,7 +170,7 @@ float3 TraceDielectricReflectContrib(
             reflectPayload.instanceId,
             reflectPayload.primitiveIndex,
             reflectPayload.barycentrics,
-            reflectPayload.normal,
+            reflectPayload.shadingNormal,
             reflectDir);
     }
 
@@ -302,6 +302,7 @@ struct TransmissionGuideHit
     uint primitiveIndex;
     float2 barycentrics;
     float3 normal;
+    float3 shadingNormal;
     float triangleLod;
     float3 refractDir;
     float refractedHitDistance;
@@ -326,6 +327,7 @@ TransmissionGuideHit TraceTransmissionGuide(
     result.primitiveIndex = 0u;
     result.barycentrics = 0.0.xx;
     result.normal = float3(0.0, 0.0, 1.0);
+    result.shadingNormal = float3(0.0, 0.0, 1.0);
     result.triangleLod = 0.0;
     result.refractDir = rayDir;
     result.refractedHitDistance = 0.0;
@@ -364,6 +366,7 @@ TransmissionGuideHit TraceTransmissionGuide(
             result.primitiveIndex = guidePayload.primitiveIndex;
             result.barycentrics = guidePayload.barycentrics;
             result.normal = guidePayload.normal;
+            result.shadingNormal = guidePayload.shadingNormal;
             result.triangleLod = guidePayload.triangleLod;
             result.refractedHitDistance = guidePayload.hitDistance;
             return result;
@@ -412,7 +415,9 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
 
         if (pathInMedium)
         {
-            transmittance *= BeerLambertMediumAttenuation(mat.albedo, probe.hitDistance);
+            const float3 mediumAttenuation =
+                BeerLambertMediumAttenuation(mat.albedo, probe.hitDistance);
+            transmittance *= (mediumAttenuation.r + mediumAttenuation.g + mediumAttenuation.b) / 3.0;
         }
 
         const float3 hitPos = rayOrigin + rayDir * probe.hitDistance;

@@ -24,6 +24,35 @@
 
 namespace
 {
+    constexpr std::uint32_t kMaterialFlagMetallicRoughnessMap = 1u;
+    constexpr std::uint32_t kUv0OffsetFloats = 6u;
+    constexpr std::uint32_t kUv1OffsetFloats = 8u;
+    constexpr std::uint32_t kTangentOffsetFloats = 10u;
+    constexpr std::uint32_t kMinTexturedStrideFloats = 8u;
+    constexpr std::uint32_t kMinTangentStrideFloats = 14u;
+
+    std::uint32_t UvOffsetFloatsForTexCoordSet(const int texCoordSet)
+    {
+        return texCoordSet == 1 ? kUv1OffsetFloats : kUv0OffsetFloats;
+    }
+
+    void AssignMaterialMapBinding(
+        const std::uint32_t srvIndex,
+        const int texCoordSet,
+        const std::uint32_t vertexStrideFloats,
+        const std::uint32_t minStride,
+        std::uint32_t& outTexIndex,
+        std::uint32_t& outUvOffset)
+    {
+        outTexIndex = UINT32_MAX;
+        outUvOffset = UINT32_MAX;
+        if (srvIndex != UINT32_MAX && vertexStrideFloats >= minStride)
+        {
+            outTexIndex = srvIndex;
+            outUvOffset = UvOffsetFloatsForTexCoordSet(texCoordSet);
+        }
+    }
+
     std::uint64_t HashCombine(const std::uint64_t seed, const std::uint64_t value)
     {
         return seed ^ (value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
@@ -81,6 +110,11 @@ namespace
             fingerprint = HashFloatBits(fingerprint, material.GetIndexOfRefraction());
             fingerprint = HashCombine(fingerprint, material.IsThinWalled() ? 1u : 0u);
             fingerprint = HashCombine(fingerprint, material.GetAlbedoMapSrvIndex());
+            fingerprint = HashCombine(fingerprint, material.GetNormalMapSrvIndex());
+            fingerprint = HashCombine(fingerprint, material.GetRoughnessMapSrvIndex());
+            fingerprint = HashCombine(fingerprint, material.GetEmissiveMapSrvIndex());
+            fingerprint = HashCombine(
+                fingerprint, material.HasMetallicRoughnessMap() ? kMaterialFlagMetallicRoughnessMap : 0u);
         }
 
         return fingerprint;
@@ -389,15 +423,42 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         materialEntry.transmission = material.GetTransmission();
         materialEntry.indexOfRefraction = material.GetIndexOfRefraction();
         materialEntry.thinWalled = material.IsThinWalled() ? 1.0f : 0.0f;
+        materialEntry.materialFlags = 0;
+        materialEntry.tangentOffsetFloats =
+            vertexStrideFloats >= kMinTangentStrideFloats ? kTangentOffsetFloats : UINT32_MAX;
 
-        // Bindless albedo texture:
-        // constant. UV0 sits at float offset 6 in the interleaved stride (pos3 + normal3 + uv0).
-        const std::uint32_t albedoTexIndex = material.GetAlbedoMapSrvIndex();
-        if (albedoTexIndex != UINT32_MAX && vertexStrideFloats >= 8)
+        AssignMaterialMapBinding(
+            material.GetAlbedoMapSrvIndex(),
+            material.GetAlbedoTexCoordSet(),
+            vertexStrideFloats,
+            kMinTexturedStrideFloats,
+            materialEntry.albedoTexIndex,
+            materialEntry.albedoUvOffsetFloats);
+        AssignMaterialMapBinding(
+            material.GetNormalMapSrvIndex(),
+            material.GetNormalTexCoordSet(),
+            vertexStrideFloats,
+            kMinTangentStrideFloats,
+            materialEntry.normalTexIndex,
+            materialEntry.normalUvOffsetFloats);
+        AssignMaterialMapBinding(
+            material.GetRoughnessMapSrvIndex(),
+            material.GetRoughnessTexCoordSet(),
+            vertexStrideFloats,
+            kMinTexturedStrideFloats,
+            materialEntry.roughnessTexIndex,
+            materialEntry.roughnessUvOffsetFloats);
+        if (material.HasRoughnessMap() && material.HasMetallicRoughnessMap())
         {
-            materialEntry.albedoTexIndex = albedoTexIndex;
-            materialEntry.albedoUvOffsetFloats = 6;
+            materialEntry.materialFlags |= kMaterialFlagMetallicRoughnessMap;
         }
+        AssignMaterialMapBinding(
+            material.GetEmissiveMapSrvIndex(),
+            material.GetEmissiveTexCoordSet(),
+            vertexStrideFloats,
+            kMinTexturedStrideFloats,
+            materialEntry.emissiveTexIndex,
+            materialEntry.emissiveUvOffsetFloats);
 
         const std::vector<unsigned int>& meshIndices = mesh->GetIndices();
         indices.insert(indices.end(), meshIndices.begin(), meshIndices.end());

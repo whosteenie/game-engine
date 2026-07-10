@@ -195,6 +195,8 @@ void GiClosestHit(inout GiPayload payload, BuiltInTriangleIntersectionAttributes
     payload.hit = 1;
     payload.hitDistance = hitT;
     // viewDir toward the receiver is the reversed incoming ray direction.
+    const float3 shadingNormal = ApplyWorldNormalMap(
+        instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
     payload.radiance =
-        ShadeHit(instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir);
+        ShadeHit(instanceId, primitiveIndex, attribs.barycentrics, shadingNormal, -rayDir);
 }

@@ -66,17 +66,27 @@ TextureCube<float4> g_PrefilterMap : register(t10);
 Texture2D<float4> g_VelocityMap : register(t11); // RT4 motion NDC (curr - prev)
 
 // Per-object material constants (indexed by InstanceID). Layout mirrors DxrMaterialEntry.
+static const uint kMaterialFlagMetallicRoughnessMap = 1u;
+
 struct MaterialEntry
 {
     float3 albedo;
     float metallic;
     float3 emissive;
     float roughness;
-    uint albedoTexIndex;        // absolute bindless SRV heap index; 0xFFFFFFFF = none
-    uint albedoUvOffsetFloats;  // UV0 float offset within the vertex stride
-    float transmission;         // 0 = opaque, 1 = glass (PT-A)
-    float indexOfRefraction;    // dielectric IOR (air = 1.0); default ~1.5 glass
-    float thinWalled;           // 1 = thin slab (pane); 0 = solid volume (lens)
+    uint albedoTexIndex;           // absolute bindless SRV heap index; 0xFFFFFFFF = none
+    uint albedoUvOffsetFloats;     // UV float offset within the vertex stride
+    uint normalTexIndex;
+    uint normalUvOffsetFloats;
+    uint roughnessTexIndex;
+    uint roughnessUvOffsetFloats;
+    uint emissiveTexIndex;
+    uint emissiveUvOffsetFloats;
+    uint materialFlags;            // kMaterialFlagMetallicRoughnessMap
+    uint tangentOffsetFloats;      // tangent float offset; 0xFFFFFFFF = derive from geom normal
+    float transmission;            // 0 = opaque, 1 = glass (PT-A)
+    float indexOfRefraction;       // dielectric IOR (air = 1.0); default ~1.5 glass
+    float thinWalled;              // 1 = thin slab (pane); 0 = solid volume (lens)
     float _padDielectric;
 };
 
@@ -226,6 +236,191 @@ float3 ComputeWorldShadingNormal(GeometryLookupEntry geo, uint primitiveIndex, f
     return normalize(worldNormal);
 }
 
+float4 LoadObjectTangent(GeometryLookupEntry geo, uint vertexIndex, uint tangentOffsetFloats)
+{
+    const uint base = geo.vertexFloatOffset + vertexIndex * geo.vertexStrideFloats + tangentOffsetFloats;
+    return float4(
+        g_SceneVertexFloats[base + 0],
+        g_SceneVertexFloats[base + 1],
+        g_SceneVertexFloats[base + 2],
+        g_SceneVertexFloats[base + 3]);
+}
+
+float4 InterpolateObjectTangent(
+    GeometryLookupEntry geo, uint primitiveIndex, float2 barycentrics, uint tangentOffsetFloats)
+{
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint i0 = g_SceneIndices[indexBase + 0];
+    const uint i1 = g_SceneIndices[indexBase + 1];
+    const uint i2 = g_SceneIndices[indexBase + 2];
+
+    const float w = 1.0 - barycentrics.x - barycentrics.y;
+    const float4 t0 = LoadObjectTangent(geo, i0, tangentOffsetFloats);
+    const float4 t1 = LoadObjectTangent(geo, i1, tangentOffsetFloats);
+    const float4 t2 = LoadObjectTangent(geo, i2, tangentOffsetFloats);
+    return t0 * w + t1 * barycentrics.x + t2 * barycentrics.y;
+}
+
+float3 PerturbNormalFromTangentMap(float3 geomNormal, float4 tangent, float3 tangentNormalSample)
+{
+    float3 tangentVector = normalize(tangent.xyz);
+    tangentVector = normalize(tangentVector - dot(tangentVector, geomNormal) * geomNormal);
+    const float3 bitangent = normalize(cross(geomNormal, tangentVector) * tangent.w);
+    const float3x3 tbn = float3x3(tangentVector, bitangent, geomNormal);
+    return normalize(mul(tangentNormalSample, tbn));
+}
+
+// Shading-normal adaptation (Keller et al., "The Iray Light Transport Simulation and Rendering
+// System", §A.3): a normal-mapped shading normal can face AWAY from the viewer on visible geometry
+// (bump walls at oblique views). Every NoV-dependent BRDF term then degenerates to exactly zero —
+// FresnelSchlick(NoV=0)=1 kills the (1-F(NoV)) diffuse split, SmithG2(NoV=0)=0 kills specular, and
+// the bounce estimator zeroes throughput — producing view-dependent black voids in crevices. Bend
+// the normal just inside the view hemisphere instead, preserving as much of the perturbation as
+// possible. dot(n + V*(eps - NoV), V) = eps > 0, so the result is always visible-hemisphere valid.
+// eps = 0.1 keeps (1-F(0.1)) ~= 0.39 of the diffuse — continuous with neighboring crevice pixels
+// (a tiny eps like 0.01 leaves F ~= 0.95 and the void survives as a dark band).
+static const float kMinShadingNoV = 0.1;
+
+float3 FinalizeShadingNormal(float3 geomNormal, float3 shadingNormal, float3 viewDir)
+{
+    float3 n = normalize(shadingNormal);
+    const float nDotV = dot(n, viewDir);
+    if (nDotV < kMinShadingNoV)
+    {
+        n = normalize(n + viewDir * (kMinShadingNoV - nDotV));
+    }
+    return n;
+}
+
+float3 SampleBindlessTextureRgb(uint texIndex, float2 uv, float lod)
+{
+    return g_BindlessTextures[NonUniformResourceIndex(texIndex)]
+        .SampleLevel(g_LinearWrapSampler, uv, max(lod, 0.0)).rgb;
+}
+
+// Apply a normal map at a hit. Requires ObjectToWorld — call from closest-hit only.
+float3 ApplyWorldNormalMap(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 worldGeomNormal,
+    float3 viewDir,
+    float textureLod)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const MaterialEntry material = g_Materials[instanceId];
+    float3 shadingNormal = normalize(worldGeomNormal);
+    if (material.normalTexIndex == 0xFFFFFFFFu || material.normalUvOffsetFloats == 0xFFFFFFFFu)
+    {
+        return shadingNormal;
+    }
+
+    const float2 hitUv =
+        ComputeHitUv(geo, primitiveIndex, material.normalUvOffsetFloats, barycentrics);
+    const float3 tangentNormal =
+        SampleBindlessTextureRgb(material.normalTexIndex, hitUv, textureLod) * 2.0 - 1.0;
+
+    if (material.tangentOffsetFloats != 0xFFFFFFFFu
+        && geo.vertexStrideFloats >= material.tangentOffsetFloats + 4u)
+    {
+        const float4 objectTangent =
+            InterpolateObjectTangent(geo, primitiveIndex, barycentrics, material.tangentOffsetFloats);
+        const float3x4 objectToWorld = ObjectToWorld3x4();
+        const float3 worldTangent = normalize(mul((float3x3)objectToWorld, objectTangent.xyz));
+        const float4 worldTangent4 = float4(worldTangent, objectTangent.w);
+        shadingNormal = PerturbNormalFromTangentMap(shadingNormal, worldTangent4, tangentNormal);
+    }
+    else
+    {
+        float3 fallbackTangent;
+        float3 fallbackBitangent;
+        BuildTangentFrame(shadingNormal, fallbackTangent, fallbackBitangent);
+        shadingNormal = PerturbNormalFromTangentMap(
+            shadingNormal, float4(fallbackTangent, 1.0), tangentNormal);
+    }
+
+    return FinalizeShadingNormal(worldGeomNormal, shadingNormal, viewDir);
+}
+
+// Map sampling safe from raygen (no ObjectToWorld). Normal mapping is applied in closest-hit.
+void ResolveSurfaceMaterialScalars(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float textureLod,
+    out float3 outAlbedo,
+    out float outRoughness,
+    out float outMetallic,
+    out float3 outEmissive)
+{
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    const MaterialEntry material = g_Materials[instanceId];
+
+    outAlbedo = material.albedo;
+    if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
+        outAlbedo *= SampleBindlessTextureRgb(material.albedoTexIndex, hitUv, textureLod);
+    }
+
+    outRoughness = material.roughness;
+    outMetallic = material.metallic;
+    if (material.roughnessTexIndex != 0xFFFFFFFFu && material.roughnessUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.roughnessUvOffsetFloats, barycentrics);
+        const float3 roughnessSample =
+            SampleBindlessTextureRgb(material.roughnessTexIndex, hitUv, textureLod);
+        if ((material.materialFlags & kMaterialFlagMetallicRoughnessMap) != 0u)
+        {
+            outRoughness *= roughnessSample.g;
+            outMetallic *= roughnessSample.b;
+        }
+        else
+        {
+            outRoughness *= roughnessSample.r;
+        }
+    }
+    outRoughness = clamp(outRoughness, 0.0, 1.0);
+    outMetallic = clamp(outMetallic, 0.0, 1.0);
+
+    outEmissive = max(material.emissive, 0.0.xxx);
+    if (material.emissiveTexIndex != 0xFFFFFFFFu && material.emissiveUvOffsetFloats != 0xFFFFFFFFu)
+    {
+        const float2 hitUv =
+            ComputeHitUv(geo, primitiveIndex, material.emissiveUvOffsetFloats, barycentrics);
+        outEmissive *= SampleBindlessTextureRgb(material.emissiveTexIndex, hitUv, textureLod);
+    }
+}
+
+// Full resolve including normal map — closest-hit / ShadeHit only (uses ObjectToWorld).
+void ResolveSurfaceMaterial(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 geomNormal,
+    float3 viewDir,
+    float textureLod,
+    out float3 outAlbedo,
+    out float3 outNormal,
+    out float outRoughness,
+    out float outMetallic,
+    out float3 outEmissive)
+{
+    ResolveSurfaceMaterialScalars(
+        instanceId,
+        primitiveIndex,
+        barycentrics,
+        textureLod,
+        outAlbedo,
+        outRoughness,
+        outMetallic,
+        outEmissive);
+    outNormal = ApplyWorldNormalMap(
+        instanceId, primitiveIndex, barycentrics, geomNormal, viewDir, textureLod);
+}
+
 float3 SrgbToLinear(float3 c)
 {
     return pow(max(c, 0.0.xxx), 2.2.xxx);
@@ -295,38 +490,39 @@ float3 EnvBrdfApprox(float3 f0, float roughness, float nDotV)
 // zero-vs-sky split the diffuse denoiser smears into splotches. Env is the terminal bounce (no
 // secondary trace), matching reflections.hlsl's ReflectionClosestHit.
 // viewDir = direction from the hit toward the receiver (i.e. -incoming ray direction).
+// shadingNormal must already include normal-map perturbation when bound (computed in closest-hit).
 float3 ShadeHit(
-    uint instanceId, uint primitiveIndex, float2 barycentrics, float3 hitNormal, float3 viewDir)
+    uint instanceId, uint primitiveIndex, float2 barycentrics, float3 shadingNormal, float3 viewDir)
 {
-    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
-    const MaterialEntry material = g_Materials[instanceId];
-
-    float3 albedo = material.albedo;
-    if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
-    {
-        const float2 hitUv =
-            ComputeHitUv(geo, primitiveIndex, material.albedoUvOffsetFloats, barycentrics);
-        const float3 texel =
-            g_BindlessTextures[NonUniformResourceIndex(material.albedoTexIndex)]
-                .SampleLevel(g_LinearWrapSampler, hitUv, 0.0).rgb;
-        albedo *= texel;
-    }
+    float3 albedo;
+    float roughness;
+    float metallic;
+    float3 emissive;
+    ResolveSurfaceMaterialScalars(
+        instanceId,
+        primitiveIndex,
+        barycentrics,
+        0.0,
+        albedo,
+        roughness,
+        metallic,
+        emissive);
 
     // Energy-conserving diffuse weight, matching the raster (pbr.ps.hlsl CalcCookTorrance): the
     // fraction of light NOT taken by the specular lobe. Without the (1 - F) term the bounce
     // surface reads hotter than it does under direct shading, inflating GI.
-    const float3 f0 = lerp(0.04.xxx, albedo, material.metallic);
-    const float nDotV = saturate(dot(hitNormal, viewDir));
-    const float3 specularEnergy = FresnelSchlickRoughnessGi(nDotV, f0, max(material.roughness, 0.55));
-    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - material.metallic);
+    const float3 f0 = lerp(0.04.xxx, albedo, metallic);
+    const float nDotV = saturate(dot(shadingNormal, viewDir));
+    const float3 specularEnergy = FresnelSchlickRoughnessGi(nDotV, f0, max(roughness, 0.55));
+    const float3 diffuseEnergy = (1.0.xxx - specularEnergy) * (1.0 - metallic);
     const float3 diffuseAlbedo = albedo * diffuseEnergy;
 
     const float3 sunL = normalize(g_SunDirection);
-    const float ndotl = saturate(dot(hitNormal, sunL));
+    const float ndotl = saturate(dot(shadingNormal, sunL));
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
     const float3 direct = diffuseAlbedo * sunRadiance * ndotl / kPi;
 
-    const float3 irradiance = EvaluateDiffuseIrradianceSh(hitNormal);
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(shadingNormal);
     const float3 ambient = diffuseAlbedo * irradiance / kPi;
 
     // Specular environment IBL at the hit: reflect the incoming ray about the hit normal, sample the
@@ -334,11 +530,11 @@ float3 ShadeHit(
     // reflected-light transport the surface bounces toward the receiver (a mirror floor sends the sky
     // up onto the receiver). f0 = 0.04 for dielectrics, albedo for metals, so metals return their
     // tinted reflection while the (1 - F) diffuse split above keeps energy conserved.
-    const float3 reflectDir = reflect(-viewDir, hitNormal);
+    const float3 reflectDir = reflect(-viewDir, shadingNormal);
     const float3 specular =
-        SampleEnvironment(reflectDir, material.roughness) * EnvBrdfApprox(f0, material.roughness, nDotV);
+        SampleEnvironment(reflectDir, roughness) * EnvBrdfApprox(f0, roughness, nDotV);
 
-    return max(direct + ambient + specular + material.emissive, 0.0.xxx);
+    return max(direct + ambient + specular + emissive, 0.0.xxx);
 }
 
 #endif // DXR_HIT_SHADING_HLSLI
