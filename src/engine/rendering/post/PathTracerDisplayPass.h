@@ -27,6 +27,7 @@ struct PathTracerHistoryKey
     float sunIntensity = 0.0f;
     float environmentIntensity = 1.0f;
     std::size_t geometryObjectCount = 0;
+    std::uint32_t sceneVersion = 0;
 
     bool operator==(const PathTracerHistoryKey& other) const;
 };

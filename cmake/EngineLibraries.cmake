@@ -88,6 +88,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/post/ScreenCompositePass.cpp
     src/engine/rendering/post/PostProcessDebugPass.cpp
     src/engine/rendering/DxrSettings.cpp
+    src/engine/rendering/PtTemporalHistory.cpp
     src/engine/lighting/DirectionalShadowSettings.cpp
     src/engine/rendering/Shader.cpp
     src/engine/rendering/ShaderCache.cpp

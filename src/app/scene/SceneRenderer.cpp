@@ -33,7 +33,7 @@
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/ScreenSpaceEffectsSettings.h"
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/PtTemporalHistory.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/raytracing/DxrTrace.h"
@@ -564,6 +564,9 @@ void SceneRenderer::RecordDxrPass(
         GfxContext::Get().GetCommandList());
     DxrBreadcrumb("render: EnsureScene end");
 
+    SyncPtTemporalHistoryVersion();
+    ApplyPtSceneVersionInvalidation();
+
     const RenderDebugMode debugMode =
         usePostProcess && m_activeScreenSpaceEffects != nullptr ? m_activeScreenSpaceEffects->GetDebugMode()
                                                           : RenderDebugMode::None;
@@ -744,6 +747,7 @@ void SceneRenderer::RecordDxrPass(
             historyKey.sunIntensity = ptInputs.sunIntensity;
             historyKey.environmentIntensity = ptInputs.environmentIntensity;
             historyKey.geometryObjectCount = m_dxrAccelerationStructures->GetGeometryObjectCount();
+            historyKey.sceneVersion = m_dxrAccelerationStructures->GetPtSceneVersion();
 
             m_activeScreenSpaceEffects->AccumulatePathTracerReference(
                 historyKey,
@@ -1859,6 +1863,64 @@ void SceneRenderer::InvalidateGameViewMotionOnPlayStop()
     }
 
     m_gameViewPreviousWorldMatrices.clear();
+}
+
+void SceneRenderer::SyncPtTemporalHistoryVersion()
+{
+    if (m_dxrAccelerationStructures == nullptr)
+    {
+        return;
+    }
+
+    if (m_environmentMap != nullptr)
+    {
+        const std::uint64_t environmentFingerprint = ComputePtEnvironmentFingerprint(*m_environmentMap);
+        if (m_ptEnvironmentFingerprint != 0 && environmentFingerprint != m_ptEnvironmentFingerprint)
+        {
+            m_dxrAccelerationStructures->BumpPtSceneVersion();
+        }
+        m_ptEnvironmentFingerprint = environmentFingerprint;
+    }
+
+    const std::uint64_t settingsFingerprint = ComputePtSettingsFingerprint(m_dxrSettings);
+    if (m_ptSettingsFingerprint != 0 && settingsFingerprint != m_ptSettingsFingerprint)
+    {
+        m_dxrAccelerationStructures->BumpPtSceneVersion();
+    }
+    m_ptSettingsFingerprint = settingsFingerprint;
+}
+
+void SceneRenderer::ApplyPtSceneVersionInvalidation()
+{
+    if (m_dxrAccelerationStructures == nullptr)
+    {
+        return;
+    }
+
+    const std::uint32_t sceneVersion = m_dxrAccelerationStructures->GetPtSceneVersion();
+    if (sceneVersion == m_consumedPtSceneVersion)
+    {
+        return;
+    }
+
+    m_consumedPtSceneVersion = sceneVersion;
+
+    if (m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->InvalidateMotionHistory();
+        m_screenSpaceEffects->ResetPathTracerAccumulation();
+    }
+
+    if (m_gameViewScreenSpaceEffects != nullptr)
+    {
+        m_gameViewScreenSpaceEffects->InvalidateMotionHistory();
+        m_gameViewScreenSpaceEffects->ResetPathTracerAccumulation();
+    }
+
+    if (m_dxrPathTracerDispatch != nullptr)
+    {
+        m_dxrPathTracerDispatch->ResetAccumulation();
+    }
 }
 
 void SceneRenderer::SyncGameViewScreenSpaceSettings()

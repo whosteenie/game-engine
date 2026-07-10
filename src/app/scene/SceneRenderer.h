@@ -181,6 +181,8 @@ private:
     void SyncGameViewScreenSpaceSettings();
     void MaybeInvalidateStaleViewportTemporalState(RenderViewport viewport);
     void InvalidateViewportTemporalState(RenderViewport viewport);
+    void SyncPtTemporalHistoryVersion();
+    void ApplyPtSceneVersionInvalidation();
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
@@ -217,4 +219,7 @@ private:
     bool m_geometryMsaaReloadRequested = false;
     bool m_geometryMsaaReloadFailed = false;
     std::string m_geometryMsaaReloadError;
+    std::uint32_t m_consumedPtSceneVersion = 0;
+    std::uint64_t m_ptEnvironmentFingerprint = 0;
+    std::uint64_t m_ptSettingsFingerprint = 0;
 };

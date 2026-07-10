@@ -17,6 +17,7 @@ void RunRotationUtilsTests(int& failures);
 void RunDxrSettingsTests(int& failures);
 void RunDirectionalShadowSettingsTests(int& failures);
 void RunDxrAccelerationStructureTests(int& failures);
+void RunPtTemporalHistoryTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
@@ -71,6 +72,7 @@ namespace
         maybeRun(
             "dxr_acceleration_structure",
             [] { RunDxrAccelerationStructureTests(test::FailureCount()); });
+        maybeRun("pt_temporal_history", [] { RunPtTemporalHistoryTests(test::FailureCount()); });
         maybeRun(
             "dxr_shader_infrastructure",
             [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });

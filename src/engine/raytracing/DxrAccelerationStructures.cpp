@@ -165,6 +165,15 @@ bool DxrAccelerationStructures::ConsumeGeometryContentReupload()
     return pending;
 }
 
+void DxrAccelerationStructures::BumpPtSceneVersion()
+{
+    ++m_ptSceneVersion;
+    if (m_ptSceneVersion == 0)
+    {
+        m_ptSceneVersion = 1;
+    }
+}
+
 void DxrAccelerationStructures::ReleaseGeometryBuffers()
 {
     // CRASH-03: defer descriptor-slot recycling — in-flight rays may still read these.
@@ -347,6 +356,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         return true;
     }
 
+    BumpPtSceneVersion();
     m_pendingGeometryContentReupload = true;
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(objects.size());
@@ -1216,14 +1226,20 @@ void DxrAccelerationStructures::EnsureScene(
 
         const std::uint64_t topologyFingerprint = ComputeDxrTlasTopologyFingerprint(instances);
         const std::uint64_t transformFingerprint = ComputeDxrTlasTransformFingerprint(instances);
+        const bool topologyChanged = topologyFingerprint != m_builtTlasTopologyFingerprint;
         const bool skipTlasBuild = !instances.empty()
             && m_tlas.IsBuilt()
             && !m_anyBlasBuiltThisFrame
-            && topologyFingerprint == m_builtTlasTopologyFingerprint
+            && !topologyChanged
             && transformFingerprint == m_builtTlasTransformFingerprint;
 
         if (!skipTlasBuild)
         {
+            if (topologyChanged || m_anyBlasBuiltThisFrame)
+            {
+                BumpPtSceneVersion();
+            }
+
             if (!m_tlas.Build(commandList4, instances, m_scratchBuffer, error))
             {
                 DxrBreadcrumb("AS tlas-build failed");

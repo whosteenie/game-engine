@@ -140,7 +140,8 @@ bool PathTracerHistoryKey::operator==(const PathTracerHistoryKey& other) const
 {
     if (width != other.width || height != other.height
         || convergenceMode != other.convergenceMode
-        || geometryObjectCount != other.geometryObjectCount)
+        || geometryObjectCount != other.geometryObjectCount
+        || sceneVersion != other.sceneVersion)
     {
         return false;
     }

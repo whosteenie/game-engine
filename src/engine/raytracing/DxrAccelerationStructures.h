@@ -158,6 +158,12 @@ public:
     // True once after mesh/material geometry buffers were re-uploaded; clears on read.
     bool ConsumeGeometryContentReupload();
 
+    // G1 (ReSTIR R0): monotonic scene version for PT temporal histories (reference accumulation,
+    // DLSS-RR, future reservoirs). Bumped on geometry/material/topology edits; SceneRenderer bumps
+    // on environment and PT-setting fingerprint changes.
+    std::uint32_t GetPtSceneVersion() const { return m_ptSceneVersion; }
+    void BumpPtSceneVersion();
+
     // Valid only for the frame UploadEmissiveLights ran; UINT32_MAX otherwise.
     std::uint32_t GetEmissiveLightsSrvIndex() const
     {
@@ -243,6 +249,7 @@ private:
     std::uint64_t m_builtTlasTopologyFingerprint = 0;
     std::uint64_t m_builtTlasTransformFingerprint = 0;
     bool m_pendingGeometryContentReupload = false;
+    std::uint32_t m_ptSceneVersion = 1;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);
 };
