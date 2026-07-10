@@ -74,6 +74,9 @@ static const float kRussianRouletteMaxProb = 0.95;
 // Below this roughness, specular uses a delta mirror bounce instead of VNDF (alpha floor ~0.032
 // otherwise reads as frosted even at roughness 0).
 static const float kPtDeltaSpecularRoughness = 0.03;
+// Sentinel pdf for delta events (camera ray, perfect mirror, dielectric interface) so MIS gives
+// weight ≈ 1 when no BSDF-sampling partner exists (PBRT 14.3.x).
+static const float kDeltaScatterPdf = 1.0e10;
 
 struct Payload
 {
@@ -504,25 +507,6 @@ float TracePrimarySunVisibility(
         : TraceTransmissiveVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
 }
 
-float3 EvaluateDirectSun(
-    uint2 pixel,
-    uint bounceIndex,
-    float3 diffuseAlbedo,
-    float3 hitNormal,
-    float3 shadowOrigin)
-{
-    const float3 sunL = normalize(g_SunDirection);
-    const float ndotl = saturate(dot(hitNormal, sunL));
-    if (ndotl <= 0.0)
-    {
-        return 0.0.xxx;
-    }
-
-    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, hitNormal, shadowOrigin);
-    const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
-    return diffuseAlbedo * sunRadiance * ndotl / kPi * sunVis;
-}
-
 float BalanceHeuristic(float pdfA, float pdfB)
 {
     const float denom = pdfA + pdfB;
@@ -560,6 +544,41 @@ float EmissiveLightPickPdf(uint instanceId)
         }
     }
     return 0.0;
+}
+
+// Look up an emitter's NEE selection pdf AND its (AABB) surface area by instance id, so a BSDF-sampled
+// ray that lands on an emitter can compute the competing NEE density for MIS.
+void EmissiveLightLookup(uint instanceId, out float pickPdf, out float surfaceArea)
+{
+    pickPdf = 0.0;
+    surfaceArea = 0.0;
+    if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0)
+    {
+        return;
+    }
+
+    [loop]
+    for (uint lightIndex = 0u; lightIndex < g_EmissiveLightCount; ++lightIndex)
+    {
+        if (g_EmissiveLights[lightIndex].instanceId == instanceId)
+        {
+            pickPdf = g_EmissiveLights[lightIndex].pickWeight / g_EmissiveLightPickWeightSum;
+            surfaceArea = g_EmissiveLights[lightIndex].surfaceArea;
+            return;
+        }
+    }
+}
+
+// Solid-angle density of the emissive-NEE strategy for a light seen at `dist` with emitter-facing
+// cosine `cosThetaEmitter`: pickPdf * (1/area) * dist^2 / cos. Both MIS sides use this so the balance
+// heuristic weights sum to 1 (up to the AABB-vs-mesh emitter approximation, A1).
+float EmissiveNeePdfSolidAngle(float pickPdf, float surfaceArea, float dist2, float cosThetaEmitter)
+{
+    if (pickPdf <= 0.0 || surfaceArea <= 1e-8 || cosThetaEmitter <= 1e-6)
+    {
+        return 0.0;
+    }
+    return pickPdf * (1.0 / surfaceArea) * dist2 / cosThetaEmitter;
 }
 
 // Uniform sample on an axis-aligned box shell; pdfArea is 1 / total surface area.
@@ -652,11 +671,148 @@ void SampleUniformPointOnAabbSurface(
         boundsMin.z);
 }
 
-// One emissive area-light sample per bounce (AABB surface + shadow ray). MIS vs cosine hemisphere.
+// GGX/Trowbridge-Reitz + height-correlated Smith helpers for the opaque BRDF estimator.
+// alpha MUST match SampleGgxVndfHalfVector's internal floor (1e-3) so the evaluated pdf corresponds
+// to the sampling distribution (a mismatch biases the estimator).
+float GgxD(float NoH, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float d = NoH * NoH * (a2 - 1.0) + 1.0;
+    return a2 / max(kPi * d * d, 1e-9);
+}
+
+float SmithG1(float NoX, float alpha)
+{
+    const float a2 = alpha * alpha;
+    return 2.0 * NoX / max(NoX + sqrt(a2 + (1.0 - a2) * NoX * NoX), 1e-9);
+}
+
+float SmithG2HeightCorrelated(float NoV, float NoL, float alpha)
+{
+    const float a2 = alpha * alpha;
+    const float lambdaV = NoL * sqrt(a2 + (1.0 - a2) * NoV * NoV);
+    const float lambdaL = NoV * sqrt(a2 + (1.0 - a2) * NoL * NoL);
+    return 2.0 * NoV * NoL / max(lambdaV + lambdaL, 1e-9);
+}
+
+// Plain Schlick Fresnel (no roughness ceiling — that raster-IBL hack, R4, does not belong in the PT
+// energy split). f0 = 0.04 dielectric / albedo metal.
+float3 FresnelSchlick(float cosTheta, float3 f0)
+{
+    const float m = saturate(1.0 - cosTheta);
+    const float m2 = m * m;
+    return f0 + (1.0.xxx - f0) * (m2 * m2 * m);
+}
+
+float OpaqueBsdfLobeSelectionProbFromNoV(float NoV, float3 f0, float3 albedo, float metallic)
+{
+    const float3 fresnelNoV = FresnelSchlick(NoV, f0);
+    const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
+    const float specLum = Luminance(fresnelNoV);
+    const float diffLum = Luminance(baseDiffuse);
+    float pSpec = specLum / max(specLum + diffLum, 1e-4);
+    pSpec = lerp(pSpec, 1.0, saturate(metallic));
+    return clamp(pSpec, 0.1, 0.9);
+}
+
+// Full opaque BRDF * cos(theta_l) toward direction wi (diffuse + GGX specular).
+float3 EvaluateOpaqueBsdf(
+    float3 hitNormal,
+    float3 viewDir,
+    float3 wi,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic)
+{
+    const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
+    const float alpha = max(ggxRoughness * ggxRoughness, 1e-3);
+    const float NoV = saturate(dot(hitNormal, viewDir));
+    const float NoL = saturate(dot(hitNormal, wi));
+    if (NoL <= 1e-4 || NoV <= 1e-4)
+    {
+        return 0.0.xxx;
+    }
+
+    const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
+    const float3 fresnelNoV = FresnelSchlick(NoV, f0);
+    const float3 h = normalize(viewDir + wi);
+    const float NoH = saturate(dot(hitNormal, h));
+    const float VoH = saturate(dot(viewDir, h));
+
+    const float d = GgxD(NoH, alpha);
+    const float g2 = SmithG2HeightCorrelated(NoV, NoL, alpha);
+    const float3 fresnel = FresnelSchlick(VoH, f0);
+
+    const float3 specCos = d * g2 * fresnel / max(4.0 * NoV, 1e-6);
+    const float3 diffCos = baseDiffuse * (1.0.xxx - fresnelNoV) * (NoL / kPi);
+    return specCos + diffCos;
+}
+
+// Mixture directional pdf for sampling direction wi (matches SampleOpaqueInterface's pdfMix).
+float OpaqueBsdfPdf(
+    float3 hitNormal,
+    float3 viewDir,
+    float3 wi,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic)
+{
+    const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
+    const float alpha = max(ggxRoughness * ggxRoughness, 1e-3);
+    const float NoV = saturate(dot(hitNormal, viewDir));
+    const float NoL = saturate(dot(hitNormal, wi));
+    if (NoL <= 1e-4 || NoV <= 1e-4)
+    {
+        return 0.0;
+    }
+
+    const float pSpec = OpaqueBsdfLobeSelectionProbFromNoV(NoV, f0, albedo, metallic);
+    const float3 h = normalize(viewDir + wi);
+    const float NoH = saturate(dot(hitNormal, h));
+
+    const float d = GgxD(NoH, alpha);
+    const float g1 = SmithG1(NoV, alpha);
+    const float pdfSpec = g1 * d / max(4.0 * NoV, 1e-6);
+    const float pdfDiff = NoL / kPi;
+    return pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
+}
+
+// Sun NEE — full opaque BSDF toward the sun. Delta light: no MIS partner, weight 1.
+float3 EvaluateDirectSun(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float3 hitNormal,
+    float3 shadowOrigin)
+{
+    const float3 sunL = normalize(g_SunDirection);
+    if (dot(hitNormal, sunL) <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, hitNormal, shadowOrigin);
+    const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
+    const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, sunL, f0, albedo, roughness, metallic);
+    return bsdf * sunRadiance * sunVis;
+}
+
+// One emissive area-light sample per bounce (AABB surface + shadow ray), full-BSDF, MIS-weighted
+// against BSDF sampling with the true mixture pdf (both measured in solid angle).
 float3 EvaluateDirectEmissive(
     uint2 pixel,
     uint bounceIndex,
-    float3 diffuseAlbedo,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
     float3 hitNormal,
     float3 shadowOrigin)
 {
@@ -718,48 +874,16 @@ float3 EvaluateDirectEmissive(
     }
 
     const float pickPdf = light.pickWeight / g_EmissiveLightPickWeightSum;
-    const float pdfSolidAngle = pickPdf * pdfArea * dist2 / max(cosThetaEmitter, 1e-6);
-    const float pdfBsdf = cosThetaReceiver / kPi;
+    const float pdfSolidAngle =
+        EmissiveNeePdfSolidAngle(pickPdf, light.surfaceArea, dist2, cosThetaEmitter);
+    const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
     const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
 
-    const float3 bsdf = diffuseAlbedo / kPi;
+    const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
     const float geometryTerm = cosThetaReceiver * cosThetaEmitter / dist2;
 
     return bsdf * EmissiveWithBloomHalo(light.emissive) * geometryTerm * visibility * misWeight
         / max(pickPdf * pdfArea, 1e-8);
-}
-
-// GGX/Trowbridge-Reitz + height-correlated Smith helpers for the opaque BRDF estimator.
-// alpha MUST match SampleGgxVndfHalfVector's internal floor (1e-3) so the evaluated pdf corresponds
-// to the sampling distribution (a mismatch biases the estimator).
-float GgxD(float NoH, float alpha)
-{
-    const float a2 = alpha * alpha;
-    const float d = NoH * NoH * (a2 - 1.0) + 1.0;
-    return a2 / max(kPi * d * d, 1e-9);
-}
-
-float SmithG1(float NoX, float alpha)
-{
-    const float a2 = alpha * alpha;
-    return 2.0 * NoX / max(NoX + sqrt(a2 + (1.0 - a2) * NoX * NoX), 1e-9);
-}
-
-float SmithG2HeightCorrelated(float NoV, float NoL, float alpha)
-{
-    const float a2 = alpha * alpha;
-    const float lambdaV = NoL * sqrt(a2 + (1.0 - a2) * NoV * NoV);
-    const float lambdaL = NoV * sqrt(a2 + (1.0 - a2) * NoL * NoL);
-    return 2.0 * NoV * NoL / max(lambdaV + lambdaL, 1e-9);
-}
-
-// Plain Schlick Fresnel (no roughness ceiling — that raster-IBL hack, R4, does not belong in the PT
-// energy split). f0 = 0.04 dielectric / albedo metal.
-float3 FresnelSchlick(float cosTheta, float3 f0)
-{
-    const float m = saturate(1.0 - cosTheta);
-    const float m2 = m * m;
-    return f0 + (1.0.xxx - f0) * (m2 * m2 * m);
 }
 
 // Opaque BRDF bounce: stochastic diffuse/GGX-specular lobe pick, weighted by the FULL BRDF over the
@@ -822,7 +946,7 @@ void SampleOpaqueInterface(
         }
 
         throughput *= fresnelNoV / max(pSpec, 1e-6);
-        scatterPdf = 1.0;
+        scatterPdf = kDeltaScatterPdf;
         return;
     }
 
@@ -1077,7 +1201,7 @@ void PathTracerRayGen()
     // SPECULAR bounces still add the env on miss (background + reflections). Reference traces the sky
     // purely and always adds it on miss.
     bool addEnvOnMiss = true;
-    float lastScatterPdf = 1.0;
+    float lastScatterPdf = kDeltaScatterPdf;
     bool pathInMedium = false;
     float3 mediumTint = 1.0.xxx;
 
@@ -1154,22 +1278,31 @@ void PathTracerRayGen()
         const float emissiveLuminance = max(material.emissive.r, max(material.emissive.g, material.emissive.b));
         if (emissiveLuminance > 1e-4)
         {
-            const float pickPdf = EmissiveLightPickPdf(payload.instanceId);
-            const float misHit = (pickPdf > 0.0 && lastScatterPdf > 0.0)
-                ? BalanceHeuristic(lastScatterPdf, pickPdf)
-                : 1.0;
+            float emitterPickPdf;
+            float emitterArea;
+            EmissiveLightLookup(payload.instanceId, emitterPickPdf, emitterArea);
+            const float cosEmitter = saturate(dot(hitNormal, viewDir));
+            const float pdfNee = EmissiveNeePdfSolidAngle(
+                emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter);
+            const float misHit = pdfNee > 0.0 ? BalanceHeuristic(lastScatterPdf, pdfNee) : 1.0;
             const float3 surfaceEmissive = EmissiveWithBloomHalo(material.emissive) * misHit;
             radiance += throughput * surfaceEmissive;
             termSurfaceEmissive += throughput * surfaceEmissive;
         }
 
-        const float3 sunContrib = EvaluateDirectSun(
-            pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
+        const float3 sunContrib = (dielectricWeight > 0.01)
+            ? 0.0.xxx
+            : EvaluateDirectSun(
+                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                hitNormal, shadowOrigin);
         radiance += throughput * sunContrib;
         termDirectSun += throughput * sunContrib;
 
-        const float3 emissiveContrib = EvaluateDirectEmissive(
-            pixel, bounce, diffuseAlbedo, hitNormal, shadowOrigin);
+        const float3 emissiveContrib = (dielectricWeight > 0.01)
+            ? 0.0.xxx
+            : EvaluateDirectEmissive(
+                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                hitNormal, shadowOrigin);
         radiance += throughput * emissiveContrib;
         termDirectEmissive += throughput * emissiveContrib;
 

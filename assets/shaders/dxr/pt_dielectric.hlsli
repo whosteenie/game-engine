@@ -220,7 +220,7 @@ void SampleDielectricInterface(
     const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
 
     outPathInMedium = thinWalled ? false : pathInMedium;
-    scatterPdf = 1.0;
+    scatterPdf = kDeltaScatterPdf;
 
     if (fresnel > 1e-6)
     {
