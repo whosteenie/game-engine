@@ -70,6 +70,10 @@ void SceneRenderer::ThrowGpuResourcesUnavailable() const
 
 namespace
 {
+    // ReSTIR GI is disabled while PTGI baseline quality is under investigation. Keeping this as a
+    // single local switch avoids tearing out the experimental code while removing its runtime cost.
+    constexpr bool kEnableRestirGiExperiment = false;
+
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, Fn&& fn)
     {
@@ -429,9 +433,12 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
         }
 
-        if (m_dxrRestirDispatch == nullptr)
+        if constexpr (kEnableRestirGiExperiment)
         {
-            m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
+            if (m_dxrRestirDispatch == nullptr)
+            {
+                m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
+            }
         }
 
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
@@ -440,8 +447,9 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
         const bool giReady = m_dxrGiDispatch->IsPipelineReady();
         const bool pathTracerReady = m_dxrPathTracerDispatch->IsPipelineReady();
-        const bool restirReady = m_dxrRestirDispatch->IsPipelineReady()
-            && m_dxrRestirDispatch->IsSpatialPipelineReady();
+        const bool restirReady = !kEnableRestirGiExperiment
+            || (m_dxrRestirDispatch != nullptr && m_dxrRestirDispatch->IsPipelineReady()
+                && m_dxrRestirDispatch->IsSpatialPipelineReady());
         if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady
             && pathTracerReady && restirReady)
         {
@@ -473,9 +481,12 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         {
             m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
         }
-        if (!restirReady)
+        if constexpr (kEnableRestirGiExperiment)
         {
-            m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
+            if (!restirReady && m_dxrRestirDispatch != nullptr)
+            {
+                m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
+            }
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
@@ -748,10 +759,11 @@ void SceneRenderer::RecordDxrPass(
         if (pathTracerDispatched)
         {
             const bool realTimePt = !m_dxrSettings.IsPtReferenceConvergence();
-            // R2 temporal: reservoirs + shade g_Output = direct + Y·W (skip shade for isolate AOVs).
-            if (realTimePt && m_dxrRestirDispatch != nullptr)
+            // ReSTIR GI is intentionally disabled for now; keep PT output as the baseline signal.
+            if (kEnableRestirGiExperiment && realTimePt && m_dxrRestirDispatch != nullptr)
             {
                 const int isolateMode = PtDebugIsolateModeFromRenderDebug(debugMode);
+                const bool shadeOutput = isolateMode == 0;
                 DxrBreadcrumb("render: restir temporal begin");
                 m_dxrPathTracerDispatch->DispatchRestirTemporal(
                     *m_dxrRestirDispatch,
@@ -761,8 +773,18 @@ void SceneRenderer::RecordDxrPass(
                     m_dxrSettings.GetMaxTraceDistance(),
                     m_dxrAccelerationStructures->GetPtSceneVersion(),
                     true,
-                    isolateMode == 0);
+                    shadeOutput);
                 DxrBreadcrumb("render: restir temporal end");
+                DxrBreadcrumb("render: restir spatial begin");
+                m_dxrPathTracerDispatch->DispatchRestirSpatial(
+                    *m_dxrRestirDispatch,
+                    *m_dxrAccelerationStructures,
+                    camera,
+                    GfxContext::Get().GetCommandList(),
+                    m_dxrSettings.GetMaxTraceDistance(),
+                    true,
+                    shadeOutput);
+                DxrBreadcrumb("render: restir spatial end");
             }
 
             m_dxrPathTracerDispatch->FinalizePathTracerSurfaceHistory(

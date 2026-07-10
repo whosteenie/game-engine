@@ -96,9 +96,9 @@ struct RestirTemporalConstants
     float cameraPos[3] = {};
     float maxTraceDistance = 100.0f;
     std::uint32_t shadeOutput = 1; // rewrite g_Output = direct + Y·W (0 keeps isolate AOVs)
-    std::uint32_t _shadePad0 = 0;
-    std::uint32_t _shadePad1 = 0;
-    std::uint32_t _shadePad2 = 0;
+    std::uint32_t spatialSampleCount = 5;
+    float spatialRadius = 20.0f;
+    std::uint32_t spatialIteration = 0;
 };
 
 struct ShadowDispatchConstants

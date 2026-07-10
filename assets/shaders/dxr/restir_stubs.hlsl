@@ -12,7 +12,9 @@ cbuffer RestirTemporalConstants : register(b0)
     float3 g_CameraPos;
     float g_MaxTraceDistance;
     uint g_ShadeOutput; // 0 = reservoirs only (isolate AOVs); 1 = rewrite g_Output
-    uint3 g_ShadePad;
+    uint g_SpatialSampleCount; // R3: neighbors per iteration (default 5)
+    float g_SpatialRadius; // R3: disk radius in pixels (halved each iteration)
+    uint g_SpatialIteration; // R3: 0, 1, ...
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
@@ -41,8 +43,8 @@ float TraceRestirVisibility(float3 origin, float3 direction, float tMax)
     RayDesc ray;
     ray.Origin = origin;
     ray.Direction = direction;
-    ray.TMin = 0.001;
-    ray.TMax = tMax;
+    ray.TMin = min(0.001, max(tMax * 0.001, 0.00005));
+    ray.TMax = max(tMax, ray.TMin + 0.00001);
 
     Payload probe;
     probe.hit = kPayloadFlagVisibility;
@@ -51,6 +53,32 @@ float TraceRestirVisibility(float3 origin, float3 direction, float tMax)
         | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
     TraceRay(g_SceneTlas, occlusionFlags, 0xFF, 0, 0, 0, ray, probe);
     return probe.hit == 0 ? 1.0 : 0.0;
+}
+
+float RestirConnectionBias(float dist)
+{
+    const float scaled = max(dist * 0.001, 0.00005);
+    return min(scaled, max(dist * 0.2, 0.00005));
+}
+
+bool RestirValidateConnection(float3 receiverPos, float3 receiverN, float3 xs)
+{
+    const float3 toXs = xs - receiverPos;
+    const float dist = length(toXs);
+    const float bias = RestirConnectionBias(dist);
+    if (dist <= bias * 2.0 + 0.00005)
+    {
+        return false;
+    }
+
+    const float3 wi = toXs / dist;
+    if (dot(receiverN, wi) <= 0.0)
+    {
+        return false;
+    }
+
+    const float3 origin = receiverPos + receiverN * bias;
+    return TraceRestirVisibility(origin, wi, dist - bias * 2.0) > 0.0;
 }
 
 float2 PixelToNdc(uint2 pixel, uint2 size)
@@ -128,6 +156,46 @@ bool RestirSurfaceSimilar(
     }
 
     return true;
+}
+
+// Stricter gates for spatial contribution reuse (no receiver BSDF reconnection).
+bool RestirSpatialSurfaceSimilar(
+    float currDepth,
+    float neighborDepth,
+    float3 currN,
+    float3 neighborN,
+    float currRough,
+    float neighborRough)
+{
+    if (currDepth >= 0.9999 || neighborDepth >= 0.9999)
+    {
+        return false;
+    }
+
+    const float depthDiff = abs(currDepth - neighborDepth);
+    if (depthDiff > 0.01 * max(max(currDepth, neighborDepth), 1e-3))
+    {
+        return false;
+    }
+
+    if (dot(currN, neighborN) < 0.95)
+    {
+        return false;
+    }
+
+    if (abs(currRough - neighborRough) > 0.05)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool RestirSampleChanged(RestirInitialSample a, RestirInitialSample b)
+{
+    return any(abs(a.xs - b.xs) > 1e-3)
+        || a.loTailRg != b.loTailRg
+        || (a.loTailBFlags & 0xffffu) != (b.loTailBFlags & 0xffffu);
 }
 
 float RestirHash(uint2 pixel, uint frame, uint salt)
@@ -218,22 +286,8 @@ void RestirTemporalRayGen()
                     // Validation ray: current primary → kept xs (unshadowed p̂; V enters here).
                     const float3 primaryPos = ReconstructWorldPos(pixel, currDepth);
                     const float3 primaryN = ReconstructGeometricNormal(pixel, currDepth);
-                    const float3 toXs = merged.sample.xs - primaryPos;
-                    const float dist = length(toXs);
-                    bool visible = dist > 1e-4;
-                    if (visible)
-                    {
-                        const float3 wi = toXs / dist;
-                        if (dot(primaryN, wi) <= 0.0)
-                        {
-                            visible = false;
-                        }
-                        else
-                        {
-                            const float3 origin = primaryPos + primaryN * max(dist * 0.001, 0.002);
-                            visible = TraceRestirVisibility(origin, wi, dist - 0.001) > 0.0;
-                        }
-                    }
+                    const bool visible =
+                        RestirValidateConnection(primaryPos, primaryN, merged.sample.xs);
 
                     if (visible)
                     {
@@ -244,6 +298,7 @@ void RestirTemporalRayGen()
                         if (keptStrength <= kRestirBoilingFactor * localStrength)
                         {
                             outRes = merged;
+                            outRes.M = min(max(outRes.M, 1u), kRestirMCap);
                             reused = true;
                         }
                     }
@@ -266,10 +321,8 @@ void RestirTemporalRayGen()
     {
         const float4 prevOut = g_Output[pixel];
         const float3 direct = g_Direct[pixel].rgb;
-        float w = outRes.W;
-        w = (w == w && w > 0.0) ? w : 0.0;
         const float3 shaded =
-            RestirClampRadiance(direct + RestirUnpackLoTail(outRes.sample) * w);
+            RestirClampRadiance(direct + RestirShadeIndirect(outRes));
         g_Output[pixel] = float4(shaded, prevOut.a);
     }
     else
@@ -289,13 +342,177 @@ void RestirSpatialRayGen()
         return;
     }
 
-    // R3 stub — spatial reuse not yet dispatched.
-    (void)g_SceneTlas;
-    (void)g_ReservoirCurrent;
-    (void)g_ReservoirPrev;
-    (void)g_InitialSample;
-    (void)g_Direct;
-    (void)g_Output;
+    const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
+    // u1 = temporal (or prior spatial iter) input; u0 = this iteration's output.
+    const RestirReservoir center = g_ReservoirPrev[pixelIndex];
+    const uint centerFlags = RestirSampleFlags(center.sample);
+    const float3 yCenter = RestirShadeIndirect(center);
+    const float centerStrength = max(RestirLuminance(yCenter), 1e-6);
+
+    RestirReservoir outRes = center;
+    bool spatialReused = false;
+
+    const float currDepth = g_CurrDepth[pixel];
+    const bool skipReuse = (centerFlags & kRestirSampleNoReuse) != 0u || center.M == 0u
+        || currDepth >= 0.9999;
+
+    if (!skipReuse)
+    {
+        const float4 currNr = g_CurrNormalRoughness[pixel];
+        const float3 receiverPos = ReconstructWorldPos(pixel, currDepth);
+        const float3 receiverN = ReconstructGeometricNormal(pixel, currDepth);
+
+        // Fresh WRS over center + Jacobian-shifted neighbor contributions.
+        RestirReservoir merged;
+        merged.sample = center.sample;
+        merged.wSum = 0.0;
+        merged.W = 0.0;
+        merged.M = 0u;
+        merged.pad = 0u;
+
+        RestirUpdate(
+            merged,
+            center.sample,
+            centerStrength,
+            RestirHash(pixel, g_FrameIndex, 90u + g_SpatialIteration));
+
+        bool anyNeighbor = false;
+        const uint sampleCount = clamp(g_SpatialSampleCount, 1u, 16u);
+        const float radius = max(g_SpatialRadius, 1.0);
+
+        [loop]
+        for (uint i = 0u; i < sampleCount; ++i)
+        {
+            const float u1 = RestirHash(pixel, g_FrameIndex, 100u + i * 3u + g_SpatialIteration * 17u);
+            const float u2 = RestirHash(pixel, g_FrameIndex, 101u + i * 3u + g_SpatialIteration * 17u);
+            const float diskR = radius * sqrt(u1);
+            const float angle = u2 * (2.0 * kRestirPi);
+            const int2 neighborPixel = int2(pixel)
+                + int2(round(float2(cos(angle), sin(angle)) * diskR));
+
+            if (neighborPixel.x < 0 || neighborPixel.y < 0
+                || neighborPixel.x >= int(g_OutputSize.x)
+                || neighborPixel.y >= int(g_OutputSize.y))
+            {
+                continue;
+            }
+            if (neighborPixel.x == int(pixel.x) && neighborPixel.y == int(pixel.y))
+            {
+                continue;
+            }
+
+            const float neighborDepth = g_CurrDepth[neighborPixel];
+            const float4 neighborNr = g_CurrNormalRoughness[neighborPixel];
+            if (!RestirSpatialSurfaceSimilar(
+                    currDepth,
+                    neighborDepth,
+                    normalize(currNr.xyz),
+                    normalize(neighborNr.xyz),
+                    currNr.w,
+                    neighborNr.w))
+            {
+                continue;
+            }
+
+            const uint neighborIndex =
+                uint(neighborPixel.y) * g_OutputSize.x + uint(neighborPixel.x);
+            RestirReservoir neighborRes = g_ReservoirPrev[neighborIndex];
+            const uint neighborFlags = RestirSampleFlags(neighborRes.sample);
+            if (neighborRes.M == 0u || (neighborFlags & kRestirSampleNoReuse) != 0u)
+            {
+                continue;
+            }
+
+            const float3 neighborPos = ReconstructWorldPos(uint2(neighborPixel), neighborDepth);
+            if (length(neighborPos - receiverPos) > kRestirSpatialMaxPrimaryDistance)
+            {
+                continue;
+            }
+
+            const float3 xs = neighborRes.sample.xs;
+            const float3 ns = RestirUnpackOctNormal(neighborRes.sample.nsOct);
+
+            const float3 toXs = xs - receiverPos;
+            const float dist = length(toXs);
+            if (dist < 1e-4 || dot(receiverN, toXs / dist) <= 0.0)
+            {
+                continue;
+            }
+
+            const float jacobian = RestirReconnectionJacobian(xs, ns, neighborPos, receiverPos);
+            if (jacobian <= 0.0)
+            {
+                continue;
+            }
+
+            const RestirInitialSample shifted =
+                RestirScaleSampleY(neighborRes.sample, jacobian);
+            const float3 yShifted = RestirUnpackLoTail(shifted);
+            float neighborW = neighborRes.W;
+            neighborW = (neighborW == neighborW && neighborW > 0.0) ? neighborW : 0.0;
+            const float shiftedStrength =
+                neighborW * max(RestirLuminance(yShifted), 1e-6);
+
+            // Relative boil + chroma: dark soffits must not import pink/red bounce from afar.
+            if (shiftedStrength > kRestirSpatialBoilingFactor * centerStrength)
+            {
+                continue;
+            }
+            if (!RestirChromaticitySimilar(yCenter, yShifted))
+            {
+                continue;
+            }
+
+            RestirUpdate(
+                merged,
+                shifted,
+                shiftedStrength,
+                RestirHash(pixel, g_FrameIndex, 200u + i + g_SpatialIteration * 13u));
+            anyNeighbor = true;
+        }
+
+        if (anyNeighbor)
+        {
+            RestirFinalizeW(merged);
+
+            const bool visible =
+                RestirValidateConnection(receiverPos, receiverN, merged.sample.xs);
+
+            if (visible)
+            {
+                const float3 yKept = RestirUnpackLoTail(merged.sample);
+                const float keptStrength =
+                    merged.W * max(RestirLuminance(yKept), 1e-6);
+                if (keptStrength <= kRestirSpatialBoilingFactor * centerStrength
+                    && RestirChromaticitySimilar(yCenter, yKept))
+                {
+                    outRes = merged;
+                    outRes.M = min(max(outRes.M, 1u), kRestirMCap);
+                    spatialReused = true;
+                }
+            }
+        }
+    }
+
+    g_ReservoirCurrent[pixelIndex] = outRes;
+
+    if (g_ShadeOutput != 0u && spatialReused)
+    {
+        const float4 prevOut = g_Output[pixel];
+        const float3 direct = g_Direct[pixel].rgb;
+        const float3 shaded =
+            RestirClampRadiance(direct + RestirShadeIndirect(outRes));
+        g_Output[pixel] = float4(shaded, prevOut.a);
+    }
+    else
+    {
+        (void)g_Direct;
+        (void)g_Output;
+        (void)g_InitialSample;
+        (void)g_Motion;
+        (void)g_PrevDepth;
+        (void)g_PrevNormalRoughness;
+    }
 }
 
 [shader("miss")]

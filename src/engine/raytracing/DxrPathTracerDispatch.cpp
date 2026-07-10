@@ -300,6 +300,9 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     constants.cameraPos[2] = cameraPos.z;
     constants.maxTraceDistance = maxTraceDistance;
     constants.shadeOutput = shadeOutput ? 1u : 0u;
+    constants.spatialSampleCount = 5u;
+    constants.spatialRadius = 10.0f;
+    constants.spatialIteration = 0u;
 
     std::string error;
     const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR temporal");
@@ -317,6 +320,74 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
             "dispatch-restir-temporal-failure",
             std::string("ReSTIR temporal failed: ") + error);
         return false;
+    }
+
+    return true;
+}
+
+bool DxrPathTracerDispatch::DispatchRestirSpatial(
+    DxrRestirDispatch& restirDispatch,
+    const DxrAccelerationStructures& accelerationStructures,
+    const Camera& camera,
+    void* commandList,
+    const float maxTraceDistance,
+    const bool realTimeMode,
+    const bool shadeOutput)
+{
+    if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsSpatialPipelineReady())
+    {
+        return false;
+    }
+
+    auto* commandList4 = static_cast<ID3D12GraphicsCommandList4*>(commandList);
+    if (commandList4 == nullptr)
+    {
+        return false;
+    }
+
+    const glm::mat4 viewProj = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+    const glm::mat4 invViewProj = glm::inverse(viewProj);
+    const glm::vec3 cameraPos = camera.GetPosition();
+
+    // Two iterations, radius 20 → 10 (restir-pt.md §3).
+    constexpr std::uint32_t kSpatialIterations = 2u;
+    constexpr float kSpatialRadii[kSpatialIterations] = {10.0f, 5.0f};
+
+    for (std::uint32_t iteration = 0; iteration < kSpatialIterations; ++iteration)
+    {
+        DxrRootSignature::RestirTemporalConstants constants{};
+        constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
+        constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
+        constants.historyValid = 1u;
+        constants.frameIndex = m_frameIndex;
+        std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
+        constants.cameraPos[0] = cameraPos.x;
+        constants.cameraPos[1] = cameraPos.y;
+        constants.cameraPos[2] = cameraPos.z;
+        constants.maxTraceDistance = maxTraceDistance;
+        constants.shadeOutput = shadeOutput ? 1u : 0u;
+        constants.spatialSampleCount = 5u;
+        constants.spatialRadius = kSpatialRadii[iteration];
+        constants.spatialIteration = iteration;
+
+        std::string error;
+        const GfxContext::GpuTimerScope gpuScope(
+            iteration == 0u ? "Path tracer/ReSTIR spatial 0" : "Path tracer/ReSTIR spatial 1");
+        if (!m_dispatchContext.DispatchRestirSpatial(
+                commandList4,
+                restirDispatch.GetStateObject(),
+                restirDispatch.GetGlobalRootSignature(),
+                restirDispatch.GetSpatialShaderBindingTable(),
+                accelerationStructures.GetTlasResource(),
+                accelerationStructures.GetTlasGpuVirtualAddress(),
+                constants,
+                error))
+        {
+            DxrLogErrorOnce(
+                "dispatch-restir-spatial-failure",
+                std::string("ReSTIR spatial failed: ") + error);
+            return false;
+        }
     }
 
     return true;

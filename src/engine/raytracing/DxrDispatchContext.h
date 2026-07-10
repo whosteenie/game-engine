@@ -286,6 +286,17 @@ public:
         const DxrRootSignature::RestirTemporalConstants& constants,
         std::string& outError);
 
+    // R3: spatial reuse after temporal (1–2 iterations). Ping-pongs reservoirs; final shade on reuse.
+    bool DispatchRestirSpatial(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        ID3D12Resource* tlasResource,
+        std::uint64_t tlasGpuVirtualAddress,
+        const DxrRootSignature::RestirTemporalConstants& constants,
+        std::string& outError);
+
     // G4: copy current depth/N+R → prev (call AFTER R2 temporal).
     void FinalizePathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList);
     void InvalidateRestirHistoryIfSceneChanged(std::uint32_t sceneVersion);

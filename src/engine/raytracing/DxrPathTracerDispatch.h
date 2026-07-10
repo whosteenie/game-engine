@@ -116,6 +116,16 @@ public:
         bool realTimeMode,
         bool shadeOutput = true);
 
+    // R3 spatial reuse (real-time only). Call after temporal, before surface-history copy.
+    bool DispatchRestirSpatial(
+        DxrRestirDispatch& restirDispatch,
+        const DxrAccelerationStructures& accelerationStructures,
+        const Camera& camera,
+        void* commandList,
+        float maxTraceDistance,
+        bool realTimeMode,
+        bool shadeOutput = true);
+
     void FinalizePathTracerSurfaceHistory(void* commandList);
 
     // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.

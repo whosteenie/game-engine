@@ -8,6 +8,12 @@
 static const uint kRestirSampleNoReuse = 1u;
 static const uint kRestirMCap = 20u;
 static const float kRestirBoilingFactor = 10.0;
+static const float kRestirSpatialBoilingFactor = 1.5;
+static const float kRestirSpatialChromaDotMin = 0.92; // reject hue leaks (red bounce → gray soffit)
+static const float kRestirSpatialMaxPrimaryDistance = 0.35; // world units; screen radius alone is not enough
+static const float kRestirJacobianMin = 1.0 / 16.0;
+static const float kRestirJacobianMax = 4.0;
+static const float kRestirPi = 3.14159265;
 
 float2 RestirOctEncode(float3 n)
 {
@@ -71,6 +77,13 @@ float RestirLuminance(float3 c)
     return max(0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b, 0.0);
 }
 
+bool RestirChromaticitySimilar(float3 a, float3 b)
+{
+    const float la = max(RestirLuminance(a), 1e-6);
+    const float lb = max(RestirLuminance(b), 1e-6);
+    return dot(a / la, b / lb) >= kRestirSpatialChromaDotMin;
+}
+
 RestirInitialSample RestirMakeInitialSample(
     float3 xs,
     float3 ns,
@@ -86,6 +99,16 @@ RestirInitialSample RestirMakeInitialSample(
     sample.loTailBFlags = f32tof16(loTail.b) | (flags << 16);
     sample.pdf = pdf;
     sample.seed = seed;
+    return sample;
+}
+
+// Scale packed Y in-place (R3: apply reconnection Jacobian to contribution, not to RIS misWeight).
+RestirInitialSample RestirScaleSampleY(RestirInitialSample sample, float scale)
+{
+    const float3 y = RestirUnpackLoTail(sample) * scale;
+    const uint flags = RestirSampleFlags(sample);
+    sample.loTailRg = RestirPackHalf2(y.rg);
+    sample.loTailBFlags = f32tof16(y.b) | (flags << 16);
     return sample;
 }
 
@@ -159,7 +182,37 @@ void RestirMergeReservoir(
 float3 RestirShadeIndirect(RestirReservoir reservoir)
 {
     const float3 y = RestirUnpackLoTail(reservoir.sample);
-    return y * reservoir.W;
+    float w = reservoir.W;
+    w = (w == w && w > 0.0) ? w : 0.0;
+    return y * w;
+}
+
+// Ouyang ReSTIR GI reconnection Jacobian |J| = (cosφ_r/cosφ_q)·(d_q²/d_r²).
+// ns is the normal at xs; posQ/posR are primary hits at the neighbor and receiver.
+float RestirReconnectionJacobian(float3 xs, float3 ns, float3 posQ, float3 posR)
+{
+    const float3 toQ = posQ - xs;
+    const float3 toR = posR - xs;
+    const float distQ = length(toQ);
+    const float distR = length(toR);
+    if (distQ < 1e-4 || distR < 1e-4)
+    {
+        return 0.0;
+    }
+
+    const float cosQ = saturate(dot(ns, toQ / distQ));
+    const float cosR = saturate(dot(ns, toR / distR));
+    if (cosQ < 1e-4 || cosR < 1e-4)
+    {
+        return 0.0;
+    }
+
+    const float jacobian = (cosR / cosQ) * ((distQ * distQ) / (distR * distR));
+    if (!(jacobian == jacobian))
+    {
+        return 0.0;
+    }
+    return clamp(jacobian, kRestirJacobianMin, kRestirJacobianMax);
 }
 
 // Match path_tracer / hit_shading ClampRadiance (kMaxRadiance = 64).

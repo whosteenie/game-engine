@@ -1461,16 +1461,14 @@ void PathTracerRayGen()
 
             if (!terminalEmissiveHit)
             {
-                // Real-time emissive NEE only at bounce 0 — deeper bounces rely on BSDF+MIS hits.
-                const bool wantEmissiveNee = !kPtCenterPrimaryRays || bounce == 0u;
-                if (wantEmissiveNee)
-                {
-                    const float3 emissiveNee = opaqueWeight
-                        * EvaluateDirectEmissive(
-                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                            hitNormal, shadowOrigin);
-                    emissiveNeeContrib = throughput * emissiveNee;
-                }
+                // Mesh-light NEE must run in the GI tail too. Otherwise Cornell-box indirect
+                // lighting relies on random BSDF rays hitting the ceiling light, which is extreme
+                // variance and presents as frame-to-frame boiling before ReSTIR even runs.
+                const float3 emissiveNee = opaqueWeight
+                    * EvaluateDirectEmissive(
+                        rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                        hitNormal, shadowOrigin);
+                emissiveNeeContrib = throughput * emissiveNee;
 
                 const float3 envNee = opaqueWeight
                     * EvaluateDirectEnvironment(

@@ -7,9 +7,8 @@
 
 struct ID3D12StateObject;
 
-// G8 — ReSTIR temporal/spatial raygen PSOs + SBTs (devdoc/dxr/pt/restir-pt.md).
+// G8/R2/R3 — ReSTIR temporal/spatial raygen PSOs + SBTs (devdoc/dxr/pt/restir-pt.md).
 // Buffers live on the path-tracer DxrDispatchContext; this class only owns pipelines.
-// No DispatchRays until R2/R3.
 class DxrRestirDispatch : public DxrDispatchBase
 {
 public:

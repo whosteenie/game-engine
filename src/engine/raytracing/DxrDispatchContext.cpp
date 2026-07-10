@@ -1220,6 +1220,144 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     return true;
 }
 
+bool DxrDispatchContext::DispatchRestirSpatial(
+    ID3D12GraphicsCommandList4* commandList,
+    ID3D12StateObject* stateObject,
+    ID3D12RootSignature* rootSignature,
+    const ShaderBindingTable& shaderBindingTable,
+    ID3D12Resource* tlasResource,
+    const std::uint64_t tlasGpuVirtualAddress,
+    const DxrRootSignature::RestirTemporalConstants& constants,
+    std::string& outError)
+{
+    outError.clear();
+    if (commandList == nullptr || stateObject == nullptr || rootSignature == nullptr)
+    {
+        outError = "invalid ReSTIR spatial dispatch arguments";
+        return false;
+    }
+    if (!HasRestirBuffers() || m_primaryOutputResource == nullptr || m_primaryOutputUavIndex == UINT32_MAX
+        || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX)
+    {
+        outError = "ReSTIR spatial buffers unavailable";
+        return false;
+    }
+    if (!CreateTlasSrv(tlasResource, tlasGpuVirtualAddress, outError))
+    {
+        return false;
+    }
+
+    // After temporal: writeIndex is free; temporal result is in the other slot.
+    const int writeIndex = m_restirWriteIndex;
+    const int readIndex = 1 - writeIndex;
+    const int width = m_restirBufferWidth;
+    const int height = m_restirBufferHeight;
+
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    TransitionResource(
+        commandList,
+        m_primaryOutputResource,
+        static_cast<D3D12_RESOURCE_STATES>(m_primaryOutputResourceState),
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    m_primaryOutputResourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    if (m_ptDirectTexture.state != static_cast<std::uint32_t>(kAllShaderRead))
+    {
+        TransitionResource(
+            commandList,
+            m_ptDirectTexture.resource,
+            static_cast<D3D12_RESOURCE_STATES>(m_ptDirectTexture.state),
+            kAllShaderRead);
+        m_ptDirectTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+
+    auto ensureUav = [&](StructuredBufferUav& buffer) {
+        if (buffer.resource == nullptr)
+        {
+            return;
+        }
+        const D3D12_RESOURCE_STATES before =
+            buffer.state == 0 ? D3D12_RESOURCE_STATE_COMMON
+                            : static_cast<D3D12_RESOURCE_STATES>(buffer.state);
+        if (before != D3D12_RESOURCE_STATE_UNORDERED_ACCESS)
+        {
+            TransitionResource(commandList, buffer.resource, before, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+            buffer.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        }
+    };
+    ensureUav(m_restirReservoirs[writeIndex]);
+    ensureUav(m_restirReservoirs[readIndex]);
+    ensureUav(m_restirInitialSample);
+
+    // UAV barrier on the read buffer so this iteration sees the prior pass's writes.
+    RecordDxrUavBarrier(commandList, m_restirReservoirs[readIndex].resource);
+
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    if (constantsGpuAddress == 0)
+    {
+        outError = "failed to allocate ReSTIR spatial constants";
+        return false;
+    }
+
+    DxrDispatchRecorder recorder(commandList);
+    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
+
+    const std::uint32_t srvIndices[7] = {
+        m_tlasSrvIndex,
+        m_ptPrevDepthTexture.srvIndex,
+        m_ptPrevNormalRoughnessTexture.srvIndex,
+        m_ptDepthTexture.srvIndex,
+        m_ptNormalRoughnessTexture.srvIndex,
+        m_ptMotionTexture.srvIndex,
+        m_ptDirectTexture.srvIndex};
+    for (const std::uint32_t srvIndex : srvIndices)
+    {
+        if (srvIndex == UINT32_MAX)
+        {
+            outError = "ReSTIR spatial SRV bindings unavailable";
+            return false;
+        }
+    }
+    recorder.BindSrvTables(1, srvIndices, 7);
+
+    // u0 = spatial write, u1 = prior reservoirs (temporal / previous spatial iter).
+    const std::uint32_t uavIndices[4] = {
+        m_restirReservoirs[writeIndex].uavIndex,
+        m_restirReservoirs[readIndex].uavIndex,
+        m_restirInitialSample.uavIndex,
+        m_primaryOutputUavIndex};
+    for (std::uint32_t uavIndex = 0; uavIndex < 4; ++uavIndex)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+        uavTableHandle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(uavIndices[uavIndex]));
+        commandList->SetComputeRootDescriptorTable(8 + uavIndex, uavTableHandle);
+    }
+
+    if (tlasResource != nullptr)
+    {
+        RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
+    }
+
+    recorder.DispatchRays(shaderBindingTable, width, height);
+
+    RecordDxrUavBarrier(commandList, m_primaryOutputResource);
+    RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);
+
+    TransitionResource(
+        commandList,
+        m_primaryOutputResource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    m_primaryOutputResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+
+    // Next PT overwrites the read slot; spatial output becomes temporal history.
+    m_restirWriteIndex = readIndex;
+    return true;
+}
+
 bool DxrDispatchContext::CreateReflectionTexture(
     const int width,
     const int height,
