@@ -1,4 +1,5 @@
 #include "engine/lighting/IBL.h"
+#include "engine/lighting/EnvironmentImportanceSampling.h"
 #include "engine/lighting/IrradianceSh.h"
 
 #include "engine/platform/SceneRenderTrace.h"
@@ -134,6 +135,22 @@ namespace
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Texture2D.MipLevels = mipLevels;
+        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+    }
+
+    void CreateFloatBufferSrv(
+        ID3D12Device* device,
+        ID3D12Resource* resource,
+        const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+        const std::uint32_t floatCount)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = floatCount;
+        srvDesc.Buffer.StructureByteStride = 0;
         device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
     }
 }
@@ -373,9 +390,147 @@ void IBL::DestroyEnvironmentTextures()
     DestroyGpuTexture(m_hdrGpu);
     DestroyGpuTexture(m_environmentCubemapGpu);
     DestroyGpuTexture(m_prefilterMapGpu);
+    DestroyEnvImportanceCdf();
     m_irradianceSh = {};
     m_gpuGenerated = false;
     m_loadError.clear();
+}
+
+void IBL::DestroyEnvImportanceCdf()
+{
+    if (GfxContext::Get().IsInitialized() && m_envImportanceCdfSrvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().FreeOffscreenSrv(m_envImportanceCdfSrvIndex);
+    }
+
+    if (m_envImportanceCdfResource != nullptr)
+    {
+        static_cast<ID3D12Resource*>(m_envImportanceCdfResource)->Release();
+        m_envImportanceCdfResource = nullptr;
+    }
+
+    if (m_envImportanceCdfAllocation != nullptr)
+    {
+        static_cast<D3D12MA::Allocation*>(m_envImportanceCdfAllocation)->Release();
+        m_envImportanceCdfAllocation = nullptr;
+    }
+
+    m_envImportanceCdfSrvIndex = UINT32_MAX;
+    m_envImportanceSampleCount = 0;
+    m_envImportanceCdfWidth = 0;
+    m_envImportanceCdfHeight = 0;
+    m_envImportanceWeightSum = 0.0f;
+}
+
+void IBL::BuildAndUploadEnvImportanceCdf(
+    const std::vector<float>& rgbaRadiance,
+    const int hdrWidth,
+    const int hdrHeight)
+{
+    DestroyEnvImportanceCdf();
+
+    const EnvImportanceSamplingBuildResult build =
+        BuildEquirectEnvImportanceCdf(rgbaRadiance, hdrWidth, hdrHeight);
+    if (build.cdf.empty() || build.cdfWidth <= 0 || build.cdfHeight <= 0 || build.weightSum <= 0.0f)
+    {
+        return;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+    if (device == nullptr || allocator == nullptr)
+    {
+        return;
+    }
+
+    const std::uint64_t byteSize =
+        static_cast<std::uint64_t>(build.cdf.size()) * sizeof(float);
+    const std::uint64_t alignedByteSize = (byteSize + 255ull) & ~255ull;
+
+    D3D12_RESOURCE_DESC bufferDesc{};
+    bufferDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    bufferDesc.Width = alignedByteSize;
+    bufferDesc.Height = 1;
+    bufferDesc.DepthOrArraySize = 1;
+    bufferDesc.MipLevels = 1;
+    bufferDesc.Format = DXGI_FORMAT_UNKNOWN;
+    bufferDesc.SampleDesc.Count = 1;
+    bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    bufferDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource* bufferResource = nullptr;
+    D3D12MA::Allocation* bufferAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &allocationDesc,
+            &bufferDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            &bufferAllocation,
+            IID_PPV_ARGS(&bufferResource))))
+    {
+        return;
+    }
+
+    D3D12MA::ALLOCATION_DESC uploadAllocationDesc{};
+    uploadAllocationDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+
+    ID3D12Resource* uploadResource = nullptr;
+    D3D12MA::Allocation* uploadAllocation = nullptr;
+    if (FAILED(allocator->CreateResource(
+            &uploadAllocationDesc,
+            &bufferDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            &uploadAllocation,
+            IID_PPV_ARGS(&uploadResource))))
+    {
+        bufferAllocation->Release();
+        bufferResource->Release();
+        return;
+    }
+
+    void* mapped = nullptr;
+    if (FAILED(uploadResource->Map(0, nullptr, &mapped)) || mapped == nullptr)
+    {
+        uploadAllocation->Release();
+        uploadResource->Release();
+        bufferAllocation->Release();
+        bufferResource->Release();
+        return;
+    }
+
+    std::memcpy(mapped, build.cdf.data(), byteSize);
+    uploadResource->Unmap(0, nullptr);
+
+    GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+        auto* commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPointer);
+        commandList->CopyBufferRegion(bufferResource, 0, uploadResource, 0, byteSize);
+        TransitionResource(
+            commandList,
+            bufferResource,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    });
+
+    uploadAllocation->Release();
+    uploadResource->Release();
+
+    m_envImportanceCdfResource = bufferResource;
+    m_envImportanceCdfAllocation = bufferAllocation;
+    m_envImportanceCdfSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    CreateFloatBufferSrv(
+        device,
+        bufferResource,
+        {GfxContext::Get().GetSrvCpuHandle(m_envImportanceCdfSrvIndex)},
+        static_cast<std::uint32_t>(build.cdf.size()));
+    m_envImportanceSampleCount =
+        static_cast<std::uint32_t>(build.cdfWidth) * static_cast<std::uint32_t>(build.cdfHeight);
+    m_envImportanceCdfWidth = build.cdfWidth;
+    m_envImportanceCdfHeight = build.cdfHeight;
+    m_envImportanceWeightSum = build.weightSum;
 }
 
 void IBL::DestroyResources()
@@ -647,6 +802,8 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
         {m_hdrGpu.srvCpuHandle},
         DXGI_FORMAT_R32G32B32A32_FLOAT,
         1);
+
+    BuildAndUploadEnvImportanceCdf(rgba, width, height);
 }
 
 void IBL::CaptureCubemapFaces(

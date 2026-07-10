@@ -640,6 +640,15 @@ void SceneRenderer::RecordDxrPass(
         ptInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
         ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
         ptInputs.maxReflectionLod = ptIbl.GetMaxReflectionLod();
+        if (ptIbl.HasEnvImportanceSampling())
+        {
+            ptInputs.envEquirectSrvCpuHandle = ptIbl.GetHdrEquirectSrvCpuHandle();
+            ptInputs.envImportanceCdfSrvIndex = ptIbl.GetEnvImportanceCdfSrvIndex();
+            ptInputs.envImportanceSampleCount = ptIbl.GetEnvImportanceSampleCount();
+            ptInputs.envImportanceCdfWidth = static_cast<std::uint32_t>(ptIbl.GetEnvImportanceCdfWidth());
+            ptInputs.envImportanceCdfHeight = static_cast<std::uint32_t>(ptIbl.GetEnvImportanceCdfHeight());
+            ptInputs.envImportanceWeightSum = ptIbl.GetEnvImportanceWeightSum();
+        }
         {
             const IrradianceSh9& ptSh9 = ptIbl.GetIrradianceSh9();
             for (std::size_t i = 0;

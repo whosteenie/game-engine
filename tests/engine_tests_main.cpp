@@ -23,6 +23,7 @@ void RunGuideEncodingTests();
 void RunRefractionTests();
 void RunBrdfEnergyTests();
 void RunMisNeeTests();
+void RunEnvImportanceTests();
 void RunShaderCompileTests();
 
 namespace
@@ -77,6 +78,7 @@ namespace
         maybeRun("refraction", RunRefractionTests);
         maybeRun("brdf_energy", RunBrdfEnergyTests);
         maybeRun("mis_nee", RunMisNeeTests);
+        maybeRun("env_importance", RunEnvImportanceTests);
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

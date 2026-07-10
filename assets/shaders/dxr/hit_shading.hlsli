@@ -44,6 +44,11 @@ cbuffer ReflectionDispatchConstants : register(b0)
     float4x4 g_PrevInvViewProj;
     float3 g_PrevCameraPos;
     float _PadPrevCamera;
+    // F2 environment importance sampling (path tracer only).
+    uint g_EnvLightImportanceCount;
+    uint g_EnvIsCdfWidth;
+    float g_EnvLightImportanceInvWeightSum;
+    uint g_EnvIsCdfHeight;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

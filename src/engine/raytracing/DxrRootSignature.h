@@ -75,6 +75,11 @@ struct ReflectionDispatchConstants
     float prevInvViewProj[16] = {};
     float prevCameraPos[3] = {};
     float _padPrevCamera = 0.0f;
+    // F2 path-tracer-only: environment importance sampling (t16 CDF + t17 HDR equirect).
+    std::uint32_t envLightImportanceCount = 0;
+    std::uint32_t envIsCdfWidth = 0;
+    float envLightImportanceInvWeightSum = 0.0f;
+    std::uint32_t envIsCdfHeight = 0;
 };
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in

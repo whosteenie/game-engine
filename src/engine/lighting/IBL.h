@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 class Shader;
 
@@ -42,6 +43,14 @@ public:
     std::uintptr_t GetBrdfLutSrvCpuHandle() const;
     std::uintptr_t GetHdrEquirectSrvCpuHandle() const;
 
+    // Path-tracer environment importance sampling (F2 / S5 step 13).
+    bool HasEnvImportanceSampling() const { return m_envImportanceSampleCount > 0u; }
+    std::uint32_t GetEnvImportanceCdfSrvIndex() const { return m_envImportanceCdfSrvIndex; }
+    std::uint32_t GetEnvImportanceSampleCount() const { return m_envImportanceSampleCount; }
+    int GetEnvImportanceCdfWidth() const { return m_envImportanceCdfWidth; }
+    int GetEnvImportanceCdfHeight() const { return m_envImportanceCdfHeight; }
+    float GetEnvImportanceWeightSum() const { return m_envImportanceWeightSum; }
+
     void ReloadFromHdr(const char* hdrPath, float rotationYRadians = 0.0f);
 
     EnvironmentIblCubemapResolution GetCubemapResolutionMode() const;
@@ -59,6 +68,8 @@ private:
     void CreateEnvironmentCubemap();
     void CreatePrefilterMap();
     void CreateBrdfLut();
+    void DestroyEnvImportanceCdf();
+    void BuildAndUploadEnvImportanceCdf(const std::vector<float>& rgbaRadiance, int hdrWidth, int hdrHeight);
 
     void CaptureCubemapFaces(
         unsigned int targetCubemap,
@@ -118,4 +129,12 @@ private:
     int m_hdrWidth = 0;
     int m_hdrHeight = 0;
     EnvironmentIblCubemapResolution m_cubemapResolutionMode = EnvironmentIblCubemapResolution::Auto;
+
+    void* m_envImportanceCdfResource = nullptr;
+    void* m_envImportanceCdfAllocation = nullptr;
+    std::uint32_t m_envImportanceCdfSrvIndex = UINT32_MAX;
+    std::uint32_t m_envImportanceSampleCount = 0;
+    int m_envImportanceCdfWidth = 0;
+    int m_envImportanceCdfHeight = 0;
+    float m_envImportanceWeightSum = 0.0f;
 };

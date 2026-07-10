@@ -57,6 +57,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/lighting/IBL.cpp
     src/engine/lighting/EnvironmentMap.cpp
     src/engine/lighting/IrradianceSh.cpp
+    src/engine/lighting/EnvironmentImportanceSampling.cpp
 
     src/engine/rendering/Material.cpp
     src/engine/rendering/Texture.cpp

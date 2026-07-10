@@ -38,6 +38,8 @@ struct EmissiveLightEntry
 };
 StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
 
+#include "pt_env_light.hlsli"
+
 // The shared cbuffer field g_SamplesPerPixel carries the PT max-bounce count (reused verbatim; the
 // reflection/GI passes read it as an actual sample count). Alias it for readable PT intent.
 #define g_MaxBounces g_SamplesPerPixel
@@ -65,6 +67,7 @@ StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
 static const uint kPtAmbientAoRngSalt = 128u;
 static const uint kPtSoftSunRngSalt = 32u;
 static const uint kPtEmissiveNeeSalt = 96u;
+static const uint kPtEnvNeeSalt = 112u;
 static const uint kPtSoftSunSampleCount = 4u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
@@ -474,6 +477,12 @@ float3 EvaluateRealTimeDiffuseAmbient(
     float3 hitNormal,
     float3 shadowOrigin)
 {
+    // Environment IS NEE replaces the SH ambient floor when the CDF is bound (F2).
+    if (g_EnvLightImportanceCount > 0u)
+    {
+        return 0.0.xxx;
+    }
+
     const float diffuseWeight = max(diffuseAlbedo.r, max(diffuseAlbedo.g, diffuseAlbedo.b));
     if (diffuseWeight <= 0.02)
     {
@@ -884,6 +893,49 @@ float3 EvaluateDirectEmissive(
 
     return bsdf * EmissiveWithBloomHalo(light.emissive) * geometryTerm * visibility * misWeight
         / max(pickPdf * pdfArea, 1e-8);
+}
+
+// Infinite environment light NEE — luminance-importance sampled HDR equirect, MIS vs BSDF.
+float3 EvaluateDirectEnvironment(
+    uint2 pixel,
+    uint bounceIndex,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float3 hitNormal,
+    float3 shadowOrigin)
+{
+    if (g_EnvLightImportanceCount == 0u)
+    {
+        return 0.0.xxx;
+    }
+
+    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEnvNeeSalt);
+    float3 wi;
+    float pdfEnv;
+    if (!SampleEnvLightDirection(xi, wi, pdfEnv))
+    {
+        return 0.0.xxx;
+    }
+
+    if (dot(hitNormal, wi) <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float visibility = TraceTransmissiveVisibility(shadowOrigin, wi, g_MaxTraceDistance);
+    if (visibility <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+    const float misWeight = BalanceHeuristic(pdfEnv, pdfBsdf);
+    const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+    const float3 radiance = EnvNeeRadiance(wi);
+    return bsdf * radiance * visibility * misWeight / max(pdfEnv, 1e-8);
 }
 
 // Opaque BRDF bounce: stochastic diffuse/GGX-specular lobe pick, weighted by the FULL BRDF over the
@@ -1306,6 +1358,13 @@ void PathTracerRayGen()
         radiance += throughput * emissiveContrib;
         termDirectEmissive += throughput * emissiveContrib;
 
+        const float3 envContrib = (dielectricWeight > 0.01)
+            ? 0.0.xxx
+            : EvaluateDirectEnvironment(
+                pixel, bounce, viewDir, f0, albedo, material.roughness, material.metallic,
+                hitNormal, shadowOrigin);
+        radiance += throughput * envContrib;
+
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
         if (kPtCenterPrimaryRays && bounce == 0u)
@@ -1465,7 +1524,7 @@ void PathTracerRayGen()
                 ray.Direction,
                 TransmissionMissEnvRoughness(material.roughness, dielectricWeight));
             radiance += throughput * lerp(reflectTail, transmitTail, dielectricWeight);
-            if (!kPtCenterPrimaryRays)
+            if (!kPtCenterPrimaryRays && g_EnvLightImportanceCount == 0u)
             {
                 radiance += throughput * diffuseAlbedo * EvaluateDiffuseIrradianceSh(hitNormal) / kPi
                     * g_EnvironmentIntensity;

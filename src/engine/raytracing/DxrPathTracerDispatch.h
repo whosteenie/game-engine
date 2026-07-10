@@ -41,6 +41,12 @@ public:
         bool motionHistoryValid = false;
         // Real-time (DLSS): pixel-center primary rays only. Reference: sub-pixel jitter for accumulation.
         bool centerPrimaryRays = false;
+        std::uintptr_t envEquirectSrvCpuHandle = 0;
+        std::uint32_t envImportanceCdfSrvIndex = UINT32_MAX;
+        std::uint32_t envImportanceSampleCount = 0;
+        std::uint32_t envImportanceCdfWidth = 0;
+        std::uint32_t envImportanceCdfHeight = 0;
+        float envImportanceWeightSum = 0.0f;
     };
 
     DxrPathTracerDispatch() = default;

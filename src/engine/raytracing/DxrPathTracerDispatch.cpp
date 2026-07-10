@@ -200,6 +200,13 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         constants.irradianceSh9[i][2] = frameInputs.irradianceSh9[i].z;
         constants.irradianceSh9[i][3] = frameInputs.irradianceSh9[i].w;
     }
+    constants.envLightImportanceCount = frameInputs.envImportanceSampleCount;
+    constants.envIsCdfWidth = frameInputs.envImportanceCdfWidth;
+    constants.envIsCdfHeight = frameInputs.envImportanceCdfHeight;
+    constants.envLightImportanceInvWeightSum =
+        frameInputs.envImportanceWeightSum > 0.0f
+            ? 1.0f / frameInputs.envImportanceWeightSum
+            : 0.0f;
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
@@ -218,6 +225,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.velocitySrvCpuHandle = frameInputs.velocitySrvCpuHandle;
     dispatchInputs.prevInstanceTransformsSrvIndex = prevTransformsSrvIndex;
     dispatchInputs.emissiveLightsSrvIndex = accelerationStructures.GetEmissiveLightsSrvIndex();
+    dispatchInputs.envImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
+    dispatchInputs.envEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
 
     if (!m_dispatchContext.DispatchPathTracer(
             commandList4,

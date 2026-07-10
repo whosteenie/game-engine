@@ -83,6 +83,9 @@ public:
         std::uint32_t prevInstanceTransformsSrvIndex = UINT32_MAX;
         // F2 path tracer only (t15): emissive instance list for NEE. UINT32_MAX = unavailable.
         std::uint32_t emissiveLightsSrvIndex = UINT32_MAX;
+        // F2 environment IS (t16 CDF, t17 HDR equirect). UINT32_MAX / 0 = unavailable.
+        std::uint32_t envImportanceCdfSrvIndex = UINT32_MAX;
+        std::uintptr_t envEquirectSrvCpuHandle = 0;
     };
 
     // Phase D5 (devdoc/dxr/nrd-integration.md): everything the NRD backend needs to denoise
