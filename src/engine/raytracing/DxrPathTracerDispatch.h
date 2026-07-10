@@ -10,6 +10,8 @@
 
 class Camera;
 class DxrAccelerationStructures;
+class DxrRestirDispatch;
+class DxrRestirDispatch;
 
 // Phase P0/P1/P2 — unified path tracer (devdoc/dxr/path-tracing.md).
 //
@@ -101,6 +103,20 @@ public:
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const;
     bool HasRestirBuffers() const;
     bool HasValidOutput() const;
+
+    // R2 temporal reuse (real-time only). Call after DispatchIfEnabled, before surface-history copy.
+    // shadeOutput=false keeps isolate AOVs (reservoirs still update).
+    bool DispatchRestirTemporal(
+        DxrRestirDispatch& restirDispatch,
+        const DxrAccelerationStructures& accelerationStructures,
+        const Camera& camera,
+        void* commandList,
+        float maxTraceDistance,
+        std::uint32_t sceneVersion,
+        bool realTimeMode,
+        bool shadeOutput = true);
+
+    void FinalizePathTracerSurfaceHistory(void* commandList);
 
     // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.
     void ResetAccumulation() { m_frameIndex = 0; }

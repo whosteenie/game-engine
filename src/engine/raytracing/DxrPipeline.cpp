@@ -767,7 +767,7 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
 
     try
     {
-        // G5 widened PT UAVs 7→9; drop any stale singleton from an older layout in-process.
+        // G5/R2 widened PT UAVs (ReSTIR + direct); drop any stale singleton from an older layout.
         DxrRootSignature::ReleasePathTracerGlobalRootSignature();
         m_globalRootSignature = DxrRootSignature::CreatePathTracerGlobalRootSignature();
     }
@@ -1531,6 +1531,8 @@ bool DxrPipeline::CreateRestirPipeline(std::string& outError)
 
     try
     {
+        m_globalRootSignature = nullptr;
+        DxrRootSignature::ReleaseRestirGlobalRootSignature();
         m_globalRootSignature = DxrRootSignature::CreateRestirGlobalRootSignature();
     }
     catch (const std::exception& exception)

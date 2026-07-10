@@ -86,6 +86,21 @@ struct ReflectionDispatchConstants
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in
 // assets/shaders/dxr/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then
 // float3+float pairs, then scalars in multiples of 4).
+struct RestirTemporalConstants
+{
+    std::uint32_t outputWidth = 0;
+    std::uint32_t outputHeight = 0;
+    std::uint32_t historyValid = 0;
+    std::uint32_t frameIndex = 0;
+    float invViewProj[16] = {};
+    float cameraPos[3] = {};
+    float maxTraceDistance = 100.0f;
+    std::uint32_t shadeOutput = 1; // rewrite g_Output = direct + Y·W (0 keeps isolate AOVs)
+    std::uint32_t _shadePad0 = 0;
+    std::uint32_t _shadePad1 = 0;
+    std::uint32_t _shadePad2 = 0;
+};
+
 struct ShadowDispatchConstants
 {
     std::uint32_t outputWidth = 0;

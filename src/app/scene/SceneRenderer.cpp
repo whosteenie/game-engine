@@ -745,6 +745,30 @@ void SceneRenderer::RecordDxrPass(
             PtDebugIsolateModeFromRenderDebug(debugMode));
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 
+        if (pathTracerDispatched)
+        {
+            const bool realTimePt = !m_dxrSettings.IsPtReferenceConvergence();
+            // R2 temporal: reservoirs + shade g_Output = direct + Y·W (skip shade for isolate AOVs).
+            if (realTimePt && m_dxrRestirDispatch != nullptr)
+            {
+                const int isolateMode = PtDebugIsolateModeFromRenderDebug(debugMode);
+                DxrBreadcrumb("render: restir temporal begin");
+                m_dxrPathTracerDispatch->DispatchRestirTemporal(
+                    *m_dxrRestirDispatch,
+                    *m_dxrAccelerationStructures,
+                    camera,
+                    GfxContext::Get().GetCommandList(),
+                    m_dxrSettings.GetMaxTraceDistance(),
+                    m_dxrAccelerationStructures->GetPtSceneVersion(),
+                    true,
+                    isolateMode == 0);
+                DxrBreadcrumb("render: restir temporal end");
+            }
+
+            m_dxrPathTracerDispatch->FinalizePathTracerSurfaceHistory(
+                GfxContext::Get().GetCommandList());
+        }
+
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
         {
             PathTracerHistoryKey historyKey{};

@@ -446,12 +446,11 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
 
 // P4b path tracer: reflection layout plus t14 (prev-instance transforms for object motion),
 // t15 (emissive NEE light list), t18 (emissive triangle geometry), u4-u6 (RR material guides),
-// and u7-u8 (G5/R1 ReSTIR InitialSample + Reservoir[0]). The reflection signature stays at
-// t0-t13 / u0-u3 — never widen it.
+// u7-u8 (ReSTIR InitialSample + Reservoir), u9 (R2 direct radiance for temporal shade).
 void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     SerializeHitShadingGlobalRootSignatureBlob(
-        19, 9, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
+        19, 10, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()
@@ -730,16 +729,20 @@ void DxrRootSignature::ReleaseShadowLocalRootSignature()
 
 void DxrRootSignature::SerializeRestirGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
-    D3D12_DESCRIPTOR_RANGE1 srvRange{};
-    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-    srvRange.NumDescriptors = 1;
-    srvRange.BaseShaderRegister = 0;
-    srvRange.RegisterSpace = 0;
-    srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
-    srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    // t0 TLAS, t1-t5 prev/curr depth+N/R + motion, t6 PT direct; u0-u3 reservoirs + initial + output.
+    D3D12_DESCRIPTOR_RANGE1 srvRanges[7]{};
+    for (std::uint32_t registerIndex = 0; registerIndex < 7; ++registerIndex)
+    {
+        srvRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRanges[registerIndex].NumDescriptors = 1;
+        srvRanges[registerIndex].BaseShaderRegister = registerIndex;
+        srvRanges[registerIndex].RegisterSpace = 0;
+        srvRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        srvRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    }
 
-    D3D12_DESCRIPTOR_RANGE1 uavRanges[3]{};
-    for (std::uint32_t registerIndex = 0; registerIndex < 3; ++registerIndex)
+    D3D12_DESCRIPTOR_RANGE1 uavRanges[4]{};
+    for (std::uint32_t registerIndex = 0; registerIndex < 4; ++registerIndex)
     {
         uavRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
         uavRanges[registerIndex].NumDescriptors = 1;
@@ -749,27 +752,30 @@ void DxrRootSignature::SerializeRestirGlobalRootSignature(ComPtr<ID3DBlob>& outB
         uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
     }
 
-    D3D12_ROOT_PARAMETER1 rootParams[5]{};
+    D3D12_ROOT_PARAMETER1 rootParams[12]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].Descriptor.ShaderRegister = 0;
     rootParams[0].Descriptor.RegisterSpace = 0;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-    rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
-    rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
-    rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
-
-    for (std::uint32_t uavIndex = 0; uavIndex < 3; ++uavIndex)
+    for (std::uint32_t srvIndex = 0; srvIndex < 7; ++srvIndex)
     {
-        rootParams[2 + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[2 + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[2 + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
-        rootParams[2 + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        rootParams[1 + srvIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[1 + srvIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[1 + srvIndex].DescriptorTable.pDescriptorRanges = &srvRanges[srvIndex];
+        rootParams[1 + srvIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
+    for (std::uint32_t uavIndex = 0; uavIndex < 4; ++uavIndex)
+    {
+        rootParams[8 + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[8 + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[8 + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
+        rootParams[8 + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     }
 
     D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
-    rootDesc.NumParameters = 5;
+    rootDesc.NumParameters = 12;
     rootDesc.pParameters = rootParams;
     rootDesc.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |

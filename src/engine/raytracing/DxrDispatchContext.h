@@ -232,6 +232,9 @@ public:
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerNormalRoughnessResource() const { return m_ptNormalRoughnessTexture.resource; }
     std::uint32_t GetPathTracerNormalRoughnessResourceState() const { return m_ptNormalRoughnessTexture.state; }
+    std::uintptr_t GetPathTracerDirectSrvCpuHandle() const { return m_ptDirectTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerDirectResource() const { return m_ptDirectTexture.resource; }
+    std::uint32_t GetPathTracerDirectResourceState() const { return m_ptDirectTexture.state; }
 
     // G4 / ReSTIR: previous-frame PT surface history (render-res copy of depth + normal/roughness).
     // Valid after the first successful PT dispatch following create/resize. Temporal reuse (R2)
@@ -270,6 +273,22 @@ public:
                                                          : nullptr;
     }
     ID3D12Resource* GetRestirInitialSampleResource() const { return m_restirInitialSample.resource; }
+    int GetRestirWriteIndex() const { return m_restirWriteIndex; }
+
+    // R2: temporal reuse after PT DispatchRays, before CopyPathTracerSurfaceHistory.
+    bool DispatchRestirTemporal(
+        ID3D12GraphicsCommandList4* commandList,
+        ID3D12StateObject* stateObject,
+        ID3D12RootSignature* rootSignature,
+        const ShaderBindingTable& shaderBindingTable,
+        ID3D12Resource* tlasResource,
+        std::uint64_t tlasGpuVirtualAddress,
+        const DxrRootSignature::RestirTemporalConstants& constants,
+        std::string& outError);
+
+    // G4: copy current depth/N+R → prev (call AFTER R2 temporal).
+    void FinalizePathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList);
+    void InvalidateRestirHistoryIfSceneChanged(std::uint32_t sceneVersion);
 
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
@@ -371,6 +390,8 @@ private:
     ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
     ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
     ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
+    // R2: bounce-0 direct only (sun/emissive/env NEE + ambient) for temporal shade without (rgb−Y).
+    ReflectionTexture m_ptDirectTexture{};
     // G4: previous-frame copies for ReSTIR temporal validation (same formats as current guides).
     ReflectionTexture m_ptPrevDepthTexture{};
     ReflectionTexture m_ptPrevNormalRoughnessTexture{};
@@ -402,6 +423,9 @@ private:
     int m_restirBufferWidth = 0;
     int m_restirBufferHeight = 0;
     std::uint32_t m_restirElementCount = 0;
+    int m_restirWriteIndex = 0; // PT + temporal write; other index is prev-frame read
+    bool m_restirReservoirHistoryValid = false;
+    std::uint32_t m_restirLastSceneVersion = 0;
     std::vector<RetiredOutput> m_retiredRestirBuffers;
 
     static constexpr int kReflectionTextureCount = 5;

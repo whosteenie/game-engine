@@ -8,8 +8,8 @@ struct RestirInitialSample
 {
     float3 xs;
     uint nsOct; // octahedral normal as two fp16
-    uint loTailRg; // Lo_tail.rg as fp16
-    uint loTailBFlags; // Lo_tail.b fp16 in low 16, flags in high 16
+    uint loTailRg; // Y.rg as fp16 (R2: Y = t1·Lo_tail contribution)
+    uint loTailBFlags; // Y.b fp16 in low 16, flags in high 16
     float pdf;
     uint seed;
 };

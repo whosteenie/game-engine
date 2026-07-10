@@ -26,6 +26,7 @@ public:
     bool IsSpatialPipelineReady() const { return m_spatialPipelineReady; }
 
     ID3D12StateObject* GetStateObject() const { return m_pipeline.GetStateObject(); }
+    ID3D12RootSignature* GetGlobalRootSignature() const { return m_pipeline.GetGlobalRootSignature(); }
     const ShaderBindingTable& GetTemporalShaderBindingTable() const { return m_shaderBindingTable; }
     const ShaderBindingTable& GetSpatialShaderBindingTable() const { return m_spatialShaderBindingTable; }
 

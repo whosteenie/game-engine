@@ -19,6 +19,8 @@ RWTexture2D<float4> g_NormalRoughnessGuide : register(u6); // RGBA16F: world nor
 // G5/R1: first-indirect-vertex sample + M=1 reservoir (passthrough until R2 reuse).
 RWStructuredBuffer<RestirInitialSample> g_InitialSample : register(u7);
 RWStructuredBuffer<RestirReservoir> g_ReservoirCurrent : register(u8);
+// R2: bounce-0 direct only — temporal shades g_Output = direct + Y·W (never subtract packed Y).
+RWTexture2D<float4> g_DirectOutput : register(u9);
 
 // P4b: previous-frame object-to-world rows per instance (indexed by InstanceID == object index).
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -1801,15 +1803,16 @@ void PathTracerRayGen()
         radiance = ClampRadiance(radiance);
     }
 
-    // R1 M=1 passthrough: write InitialSample + Reservoir (unused by shade until R2).
+    // R1/R2: store Y = t1·Lo_tail (indirect contribution). Temporal shades direct + Y·W.
     if (!haveInitialSample)
     {
         sampleFlags |= kRestirSampleNoReuse;
     }
+    const float3 indirectContrib = throughputAfterFirstScatter * loTailForStore;
     const RestirInitialSample initialSample = RestirMakeInitialSample(
         sampleXs,
         sampleNs,
-        loTailForStore,
+        indirectContrib,
         samplePdf,
         pathSeed,
         sampleFlags);
@@ -1830,6 +1833,8 @@ void PathTracerRayGen()
         primarySunVis,
         specHitDistGuide);
 
+    // Unclamped bounce-0 direct for ReSTIR shade; g_Output keeps full M=1 / isolate AOVs.
+    g_DirectOutput[pixel] = float4(directRadiance, 0.0);
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     g_DepthOutput[pixel] = primaryDepth;
     g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);

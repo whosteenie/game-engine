@@ -4,6 +4,8 @@
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrAccelerationStructures.h"
 #include "engine/raytracing/DxrContext.h"
+#include "engine/raytracing/DxrRestirDispatch.h"
+#include "engine/raytracing/DxrRootSignature.h"
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 
@@ -258,6 +260,72 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     DxrEnableTrustMode();
     m_dispatchedThisFrame = true;
     return true;
+}
+
+bool DxrPathTracerDispatch::DispatchRestirTemporal(
+    DxrRestirDispatch& restirDispatch,
+    const DxrAccelerationStructures& accelerationStructures,
+    const Camera& camera,
+    void* commandList,
+    const float maxTraceDistance,
+    const std::uint32_t sceneVersion,
+    const bool realTimeMode,
+    const bool shadeOutput)
+{
+    if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsPipelineReady())
+    {
+        return false;
+    }
+
+    auto* commandList4 = static_cast<ID3D12GraphicsCommandList4*>(commandList);
+    if (commandList4 == nullptr)
+    {
+        return false;
+    }
+
+    m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion);
+
+    const glm::mat4 viewProj = camera.GetProjectionMatrix() * camera.GetViewMatrix();
+    const glm::mat4 invViewProj = glm::inverse(viewProj);
+    const glm::vec3 cameraPos = camera.GetPosition();
+
+    DxrRootSignature::RestirTemporalConstants constants{};
+    constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
+    constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
+    constants.historyValid = 1u;
+    constants.frameIndex = m_frameIndex;
+    std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
+    constants.cameraPos[0] = cameraPos.x;
+    constants.cameraPos[1] = cameraPos.y;
+    constants.cameraPos[2] = cameraPos.z;
+    constants.maxTraceDistance = maxTraceDistance;
+    constants.shadeOutput = shadeOutput ? 1u : 0u;
+
+    std::string error;
+    const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR temporal");
+    if (!m_dispatchContext.DispatchRestirTemporal(
+            commandList4,
+            restirDispatch.GetStateObject(),
+            restirDispatch.GetGlobalRootSignature(),
+            restirDispatch.GetTemporalShaderBindingTable(),
+            accelerationStructures.GetTlasResource(),
+            accelerationStructures.GetTlasGpuVirtualAddress(),
+            constants,
+            error))
+    {
+        DxrLogErrorOnce(
+            "dispatch-restir-temporal-failure",
+            std::string("ReSTIR temporal failed: ") + error);
+        return false;
+    }
+
+    return true;
+}
+
+void DxrPathTracerDispatch::FinalizePathTracerSurfaceHistory(void* commandList)
+{
+    m_dispatchContext.FinalizePathTracerSurfaceHistory(
+        static_cast<ID3D12GraphicsCommandList*>(commandList));
 }
 
 std::uintptr_t DxrPathTracerDispatch::GetPrimaryOutputSrvCpuHandle() const

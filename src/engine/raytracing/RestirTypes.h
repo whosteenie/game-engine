@@ -17,6 +17,7 @@ struct RestirInitialSample
 
 static_assert(sizeof(RestirInitialSample) == 32, "RestirInitialSample must be 32 bytes");
 
+// Note (R2): sample.loTail* stores Y = t1·Lo_tail (indirect contribution), not raw Lo_tail.
 struct RestirReservoir
 {
     RestirInitialSample sample{};

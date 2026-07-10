@@ -524,6 +524,7 @@ add_executable(engine-tests
     tests/pt_temporal_history_test.cpp
     tests/path_rng_test.cpp
     tests/restir_types_test.cpp
+    tests/restir_wrs_test.cpp
     tests/dxr_shader_infrastructure_test.cpp
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
