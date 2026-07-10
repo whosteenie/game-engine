@@ -50,7 +50,11 @@ bool RefractSnell(float3 wi, float3 n, float eta, out float3 wt)
     }
 
     const float cosT = sqrt(max(1.0 - sin2T, 0.0));
-    wt = eta * wi - (eta * cosI + cosT) * n;
+    // Transmitted PROPAGATION direction (PBRT eq. 9.34 / GLSL refract with incident d = -wi). The
+    // previous form (eta*wi - (eta*cosI + cosT)*n) flipped the tangential component, mirroring every
+    // refraction about the normal — invisible for parallel-face slabs (entry/exit cancel) but wrong
+    // for lenses, internal paths, glass shadows, and transmission guides.
+    wt = -eta * wi + (eta * cosI - cosT) * n;
     return dot(wt, wt) > 1e-8;
 }
 
@@ -91,31 +95,14 @@ float3 SampleDielectricMicroNormal(float3 n, float3 wi, float roughness, float2 
     return microN;
 }
 
-// Thin dielectric slab: enter + exit refraction in one event (PBRT thin dielectric).
+// Thin dielectric slab (zero thickness, parallel faces): the enter and exit refractions are equal
+// and opposite, so the transmitted ray continues along the original propagation direction — PBRT's
+// ThinDielectricBxDF transmits along the unmodified incident direction. wi points back along the
+// incoming path, so the forward transmit direction is -wi. A parallel slab always transmits the
+// non-reflected portion (no TIR), so this never fails. (n / ior unused: kept for call-site parity.)
 bool RefractThinSlab(float3 wi, float3 n, float ior, out float3 wo)
 {
-    float3 nFront = n;
-    if (dot(wi, nFront) < 0.0)
-    {
-        nFront = -nFront;
-    }
-
-    const float eta = 1.0 / max(ior, 1.0);
-    float3 wt;
-    if (!RefractSnell(wi, -nFront, eta, wt))
-    {
-        wo = reflect(wi, nFront);
-        return false;
-    }
-
-    float3 wp;
-    if (!RefractSnell(-wt, nFront, eta, wp))
-    {
-        wo = reflect(wi, nFront);
-        return false;
-    }
-
-    wo = normalize(-wp);
+    wo = -wi;
     return true;
 }
 
@@ -223,7 +210,12 @@ void SampleDielectricInterface(
     const float eta = thinWalled ? (1.0 / iorClamped) : (pathInMedium ? iorClamped : (1.0 / iorClamped));
     const bool enteringMedium = !pathInMedium && !thinWalled;
     const float cosThetaI = dot(wi, interfaceN);
-    const float fresnel = FresnelDielectric(cosThetaI, eta);
+    const float singleFaceFresnel = FresnelDielectric(cosThetaI, eta);
+    // A thin pane reflects off BOTH faces plus internal bounces: R_slab = 2R/(1+R) (PBRT
+    // ThinDielectric). A single-interface R under-reflects panes.
+    const float fresnel = thinWalled
+        ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
+        : singleFaceFresnel;
     const float3 reflectDir = normalize(reflect(wi, interfaceN));
     const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
 
@@ -407,7 +399,11 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
         const float ior = max(mat.indexOfRefraction, 1.0);
         const bool thin = mat.thinWalled > 0.5;
         const float eta = thin ? (1.0 / ior) : (pathInMedium ? ior : (1.0 / ior));
-        const float fresnel = FresnelDielectric(dot(wi, n), eta);
+        const float singleFaceFresnel = FresnelDielectric(dot(wi, n), eta);
+        // Match SampleDielectricInterface: two-face slab reflectance for panes (R_slab = 2R/(1+R)).
+        const float fresnel = thin
+            ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
+            : singleFaceFresnel;
         transmittance *= max(1.0 - fresnel, 0.0);
         if (transmittance < 1e-4)
         {

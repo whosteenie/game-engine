@@ -524,6 +524,7 @@ add_executable(engine-tests
     tests/dxr_shader_infrastructure_test.cpp
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
+    tests/refraction_test.cpp
     tests/shader_compile_test.cpp
 )
 

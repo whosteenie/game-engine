@@ -20,6 +20,7 @@ void RunDxrAccelerationStructureTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
+void RunRefractionTests();
 void RunShaderCompileTests();
 
 namespace
@@ -71,6 +72,7 @@ namespace
             [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });
         maybeRun("material", RunMaterialTests);
         maybeRun("guide_encoding", RunGuideEncodingTests);
+        maybeRun("refraction", RunRefractionTests);
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

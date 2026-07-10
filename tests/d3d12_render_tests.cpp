@@ -2242,10 +2242,16 @@ namespace render_tests
                 normalGuide),
             "Normal-roughness guide readback should succeed");
 
-        test::ExpectTrue(normalGuide[3] < 0.08f, "Primary guide roughness should stay on glass pane");
+        // PSR (transmission-rr-guides.md): through a clear head-on pane transmitWeight ~= 1 - Fresnel
+        // ~= 0.96, so the guides describe the BACKGROUND surface. The roughness therefore blends toward
+        // the backdrop's (0.35), not the glass pane's (0.02). (Before the S1 refraction fix the thin-slab
+        // guide trace produced a mirrored direction that missed the backdrop and left glass roughness.)
+        test::ExpectTrue(
+            normalGuide[3] > 0.2f,
+            "Through clear glass, guide roughness should blend toward the backdrop (PSR)");
 
-        // When the refracted guide trace hits the backdrop, diffuse picks up its red albedo band.
-        // Thin-shell cube panes may still miss (transmission-rr-guides.md); then expect sky fallback.
+        // The refracted guide trace hits the backdrop, so diffuse picks up its red albedo band. If the
+        // thin-shell retry ever misses (transmission-rr-guides.md), the neutral sky fallback is accepted.
         const bool backdropGuideBand =
             diffuseGuide[0] > 0.55f && diffuseGuide[1] < 0.25f;
         const bool skyFallbackBand =
@@ -2254,11 +2260,14 @@ namespace render_tests
         test::ExpectTrue(
             backdropGuideBand || skyFallbackBand,
             "Through glass, diffuse guide should be backdrop red or neutral sky fallback");
-        if (baselineDiffuseR > 0.0f)
+        if (baselineDiffuseR > 0.0f && backdropGuideBand)
         {
+            // PSR at head-on makes the through-glass guide track the backdrop, so it should closely
+            // match the direct-backdrop baseline (minus the small Fresnel-reflected fraction), not
+            // diverge from it as the pre-fix mirrored/sky-fallback behavior did.
             test::ExpectTrue(
-                diffuseGuide[0] < baselineDiffuseR - 0.2f,
-                "Through-glass diffuse guide should differ from a direct backdrop hit");
+                diffuseGuide[0] > baselineDiffuseR - 0.15f,
+                "Through clear glass, diffuse guide should closely match the backdrop (PSR)");
         }
         test::ExpectTrue(
             normalGuide[2] > 0.5f,
