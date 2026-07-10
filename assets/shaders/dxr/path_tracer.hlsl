@@ -1063,6 +1063,7 @@ bool SampleMaterialBounce(
             thinWalled,
             pathInMedium,
             instanceId,
+            xi.z,
             xi.xy,
             fresnelReflect,
             nextDir,
@@ -1566,6 +1567,12 @@ void PathTracerRayGen()
         {
             // Thin slab is zero-thickness; escape any physical shell (scaled-cube panes) before continuing.
             ray.Origin = hitPos + nextDir * max(originBias, kThinShellMinExitBias);
+        }
+        else if (dielectricWeight > 0.01 && !pathInMediumBefore && pathInMedium)
+        {
+            // Entering a solid volume: push past the entry interface so the refracted segment does not
+            // immediately self-hit the same shell triangle (reads as frosted/milky glass).
+            ray.Origin = hitPos + nextDir * max(originBias, 0.02);
         }
         else if (dielectricWeight > 0.01 && pathInMediumBefore && !pathInMedium)
         {

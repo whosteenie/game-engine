@@ -139,7 +139,8 @@ bool ComputeDielectricRefractDir(
     return true;
 }
 
-// One-bounce mirror trace for Fresnel reflection — shades the hit instead of env-only fallback.
+// One-bounce mirror trace for the real-time deterministic Fresnel split (external interfaces only).
+// Reference mode uses stochastic path continuation instead (audit R2).
 float3 TraceDielectricReflectContrib(
     float3 hitPos,
     float3 hitNormal,
@@ -176,7 +177,10 @@ float3 TraceDielectricReflectContrib(
     return SampleEnvironment(reflectDir, envRoughness);
 }
 
-// Fresnel reflect (traced) + Snell / thin-slab refract (path continuation). Deterministic split.
+// Dielectric interface scatter. Real-time (`kPtCenterPrimaryRays`): deterministic Fresnel split —
+// reflected energy via one-bounce TraceDielectricReflectContrib on external hits only (no stacking
+// on volume interior), transmitted energy continues the path. Reference mode: stochastic reflect OR
+// refract with throughput / branch prob (unbiased; needs accumulation to converge).
 void SampleDielectricInterface(
     float3 hitPos,
     float3 hitNormal,
@@ -186,6 +190,7 @@ void SampleDielectricInterface(
     bool thinWalled,
     bool pathInMedium,
     uint instanceId,
+    float fresnelXi,
     float2 roughXi,
     out float3 fresnelReflectRadiance,
     out float3 nextDir,
@@ -203,66 +208,88 @@ void SampleDielectricInterface(
     }
 
     const float iorClamped = max(ior, 1.0);
-    // Thin slab models a zero-thickness interface (glTF thicknessFactor = 0). Microfacet tilt on the
-    // slab breaks enter+exit cancellation and reads as a mirror on panes — reserve it for solid volumes.
     const float3 geoN = n;
-    const float3 interfaceN = thinWalled ? geoN : SampleDielectricMicroNormal(n, wi, roughness, roughXi);
+    // Thin slab: geometric normal for Fresnel/Snell slab model; microfacet tilt on reflection only
+    // (tilting the slab breaks enter+exit cancellation on transmission). Solid volumes tilt both lobes.
+    const float3 reflectN = thinWalled
+        ? SampleDielectricMicroNormal(geoN, wi, roughness, roughXi)
+        : SampleDielectricMicroNormal(n, wi, roughness, roughXi);
+    const float3 snellN = thinWalled ? geoN : reflectN;
     const float eta = thinWalled ? (1.0 / iorClamped) : (pathInMedium ? iorClamped : (1.0 / iorClamped));
     const bool enteringMedium = !pathInMedium && !thinWalled;
-    const float cosThetaI = dot(wi, interfaceN);
+    const float cosThetaI = dot(wi, snellN);
     const float singleFaceFresnel = FresnelDielectric(cosThetaI, eta);
-    // A thin pane reflects off BOTH faces plus internal bounces: R_slab = 2R/(1+R) (PBRT
-    // ThinDielectric). A single-interface R under-reflects panes.
     const float fresnel = thinWalled
         ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
         : singleFaceFresnel;
-    const float3 reflectDir = normalize(reflect(wi, interfaceN));
+    const float3 reflectDir = normalize(reflect(wi, reflectN));
     const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
 
     outPathInMedium = thinWalled ? false : pathInMedium;
     scatterPdf = kDeltaScatterPdf;
 
-    if (fresnel > 1e-6)
-    {
-        fresnelReflectRadiance = fresnel
-            * TraceDielectricReflectContrib(hitPos, interfaceN, reflectDir, envRough, instanceId);
-    }
-
-    throughput *= max(1.0 - fresnel, 1e-6);
-
-    if ((1.0 - fresnel) < 1e-4)
-    {
-        nextDir = reflectDir;
-        return;
-    }
-
     float3 refracted;
-    bool refractOk;
+    bool refractOk = false;
     if (thinWalled)
     {
         refractOk = RefractThinSlab(wi, geoN, iorClamped, refracted);
-        outPathInMedium = false;
-        if (refractOk && roughness > 1e-4)
-        {
-            const float rough2 = roughness * roughness;
-            const float3 perturb = CosineSampleHemisphere(refracted, roughXi);
-            refracted = normalize(lerp(refracted, perturb, rough2));
-        }
     }
     else
     {
-        refractOk = RefractSnell(wi, interfaceN, eta, refracted);
-        outPathInMedium = enteringMedium;
+        refractOk = RefractSnell(wi, snellN, eta, refracted);
     }
 
-    if (!refractOk)
+    if (kPtCenterPrimaryRays)
     {
-        nextDir = reflectDir;
-        throughput = 0.0.xxx;
+        const bool externalHit = thinWalled || !pathInMedium;
+
+        if (externalHit && fresnel > 1e-6)
+        {
+            fresnelReflectRadiance = fresnel
+                * TraceDielectricReflectContrib(hitPos, reflectN, reflectDir, envRough, instanceId);
+        }
+
+        // Reflection-dominated (TIR or R≈1): external hits deposit reflect energy via the inject
+        // above and carry only the (1−R) tail on the path. Interior hits must continue in
+        // reflectDir with full throughput — otherwise TIR on cube edge/side faces zeroes the path
+        // (black silhouette rims) because there is no external inject inside the volume.
+        if (!refractOk || (1.0 - fresnel) < 1e-4)
+        {
+            nextDir = reflectDir;
+            if (externalHit)
+            {
+                throughput *= max(1.0 - fresnel, 1e-6);
+            }
+            return;
+        }
+
+        throughput *= max(1.0 - fresnel, 1e-6);
+        nextDir = normalize(refracted);
+        outPathInMedium = thinWalled ? false : enteringMedium;
         return;
     }
 
+    const bool mustReflect = !refractOk;
+    const bool chooseReflect = mustReflect || (fresnelXi < fresnel);
+
+    if (chooseReflect)
+    {
+        nextDir = reflectDir;
+        outPathInMedium = thinWalled ? false : pathInMedium;
+        throughput /= max(mustReflect ? 1.0 : fresnel, 1e-6);
+        return;
+    }
+
+    throughput /= max(1.0 - fresnel, 1e-6);
     nextDir = normalize(refracted);
+    if (thinWalled)
+    {
+        outPathInMedium = false;
+    }
+    else
+    {
+        outPathInMedium = enteringMedium;
+    }
 }
 
 // Result of a deterministic refracted primary-ray trace for DLSS-RR transmission guides (PSR).
