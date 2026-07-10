@@ -139,67 +139,22 @@ bool ComputeDielectricRefractDir(
     return true;
 }
 
-// One-bounce mirror trace for the real-time deterministic Fresnel split (external interfaces only).
-// Reference mode uses stochastic path continuation instead (audit R2).
-float3 TraceDielectricReflectContrib(
-    float3 hitPos,
-    float3 hitNormal,
-    float3 reflectDir,
-    float envRoughness,
-    uint excludeInstanceId)
-{
-    const float nDotV = saturate(dot(hitNormal, reflectDir));
-    const float bias = max(0.01, 0.01 * (1.0 + 2.0 * (1.0 - nDotV)));
-    RayDesc reflectRay;
-    reflectRay.Origin = hitPos + hitNormal * bias;
-    reflectRay.Direction = reflectDir;
-    reflectRay.TMin = 0.001;
-    reflectRay.TMax = g_MaxTraceDistance;
-
-    Payload reflectPayload;
-    ResetPayload(reflectPayload);
-    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, reflectRay, reflectPayload);
-    if (reflectPayload.hit != 0)
-    {
-        if (reflectPayload.instanceId == excludeInstanceId)
-        {
-            return SampleEnvironment(reflectDir, envRoughness);
-        }
-
-        return ShadeHit(
-            reflectPayload.instanceId,
-            reflectPayload.primitiveIndex,
-            reflectPayload.barycentrics,
-            reflectPayload.shadingNormal,
-            reflectDir);
-    }
-
-    return SampleEnvironment(reflectDir, envRoughness);
-}
-
-// Dielectric interface scatter. Real-time (`kPtCenterPrimaryRays`): deterministic Fresnel split —
-// reflected energy via one-bounce TraceDielectricReflectContrib on external hits only (no stacking
-// on volume interior), transmitted energy continues the path. Reference mode: stochastic reflect OR
-// refract with throughput / branch prob (unbiased; needs accumulation to converge).
+// Dielectric interface scatter: stochastic reflect OR refract with Fresnel-proportional selection
+// (G2 / ReSTIR R0). Real-time and reference share this path — one sample, one pdf. Throughput is
+// unchanged on either branch because weight = f/pdf = 1 for Fresnel-proportional picks (C1).
 void SampleDielectricInterface(
-    float3 hitPos,
     float3 hitNormal,
     float3 rayDir,
     float roughness,
     float ior,
     bool thinWalled,
     bool pathInMedium,
-    uint instanceId,
     float fresnelXi,
     float2 roughXi,
-    out float3 fresnelReflectRadiance,
     out float3 nextDir,
     out bool outPathInMedium,
-    out float scatterPdf,
-    inout float3 throughput)
+    out float scatterPdf)
 {
-    fresnelReflectRadiance = 0.0.xxx;
-
     const float3 wi = -rayDir;
     float3 n = hitNormal;
     if (dot(wi, n) < 0.0)
@@ -227,7 +182,6 @@ void SampleDielectricInterface(
     // reflection (pointing into the surface) — a long-standing sign bug that sent the glass reflection
     // ray the wrong way (and internal TIR out through the wall instead of bouncing back in).
     const float3 reflectDir = normalize(reflect(rayDir, reflectN));
-    const float envRough = TransmissionMissEnvRoughness(roughness, 1.0);
 
     outPathInMedium = thinWalled ? false : pathInMedium;
     scatterPdf = kDeltaScatterPdf;
@@ -243,44 +197,13 @@ void SampleDielectricInterface(
         refractOk = RefractSnell(wi, snellN, eta, refracted);
     }
 
-    if (kPtCenterPrimaryRays)
-    {
-        const bool externalHit = thinWalled || !pathInMedium;
-
-        if (externalHit && fresnel > 1e-6)
-        {
-            fresnelReflectRadiance = fresnel
-                * TraceDielectricReflectContrib(hitPos, reflectN, reflectDir, envRough, instanceId);
-        }
-
-        // Reflection-dominated (TIR or R≈1): external hits deposit reflect energy via the inject
-        // above and carry only the (1−R) tail on the path. Interior hits must continue in
-        // reflectDir with full throughput — otherwise TIR on cube edge/side faces zeroes the path
-        // (black silhouette rims) because there is no external inject inside the volume.
-        if (!refractOk || (1.0 - fresnel) < 1e-4)
-        {
-            nextDir = reflectDir;
-            if (externalHit)
-            {
-                throughput *= max(1.0 - fresnel, 1e-6);
-            }
-            return;
-        }
-
-        throughput *= max(1.0 - fresnel, 1e-6);
-        nextDir = normalize(refracted);
-        outPathInMedium = thinWalled ? false : enteringMedium;
-        return;
-    }
-
     const bool mustReflect = !refractOk;
     const bool chooseReflect = mustReflect || (fresnelXi < fresnel);
 
     if (chooseReflect)
     {
         // Fresnel-proportional selection: the estimator weight is reflectance / P(reflect) = F/F = 1
-        // (and 1/1 = 1 for TIR). Throughput passes through unchanged. The previous `throughput /=
-        // fresnel` multiplied by 1/F — ≈ 25× energy gain on a normal-incidence glass reflection.
+        // (and 1/1 = 1 for TIR). Throughput passes through unchanged.
         nextDir = reflectDir;
         outPathInMedium = thinWalled ? false : pathInMedium;
         return;

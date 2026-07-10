@@ -1030,13 +1030,18 @@ void SampleOpaqueInterface(
 }
 
 // Unified material bounce: dielectric Fresnel/Snell or opaque GGX.
-// Real-time (1 SPP): deterministic — scale glass transport by dielectricWeight, never stochastic
-// pick + 1/p divide (that explodes brightness at partial transmission, e.g. t≈0.6 peak blowout).
-// Reference: stochastic lobe pick weighted by transmission·(1−metallic) for unbiased convergence.
+//
+// G2: Fresnel at a dielectric interface is always stochastic (reflect XOR refract) — never the old
+// real-time dual inject. That is what ReSTIR needs for sample~pdf on glass.
+//
+// Glass vs opaque mixture (dielectricWeight = transmission·(1−metallic)):
+//   Reference — Bernoulli pick with 1/p (unbiased; fireflies average out under accumulation).
+//   Real-time — always follow the glass lobe when dw > 0 and scale throughput by dw (p=1 for that
+//   choice). Opaque residual stays on NEE/ambient via opaqueWeight. This avoids the 1/dw mid-t
+//   blowout at 1 spp; the path is still a single dielectric sample with a well-defined pdf.
 bool SampleMaterialBounce(
     uint2 pixel,
     uint bounceIndex,
-    float3 hitPos,
     float3 hitNormal,
     float3 rayDir,
     float3 viewDir,
@@ -1048,12 +1053,10 @@ bool SampleMaterialBounce(
     float ior,
     bool thinWalled,
     bool pathInMedium,
-    uint instanceId,
     out float3 nextDir,
     out bool isSpecular,
     out bool outPathInMedium,
     out float scatterPdf,
-    out float3 interfaceAddRadiance,
     inout float3 throughput)
 {
     const float dielectricWeight = DielectricWeight(transmission, metallic);
@@ -1062,41 +1065,32 @@ bool SampleMaterialBounce(
     outPathInMedium = pathInMedium;
     isSpecular = false;
     scatterPdf = 1.0;
-    interfaceAddRadiance = 0.0.xxx;
 
-    const bool useGlassPath = kPtCenterPrimaryRays
-        ? (dielectricWeight > 0.0)
-        : (dielectricWeight > 0.0 && xi.w < dielectricWeight);
+    const bool useGlassPath = dielectricWeight > 0.0
+        && (kPtCenterPrimaryRays || xi.w < dielectricWeight);
 
     if (useGlassPath)
     {
-        if (!kPtCenterPrimaryRays)
-        {
-            throughput /= max(dielectricWeight, 1e-6);
-        }
-        else
+        if (kPtCenterPrimaryRays)
         {
             throughput *= dielectricWeight;
         }
-        const float3 throughputAtInterface = throughput;
-        float3 fresnelReflect = 0.0.xxx;
+        else
+        {
+            throughput /= max(dielectricWeight, 1e-6);
+        }
         SampleDielectricInterface(
-            hitPos,
             hitNormal,
             rayDir,
             roughness,
             ior,
             thinWalled,
             pathInMedium,
-            instanceId,
             xi.z,
             xi.xy,
-            fresnelReflect,
             nextDir,
             outPathInMedium,
-            scatterPdf,
-            throughput);
-        interfaceAddRadiance = throughputAtInterface * fresnelReflect;
+            scatterPdf);
         isSpecular = true;
         return true;
     }
@@ -1575,12 +1569,10 @@ void PathTracerRayGen()
         float3 nextDir;
         bool isSpecular = false;
         float scatterPdf = 1.0;
-        float3 interfaceAddRadiance = 0.0.xxx;
         const bool pathInMediumBefore = pathInMedium;
         SampleMaterialBounce(
             pixel,
             bounce,
-            hitPos,
             hitNormal,
             ray.Direction,
             viewDir,
@@ -1592,12 +1584,10 @@ void PathTracerRayGen()
             material.indexOfRefraction,
             material.thinWalled > 0.5,
             pathInMedium,
-            payload.instanceId,
             nextDir,
             isSpecular,
             pathInMedium,
             scatterPdf,
-            interfaceAddRadiance,
             throughput);
         if (pathInMedium && !pathInMediumBefore && material.thinWalled < 0.5)
         {
@@ -1607,7 +1597,6 @@ void PathTracerRayGen()
         {
             mediumTint = 1.0.xxx;
         }
-        radiance += interfaceAddRadiance;
 
         lastScatterPdf = scatterPdf;
 
