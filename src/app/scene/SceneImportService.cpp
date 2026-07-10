@@ -7,7 +7,10 @@
 #include "app/scene/SceneSpawnService.h"
 
 #include "engine/assets/ModelImporter.h"
+#include "engine/platform/RenderPathDiagnostics.h"
+#include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rhi/GfxContext.h"
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/assets/ProjectAssets.h"
 #include "engine/scene/SceneHierarchy.h"
@@ -18,7 +21,63 @@
 #include <filesystem>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <string>
+
+namespace
+{
+    std::string FormatVec3(const glm::vec3& value)
+    {
+        std::ostringstream stream;
+        stream << "(" << value.x << ", " << value.y << ", " << value.z << ")";
+        return stream.str();
+    }
+
+    std::string SnapshotTrackedObjects(const Scene& scene, const char* label)
+    {
+        std::ostringstream stream;
+        stream << label << " tracked objects:";
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+        int logged = 0;
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        {
+            const SceneObject& object = objects[objectIndex];
+            if (object.GetName() != "Cube" && object.GetName() != "Floor" && object.GetImportAssetPath().empty())
+            {
+                continue;
+            }
+
+            const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+            const glm::vec3 worldPosition = glm::vec3(worldMatrix[3]);
+            stream << "\n  [" << objectIndex << "] \"" << object.GetName() << "\""
+                   << " pos=" << FormatVec3(worldPosition)
+                   << " mesh=" << (object.HasMesh() ? "yes" : "no");
+            if (object.HasMaterial())
+            {
+                const Material& material = object.GetMaterial();
+                stream << " albedo=" << FormatVec3(material.GetAlbedo())
+                       << " albedoMap=" << (material.HasAlbedoMap() ? "assigned" : "none");
+            }
+            else
+            {
+                stream << " material=none";
+            }
+            stream << " import=" << (object.GetImportAssetPath().empty() ? "no" : "yes");
+            ++logged;
+            if (logged >= 8)
+            {
+                break;
+            }
+        }
+
+        if (logged == 0)
+        {
+            stream << " (none)";
+        }
+
+        return stream.str();
+    }
+}
 
 std::vector<int> SceneImportService::ImportModel(
     Scene& scene,
@@ -28,6 +87,9 @@ std::vector<int> SceneImportService::ImportModel(
 {
     m_lastImportError.clear();
     m_lastImportWarning.clear();
+
+    RenderPathDiagnostics::LogImportBegin(path, parentIndex);
+    const std::string objectsBeforeImport = SnapshotTrackedObjects(scene, "before");
 
     const std::string modelName = std::filesystem::path(path).filename().string();
     ScopedNativeProgress progress("Importing Model", modelName);
@@ -149,6 +211,30 @@ std::vector<int> SceneImportService::ImportModel(
     }
 
     scene.MarkDirty();
+
+    int meshNodes = 0;
+    for (const ImportedSceneNode& node : importedModel.nodes)
+    {
+        if (node.hasMesh)
+        {
+            ++meshNodes;
+        }
+    }
+
+    std::uint32_t srvUsed = 0;
+    std::uint32_t srvCapacity = 0;
+    GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
+    RenderPathDiagnostics::LogImportComplete(
+        importPath,
+        static_cast<int>(importedModel.nodes.size()),
+        meshNodes,
+        importedModel.texturesCached,
+        importedModel.textureLoadFailures,
+        floorOffset,
+        srvUsed,
+        srvCapacity,
+        objectsBeforeImport + "\n" + SnapshotTrackedObjects(scene, "after"));
+
     return {baseObjectIndex + importedModel.rootNodeIndex};
 }
 

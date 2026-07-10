@@ -1,0 +1,97 @@
+// DLSS Ray Reconstruction guide generation (devdoc/dxr/dlss-rr.md, Phases RR1/RR4).
+// Produces the material guides RR consumes, at render (internal) resolution, from the G-buffer.
+// One shader, selected by uGuideMode; the renderer draws it once per guide target.
+//   0 = diffuse albedo   (SL kBufferTypeAlbedo)            = albedo * (1 - metallic)
+//   1 = specular albedo  (SL kBufferTypeSpecularAlbedo)    = F0 = lerp(0.04, albedo, metallic)
+//   2 = normal-roughness (SL kBufferTypeNormalRoughness, PACKED) = world normal in rgb, roughness in a
+//   3 = spec hit distance(SL kBufferTypeSpecularHitDistance)     = reflection ray length, world units
+//
+// Encoding contract (RR4 — VALIDATED against sl_dlss_d.h + sl_core_types.h):
+//  - Normal-roughness uses DLSSDNormalRoughnessMode::ePacked: raw signed world-space normal in rgb,
+//    linear roughness in .a, in an fp16 (signed) target. RR transforms world->view itself via the
+//    DLSSDOptions worldToCameraView/cameraViewToWorld we supply, so world-space (not view-space) is
+//    correct and no N*0.5+0.5 remap is needed. This is the single place to adjust if that ever changes.
+//  - Spec hit distance is the raw reflection ray length in world units (miss = max trace distance),
+//    exactly as the reflection trace packs it into radiance.a — RR uses it to reproject/sharpen
+//    reflections. Written to a single-channel (R16_FLOAT) target so channel choice is unambiguous.
+//  - Sky (real-time PT only): the raster skybox is skipped, so sky pixels hold G-buffer CLEAR values —
+//    including a black diffuse albedo that breaks RR demodulation on the brightest pixels of the frame
+//    (sky smears under rotation even with correct motion vectors). PT primary-miss metadata identifies
+//    sky; emit the DLSS-RR guide convention for sky instead: (0.5, 0.5, 0.5) diffuse AND specular
+//    albedo (Integration Guide 3.4.2), roughness 1.
+
+Texture2D uNormalMap : register(t0);    // RT2 shading normal (world space)
+Texture2D uMaterial0Map : register(t1); // albedo.rgb + roughness.a (RT5)
+Texture2D uMaterial1Map : register(t2); // metallic.r + emissive.gba (RT6)
+Texture2D uReflectionRaw : register(t3); // raw RT reflection radiance.rgb + hit distance.a (mode 3)
+Texture2D<uint2> uPtMetadata : register(t4); // PT primary metadata (instanceId + 1; 0 = sky/miss)
+
+SamplerState uPointSampler : register(s0);
+
+cbuffer PerPixel : register(b0)
+{
+    int uGuideMode; // 0 = diffuse albedo, 1 = specular albedo, 2 = normal-roughness, 3 = spec hit dist
+    float uReflectionUvScaleX; // render-res UV -> reflection-buffer UV (reflection may be quality-scaled)
+    float uReflectionUvScaleY;
+    int uUsePathTracerHitDistance; // mode 3: sample primary-hit distance from PT output (t3) at full UV
+    int uPatchPtSkyGuides; // modes 0-2: real-time PT sky pixels get emissive-convention guides (t4)
+};
+
+struct PSInput
+{
+    float4 position : SV_Position;
+    float2 texCoord : TEXCOORD0;
+};
+
+float4 main(PSInput input) : SV_Target
+{
+    const float2 uv = input.texCoord;
+
+    // DLSS-RR Integration Guide 3.4.2: "A common integration error is to leave sky pixels
+    // uncleared. A good default albedo for sky is (0.5, 0.5, 0.5)." Zero specular albedo is a
+    // degenerate case the SDK hacks around (appendix EnvBRDFApprox2) — never emit it for sky.
+    if (uPatchPtSkyGuides != 0 && uGuideMode != 3
+        && uPtMetadata.Load(int3(int2(input.position.xy), 0)).x == 0u)
+    {
+        if (uGuideMode == 0 || uGuideMode == 1)
+        {
+            return float4(0.5, 0.5, 0.5, 1.0); // NVIDIA-recommended neutral sky albedo
+        }
+        return float4(0.0, 0.0, 1.0, 1.0); // stable normal, roughness 1
+    }
+
+    const float4 material0 = uMaterial0Map.Sample(uPointSampler, uv);
+    const float3 albedo = material0.rgb;
+    const float roughness = material0.a;
+    const float metallic = uMaterial1Map.Sample(uPointSampler, uv).r;
+
+    if (uGuideMode == 0)
+    {
+        return float4(albedo * (1.0 - metallic), 1.0); // diffuse albedo
+    }
+    if (uGuideMode == 1)
+    {
+        return float4(lerp(0.04.xxx, albedo, metallic), 1.0); // specular albedo (F0)
+    }
+    if (uGuideMode == 3)
+    {
+        // Specular hit distance: raw ray length in world units. Hybrid reflections store it in
+        // radiance.a (quality-scaled UV). Path-traced real-time uses the primary-hit distance in
+        // the PT output alpha at full render resolution (devdoc/dxr/path-tracing.md P4).
+        float hitDistance;
+        if (uUsePathTracerHitDistance != 0)
+        {
+            hitDistance = uReflectionRaw.Sample(uPointSampler, uv).a;
+        }
+        else
+        {
+            const float2 reflUv = uv * float2(uReflectionUvScaleX, uReflectionUvScaleY);
+            hitDistance = uReflectionRaw.Sample(uPointSampler, reflUv).a;
+        }
+        return float4(hitDistance, 0.0, 0.0, 0.0);
+    }
+
+    // Packed normal-roughness: world normal in rgb (raw signed), roughness in a.
+    const float3 normal = normalize(uNormalMap.Sample(uPointSampler, uv).rgb);
+    return float4(normal, roughness);
+}

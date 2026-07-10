@@ -16,6 +16,7 @@ class ProjectChooser
 public:
     using RequestCloseCallback = std::function<void()>;
     using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
+    using FinalizeEditorOpenFn = std::function<void()>;
 
     bool Draw(
         ProjectSession& project,
@@ -24,11 +25,47 @@ public:
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
         const RequestCloseCallback& requestClose,
+        const FinalizeEditorOpenFn& prepareEditorOpen,
         UndoStack& undoStack,
         EditorClipboard& clipboard);
 
     void OpenNewProjectForm(EditorSettings& settings);
     bool IsBlockingEditor() const;
+    void SetErrorMessage(const std::string& message) { m_errorMessage = message; }
+    void ReturnToStartupWithError(ProjectSession& project, Scene& scene, const std::string& message);
+    void ClearProjectLoadPresentation();
+    bool LastOpenFailedDueToDeviceRemoved() const { return m_lastOpenFailedDueToDeviceRemoved; }
+
+    bool OpenProjectAtPath(
+        ProjectSession& project,
+        Scene& scene,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const std::string& projectFilePath,
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
+        const FinalizeEditorOpenFn& finalizeEditorOpen,
+        std::string& outError);
+
+    bool ProcessPendingProjectOpen(
+        ProjectSession& project,
+        Scene& scene,
+        EditorSettings& settings,
+        ProjectEditorState& editorState,
+        const ApplyEditorStateFn& applyEditorState,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
+        const FinalizeEditorOpenFn& finalizeEditorOpen,
+        std::string& outError);
+
+    bool QueueProjectOpen(const std::string& projectFilePath);
+    bool HasPendingProjectOpen() const { return !m_pendingProjectPath.empty(); }
+
+    bool IsPresentingProjectLoad() const { return m_projectLoadInProgress; }
+    void NotifyEditorCompositeReady();
+    void FinishScheduledPresentation();
+    void TickProjectLoadTimeout(bool gpuResourcesFailed);
 
 private:
     bool DrawStartupScreen(
@@ -38,6 +75,7 @@ private:
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
         const RequestCloseCallback& requestClose,
+        const FinalizeEditorOpenFn& prepareEditorOpen,
         UndoStack& undoStack,
         EditorClipboard& clipboard);
 
@@ -46,6 +84,7 @@ private:
         Scene& scene,
         EditorSettings& settings,
         const ApplyEditorStateFn& applyEditorState,
+        const FinalizeEditorOpenFn& prepareEditorOpen,
         UndoStack& undoStack,
         EditorClipboard& clipboard);
 
@@ -60,9 +99,15 @@ private:
         EditorClipboard& clipboard,
         std::string& outError);
 
+    void FinishProjectLoadPresentation(bool firstFrameReady);
+
     bool m_showNewProjectForm = false;
     bool m_startupMode = true;
     char m_newProjectName[64] = "My Project";
     char m_newProjectDirectory[512] = {};
     std::string m_errorMessage;
+    std::string m_pendingProjectPath;
+    bool m_projectLoadInProgress = false;
+    bool m_finishPresentationAfterPresent = false;
+    bool m_lastOpenFailedDueToDeviceRemoved = false;
 };

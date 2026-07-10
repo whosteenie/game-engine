@@ -4,6 +4,7 @@
 #include "engine/lighting/ShadowMapMath.h"
 
 #include <array>
+#include <cstdint>
 #include <glm/glm.hpp>
 
 class Camera;
@@ -38,6 +39,7 @@ public:
     int GetActiveCascadeCount() const;
 
     void BindDepthTexture(unsigned int textureUnit) const;
+    bool HasRenderedDepth() const;
 
 private:
     void CreateResources();
@@ -45,17 +47,19 @@ private:
     void RestoreRasterState() const;
 
     int m_resolution;
-    int m_activeCascadeCount = MaxCascades;
-    unsigned int m_fbo = 0;
-    unsigned int m_depthTexture = 0;
+    int m_activeCascadeCount = 1;
     std::array<glm::mat4, MaxCascades> m_lightSpaceMatrices{};
     std::array<ShadowLightSpaceSetup, MaxCascades> m_cascadeSetups{};
     std::array<float, MaxCascades> m_cascadeEndSplits{};
-    std::array<float, MaxCascades> m_stableOrthoHalfExtents{};
-    std::array<glm::vec2, MaxCascades> m_stableOrthoCentersLight{};
-    std::array<float, MaxCascades> m_stableOrthoZNear{};
-    std::array<float, MaxCascades> m_stableOrthoZFar{};
-    glm::vec3 m_lastCameraPosition{0.0f};
-    bool m_hasStableOrthoHalfExtents = false;
-    int m_savedViewport[4]{0, 0, 0, 0};
+    bool m_hasRenderedDepth = false;
+
+    void* m_depthResource = nullptr;
+    void* m_depthAllocation = nullptr;
+    std::uint32_t m_depthSrvIndex = UINT32_MAX;
+    std::uintptr_t m_depthSrvCpuHandle = 0;
+    std::array<std::uint32_t, MaxCascades> m_dsvIndices{};
+    float m_savedViewportWidth = 0.0f;
+    float m_savedViewportHeight = 0.0f;
+    bool m_inShadowPass = false;
+    bool m_depthInShaderReadState = false;
 };

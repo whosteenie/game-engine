@@ -1,5 +1,6 @@
 #include "app/inspector/InspectorTransform.h"
 
+#include "app/editor/EditorWidgets.h"
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/scene/Scene.h"
 #include "engine/scene/SceneObject.h"
@@ -31,6 +32,9 @@ WorldTransformState GetObjectWorldTransformState(const Scene& scene, int objectI
     state.position = worldTransform.position;
     state.rotationDegrees = worldTransform.GetRotationDegrees();
     state.scale = worldTransform.scale;
+    EditorWidgets::SanitizeSignedZero(state.position);
+    EditorWidgets::SanitizeSignedZero(state.rotationDegrees);
+    EditorWidgets::SanitizeSignedZero(state.scale);
     return state;
 }
 
@@ -108,7 +112,7 @@ void ResetTransformsOnObjects(Scene& scene, const std::vector<int>& objectIndice
 {
     for (int objectIndex : objectIndices)
     {
-        scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().Reset();
+        scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform().Reset();
     }
 
     if (!objectIndices.empty())

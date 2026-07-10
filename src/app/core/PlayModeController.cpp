@@ -3,6 +3,7 @@
 #include "app/core/PhysicsWorld.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneEditor.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/scene/Transform.h"
 
 #include <exception>
@@ -108,11 +109,26 @@ void PlayModeController::Simulate(double deltaTime)
         return;
     }
 
-    AdvanceSimulation(
-        m_runtimeScene.get(),
-        m_physicsWorld.get(),
-        m_physicsRebuildPending,
-        static_cast<float>(deltaTime));
+    try
+    {
+        AdvanceSimulation(
+            m_runtimeScene.get(),
+            m_physicsWorld.get(),
+            m_physicsRebuildPending,
+            static_cast<float>(deltaTime));
+    }
+    catch (const std::exception& exception)
+    {
+        m_lastError = std::string("Play mode simulation failed: ") + exception.what();
+        EngineLog::Error("play-mode", m_lastError);
+        ForceStop();
+    }
+    catch (...)
+    {
+        m_lastError = "Play mode simulation failed with unknown exception.";
+        EngineLog::Error("play-mode", m_lastError);
+        ForceStop();
+    }
 }
 
 void PlayModeController::StepOnce()
@@ -122,11 +138,26 @@ void PlayModeController::StepOnce()
         return;
     }
 
-    AdvanceSimulation(
-        m_runtimeScene.get(),
-        m_physicsWorld.get(),
-        m_physicsRebuildPending,
-        kSimulationTick);
+    try
+    {
+        AdvanceSimulation(
+            m_runtimeScene.get(),
+            m_physicsWorld.get(),
+            m_physicsRebuildPending,
+            kSimulationTick);
+    }
+    catch (const std::exception& exception)
+    {
+        m_lastError = std::string("Play mode step failed: ") + exception.what();
+        EngineLog::Error("play-mode", m_lastError);
+        ForceStop();
+    }
+    catch (...)
+    {
+        m_lastError = "Play mode step failed with unknown exception.";
+        EngineLog::Error("play-mode", m_lastError);
+        ForceStop();
+    }
 }
 
 void PlayModeController::DebugNudgeRuntimeSelection(float deltaY)
@@ -142,7 +173,7 @@ void PlayModeController::DebugNudgeRuntimeSelection(float deltaY)
         return;
     }
 
-    Transform& transform = m_runtimeScene->GetObject(static_cast<std::size_t>(objectIndex)).GetTransform();
+    Transform& transform = m_runtimeScene->GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform();
     transform.position.y += deltaY;
 }
 
@@ -176,6 +207,7 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
     catch (const std::exception& exception)
     {
         m_lastError = std::string("Play mode failed: ") + exception.what();
+        EngineLog::Error("play-mode", m_lastError);
         m_physicsWorld.reset();
         m_runtimeScene.reset();
         return false;
@@ -183,6 +215,7 @@ bool PlayModeController::EnterPlay(Scene& editScene, const std::string& /*projec
     catch (...)
     {
         m_lastError = "Play mode failed with unknown exception.";
+        EngineLog::Error("play-mode", m_lastError);
         m_physicsWorld.reset();
         m_runtimeScene.reset();
         return false;
@@ -200,6 +233,12 @@ bool PlayModeController::Stop(Scene& /*editScene*/, const std::string& /*project
         return false;
     }
 
+    ForceStop();
+    return true;
+}
+
+void PlayModeController::ForceStop()
+{
     if (m_sceneEditor != nullptr)
     {
         m_sceneEditor->ResetInteractionState();
@@ -214,5 +253,4 @@ bool PlayModeController::Stop(Scene& /*editScene*/, const std::string& /*project
     m_runtimeScene.reset();
     m_physicsRebuildPending = false;
     m_state = PlayModeState::Edit;
-    return true;
 }

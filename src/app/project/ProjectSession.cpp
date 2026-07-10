@@ -1,8 +1,14 @@
 #include "app/project/ProjectSession.h"
 
+#include "app/editor/EditorSettings.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneMeshLibrary.h"
 #include "app/project/SceneProjectIO.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadTrace.h"
+#include "engine/rendering/Material.h"
 
 #include <algorithm>
 #include <cctype>
@@ -17,7 +23,7 @@ void ProjectSession::MarkDirty()
 
 void ProjectSession::SetStatusMessage(const std::string& message)
 {
-    m_statusMessage = message;
+    m_statusMessage = SanitizeLogText(message, "Internal error.");
 }
 
 void ProjectSession::MarkClean()
@@ -27,6 +33,12 @@ void ProjectSession::MarkClean()
 
 void ProjectSession::CloseProject()
 {
+    if (m_hasActiveProject)
+    {
+        EditorSettings::SaveEditorLayout(m_projectRootDirectory);
+    }
+
+    Material::ClearTexturePathResolver();
     m_projectFilePath.clear();
     m_projectRootDirectory.clear();
     m_displayName = "Untitled";
@@ -109,6 +121,7 @@ bool ProjectSession::CreateNewProject(
 
     SetProjectRootDirectory(projectDirectory.string());
     SetProjectFilePath(projectPath.string());
+    SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
 
     fs::create_directories(projectDirectory / "Assets", error);
     if (error)
@@ -142,7 +155,7 @@ bool ProjectSession::Save(Scene& scene, const ProjectEditorState& editorState)
     std::string error;
     if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
-        m_statusMessage = error.empty() ? "Failed to save project." : error;
+        SetStatusMessage(error.empty() ? "Failed to save project." : error);
         return false;
     }
 
@@ -158,7 +171,7 @@ bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath, co
     std::string error;
     if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
     {
-        m_statusMessage = error.empty() ? "Failed to save project." : error;
+        SetStatusMessage(error.empty() ? "Failed to save project." : error);
         return false;
     }
 
@@ -170,14 +183,37 @@ bool ProjectSession::SaveAs(Scene& scene, const std::string& projectFilePath, co
 bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePath, ProjectEditorState& editorState)
 {
     SetProjectFilePath(projectFilePath);
+    ProjectLoadTrace::Step("project paths resolved");
 
     std::string error;
-    if (!SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error))
+    ProjectLoadTrace::Scope loadScope("SceneProjectIO::Load");
+    const bool loaded = SceneProjectIO::Load(scene, editorState, m_projectRootDirectory, m_projectFilePath, error);
+    if (!loaded)
     {
-        m_statusMessage = error.empty() ? "Failed to load project." : error;
+        const std::string loadError = error.empty() ? "Failed to load project." : error;
+        SetStatusMessage(loadError);
+        ProjectLoadTrace::Step("SceneProjectIO::Load returned false");
+
+        try
+        {
+            ProjectLoadTrace::Step("ResetToDefault after load failure");
+            scene.ResetToDefault();
+            ProjectLoadTrace::Step("ResetToDefault after load failure ok");
+        }
+        catch (const std::exception& exception)
+        {
+            scene.GetMeshLibrary().InvalidatePrimitives();
+            ProjectLoadTrace::Step("ResetToDefault after load failure exception");
+            EngineLog::LogFailure(
+                "project",
+                "ResetToDefault",
+                FormatExceptionContext("Failed to reset scene after load error", exception));
+        }
+
         m_hasActiveProject = false;
         return false;
     }
+    loadScope.Success();
 
     MarkClean();
     m_hasActiveProject = true;

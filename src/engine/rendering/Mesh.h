@@ -4,6 +4,8 @@
 #include <memory>
 #include <vector>
 
+#include "engine/rhi/d3d12/GpuBuffer.h"
+
 class Mesh
 {
 public:
@@ -34,15 +36,21 @@ public:
 
     const std::vector<glm::vec3>& GetPositions() const;
     const std::vector<unsigned int>& GetIndices() const;
+    const std::vector<float>& GetVertexData() const { return m_vertices; }
+
+    void EnsureGpuResources() const;
+    const GpuBuffer& GetVertexBuffer() const { return m_vertexBuffer; }
+    const GpuBuffer& GetIndexBuffer() const { return m_indexBuffer; }
+    unsigned int GetFloatsPerVertex() const { return m_floatsPerVertex; }
 
 private:
-    void DestroyGlResources();
+    void ReleaseGpuResources();
 
-    unsigned int m_vao = 0;
-    unsigned int m_vbo = 0;
-    unsigned int m_ebo = 0;
     unsigned int m_indexCount = 0;
     unsigned int m_floatsPerVertex = BasicVertexFloatCount;
     std::vector<glm::vec3> m_positions;
     std::vector<unsigned int> m_indices;
+    std::vector<float> m_vertices;
+    GpuBuffer m_vertexBuffer;
+    GpuBuffer m_indexBuffer;
 };

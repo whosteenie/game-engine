@@ -4,125 +4,72 @@
 
 #include <imgui.h>
 
-#include <algorithm>
-
-namespace
-{
-    void UpdateInteractionRect(
-        EditorViewportRect& interactionRect,
-        const ImVec2& imageMin,
-        const ImVec2& imageSize,
-        int renderWidth,
-        int renderHeight)
-    {
-        const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
-        interactionRect.valid = renderWidth > 0 && renderHeight > 0;
-        interactionRect.screenX = imageMin.x;
-        interactionRect.screenY = imageMin.y;
-        interactionRect.screenWidth = imageSize.x;
-        interactionRect.screenHeight = imageSize.y;
-        interactionRect.framebufferX = static_cast<int>(imageMin.x * framebufferScale.x);
-        interactionRect.framebufferY = static_cast<int>(imageMin.y * framebufferScale.y);
-        interactionRect.width = renderWidth;
-        interactionRect.height = renderHeight;
-        interactionRect.hovered = false;
-    }
-}
-
 bool GameViewportPanel::HasValidRenderTarget() const
 {
-    return m_showPanel && m_renderWidth > 0 && m_renderHeight > 0;
+    return OffscreenViewportPanel::HasValidRenderTarget(m_viewport);
 }
 
-unsigned int GameViewportPanel::GetFramebuffer() const
+std::uintptr_t GameViewportPanel::GetFramebuffer() const
 {
-    return m_framebuffer.GetFramebuffer();
+    return OffscreenViewportPanel::GetFramebuffer(m_viewport);
 }
 
-unsigned int GameViewportPanel::GetColorTexture() const
+std::uintptr_t GameViewportPanel::GetColorTexture() const
 {
-    return m_framebuffer.GetColorTexture();
+    return OffscreenViewportPanel::GetColorTexture(m_viewport);
 }
 
 void GameViewportPanel::EnsureFramebufferSized() const
 {
-    if (!HasValidRenderTarget())
-    {
-        return;
-    }
-
-    m_framebuffer.Resize(m_renderWidth, m_renderHeight);
+    OffscreenViewportPanel::EnsureFramebufferSized(m_viewport);
 }
 
-void GameViewportPanel::Draw(const bool hasSceneCamera, const bool hasRenderedFrame)
+void GameViewportPanel::ClearRenderTarget() const
 {
-    m_interactionRect = {};
+    OffscreenViewportPanel::ClearRenderTarget(m_viewport);
+}
+
+void GameViewportPanel::Draw(const bool hasSceneCamera, const bool willRenderThisFrame)
+{
+    OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
-    if (!EditorPanelConstraints::BeginDockedPanel("Game View", m_showPanel))
+    if (!EditorPanelConstraints::BeginDockedPanel("Game View", m_viewport.showPanel))
     {
-        m_renderWidth = 0;
-        m_renderHeight = 0;
+        if (!m_viewport.showPanel)
+        {
+            OffscreenViewportPanel::OnPanelHidden(m_viewport);
+        }
         return;
     }
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
-    m_renderWidth = std::max(1, static_cast<int>(available.x * framebufferScale.x));
-    m_renderHeight = std::max(1, static_cast<int>(available.y * framebufferScale.y));
+    OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
 
-    const bool showRenderedFrame =
-        hasSceneCamera && hasRenderedFrame && m_framebuffer.IsValid()
-        && m_framebuffer.GetColorTexture() != 0;
-
-    if (showRenderedFrame)
+    if (hasSceneCamera && HasValidRenderTarget())
     {
-        const ImTextureID textureId =
-            static_cast<ImTextureID>(static_cast<intptr_t>(m_framebuffer.GetColorTexture()));
-        ImGui::Image(textureId, available, ImVec2(0.0f, 1.0f), ImVec2(1.0f, 0.0f));
+        EnsureFramebufferSized();
     }
-    else
-    {
-        ImGui::Dummy(available);
-        const ImVec2 cursor = ImGui::GetItemRectMin();
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        const ImVec2 regionMax(cursor.x + available.x, cursor.y + available.y);
-        drawList->AddRectFilled(cursor, regionMax, IM_COL32(34, 34, 38, 255));
 
+    const bool canCompositeFrame = hasSceneCamera
+        && OffscreenViewportPanel::CanCompositeFrame(m_viewport, willRenderThisFrame);
+    const OffscreenViewportPanel::ViewportRegion region =
+        OffscreenViewportPanel::DrawViewportRegion(m_viewport, available, canCompositeFrame);
+    if (!canCompositeFrame)
+    {
         const char* primaryLabel = hasSceneCamera ? "Game View" : "No camera in scene";
-        const char* secondaryLabel =
-            hasSceneCamera ? nullptr : "Add a Camera object to preview";
-        const ImVec2 primarySize = ImGui::CalcTextSize(primaryLabel);
-        const float lineSpacing = ImGui::GetTextLineHeightWithSpacing() - ImGui::GetTextLineHeight();
-        float totalHeight = primarySize.y;
-        ImVec2 secondarySize(0.0f, 0.0f);
-        if (secondaryLabel != nullptr)
-        {
-            secondarySize = ImGui::CalcTextSize(secondaryLabel);
-            totalHeight += lineSpacing + secondarySize.y;
-        }
-
-        float textY = cursor.y + (available.y - totalHeight) * 0.5f;
-        drawList->AddText(
-            ImVec2(cursor.x + (available.x - primarySize.x) * 0.5f, textY),
-            IM_COL32(130, 130, 140, 255),
-            primaryLabel);
-
-        if (secondaryLabel != nullptr)
-        {
-            textY += primarySize.y + lineSpacing;
-            drawList->AddText(
-                ImVec2(cursor.x + (available.x - secondarySize.x) * 0.5f, textY),
-                IM_COL32(100, 100, 110, 255),
-                secondaryLabel);
-        }
+        const char* secondaryLabel = hasSceneCamera ? nullptr : "Add a Camera object to preview";
+        OffscreenViewportPanel::DrawCenteredPlaceholder(
+            region.imageMin, available, primaryLabel, secondaryLabel);
     }
 
-    const ImVec2 imageMin = ImGui::GetItemRectMin();
-    const ImVec2 imageMax = ImGui::GetItemRectMax();
-    const ImVec2 imageSize(imageMax.x - imageMin.x, imageMax.y - imageMin.y);
-    UpdateInteractionRect(m_interactionRect, imageMin, imageSize, m_renderWidth, m_renderHeight);
-    m_interactionRect.hovered = ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenBlockedByPopup);
+    OffscreenViewportPanel::UpdateInteractionRect(
+        m_viewport, region.imageMin, region.imageSize, false);
 
     ImGui::End();
+}
+
+void GameViewportPanel::CompositeRenderedFrame()
+{
+    OffscreenViewportPanel::CompositeRenderedFrame(m_viewport);
 }

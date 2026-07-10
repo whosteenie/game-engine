@@ -1,33 +1,34 @@
 #pragma once
 
 #include "app/editor/EditorViewportRect.h"
+#include "app/editor/OffscreenViewportPanel.h"
 
-#include "engine/rendering/Framebuffer.h"
+#include <imgui.h>
 
 class GameViewportPanel
 {
 public:
-    void Draw(bool hasSceneCamera, bool hasRenderedFrame);
+    void Draw(bool hasSceneCamera, bool willRenderThisFrame);
 
-    bool& ShowPanel() { return m_showPanel; }
-    const bool& ShowPanel() const { return m_showPanel; }
+    void CompositeRenderedFrame();
+
+    bool& ShowPanel() { return m_viewport.showPanel; }
+    const bool& ShowPanel() const { return m_viewport.showPanel; }
 
     bool HasValidRenderTarget() const;
-    bool IsHovered() const { return m_interactionRect.hovered; }
-    const EditorViewportRect& GetInteractionRect() const { return m_interactionRect; }
+    bool HasGpuFramebuffer() const { return m_viewport.framebuffer.IsValid(); }
+    bool IsHovered() const { return m_viewport.interactionRect.hovered; }
+    const EditorViewportRect& GetInteractionRect() const { return m_viewport.interactionRect; }
 
-    int GetRenderWidth() const { return m_renderWidth; }
-    int GetRenderHeight() const { return m_renderHeight; }
+    int GetRenderWidth() const { return m_viewport.renderWidth; }
+    int GetRenderHeight() const { return m_viewport.renderHeight; }
 
-    unsigned int GetFramebuffer() const;
-    unsigned int GetColorTexture() const;
+    std::uintptr_t GetFramebuffer() const;
+    std::uintptr_t GetColorTexture() const;
 
     void EnsureFramebufferSized() const;
+    void ClearRenderTarget() const;
 
 private:
-    bool m_showPanel = true;
-    mutable Framebuffer m_framebuffer;
-    mutable int m_renderWidth = 0;
-    mutable int m_renderHeight = 0;
-    mutable EditorViewportRect m_interactionRect{};
+    OffscreenViewportPanel::State m_viewport{};
 };

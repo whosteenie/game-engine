@@ -180,7 +180,7 @@ namespace
         glm::mat4 gizmoWorldMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
         const glm::mat4 gizmoWorldMatrixBefore = gizmoWorldMatrix;
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
-        const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
+        const glm::mat4 projectionMatrix = camera.GetUnjitteredProjectionMatrix();
 
         const bool wasUsing = gizmoWasUsing;
         ObjectTransformMap frameStartTransforms;
@@ -387,7 +387,7 @@ void SceneEditor::Update(
     }
 
     const glm::mat4 viewMatrix = camera.GetViewMatrix();
-    const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
+    const glm::mat4 projectionMatrix = camera.GetUnjitteredProjectionMatrix();
 
     if (input.WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT) && insideViewport)
     {

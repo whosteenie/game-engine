@@ -1,5 +1,11 @@
 #include "app/undo/UndoStack.h"
 
+#include "app/undo/UndoCommand.h"
+
+UndoStack::~UndoStack() = default;
+UndoStack::UndoStack(UndoStack&&) noexcept = default;
+UndoStack& UndoStack::operator=(UndoStack&&) noexcept = default;
+
 void UndoStack::Push(std::unique_ptr<IUndoCommand> command)
 {
     if (!command)

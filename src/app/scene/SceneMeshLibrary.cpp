@@ -1,5 +1,8 @@
 #include "app/scene/SceneMeshLibrary.h"
 
+#include "engine/platform/ExceptionMessage.h"
+#include "engine/rhi/GfxContext.h"
+#include "engine/rhi/HresultFormat.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "primitives/Capsule.h"
@@ -9,22 +12,87 @@
 #include "primitives/Sphere.h"
 
 #include <algorithm>
+#include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
 
 SceneMeshLibrary::SceneMeshLibrary(float floorHalfExtent)
-    : m_cubeMesh(CreateCubeMesh()),
-      m_sphereMesh(CreateSphereMesh()),
-      m_cylinderMesh(CreateCylinderMesh()),
-      m_capsuleMesh(CreateCapsuleMesh()),
-      m_planeMesh(CreatePlaneMesh(floorHalfExtent))
+    : m_floorHalfExtent(floorHalfExtent)
 {
 }
 
 SceneMeshLibrary::~SceneMeshLibrary() = default;
 
+void SceneMeshLibrary::InvalidatePrimitives()
+{
+    m_cubeMesh.reset();
+    m_sphereMesh.reset();
+    m_cylinderMesh.reset();
+    m_capsuleMesh.reset();
+    m_planeMesh.reset();
+    m_primitivesReady = false;
+}
+
+void SceneMeshLibrary::EnsurePrimitives() const
+{
+    if (m_primitivesReady)
+    {
+        return;
+    }
+
+    SceneMeshLibrary* self = const_cast<SceneMeshLibrary*>(this);
+    self->InvalidatePrimitives();
+
+    if (!GfxContext::Get().IsInitialized())
+    {
+        throw std::runtime_error(
+            "Failed to create primitive meshes: graphics context is not initialized");
+    }
+
+    std::string deviceRemovedReason;
+    if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
+    {
+        throw std::runtime_error(
+            "Failed to create primitive meshes: " + HresultFormat::DeviceRemovedMessage(deviceRemovedReason));
+    }
+
+    auto createPrimitive =
+        [&](const char* name, auto createFn, std::unique_ptr<Mesh>& outMesh) {
+            try
+            {
+                outMesh = createFn();
+            }
+            catch (const std::exception& exception)
+            {
+                self->InvalidatePrimitives();
+                throw std::runtime_error(
+                    std::string("Failed to create primitive mesh '") + name + "': "
+                    + SafeExceptionMessage(exception));
+            }
+            catch (...)
+            {
+                self->InvalidatePrimitives();
+                throw std::runtime_error(
+                    std::string("Failed to create primitive mesh '") + name
+                    + "': unknown exception");
+            }
+        };
+
+    createPrimitive("Cube", []() { return CreateCubeMesh(); }, self->m_cubeMesh);
+    createPrimitive("Sphere", []() { return CreateSphereMesh(); }, self->m_sphereMesh);
+    createPrimitive("Cylinder", []() { return CreateCylinderMesh(); }, self->m_cylinderMesh);
+    createPrimitive("Capsule", []() { return CreateCapsuleMesh(); }, self->m_capsuleMesh);
+    createPrimitive(
+        "Plane",
+        [&]() { return CreatePlaneMesh(m_floorHalfExtent); },
+        self->m_planeMesh);
+    self->m_primitivesReady = true;
+}
+
 Mesh* SceneMeshLibrary::GetPrimitive(ScenePrimitive primitive) const
 {
+    EnsurePrimitives();
+
     switch (primitive)
     {
     case ScenePrimitive::Cube:

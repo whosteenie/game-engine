@@ -470,7 +470,14 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
 
     if (projectRoot != m_trackedProjectRoot)
     {
-        ResetBrowseState(projectRoot);
+        if (m_trackedProjectRoot.empty())
+        {
+            m_trackedProjectRoot = projectRoot;
+        }
+        else
+        {
+            ResetBrowseState(projectRoot);
+        }
     }
 
     if (m_browsedDirectory.empty())

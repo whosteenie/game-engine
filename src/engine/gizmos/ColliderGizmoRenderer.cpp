@@ -1,8 +1,8 @@
-#include <glad/glad.h>
-
 #include "engine/gizmos/ColliderGizmoRenderer.h"
+
 #include "engine/camera/Camera.h"
 #include "engine/components/ColliderComponent.h"
+#include "engine/gizmos/GizmoDraw.h"
 #include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
@@ -11,11 +11,8 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
-#include <cmath>
 #include <vector>
 
 namespace
@@ -117,41 +114,23 @@ namespace
 }
 
 ColliderGizmoRenderer::ColliderGizmoRenderer()
-    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader))
 {
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
 }
 
-ColliderGizmoRenderer::~ColliderGizmoRenderer()
-{
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
-}
+ColliderGizmoRenderer::~ColliderGizmoRenderer() = default;
 
 void ColliderGizmoRenderer::Draw(
     const Camera& camera,
     const std::vector<SceneObject>& objects,
     const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
-    const std::vector<int>& selectedObjectIndices) const
+    const std::vector<int>& selectedObjectIndices,
+    const bool depthReadOnly) const
 {
     if (objects.empty())
     {
         return;
     }
-
-    m_shader->Use();
-    m_shader->SetMat4("uView", camera.GetViewMatrix());
-    m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
-
-    glBindVertexArray(m_vao);
 
     for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
     {
@@ -178,12 +157,6 @@ void ColliderGizmoRenderer::Draw(
             continue;
         }
 
-        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-
-        m_shader->SetVec3("uColor", GizmoColor(true));
-        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
+        GizmoDraw::DrawLineVertices(*m_shader, camera, vertices, GizmoColor(true), depthReadOnly);
     }
-
-    glBindVertexArray(0);
 }

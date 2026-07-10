@@ -54,10 +54,10 @@ bool ShouldShowInspectorSection(
         return true;
     case InspectorSectionKind::Light:
         return selectedIndices.size() == 1
-            && scene.GetObject(static_cast<std::size_t>(selectedIndices.front())).HasLight();
+            && scene.GetSceneObject(static_cast<std::size_t>(selectedIndices.front())).HasLight();
     case InspectorSectionKind::Material:
         return selectedIndices.size() == 1
-            && scene.GetObject(static_cast<std::size_t>(selectedIndices.front())).HasMaterial();
+            && scene.GetSceneObject(static_cast<std::size_t>(selectedIndices.front())).HasMaterial();
     }
 
     return false;

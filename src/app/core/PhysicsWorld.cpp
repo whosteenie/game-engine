@@ -3,6 +3,7 @@
 #include "app/scene/Scene.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/components/RigidBodyComponent.h"
+#include "engine/platform/EngineLog.h"
 #include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"
@@ -14,6 +15,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyInterface.h>
+#include <Jolt/Physics/Body/MotionQuality.h>
 #include <Jolt/Physics/Collision/BroadPhase/BroadPhaseLayer.h>
 #include <Jolt/Physics/Collision/ObjectLayer.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
@@ -21,7 +23,12 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <Jolt/Core/IssueReporting.h>
+
 #include "engine/physics/JoltConversion.h"
+
+#include <cstdarg>
+#include <cstdio>
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtc/matrix_transform.hpp>
@@ -30,6 +37,7 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -135,6 +143,33 @@ namespace
         }
 
         RegisterDefaultAllocator();
+
+        JPH::Trace = [](const char* format, ...) {
+            char buffer[1024];
+            va_list args;
+            va_start(args, format);
+            vsnprintf(buffer, sizeof(buffer), format, args);
+            va_end(args);
+            EngineLog::Warn("jolt", buffer);
+        };
+
+        JPH_IF_ENABLE_ASSERTS(
+            JPH::AssertFailed = [](const char* expression,
+                                   const char* message,
+                                   const char* file,
+                                   JPH::uint line) {
+                std::string details = std::string(expression) + " (" + file + ":" + std::to_string(line)
+                    + ")";
+                if (message != nullptr && message[0] != '\0')
+                {
+                    details += " — ";
+                    details += message;
+                }
+
+                EngineLog::Error("jolt", details);
+                return true;
+            });
+
         Factory::sInstance = new Factory();
         RegisterTypes();
         initialized = true;
@@ -143,7 +178,7 @@ namespace
     void ApplyWorldTransformToObject(Scene& scene, int objectIndex, const glm::vec3& worldPosition, const glm::quat& worldRotation)
     {
         const glm::vec3 preservedScale =
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform().scale;
         Transform worldTransform;
         worldTransform.position = worldPosition;
         worldTransform.rotation = worldRotation;
@@ -161,6 +196,25 @@ namespace
         return std::isfinite(value.x) && std::isfinite(value.y) && std::isfinite(value.z)
             && std::isfinite(value.w);
     }
+
+    EMotionQuality ToJoltMotionQuality(const RigidBodyCollisionDetection mode)
+    {
+        switch (mode)
+        {
+        case RigidBodyCollisionDetection::Continuous:
+            return EMotionQuality::LinearCast;
+        case RigidBodyCollisionDetection::Discrete:
+        default:
+            return EMotionQuality::Discrete;
+        }
+    }
+
+    void ApplyColliderMaterialSettings(BodyCreationSettings& bodySettings, const ColliderComponent& collider)
+    {
+        bodySettings.mFriction = std::max(collider.friction, 0.0f);
+        bodySettings.mRestitution = std::max(collider.restitution, 0.0f);
+        bodySettings.mIsSensor = collider.isTrigger;
+    }
 }
 
 struct PhysicsWorld::Impl
@@ -176,7 +230,7 @@ struct PhysicsWorld::Impl
     JobSystemThreadPool jobSystem{
         cMaxPhysicsJobs,
         cMaxPhysicsBarriers,
-        static_cast<int>(std::max(1u, static_cast<unsigned int>(std::thread::hardware_concurrency()) - 1u))};
+        static_cast<int>(std::thread::hardware_concurrency()) - 1};
     PhysicsSystem physicsSystem;
 
     struct TrackedBody
@@ -338,17 +392,22 @@ void PhysicsWorld::BuildFromScene(Scene& scene)
             motionType,
             objectLayer);
 
+        ApplyColliderMaterialSettings(bodySettings, collider);
+
         if (object.HasRigidBody())
         {
             const RigidBodyComponent& rigidBody = object.GetRigidBody();
             bodySettings.mOverrideMassProperties = EOverrideMassProperties::CalculateInertia;
             bodySettings.mMassPropertiesOverride.mMass = std::max(rigidBody.mass, 0.001f);
             bodySettings.mGravityFactor = rigidBody.useGravity ? 1.0f : 0.0f;
-            bodySettings.mIsSensor = collider.isTrigger;
-        }
-        else
-        {
-            bodySettings.mIsSensor = collider.isTrigger;
+            bodySettings.mLinearDamping = std::max(rigidBody.linearDamping, 0.0f);
+            bodySettings.mAngularDamping = std::max(rigidBody.angularDamping, 0.0f);
+            bodySettings.mAllowSleeping = rigidBody.allowSleeping;
+
+            if (motionType == EMotionType::Dynamic)
+            {
+                bodySettings.mMotionQuality = ToJoltMotionQuality(rigidBody.collisionDetection);
+            }
         }
 
         Body* body = bodyInterface.CreateBody(bodySettings);
@@ -379,8 +438,17 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
         return;
     }
 
+    // Jolt allocates physics jobs for every collision step before any complete. A large frame
+    // delta (tab switch, breakpoint, first frame after Play) can request hundreds of steps and
+    // exhaust the fixed job pool (cMaxPhysicsJobs == 2048).
     constexpr float kPhysicsTick = 1.0f / 60.0f;
-    const int collisionSteps = std::max(1, static_cast<int>(std::ceil(deltaTime / kPhysicsTick)));
+    constexpr float kMaxStepDelta = 1.0f / 15.0f;
+    constexpr int kMaxCollisionSteps = 4;
+
+    deltaTime = std::min(deltaTime, kMaxStepDelta * static_cast<float>(kMaxCollisionSteps));
+    const int collisionSteps = std::min(
+        kMaxCollisionSteps,
+        std::max(1, static_cast<int>(std::ceil(deltaTime / kPhysicsTick))));
 
     m_impl->physicsSystem.Update(
         deltaTime,
@@ -415,7 +483,7 @@ void PhysicsWorld::Step(Scene& scene, float deltaTime)
         const glm::vec3 colliderWorldCenter = JoltConversion::FromVec3(
             Vec3(position.GetX(), position.GetY(), position.GetZ()));
 
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const ColliderComponent& collider = object.GetCollider();
 
         Transform worldTransform;

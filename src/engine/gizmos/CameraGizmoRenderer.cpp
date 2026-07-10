@@ -1,8 +1,8 @@
-#include <glad/glad.h>
-
 #include "engine/gizmos/CameraGizmoRenderer.h"
+
 #include "engine/camera/Camera.h"
 #include "engine/components/CameraComponent.h"
+#include "engine/gizmos/GizmoDraw.h"
 #include "engine/gizmos/GizmoGeometry.h"
 #include "engine/rendering/Constants.h"
 #include "engine/scene/SceneObject.h"
@@ -61,17 +61,17 @@ namespace
         const glm::vec3 farCenter = position + forward * farDistance;
 
         glm::vec3 nearCorners[4] = {
-            nearCenter + up * nearHalfHeight - right * nearHalfWidth,  // top-left
-            nearCenter + up * nearHalfHeight + right * nearHalfWidth,  // top-right
-            nearCenter - up * nearHalfHeight + right * nearHalfWidth,  // bottom-right
-            nearCenter - up * nearHalfHeight - right * nearHalfWidth   // bottom-left
+            nearCenter + up * nearHalfHeight - right * nearHalfWidth,
+            nearCenter + up * nearHalfHeight + right * nearHalfWidth,
+            nearCenter - up * nearHalfHeight + right * nearHalfWidth,
+            nearCenter - up * nearHalfHeight - right * nearHalfWidth,
         };
 
         glm::vec3 farCorners[4] = {
             farCenter + up * farHalfHeight - right * farHalfWidth,
             farCenter + up * farHalfHeight + right * farHalfWidth,
             farCenter - up * farHalfHeight + right * farHalfWidth,
-            farCenter - up * farHalfHeight - right * farHalfWidth
+            farCenter - up * farHalfHeight - right * farHalfWidth,
         };
 
         AppendPlaneRect(vertices, nearCorners);
@@ -83,47 +83,28 @@ namespace
             GizmoGeometry::AppendLine(vertices, position, nearCorners[i]);
         }
 
-        // Forward axis cue so it's clear which way the camera is facing.
         GizmoGeometry::AppendLine(vertices, position, nearCenter);
     }
 }
 
 CameraGizmoRenderer::CameraGizmoRenderer()
-    : m_shader(std::make_unique<Shader>(EngineConstants::GridVertexShader, EngineConstants::LineFragmentShader))
+    : m_shader(std::make_unique<Shader>(EngineConstants::GizmoLineVertexShader, EngineConstants::LineFragmentShader))
 {
-    glGenVertexArrays(1, &m_vao);
-    glGenBuffers(1, &m_vbo);
-
-    glBindVertexArray(m_vao);
-    glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), nullptr);
-    glEnableVertexAttribArray(0);
-    glBindVertexArray(0);
 }
 
-CameraGizmoRenderer::~CameraGizmoRenderer()
-{
-    glDeleteVertexArrays(1, &m_vao);
-    glDeleteBuffers(1, &m_vbo);
-}
+CameraGizmoRenderer::~CameraGizmoRenderer() = default;
 
 void CameraGizmoRenderer::Draw(
     const Camera& camera,
     const std::vector<SceneObject>& objects,
     const std::function<glm::mat4(int objectIndex)>& getWorldMatrix,
-    const std::vector<int>& selectedObjectIndices) const
+    const std::vector<int>& selectedObjectIndices,
+    const bool depthReadOnly) const
 {
     if (objects.empty() || selectedObjectIndices.empty())
     {
         return;
     }
-
-    m_shader->Use();
-    m_shader->SetMat4("uView", camera.GetViewMatrix());
-    m_shader->SetMat4("uProjection", camera.GetProjectionMatrix());
-
-    glBindVertexArray(m_vao);
 
     for (int objectIndex : selectedObjectIndices)
     {
@@ -153,11 +134,6 @@ void CameraGizmoRenderer::Draw(
             continue;
         }
 
-        glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-        glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
-        m_shader->SetVec3("uColor", GizmoColor(true));
-        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(vertices.size() / 3));
+        GizmoDraw::DrawLineVertices(*m_shader, camera, vertices, GizmoColor(true), depthReadOnly);
     }
-
-    glBindVertexArray(0);
 }

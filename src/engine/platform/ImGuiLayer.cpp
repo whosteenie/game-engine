@@ -1,17 +1,15 @@
 #include "engine/platform/ImGuiLayer.h"
 
 #include "engine/platform/ImGuiFonts.h"
-
-#include <glad/glad.h>
-
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
+#include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
+#include <imgui_impl_dx12.h>
 #include <imgui_impl_glfw.h>
 
 #include <ImGuizmo.h>
-#include <imgui_impl_opengl3.h>
+
+#include <imgui_internal.h>
 
 #include <stdexcept>
 
@@ -27,39 +25,67 @@ ImGuiLayer::ImGuiLayer(GLFWwindow* window, const std::string& iniPath)
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigDockingNoSplit = false;
     io.ConfigDockingNoDockingOver = false;
-    if (!m_iniPath.empty())
-    {
-        io.IniFilename = m_iniPath.c_str();
-    }
-    else
-    {
-        io.IniFilename = nullptr;
-    }
+    io.ConfigErrorRecovery = true;
+    // Defer imgui.ini load until a project is opened. Loading a saved editor dock
+    // layout on the project picker leaves invisible host windows that steal input.
+    io.IniFilename = nullptr;
 
     ImGuiFonts::LoadEditorFonts(io);
+}
 
-    if (!ImGui_ImplGlfw_InitForOpenGL(m_window, true))
+void ImGuiLayer::InitPlatformBackend()
+{
+    if (m_window == nullptr)
     {
-        throw std::runtime_error("Failed to initialize ImGui GLFW backend");
+        throw std::runtime_error("ImGuiLayer has no GLFW window");
     }
 
-    if (!ImGui_ImplOpenGL3_Init("#version 330"))
+    if (ImGui::GetIO().BackendPlatformUserData != nullptr)
     {
-        throw std::runtime_error("Failed to initialize ImGui OpenGL3 backend");
+        return;
+    }
+
+    if (!ImGui_ImplGlfw_InitForOther(m_window, true))
+    {
+        throw std::runtime_error("Failed to initialize ImGui GLFW backend");
     }
 }
 
 ImGuiLayer::~ImGuiLayer()
 {
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
+    if (ImGui::GetCurrentContext() == nullptr)
+    {
+        return;
+    }
+
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().PrepareForDeviceShutdown();
+    }
+
+    // DX12 must shut down before GLFW: ImGui_ImplDX12_Init always sets main viewport
+    // RendererUserData, but Renderer_DestroyWindow is only registered with ViewportsEnable.
+    if (ImGui::GetIO().BackendRendererUserData != nullptr)
+    {
+        ImGui_ImplDX12_Shutdown();
+        if (GfxContext::Get().IsInitialized())
+        {
+            GfxContext::Get().PrepareForDeviceShutdown();
+        }
+    }
+
+    if (ImGui::GetIO().BackendPlatformUserData != nullptr)
+    {
+        ImGui_ImplGlfw_Shutdown();
+    }
+
     ImGui::DestroyContext();
 }
 
 void ImGuiLayer::BeginFrame()
 {
-    ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplGlfw_NewFrame();
+    ImGui_ImplDX12_NewFrame();
     ImGui::NewFrame();
     ImGuizmo::BeginFrame();
 }
@@ -67,5 +93,43 @@ void ImGuiLayer::BeginFrame()
 void ImGuiLayer::EndFrame()
 {
     ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void ImGuiLayer::CancelInterruptedFrame()
+{
+    ImGuiContext* context = ImGui::GetCurrentContext();
+    if (context == nullptr || !context->WithinFrameScope)
+    {
+        return;
+    }
+
+    // Drain only real windows above the implicit debug window (stack size 1).
+    // End() when Size <= 1 asserts ("Calling End() too many times!").
+    constexpr int kMaxRecoverySteps = 256;
+    for (int step = 0; step < kMaxRecoverySteps && context->CurrentWindowStack.Size > 1; ++step)
+    {
+        ImGuiWindow* window = context->CurrentWindow;
+        if (window == nullptr)
+        {
+            break;
+        }
+
+        if ((window->Flags & ImGuiWindowFlags_Popup) != 0)
+        {
+            ImGui::EndPopup();
+        }
+        else if ((window->Flags & ImGuiWindowFlags_ChildWindow) != 0)
+        {
+            ImGui::EndChild();
+        }
+        else
+        {
+            ImGui::End();
+        }
+    }
+
+    if (context->WithinFrameScope)
+    {
+        ImGui::EndFrame();
+    }
 }

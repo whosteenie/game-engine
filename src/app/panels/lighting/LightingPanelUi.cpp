@@ -1,0 +1,37 @@
+#include "app/panels/lighting/LightingPanelUi.h"
+
+#include "app/editor/EditorWidgets.h"
+#include "app/scene/SceneRenderer.h"
+#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/ScreenSpaceEffects.h"
+
+#include <imgui.h>
+
+namespace LightingPanelUi
+{
+    void DrawWrappedNote(const char* text)
+    {
+        EditorWidgets::TextWrappedDisabled(text);
+    }
+
+    void DrawWrappedHelp(const char* text)
+    {
+        const EditorWidgets::TextWrapScope wrap;
+        ImGui::TextWrapped("%s", text);
+    }
+
+    FeatureState QueryFeatures(const SceneRenderer& renderer, const ScreenSpaceEffects& screenSpaceEffects)
+    {
+        FeatureState state;
+        state.postProcessingEnabled = screenSpaceEffects.IsEnabled();
+        const DxrSettings& dxrSettings = renderer.GetDxrSettings();
+        state.dxrEnabled = dxrSettings.IsEnabled();
+        state.pathTracingActive = dxrSettings.IsPathTracingActive();
+        state.rtGiEnabled = state.dxrEnabled && dxrSettings.IsGiEnabled();
+        state.ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
+        state.rayReconstructionActive = screenSpaceEffects.IsRayReconstructionActive();
+        state.debugViewActive = screenSpaceEffects.GetDebugMode() != RenderDebugMode::None;
+        return state;
+    }
+}

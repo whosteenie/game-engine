@@ -39,7 +39,8 @@ glm::mat4 GetObjectGizmoWorldMatrix(const std::vector<SceneObject>& objects, int
 void ApplyObjectGizmoWorldMatrix(
     std::vector<SceneObject>& objects,
     int objectIndex,
-    const glm::mat4& gizmoWorldMatrix);
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix);
 glm::mat4 GetGroupSelectionGizmoWorldMatrix(
     const std::vector<SceneObject>& objects,
     const std::vector<int>& objectIndices,

@@ -10,6 +10,7 @@
 #include "app/scene/SceneRenderer.h"
 #include "app/scene/SceneSpawnService.h"
 #include "engine/rendering/Constants.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 #include "engine/components/CameraComponent.h"
 #include "engine/components/ColliderComponent.h"
@@ -21,22 +22,32 @@
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/assets/ModelImporter.h"
+#include "engine/platform/EngineLog.h"
+#include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadTrace.h"
+#include "engine/platform/SceneRenderTrace.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"
 #include "engine/scene/ScenePrimitive.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/ScreenSpaceEffectsSettings.h"
+#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/TextureSamplerSettings.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
+#include "engine/rhi/GfxContext.h"
+#include "engine/rhi/DlssContext.h"
 
-#include <imgui.h>
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -46,6 +57,8 @@ using json = nlohmann::json;
 namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
+    constexpr float kProjectObjectLoadProgressStart = 0.15f;
+    constexpr float kProjectObjectLoadProgressEnd = 0.75f;
 
     std::string NormalizeSlashes(std::string path)
     {
@@ -106,32 +119,7 @@ namespace SceneProjectIODetail
 
     std::string ResolveProjectPath(const std::string& projectRoot, const std::string& storedPath)
     {
-        if (storedPath.empty())
-        {
-            return {};
-        }
-
-        const fs::path stored(storedPath);
-        if (stored.is_absolute())
-        {
-            return stored.generic_string();
-        }
-
-        if (!projectRoot.empty())
-        {
-            const fs::path rooted = fs::path(projectRoot) / stored;
-            if (fs::exists(rooted))
-            {
-                return rooted.generic_string();
-            }
-        }
-
-        if (fs::exists(stored))
-        {
-            return stored.generic_string();
-        }
-
-        return (fs::path(projectRoot) / stored).generic_string();
+        return SceneProjectIO::ResolveProjectPath(projectRoot, storedPath);
     }
 
     std::optional<ScenePrimitive> DetectPrimitiveMesh(const Scene& scene, Mesh* mesh)
@@ -158,6 +146,35 @@ namespace SceneProjectIODetail
         }
 
         return std::nullopt;
+    }
+
+    bool TryGetPrimitiveLocalBounds(ScenePrimitive primitive, glm::vec3& outMin, glm::vec3& outMax)
+    {
+        switch (primitive)
+        {
+        case ScenePrimitive::Cube:
+        case ScenePrimitive::Sphere:
+        case ScenePrimitive::Cylinder:
+            outMin = glm::vec3(-0.5f);
+            outMax = glm::vec3(0.5f);
+            return true;
+        case ScenePrimitive::Capsule:
+            outMin = glm::vec3(-0.5f, -1.0f, -0.5f);
+            outMax = glm::vec3(0.5f, 1.0f, 0.5f);
+            return true;
+        case ScenePrimitive::Plane:
+            outMin = glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent);
+            outMax = glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool TryGetMeshLocalBounds(const Scene& scene, Mesh* mesh, glm::vec3& outMin, glm::vec3& outMax)
+    {
+        const std::optional<ScenePrimitive> primitive = DetectPrimitiveMesh(scene, mesh);
+        return primitive.has_value() && TryGetPrimitiveLocalBounds(*primitive, outMin, outMax);
     }
 
     json SerializeMesh(const Scene& scene, const SceneObject& object, const std::string& projectRoot)
@@ -379,174 +396,307 @@ namespace SceneProjectIODetail
         return result;
     }
 
-    const char* TonemapModeToString(TonemapMode mode)
+    const char* TextureFilterModeToString(TextureFilterMode mode)
     {
         switch (mode)
         {
-        case TonemapMode::Gamma:
-            return "Gamma";
-        case TonemapMode::Reinhard:
-            return "Reinhard";
-        case TonemapMode::ACES:
-            return "ACES";
+        case TextureFilterMode::Bilinear:
+            return "Bilinear";
+        case TextureFilterMode::Nearest:
+            return "Nearest";
+        case TextureFilterMode::Trilinear:
+        default:
+            return "Trilinear";
         }
-
-        return "Gamma";
     }
 
-    TonemapMode TonemapModeFromString(const std::string& value)
+    TextureFilterMode TextureFilterModeFromString(const std::string& value)
     {
-        if (value == "Reinhard")
+        if (value == "Bilinear")
         {
-            return TonemapMode::Reinhard;
+            return TextureFilterMode::Bilinear;
         }
-        if (value == "ACES")
+        if (value == "Nearest")
         {
-            return TonemapMode::ACES;
-        }
-
-        return TonemapMode::Gamma;
-    }
-
-    const char* ShadowFilterModeToString(DirectionalShadowFilterMode mode)
-    {
-        return mode == DirectionalShadowFilterMode::PCSS ? "PCSS" : "PCF";
-    }
-
-    DirectionalShadowFilterMode ShadowFilterModeFromString(const std::string& value)
-    {
-        if (value == "PCSS")
-        {
-            return DirectionalShadowFilterMode::PCSS;
+            return TextureFilterMode::Nearest;
         }
 
-        return DirectionalShadowFilterMode::PCF;
+        return TextureFilterMode::Trilinear;
     }
 
     json SerializeRenderer(const Scene& scene)
     {
         const ScreenSpaceEffects& effects = scene.GetRenderer().GetScreenSpaceEffects();
         const DirectionalShadowSettings& shadowSettings = scene.GetRenderer().GetDirectionalShadowSettings();
+        const DxrSettings& dxrSettings = scene.GetRenderer().GetDxrSettings();
         return json{
             {"environmentIntensity", scene.GetRenderer().GetIBL().GetEnvironmentIntensity()},
-            {"directionalShadow",
+            {"skybox",
              json{
-                 {"filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode())},
-                 {"shadowMapResolution", shadowSettings.GetShadowMapResolution()},
-                 {"cascadeCount", shadowSettings.GetCascadeCount()},
-                 {"cascadeSplitLambda", shadowSettings.GetCascadeSplitLambda()},
-                 {"cascadeBlendRatio", shadowSettings.GetCascadeBlendRatio()},
-                 {"tightNearPlaneXyFit", shadowSettings.GetTightNearPlaneXyFit()},
-                 {"xyMarginFraction", shadowSettings.GetXyMarginFraction()},
-                 {"zMarginFraction", shadowSettings.GetZMarginFraction()},
-                 {"usePoissonPcf", shadowSettings.GetUsePoissonPcf()},
-                 {"pcfKernelRadius", shadowSettings.GetPcfKernelRadius()},
-                 {"pcfSampleCount", shadowSettings.GetPcfSampleCount()},
-                 {"minPenumbraTexels", shadowSettings.GetMinPenumbraTexels()},
-                 {"sunAngularDiameterDegrees", shadowSettings.GetSunAngularDiameterDegrees()},
-                 {"pcssLightAngularSize", shadowSettings.GetPcssLightAngularSize()},
-                 {"pcssBlockerRadius", shadowSettings.GetPcssBlockerRadius()},
-                 {"pcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels()},
-                 {"pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()},
-                 {"worldBiasScale", shadowSettings.GetWorldBiasScale()},
-                 {"depthBiasScale", shadowSettings.GetDepthBiasScale()},
-                 {"shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()},
-                 {"shadowBlurRadius", shadowSettings.GetShadowBlurRadius()},
+                 {"enabled", scene.GetRenderer().GetEnvironmentMap().IsEnabled()},
+                 {"backgroundMode", static_cast<int>(scene.GetRenderer().GetEnvironmentMap().GetBackgroundMode())},
+                 {"hdrPath", scene.GetRenderer().GetEnvironmentMap().GetHdrPath()},
+                 {"rotationDegrees", scene.GetRenderer().GetEnvironmentMap().GetRotationDegrees()},
+                 {"exposure", scene.GetRenderer().GetEnvironmentMap().GetExposure()},
+                 {"iblCubemapResolution",
+                  static_cast<int>(scene.GetRenderer().GetEnvironmentMap().GetIblCubemapResolution())},
+                 {"solidBackgroundColor",
+                  json::array(
+                      {scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().x,
+                       scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().y,
+                       scene.GetRenderer().GetEnvironmentMap().GetSolidBackgroundColorSrgb().z})},
              }},
-            {"screenSpaceEffects",
-             json{
-                 {"enabled", effects.IsEnabled()},
-                 {"ssaoEnabled", effects.IsSsaoEnabled()},
-                 {"ssaoRadius", effects.GetSsaoRadius()},
-                 {"ssaoBias", effects.GetSsaoBias()},
-                 {"ssaoPower", effects.GetSsaoPower()},
-                 {"aoStrength", effects.GetAoStrength()},
-                 {"exposure", effects.GetExposure()},
-                 {"tonemapMode", TonemapModeToString(effects.GetTonemapMode())},
-                 {"bloomEnabled", effects.IsBloomEnabled()},
-                 {"bloomThreshold", effects.GetBloomThreshold()},
-                 {"bloomSoftKnee", effects.GetBloomSoftKnee()},
-                 {"bloomIntensity", effects.GetBloomIntensity()},
-                 {"bloomBlurRadius", effects.GetBloomBlurRadius()},
-             }},
+            {"textureFilterMode", TextureFilterModeToString(scene.GetRenderer().GetTextureFilterMode())},
+            {"textureAnisotropy", scene.GetRenderer().GetTextureAnisotropy()},
+            {"textureMipBias", scene.GetRenderer().GetTextureMipBias()},
+            {"directionalShadow", shadowSettings.ToJson()},
+            {"screenSpaceEffects", ScreenSpaceEffectsSettings::ToJson(effects)},
+            {"dxr", dxrSettings.ToJson()},
         };
     }
 
-    void DeserializeRenderer(Scene& scene, const json& rendererValue)
+    void ApplySkyboxDelta(EnvironmentMap& environmentMap, const json& skyboxValue)
     {
-        SceneRenderer& renderer = scene.GetRenderer();
-        renderer.GetIBL().SetEnvironmentIntensity(
-            rendererValue.value("environmentIntensity", renderer.GetIBL().GetEnvironmentIntensity()));
-
-        if (rendererValue.contains("directionalShadow"))
+        if (skyboxValue.contains("enabled"))
         {
-            const json& shadowValue = rendererValue.at("directionalShadow");
-            DirectionalShadowSettings& shadowSettings = renderer.GetDirectionalShadowSettings();
-            shadowSettings.SetFilterMode(ShadowFilterModeFromString(
-                shadowValue.value("filterMode", ShadowFilterModeToString(shadowSettings.GetFilterMode()))));
-            shadowSettings.SetShadowMapResolution(
-                shadowValue.value("shadowMapResolution", shadowSettings.GetShadowMapResolution()));
-            shadowSettings.SetCascadeCount(shadowValue.value("cascadeCount", shadowSettings.GetCascadeCount()));
-            shadowSettings.SetCascadeSplitLambda(
-                shadowValue.value("cascadeSplitLambda", shadowSettings.GetCascadeSplitLambda()));
-            shadowSettings.SetCascadeBlendRatio(
-                shadowValue.value("cascadeBlendRatio", shadowSettings.GetCascadeBlendRatio()));
-            shadowSettings.SetTightNearPlaneXyFit(
-                shadowValue.value("tightNearPlaneXyFit", shadowSettings.GetTightNearPlaneXyFit()));
-            shadowSettings.SetXyMarginFraction(
-                shadowValue.value("xyMarginFraction", shadowSettings.GetXyMarginFraction()));
-            shadowSettings.SetZMarginFraction(
-                shadowValue.value("zMarginFraction", shadowSettings.GetZMarginFraction()));
-            shadowSettings.SetUsePoissonPcf(
-                shadowValue.value("usePoissonPcf", shadowSettings.GetUsePoissonPcf()));
-            shadowSettings.SetPcfKernelRadius(
-                shadowValue.value("pcfKernelRadius", shadowSettings.GetPcfKernelRadius()));
-            shadowSettings.SetPcfSampleCount(
-                shadowValue.value("pcfSampleCount", shadowSettings.GetPcfSampleCount()));
-            shadowSettings.SetMinPenumbraTexels(
-                shadowValue.value("minPenumbraTexels", shadowSettings.GetMinPenumbraTexels()));
-            shadowSettings.SetSunAngularDiameterDegrees(shadowValue.value(
-                "sunAngularDiameterDegrees",
-                shadowSettings.GetSunAngularDiameterDegrees()));
-            shadowSettings.SetPcssLightAngularSize(
-                shadowValue.value("pcssLightAngularSize", shadowSettings.GetPcssLightAngularSize()));
-            shadowSettings.SetPcssBlockerRadius(
-                shadowValue.value("pcssBlockerRadius", shadowSettings.GetPcssBlockerRadius()));
-            shadowSettings.SetPcssMinPenumbraTexels(
-                shadowValue.value("pcssMinPenumbraTexels", shadowSettings.GetPcssMinPenumbraTexels()));
-            shadowSettings.SetPcssMaxPenumbraTexels(
-                shadowValue.value("pcssMaxPenumbraTexels", shadowSettings.GetPcssMaxPenumbraTexels()));
-            shadowSettings.SetWorldBiasScale(
-                shadowValue.value("worldBiasScale", shadowSettings.GetWorldBiasScale()));
-            shadowSettings.SetDepthBiasScale(
-                shadowValue.value("depthBiasScale", shadowSettings.GetDepthBiasScale()));
-            shadowSettings.SetShadowBlurEnabled(
-                shadowValue.value("shadowBlurEnabled", shadowSettings.GetShadowBlurEnabled()));
-            shadowSettings.SetShadowBlurRadius(
-                shadowValue.value("shadowBlurRadius", shadowSettings.GetShadowBlurRadius()));
+            environmentMap.SetEnabled(skyboxValue.at("enabled").get<bool>());
         }
+        if (skyboxValue.contains("backgroundMode"))
+        {
+            environmentMap.SetBackgroundMode(static_cast<EnvironmentBackgroundMode>(
+                skyboxValue.at("backgroundMode").get<int>()));
+        }
+        if (skyboxValue.contains("hdrPath"))
+        {
+            environmentMap.SetHdrPath(skyboxValue.at("hdrPath").get<std::string>());
+        }
+        if (skyboxValue.contains("rotationDegrees"))
+        {
+            environmentMap.SetRotationDegrees(skyboxValue.at("rotationDegrees").get<float>());
+        }
+        if (skyboxValue.contains("exposure"))
+        {
+            environmentMap.SetExposure(skyboxValue.at("exposure").get<float>());
+        }
+        if (skyboxValue.contains("iblCubemapResolution"))
+        {
+            environmentMap.SetIblCubemapResolution(static_cast<EnvironmentIblCubemapResolution>(
+                skyboxValue.at("iblCubemapResolution").get<int>()));
+        }
+        if (skyboxValue.contains("solidBackgroundColor")
+            && skyboxValue.at("solidBackgroundColor").is_array()
+            && skyboxValue.at("solidBackgroundColor").size() == 3)
+        {
+            const json& colorValue = skyboxValue.at("solidBackgroundColor");
+            environmentMap.SetSolidBackgroundColorSrgb(glm::vec3(
+                colorValue[0].get<float>(),
+                colorValue[1].get<float>(),
+                colorValue[2].get<float>()));
+        }
+    }
 
-        if (!rendererValue.contains("screenSpaceEffects"))
+    void ApplyRendererSettingsDelta(Scene& scene, const json& delta, const bool deferIfGpuNotReady = true)
+    {
+        if (!delta.is_object())
         {
             return;
         }
 
-        const json& effectsValue = rendererValue.at("screenSpaceEffects");
-        ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
-        effects.SetEnabled(effectsValue.value("enabled", effects.IsEnabled()));
-        effects.SetSsaoEnabled(effectsValue.value("ssaoEnabled", effects.IsSsaoEnabled()));
-        effects.SetSsaoRadius(effectsValue.value("ssaoRadius", effects.GetSsaoRadius()));
-        effects.SetSsaoBias(effectsValue.value("ssaoBias", effects.GetSsaoBias()));
-        effects.SetSsaoPower(effectsValue.value("ssaoPower", effects.GetSsaoPower()));
-        effects.SetAoStrength(effectsValue.value("aoStrength", effects.GetAoStrength()));
-        effects.SetExposure(effectsValue.value("exposure", effects.GetExposure()));
-        effects.SetTonemapMode(
-            TonemapModeFromString(effectsValue.value("tonemapMode", TonemapModeToString(effects.GetTonemapMode()))));
-        effects.SetBloomEnabled(effectsValue.value("bloomEnabled", effects.IsBloomEnabled()));
-        effects.SetBloomThreshold(effectsValue.value("bloomThreshold", effects.GetBloomThreshold()));
-        effects.SetBloomSoftKnee(effectsValue.value("bloomSoftKnee", effects.GetBloomSoftKnee()));
-        effects.SetBloomIntensity(effectsValue.value("bloomIntensity", effects.GetBloomIntensity()));
-        effects.SetBloomBlurRadius(effectsValue.value("bloomBlurRadius", effects.GetBloomBlurRadius()));
+        SceneRenderer& renderer = scene.GetRenderer();
+
+        // CPU-safe settings: no D3D12 resources required (applied even when deferring).
+        if (delta.contains("directionalShadow"))
+        {
+            renderer.GetDirectionalShadowSettings().ApplyFromJson(delta.at("directionalShadow"));
+        }
+
+        if (delta.contains("dxr"))
+        {
+            DxrSettings& dxrSettings = renderer.GetDxrSettings();
+            dxrSettings.ApplyFromJson(delta.at("dxr"));
+            if (GfxContext::Get().IsInitialized())
+            {
+                dxrSettings.ClampToHardwareWithLogging(GfxContext::Get().IsRaytracingSupported());
+            }
+        }
+
+        const auto deferPendingRendererSettings = [&]()
+        {
+            renderer.MergePendingRendererSettings(delta);
+            ProjectLoadTrace::Step("renderer settings deferred (GPU not ready)");
+            scene.MarkDirty();
+        };
+
+        // During project load the GPU path is not ready yet; never touch D3D12 resources here.
+        if (deferIfGpuNotReady && !renderer.IsGpuResourcesReady())
+        {
+            // Geometry MSAA must be on GfxContext before the first EnsureGpuResources so we
+            // don't init at 1x and immediately tear down/reinit when deferred settings apply.
+            const ScreenSpaceEffectsSettings::LoadedAntiAliasingSettings pendingAaSettings =
+                ScreenSpaceEffectsSettings::ResolveLoadedAntiAliasingSettings(delta);
+            GfxContext::Get().SetActiveMsaaSampleCount(pendingAaSettings.msaaSampleCount);
+
+            deferPendingRendererSettings();
+            return;
+        }
+
+        ScreenSpaceEffectsSettings::LoadedAntiAliasingSettings aaToApply{};
+        bool applyAaSettings = false;
+        if (delta.contains("screenSpaceEffects"))
+        {
+            const json& effectsValue = delta.at("screenSpaceEffects");
+            if (effectsValue.contains("antiAliasingMode") || effectsValue.contains("msaaSampleCount"))
+            {
+                AntiAliasingMode aaMode = AntiAliasingMode::None;
+                int msaaSampleCount = 1;
+                if (renderer.IsGpuResourcesReady())
+                {
+                    const ScreenSpaceEffects& currentEffects = renderer.GetScreenSpaceEffects();
+                    aaMode = currentEffects.GetAntiAliasingMode();
+                    msaaSampleCount = currentEffects.GetMsaaSampleCount();
+                }
+                aaToApply = ScreenSpaceEffectsSettings::ResolveAntiAliasingDelta(
+                    effectsValue,
+                    aaMode,
+                    msaaSampleCount);
+                applyAaSettings = true;
+                if (aaToApply.msaaSampleCount > 1)
+                {
+                    RenderingPipelineCache::InvalidateAll();
+                }
+                renderer.PrepareGpuResourcesForGeometryMsaa(aaToApply.msaaSampleCount);
+                if (renderer.IsGpuResourcesReady() && aaToApply.msaaSampleCount > 1)
+                {
+                    scene.InvalidateAllMaterialCachedShaders();
+                }
+            }
+        }
+
+        if (GfxContext::Get().IsInitialized())
+        {
+            renderer.PrepareGpuResources();
+        }
+
+        const bool gpuReady = renderer.IsGpuResourcesReady();
+        if (deferIfGpuNotReady && !gpuReady)
+        {
+            deferPendingRendererSettings();
+            return;
+        }
+
+        if (gpuReady)
+        {
+            if (applyAaSettings)
+            {
+                ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+                effects.SetAntiAliasingMode(aaToApply.antiAliasingMode);
+                effects.SetMsaaSampleCount(aaToApply.msaaSampleCount);
+            }
+
+            if (delta.contains("environmentIntensity"))
+            {
+                renderer.GetIBL().SetEnvironmentIntensity(delta.at("environmentIntensity").get<float>());
+            }
+
+            if (delta.contains("skybox"))
+            {
+                ApplySkyboxDelta(renderer.GetEnvironmentMap(), delta.at("skybox"));
+            }
+
+            if (delta.contains("textureFilterMode"))
+            {
+                renderer.SetTextureFilterMode(TextureFilterModeFromString(
+                    delta.at("textureFilterMode").get<std::string>()));
+            }
+            if (delta.contains("textureAnisotropy"))
+            {
+                renderer.SetTextureAnisotropy(delta.at("textureAnisotropy").get<float>());
+            }
+            if (delta.contains("textureMipBias"))
+            {
+                renderer.SetTextureMipBias(delta.at("textureMipBias").get<float>());
+            }
+
+            if (delta.contains("screenSpaceEffects"))
+            {
+                ScreenSpaceEffectsSettings::ApplyFromJson(
+                    renderer.GetScreenSpaceEffects(),
+                    delta.at("screenSpaceEffects"));
+            }
+        }
+
+        scene.MarkDirty();
+    }
+
+    void MergeRendererSettings(json& target, const json& delta)
+    {
+        if (!delta.is_object())
+        {
+            target = delta;
+            return;
+        }
+
+        if (!target.is_object())
+        {
+            target = json::object();
+        }
+
+        for (const auto& [key, value] : delta.items())
+        {
+            if (value.is_object() && target.contains(key) && target.at(key).is_object())
+            {
+                MergeRendererSettings(target[key], value);
+            }
+            else
+            {
+                target[key] = value;
+            }
+        }
+    }
+
+    void ApplyDeferredRendererSettings(Scene& scene)
+    {
+        SceneRenderer& renderer = scene.GetRenderer();
+        if (!renderer.HasPendingRendererSettings())
+        {
+            return;
+        }
+
+        SceneRenderTrace::Scope applyScope("ApplyDeferredRendererSettings");
+        try
+        {
+            const json pending = renderer.TakePendingRendererSettings();
+            ApplyRendererSettingsDelta(scene, pending, false);
+            applyScope.Success();
+        }
+        catch (const std::exception& exception)
+        {
+            EngineLog::Error(
+                "load",
+                std::string("ApplyDeferredRendererSettings failed: ") + exception.what());
+            throw;
+        }
+    }
+
+    void DeserializeRenderer(Scene& scene, const json& rendererValue)
+    {
+        ProjectLoadTrace::Scope rendererScope("deserialize renderer settings");
+        try
+        {
+            ApplyRendererSettingsDelta(scene, rendererValue);
+            if (scene.GetRenderer().HasPendingRendererSettings())
+            {
+                ProjectLoadTrace::Step("renderer settings pending until first GPU frame");
+            }
+            rendererScope.Success();
+        }
+        catch (const std::exception& exception)
+        {
+            EngineLog::Error(
+                "load",
+                std::string("deserialize renderer settings failed: ") + exception.what());
+            throw;
+        }
     }
 
     json SerializeProjectFilesFolderOpenStates(
@@ -614,6 +764,7 @@ namespace SceneProjectIODetail
                  {"inspector", editorState.showInspector},
                  {"toolbar", editorState.showToolbar},
                  {"lighting", editorState.showLighting},
+                 {"performance", editorState.showPerformance},
                  {"projectFiles", editorState.showProjectFiles},
                  {"sceneView", editorState.showSceneView},
                  {"gameView", editorState.showGameView},
@@ -652,6 +803,7 @@ namespace SceneProjectIODetail
             editorState.showInspector = panelsValue.value("inspector", editorState.showInspector);
             editorState.showToolbar = panelsValue.value("toolbar", editorState.showToolbar);
             editorState.showLighting = panelsValue.value("lighting", editorState.showLighting);
+            editorState.showPerformance = panelsValue.value("performance", editorState.showPerformance);
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
             editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
             editorState.showGameView = panelsValue.value("gameView", editorState.showGameView);
@@ -676,68 +828,6 @@ namespace SceneProjectIODetail
                     DeserializeProjectFilesFolderOpenStates(projectFilesValue.at("folderOpenStates"), projectRoot);
             }
         }
-    }
-
-    fs::path GetEditorLayoutPath(const std::string& projectRoot)
-    {
-        return fs::path(projectRoot) / ".editor" / "imgui.ini";
-    }
-
-    bool SaveEditorLayout(const std::string& projectRoot)
-    {
-        std::size_t iniSize = 0;
-        const char* iniData = ImGui::SaveIniSettingsToMemory(&iniSize);
-        if (iniData == nullptr || iniSize == 0)
-        {
-            return true;
-        }
-
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        std::error_code error;
-        fs::create_directories(layoutPath.parent_path(), error);
-
-        std::ofstream output(layoutPath, std::ios::binary);
-        if (!output)
-        {
-            return false;
-        }
-
-        output.write(iniData, static_cast<std::streamsize>(iniSize));
-        return static_cast<bool>(output);
-    }
-
-    bool LoadEditorLayout(const std::string& projectRoot)
-    {
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        if (!fs::exists(layoutPath))
-        {
-            return true;
-        }
-
-        std::ifstream input(layoutPath, std::ios::binary);
-        if (!input)
-        {
-            return false;
-        }
-
-        const std::string iniData(
-            (std::istreambuf_iterator<char>(input)),
-            std::istreambuf_iterator<char>());
-        if (iniData.empty())
-        {
-            return true;
-        }
-
-        ImGui::LoadIniSettingsFromMemory(iniData.c_str(), iniData.size());
-        return true;
-    }
-
-    bool DeleteEditorLayout(const std::string& projectRoot)
-    {
-        const fs::path layoutPath = GetEditorLayoutPath(projectRoot);
-        std::error_code error;
-        fs::remove(layoutPath, error);
-        return true;
     }
 
     json SerializeObjects(const Scene& scene, const std::string& projectRoot)
@@ -888,21 +978,54 @@ namespace SceneProjectIODetail
         std::vector<SceneObject>& sceneObjects = scene.GetObjects();
         sceneObjects.reserve(objectValues.size());
 
+        try
+        {
+            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube);
+        }
+        catch (const std::exception& exception)
+        {
+            outError = FormatExceptionContext("Failed to create primitive meshes before loading objects", exception);
+            EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+            return false;
+        }
+        catch (...)
+        {
+            outError = "Failed to create primitive meshes before loading objects: unknown exception";
+            EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+            return false;
+        }
+
         const std::size_t objectCount = objectValues.size();
+        ProjectLoadTrace::Step(
+            "deserialize scene objects (count=" + std::to_string(objectCount) + ")");
+        std::unique_ptr<ScopedNativeProgress> loadProgress;
+        if (showProgress && objectCount > 0)
+        {
+            loadProgress = std::make_unique<ScopedNativeProgress>(
+                "Loading Project",
+                "Loading scene objects...");
+            loadProgress->SetProgress(kProjectObjectLoadProgressStart);
+        }
+
         std::size_t objectIndex = 0;
         for (const json& objectValue : objectValues)
         {
             ++objectIndex;
-            if (showProgress)
+            if (loadProgress != nullptr)
             {
-                const float loadProgress =
-                    objectCount > 0 ? static_cast<float>(objectIndex) / static_cast<float>(objectCount) : 1.0f;
-                NativeProgressWindow::Instance().SetMessage(
-                    "Loading scene objects (" + std::to_string(objectIndex) + "/"
-                    + std::to_string(objectCount) + ")...");
-                NativeProgressWindow::Instance().SetProgress(0.05f + (loadProgress * 0.95f));
+                const std::string objectName = objectValue.value("name", "object");
+                loadProgress->SetMessage(
+                    "Loading '" + objectName + "' (" + std::to_string(objectIndex) + "/" +
+                    std::to_string(objectCount) + ")");
+                const float objectProgress =
+                    static_cast<float>(objectIndex) / static_cast<float>(objectCount);
+                loadProgress->SetProgress(
+                    kProjectObjectLoadProgressStart
+                    + objectProgress * (kProjectObjectLoadProgressEnd - kProjectObjectLoadProgressStart));
             }
 
+            try
+            {
             Mesh* mesh = nullptr;
             std::string importAssetPath;
             int importNodeIndex = -1;
@@ -959,9 +1082,19 @@ namespace SceneProjectIODetail
             transform.rotation = QuatFromJson(transformValue.at("rotation"));
             transform.scale = Vec3FromJson(transformValue.at("scale"));
 
-            const json& boundsValue = objectValue.at("bounds");
-            const glm::vec3 boundsMin = Vec3FromJson(boundsValue.at("min"));
-            const glm::vec3 boundsMax = Vec3FromJson(boundsValue.at("max"));
+            glm::vec3 boundsMin(0.0f);
+            glm::vec3 boundsMax(0.0f);
+            if (objectValue.contains("bounds"))
+            {
+                const json& boundsValue = objectValue.at("bounds");
+                boundsMin = Vec3FromJson(boundsValue.at("min"));
+                boundsMax = Vec3FromJson(boundsValue.at("max"));
+            }
+            else if (!TryGetMeshLocalBounds(scene, mesh, boundsMin, boundsMax))
+            {
+                boundsMin = glm::vec3(-0.5f);
+                boundsMax = glm::vec3(0.5f);
+            }
 
             SceneObjectId objectId = kInvalidSceneObjectId;
             if (formatVersion >= 3 && objectValue.contains("id"))
@@ -1006,6 +1139,23 @@ namespace SceneProjectIODetail
             {
                 scene.GetObjectStore().FinalizeNewObject(createdObject);
             }
+            }
+            catch (const std::exception& exception)
+            {
+                const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
+                outError = FormatExceptionContext(context.c_str(), exception);
+                ProjectLoadTrace::Step("deserialize scene objects exception");
+                EngineLog::LogException("project-io", "DeserializeObjects", exception);
+                EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+                return false;
+            }
+            catch (...)
+            {
+                const std::string context = "Failed loading object '" + objectValue.value("name", "?") + "'";
+                outError = context + ": unknown exception";
+                EngineLog::LogFailure("project-io", "DeserializeObjects", outError);
+                return false;
+            }
         }
 
         int mainCameraIndex = -1;
@@ -1027,6 +1177,7 @@ namespace SceneProjectIODetail
             }
         }
 
+        ProjectLoadTrace::Step("deserialize scene objects ok");
         return true;
     }
 
@@ -1088,6 +1239,9 @@ namespace SceneProjectIODetail
                 meshReusePool,
                 showProgress))
         {
+            scene.GetObjectStore().Clear();
+            scene.GetMeshLibrary().ClearImportedMeshes();
+            scene.ClearSelection();
             return false;
         }
 
@@ -1144,6 +1298,7 @@ bool SceneProjectIO::DeserializeScene(
     const std::string& projectRoot,
     std::string& outError)
     {
+        ProjectLoadTrace::Scope deserializeScope("DeserializeScene");
         if (root.value("format", "") != SceneProjectIODetail::kFormatId)
         {
             outError = "Unrecognized project file format.";
@@ -1172,6 +1327,7 @@ bool SceneProjectIO::DeserializeScene(
 
         scene.GetObjectStore().Clear();
         scene.GetMeshLibrary().ClearImportedMeshes();
+        ProjectLoadTrace::Step("scene stores cleared");
 
         if (!SceneProjectIODetail::DeserializeObjects(
                 scene,
@@ -1182,11 +1338,15 @@ bool SceneProjectIO::DeserializeScene(
                 nullptr,
                 true))
         {
+            scene.GetObjectStore().Clear();
+            scene.GetMeshLibrary().ClearImportedMeshes();
+            scene.ClearSelection();
             return false;
         }
 
         if (sceneValue.contains("editor"))
         {
+            ProjectLoadTrace::Step("deserialize editor state");
             const json& editor = sceneValue.at("editor");
             scene.ClearSelection();
             scene.SetShowGrid(editor.value("showGrid", true));
@@ -1203,9 +1363,14 @@ bool SceneProjectIO::DeserializeScene(
         {
             SceneProjectIODetail::DeserializeRenderer(scene, sceneValue.at("renderer"));
         }
+        else
+        {
+            ProjectLoadTrace::Step("no renderer block in project file");
+        }
 
         if (sceneValue.contains("spawnCounters"))
         {
+            ProjectLoadTrace::Step("deserialize spawn counters");
             SceneProjectIODetail::DeserializeSpawnCounters(scene, sceneValue.at("spawnCounters"));
         }
 
@@ -1218,14 +1383,9 @@ bool SceneProjectIO::DeserializeScene(
             SceneProjectIODetail::EnsureNextObjectId(scene);
         }
 
-        if (!SceneProjectIODetail::LoadEditorLayout(projectRoot))
-        {
-            outError = "Failed to load editor layout.";
-            return false;
-        }
-
+        deserializeScope.Success();
         return true;
-}
+    }
 
 bool SceneProjectIO::Save(
     const Scene& scene,
@@ -1256,17 +1416,12 @@ bool SceneProjectIO::Save(
 
         output << root.dump(2);
 
-        if (!SceneProjectIODetail::SaveEditorLayout(projectRoot))
-        {
-            outError = "Failed to save editor layout.";
-            return false;
-        }
-
         return true;
     }
     catch (const std::exception& exception)
     {
-        outError = exception.what();
+        outError = FormatExceptionContext("Failed to save project", exception);
+        EngineLog::LogFailure("project-io", "Save", outError);
         return false;
     }
 }
@@ -1282,40 +1437,76 @@ bool SceneProjectIO::Load(
 
     try
     {
-        ScopedNativeProgress progress("Loading Project", "Reading project file...");
+        ProjectLoadTrace::Step("set material texture resolver");
+        SetMaterialTexturePathResolver(projectRoot);
 
+        ScopedNativeProgress progress("Loading Project", "Reading project file...");
+        progress.SetProgress(0.04f);
+
+        ProjectLoadTrace::Step("open project file");
         std::ifstream input(projectFilePath, std::ios::binary);
         if (!input)
         {
             outError = "Failed to open project file for reading.";
+            ProjectLoadTrace::Step("open project file failed");
             return false;
         }
 
         json root;
+        progress.SetMessage("Parsing project file...");
+        progress.SetProgress(0.10f);
+        ProjectLoadTrace::Step("parse project json");
         input >> root;
+        ProjectLoadTrace::Step("parse project json ok");
 
         progress.SetMessage("Loading scene...");
-        progress.SetProgress(0.05f);
+        progress.SetProgress(SceneProjectIODetail::kProjectObjectLoadProgressStart);
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)
     {
-        outError = exception.what();
+        ProjectLoadTrace::Step("SceneProjectIO::Load exception");
+        outError = FormatExceptionContext("Failed to load project file", exception);
+        EngineLog::LogFailure("project-io", "Load", outError);
         return false;
     }
 }
 
-bool SceneProjectIO::SaveEditorLayout(const std::string& projectRoot)
+std::string SceneProjectIO::ResolveProjectPath(
+    const std::string& projectRoot,
+    const std::string& storedPath)
 {
-    return SceneProjectIODetail::SaveEditorLayout(projectRoot);
+    if (storedPath.empty())
+    {
+        return {};
+    }
+
+    const fs::path stored(storedPath);
+    if (stored.is_absolute())
+    {
+        return stored.generic_string();
+    }
+
+    if (!projectRoot.empty())
+    {
+        const fs::path rooted = fs::path(projectRoot) / stored;
+        if (fs::exists(rooted))
+        {
+            return rooted.generic_string();
+        }
+    }
+
+    if (fs::exists(stored))
+    {
+        return stored.generic_string();
+    }
+
+    return (fs::path(projectRoot) / stored).generic_string();
 }
 
-bool SceneProjectIO::LoadEditorLayout(const std::string& projectRoot)
+void SceneProjectIO::SetMaterialTexturePathResolver(const std::string& projectRoot)
 {
-    return SceneProjectIODetail::LoadEditorLayout(projectRoot);
-}
-
-bool SceneProjectIO::DeleteEditorLayout(const std::string& projectRoot)
-{
-    return SceneProjectIODetail::DeleteEditorLayout(projectRoot);
+    Material::SetTexturePathResolver([projectRoot](const std::string& storedPath) {
+        return SceneProjectIO::ResolveProjectPath(projectRoot, storedPath);
+    });
 }

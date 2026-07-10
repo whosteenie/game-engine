@@ -11,9 +11,13 @@
 #include "engine/lighting/CascadedShadowMap.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/ShadowMapMath.h"
+#include "engine/lighting/LightingProbe.h"
 
-#include <glm/gtc/matrix_inverse.hpp>
+#include "engine/rhi/GfxContext.h"
+
+#include <glm/gtc/matrix_transform.hpp>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -68,7 +72,7 @@ namespace
         const glm::mat4& lightSpaceMatrix,
         const glm::vec3& lightDirection)
     {
-        const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         glm::vec3 boundsMin;
         glm::vec3 boundsMax;
         scene.GetWorldBounds(objectIndex, boundsMin, boundsMax);
@@ -170,6 +174,17 @@ namespace RenderDiagnostics
             out << "Size: " << viewportWidth << " x " << viewportHeight << "\n";
             out << "Camera position: " << FormatVec3(camera.GetPosition()) << "\n\n";
 
+            scene.GetRenderer().PrepareGpuResources();
+            if (!scene.GetRenderer().IsGpuResourcesReady())
+            {
+                statusMessage = scene.GetRenderer().GetGpuResourcesInitError();
+                if (statusMessage.empty())
+                {
+                    statusMessage = "GPU resources are not initialized.";
+                }
+                return false;
+            }
+
             glm::vec3 shadowBoundsMin;
             glm::vec3 shadowBoundsMax;
             ComputeShadowSceneBounds(scene, shadowBoundsMin, shadowBoundsMax);
@@ -215,6 +230,71 @@ namespace RenderDiagnostics
             out << "Legacy single-map texel size (full scene fit): "
                 << legacySetup.texelWorldSizeX << " / " << legacySetup.texelWorldSizeY << "\n\n";
 
+            out << "[Runtime cascade matrices (GPU path)]\n";
+            const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& runtimeMatrices =
+                shadowMap.GetLightSpaceMatrices();
+            const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& runtimeSetups =
+                shadowMap.GetCascadeSetups();
+            const std::array<float, CascadedShadowMap::MaxCascades>& runtimeSplits =
+                shadowMap.GetCascadeEndSplits();
+            const int activeCascadeCount = shadowMap.GetActiveCascadeCount();
+            for (int cascadeIndex = 0; cascadeIndex < activeCascadeCount; ++cascadeIndex)
+            {
+                const ShadowLightSpaceSetup& setup = runtimeSetups[static_cast<std::size_t>(cascadeIndex)];
+                out << "C" << cascadeIndex << " ortho " << setup.orthoWidth << " x " << setup.orthoHeight
+                    << " m | frustum stable clipZ [" << setup.clipDepthContentMin << ", "
+                    << setup.clipDepthContentMax << "]\n";
+            }
+
+            if (activeCascadeCount > 1)
+            {
+                const ShadowLightSpaceSetup& firstSetup = runtimeSetups[0];
+                const ShadowLightSpaceSetup& lastSetup =
+                    runtimeSetups[static_cast<std::size_t>(activeCascadeCount - 1)];
+                const bool identicalDepthRange =
+                    std::abs(firstSetup.clipDepthContentMin - lastSetup.clipDepthContentMin) < 1e-5f &&
+                    std::abs(firstSetup.clipDepthContentMax - lastSetup.clipDepthContentMax) < 1e-5f;
+                const bool oversizedNearOrtho = firstSetup.orthoWidth > 15.0f;
+                if (identicalDepthRange && oversizedNearOrtho)
+                {
+                    out << "WARNING: Near cascades share full-scene ortho/depth range. "
+                        << "Enable Frustum-only XY fit and move the camera >1.25 m to reset stable fit.\n";
+                }
+            }
+            out << "Light-space depth debug shows raw stable clip Z in [0,1] (no normalization).\n\n";
+
+            const glm::vec3 focusPoint = camera.GetPosition() + camera.GetFront() * 3.0f;
+            const glm::vec4 viewFocus = camera.GetViewMatrix() * glm::vec4(focusPoint, 1.0f);
+            const std::array<glm::vec3, 3> receiverProbePoints = {
+                focusPoint,
+                glm::vec3(0.0f, 0.0f, 0.0f),
+                glm::vec3(camera.GetPosition().x, 0.0f, camera.GetPosition().z),
+            };
+            const char* receiverProbeNames[3] = {
+                "focus-3m-ahead",
+                "world-origin-floor",
+                "floor-under-camera",
+            };
+            out << "[Light-space receiver probe (matches debug shader)]\n";
+            for (std::size_t probeIndex = 0; probeIndex < receiverProbePoints.size(); ++probeIndex)
+            {
+                const glm::vec3& worldPoint = receiverProbePoints[probeIndex];
+                const glm::vec4 viewPoint = camera.GetViewMatrix() * glm::vec4(worldPoint, 1.0f);
+                const ShadowReceiverProbeResult probe = EvaluateShadowReceiverProbe(
+                    worldPoint,
+                    viewPoint.z,
+                    runtimeMatrices.data(),
+                    runtimeSetups.data(),
+                    runtimeSplits.data(),
+                    activeCascadeCount);
+                out << receiverProbeNames[probeIndex] << " @ " << FormatVec3(worldPoint) << "\n";
+                out << "  viewDepth=" << viewPoint.z << " cascade=C" << probe.cascadeIndex
+                    << " inBounds=" << (probe.inBounds ? "yes" : "no") << "\n";
+                out << "  clipZ=" << probe.receiverClipZ << " normalized=" << probe.normalizedClipZ
+                    << " uv=" << FormatVec3(glm::vec3(probe.shadowUv, 0.0f)) << "\n";
+            }
+            out << "\n";
+
             const glm::mat4 inverseViewMatrix = glm::inverse(camera.GetViewMatrix());
             for (int cascadeIndex = 0; cascadeIndex < shadowSettings.GetCascadeCount(); ++cascadeIndex)
             {
@@ -259,6 +339,31 @@ namespace RenderDiagnostics
             out << "AO strength: " << effects.GetAoStrength() << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
 
+            std::uint32_t srvUsed = 0;
+            std::uint32_t srvCapacity = 0;
+            GfxContext::Get().GetSrvDescriptorUsage(srvUsed, srvCapacity);
+            out << "[GPU descriptors]\n";
+            out << "SRV heap used: " << srvUsed << " / " << srvCapacity << "\n";
+            if (!GfxContext::GetLastGpuAllocationError().empty())
+            {
+                out << "Last GPU allocation error: " << GfxContext::GetLastGpuAllocationError() << "\n";
+            }
+            out << "\n";
+
+            out << "[Scene object transforms]\n";
+            const std::vector<SceneObject>& objects = scene.GetObjects();
+            for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+            {
+                const SceneObject& object = objects[objectIndex];
+                const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+                const glm::vec3 worldPosition = glm::vec3(worldMatrix[3]);
+                out << "  [" << objectIndex << "] \"" << object.GetName() << "\""
+                    << " pos=" << FormatVec3(worldPosition)
+                    << " mesh=" << (object.HasMesh() ? "yes" : "no")
+                    << " import=" << (object.GetImportAssetPath().empty() ? "no" : "yes") << "\n";
+            }
+            out << "\n";
+
             const int selectedIndex = scene.GetPrimarySelection();
             out << "[Selected object shadow analysis]\n";
             if (selectedIndex < 0)
@@ -276,13 +381,65 @@ namespace RenderDiagnostics
                 out << "\n";
             }
 
+            const std::array<glm::vec3, 3> probePoints = {
+                glm::vec3(0.0f, 2.0f, 0.0f),
+                glm::vec3(0.0f, 0.5f, 0.0f),
+                glm::vec3(0.0f, 0.0f, 0.0f),
+            };
+            const char* probeNames[3] = {"cube-top", "sphere-center", "floor"};
+            const std::array<glm::vec3, 3> probeNormals = {
+                glm::vec3(0.0f, 1.0f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f),
+            };
+
+            out << "[Lighting probe sweep (8 orbit cameras)]\n";
+            out << "Columns: viewDepth, cascade, blend, sunDotGeom\n";
+            for (std::size_t probeIndex = 0; probeIndex < probePoints.size(); ++probeIndex)
+            {
+                out << "Probe " << probeNames[probeIndex] << " @ " << FormatVec3(probePoints[probeIndex]) << "\n";
+                for (int step = 0; step < 8; ++step)
+                {
+                    const float angle = glm::two_pi<float>() * (static_cast<float>(step) / 8.0f);
+                    const glm::vec3 eye(
+                        std::cos(angle) * 6.0f,
+                        3.5f,
+                        std::sin(angle) * 6.0f);
+                    const glm::mat4 viewMatrix = glm::lookAtLH(
+                        eye,
+                        probePoints[probeIndex],
+                        glm::vec3(0.0f, 1.0f, 0.0f));
+
+                    const LightingProbeResult probe = EvaluateLightingProbe(
+                        viewMatrix,
+                        probePoints[probeIndex],
+                        probeNormals[probeIndex],
+                        lightDirection,
+                        cascadeSplits,
+                        camera.GetNearPlane(),
+                        shadowSettings.GetCascadeBlendRatio(),
+                        shadowSettings.GetCascadeCount());
+
+                    out << "  cam" << step
+                        << " eye=" << FormatVec3(eye)
+                        << " viewDepth=" << probe.viewDepth
+                        << " cascade=" << probe.cascadeIndex
+                        << " blend=" << probe.cascadeBlendFactor
+                        << " sunDotGeom=" << probe.sunDotGeomNormal
+                        << "\n";
+                }
+                out << "\n";
+            }
+
             out << "[How to isolate the artifact]\n";
-            out << "Lighting model: color = direct + indirect * ambientOcclusion\n";
-            out << "1. Shadow factor (PBR): shadow map / PCF issues\n";
-            out << "2. Direct lighting (PBR): sun/specular only\n";
-            out << "3. Ambient / IBL (PBR): indirect before SSAO\n";
-            out << "4. SSAO buffer: screen-space AO applied to indirect only\n";
-            out << "5. Composite occlusion: SSAO multiplier on indirect\n";
+            out << "Lighting model: color = direct * shadowFactor + indirect * SSAO\n";
+            out << "1. Shadow factor / Cascade blend factor: shadow map and cascade seams\n";
+            out << "2. Direct lighting: full Cook-Torrance (includes normal maps)\n";
+            out << "3. Direct diffuse (geom N·L): sun on geometric normals only\n";
+            out << "4. Diffuse IBL / Specular IBL: split indirect lighting\n";
+            out << "5. Shaded normal vs Geometric normal: normal-map / TBN issues\n";
+            out << "6. View depth / Cascade index: split selection diagnostics\n";
+            out << "7. SSAO buffer / Composite occlusion: screen-space AO on indirect\n";
 
             statusMessage = "Wrote " + fs::absolute(outputFilePath).string();
             return true;

@@ -24,7 +24,7 @@ namespace
             up = glm::vec3(0.0f, 0.0f, 1.0f);
         }
 
-        return glm::lookAt(lightEye, viewTarget, up);
+        return glm::lookAtLH(lightEye, viewTarget, up);
     }
 
     std::array<glm::vec3, 8> BuildAxisAlignedBoxCorners(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
@@ -41,19 +41,56 @@ namespace
         };
     }
 
+    void AccumulateClipDepthRange(
+        ShadowLightSpaceSetup& setup,
+        const std::vector<glm::vec3>& worldPoints)
+    {
+        setup.clipDepthContentMin = 1.0f;
+        setup.clipDepthContentMax = 0.0f;
+        for (const glm::vec3& point : worldPoints)
+        {
+            const glm::vec4 clip = setup.lightSpaceMatrix * glm::vec4(point, 1.0f);
+            const float clipZ = clip.z / clip.w;
+            setup.clipDepthContentMin = std::min(setup.clipDepthContentMin, clipZ);
+            setup.clipDepthContentMax = std::max(setup.clipDepthContentMax, clipZ);
+        }
+
+        const float clipSpan = std::max(setup.clipDepthContentMax - setup.clipDepthContentMin, 1e-4f);
+        setup.clipDepthContentMin =
+            std::clamp(setup.clipDepthContentMin - clipSpan * 0.02f, 0.0f, 1.0f);
+        setup.clipDepthContentMax =
+            std::clamp(setup.clipDepthContentMax + clipSpan * 0.02f, 0.0f, 1.0f);
+        if (setup.clipDepthContentMax <= setup.clipDepthContentMin)
+        {
+            setup.clipDepthContentMin = 0.0f;
+            setup.clipDepthContentMax = 1.0f;
+        }
+    }
+
+    glm::vec2 SnapLightSpaceCenterToWorldStableTexelGrid(
+        const float centerX,
+        const float centerY,
+        const glm::mat4& lightView,
+        const float texelWorldSize)
+    {
+        const glm::vec4 worldOriginLightSpace = lightView * glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+        const float anchorX = worldOriginLightSpace.x;
+        const float anchorY = worldOriginLightSpace.y;
+
+        const float snappedCenterX = anchorX +
+            std::floor((centerX - anchorX) / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
+        const float snappedCenterY = anchorY +
+            std::floor((centerY - anchorY) / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
+        return glm::vec2(snappedCenterX, snappedCenterY);
+    }
+
     ShadowLightSpaceSetup BuildShadowLightSpaceFromWorldPoints(
         const glm::vec3& lightDirectionTowardSource,
         const std::vector<glm::vec3>& xyWorldPoints,
         const std::vector<glm::vec3>& zWorldPoints,
         const int shadowMapResolution,
         const float xyMarginFraction,
-        const float zMarginFraction,
-        const glm::vec3* lightViewAnchor,
-        float* stableOrthoHalfExtentInOut,
-        glm::vec2* stableOrthoCenterLightInOut,
-        float* stableOrthoZNearInOut,
-        float* stableOrthoZFarInOut,
-        const bool resetStableFit)
+        const float zMarginFraction)
     {
         ShadowLightSpaceSetup setup;
         if (zWorldPoints.empty())
@@ -72,7 +109,6 @@ namespace
         setup.sceneCenter /= static_cast<float>(centerPoints.size());
 
         setup.lightView = BuildStableLightViewMatrix(lightDirectionTowardSource);
-        (void)lightViewAnchor;
 
         float minX = std::numeric_limits<float>::max();
         float maxX = std::numeric_limits<float>::lowest();
@@ -118,9 +154,9 @@ namespace
         const float spanX = std::max(maxX - minX, 1e-3f);
         const float spanY = std::max(maxY - minY, 1e-3f);
         const float spanZ = std::max(maxZ - minZ, 1e-3f);
-        const float marginX = std::max(0.25f, spanX * xyMarginFraction);
-        const float marginY = std::max(0.25f, spanY * xyMarginFraction);
-        const float marginZ = std::max(1.0f, spanZ * zMarginFraction);
+        const float marginX = std::max(spanX * xyMarginFraction, 1e-4f);
+        const float marginY = std::max(spanY * xyMarginFraction, 1e-4f);
+        const float marginZ = std::max(spanZ * zMarginFraction, 1e-4f);
 
         float centerX = (minX + maxX) * 0.5f;
         float centerY = (minY + maxY) * 0.5f;
@@ -130,91 +166,59 @@ namespace
         halfExtent = std::ceil(halfExtent / texelWorldSize) * texelWorldSize;
         texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
 
-        if (stableOrthoHalfExtentInOut != nullptr)
-        {
-            if (resetStableFit || *stableOrthoHalfExtentInOut <= 0.0f)
-            {
-                *stableOrthoHalfExtentInOut = halfExtent;
-            }
-            else if (halfExtent > *stableOrthoHalfExtentInOut)
-            {
-                *stableOrthoHalfExtentInOut = halfExtent;
-            }
+        const glm::vec2 snappedCenter = SnapLightSpaceCenterToWorldStableTexelGrid(
+            centerX,
+            centerY,
+            setup.lightView,
+            texelWorldSize);
+        const float snappedCenterX = snappedCenter.x;
+        const float snappedCenterY = snappedCenter.y;
 
-            halfExtent = *stableOrthoHalfExtentInOut;
-            texelWorldSize = (halfExtent * 2.0f) / static_cast<float>(shadowMapResolution);
-        }
-
-        const float desiredSnapCenterX =
-            std::floor(centerX / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
-        const float desiredSnapCenterY =
-            std::floor(centerY / texelWorldSize) * texelWorldSize + texelWorldSize * 0.5f;
-
-        float snappedCenterX = desiredSnapCenterX;
-        float snappedCenterY = desiredSnapCenterY;
-        if (stableOrthoCenterLightInOut != nullptr)
-        {
-            if (resetStableFit)
-            {
-                *stableOrthoCenterLightInOut = glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
-            }
-            else
-            {
-                const float centerDeltaX =
-                    std::abs(desiredSnapCenterX - stableOrthoCenterLightInOut->x);
-                const float centerDeltaY =
-                    std::abs(desiredSnapCenterY - stableOrthoCenterLightInOut->y);
-                constexpr float kCenterSnapTexelThreshold = 2.0f;
-                if (centerDeltaX >= texelWorldSize * kCenterSnapTexelThreshold ||
-                    centerDeltaY >= texelWorldSize * kCenterSnapTexelThreshold)
-                {
-                    *stableOrthoCenterLightInOut =
-                        glm::vec2(desiredSnapCenterX, desiredSnapCenterY);
-                }
-            }
-
-            snappedCenterX = stableOrthoCenterLightInOut->x;
-            snappedCenterY = stableOrthoCenterLightInOut->y;
-        }
-
-        const float orthoNear = -maxZ - marginZ;
-        const float orthoFar = -minZ + marginZ;
-        float stableOrthoNear = orthoNear;
-        float stableOrthoFar = orthoFar;
-        if (stableOrthoZNearInOut != nullptr && stableOrthoZFarInOut != nullptr)
-        {
-            if (resetStableFit || *stableOrthoZFarInOut <= *stableOrthoZNearInOut)
-            {
-                *stableOrthoZNearInOut = orthoNear;
-                *stableOrthoZFarInOut = orthoFar;
-            }
-            else
-            {
-                *stableOrthoZNearInOut = std::min(*stableOrthoZNearInOut, orthoNear);
-                *stableOrthoZFarInOut = std::max(*stableOrthoZFarInOut, orthoFar);
-            }
-
-            stableOrthoNear = *stableOrthoZNearInOut;
-            stableOrthoFar = *stableOrthoZFarInOut;
-        }
+        const float orthoNear = minZ - marginZ;
+        const float orthoFar = maxZ + marginZ;
+        setup.contentOrthoNear = orthoNear;
+        setup.contentOrthoFar = orthoFar;
+        setup.stableOrthoNear = orthoNear;
+        setup.stableOrthoFar = orthoFar;
 
         setup.orthoWidth = halfExtent * 2.0f;
         setup.orthoHeight = halfExtent * 2.0f;
         setup.texelWorldSizeX = texelWorldSize;
         setup.texelWorldSizeY = texelWorldSize;
 
-        setup.lightProjection = glm::ortho(
+        setup.lightProjection = glm::orthoLH_ZO(
             snappedCenterX - halfExtent,
             snappedCenterX + halfExtent,
             snappedCenterY - halfExtent,
             snappedCenterY + halfExtent,
-            stableOrthoNear,
-            stableOrthoFar);
+            orthoNear,
+            orthoFar);
 
         setup.lightSpaceMatrix = setup.lightProjection * setup.lightView;
-        setup.snapOffsetNdc = glm::vec2(0.0f);
+        if (halfExtent > 1e-6f)
+        {
+            setup.snapOffsetNdc = glm::vec2(
+                (snappedCenterX - centerX) / halfExtent,
+                (snappedCenterY - centerY) / halfExtent);
+        }
+        else
+        {
+            setup.snapOffsetNdc = glm::vec2(0.0f);
+        }
+
+        AccumulateClipDepthRange(setup, zWorldPoints);
 
         return setup;
+    }
+
+    void ApplyFrustumContentDepthRange(
+        ShadowLightSpaceSetup& setup,
+        const std::array<glm::vec3, 8>& frustumCorners,
+        const float /*zMarginFraction*/)
+    {
+        AccumulateClipDepthRange(
+            setup,
+            std::vector<glm::vec3>(frustumCorners.begin(), frustumCorners.end()));
     }
 }
 
@@ -234,13 +238,7 @@ ShadowLightSpaceSetup BuildShadowLightSpace(
         cornersVector,
         shadowMapResolution,
         std::max(marginFraction, 0.02f),
-        std::max(marginFraction * 2.0f, 0.08f),
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        nullptr,
-        true);
+        std::max(marginFraction * 2.0f, 0.08f));
 }
 
 ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
@@ -250,49 +248,147 @@ ShadowLightSpaceSetup BuildShadowLightSpaceForFrustumCorners(
     const float xyMarginFraction,
     const float zMarginFraction,
     const glm::vec3* casterBoundsMin,
-    const glm::vec3* casterBoundsMax,
-    const bool tightNearPlaneXyFit,
-    const glm::vec3* lightViewAnchor,
-    float* stableOrthoHalfExtentInOut,
-    glm::vec2* stableOrthoCenterLightInOut,
-    float* stableOrthoZNearInOut,
-    float* stableOrthoZFarInOut,
-    const bool resetStableFit)
+    const glm::vec3* casterBoundsMax)
 {
-    std::vector<glm::vec3> zPoints(frustumCorners.begin(), frustumCorners.end());
-    std::vector<glm::vec3> xyPoints(frustumCorners.begin(), frustumCorners.end());
+    const std::vector<glm::vec3> frustumPoints(frustumCorners.begin(), frustumCorners.end());
 
+    std::vector<glm::vec3> zWorldPoints = frustumPoints;
     if (casterBoundsMin != nullptr && casterBoundsMax != nullptr)
     {
         const std::array<glm::vec3, 8> casterCorners =
             BuildAxisAlignedBoxCorners(*casterBoundsMin, *casterBoundsMax);
-        zPoints.insert(zPoints.end(), casterCorners.begin(), casterCorners.end());
-        if (!tightNearPlaneXyFit)
-        {
-            xyPoints.insert(xyPoints.end(), casterCorners.begin(), casterCorners.end());
-        }
+        zWorldPoints.insert(zWorldPoints.end(), casterCorners.begin(), casterCorners.end());
     }
 
-    return BuildShadowLightSpaceFromWorldPoints(
+    ShadowLightSpaceSetup setup = BuildShadowLightSpaceFromWorldPoints(
         lightDirectionTowardSource,
-        xyPoints,
-        zPoints,
+        frustumPoints,
+        zWorldPoints,
         shadowMapResolution,
         xyMarginFraction,
-        zMarginFraction,
-        lightViewAnchor,
-        stableOrthoHalfExtentInOut,
-        stableOrthoCenterLightInOut,
-        stableOrthoZNearInOut,
-        stableOrthoZFarInOut,
-        resetStableFit);
+        zMarginFraction);
+
+    ApplyFrustumContentDepthRange(setup, frustumCorners, zMarginFraction);
+    return setup;
+}
+
+ShadowLightSpaceSetup BuildShadowLightSpaceForBounds(
+    const glm::vec3& lightDirectionTowardSource,
+    const glm::vec3& boundsMin,
+    const glm::vec3& boundsMax,
+    const int shadowMapResolution,
+    const float xyMarginFraction,
+    const float zMarginFraction)
+{
+    const std::array<glm::vec3, 8> corners = BuildAxisAlignedBoxCorners(boundsMin, boundsMax);
+    const std::vector<glm::vec3> boundsPoints(corners.begin(), corners.end());
+    return BuildShadowLightSpaceFromWorldPoints(
+        lightDirectionTowardSource,
+        boundsPoints,
+        boundsPoints,
+        shadowMapResolution,
+        xyMarginFraction,
+        zMarginFraction);
 }
 
 glm::vec3 WorldToShadowNdc(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition)
 {
     const glm::vec4 lightSpace = lightSpaceMatrix * glm::vec4(worldPosition, 1.0f);
     const glm::vec3 projected = glm::vec3(lightSpace) / lightSpace.w;
-    return projected * 0.5f + 0.5f;
+    // orthoLH_ZO clip xy are [-1, 1]; depth is already in [0, 1].
+    return glm::vec3(projected.x * 0.5f + 0.5f, projected.y * 0.5f + 0.5f, projected.z);
+}
+
+glm::vec3 WorldToShadowSampleCoords(const glm::mat4& lightSpaceMatrix, const glm::vec3& worldPosition)
+{
+    const glm::vec4 lightSpace = lightSpaceMatrix * glm::vec4(worldPosition, 1.0f);
+    glm::vec3 coords = glm::vec3(lightSpace) / lightSpace.w;
+    coords.x = coords.x * 0.5f + 0.5f;
+    coords.y = coords.y * 0.5f + 0.5f;
+    coords.y = 1.0f - coords.y;
+    return coords;
+}
+
+namespace
+{
+    bool IsInShadowCascadeBounds(const glm::vec3& sampleCoords)
+    {
+        return sampleCoords.z >= 0.0f && sampleCoords.z <= 1.0f && sampleCoords.x >= 0.0f
+            && sampleCoords.x <= 1.0f && sampleCoords.y >= 0.0f && sampleCoords.y <= 1.0f;
+    }
+
+    int SelectCascadeIndexFromViewDepth(const float viewDepth, const float* cascadeEndSplits, const int cascadeCount)
+    {
+        int cascadeIndex = 0;
+        for (int splitIndex = 0; splitIndex < cascadeCount - 1; ++splitIndex)
+        {
+            if (viewDepth > cascadeEndSplits[splitIndex])
+            {
+                cascadeIndex = splitIndex + 1;
+            }
+        }
+        return cascadeIndex;
+    }
+
+    float StableClipZToContentClipZ(
+        const ShadowLightSpaceSetup& setup,
+        const float stableClipZ)
+    {
+        const float depthRange = std::max(setup.clipDepthContentMax - setup.clipDepthContentMin, 1e-5f);
+        return (stableClipZ - setup.clipDepthContentMin) / depthRange;
+    }
+
+    float NormalizeCascadeClipDepth(
+        const ShadowLightSpaceSetup& setup,
+        const float stableClipZ)
+    {
+        return std::clamp(StableClipZToContentClipZ(setup, stableClipZ), 0.0f, 1.0f);
+    }
+}
+
+ShadowReceiverProbeResult EvaluateShadowReceiverProbe(
+    const glm::vec3& worldPosition,
+    const float viewDepth,
+    const glm::mat4* lightSpaceMatrices,
+    const ShadowLightSpaceSetup* cascadeSetups,
+    const float* cascadeEndSplits,
+    const int cascadeCount)
+{
+    ShadowReceiverProbeResult result;
+    if (lightSpaceMatrices == nullptr || cascadeSetups == nullptr || cascadeCount <= 0)
+    {
+        return result;
+    }
+
+    int cascadeIndex = 0;
+    bool foundContainingCascade = false;
+    for (int candidateIndex = 0; candidateIndex < cascadeCount; ++candidateIndex)
+    {
+        const glm::vec3 sampleCoords =
+            WorldToShadowSampleCoords(lightSpaceMatrices[candidateIndex], worldPosition);
+        if (IsInShadowCascadeBounds(sampleCoords))
+        {
+            cascadeIndex = candidateIndex;
+            foundContainingCascade = true;
+            break;
+        }
+    }
+
+    if (!foundContainingCascade && cascadeEndSplits != nullptr)
+    {
+        cascadeIndex = SelectCascadeIndexFromViewDepth(viewDepth, cascadeEndSplits, cascadeCount);
+        cascadeIndex = std::clamp(cascadeIndex, 0, cascadeCount - 1);
+    }
+
+    const glm::vec3 sampleCoords =
+        WorldToShadowSampleCoords(lightSpaceMatrices[cascadeIndex], worldPosition);
+    result.cascadeIndex = cascadeIndex;
+    result.shadowUv = glm::vec2(sampleCoords.x, sampleCoords.y);
+    result.receiverClipZ = sampleCoords.z;
+    result.inBounds = IsInShadowCascadeBounds(sampleCoords);
+    result.normalizedClipZ =
+        NormalizeCascadeClipDepth(cascadeSetups[cascadeIndex], sampleCoords.z);
+    return result;
 }
 
 float ComputeShadowBias(const float nDotL, const float texelSpan)
@@ -300,6 +396,16 @@ float ComputeShadowBias(const float nDotL, const float texelSpan)
     const float clampedNDotL = std::clamp(nDotL, 0.0f, 1.0f);
     const float sinTheta = std::sqrt(std::max(1.0f - clampedNDotL * clampedNDotL, 1e-5f));
     return texelSpan * (1.5f + 3.5f * sinTheta / std::max(clampedNDotL, 0.1f));
+}
+
+float ComputeCasterDepthBiasNormalized(
+    const float texelWorldSize,
+    const float orthoNear,
+    const float orthoFar,
+    const float scale)
+{
+    const float depthSpan = std::max(orthoFar - orthoNear, 1e-3f);
+    return (texelWorldSize / depthSpan) * std::max(scale, 0.0f);
 }
 
 std::vector<float> ComputeCascadeSplitDistances(
@@ -335,17 +441,17 @@ std::array<glm::vec3, 8> ComputeCascadeFrustumCorners(
     const float tanHalfFovX = tanHalfFovY * aspect;
 
     const std::array<glm::vec3, 4> nearPlaneOffsets = {
-        glm::vec3(-tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(-tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, -nearPlane),
-        glm::vec3(tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, -nearPlane),
+        glm::vec3(-tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(tanHalfFovX * nearPlane, -tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(-tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, nearPlane),
+        glm::vec3(tanHalfFovX * nearPlane, tanHalfFovY * nearPlane, nearPlane),
     };
 
     const std::array<glm::vec3, 4> farPlaneOffsets = {
-        glm::vec3(-tanHalfFovX * farPlane, -tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(tanHalfFovX * farPlane, -tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(-tanHalfFovX * farPlane, tanHalfFovY * farPlane, -farPlane),
-        glm::vec3(tanHalfFovX * farPlane, tanHalfFovY * farPlane, -farPlane),
+        glm::vec3(-tanHalfFovX * farPlane, -tanHalfFovY * farPlane, farPlane),
+        glm::vec3(tanHalfFovX * farPlane, -tanHalfFovY * farPlane, farPlane),
+        glm::vec3(-tanHalfFovX * farPlane, tanHalfFovY * farPlane, farPlane),
+        glm::vec3(tanHalfFovX * farPlane, tanHalfFovY * farPlane, farPlane),
     };
 
     std::array<glm::vec3, 8> corners{};

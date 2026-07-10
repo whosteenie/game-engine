@@ -158,7 +158,7 @@ namespace
                 continue;
             }
 
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetTransform() = transform;
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetTransform() = transform;
         }
 
         if (!transforms.empty())
@@ -184,7 +184,7 @@ void SetObjectNameCommand::ApplyName(UndoContext& context, const std::string& na
         return;
     }
 
-    context.scene.GetObject(static_cast<std::size_t>(objectIndex)).SetName(name);
+    context.scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).SetName(name);
     context.scene.MarkDirty();
 }
 
@@ -620,16 +620,9 @@ const char* TransformObjectsCommand::GetName() const
     return m_name.c_str();
 }
 
-bool TransformObjectsCommand::TryMerge(const IUndoCommand& next)
+bool TransformObjectsCommand::TryMerge(const IUndoCommand& /*next*/)
 {
-    const auto* other = dynamic_cast<const TransformObjectsCommand*>(&next);
-    if (other == nullptr || !HasSameObjectIds(m_before, other->m_before))
-    {
-        return false;
-    }
-
-    m_after = other->m_after;
-    return true;
+    return false;
 }
 
 void PushTransformObjects(
@@ -849,7 +842,7 @@ void ApplyObjectMaterial(Scene& scene, SceneObjectId objectId, const std::unique
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasMaterial())
     {
         return;
@@ -867,7 +860,7 @@ void ApplyObjectLight(Scene& scene, SceneObjectId objectId, const LightComponent
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasLight())
     {
         return;
@@ -885,7 +878,7 @@ void ApplyObjectCamera(Scene& scene, SceneObjectId objectId, const CameraCompone
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasCamera())
     {
         return;
@@ -908,7 +901,7 @@ void ApplyObjectRigidBody(Scene& scene, SceneObjectId objectId, const RigidBodyC
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasRigidBody())
     {
         return;
@@ -926,7 +919,7 @@ void ApplyObjectCollider(Scene& scene, SceneObjectId objectId, const ColliderCom
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     if (!object.HasCollider())
     {
         return;
@@ -944,7 +937,7 @@ void ApplyObjectShadowFlags(Scene& scene, SceneObjectId objectId, const ObjectSh
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     object.SetCastShadow(flags.castShadow);
     object.SetReceiveShadow(flags.receiveShadow);
     scene.MarkDirty();
@@ -1066,8 +1059,24 @@ void HandleMaterialFieldEditEvents(MaterialEditContext& context)
         return;
     }
 
-    if (ImGui::IsItemActivated() && !context.sessionOpen)
+    if (ImGui::IsItemActivated())
     {
+        if (context.sessionOpen)
+        {
+            // Commit the previous widget's edit when focus moves to another material field
+            // without a deactivate (common when clicking between sliders).
+            ObjectMaterialMap after = CaptureObjectMaterials(*context.scene, context.objectIndices);
+            if (!AreObjectMaterialMapsEqual(context.pendingBefore, after))
+            {
+                PushObjectMaterials(
+                    *context.undoStack,
+                    std::move(context.pendingBefore),
+                    std::move(after),
+                    context.commandName);
+            }
+            context.sessionOpen = false;
+        }
+
         context.pendingBefore = CaptureObjectMaterials(*context.scene, context.objectIndices);
         context.sessionOpen = true;
     }
@@ -1231,7 +1240,7 @@ void ApplyObjectSystemComponentState(
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
 
     if (state.light.has_value())
     {
@@ -1327,10 +1336,10 @@ void PushSystemComponentMutation(
         return;
     }
 
-    const SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     const ObjectSystemComponentState before = CaptureObjectSystemComponentState(object);
     mutate(scene);
-    const SceneObject& updatedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    const SceneObject& updatedObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     const ObjectSystemComponentState after = CaptureObjectSystemComponentState(updatedObject);
     if (AreObjectSystemComponentStatesEqual(before, after))
     {
@@ -1383,7 +1392,7 @@ private:
             return;
         }
 
-        SceneObject& object = context.scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = context.scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         object.SetInspectorComponentOrder(useAfter ? m_after : m_before);
         context.scene.MarkDirty();
     }
@@ -1406,7 +1415,7 @@ void PushInspectorComponentOrderMutation(
         return;
     }
 
-    SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+    SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
     std::vector<InspectorComponentType> before = object.GetEffectiveInspectorComponentOrder();
     std::vector<InspectorComponentType> after = before;
     mutateOrder(after);
@@ -1517,6 +1526,58 @@ nlohmann::json CaptureRendererSettings(const Scene& scene)
     return SceneProjectIODetail::SerializeRenderer(scene);
 }
 
+namespace
+{
+    nlohmann::json BuildRendererSettingsDelta(
+        const nlohmann::json& before,
+        const nlohmann::json& after,
+        const nlohmann::json& values)
+    {
+        if (before == after)
+        {
+            return nlohmann::json::object();
+        }
+
+        if (!before.is_object() || !after.is_object() || !values.is_object())
+        {
+            return values;
+        }
+
+        nlohmann::json delta = nlohmann::json::object();
+        for (const auto& [key, afterValue] : after.items())
+        {
+            const nlohmann::json beforeValue =
+                before.contains(key) ? before.at(key) : nlohmann::json();
+            const nlohmann::json value =
+                values.contains(key) ? values.at(key) : nlohmann::json();
+            nlohmann::json childDelta = BuildRendererSettingsDelta(beforeValue, afterValue, value);
+            if (!childDelta.is_object() || !childDelta.empty())
+            {
+                delta[key] = std::move(childDelta);
+            }
+        }
+
+        for (const auto& [key, beforeValue] : before.items())
+        {
+            if (after.contains(key))
+            {
+                continue;
+            }
+
+            const nlohmann::json value =
+                values.contains(key) ? values.at(key) : nlohmann::json();
+            delta[key] = value;
+        }
+
+        return delta;
+    }
+
+    void ApplyRendererSettingsDelta(Scene& scene, const nlohmann::json& delta)
+    {
+        SceneProjectIODetail::ApplyRendererSettingsDelta(scene, delta);
+    }
+}
+
 bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& right)
 {
     return left == right;
@@ -1524,28 +1585,27 @@ bool AreRendererSettingsEqual(const nlohmann::json& left, const nlohmann::json& 
 
 void ApplyRendererSettings(Scene& scene, const nlohmann::json& settings)
 {
-    SceneProjectIODetail::DeserializeRenderer(scene, settings);
-    scene.MarkDirty();
+    SceneProjectIODetail::ApplyRendererSettingsDelta(scene, settings);
 }
 
 RendererSettingsCommand::RendererSettingsCommand(
     nlohmann::json before,
     nlohmann::json after,
     std::string name)
-    : m_before(std::move(before)),
-      m_after(std::move(after)),
+    : m_before(BuildRendererSettingsDelta(before, after, before)),
+      m_after(BuildRendererSettingsDelta(before, after, after)),
       m_name(std::move(name))
 {
 }
 
 void RendererSettingsCommand::Undo(UndoContext& context)
 {
-    ApplyRendererSettings(context.scene, m_before);
+    ApplyRendererSettingsDelta(context.scene, m_before);
 }
 
 void RendererSettingsCommand::Redo(UndoContext& context)
 {
-    ApplyRendererSettings(context.scene, m_after);
+    ApplyRendererSettingsDelta(context.scene, m_after);
 }
 
 const char* RendererSettingsCommand::GetName() const
@@ -1555,14 +1615,8 @@ const char* RendererSettingsCommand::GetName() const
 
 bool RendererSettingsCommand::TryMerge(const IUndoCommand& next)
 {
-    const auto* other = dynamic_cast<const RendererSettingsCommand*>(&next);
-    if (other == nullptr)
-    {
-        return false;
-    }
-
-    m_after = other->m_after;
-    return true;
+    (void)next;
+    return false;
 }
 
 void PushRendererSettings(
@@ -1599,6 +1653,19 @@ void PushRendererMutation(
     PushRendererSettings(undoStack, std::move(before), std::move(after), commandName);
 }
 
+void BeginRendererEditFrame(RendererEditContext& context)
+{
+    if (context.scene == nullptr)
+    {
+        context.hasFrameBefore = false;
+        context.frameBefore = nlohmann::json();
+        return;
+    }
+
+    context.frameBefore = CaptureRendererSettings(*context.scene);
+    context.hasFrameBefore = true;
+}
+
 void HandleRendererFieldEditEvents(RendererEditContext& context)
 {
     if (context.undoStack == nullptr || context.scene == nullptr)
@@ -1608,7 +1675,9 @@ void HandleRendererFieldEditEvents(RendererEditContext& context)
 
     if (ImGui::IsItemActivated() && !context.sessionOpen)
     {
-        context.pendingBefore = CaptureRendererSettings(*context.scene);
+        context.pendingBefore = context.hasFrameBefore
+            ? context.frameBefore
+            : CaptureRendererSettings(*context.scene);
         context.sessionOpen = true;
     }
 

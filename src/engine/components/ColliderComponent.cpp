@@ -45,7 +45,9 @@ bool operator==(const ColliderComponent& left, const ColliderComponent& right)
         && left.offset == right.offset
         && left.halfExtents == right.halfExtents
         && FloatsEqual(left.radius, right.radius)
-        && left.isTrigger == right.isTrigger;
+        && left.isTrigger == right.isTrigger
+        && FloatsEqual(left.friction, right.friction)
+        && FloatsEqual(left.restitution, right.restitution);
 }
 
 json ColliderComponentToJson(const ColliderComponent& collider)
@@ -56,6 +58,8 @@ json ColliderComponentToJson(const ColliderComponent& collider)
         {"halfExtents", Vec3ToJson(collider.halfExtents)},
         {"radius", collider.radius},
         {"isTrigger", collider.isTrigger},
+        {"friction", collider.friction},
+        {"restitution", collider.restitution},
     };
 }
 
@@ -79,6 +83,8 @@ ColliderComponent ColliderComponentFromJson(const json& value)
     }
     collider.radius = value.value("radius", collider.radius);
     collider.isTrigger = value.value("isTrigger", collider.isTrigger);
+    collider.friction = value.value("friction", collider.friction);
+    collider.restitution = value.value("restitution", collider.restitution);
     return collider;
 }
 

@@ -101,19 +101,21 @@ void SceneSpawnService::SetupDefaultSunLight(Scene& scene)
 
 void SceneSpawnService::SetupObjects(Scene& scene)
 {
+    Mesh* floorMesh = scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane);
+
     auto floorMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
         EngineConstants::PbrFragmentShader,
         glm::vec3(1.0f),
         1.0f,
         0.0f);
-    ApplyConcreteFloorMaterialMaps(*floorMaterial);
+    AssignConcreteFloorMaterialMapPaths(*floorMaterial);
 
     SceneSpawnBuilders::AppendObject(
         scene,
         SceneSpawnBuilders::MakeRenderableObject(
             "Floor",
-            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Plane),
+            floorMesh,
             std::move(floorMaterial),
             glm::vec3(-Scene::FloorHalfExtent, -0.01f, -Scene::FloorHalfExtent),
             glm::vec3(Scene::FloorHalfExtent, 0.01f, Scene::FloorHalfExtent),
@@ -123,13 +125,15 @@ void SceneSpawnService::SetupObjects(Scene& scene)
             -1,
             1));
 
+    Mesh* cubeMesh = scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube);
+
     auto cubeMaterial = std::make_unique<Material>(
         EngineConstants::LitVertexShader,
         EngineConstants::PbrFragmentShader,
         glm::vec3(1.0f),
         0.85f,
         0.0f);
-    ApplyWoodTableMaterialMaps(*cubeMaterial);
+    AssignWoodTableMaterialMapPaths(*cubeMaterial);
 
     Transform cubeTransform;
     cubeTransform.position = glm::vec3(0.0f, 1.5f, 0.0f);
@@ -138,7 +142,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
         scene,
         SceneSpawnBuilders::MakeRenderableObject(
             "Cube",
-            scene.GetMeshLibrary().GetPrimitive(ScenePrimitive::Cube),
+            cubeMesh,
             std::move(cubeMaterial),
             glm::vec3(-0.5f),
             glm::vec3(0.5f),
@@ -155,6 +159,7 @@ void SceneSpawnService::ResetToDefault(Scene& scene)
 {
     scene.GetObjectStore().Clear();
     scene.GetMeshLibrary().ClearImportedMeshes();
+    scene.GetMeshLibrary().InvalidatePrimitives();
     scene.GetSelectionController().Clear();
     scene.GetObjectStore().SetNextId(1);
     scene.SetShowLightGizmos(true);

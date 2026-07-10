@@ -110,11 +110,16 @@ namespace
         }
 
         int currentIndex = objectIndex;
-        while (currentIndex >= 0)
+        for (int depth = 0; depth < static_cast<int>(objects.size()); ++depth)
         {
+            if (currentIndex < 0 || static_cast<std::size_t>(currentIndex) >= objects.size())
+            {
+                break;
+            }
+
             const SceneObject& object = objects[static_cast<std::size_t>(currentIndex)];
             const int parentIndex = object.GetParentIndex();
-            if (parentIndex < 0)
+            if (parentIndex < 0 || static_cast<std::size_t>(parentIndex) >= objects.size())
             {
                 break;
             }

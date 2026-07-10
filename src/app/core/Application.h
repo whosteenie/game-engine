@@ -14,6 +14,7 @@ class EditorDockSpace;
 class EditorTopToolbar;
 class EditorSettings;
 class LightingPanel;
+class PerformancePanel;
 class MainMenuBar;
 class ProjectChooser;
 class ProjectFilesPanel;
@@ -39,7 +40,6 @@ public:
 
 private:
     void InitGLFW();
-    void InitGLAD();
 
     void Update(double deltaTime);
     void Render();
@@ -52,6 +52,13 @@ private:
     bool TrySaveProject();
     bool IsEditorUndoRedoBlocked() const;
     void ResetEditorLayout();
+    void ResetEditorLayoutLoadState();
+    void RecoverInterruptedFrame();
+    void EnsureEditorLayoutLoaded();
+    void HandleFatalGpuDeviceLoss(const std::string& reason);
+    void PumpStartupFramesUntilDlssReady();
+    void UpdatePendingProjectStartupProgress(const char* message) const;
+    void ProcessQueuedProjectOpenIfReady();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -60,10 +67,10 @@ private:
 
     static void FramebufferSizeCallback(GLFWwindow* window, int width, int height);
     static void WindowCloseCallback(GLFWwindow* window);
-    static void MouseCallback(GLFWwindow* window, double xPos, double yPos);
 
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
+    bool m_fatalGpuLossHandled = false;
 
     int m_width;
     int m_height;
@@ -79,6 +86,7 @@ private:
     std::unique_ptr<MainMenuBar> m_mainMenuBar;
     std::unique_ptr<EditorTopToolbar> m_editorTopToolbar;
     std::unique_ptr<LightingPanel> m_lightingPanel;
+    std::unique_ptr<PerformancePanel> m_performancePanel;
     std::unique_ptr<SceneToolbarPanel> m_sceneToolbarPanel;
     std::unique_ptr<SceneHierarchyPanel> m_sceneHierarchyPanel;
     std::unique_ptr<SceneInspectorPanel> m_sceneInspectorPanel;
@@ -93,7 +101,11 @@ private:
     PlayModeController m_playModeController;
     UndoStack m_playModeDiscardUndoStack;
     bool m_wasPlayModeActive = false;
-    bool m_gameViewRenderedLastFrame = false;
+    bool m_imguiFrameActive = false;
+    bool m_gfxFrameActive = false;
+    bool m_globalEditorLayoutLoaded = false;
+    bool m_editorLayoutRestoredFromDisk = false;
+    bool m_pendingEditorLayoutValidation = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

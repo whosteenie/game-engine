@@ -26,9 +26,8 @@ struct SceneProjectIO
         const std::string& projectFilePath,
         std::string& outError);
 
-    static bool SaveEditorLayout(const std::string& projectRoot);
-    static bool LoadEditorLayout(const std::string& projectRoot);
-    static bool DeleteEditorLayout(const std::string& projectRoot);
+    static std::string ResolveProjectPath(const std::string& projectRoot, const std::string& storedPath);
+    static void SetMaterialTexturePathResolver(const std::string& projectRoot);
 
 private:
     static nlohmann::json SerializeScene(

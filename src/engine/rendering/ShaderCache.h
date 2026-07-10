@@ -9,6 +9,7 @@ class ShaderCache
 {
 public:
     static std::shared_ptr<Shader> Load(const char* vertexPath, const char* fragmentPath);
+    static void Clear();
 
 private:
     ShaderCache() = default;

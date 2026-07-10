@@ -47,6 +47,7 @@ public:
 private:
     bool EnterPlay(Scene& editScene, const std::string& projectRoot);
     bool Stop(Scene& editScene, const std::string& projectRoot);
+    void ForceStop();
 
     PlayModeState m_state = PlayModeState::Edit;
     std::unique_ptr<Scene> m_runtimeScene;

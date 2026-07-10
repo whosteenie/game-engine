@@ -42,3 +42,21 @@ void EditorDockLayout::AllowViewportUndocking(const ImGuiID dockspaceId)
             centralNode->LocalFlags & ~ImGuiDockNodeFlags_NoUndocking);
     }
 }
+
+void EditorDockLayout::ValidateRestoredLayout(const ImGuiID dockspaceId)
+{
+    ImGuiDockNode* dockNode = ImGui::DockBuilderGetNode(dockspaceId);
+    if (dockNode != nullptr && dockNode->IsSplitNode())
+    {
+        return;
+    }
+
+    // Dock ini is applied after editor panels register; only rebuild when the tree is still missing.
+    if (ImGui::FindWindowByName("Scene View") == nullptr
+        && ImGui::FindWindowByName("Hierarchy") == nullptr)
+    {
+        return;
+    }
+
+    BuildDefaultLayout(dockspaceId);
+}

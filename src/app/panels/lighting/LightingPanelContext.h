@@ -1,0 +1,22 @@
+#pragma once
+
+class Camera;
+class EnvironmentMap;
+class IBL;
+class Scene;
+class SceneRenderer;
+class ScreenSpaceEffects;
+struct RendererEditContext;
+
+struct LightingPanelContext
+{
+    Scene& scene;
+    const Camera& camera;
+    int viewportWidth;
+    int viewportHeight;
+    RendererEditContext& editContext;
+    SceneRenderer& renderer;
+    IBL& ibl;
+    EnvironmentMap& environmentMap;
+    ScreenSpaceEffects& screenSpaceEffects;
+};

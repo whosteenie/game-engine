@@ -9,12 +9,14 @@
 #include "app/scene/Scene.h"
 #include "app/scene/SceneComponentCatalog.h"
 #include "app/undo/UndoCommand.h"
+#include "app/editor/EditorMouseWrapping.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/components/CameraComponent.h"
 #include "engine/scene/InspectorComponentOrder.h"
 #include "engine/lighting/Light.h"
 #include "engine/components/LightComponent.h"
+#include "engine/rendering/ColorSpace.h"
 #include "engine/rendering/Material.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneObject.h"
@@ -113,7 +115,13 @@ namespace
 
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
+        value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
         const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        if (dragged)
+        {
+            value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
+        }
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         if (editContext != nullptr)
         {
             HandleTransformFieldEditEvents(*editContext);
@@ -326,19 +334,25 @@ namespace
         Scene& scene,
         MaterialEditContext& editContext)
     {
-        glm::vec3 albedo = material.GetAlbedo();
-        if (EditorWidgets::ColorEditVec3("Albedo", albedo))
+        glm::vec3 albedoDisplay = ColorSpace::LinearToSrgb(material.GetAlbedo());
+        if (EditorWidgets::ColorEditVec3("Albedo", albedoDisplay))
         {
-            material.SetAlbedo(albedo);
+            material.SetAlbedo(ColorSpace::SrgbToLinear(albedoDisplay));
             scene.MarkDirty();
         }
         HandleMaterialFieldEditEvents(editContext);
 
         float roughness = material.GetRoughness();
-        if (ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f))
+        if (ImGui::SliderFloat("Roughness", &roughness, 0.0f, 1.0f))
         {
             material.SetRoughness(roughness);
             scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "0 = perfect mirror (stored in the G-buffer for RT/SSR). "
+                "Direct sun specular still uses a small BRDF floor to avoid GGX singularities.");
         }
         HandleMaterialFieldEditEvents(editContext);
 
@@ -349,6 +363,67 @@ namespace
             scene.MarkDirty();
         }
         HandleMaterialFieldEditEvents(editContext);
+
+        float transmission = material.GetTransmission();
+        if (ImGui::SliderFloat("Transmission", &transmission, 0.0f, 1.0f))
+        {
+            material.SetTransmission(transmission);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "0 = opaque. 1 = clear glass.\n"
+                "Window pane: use a Plane mesh + Thin walled + Double sided.\n"
+                "Avoid scaled cubes — edge faces cause dark/rainbow rims.\n"
+                "Bottle/cup/lens: leave Thin walled off (solid volume).");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
+        bool thinWalled = material.IsThinWalled();
+        if (ImGui::Checkbox("Thin walled (pane)", &thinWalled))
+        {
+            material.SetThinWalled(thinWalled);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "glTF thicknessFactor = 0: zero-thickness window glass.\n"
+                "Enter + exit refraction in one bounce — use for flat panes only.\n"
+                "Not for cups, bottles, or solid lenses (leave off).\n"
+                "Pair with Double sided on single-plane meshes.");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
+        float ior = material.GetIndexOfRefraction();
+        if (ImGui::SliderFloat("IOR", &ior, 1.0f, 3.0f))
+        {
+            material.SetIndexOfRefraction(ior);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Index of refraction. Air = 1.0 (no bending). Window glass ~1.5. "
+                "Diamond ~2.4. Edits reset path-tracer noise so the image reconverges.");
+        }
+        HandleMaterialFieldEditEvents(editContext);
+
+        glm::vec3 emissive = material.GetEmissive();
+        EditorWidgets::SanitizeSignedZero(emissive);
+        if (ImGui::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))
+        {
+            EditorWidgets::SanitizeSignedZero(emissive);
+            material.SetEmissive(emissive);
+            scene.MarkDirty();
+        }
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
+        HandleMaterialFieldEditEvents(editContext);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Linear HDR emissive RGB. Values above 1.0 can bloom.");
+        }
 
         bool doubleSided = material.IsDoubleSided();
         if (ImGui::Checkbox("Double sided", &doubleSided))
@@ -445,6 +520,31 @@ namespace
                 scene.MarkDirty();
             }
             HandleMaterialFieldEditEvents(editContext);
+        }
+
+        DrawMaterialTextureSlot(
+            "Emissive",
+            material.HasEmissiveMap(),
+            material.GetEmissiveMapPath(),
+            TextureColorSpace::SRGB,
+            scene,
+            editContext.undoStack,
+            editContext.objectIndices,
+            [&material](std::shared_ptr<Texture> texture, const std::string& path) {
+                material.SetEmissiveMap(std::move(texture), path);
+            },
+            [&material]() { material.ClearEmissiveMap(); });
+
+        if (material.HasEmissiveMap())
+        {
+            int emissiveTexCoordSet = material.GetEmissiveTexCoordSet();
+            if (ImGui::Combo("Emissive UV set", &emissiveTexCoordSet, "0\0" "1\0"))
+            {
+                material.SetEmissiveTexCoordSet(emissiveTexCoordSet);
+                scene.MarkDirty();
+            }
+            HandleMaterialFieldEditEvents(editContext);
+            ImGui::TextDisabled("Emission color multiplies the emissive map.");
         }
 
         if (material.HasMetallicRoughnessMap())
@@ -605,7 +705,7 @@ namespace
 
     void DrawLightSection(Scene& scene, int objectIndex, LightEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         LightComponent& light = object.GetLight();
 
         int lightTypeIndex = static_cast<int>(light.type);
@@ -628,7 +728,7 @@ namespace
                         CaptureObjectLights,
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             LightComponent& targetLight = targetObject.GetLight();
                             const bool preserveShadow = targetLight.castsShadow;
                             targetLight = MakeDefaultLightComponent(newType);
@@ -676,7 +776,7 @@ namespace
                         },
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             LightComponent& targetLight = targetObject.GetLight();
                             if (castsShadow)
                             {
@@ -826,7 +926,7 @@ namespace
 
     void DrawCameraSection(Scene& scene, int objectIndex, CameraEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         CameraComponent& camera = object.GetCamera();
 
         if (ImGui::SliderFloat("FOV", &camera.fovDegrees, 15.0f, 120.0f))
@@ -876,7 +976,7 @@ namespace
                         },
                         [&](Scene& target) {
                             SceneObject& targetObject =
-                                target.GetObject(static_cast<std::size_t>(objectIndex));
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex));
                             CameraComponent& targetCamera = targetObject.GetCamera();
                             targetCamera.isMain = isMain;
                             if (targetCamera.isMain)
@@ -903,7 +1003,7 @@ namespace
 
     void DrawRigidBodySection(Scene& scene, int objectIndex, RigidBodyEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         RigidBodyComponent& rigidBody = object.GetRigidBody();
 
         if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.001f, 10000.0f))
@@ -924,11 +1024,49 @@ namespace
             scene.MarkDirty();
         }
         HandleRigidBodyFieldEditEvents(editContext);
+
+        int collisionDetectionIndex = static_cast<int>(rigidBody.collisionDetection);
+        if (ImGui::Combo(
+                "Collision Detection",
+                &collisionDetectionIndex,
+                "Discrete\0Continuous\0",
+                2))
+        {
+            rigidBody.collisionDetection =
+                static_cast<RigidBodyCollisionDetection>(collisionDetectionIndex);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Continuous uses Jolt linear casting to reduce tunneling on fast-moving bodies.");
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f, 10.0f))
+        {
+            rigidBody.linearDamping = std::max(rigidBody.linearDamping, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f, 10.0f))
+        {
+            rigidBody.angularDamping = std::max(rigidBody.angularDamping, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
+
+        if (ImGui::Checkbox("Allow Sleeping", &rigidBody.allowSleeping))
+        {
+            scene.MarkDirty();
+        }
+        HandleRigidBodyFieldEditEvents(editContext);
     }
 
     void DrawColliderSection(Scene& scene, int objectIndex, ColliderEditContext& editContext)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         ColliderComponent& collider = object.GetCollider();
 
         int shapeIndex = static_cast<int>(collider.shape);
@@ -945,7 +1083,7 @@ namespace
                         editContext.objectIndices,
                         "Collider",
                         [&](Scene& target) {
-                            target.GetObject(static_cast<std::size_t>(objectIndex))
+                            target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                 .GetCollider()
                                 .shape = newShape;
                             target.MarkDirty();
@@ -985,13 +1123,33 @@ namespace
 
         if (ImGui::DragFloat3("Offset", &collider.offset.x, 0.01f))
         {
+            EditorWidgets::SanitizeSignedZero(collider.offset);
             scene.MarkDirty();
         }
+        EditorMouseWrapping::MarkCurrentItemForMouseWrap();
         HandleColliderFieldEditEvents(editContext);
 
         if (ImGui::Checkbox("Is Trigger", &collider.isTrigger))
         {
             scene.MarkDirty();
+        }
+        HandleColliderFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Friction", &collider.friction, 0.01f, 0.0f, 1.0f))
+        {
+            collider.friction = std::max(collider.friction, 0.0f);
+            scene.MarkDirty();
+        }
+        HandleColliderFieldEditEvents(editContext);
+
+        if (ImGui::DragFloat("Restitution", &collider.restitution, 0.01f, 0.0f, 1.0f))
+        {
+            collider.restitution = std::max(collider.restitution, 0.0f);
+            scene.MarkDirty();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Bounciness. 0 = inelastic, 1 = fully elastic.");
         }
         HandleColliderFieldEditEvents(editContext);
     }
@@ -1003,7 +1161,7 @@ namespace
         const int fromIndex,
         const int beforeIndex)
     {
-        SceneObject& object = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const int slotCount = static_cast<int>(object.GetEffectiveInspectorComponentOrder().size());
         if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
         {
@@ -1075,7 +1233,7 @@ namespace
         const auto* dragPayload = static_cast<const InspectorComponentDragPayload*>(activePayload->Data);
         const int fromIndex = dragPayload->slotIndex;
         const int slotCount = static_cast<int>(
-            scene.GetObject(static_cast<std::size_t>(objectIndex)).GetEffectiveInspectorComponentOrder().size());
+            scene.GetSceneObject(static_cast<std::size_t>(objectIndex)).GetEffectiveInspectorComponentOrder().size());
         if (!WouldInspectorComponentMoveChangeOrder(fromIndex, beforeIndex, slotCount))
         {
             return false;
@@ -1283,7 +1441,7 @@ namespace
         const int objectIndex,
         TransformEditContext& editContext)
     {
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(objectIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         if (!selectedObject.IsRenderable())
         {
             ImGui::TextUnformatted("Empty object (transform container only).");
@@ -1301,7 +1459,7 @@ namespace
                     {objectIndex},
                     "Cast shadow",
                     [&](Scene& target) {
-                        target.GetObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadow);
+                        target.GetSceneObject(static_cast<std::size_t>(objectIndex)).SetCastShadow(castShadow);
                         target.MarkDirty();
                     });
             }
@@ -1323,7 +1481,7 @@ namespace
                     {objectIndex},
                     "Receive shadow",
                     [&](Scene& target) {
-                        target.GetObject(static_cast<std::size_t>(objectIndex))
+                        target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetReceiveShadow(receiveShadow);
                         target.MarkDirty();
                     });
@@ -1347,7 +1505,7 @@ namespace
         RigidBodyEditContext& rigidBodyEditContext,
         ColliderEditContext& colliderEditContext)
     {
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
         const std::vector<InspectorComponentType> componentOrder =
             selectedObject.GetEffectiveInspectorComponentOrder();
         const int slotCount = static_cast<int>(componentOrder.size());
@@ -1465,7 +1623,7 @@ namespace
     void DrawAddComponentFooter(Scene& scene, int objectIndex, UndoStack* undoStack)
     {
         std::vector<SceneSystemComponentType> addableComponents;
-        GetAddableSceneSystemComponents(scene.GetObject(static_cast<std::size_t>(objectIndex)), addableComponents);
+        GetAddableSceneSystemComponents(scene.GetSceneObject(static_cast<std::size_t>(objectIndex)), addableComponents);
         if (addableComponents.empty())
         {
             return;
@@ -1570,7 +1728,7 @@ namespace
                         [&](Scene& target) {
                             for (int objectIndex : selectedIndices)
                             {
-                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                     .SetCastShadow(castShadowField.value);
                             }
                             target.MarkDirty();
@@ -1580,7 +1738,7 @@ namespace
                 {
                     for (int objectIndex : selectedIndices)
                     {
-                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                        scene.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetCastShadow(castShadowField.value);
                     }
 
@@ -1601,7 +1759,7 @@ namespace
                         [&](Scene& target) {
                             for (int objectIndex : selectedIndices)
                             {
-                                target.GetObject(static_cast<std::size_t>(objectIndex))
+                                target.GetSceneObject(static_cast<std::size_t>(objectIndex))
                                     .SetReceiveShadow(receiveShadowField.value);
                             }
                             target.MarkDirty();
@@ -1611,7 +1769,7 @@ namespace
                 {
                     for (int objectIndex : selectedIndices)
                     {
-                        scene.GetObject(static_cast<std::size_t>(objectIndex))
+                        scene.GetSceneObject(static_cast<std::size_t>(objectIndex))
                             .SetReceiveShadow(receiveShadowField.value);
                     }
 
@@ -1635,7 +1793,7 @@ namespace
         std::string& nameEditOldName)
     {
         const std::vector<SceneObject>& objects = scene.GetObjects();
-        SceneObject& selectedObject = scene.GetObject(static_cast<std::size_t>(selectedIndex));
+        SceneObject& selectedObject = scene.GetSceneObject(static_cast<std::size_t>(selectedIndex));
 
         ImGui::Text("Inspector: %s", selectedObject.GetName().c_str());
 
@@ -1729,7 +1887,7 @@ namespace
         const int primaryIndex = scene.GetPrimarySelection();
         if (primaryIndex >= 0 && static_cast<std::size_t>(primaryIndex) < scene.GetObjects().size())
         {
-            ImGui::TextDisabled("Primary: %s", scene.GetObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
+            ImGui::TextDisabled("Primary: %s", scene.GetSceneObject(static_cast<std::size_t>(primaryIndex)).GetName().c_str());
         }
 
         if (ShouldShowInspectorSection(InspectorSectionKind::Transform, scene, selectedIndices))

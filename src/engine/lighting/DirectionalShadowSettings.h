@@ -2,6 +2,8 @@
 
 #include <algorithm>
 
+#include <nlohmann/json_fwd.hpp>
+
 enum class DirectionalShadowFilterMode
 {
     PCF = 0,
@@ -22,8 +24,9 @@ public:
         m_shadowMapResolution = std::clamp(resolution, 512, 8192);
     }
 
-    int GetCascadeCount() const { return m_cascadeCount; }
-    void SetCascadeCount(int count) { m_cascadeCount = std::clamp(count, 1, MaxCascades); }
+    // CSM disabled for now — single shadow map only (MaxCascades kept for texture array layout).
+    int GetCascadeCount() const { return 1; }
+    void SetCascadeCount(int /*count*/) { m_cascadeCount = 1; }
 
     float GetCascadeSplitLambda() const { return m_cascadeSplitLambda; }
     void SetCascadeSplitLambda(float lambda) { m_cascadeSplitLambda = std::clamp(lambda, 0.0f, 1.0f); }
@@ -80,23 +83,44 @@ public:
     float GetDepthBiasScale() const { return m_depthBiasScale; }
     void SetDepthBiasScale(float scale) { m_depthBiasScale = std::clamp(scale, 0.0f, 4.0f); }
 
+    float GetCasterDepthBiasScale() const { return m_casterDepthBiasScale; }
+    void SetCasterDepthBiasScale(float scale) { m_casterDepthBiasScale = std::clamp(scale, 0.0f, 4.0f); }
+
     bool GetShadowBlurEnabled() const { return m_shadowBlurEnabled; }
     void SetShadowBlurEnabled(bool enabled) { m_shadowBlurEnabled = enabled; }
 
     float GetShadowBlurRadius() const { return m_shadowBlurRadius; }
     void SetShadowBlurRadius(float radius) { m_shadowBlurRadius = std::clamp(radius, 0.0f, 8.0f); }
 
+    float GetShadowBlurDepthThreshold() const { return m_shadowBlurDepthThreshold; }
+    void SetShadowBlurDepthThreshold(float threshold)
+    {
+        m_shadowBlurDepthThreshold = std::clamp(threshold, 0.01f, 1.0f);
+    }
+
+    float GetShadowBlurShadowThreshold() const { return m_shadowBlurShadowThreshold; }
+    void SetShadowBlurShadowThreshold(float threshold)
+    {
+        m_shadowBlurShadowThreshold = std::clamp(threshold, 0.01f, 1.0f);
+    }
+
+    static const char* FilterModeToString(DirectionalShadowFilterMode mode);
+    static DirectionalShadowFilterMode FilterModeFromString(const std::string& value);
+
+    nlohmann::json ToJson() const;
+    void ApplyFromJson(const nlohmann::json& value);
+
 private:
-    DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCSS;
+    DirectionalShadowFilterMode m_filterMode = DirectionalShadowFilterMode::PCF;
     int m_shadowMapResolution = 4096;
-    int m_cascadeCount = 4;
+    int m_cascadeCount = 1;
     float m_cascadeSplitLambda = 0.82f;
-    float m_cascadeBlendRatio = 0.25f;
-    bool m_tightNearPlaneXyFit = false;
-    float m_xyMarginFraction = 0.03f;
-    float m_zMarginFraction = 0.12f;
-    bool m_usePoissonPcf = true;
-    int m_pcfKernelRadius = 4;
+    float m_cascadeBlendRatio = 0.08f;
+    bool m_tightNearPlaneXyFit = true;
+    float m_xyMarginFraction = 0.05f;
+    float m_zMarginFraction = 0.10f;
+    bool m_usePoissonPcf = false;
+    int m_pcfKernelRadius = 2;
     int m_pcfSampleCount = 32;
     float m_minPenumbraTexels = 2.5f;
     float m_sunAngularDiameterDegrees = 0.5f;
@@ -106,6 +130,9 @@ private:
     float m_pcssMaxPenumbraTexels = 32.0f;
     float m_worldBiasScale = 1.0f;
     float m_depthBiasScale = 1.0f;
-    bool m_shadowBlurEnabled = true;
+    float m_casterDepthBiasScale = 2.0f;
+    bool m_shadowBlurEnabled = false;
     float m_shadowBlurRadius = 2.5f;
+    float m_shadowBlurDepthThreshold = 0.14f;
+    float m_shadowBlurShadowThreshold = 0.28f;
 };

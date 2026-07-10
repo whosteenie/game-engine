@@ -11,6 +11,7 @@ std::unique_ptr<Mesh> CreatePlaneMesh(float halfExtent)
     std::vector<float> vertices;
     std::vector<unsigned int> indices;
 
+    // UV span repeats every tileScale world units (material samplers use wrap/repeat).
     const float tileScale = 3.0f;
     const float maxUv = (halfExtent * 2.0f) / tileScale;
 

@@ -492,6 +492,7 @@ void MainMenuBar::Draw(
         DrawPanelToggle("Game View", panels.gameView);
         DrawPanelToggle("Toolbar", panels.toolbar);
         DrawPanelToggle("Renderer Tuning", panels.lighting);
+        DrawPanelToggle("Performance", panels.performance);
         DrawPanelToggle("Project", panels.project);
 
         ImGui::Separator();

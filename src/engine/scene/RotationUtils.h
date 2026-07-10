@@ -17,4 +17,7 @@ namespace RotationUtils
         glm::vec3& outPosition,
         glm::vec3& outForward,
         glm::vec3& outUp);
+
+    // Editor view inverse uses +local Z as look direction; camera objects use -local Z.
+    glm::mat4 BuildCameraObjectWorldMatrixFromEditorViewInverse(const glm::mat4& inverseViewMatrix);
 }

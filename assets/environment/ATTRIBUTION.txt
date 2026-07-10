@@ -1,0 +1,17 @@
+HDR environment maps in this folder are from Poly Haven (https://polyhaven.com).
+License: CC0 1.0 Universal (public domain).
+
+Presets default to 2K (2048x1024). Full-sky 4K (4096x2048) variants are listed
+separately in the editor under "4K — full-sky / puresky".
+
+4K full-sky assets:
+- qwantani_puresky_4k.hdr
+- overcast_soil_puresky_4k.hdr
+- kloofendal_48d_partly_cloudy_4k.hdr
+- syferfontein_18d_clear_4k.hdr
+- drakensberg_solitary_mountain_puresky_4k.hdr
+- mud_road_puresky_4k.hdr
+- kloppenheim_02_4k.hdr
+- rogland_clear_night_4k.hdr
+
+2K assets use the _2k.hdr suffix; legacy 1K files use _1k.hdr.

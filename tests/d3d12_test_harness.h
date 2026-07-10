@@ -1,0 +1,84 @@
+#pragma once
+
+// Shared harness for tests/d3d12_render_tests.cpp (manual GPU suite only).
+// See the banner comment in d3d12_render_tests.cpp — do not auto-run.
+
+#include "engine/rendering/Framebuffer.h"
+
+#include <GLFW/glfw3.h>
+
+#include <memory>
+
+class IBL;
+
+struct D3d12TestContext
+{
+    GLFWwindow* window = nullptr;
+    bool gfxInitialized = false;
+
+    bool Initialize(int width = 640, int height = 480);
+    void Shutdown();
+};
+
+// One GLFW/D3D12/ImGui session shared across the entire test run (Phase C harness).
+class D3d12TestSession
+{
+public:
+    D3d12TestContext context;
+
+    bool EnsureInitialized(int width = 640, int height = 480);
+    void Shutdown();
+
+    // Loads EngineConstants::EnvironmentHdr on first use (tier 2+ tests only).
+    IBL& GetEnvironmentIbl();
+
+    // Releases GPU-heavy environment resources before global cache teardown.
+    void ReleaseCachedEnvironmentIbl();
+
+private:
+    std::unique_ptr<IBL> m_environmentIbl;
+};
+
+D3d12TestSession& GetD3d12TestSession();
+
+enum class FrameSubmitMode
+{
+    // Matches early tests: close/submit without swapchain present or ImGui.
+    DirectSubmit,
+    // Matches Application::Render: Unbind offscreen targets, EndFrame with optional ImGui.
+    EditorPath,
+};
+
+void BeginOffscreenPass(Framebuffer& framebuffer, const bool bindDepthStencil = true, const bool waitForGpu = true);
+
+void EndOffscreenPass(FrameSubmitMode mode = FrameSubmitMode::DirectSubmit);
+
+// Finishes a frame the way SceneRenderer does: transition viewport color to SRV, then EndFrame.
+void EndEditorPass(Framebuffer& framebuffer, bool compositeViewportInImGui = false);
+
+// Presents one swapchain frame the same way Application::Render does for the project picker.
+void PresentEditorSwapchainFrame();
+
+// Drain deferred D3D12MA releases after explicitly calling Release() on DXR objects.
+void DrainDeferredTestGpuResources();
+
+// Drain the GPU and process deferred resource releases. Call after explicitly releasing
+// test-owned DXR/GPU objects (Blas, Tlas, DxrDispatchContext, etc.) and before
+// D3d12TestContext::Shutdown(). Stack destructors for those objects run after Shutdown
+// and would defer-free into an already-destroyed D3D12MA allocator.
+void FinalizeD3d12TestSession();
+
+bool ReadFramebufferPixel(const Framebuffer& framebuffer, int x, int y, float outRgba[4]);
+
+bool ReadPresentedSwapchainPixel(int x, int y, float outRgba[4]);
+
+constexpr float kViewportClearColor[4] = {0.08f, 0.09f, 0.15f, 1.0f};
+
+bool IsNearClearColor(const float rgba[4], float tolerance = 0.03f);
+
+float ColorDistanceFromClear(const float rgba[4]);
+
+bool IsApproximatelyGrayscale(const float rgba[4], float channelTolerance = 0.06f);
+
+// Simulates SceneRenderer's duplicate Bind() when post-process is disabled.
+void BindViewportLikeSceneRenderer(Framebuffer& framebuffer);

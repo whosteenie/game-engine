@@ -29,6 +29,8 @@ struct ImportedModel
     int rootNodeIndex = -1;
     std::string errorMessage;
     std::string warningMessage;
+    int textureLoadFailures = 0;
+    int texturesCached = 0;
 };
 
 using ModelOperationProgressFn = std::function<void(float progress, const std::string& message)>;

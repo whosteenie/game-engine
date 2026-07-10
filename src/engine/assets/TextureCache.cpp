@@ -1,5 +1,6 @@
 #include "engine/assets/TextureCache.h"
 
+#include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/TextureSamplerSettings.h"
 
 #include <stdexcept>
@@ -53,9 +54,15 @@ std::shared_ptr<Texture> TextureCache::Load(
     }
     catch (const std::exception& exception)
     {
-        throw std::runtime_error(std::string("TextureCache failed to load '") + path + "': " + exception.what());
+        throw std::runtime_error(
+            std::string("TextureCache failed to load '") + path + "': " + SafeExceptionMessage(exception));
     }
 
     m_textures[cacheKey] = texture;
     return texture;
+}
+
+void TextureCache::Clear()
+{
+    m_textures.clear();
 }

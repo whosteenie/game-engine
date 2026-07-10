@@ -1,6 +1,7 @@
 #pragma once
 
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -12,6 +13,7 @@
 #include "engine/scene/SceneObjectId.h"
 
 #include "app/scene/SceneSelection.h"
+#include "app/scene/RenderViewport.h"
 #include "app/project/SceneImportedMeshPool.h"
 #include "app/scene/SceneSpawnService.h"
 
@@ -41,6 +43,7 @@ struct SceneRenderOptions
     bool showLightGizmos = true;
     bool showColliderGizmos = true;
     bool showEditorOverlay = true;
+    bool enableShadowPass = true;
 };
 
 class Scene
@@ -68,13 +71,15 @@ public:
         const Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        unsigned int targetFramebuffer = 0,
-        const SceneRenderOptions& options = SceneRenderOptions{}) const;
+        std::uintptr_t targetFramebuffer = 0,
+        const SceneRenderOptions& options = SceneRenderOptions{},
+        RenderViewport renderViewport = RenderViewport::SceneView) const;
 
     const std::vector<SceneObject>& GetObjects() const;
     std::vector<SceneObject>& GetObjects();
-    SceneObject& GetObject(std::size_t index);
-    const SceneObject& GetObject(std::size_t index) const;
+    void InvalidateAllMaterialCachedShaders();
+    SceneObject& GetSceneObject(std::size_t index);
+    const SceneObject& GetSceneObject(std::size_t index) const;
     int FindObjectIndex(SceneObjectId id) const;
 
     std::vector<SceneObjectId> GetSelectionIds() const;
@@ -106,7 +111,10 @@ public:
         int parentIndex = -1,
         const std::string& projectRoot = {});
 
-    static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source);
+    static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source, bool shareGpuResources = true);
+
+    // Runtime play-mode clone shares GPU meshes and SceneRenderer with the edit scene.
+    void UseSharedPlayModeResources(const Scene& editScene);
 
     void MarkDirty();
     void SetDirtyCallback(std::function<void()> callback);
@@ -128,7 +136,10 @@ public:
     glm::mat4 GetGizmoWorldMatrix(int objectIndex) const;
     glm::mat4 GetSelectionGizmoWorldMatrix(bool worldSpace) const;
     void GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::vec3& boundsMax) const;
-    void ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix);
+    void ApplyGizmoWorldMatrix(
+        int objectIndex,
+        const glm::mat4& oldGizmoWorldMatrix,
+        const glm::mat4& newGizmoWorldMatrix);
     void ApplySelectionGizmoWorldMatrix(
         const glm::mat4& oldGizmoWorldMatrix,
         const glm::mat4& newGizmoWorldMatrix);
@@ -164,6 +175,8 @@ private:
     std::unique_ptr<SceneImportService> m_importService;
     SceneEditor* m_sceneEditor = nullptr;
     std::unique_ptr<SceneRenderer> m_renderer;
+    SceneMeshLibrary* m_sharedMeshLibrary = nullptr;
+    SceneRenderer* m_sharedRenderer = nullptr;
     std::unique_ptr<SceneSelectionController> m_selectionController;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;

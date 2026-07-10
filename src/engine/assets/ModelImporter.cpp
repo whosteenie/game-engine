@@ -1,20 +1,24 @@
 #include "engine/assets/ModelImporter.h"
 
-#include <glad/glad.h>
+// tinygltf must be initialized before headers that pull nlohmann json_fwd (e.g. Material.h).
+#define TINYGLTF_NO_STB_IMAGE
+#define TINYGLTF_NO_STB_IMAGE_WRITE
+#define TINYGLTF_NO_INCLUDE_JSON
+#include <nlohmann/json.hpp>
+#define TINYGLTF_IMPLEMENTATION
+#include <tiny_gltf.h>
 
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/assets/TangentSpace.h"
 #include "engine/assets/ProjectAssets.h"
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/rendering/TextureSamplerSettings.h"
 #include "primitives/PrimitiveMeshUtils.h"
 
-#define TINYGLTF_NO_STB_IMAGE
-#define TINYGLTF_NO_STB_IMAGE_WRITE
-#define TINYGLTF_IMPLEMENTATION
-#include <tiny_gltf.h>
+#include "engine/platform/RenderPathDiagnostics.h"
 
 #include <stb_image.h>
 
@@ -216,49 +220,49 @@ namespace
         boundsMax = glm::max(boundsMax, point);
     }
 
-    unsigned int ToGlWrap(int wrap)
+    unsigned int ToSamplerWrap(int wrap)
     {
         switch (wrap)
         {
         case TINYGLTF_TEXTURE_WRAP_CLAMP_TO_EDGE:
-            return GL_CLAMP_TO_EDGE;
+            return TexSampler::WrapClampToEdge;
         case TINYGLTF_TEXTURE_WRAP_MIRRORED_REPEAT:
-            return GL_MIRRORED_REPEAT;
+            return TexSampler::WrapMirroredRepeat;
         case TINYGLTF_TEXTURE_WRAP_REPEAT:
         default:
-            return GL_REPEAT;
+            return TexSampler::WrapRepeat;
         }
     }
 
-    unsigned int ToGlMinFilter(int filter)
+    unsigned int ToSamplerMinFilter(int filter)
     {
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
-            return GL_NEAREST;
+            return TexSampler::FilterNearest;
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_NEAREST:
-            return GL_NEAREST_MIPMAP_NEAREST;
+            return TexSampler::FilterNearestMipmapNearest;
         case TINYGLTF_TEXTURE_FILTER_NEAREST_MIPMAP_LINEAR:
-            return GL_NEAREST_MIPMAP_LINEAR;
+            return TexSampler::FilterNearestMipmapLinear;
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_NEAREST:
-            return GL_LINEAR_MIPMAP_NEAREST;
+            return TexSampler::FilterLinearMipmapNearest;
         case TINYGLTF_TEXTURE_FILTER_LINEAR_MIPMAP_LINEAR:
-            return GL_LINEAR_MIPMAP_LINEAR;
+            return TexSampler::FilterLinearMipmapLinear;
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-            return GL_LINEAR;
+            return TexSampler::FilterLinear;
         }
     }
 
-    unsigned int ToGlMagFilter(int filter)
+    unsigned int ToSamplerMagFilter(int filter)
     {
         switch (filter)
         {
         case TINYGLTF_TEXTURE_FILTER_NEAREST:
-            return GL_NEAREST;
+            return TexSampler::FilterNearest;
         case TINYGLTF_TEXTURE_FILTER_LINEAR:
         default:
-            return GL_LINEAR;
+            return TexSampler::FilterLinear;
         }
     }
 
@@ -278,10 +282,10 @@ namespace
         }
 
         const tinygltf::Sampler& sampler = model.samplers[static_cast<std::size_t>(texture.sampler)];
-        settings.wrapS = ToGlWrap(sampler.wrapS);
-        settings.wrapT = ToGlWrap(sampler.wrapT);
-        settings.minFilter = ToGlMinFilter(sampler.minFilter);
-        settings.magFilter = ToGlMagFilter(sampler.magFilter);
+        settings.wrapS = ToSamplerWrap(sampler.wrapS);
+        settings.wrapT = ToSamplerWrap(sampler.wrapT);
+        settings.minFilter = ToSamplerMinFilter(sampler.minFilter);
+        settings.magFilter = ToSamplerMagFilter(sampler.magFilter);
 
         return settings;
     }
@@ -301,69 +305,8 @@ namespace
             (colorSpace == TextureColorSpace::SRGB ? "s" : "l");
     }
 
-    void GenerateTangents(
-        std::vector<float>& vertices,
-        const std::vector<unsigned int>& indices)
-    {
-        const unsigned int vertexCount = static_cast<unsigned int>(vertices.size() / Mesh::TexturedVertexFloatCount);
-        std::vector<glm::vec3> tan1(vertexCount, glm::vec3(0.0f));
-        std::vector<glm::vec3> tan2(vertexCount, glm::vec3(0.0f));
-
-        for (std::size_t triangleIndex = 0; triangleIndex + 2 < indices.size(); triangleIndex += 3)
-        {
-            const unsigned int index0 = indices[triangleIndex];
-            const unsigned int index1 = indices[triangleIndex + 1];
-            const unsigned int index2 = indices[triangleIndex + 2];
-
-            const float* vertex0 = &vertices[static_cast<std::size_t>(index0) * Mesh::TexturedVertexFloatCount];
-            const float* vertex1 = &vertices[static_cast<std::size_t>(index1) * Mesh::TexturedVertexFloatCount];
-            const float* vertex2 = &vertices[static_cast<std::size_t>(index2) * Mesh::TexturedVertexFloatCount];
-
-            const glm::vec3 position0(vertex0[0], vertex0[1], vertex0[2]);
-            const glm::vec3 position1(vertex1[0], vertex1[1], vertex1[2]);
-            const glm::vec3 position2(vertex2[0], vertex2[1], vertex2[2]);
-            const glm::vec2 uv0(vertex0[6], vertex0[7]);
-            const glm::vec2 uv1(vertex1[6], vertex1[7]);
-            const glm::vec2 uv2(vertex2[6], vertex2[7]);
-
-            const glm::vec3 edge1 = position1 - position0;
-            const glm::vec3 edge2 = position2 - position0;
-            const glm::vec2 deltaUv1 = uv1 - uv0;
-            const glm::vec2 deltaUv2 = uv2 - uv0;
-
-            const float determinant = deltaUv1.x * deltaUv2.y - deltaUv2.x * deltaUv1.y;
-            if (std::abs(determinant) < 1.0e-8f)
-            {
-                continue;
-            }
-
-            const float inverseDeterminant = 1.0f / determinant;
-            const glm::vec3 tangent =
-                (edge1 * deltaUv2.y - edge2 * deltaUv1.y) * inverseDeterminant;
-            const glm::vec3 bitangent =
-                (edge2 * deltaUv1.x - edge1 * deltaUv2.x) * inverseDeterminant;
-
-            tan1[index0] += tangent;
-            tan1[index1] += tangent;
-            tan1[index2] += tangent;
-            tan2[index0] += bitangent;
-            tan2[index1] += bitangent;
-            tan2[index2] += bitangent;
-        }
-
-        for (unsigned int vertexIndex = 0; vertexIndex < vertexCount; ++vertexIndex)
-        {
-            float* vertex = &vertices[static_cast<std::size_t>(vertexIndex) * Mesh::TexturedVertexFloatCount];
-            const glm::vec3 normal(vertex[3], vertex[4], vertex[5]);
-            const glm::vec3 tangent = glm::normalize(tan1[vertexIndex] - normal * glm::dot(normal, tan1[vertexIndex]));
-            const glm::vec3 bitangent = glm::normalize(tan2[vertexIndex] - normal * glm::dot(normal, tan2[vertexIndex]));
-            const float handedness = glm::dot(glm::cross(normal, tangent), bitangent) < 0.0f ? -1.0f : 1.0f;
-            vertex[10] = tangent.x;
-            vertex[11] = tangent.y;
-            vertex[12] = tangent.z;
-            vertex[13] = handedness;
-        }
-    }
+    int g_importTextureFailures = 0;
+    int g_importTexturesCached = 0;
 
     std::shared_ptr<Texture> LoadGltfImageTexture(
         const tinygltf::Model& model,
@@ -400,26 +343,58 @@ namespace
                     samplerSettings,
                     true);
             }
-            catch (const std::exception&)
+            catch (const std::exception& exception)
             {
+                ++g_importTextureFailures;
+                RenderPathDiagnostics::LogImportTextureFailure(
+                    imageIndex,
+                    std::string("file \"") + texturePath + "\" " + exception.what());
                 texture = nullptr;
             }
         }
         else if (!image.image.empty() && image.width > 0 && image.height > 0)
         {
-            texture = Texture::CreateFromPixels(
-                image.image.data(),
-                image.width,
-                image.height,
-                image.component,
-                colorSpace,
-                samplerSettings,
-                true);
+            try
+            {
+                texture = Texture::CreateFromPixels(
+                    image.image.data(),
+                    image.width,
+                    image.height,
+                    image.component,
+                    colorSpace,
+                    samplerSettings,
+                    true);
+            }
+            catch (const std::exception& exception)
+            {
+                ++g_importTextureFailures;
+                RenderPathDiagnostics::LogImportTextureFailure(
+                    imageIndex,
+                    std::string("embedded ") + std::to_string(image.width) + "x" +
+                        std::to_string(image.height) + " " + exception.what());
+                texture = nullptr;
+            }
+        }
+        else if (imageIndex >= 0)
+        {
+            ++g_importTextureFailures;
+            RenderPathDiagnostics::LogImportTextureFailure(
+                imageIndex,
+                "no file path and no embedded pixels");
         }
 
         if (texture != nullptr && texture->IsValid())
         {
-            textureCache.emplace(cacheKey, texture);
+            const bool inserted = textureCache.emplace(cacheKey, texture).second;
+            if (inserted)
+            {
+                ++g_importTexturesCached;
+            }
+        }
+        else if (texture != nullptr)
+        {
+            ++g_importTextureFailures;
+            RenderPathDiagnostics::LogImportTextureFailure(imageIndex, "texture object is invalid after upload");
         }
 
         return texture;
@@ -511,6 +486,7 @@ namespace
         glm::vec3 albedo(0.8f);
         float roughness = 0.5f;
         float metallic = 0.0f;
+        glm::vec3 emissive(0.0f);
 
         if (materialIndex >= 0)
         {
@@ -522,6 +498,13 @@ namespace
                 static_cast<float>(pbr.baseColorFactor[2]));
             roughness = static_cast<float>(pbr.roughnessFactor);
             metallic = static_cast<float>(pbr.metallicFactor);
+            if (gltfMaterial.emissiveFactor.size() >= 3)
+            {
+                emissive = glm::vec3(
+                    static_cast<float>(gltfMaterial.emissiveFactor[0]),
+                    static_cast<float>(gltfMaterial.emissiveFactor[1]),
+                    static_cast<float>(gltfMaterial.emissiveFactor[2]));
+            }
 
             auto material = std::make_unique<Material>(
                 EngineConstants::LitVertexShader,
@@ -530,6 +513,7 @@ namespace
                 roughness,
                 metallic);
             material->SetDoubleSided(gltfMaterial.doubleSided);
+            material->SetEmissive(emissive);
 
             if (pbr.baseColorTexture.index >= 0)
             {
@@ -606,6 +590,25 @@ namespace
                 if (texture != nullptr && texture->IsValid())
                 {
                     material->SetAoMap(texture, StoreTexturePath(projectRoot, texturePath));
+                }
+            }
+
+            if (gltfMaterial.emissiveTexture.index >= 0)
+            {
+                material->SetEmissiveTexCoordSet(gltfMaterial.emissiveTexture.texCoord);
+                const std::string texturePath = GetGltfTextureFilePath(
+                    model,
+                    gltfMaterial.emissiveTexture.index,
+                    modelDirectory);
+                std::shared_ptr<Texture> texture = LoadGltfTexture(
+                    model,
+                    gltfMaterial.emissiveTexture.index,
+                    modelDirectory,
+                    TextureColorSpace::SRGB,
+                    textureCache);
+                if (texture != nullptr && texture->IsValid())
+                {
+                    material->SetEmissiveMap(texture, StoreTexturePath(projectRoot, texturePath));
                 }
             }
 
@@ -830,7 +833,21 @@ namespace
 
         if (tangents == nullptr)
         {
-            GenerateTangents(vertices, indices);
+            TangentSpace::GenerateMikkTSpaceTangents(vertices, indices);
+        }
+
+        for (std::size_t vertexIndex = 0; vertexIndex < vertices.size(); vertexIndex += Mesh::TexturedVertexFloatCount)
+        {
+            const glm::vec4 tangent(
+                vertices[vertexIndex + 10],
+                vertices[vertexIndex + 11],
+                vertices[vertexIndex + 12],
+                vertices[vertexIndex + 13]);
+            const glm::vec4 finalized = TangentSpace::FinalizeImportTangent(tangent);
+            vertices[vertexIndex + 10] = finalized.x;
+            vertices[vertexIndex + 11] = finalized.y;
+            vertices[vertexIndex + 12] = finalized.z;
+            vertices[vertexIndex + 13] = finalized.w;
         }
 
         outMesh = PrimitiveMesh::BuildMesh(vertices, indices);
@@ -971,6 +988,8 @@ ImportedModel LoadModelFromFile(
     ModelLoadMode loadMode)
 {
     ImportedModel importedModel;
+    g_importTextureFailures = 0;
+    g_importTexturesCached = 0;
     if (onProgress)
     {
         onProgress(0.0f, "Reading model file...");
@@ -1098,6 +1117,8 @@ ImportedModel LoadModelFromFile(
         return importedModel;
     }
 
+    importedModel.textureLoadFailures = g_importTextureFailures;
+    importedModel.texturesCached = g_importTexturesCached;
     return importedModel;
 }
 

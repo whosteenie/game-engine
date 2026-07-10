@@ -68,7 +68,7 @@ void Camera::ProcessMouseMovement(float xOffset, float yOffset)
     xOffset *= m_mouseSensitivity;
     yOffset *= m_mouseSensitivity;
 
-    m_yaw += xOffset;
+    m_yaw -= xOffset;
     m_pitch += yOffset;
 
     m_pitch = std::clamp(m_pitch, -89.0f, 89.0f);
@@ -76,14 +76,31 @@ void Camera::ProcessMouseMovement(float xOffset, float yOffset)
     UpdateCameraVectors();
 }
 
+glm::mat4 Camera::BuildViewMatrixFromState() const
+{
+    return glm::lookAtLH(m_position, m_position + m_front, m_worldUp);
+}
+
 glm::mat4 Camera::GetViewMatrix() const
 {
-    return glm::lookAt(m_position, m_position + m_front, m_up);
+    return BuildViewMatrixFromState();
 }
 
 glm::mat4 Camera::GetProjectionMatrix() const
 {
-    return glm::perspective(glm::radians(m_fov), m_aspect, m_near, m_far);
+    glm::mat4 projection = glm::perspectiveLH_ZO(glm::radians(m_fov), m_aspect, m_near, m_far);
+    if (m_projectionJitterNdc.x != 0.0f || m_projectionJitterNdc.y != 0.0f)
+    {
+        projection[2][0] += m_projectionJitterNdc.x;
+        projection[2][1] += m_projectionJitterNdc.y;
+    }
+
+    return projection;
+}
+
+glm::mat4 Camera::GetUnjitteredProjectionMatrix() const
+{
+    return glm::perspectiveLH_ZO(glm::radians(m_fov), m_aspect, m_near, m_far);
 }
 
 glm::vec3 Camera::GetPosition() const
@@ -145,7 +162,7 @@ void Camera::SetAspect(float aspect)
 glm::mat4 Camera::BuildViewMatrixLookingAt(const glm::vec3& target, float distance) const
 {
     const glm::vec3 eye = target - m_front * distance;
-    return glm::lookAt(eye, target, m_worldUp);
+    return glm::lookAtLH(eye, target, m_worldUp);
 }
 
 void Camera::ApplyViewManipulateResult(
@@ -199,6 +216,21 @@ float Camera::GetAspect() const
     return m_aspect;
 }
 
+void Camera::SetProjectionJitter(const glm::vec2& jitterNdc)
+{
+    m_projectionJitterNdc = jitterNdc;
+}
+
+void Camera::ClearProjectionJitter()
+{
+    m_projectionJitterNdc = glm::vec2(0.0f);
+}
+
+glm::vec2 Camera::GetProjectionJitter() const
+{
+    return m_projectionJitterNdc;
+}
+
 float Camera::ComputeFitDistance(float boundsRadius, float padding) const
 {
     const float halfFovY = glm::radians(m_fov * 0.5f);
@@ -219,6 +251,8 @@ void Camera::UpdateCameraVectors()
     front.z = sin(glm::radians(m_yaw)) * cos(glm::radians(m_pitch));
     m_front = glm::normalize(front);
 
-    m_right = glm::normalize(glm::cross(m_front, m_worldUp));
-    m_up = glm::normalize(glm::cross(m_right, m_front));
+    // Derive strafe/up from the same view matrix we render with so movement matches look.
+    const glm::mat4 invView = glm::inverse(BuildViewMatrixFromState());
+    m_right = glm::normalize(glm::vec3(invView[0]));
+    m_up = glm::normalize(glm::vec3(invView[1]));
 }

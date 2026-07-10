@@ -20,6 +20,8 @@
 #include "engine/scene/SceneObjectComponents.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/DxrSettings.h"
+#include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -39,6 +41,16 @@ namespace
         destinationRenderer.GetIBL().SetEnvironmentIntensity(
             sourceRenderer.GetIBL().GetEnvironmentIntensity());
 
+        EnvironmentMap& destinationEnvironment = destinationRenderer.GetEnvironmentMap();
+        const EnvironmentMap& sourceEnvironment = sourceRenderer.GetEnvironmentMap();
+        destinationEnvironment.SetEnabled(sourceEnvironment.IsEnabled());
+        destinationEnvironment.SetBackgroundMode(sourceEnvironment.GetBackgroundMode());
+        destinationEnvironment.SetHdrPath(sourceEnvironment.GetHdrPath());
+        destinationEnvironment.SetRotationDegrees(sourceEnvironment.GetRotationDegrees());
+        destinationEnvironment.SetExposure(sourceEnvironment.GetExposure());
+        destinationEnvironment.SetSolidBackgroundColorSrgb(
+            sourceEnvironment.GetSolidBackgroundColorSrgb());
+
         const ScreenSpaceEffects& sourceEffects = sourceRenderer.GetScreenSpaceEffects();
         ScreenSpaceEffects& destinationEffects = destinationRenderer.GetScreenSpaceEffects();
         destinationEffects.SetEnabled(sourceEffects.IsEnabled());
@@ -54,9 +66,23 @@ namespace
         destinationEffects.SetBloomSoftKnee(sourceEffects.GetBloomSoftKnee());
         destinationEffects.SetBloomIntensity(sourceEffects.GetBloomIntensity());
         destinationEffects.SetBloomBlurRadius(sourceEffects.GetBloomBlurRadius());
+        destinationEffects.SetAntiAliasingMode(sourceEffects.GetAntiAliasingMode());
+        destinationEffects.SetFxaaSubpixQuality(sourceEffects.GetFxaaSubpixQuality());
+        destinationEffects.SetFxaaEdgeThreshold(sourceEffects.GetFxaaEdgeThreshold());
+        destinationEffects.SetRenderScale(sourceEffects.GetRenderScale());
+        destinationEffects.SetDlssPreset(sourceEffects.GetDlssPreset());
+        destinationEffects.SetTaaBlendFactor(sourceEffects.GetTaaBlendFactor());
+        destinationEffects.SetSmaaThreshold(sourceEffects.GetSmaaThreshold());
+        destinationEffects.SetSmaaSearchSteps(sourceEffects.GetSmaaSearchSteps());
+        destinationEffects.SetSsaoBlurDepthThreshold(sourceEffects.GetSsaoBlurDepthThreshold());
 
+        destinationRenderer.SetTextureFilterMode(sourceRenderer.GetTextureFilterMode());
+        destinationRenderer.SetTextureAnisotropy(sourceRenderer.GetTextureAnisotropy());
+        destinationRenderer.SetTextureMipBias(sourceRenderer.GetTextureMipBias());
         destinationRenderer.GetDirectionalShadowSettings() =
             sourceRenderer.GetDirectionalShadowSettings();
+
+        destinationRenderer.GetDxrSettings().CopySettingsFrom(sourceRenderer.GetDxrSettings());
     }
 }
 
@@ -75,11 +101,21 @@ Scene::~Scene() = default;
 
 SceneRenderer& Scene::GetRenderer()
 {
+    if (m_sharedRenderer != nullptr)
+    {
+        return *m_sharedRenderer;
+    }
+
     return *m_renderer;
 }
 
 const SceneRenderer& Scene::GetRenderer() const
 {
+    if (m_sharedRenderer != nullptr)
+    {
+        return *m_sharedRenderer;
+    }
+
     return *m_renderer;
 }
 
@@ -95,11 +131,21 @@ const SceneObjectStore& Scene::GetObjectStore() const
 
 SceneMeshLibrary& Scene::GetMeshLibrary()
 {
+    if (m_sharedMeshLibrary != nullptr)
+    {
+        return *m_sharedMeshLibrary;
+    }
+
     return *m_meshLibrary;
 }
 
 const SceneMeshLibrary& Scene::GetMeshLibrary() const
 {
+    if (m_sharedMeshLibrary != nullptr)
+    {
+        return *m_sharedMeshLibrary;
+    }
+
     return *m_meshLibrary;
 }
 
@@ -133,16 +179,27 @@ const SceneImportService& Scene::GetImportService() const
     return *m_importService;
 }
 
-std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
+void Scene::UseSharedPlayModeResources(const Scene& editScene)
+{
+    m_sharedMeshLibrary = const_cast<SceneMeshLibrary*>(&editScene.GetMeshLibrary());
+    m_sharedRenderer = const_cast<SceneRenderer*>(&editScene.GetRenderer());
+}
+
+std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source, const bool shareGpuResources)
 {
     auto clone = std::make_unique<Scene>();
     clone->m_objectStore->Objects().clear();
     clone->m_objectStore->Objects().reserve(source.m_objectStore->Objects().size());
 
-    const auto remapMesh = [&source](Mesh* sourceMesh, Scene& destination) -> Mesh* {
+    const auto remapMesh = [&source, shareGpuResources](Mesh* sourceMesh, Scene& destination) -> Mesh* {
         if (sourceMesh == nullptr)
         {
             return nullptr;
+        }
+
+        if (shareGpuResources)
+        {
+            return sourceMesh;
         }
 
         const ScenePrimitive primitives[] = {
@@ -206,8 +263,16 @@ std::unique_ptr<Scene> Scene::CloneForPlayMode(const Scene& source)
     clone->GetObjectStore().SetNextId(source.GetObjectStore().GetNextId());
     clone->SetShowLightGizmos(source.GetShowLightGizmos());
     clone->SetShowGrid(source.GetShowGrid());
-    clone->GetRenderer().GetLighting() = source.GetRenderer().GetLighting();
-    CopyRendererSettings(source, *clone);
+    if (!shareGpuResources)
+    {
+        clone->GetRenderer().GetLighting() = source.GetRenderer().GetLighting();
+        CopyRendererSettings(source, *clone);
+    }
+
+    if (shareGpuResources)
+    {
+        clone->UseSharedPlayModeResources(source);
+    }
 
     return clone;
 }
@@ -258,9 +323,16 @@ void Scene::GetLocalSelectionBounds(int objectIndex, glm::vec3& boundsMin, glm::
     GetObjectLocalSelectionBounds(m_objectStore->Objects(), objectIndex, boundsMin, boundsMax);
 }
 
-void Scene::ApplyGizmoWorldMatrix(int objectIndex, const glm::mat4& gizmoWorldMatrix)
+void Scene::ApplyGizmoWorldMatrix(
+    int objectIndex,
+    const glm::mat4& oldGizmoWorldMatrix,
+    const glm::mat4& newGizmoWorldMatrix)
 {
-    ApplyObjectGizmoWorldMatrix(m_objectStore->Objects(), objectIndex, gizmoWorldMatrix);
+    ApplyObjectGizmoWorldMatrix(
+        m_objectStore->Objects(),
+        objectIndex,
+        oldGizmoWorldMatrix,
+        newGizmoWorldMatrix);
     MarkDirty();
 }
 
@@ -296,7 +368,10 @@ void Scene::ApplySelectionGizmoWorldMatrix(
 
     if (selectedIndices.size() == 1)
     {
-        ApplyGizmoWorldMatrix(selectedIndices.front(), newGizmoWorldMatrix);
+        ApplyGizmoWorldMatrix(
+            selectedIndices.front(),
+            oldGizmoWorldMatrix,
+            newGizmoWorldMatrix);
         return;
     }
 
@@ -478,12 +553,25 @@ std::vector<SceneObject>& Scene::GetObjects()
     return m_objectStore->Objects();
 }
 
-SceneObject& Scene::GetObject(std::size_t index)
+void Scene::InvalidateAllMaterialCachedShaders()
+{
+    for (SceneObject& object : m_objectStore->Objects())
+    {
+        if (!object.HasMaterial())
+        {
+            continue;
+        }
+
+        object.GetMaterial().InvalidateCachedShader();
+    }
+}
+
+SceneObject& Scene::GetSceneObject(std::size_t index)
 {
     return m_objectStore->At(index);
 }
 
-const SceneObject& Scene::GetObject(std::size_t index) const
+const SceneObject& Scene::GetSceneObject(std::size_t index) const
 {
     return m_objectStore->At(index);
 }
@@ -659,10 +747,18 @@ void Scene::SetShowGrid(bool showGrid)
 
 void Scene::Render(
     const Camera& camera,
-    int viewportWidth,
-    int viewportHeight,
-    unsigned int targetFramebuffer,
-    const SceneRenderOptions& options) const
+    const int viewportWidth,
+    const int viewportHeight,
+    const std::uintptr_t targetFramebuffer,
+    const SceneRenderOptions& options,
+    const RenderViewport renderViewport) const
 {
-    m_renderer->Render(*this, camera, viewportWidth, viewportHeight, targetFramebuffer, options);
+    const_cast<SceneRenderer&>(GetRenderer()).Render(
+        *this,
+        camera,
+        viewportWidth,
+        viewportHeight,
+        targetFramebuffer,
+        options,
+        renderViewport);
 }

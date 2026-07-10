@@ -17,6 +17,8 @@ public:
         const TextureSamplerSettings& samplerSettings = TextureSamplerSettings{},
         bool flipVertically = true);
 
+    void Clear();
+
 private:
     TextureCache() = default;
 

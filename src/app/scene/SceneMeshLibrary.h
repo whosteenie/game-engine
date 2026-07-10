@@ -29,8 +29,13 @@ public:
         const std::vector<SceneObject>& objects,
         ImportedMeshReusePool& outPool);
     void ClearImportedMeshes();
+    void InvalidatePrimitives();
 
 private:
+    void EnsurePrimitives() const;
+
+    float m_floorHalfExtent = 0.0f;
+    mutable bool m_primitivesReady = false;
     std::unique_ptr<Mesh> m_cubeMesh;
     std::unique_ptr<Mesh> m_sphereMesh;
     std::unique_ptr<Mesh> m_cylinderMesh;
