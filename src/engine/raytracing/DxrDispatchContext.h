@@ -83,6 +83,8 @@ public:
         std::uint32_t prevInstanceTransformsSrvIndex = UINT32_MAX;
         // F2 path tracer only (t15): emissive instance list for NEE. UINT32_MAX = unavailable.
         std::uint32_t emissiveLightsSrvIndex = UINT32_MAX;
+        // S5 step 14 (t18): per-triangle emissive geometry for mesh-light NEE.
+        std::uint32_t emissiveTrianglesSrvIndex = UINT32_MAX;
         // F2 environment IS (t16 CDF, t17 HDR equirect). UINT32_MAX / 0 = unavailable.
         std::uint32_t envImportanceCdfSrvIndex = UINT32_MAX;
         std::uintptr_t envEquirectSrvCpuHandle = 0;

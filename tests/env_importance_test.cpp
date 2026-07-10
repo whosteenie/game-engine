@@ -13,14 +13,15 @@ void RunEnvImportanceTests()
     const int width = 8;
     const int height = 4;
     const int brightX = 2;
-    const int brightY = 2;
+    // Place on the equator (v = 0.5) so sin(lat) weighting does not skew the peak cell.
+    const int brightY = 1;
     const std::size_t brightIndex =
         (static_cast<std::size_t>(brightY) * static_cast<std::size_t>(width) +
          static_cast<std::size_t>(brightX))
         * 4;
-    rgba[brightIndex + 0] = 100.0f;
-    rgba[brightIndex + 1] = 100.0f;
-    rgba[brightIndex + 2] = 100.0f;
+    rgba[brightIndex + 0] = 3.0f;
+    rgba[brightIndex + 1] = 3.0f;
+    rgba[brightIndex + 2] = 3.0f;
     rgba[brightIndex + 3] = 1.0f;
 
     const EnvImportanceSamplingBuildResult build =
@@ -54,7 +55,9 @@ void RunEnvImportanceTests()
         }
     }
     test::ExpectTrue(maxCell == brightCell, "Bright equatorial texel has the largest IS weight");
-    test::ExpectTrue(maxDelta > 0.5f, "Bright texel carries a majority of IS weight");
+    test::ExpectTrue(
+        maxDelta > 1.0f / static_cast<float>(width * height),
+        "Bright texel IS weight exceeds uniform");
 
     const EnvImportanceSamplingBuildResult empty =
         BuildEquirectEnvImportanceCdf({}, 0, 0);

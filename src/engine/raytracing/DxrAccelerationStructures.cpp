@@ -182,12 +182,21 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
         }
     }
 
+    for (const std::uint32_t srvIndex : m_emissiveTrianglesSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
+    }
+
     m_geometryLookupSrvIndices.fill(UINT32_MAX);
     m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
     m_sceneIndicesSrvIndices.fill(UINT32_MAX);
     m_materialSrvIndices.fill(UINT32_MAX);
     m_prevTransformsSrvIndices.fill(UINT32_MAX);
     m_emissiveLightsSrvIndices.fill(UINT32_MAX);
+    m_emissiveTrianglesSrvIndices.fill(UINT32_MAX);
 
     m_geometryLookupStaging.Release();
     m_materialStaging.Release();
@@ -195,17 +204,21 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_sceneIndicesStaging.Release();
     m_prevTransformsStaging.Release();
     m_emissiveLightsStaging.Release();
+    m_emissiveTrianglesStaging.Release();
     m_geometryLookupGpu.Release();
     m_materialGpu.Release();
     m_sceneVertexFloatsGpu.Release();
     m_sceneIndicesGpu.Release();
     m_prevTransformsGpu.Release();
     m_emissiveLightsGpu.Release();
+    m_emissiveTrianglesGpu.Release();
     m_uploadedGeometryFingerprint.fill(0);
     m_prevTransformsUploadFrame.fill(0);
     m_emissiveLightsUploadFrame.fill(0);
+    m_emissiveTrianglesUploadFrame.fill(0);
     m_prevTransformsCapacityCount = 0;
     m_emissiveLightsCapacityCount = 0;
+    m_emissiveTrianglesCapacityCount = 0;
     m_emissiveLightCount = 0;
     m_emissiveLightPickWeightSum = 0.0f;
     m_geometryObjectCount = 0;
@@ -674,10 +687,88 @@ namespace
         return 0.2126f * emissive.x + 0.7152f * emissive.y + 0.0722f * emissive.z;
     }
 
-    float AabbSurfaceArea(const glm::vec3& boundsMin, const glm::vec3& boundsMax)
+    float TriangleArea(const glm::vec3& a, const glm::vec3& b, const glm::vec3& c)
     {
-        const glm::vec3 size = glm::max(boundsMax - boundsMin, glm::vec3(0.0f));
-        return 2.0f * (size.x * size.y + size.x * size.z + size.y * size.z);
+        return 0.5f * glm::length(glm::cross(b - a, c - a));
+    }
+
+    bool UploadStructuredBufferRing(
+        ID3D12GraphicsCommandList* commandList,
+        const void* data,
+        std::uint64_t byteSize,
+        std::uint32_t structureByteStride,
+        std::uint32_t elementCount,
+        DxrUploadRing& stagingRing,
+        DxrSrvBufferRing& gpuRing,
+        std::array<std::uint32_t, GfxContext::FrameCount>& srvIndices,
+        std::array<std::uint64_t, GfxContext::FrameCount>& uploadFrame,
+        std::size_t& capacityCount)
+    {
+        if (byteSize == 0 || elementCount == 0)
+        {
+            capacityCount = 0;
+            const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+            uploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
+            return true;
+        }
+
+        const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+        const bool sameCapacity = capacityCount == elementCount
+            && stagingRing.GetCapacity() >= byteSize
+            && gpuRing.GetCapacity() >= byteSize
+            && srvIndices[frameIndex] != UINT32_MAX;
+        if (!sameCapacity)
+        {
+            if (!stagingRing.EnsureCapacity(byteSize) || !gpuRing.EnsureCapacity(byteSize))
+            {
+                return false;
+            }
+
+            auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+            if (device == nullptr)
+            {
+                return false;
+            }
+
+            for (std::uint32_t slotIndex = 0; slotIndex < GfxContext::FrameCount; ++slotIndex)
+            {
+                if (srvIndices[slotIndex] == UINT32_MAX)
+                {
+                    srvIndices[slotIndex] = GfxContext::Get().AllocateOffscreenSrv();
+                    if (srvIndices[slotIndex] == UINT32_MAX)
+                    {
+                        return false;
+                    }
+                }
+
+                D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
+                srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(srvIndices[slotIndex]);
+                D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+                srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+                srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+                srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                srvDesc.Buffer.FirstElement = 0;
+                srvDesc.Buffer.NumElements = elementCount;
+                srvDesc.Buffer.StructureByteStride = structureByteStride;
+                device->CreateShaderResourceView(
+                    gpuRing.Slot(slotIndex).resource, &srvDesc, srvHandle);
+            }
+
+            capacityCount = elementCount;
+        }
+
+        DxrGpuResource& upload = stagingRing.Slot(frameIndex);
+        void* mapped = nullptr;
+        if (FAILED(upload.resource->Map(0, nullptr, &mapped)))
+        {
+            return false;
+        }
+        std::memcpy(mapped, data, byteSize);
+        upload.resource->Unmap(0, nullptr);
+
+        CopyDxrUploadToSrvBuffer(commandList, upload, gpuRing.Slot(frameIndex), byteSize);
+        uploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
+        return true;
     }
 } // namespace
 
@@ -694,6 +785,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
     static constexpr float kEmissiveThreshold = 0.01f;
 
     std::vector<DxrEmissiveLightEntry> entries;
+    std::vector<DxrEmissiveTriangleEntry> triangles;
     const auto& objects = scene.GetObjects();
     entries.reserve(objects.size());
 
@@ -720,119 +812,115 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
         }
 
         const std::vector<glm::vec3>& positions = mesh->GetPositions();
-        if (positions.empty())
+        const std::vector<unsigned int>& indices = mesh->GetIndices();
+        if (positions.empty() || indices.size() < 3)
         {
             continue;
         }
 
         const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
-        glm::vec3 worldMin(std::numeric_limits<float>::max());
-        glm::vec3 worldMax(std::numeric_limits<float>::lowest());
-        for (const glm::vec3& position : positions)
+        const std::uint32_t triangleOffset = static_cast<std::uint32_t>(triangles.size());
+        float instanceArea = 0.0f;
+        std::uint32_t triangleCount = 0;
+
+        for (std::size_t indexOffset = 0; indexOffset + 2 < indices.size(); indexOffset += 3)
         {
-            const glm::vec3 worldPosition = glm::vec3(worldMatrix * glm::vec4(position, 1.0f));
-            worldMin = glm::min(worldMin, worldPosition);
-            worldMax = glm::max(worldMax, worldPosition);
+            const glm::vec3 localV0 = positions[indices[indexOffset]];
+            const glm::vec3 localV1 = positions[indices[indexOffset + 1]];
+            const glm::vec3 localV2 = positions[indices[indexOffset + 2]];
+            const glm::vec3 worldV0 = glm::vec3(worldMatrix * glm::vec4(localV0, 1.0f));
+            const glm::vec3 worldV1 = glm::vec3(worldMatrix * glm::vec4(localV1, 1.0f));
+            const glm::vec3 worldV2 = glm::vec3(worldMatrix * glm::vec4(localV2, 1.0f));
+
+            const float triangleArea = TriangleArea(worldV0, worldV1, worldV2);
+            if (triangleArea < 1e-8f)
+            {
+                continue;
+            }
+
+            glm::vec3 faceNormal = glm::cross(worldV1 - worldV0, worldV2 - worldV0);
+            const float normalLength = glm::length(faceNormal);
+            if (normalLength < 1e-8f)
+            {
+                continue;
+            }
+            faceNormal /= normalLength;
+
+            const float pickWeight = luminance * triangleArea;
+            instanceArea += triangleArea;
+            ++triangleCount;
+
+            DxrEmissiveTriangleEntry& triangleEntry = triangles.emplace_back();
+            triangleEntry.v0[0] = worldV0.x;
+            triangleEntry.v0[1] = worldV0.y;
+            triangleEntry.v0[2] = worldV0.z;
+            triangleEntry.pickWeight = pickWeight;
+            triangleEntry.v1[0] = worldV1.x;
+            triangleEntry.v1[1] = worldV1.y;
+            triangleEntry.v1[2] = worldV1.z;
+            triangleEntry.triangleArea = triangleArea;
+            triangleEntry.v2[0] = worldV2.x;
+            triangleEntry.v2[1] = worldV2.y;
+            triangleEntry.v2[2] = worldV2.z;
+            triangleEntry.faceNormal[0] = faceNormal.x;
+            triangleEntry.faceNormal[1] = faceNormal.y;
+            triangleEntry.faceNormal[2] = faceNormal.z;
+            triangleEntry.primitiveIndex = static_cast<std::uint32_t>(indexOffset / 3);
         }
 
-        const float surfaceArea =
-            std::max(AabbSurfaceArea(worldMin, worldMax), 1e-4f);
-        const float pickWeight = luminance * surfaceArea;
-        pickWeightSum += pickWeight;
+        if (triangleCount == 0)
+        {
+            continue;
+        }
+
+        const float instancePickWeight = luminance * instanceArea;
+        pickWeightSum += instancePickWeight;
 
         DxrEmissiveLightEntry& entry = entries.emplace_back();
-        entry.boundsMin[0] = worldMin.x;
-        entry.boundsMin[1] = worldMin.y;
-        entry.boundsMin[2] = worldMin.z;
-        entry.pickWeight = pickWeight;
-        entry.boundsMax[0] = worldMax.x;
-        entry.boundsMax[1] = worldMax.y;
-        entry.boundsMax[2] = worldMax.z;
-        entry.surfaceArea = surfaceArea;
         entry.emissive[0] = emissive.x;
         entry.emissive[1] = emissive.y;
         entry.emissive[2] = emissive.z;
+        entry.pickWeight = instancePickWeight;
         entry.instanceId = static_cast<std::uint32_t>(objectIndex);
+        entry.triangleOffset = triangleOffset;
+        entry.triangleCount = triangleCount;
+        entry.surfaceArea = std::max(instanceArea, 1e-4f);
     }
 
     m_emissiveLightCount = static_cast<std::uint32_t>(entries.size());
     m_emissiveLightPickWeightSum = pickWeightSum;
 
-    if (entries.empty())
-    {
-        m_emissiveLightsUploadFrame[GfxContext::Get().GetFrameIndex()] =
-            GfxContext::Get().GetSubmissionFrameNumber();
-        return true;
-    }
-
-    const std::uint64_t byteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
-    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
-
-    const bool sameCapacity = m_emissiveLightsCapacityCount == entries.size()
-        && m_emissiveLightsStaging.GetCapacity() >= byteSize
-        && m_emissiveLightsGpu.GetCapacity() >= byteSize
-        && m_emissiveLightsSrvIndices[frameIndex] != UINT32_MAX;
-    if (!sameCapacity)
-    {
-        if (!m_emissiveLightsStaging.EnsureCapacity(byteSize)
-            || !m_emissiveLightsGpu.EnsureCapacity(byteSize))
-        {
-            m_emissiveLightCount = 0;
-            m_emissiveLightPickWeightSum = 0.0f;
-            return false;
-        }
-
-        auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
-        if (device == nullptr)
-        {
-            m_emissiveLightCount = 0;
-            m_emissiveLightPickWeightSum = 0.0f;
-            return false;
-        }
-
-        for (std::uint32_t slotIndex = 0; slotIndex < GfxContext::FrameCount; ++slotIndex)
-        {
-            if (m_emissiveLightsSrvIndices[slotIndex] == UINT32_MAX)
-            {
-                m_emissiveLightsSrvIndices[slotIndex] = GfxContext::Get().AllocateOffscreenSrv();
-                if (m_emissiveLightsSrvIndices[slotIndex] == UINT32_MAX)
-                {
-                    m_emissiveLightCount = 0;
-                    m_emissiveLightPickWeightSum = 0.0f;
-                    return false;
-                }
-            }
-
-            D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
-            srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_emissiveLightsSrvIndices[slotIndex]);
-            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
-            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
-            srvDesc.Format = DXGI_FORMAT_UNKNOWN;
-            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            srvDesc.Buffer.FirstElement = 0;
-            srvDesc.Buffer.NumElements = static_cast<UINT>(entries.size());
-            srvDesc.Buffer.StructureByteStride = sizeof(DxrEmissiveLightEntry);
-            device->CreateShaderResourceView(
-                m_emissiveLightsGpu.Slot(slotIndex).resource, &srvDesc, srvHandle);
-        }
-
-        m_emissiveLightsCapacityCount = entries.size();
-    }
-
-    DxrGpuResource& upload = m_emissiveLightsStaging.Slot(frameIndex);
-    void* mapped = nullptr;
-    if (FAILED(upload.resource->Map(0, nullptr, &mapped)))
+    const std::uint64_t lightsByteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
+    const std::uint64_t trianglesByteSize = triangles.size() * sizeof(DxrEmissiveTriangleEntry);
+    const bool lightsOk = UploadStructuredBufferRing(
+        d3dCommandList,
+        entries.empty() ? nullptr : entries.data(),
+        lightsByteSize,
+        sizeof(DxrEmissiveLightEntry),
+        static_cast<std::uint32_t>(entries.size()),
+        m_emissiveLightsStaging,
+        m_emissiveLightsGpu,
+        m_emissiveLightsSrvIndices,
+        m_emissiveLightsUploadFrame,
+        m_emissiveLightsCapacityCount);
+    const bool trianglesOk = UploadStructuredBufferRing(
+        d3dCommandList,
+        triangles.empty() ? nullptr : triangles.data(),
+        trianglesByteSize,
+        sizeof(DxrEmissiveTriangleEntry),
+        static_cast<std::uint32_t>(triangles.size()),
+        m_emissiveTrianglesStaging,
+        m_emissiveTrianglesGpu,
+        m_emissiveTrianglesSrvIndices,
+        m_emissiveTrianglesUploadFrame,
+        m_emissiveTrianglesCapacityCount);
+    if (!lightsOk || !trianglesOk)
     {
         m_emissiveLightCount = 0;
         m_emissiveLightPickWeightSum = 0.0f;
         return false;
     }
-    std::memcpy(mapped, entries.data(), byteSize);
-    upload.resource->Unmap(0, nullptr);
 
-    CopyDxrUploadToSrvBuffer(d3dCommandList, upload, m_emissiveLightsGpu.Slot(frameIndex), byteSize);
-
-    m_emissiveLightsUploadFrame[frameIndex] = GfxContext::Get().GetSubmissionFrameNumber();
     return true;
 }
 

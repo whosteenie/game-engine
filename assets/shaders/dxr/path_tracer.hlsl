@@ -26,17 +26,30 @@ struct PrevInstanceTransform
 };
 StructuredBuffer<PrevInstanceTransform> g_PrevInstanceTransforms : register(t14);
 
-// F2/F2b emissive NEE: compact list of emissive instances (world-space AABB area lights).
+// F2/F2b emissive NEE: one entry per emissive instance (S5 step 14 / A1).
 struct EmissiveLightEntry
 {
-    float3 boundsMin;
-    float pickWeight;
-    float3 boundsMax;
-    float surfaceArea;
     float3 emissive;
+    float pickWeight;
     uint instanceId;
+    uint triangleOffset;
+    uint triangleCount;
+    float surfaceArea;
 };
 StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t15);
+
+struct EmissiveTriangleEntry
+{
+    float3 v0;
+    float pickWeight;
+    float3 v1;
+    float triangleArea;
+    float3 v2;
+    float _pad0;
+    float3 faceNormal;
+    uint primitiveIndex;
+};
+StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 
 #include "pt_env_light.hlsli"
 
@@ -555,8 +568,8 @@ float EmissiveLightPickPdf(uint instanceId)
     return 0.0;
 }
 
-// Look up an emitter's NEE selection pdf AND its (AABB) surface area by instance id, so a BSDF-sampled
-// ray that lands on an emitter can compute the competing NEE density for MIS.
+// Look up an emitter's NEE selection pdf AND its total mesh surface area by instance id, so a
+// BSDF-sampled ray that lands on an emitter can compute the competing NEE density for MIS.
 void EmissiveLightLookup(uint instanceId, out float pickPdf, out float surfaceArea)
 {
     pickPdf = 0.0;
@@ -579,8 +592,8 @@ void EmissiveLightLookup(uint instanceId, out float pickPdf, out float surfaceAr
 }
 
 // Solid-angle density of the emissive-NEE strategy for a light seen at `dist` with emitter-facing
-// cosine `cosThetaEmitter`: pickPdf * (1/area) * dist^2 / cos. Both MIS sides use this so the balance
-// heuristic weights sum to 1 (up to the AABB-vs-mesh emitter approximation, A1).
+// cosine `cosThetaEmitter`: pickPdf * (1/area) * dist^2 / cos. Instance-level pickPdf + area are
+// used for the BSDF-hit MIS partner (triangle NEE uses per-triangle area on the light side).
 float EmissiveNeePdfSolidAngle(float pickPdf, float surfaceArea, float dist2, float cosThetaEmitter)
 {
     if (pickPdf <= 0.0 || surfaceArea <= 1e-8 || cosThetaEmitter <= 1e-6)
@@ -590,94 +603,29 @@ float EmissiveNeePdfSolidAngle(float pickPdf, float surfaceArea, float dist2, fl
     return pickPdf * (1.0 / surfaceArea) * dist2 / cosThetaEmitter;
 }
 
-// Uniform sample on an axis-aligned box shell; pdfArea is 1 / total surface area.
-void SampleUniformPointOnAabbSurface(
-    float3 boundsMin,
-    float3 boundsMax,
-    float3 xi,
+// Uniform sample on a triangle; pdfArea is 1 / triangle area.
+void SampleUniformPointOnTriangle(
+    float3 v0,
+    float3 v1,
+    float3 v2,
+    float triangleArea,
+    float2 xi,
     out float3 surfacePoint,
-    out float3 faceNormal,
     out float pdfArea)
 {
-    const float3 size = max(boundsMax - boundsMin, 0.0.xxx);
-    const float areaPosX = size.y * size.z;
-    const float areaNegX = areaPosX;
-    const float areaPosY = size.x * size.z;
-    const float areaNegY = areaPosY;
-    const float areaPosZ = size.x * size.y;
-    const float areaNegZ = areaPosZ;
-    const float totalArea = 2.0 * (areaPosX + areaPosY + areaPosZ);
-
-    if (totalArea <= 1e-8)
+    if (triangleArea <= 1e-8)
     {
-        surfacePoint = 0.5 * (boundsMin + boundsMax);
-        faceNormal = float3(0.0, 1.0, 0.0);
+        surfacePoint = (v0 + v1 + v2) / 3.0;
         pdfArea = 1.0;
         return;
     }
 
-    pdfArea = 1.0 / totalArea;
-    float facePick = xi.x * totalArea;
-
-    if (facePick < areaPosX)
-    {
-        faceNormal = float3(1.0, 0.0, 0.0);
-        surfacePoint = float3(
-            boundsMax.x,
-            lerp(boundsMin.y, boundsMax.y, xi.y),
-            lerp(boundsMin.z, boundsMax.z, xi.z));
-        return;
-    }
-    facePick -= areaPosX;
-
-    if (facePick < areaNegX)
-    {
-        faceNormal = float3(-1.0, 0.0, 0.0);
-        surfacePoint = float3(
-            boundsMin.x,
-            lerp(boundsMin.y, boundsMax.y, xi.y),
-            lerp(boundsMin.z, boundsMax.z, xi.z));
-        return;
-    }
-    facePick -= areaNegX;
-
-    if (facePick < areaPosY)
-    {
-        faceNormal = float3(0.0, 1.0, 0.0);
-        surfacePoint = float3(
-            lerp(boundsMin.x, boundsMax.x, xi.y),
-            boundsMax.y,
-            lerp(boundsMin.z, boundsMax.z, xi.z));
-        return;
-    }
-    facePick -= areaPosY;
-
-    if (facePick < areaNegY)
-    {
-        faceNormal = float3(0.0, -1.0, 0.0);
-        surfacePoint = float3(
-            lerp(boundsMin.x, boundsMax.x, xi.y),
-            boundsMin.y,
-            lerp(boundsMin.z, boundsMax.z, xi.z));
-        return;
-    }
-    facePick -= areaNegY;
-
-    if (facePick < areaPosZ)
-    {
-        faceNormal = float3(0.0, 0.0, 1.0);
-        surfacePoint = float3(
-            lerp(boundsMin.x, boundsMax.x, xi.y),
-            lerp(boundsMin.y, boundsMax.y, xi.z),
-            boundsMax.z);
-        return;
-    }
-
-    faceNormal = float3(0.0, 0.0, -1.0);
-    surfacePoint = float3(
-        lerp(boundsMin.x, boundsMax.x, xi.y),
-        lerp(boundsMin.y, boundsMax.y, xi.z),
-        boundsMin.z);
+    const float sqrtXi0 = sqrt(saturate(xi.x));
+    const float u = 1.0 - sqrtXi0;
+    const float v = xi.y * sqrtXi0;
+    const float w = 1.0 - u - v;
+    surfacePoint = u * v0 + v * v1 + w * v2;
+    pdfArea = 1.0 / triangleArea;
 }
 
 // GGX/Trowbridge-Reitz + height-correlated Smith helpers for the opaque BRDF estimator.
@@ -812,8 +760,8 @@ float3 EvaluateDirectSun(
     return bsdf * sunRadiance * sunVis;
 }
 
-// One emissive area-light sample per bounce (AABB surface + shadow ray), full-BSDF, MIS-weighted
-// against BSDF sampling with the true mixture pdf (both measured in solid angle).
+// One emissive mesh-light sample per bounce (triangle surface + transmissive shadow ray), full-BSDF,
+// MIS-weighted against BSDF sampling with the true mixture pdf (both measured in solid angle).
 float3 EvaluateDirectEmissive(
     uint2 pixel,
     uint bounceIndex,
@@ -847,16 +795,36 @@ float3 EvaluateDirectEmissive(
     }
 
     const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
+    if (light.triangleCount == 0u)
+    {
+        return 0.0.xxx;
+    }
+
+    float triPick = xiPick.y * light.pickWeight;
+    uint triangleIndex = light.triangleOffset + light.triangleCount - 1u;
+    [loop]
+    for (uint triLocal = 0u; triLocal < light.triangleCount; ++triLocal)
+    {
+        const EmissiveTriangleEntry tri = g_EmissiveTriangles[light.triangleOffset + triLocal];
+        triPick -= tri.pickWeight;
+        if (triPick <= 0.0)
+        {
+            triangleIndex = light.triangleOffset + triLocal;
+            break;
+        }
+    }
+
+    const EmissiveTriangleEntry emitterTri = g_EmissiveTriangles[triangleIndex];
 
     float3 lightPoint;
-    float3 faceNormal;
     float pdfArea;
-    SampleUniformPointOnAabbSurface(
-        light.boundsMin,
-        light.boundsMax,
-        xiSurface.xyz,
+    SampleUniformPointOnTriangle(
+        emitterTri.v0,
+        emitterTri.v1,
+        emitterTri.v2,
+        emitterTri.triangleArea,
+        xiSurface.xy,
         lightPoint,
-        faceNormal,
         pdfArea);
 
     float3 toLight = lightPoint - shadowOrigin;
@@ -870,21 +838,21 @@ float3 EvaluateDirectEmissive(
         return 0.0.xxx;
     }
 
-    const float cosThetaEmitter = saturate(dot(faceNormal, -wi));
+    const float cosThetaEmitter = saturate(dot(emitterTri.faceNormal, -wi));
     if (cosThetaEmitter <= 0.0)
     {
         return 0.0.xxx;
     }
 
-    const float visibility = TraceVisibility(shadowOrigin, wi, dist - 0.001);
+    const float visibility = TraceTransmissiveVisibility(shadowOrigin, wi, dist - 0.001);
     if (visibility <= 0.0)
     {
         return 0.0.xxx;
     }
 
-    const float pickPdf = light.pickWeight / g_EmissiveLightPickWeightSum;
+    const float pickPdf = emitterTri.pickWeight / g_EmissiveLightPickWeightSum;
     const float pdfSolidAngle =
-        EmissiveNeePdfSolidAngle(pickPdf, light.surfaceArea, dist2, cosThetaEmitter);
+        EmissiveNeePdfSolidAngle(pickPdf, emitterTri.triangleArea, dist2, cosThetaEmitter);
     const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
     const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
 

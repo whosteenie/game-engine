@@ -53,18 +53,32 @@ struct DxrPrevInstanceTransformEntry
     float row2[4] = {0.0f, 0.0f, 1.0f, 0.0f};
 };
 
-// F2/F2b emissive NEE: one entry per emissive scene instance (world-space AABB area light).
+// F2/F2b emissive NEE: one entry per emissive scene instance (S5 step 14 / A1).
 // Layout must match EmissiveLightEntry in assets/shaders/dxr/path_tracer.hlsl.
 struct DxrEmissiveLightEntry
 {
-    float boundsMin[3] = {0.0f, 0.0f, 0.0f};
-    float pickWeight = 0.0f;
-    float boundsMax[3] = {0.0f, 0.0f, 0.0f};
-    float surfaceArea = 0.0f;
     float emissive[3] = {0.0f, 0.0f, 0.0f};
+    float pickWeight = 0.0f;
     std::uint32_t instanceId = 0;
+    std::uint32_t triangleOffset = 0;
+    std::uint32_t triangleCount = 0;
+    float surfaceArea = 0.0f;
 };
-static_assert(sizeof(DxrEmissiveLightEntry) == 48);
+static_assert(sizeof(DxrEmissiveLightEntry) == 32);
+
+// Per-triangle emissive geometry in world space (uploaded alongside lights, t18).
+struct DxrEmissiveTriangleEntry
+{
+    float v0[3] = {0.0f, 0.0f, 0.0f};
+    float pickWeight = 0.0f;
+    float v1[3] = {0.0f, 0.0f, 0.0f};
+    float triangleArea = 0.0f;
+    float v2[3] = {0.0f, 0.0f, 0.0f};
+    float _pad0 = 0.0f;
+    float faceNormal[3] = {0.0f, 0.0f, 1.0f};
+    std::uint32_t primitiveIndex = 0;
+};
+static_assert(sizeof(DxrEmissiveTriangleEntry) == 64);
 
 class DxrAccelerationStructures
 {
@@ -144,6 +158,14 @@ public:
             : UINT32_MAX;
     }
 
+    std::uint32_t GetEmissiveTrianglesSrvIndex() const
+    {
+        const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+        return m_emissiveTrianglesUploadFrame[frameIndex] == GfxContext::Get().GetSubmissionFrameNumber()
+            ? m_emissiveTrianglesSrvIndices[frameIndex]
+            : UINT32_MAX;
+    }
+
     void Release();
 
 private:
@@ -198,6 +220,13 @@ private:
         UINT32_MAX};
     std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveLightsUploadFrame{};
     std::size_t m_emissiveLightsCapacityCount = 0;
+    DxrUploadRing m_emissiveTrianglesStaging{};
+    DxrSrvBufferRing m_emissiveTrianglesGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_emissiveTrianglesSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveTrianglesUploadFrame{};
+    std::size_t m_emissiveTrianglesCapacityCount = 0;
     std::uint32_t m_emissiveLightCount = 0;
     float m_emissiveLightPickWeightSum = 0.0f;
     std::size_t m_geometryObjectCount = 0;
