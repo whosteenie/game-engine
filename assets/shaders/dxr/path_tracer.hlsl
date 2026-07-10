@@ -1029,8 +1029,10 @@ void SampleOpaqueInterface(
     scatterPdf = pdfMix;
 }
 
-// Unified material bounce: one stochastic lobe pick weighted by transmission·(1−metallic), then
-// dielectric Fresnel/Snell or opaque GGX. Sliders interpolate smoothly — no hard cutoffs.
+// Unified material bounce: dielectric Fresnel/Snell or opaque GGX.
+// Real-time (1 SPP): deterministic — scale glass transport by dielectricWeight, never stochastic
+// pick + 1/p divide (that explodes brightness at partial transmission, e.g. t≈0.6 peak blowout).
+// Reference: stochastic lobe pick weighted by transmission·(1−metallic) for unbiased convergence.
 bool SampleMaterialBounce(
     uint2 pixel,
     uint bounceIndex,
@@ -1062,9 +1064,20 @@ bool SampleMaterialBounce(
     scatterPdf = 1.0;
     interfaceAddRadiance = 0.0.xxx;
 
-    if (dielectricWeight > 0.0 && xi.w < dielectricWeight)
+    const bool useGlassPath = kPtCenterPrimaryRays
+        ? (dielectricWeight > 0.0)
+        : (dielectricWeight > 0.0 && xi.w < dielectricWeight);
+
+    if (useGlassPath)
     {
-        throughput /= max(dielectricWeight, 1e-6);
+        if (!kPtCenterPrimaryRays)
+        {
+            throughput /= max(dielectricWeight, 1e-6);
+        }
+        else
+        {
+            throughput *= dielectricWeight;
+        }
         const float3 throughputAtInterface = throughput;
         float3 fresnelReflect = 0.0.xxx;
         SampleDielectricInterface(
@@ -1328,6 +1341,7 @@ void PathTracerRayGen()
         const float3 f0 = lerp(0.04.xxx, albedo, surfaceMetallic);
         const float dielectricWeight =
             DielectricWeight(material.transmission, surfaceMetallic);
+        const float opaqueWeight = 1.0 - dielectricWeight;
         const float3 specularEnergy =
             FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(surfaceRoughness, 0.55));
         const float3 diffuseAlbedo =
@@ -1354,25 +1368,22 @@ void PathTracerRayGen()
             termSurfaceEmissive += throughput * surfaceEmissive;
         }
 
-        const float3 sunContrib = (dielectricWeight > 0.01)
-            ? 0.0.xxx
-            : EvaluateDirectSun(
+        const float3 sunContrib = opaqueWeight
+            * EvaluateDirectSun(
                 pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * sunContrib;
         termDirectSun += throughput * sunContrib;
 
-        const float3 emissiveContrib = (dielectricWeight > 0.01)
-            ? 0.0.xxx
-            : EvaluateDirectEmissive(
+        const float3 emissiveContrib = opaqueWeight
+            * EvaluateDirectEmissive(
                 pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * emissiveContrib;
         termDirectEmissive += throughput * emissiveContrib;
 
-        const float3 envContrib = (dielectricWeight > 0.01)
-            ? 0.0.xxx
-            : EvaluateDirectEnvironment(
+        const float3 envContrib = opaqueWeight
+            * EvaluateDirectEnvironment(
                 pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * envContrib;
