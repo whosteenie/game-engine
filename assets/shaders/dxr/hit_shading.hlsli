@@ -139,6 +139,48 @@ float4 RandomXi4(uint2 pixel, uint frameIndex, uint sampleIndex)
         float2(hashB.xy & 0x00FFFFFFu) * (1.0 / 16777216.0));
 }
 
+// G3 / ReSTIR: replayable per-path stream. Seed is stored with reservoirs later; dimension advances
+// on every draw so salts cannot collide. Same (seed, startDimension) → identical sequence (GRIS replay).
+struct PathRng
+{
+    uint seed;
+    uint dimension;
+};
+
+PathRng InitPathRng(uint2 pixel, uint frameIndex)
+{
+    PathRng rng;
+    const uint3 hash = Pcg3d(uint3(pixel.x, pixel.y, frameIndex ^ 0xA341316Cu));
+    rng.seed = hash.x != 0u ? hash.x : 1u;
+    rng.dimension = 0u;
+    return rng;
+}
+
+PathRng PathRngFromSeed(uint seed)
+{
+    PathRng rng;
+    rng.seed = seed != 0u ? seed : 1u;
+    rng.dimension = 0u;
+    return rng;
+}
+
+float PathRngNext(inout PathRng rng)
+{
+    const uint3 hash = Pcg3d(uint3(rng.seed, rng.dimension, rng.seed ^ 0x9E3779B9u));
+    rng.dimension += 1u;
+    return float(hash.x & 0x00FFFFFFu) * (1.0 / 16777216.0);
+}
+
+float2 PathRngNext2(inout PathRng rng)
+{
+    return float2(PathRngNext(rng), PathRngNext(rng));
+}
+
+float4 PathRngNext4(inout PathRng rng)
+{
+    return float4(PathRngNext2(rng), PathRngNext2(rng));
+}
+
 float Luminance(float3 color)
 {
     return dot(color, float3(0.2126, 0.7152, 0.0722));

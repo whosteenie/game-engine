@@ -77,13 +77,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // views unreachable — clamp to the real [0,9] range instead.
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 9.0)))
 
-// Disjoint per-decision salt blocks (each leaves ≥16 headroom for +bounce/+sampleIndex within a
-// frame; kRngFrameStride = 1024 keeps them from aliasing across frames). Env NEE moved to 160 so it
-// no longer overlaps emissive (96 + bounce + 1) or ambient-AO (128) at deep bounces (C5).
-static const uint kPtAmbientAoRngSalt = 128u;
-static const uint kPtSoftSunRngSalt = 32u;
-static const uint kPtEmissiveNeeSalt = 96u;
-static const uint kPtEnvNeeSalt = 160u;
+// Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
@@ -287,7 +281,7 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
 }
 
 // Soft sun visibility: cone-jittered shadow rays matching shadows.hlsl / reflections.hlsl.
-float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel, uint salt)
+float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, inout PathRng rng)
 {
     const float3 sunDir = normalize(g_SunDirection);
     if (dot(shadingNormal, sunDir) <= 0.0)
@@ -303,7 +297,7 @@ float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, uint2 rngPixel
     [loop]
     for (uint sampleIndex = 0u; sampleIndex < kPtSoftSunSampleCount; ++sampleIndex)
     {
-        const float4 xi = RandomXi4(rngPixel, g_FrameIndex, salt + sampleIndex);
+        const float4 xi = PathRngNext4(rng);
         const float diskRadius = sqrt(xi.x);
         const float diskPhi = 2.0 * kPi * xi.y;
         const float2 disk = float2(diskRadius * cos(diskPhi), diskRadius * sin(diskPhi));
@@ -467,7 +461,7 @@ float2 ComputeTransmissionVirtualMotion(
     return ComputeMotionNdc(currClipUnj, prevClipUnj);
 }
 
-float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, uint rayCount)
+float TracePrimaryAmbientOcclusion(inout PathRng rng, float3 origin, float3 normal, uint rayCount)
 {
     if (rayCount == 0u)
     {
@@ -479,7 +473,7 @@ float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, ui
     [loop]
     for (uint aoIndex = 0u; aoIndex < rayCount; ++aoIndex)
     {
-        const float2 aoXi = RandomXi4(pixel, g_FrameIndex, aoIndex + kPtAmbientAoRngSalt).xy;
+        const float2 aoXi = PathRngNext2(rng);
         const float3 aoDir = CosineSampleHemisphere(normal, aoXi);
         aoSum += TraceVisibility(origin, aoDir, aoRadius);
     }
@@ -488,11 +482,9 @@ float TracePrimaryAmbientOcclusion(uint2 pixel, float3 origin, float3 normal, ui
 }
 
 float3 EvaluateRealTimeDiffuseAmbient(
-    uint2 pixel,
     float3 diffuseAlbedo,
     float3 shadingNormal,
-    float3 aoNormal,
-    float3 shadowOrigin)
+    float aoVisibility)
 {
     // Environment IS NEE replaces the SH ambient floor when the CDF is bound (F2).
     if (g_EnvLightImportanceCount > 0u)
@@ -506,9 +498,6 @@ float3 EvaluateRealTimeDiffuseAmbient(
         return 0.0.xxx;
     }
 
-    // Contact AO uses the geometric normal (matches raster shadow/AO and crevice-darkening.md).
-    const float aoVisibility =
-        TracePrimaryAmbientOcclusion(pixel, shadowOrigin, aoNormal, g_PtAmbientAoRayCount);
     const float3 irradiance = EvaluateDiffuseIrradianceSh(shadingNormal);
     return diffuseAlbedo * irradiance / kPi
         * aoVisibility
@@ -517,8 +506,7 @@ float3 EvaluateRealTimeDiffuseAmbient(
 }
 
 float TracePrimarySunVisibility(
-    uint2 pixel,
-    uint bounceIndex,
+    inout PathRng rng,
     float3 hitNormal,
     float3 shadowOrigin)
 {
@@ -530,7 +518,7 @@ float TracePrimarySunVisibility(
     }
 
     return (g_SunAngularTanRadius > 1e-6)
-        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, pixel, bounceIndex + kPtSoftSunRngSalt)
+        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, rng)
         : TraceTransmissiveVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
 }
 
@@ -749,15 +737,13 @@ float OpaqueBsdfPdf(
 // sun-visibility boundary. The traced shadow ray (from the geometric-offset origin) still provides
 // real occlusion, so light naturally falls off past the terminator instead of stepping to black.
 float3 EvaluateDirectSun(
-    uint2 pixel,
-    uint bounceIndex,
     float3 viewDir,
     float3 f0,
     float3 albedo,
     float roughness,
     float metallic,
     float3 shadingNormal,
-    float3 shadowOrigin)
+    float sunVis)
 {
     const float3 sunL = normalize(g_SunDirection);
     if (dot(shadingNormal, sunL) <= 0.0)
@@ -765,7 +751,6 @@ float3 EvaluateDirectSun(
         return 0.0.xxx;
     }
 
-    const float sunVis = TracePrimarySunVisibility(pixel, bounceIndex, shadingNormal, shadowOrigin);
     const float3 sunRadiance = SrgbToLinear(g_SunColor) * g_SunIntensity;
     const float3 bsdf = EvaluateOpaqueBsdf(shadingNormal, viewDir, sunL, f0, albedo, roughness, metallic);
     return bsdf * sunRadiance * sunVis;
@@ -774,8 +759,7 @@ float3 EvaluateDirectSun(
 // One emissive mesh-light sample per bounce (triangle surface + transmissive shadow ray), full-BSDF,
 // MIS-weighted against BSDF sampling with the true mixture pdf (both measured in solid angle).
 float3 EvaluateDirectEmissive(
-    uint2 pixel,
-    uint bounceIndex,
+    inout PathRng rng,
     float3 viewDir,
     float3 f0,
     float3 albedo,
@@ -789,8 +773,8 @@ float3 EvaluateDirectEmissive(
         return 0.0.xxx;
     }
 
-    const float4 xiPick = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEmissiveNeeSalt);
-    const float4 xiSurface = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEmissiveNeeSalt + 1u);
+    const float4 xiPick = PathRngNext4(rng);
+    const float4 xiSurface = PathRngNext4(rng);
 
     float pick = xiPick.x * g_EmissiveLightPickWeightSum;
     uint lightIndex = g_EmissiveLightCount - 1u;
@@ -879,8 +863,7 @@ float3 EvaluateDirectEmissive(
 
 // Infinite environment light NEE — luminance-importance sampled HDR equirect, MIS vs BSDF.
 float3 EvaluateDirectEnvironment(
-    uint2 pixel,
-    uint bounceIndex,
+    inout PathRng rng,
     float3 viewDir,
     float3 f0,
     float3 albedo,
@@ -894,7 +877,7 @@ float3 EvaluateDirectEnvironment(
         return 0.0.xxx;
     }
 
-    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + kPtEnvNeeSalt);
+    const float4 xi = PathRngNext4(rng);
     float3 wi;
     float pdfEnv;
     if (!SampleEnvLightDirection(xi, wi, pdfEnv))
@@ -927,8 +910,6 @@ float3 EvaluateDirectEnvironment(
 // directional pdf for NEE MIS. No forced-lobe branches — the divisor is always the true selection
 // probability, so no lobe is over/under-weighted (B3).
 void SampleOpaqueInterface(
-    uint2 pixel,
-    uint bounceIndex,
     float3 hitNormal,
     float3 viewDir,
     float3 f0,
@@ -1040,8 +1021,7 @@ void SampleOpaqueInterface(
 //   choice). Opaque residual stays on NEE/ambient via opaqueWeight. This avoids the 1/dw mid-t
 //   blowout at 1 spp; the path is still a single dielectric sample with a well-defined pdf.
 bool SampleMaterialBounce(
-    uint2 pixel,
-    uint bounceIndex,
+    inout PathRng rng,
     float3 hitNormal,
     float3 rayDir,
     float3 viewDir,
@@ -1060,7 +1040,7 @@ bool SampleMaterialBounce(
     inout float3 throughput)
 {
     const float dielectricWeight = DielectricWeight(transmission, metallic);
-    const float4 xi = RandomXi4(pixel, g_FrameIndex, bounceIndex + 1u);
+    const float4 xi = PathRngNext4(rng);
 
     outPathInMedium = pathInMedium;
     isSpecular = false;
@@ -1101,8 +1081,6 @@ bool SampleMaterialBounce(
     }
 
     SampleOpaqueInterface(
-        pixel,
-        bounceIndex,
         hitNormal,
         viewDir,
         f0,
@@ -1203,7 +1181,8 @@ void PathTracerRayGen()
         return;
     }
 
-    const float4 primaryXi = RandomXi4(pixel, g_FrameIndex, 0u);
+    PathRng rng = InitPathRng(pixel, g_FrameIndex);
+    const float4 primaryXi = PathRngNext4(rng);
     const float2 primaryOffset = kPtCenterPrimaryRays ? float2(0.5, 0.5) : primaryXi.zw;
     const float2 texCoord = (float2(pixel) + primaryOffset) / float2(g_OutputSize);
     const float2 clipXY = PixelToClipXY(texCoord);
@@ -1362,23 +1341,24 @@ void PathTracerRayGen()
             termSurfaceEmissive += throughput * surfaceEmissive;
         }
 
+        const float sunVis = TracePrimarySunVisibility(rng, hitNormal, shadowOrigin);
         const float3 sunContrib = opaqueWeight
             * EvaluateDirectSun(
-                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                hitNormal, shadowOrigin);
+                viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                hitNormal, sunVis);
         radiance += throughput * sunContrib;
         termDirectSun += throughput * sunContrib;
 
         const float3 emissiveContrib = opaqueWeight
             * EvaluateDirectEmissive(
-                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * emissiveContrib;
         termDirectEmissive += throughput * emissiveContrib;
 
         const float3 envContrib = opaqueWeight
             * EvaluateDirectEnvironment(
-                pixel, bounce, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
                 hitNormal, shadowOrigin);
         radiance += throughput * envContrib;
 
@@ -1387,13 +1367,11 @@ void PathTracerRayGen()
         if (kPtCenterPrimaryRays && bounce == 0u)
         {
             primaryAoVis =
-                TracePrimaryAmbientOcclusion(pixel, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
-            // Shading normal, matching EvaluateDirectSun — the AOV should show the visibility the
-            // radiance path actually uses.
-            primarySunVis = TracePrimarySunVisibility(pixel, bounce, hitNormal, shadowOrigin);
+                TracePrimaryAmbientOcclusion(rng, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
+            // Same soft-sun sample as the radiance path (G3: do not re-draw — AOV must match).
+            primarySunVis = sunVis;
             const float3 ambientContrib =
-                EvaluateRealTimeDiffuseAmbient(
-                    pixel, diffuseAlbedo, hitNormal, hitNormalGeom, shadowOrigin);
+                EvaluateRealTimeDiffuseAmbient(diffuseAlbedo, hitNormal, primaryAoVis);
             radiance += throughput * ambientContrib;
             termAmbient += throughput * ambientContrib;
         }
@@ -1571,8 +1549,7 @@ void PathTracerRayGen()
         float scatterPdf = 1.0;
         const bool pathInMediumBefore = pathInMedium;
         SampleMaterialBounce(
-            pixel,
-            bounce,
+            rng,
             hitNormal,
             ray.Direction,
             viewDir,
@@ -1611,7 +1588,7 @@ void PathTracerRayGen()
             const float rrProb = min(
                 max(throughput.r, max(throughput.g, throughput.b)),
                 kRussianRouletteMaxProb);
-            const float rrXi = RandomXi4(pixel, g_FrameIndex, bounce + 64u).w;
+            const float rrXi = PathRngNext(rng);
             if (rrProb <= 1e-4 || rrXi > rrProb)
             {
                 break;
