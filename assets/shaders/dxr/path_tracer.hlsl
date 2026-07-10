@@ -1431,7 +1431,7 @@ void PathTracerRayGen()
 
             // Glass: PSR-style transmission guides — depth, motion, and material guides describe the
             // refracted background surface, not the glass polygon (devdoc/dxr/pt/transmission-rr-guides.md).
-            if (dielectricWeight > 0.01)
+            if (dielectricWeight > 0.0)
             {
                 specHitDistGuide = g_MaxTraceDistance;
 
@@ -1632,20 +1632,20 @@ void PathTracerRayGen()
 
         const float nDotV = saturate(dot(hitNormal, viewDir));
         const float originBias = max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotV));
-        const bool thinPane = material.thinWalled > 0.5 && dielectricWeight > 0.01;
+        const bool thinPane = material.thinWalled > 0.5 && dielectricWeight > 0.0;
         ray.Origin = hitPos + nextDir * originBias;
         if (thinPane)
         {
             // Thin slab is zero-thickness; escape any physical shell (scaled-cube panes) before continuing.
             ray.Origin = hitPos + nextDir * max(originBias, kThinShellMinExitBias);
         }
-        else if (dielectricWeight > 0.01 && !pathInMediumBefore && pathInMedium)
+        else if (dielectricWeight > 0.0 && !pathInMediumBefore && pathInMedium)
         {
             // Entering a solid volume: push past the entry interface so the refracted segment does not
             // immediately self-hit the same shell triangle (reads as frosted/milky glass).
             ray.Origin = hitPos + nextDir * max(originBias, 0.02);
         }
-        else if (dielectricWeight > 0.01 && pathInMediumBefore && !pathInMedium)
+        else if (dielectricWeight > 0.0 && pathInMediumBefore && !pathInMedium)
         {
             ray.Origin = hitPos + nextDir * max(originBias, 0.02);
         }

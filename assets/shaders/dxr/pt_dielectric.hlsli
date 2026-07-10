@@ -441,7 +441,9 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
 
         const MaterialEntry mat = g_Materials[probe.instanceId];
         const float glassWeight = DielectricWeight(mat.transmission, mat.metallic);
-        if (glassWeight < 0.01)
+        // Fully opaque hit — block the shadow ray. No 0.01 cutoff: partial transmission must fade
+        // smoothly (gw * (1−F)), otherwise t=0 vs t≈0.01 snaps from full shadow to nearly clear.
+        if (glassWeight <= 0.0)
         {
             return 0.0;
         }
@@ -469,7 +471,8 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
         const float fresnel = thin
             ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
             : singleFaceFresnel;
-        transmittance *= max(1.0 - fresnel, 0.0);
+        // Scale by glassWeight so t=0.3 blocks ~70% and transmits ~30%·(1−F), matching radiance path.
+        transmittance *= glassWeight * max(1.0 - fresnel, 0.0);
         if (transmittance < 1e-4)
         {
             return 0.0;
