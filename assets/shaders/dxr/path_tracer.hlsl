@@ -71,6 +71,9 @@ static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
+// Below this roughness, specular uses a delta mirror bounce instead of VNDF (alpha floor ~0.032
+// otherwise reads as frosted even at roughness 0).
+static const float kPtDeltaSpecularRoughness = 0.03;
 
 struct Payload
 {
@@ -803,6 +806,26 @@ void SampleOpaqueInterface(
 
     const bool sampledSpecular = (lobeXi < pSpec);
     float3 l;
+    if (sampledSpecular && roughness <= kPtDeltaSpecularRoughness)
+    {
+        // Delta mirror / near-mirror: bypass VNDF (its 1e-3 alpha floor reads as frosted).
+        l = normalize(reflect(-viewDir, hitNormal));
+        isSpecular = true;
+        nextDir = l;
+
+        const float NoL = dot(hitNormal, l);
+        if (NoL <= 1e-4 || NoV <= 1e-4)
+        {
+            scatterPdf = 1.0;
+            throughput = 0.0.xxx;
+            return;
+        }
+
+        throughput *= fresnelNoV / max(pSpec, 1e-6);
+        scatterPdf = 1.0;
+        return;
+    }
+
     if (sampledSpecular)
     {
         const float3 h = SampleGgxVndfHalfVector(hitNormal, viewDir, ggxRoughness, xi2d);
