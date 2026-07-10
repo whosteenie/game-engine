@@ -56,7 +56,9 @@ void ScreenSpaceEffects::InitApplyFrame(
 
     state.debugMode = m_debugMode;
     state.pbrDebugActive = IsPbrMaterialDebugMode(m_debugMode);
-    state.runAo = m_aoMode != AmbientOcclusionMode::Off && !state.pbrDebugActive;
+    // PT owns the image — do not schedule hybrid AO/SSR/SSGI/TAA work from leftover UI toggles.
+    state.runAo =
+        !m_pathTracerActive && m_aoMode != AmbientOcclusionMode::Off && !state.pbrDebugActive;
     state.runSsao = state.runAo && m_aoMode == AmbientOcclusionMode::SSAO;
     state.runGtao = state.runAo && m_aoMode == AmbientOcclusionMode::GTAO;
     state.aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
@@ -68,18 +70,19 @@ void ScreenSpaceEffects::InitApplyFrame(
         1.0f / static_cast<float>(m_height));
 
     state.useShadowFactorComposite =
-        m_sceneFramebuffer->HasShadowFactor() && !state.pbrDebugActive;
+        !m_pathTracerActive && m_sceneFramebuffer->HasShadowFactor() && !state.pbrDebugActive;
     state.shadowFactorSrv = m_sceneFramebuffer->GetGBufferSrvCpuHandle(GBufferSlot::SunShadowFactor);
 
-    state.rtCompositeWanted = m_dxrReflectionCompositeEnabled;
+    state.rtCompositeWanted = !m_pathTracerActive && m_dxrReflectionCompositeEnabled;
     state.rtHasFreshTrace = m_dxrReflectionSrv != 0;
     state.rtCompositeDebugOnly =
-        !state.rtCompositeWanted && m_debugMode == RenderDebugMode::RtSpecReplacement
-        && m_dxrReflectionSrv != 0;
+        !m_pathTracerActive && !state.rtCompositeWanted
+        && m_debugMode == RenderDebugMode::RtSpecReplacement && m_dxrReflectionSrv != 0;
 
     state.giInjectSrv = m_dxrGiDenoisedSrv != 0 ? m_dxrGiDenoisedSrv : m_dxrGiRawSrv;
     state.giHasFreshTrace = state.giInjectSrv != 0;
     state.runRtGiInject =
+        !m_pathTracerActive &&
         m_dxrGiCompositeEnabled &&
         !state.pbrDebugActive &&
         m_sceneFramebuffer->HasSplitLighting() &&
@@ -93,7 +96,7 @@ void ScreenSpaceEffects::InitApplyFrame(
     state.compositeUsesSsao = state.runAo;
     state.ssaoDebugViewSource = "none";
 
-    state.useTaa = m_antiAliasingMode == AntiAliasingMode::TAA;
+    state.useTaa = !m_pathTracerActive && m_antiAliasingMode == AntiAliasingMode::TAA;
     state.wantDlss = m_antiAliasingMode == AntiAliasingMode::DLAA
         || m_antiAliasingMode == AntiAliasingMode::DLSS;
     state.pathTracerReferenceActive =
@@ -148,8 +151,9 @@ void ScreenSpaceEffects::FillScreenSpaceReflectionInputs(ApplyFrameState& state)
     ssrInputs.pbrDebugActive = state.pbrDebugActive;
     ssrInputs.useShadowFactorComposite = state.useShadowFactorComposite;
     ssrInputs.rtCompositeWanted = state.rtCompositeWanted;
-    ssrInputs.ssrEnabled = m_ssrEnabled;
-    ssrInputs.wantsSsr = m_ssrEnabled || IsSsrDebugMode(m_debugMode);
+    ssrInputs.ssrEnabled = !m_pathTracerActive && m_ssrEnabled;
+    ssrInputs.wantsSsr =
+        !m_pathTracerActive && (m_ssrEnabled || IsSsrDebugMode(m_debugMode));
     ssrInputs.isSsrTraceDebug = IsSsrTraceDebugMode(m_debugMode);
     ssrInputs.isSsrDenoiseDebug = IsSsrDenoiseDebugMode(m_debugMode);
     ssrInputs.isSsrCompositeDebug = IsSsrCompositeDebugMode(m_debugMode);
@@ -234,7 +238,7 @@ void ScreenSpaceEffects::FillScreenSpaceGiInputs(ApplyFrameState& state) const
     ScreenSpaceGiPassInputs& ssgiInputs = state.ssgiInputs;
     ssgiInputs = ScreenSpaceGiPassInputs{};
     ssgiInputs.runRadianceAssembly = state.runRadianceAssembly;
-    ssgiInputs.ssgiEnabled = m_ssgiEnabled;
+    ssgiInputs.ssgiEnabled = !m_pathTracerActive && m_ssgiEnabled;
     ssgiInputs.ssgiDenoiseEnabled = m_ssgiDenoiseEnabled;
     ssgiInputs.ssgiNoiseInjectionEnabled = m_ssgiNoiseInjectionEnabled;
     ssgiInputs.sceneHasGeometryNormals = m_sceneFramebuffer->HasGeometryNormals();
@@ -363,165 +367,170 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
 {
     const PostProcessContext postContext = BuildPostProcessContext();
 
-    if (state.runSsao || state.runGtao)
+    // Path tracing: skip the hybrid lighting chain (AO / shadow blur / SSR / RT composite /
+    // SSGI / HDR composite / TAA). PT integrate + bloom below still feed DLSS/tonemap.
+    if (!m_pathTracerActive)
     {
-        const GfxContext::GpuTimerScope gpuScopeAo("Post-process/AO");
-        FillAmbientOcclusionInputs(state);
-        AmbientOcclusionPassOutputs aoOutputs{};
-        aoOutputs.aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
-        AmbientOcclusionPass::Execute(postContext, state.aoInputs, aoOutputs);
-        state.aoCompositeSrv = aoOutputs.aoCompositeSrv;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeShadowPrep("Post-process/Shadow prep");
-        ScreenCompositePrePassInputs prePassInputs{};
-        prePassInputs.pbrDebugActive = state.pbrDebugActive;
-        prePassInputs.useShadowFactorComposite = state.useShadowFactorComposite;
-        prePassInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
-        prePassInputs.texelSize = state.texelSize;
-        prePassInputs.shadowSettings = state.shadowSettings;
-        prePassInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-        prePassInputs.shadowFactorSrv = state.shadowFactorSrv;
-        prePassInputs.shadowBlurShader = m_shadowBlurShader.get();
-        prePassInputs.radianceAssemblyShader = m_radianceAssemblyShader.get();
-        prePassInputs.shadowBlurTarget = const_cast<InternalTarget*>(&m_shadowBlurTarget);
-        prePassInputs.shadowBlur2Target = const_cast<InternalTarget*>(&m_shadowBlur2Target);
-        prePassInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
-
-        ScreenCompositePrePassOutputs prePassOutputs{};
-        ScreenCompositePass::ExecutePreReflection(postContext, prePassInputs, prePassOutputs);
-        state.shadowFactorSrv = prePassOutputs.shadowFactorSrv;
-        state.runRadianceAssembly = prePassOutputs.runRadianceAssembly;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeSsr("Post-process/SSR");
-        FillScreenSpaceReflectionInputs(state);
-        ScreenSpaceReflectionPassOutputs ssrOutputs{};
-        ScreenSpaceReflectionPass::Execute(postContext, state.ssrInputs, ssrOutputs);
-
-        m_ssrSceneColorRanLastFrame = ssrOutputs.ssrSceneColorRanLastFrame;
-        m_ssrTraceRanLastFrame = ssrOutputs.ssrTraceRanLastFrame;
-        m_ssrDenoiseRanLastFrame = ssrOutputs.ssrDenoiseRanLastFrame;
-        m_ssrTemporalRanLastFrame = ssrOutputs.ssrTemporalRanLastFrame;
-        m_lastSsrSpatialSrv = ssrOutputs.lastSsrSpatialSrv;
-        m_lastSsrTemporalSrv = ssrOutputs.lastSsrTemporalSrv;
-        m_lastSsrVarianceSrv = ssrOutputs.lastSsrVarianceSrv;
-        m_lastSsrDenoiseSrv = ssrOutputs.lastSsrDenoiseSrv;
-        m_lastSsrResolvedSrv = ssrOutputs.lastSsrResolvedSrv;
-        m_ssrFrameIndex = ssrOutputs.ssrFrameIndex;
-        m_ssrHistoryValid = ssrOutputs.ssrHistoryValid;
-        state.runSsrIndirect = ssrOutputs.ssrIndirectRan;
-        state.indirectCompositeSrv = ssrOutputs.indirectCompositeSrv;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeRtComposite("Post-process/RT composite");
-        ScreenCompositeDxrInputs dxrInputs{};
-        dxrInputs.pbrDebugActive = state.pbrDebugActive;
-        dxrInputs.rtCompositeWanted = state.rtCompositeWanted;
-        dxrInputs.rtCompositeDebugOnly = state.rtCompositeDebugOnly;
-        dxrInputs.rtHasFreshTrace = state.rtHasFreshTrace;
-        dxrInputs.runRtGiInject = state.runRtGiInject;
-        dxrInputs.giHasFreshTrace = state.giHasFreshTrace;
-        dxrInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
-        dxrInputs.camera = state.camera;
-        dxrInputs.environmentMap = state.environmentMap;
-        dxrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-        dxrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
-        dxrInputs.dxrReflectionSrv = m_dxrReflectionSrv;
-        dxrInputs.dxrReflectionDenoisedSrv = m_dxrReflectionDenoisedSrv;
-        dxrInputs.dxrReflectionMaxTraceDistance = m_dxrReflectionMaxTraceDistance;
-        dxrInputs.dxrReflectionRoughnessCutoff = m_dxrReflectionRoughnessCutoff;
-        dxrInputs.dxrReflectionUvScaleX = m_dxrReflectionUvScaleX;
-        dxrInputs.dxrReflectionUvScaleY = m_dxrReflectionUvScaleY;
-        dxrInputs.giInjectSrv = state.giInjectSrv;
-        dxrInputs.dxrGiStrength = m_dxrGiStrength;
-        dxrInputs.dxrGiUvScaleX = m_dxrGiUvScaleX;
-        dxrInputs.dxrGiUvScaleY = m_dxrGiUvScaleY;
-        dxrInputs.dxrIndirectShader = m_dxrIndirectShader.get();
-        dxrInputs.dxrGiInjectShader = m_dxrGiInjectShader.get();
-        dxrInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
-        dxrInputs.rtGiInjectTarget = const_cast<InternalTarget*>(&m_rtGiInjectTarget);
-
-        ScreenCompositeDxrOutputs dxrOutputs{};
-        ScreenCompositePass::ExecuteDxrIndirectChain(postContext, dxrInputs, dxrOutputs);
-        state.indirectCompositeSrv = dxrOutputs.indirectCompositeSrv;
-        state.runRtIndirect = dxrOutputs.runRtIndirect;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeSsgi("Post-process/SSGI");
-        FillScreenSpaceGiInputs(state);
-        ScreenSpaceGiPassOutputs ssgiOutputs{};
-        ScreenSpaceGiPass::Execute(postContext, state.ssgiInputs, ssgiOutputs);
-
-        m_giFrameIndex = ssgiOutputs.giFrameIndex;
-        m_radianceHistoryValid = ssgiOutputs.radianceHistoryValid;
-        m_lastSsgiInjectSrv = ssgiOutputs.lastSsgiInjectSrv;
-        state.runSsgiTrace = ssgiOutputs.runSsgiTrace;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeHdrComposite("Post-process/HDR composite");
-        ScreenCompositeHdrInputs hdrInputs{};
-    hdrInputs.pbrDebugActive = state.pbrDebugActive;
-    hdrInputs.runAo = state.runAo;
-    hdrInputs.runGtao = state.runGtao;
-    hdrInputs.useShadowFactorComposite = state.useShadowFactorComposite;
-    hdrInputs.runRtGiInject = state.runRtGiInject;
-    hdrInputs.runSsgiTrace = state.runSsgiTrace;
-    hdrInputs.camera = state.camera;
-    hdrInputs.environmentMap = state.environmentMap;
-    hdrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-    hdrInputs.aoCompositeSrv = state.aoCompositeSrv;
-    hdrInputs.shadowFactorSrv = state.shadowFactorSrv;
-    hdrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
-    hdrInputs.lastSsgiInjectSrv = m_lastSsgiInjectSrv;
-    hdrInputs.aoStrength = m_aoStrength;
-    hdrInputs.ssaoPower = m_ssaoPower;
-    hdrInputs.gtaoPower = m_gtaoPower;
-    hdrInputs.ssgiStrength = m_ssgiStrength;
-    hdrInputs.dxrShadowDenoisedSrv = m_dxrShadowDenoisedSrv;
-    hdrInputs.dxrShadowUvScaleX = m_dxrShadowUvScaleX;
-    hdrInputs.dxrShadowUvScaleY = m_dxrShadowUvScaleY;
-    hdrInputs.dxrShadowCompositeEnabled = m_dxrShadowCompositeEnabled;
-    hdrInputs.debugMode = static_cast<int>(m_debugMode);
-    hdrInputs.compositeShader = m_compositeShader.get();
-    hdrInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
-    hdrInputs.hdrCompositeTarget = const_cast<InternalTarget*>(&m_hdrCompositeTarget);
-
-        ScreenCompositeHdrOutputs hdrOutputs{};
-        ScreenCompositePass::ExecuteHdrComposite(postContext, hdrInputs, hdrOutputs);
-        state.hdrColorSrv = hdrOutputs.hdrColorSrv;
-        state.hdrColorSource = hdrOutputs.hdrColorSource;
-        state.compositeRan = hdrOutputs.compositeRan;
-    }
-
-    {
-        const GfxContext::GpuTimerScope gpuScopeTaa("Post-process/TAA");
-        TaaPassInputs taaInputs{};
-        taaInputs.useTaa = state.useTaa;
-        taaInputs.hdrColorSrv = state.hdrColorSrv;
-        taaInputs.texelSize = state.texelSize;
-        taaInputs.viewMatrix = state.camera->GetViewMatrix();
-        taaInputs.unjitteredProjectionMatrix = state.camera->GetUnjitteredProjectionMatrix();
-        taaInputs.motionVectorState = m_motionVectorFrameState;
-        taaInputs.taaBlendFactor = m_taaBlendFactor;
-        taaInputs.taaHistoryValid = m_taaHistoryValid;
-        taaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
-        taaInputs.taaShader = m_taaShader.get();
-        taaInputs.taaHistoryTarget = const_cast<InternalTarget*>(&m_taaHistoryTarget);
-        taaInputs.taaResolveTarget = const_cast<InternalTarget*>(&m_taaResolveTarget);
-
-        TaaPassOutputs taaOutputs{};
-        AntiAliasingPass::ExecuteTaa(postContext, taaInputs, taaOutputs);
-        if (taaOutputs.ran)
+        if (state.runSsao || state.runGtao)
         {
-            state.hdrColorSrv = taaOutputs.hdrColorSrv;
-            state.hdrColorSource = "hdr_taa";
-            const_cast<ScreenSpaceEffects*>(this)->m_taaHistoryValid = taaOutputs.taaHistoryValid;
+            const GfxContext::GpuTimerScope gpuScopeAo("Post-process/AO");
+            FillAmbientOcclusionInputs(state);
+            AmbientOcclusionPassOutputs aoOutputs{};
+            aoOutputs.aoCompositeSrv = m_ssaoTarget.srvCpuHandle;
+            AmbientOcclusionPass::Execute(postContext, state.aoInputs, aoOutputs);
+            state.aoCompositeSrv = aoOutputs.aoCompositeSrv;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeShadowPrep("Post-process/Shadow prep");
+            ScreenCompositePrePassInputs prePassInputs{};
+            prePassInputs.pbrDebugActive = state.pbrDebugActive;
+            prePassInputs.useShadowFactorComposite = state.useShadowFactorComposite;
+            prePassInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
+            prePassInputs.texelSize = state.texelSize;
+            prePassInputs.shadowSettings = state.shadowSettings;
+            prePassInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+            prePassInputs.shadowFactorSrv = state.shadowFactorSrv;
+            prePassInputs.shadowBlurShader = m_shadowBlurShader.get();
+            prePassInputs.radianceAssemblyShader = m_radianceAssemblyShader.get();
+            prePassInputs.shadowBlurTarget = const_cast<InternalTarget*>(&m_shadowBlurTarget);
+            prePassInputs.shadowBlur2Target = const_cast<InternalTarget*>(&m_shadowBlur2Target);
+            prePassInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
+
+            ScreenCompositePrePassOutputs prePassOutputs{};
+            ScreenCompositePass::ExecutePreReflection(postContext, prePassInputs, prePassOutputs);
+            state.shadowFactorSrv = prePassOutputs.shadowFactorSrv;
+            state.runRadianceAssembly = prePassOutputs.runRadianceAssembly;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeSsr("Post-process/SSR");
+            FillScreenSpaceReflectionInputs(state);
+            ScreenSpaceReflectionPassOutputs ssrOutputs{};
+            ScreenSpaceReflectionPass::Execute(postContext, state.ssrInputs, ssrOutputs);
+
+            m_ssrSceneColorRanLastFrame = ssrOutputs.ssrSceneColorRanLastFrame;
+            m_ssrTraceRanLastFrame = ssrOutputs.ssrTraceRanLastFrame;
+            m_ssrDenoiseRanLastFrame = ssrOutputs.ssrDenoiseRanLastFrame;
+            m_ssrTemporalRanLastFrame = ssrOutputs.ssrTemporalRanLastFrame;
+            m_lastSsrSpatialSrv = ssrOutputs.lastSsrSpatialSrv;
+            m_lastSsrTemporalSrv = ssrOutputs.lastSsrTemporalSrv;
+            m_lastSsrVarianceSrv = ssrOutputs.lastSsrVarianceSrv;
+            m_lastSsrDenoiseSrv = ssrOutputs.lastSsrDenoiseSrv;
+            m_lastSsrResolvedSrv = ssrOutputs.lastSsrResolvedSrv;
+            m_ssrFrameIndex = ssrOutputs.ssrFrameIndex;
+            m_ssrHistoryValid = ssrOutputs.ssrHistoryValid;
+            state.runSsrIndirect = ssrOutputs.ssrIndirectRan;
+            state.indirectCompositeSrv = ssrOutputs.indirectCompositeSrv;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeRtComposite("Post-process/RT composite");
+            ScreenCompositeDxrInputs dxrInputs{};
+            dxrInputs.pbrDebugActive = state.pbrDebugActive;
+            dxrInputs.rtCompositeWanted = state.rtCompositeWanted;
+            dxrInputs.rtCompositeDebugOnly = state.rtCompositeDebugOnly;
+            dxrInputs.rtHasFreshTrace = state.rtHasFreshTrace;
+            dxrInputs.runRtGiInject = state.runRtGiInject;
+            dxrInputs.giHasFreshTrace = state.giHasFreshTrace;
+            dxrInputs.inverseProjectionMatrix = state.inverseProjectionMatrix;
+            dxrInputs.camera = state.camera;
+            dxrInputs.environmentMap = state.environmentMap;
+            dxrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+            dxrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
+            dxrInputs.dxrReflectionSrv = m_dxrReflectionSrv;
+            dxrInputs.dxrReflectionDenoisedSrv = m_dxrReflectionDenoisedSrv;
+            dxrInputs.dxrReflectionMaxTraceDistance = m_dxrReflectionMaxTraceDistance;
+            dxrInputs.dxrReflectionRoughnessCutoff = m_dxrReflectionRoughnessCutoff;
+            dxrInputs.dxrReflectionUvScaleX = m_dxrReflectionUvScaleX;
+            dxrInputs.dxrReflectionUvScaleY = m_dxrReflectionUvScaleY;
+            dxrInputs.giInjectSrv = state.giInjectSrv;
+            dxrInputs.dxrGiStrength = m_dxrGiStrength;
+            dxrInputs.dxrGiUvScaleX = m_dxrGiUvScaleX;
+            dxrInputs.dxrGiUvScaleY = m_dxrGiUvScaleY;
+            dxrInputs.dxrIndirectShader = m_dxrIndirectShader.get();
+            dxrInputs.dxrGiInjectShader = m_dxrGiInjectShader.get();
+            dxrInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
+            dxrInputs.rtGiInjectTarget = const_cast<InternalTarget*>(&m_rtGiInjectTarget);
+
+            ScreenCompositeDxrOutputs dxrOutputs{};
+            ScreenCompositePass::ExecuteDxrIndirectChain(postContext, dxrInputs, dxrOutputs);
+            state.indirectCompositeSrv = dxrOutputs.indirectCompositeSrv;
+            state.runRtIndirect = dxrOutputs.runRtIndirect;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeSsgi("Post-process/SSGI");
+            FillScreenSpaceGiInputs(state);
+            ScreenSpaceGiPassOutputs ssgiOutputs{};
+            ScreenSpaceGiPass::Execute(postContext, state.ssgiInputs, ssgiOutputs);
+
+            m_giFrameIndex = ssgiOutputs.giFrameIndex;
+            m_radianceHistoryValid = ssgiOutputs.radianceHistoryValid;
+            m_lastSsgiInjectSrv = ssgiOutputs.lastSsgiInjectSrv;
+            state.runSsgiTrace = ssgiOutputs.runSsgiTrace;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeHdrComposite("Post-process/HDR composite");
+            ScreenCompositeHdrInputs hdrInputs{};
+            hdrInputs.pbrDebugActive = state.pbrDebugActive;
+            hdrInputs.runAo = state.runAo;
+            hdrInputs.runGtao = state.runGtao;
+            hdrInputs.useShadowFactorComposite = state.useShadowFactorComposite;
+            hdrInputs.runRtGiInject = state.runRtGiInject;
+            hdrInputs.runSsgiTrace = state.runSsgiTrace;
+            hdrInputs.camera = state.camera;
+            hdrInputs.environmentMap = state.environmentMap;
+            hdrInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+            hdrInputs.aoCompositeSrv = state.aoCompositeSrv;
+            hdrInputs.shadowFactorSrv = state.shadowFactorSrv;
+            hdrInputs.indirectCompositeSrv = state.indirectCompositeSrv;
+            hdrInputs.lastSsgiInjectSrv = m_lastSsgiInjectSrv;
+            hdrInputs.aoStrength = m_aoStrength;
+            hdrInputs.ssaoPower = m_ssaoPower;
+            hdrInputs.gtaoPower = m_gtaoPower;
+            hdrInputs.ssgiStrength = m_ssgiStrength;
+            hdrInputs.dxrShadowDenoisedSrv = m_dxrShadowDenoisedSrv;
+            hdrInputs.dxrShadowUvScaleX = m_dxrShadowUvScaleX;
+            hdrInputs.dxrShadowUvScaleY = m_dxrShadowUvScaleY;
+            hdrInputs.dxrShadowCompositeEnabled = m_dxrShadowCompositeEnabled;
+            hdrInputs.debugMode = static_cast<int>(m_debugMode);
+            hdrInputs.compositeShader = m_compositeShader.get();
+            hdrInputs.radianceTarget = const_cast<InternalTarget*>(&m_radianceTarget);
+            hdrInputs.hdrCompositeTarget = const_cast<InternalTarget*>(&m_hdrCompositeTarget);
+
+            ScreenCompositeHdrOutputs hdrOutputs{};
+            ScreenCompositePass::ExecuteHdrComposite(postContext, hdrInputs, hdrOutputs);
+            state.hdrColorSrv = hdrOutputs.hdrColorSrv;
+            state.hdrColorSource = hdrOutputs.hdrColorSource;
+            state.compositeRan = hdrOutputs.compositeRan;
+        }
+
+        {
+            const GfxContext::GpuTimerScope gpuScopeTaa("Post-process/TAA");
+            TaaPassInputs taaInputs{};
+            taaInputs.useTaa = state.useTaa;
+            taaInputs.hdrColorSrv = state.hdrColorSrv;
+            taaInputs.texelSize = state.texelSize;
+            taaInputs.viewMatrix = state.camera->GetViewMatrix();
+            taaInputs.unjitteredProjectionMatrix = state.camera->GetUnjitteredProjectionMatrix();
+            taaInputs.motionVectorState = m_motionVectorFrameState;
+            taaInputs.taaBlendFactor = m_taaBlendFactor;
+            taaInputs.taaHistoryValid = m_taaHistoryValid;
+            taaInputs.sceneFramebuffer = m_sceneFramebuffer.get();
+            taaInputs.taaShader = m_taaShader.get();
+            taaInputs.taaHistoryTarget = const_cast<InternalTarget*>(&m_taaHistoryTarget);
+            taaInputs.taaResolveTarget = const_cast<InternalTarget*>(&m_taaResolveTarget);
+
+            TaaPassOutputs taaOutputs{};
+            AntiAliasingPass::ExecuteTaa(postContext, taaInputs, taaOutputs);
+            if (taaOutputs.ran)
+            {
+                state.hdrColorSrv = taaOutputs.hdrColorSrv;
+                state.hdrColorSource = "hdr_taa";
+                const_cast<ScreenSpaceEffects*>(this)->m_taaHistoryValid = taaOutputs.taaHistoryValid;
+            }
         }
     }
 

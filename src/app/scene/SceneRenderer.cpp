@@ -1095,11 +1095,28 @@ void SceneRenderer::RecordDxrPass(
             reflectionsDispatched ? m_dxrReflectionsDispatch->GetDenoisedSrvCpuHandle() : 0,
             m_dxrSettings.GetMaxTraceDistance());
 
-        // Run the RT specular composite in Apply (and skip SSR's) whenever RT reflections are
-        // ENABLED — not only on a fresh trace. The raster omits spec IBL when the composite will
-        // add it back (see the IBL omit flag set before the scene draw), so the composite MUST
-        // run to re-add it; it falls back to pure IBL (uHasRtTrace=0) when there is no fresh trace.
-        m_activeScreenSpaceEffects->SetDxrReflectionCompositeEnabled(m_dxrSettings.IsReflectionsEnabled());
+        // Hybrid RT composites replace raster IBL — never run them under PT (PT owns the image).
+        // Also force-clear so leftover settings cannot schedule wasted composite work in Apply.
+        if (pathTracingActive)
+        {
+            m_activeScreenSpaceEffects->SetDxrReflectionCompositeEnabled(false);
+            m_activeScreenSpaceEffects->SetDxrGiCompositeEnabled(false);
+            m_activeScreenSpaceEffects->SetDxrShadowCompositeEnabled(false);
+        }
+        else
+        {
+            // Run the RT specular composite in Apply (and skip SSR's) whenever RT reflections are
+            // ENABLED — not only on a fresh trace. The raster omits spec IBL when the composite will
+            // add it back (see the IBL omit flag set before the scene draw), so the composite MUST
+            // run to re-add it; it falls back to pure IBL (uHasRtTrace=0) when there is no fresh trace.
+            m_activeScreenSpaceEffects->SetDxrReflectionCompositeEnabled(
+                m_dxrSettings.IsReflectionsEnabled());
+            // Run the GI inject (and skip SSGI inject) whenever RT GI is ENABLED — not only on a
+            // fresh trace. The raster omits the SH diffuse ambient when GI is enabled, so the inject
+            // MUST run to replace it; it recomputes a transient SH ambient (uHasGiTrace=0) when
+            // there's no trace.
+            m_activeScreenSpaceEffects->SetDxrGiCompositeEnabled(m_dxrSettings.IsGiEnabled());
+        }
         m_activeScreenSpaceEffects->SetDxrReflectionRoughnessCutoff(
             m_dxrSettings.GetReflectionRoughnessCutoff());
 
@@ -1114,9 +1131,12 @@ void SceneRenderer::RecordDxrPass(
 
         // Replace the CSM sun shadow factor with the RT mask only when the user enabled RT
         // shadows AND a fresh denoised mask exists this frame.
-        m_activeScreenSpaceEffects->SetDxrShadowCompositeEnabled(
-            m_dxrSettings.IsShadowsEnabled() && shadowsDispatched
-            && m_dxrShadowsDispatch->DenoisedThisFrame());
+        if (!pathTracingActive)
+        {
+            m_activeScreenSpaceEffects->SetDxrShadowCompositeEnabled(
+                m_dxrSettings.IsShadowsEnabled() && shadowsDispatched
+                && m_dxrShadowsDispatch->DenoisedThisFrame());
+        }
 
         // D9: RT diffuse GI (raw drives the raw debug view, denoised feeds the inject pass).
         m_activeScreenSpaceEffects->SetDxrGiSrv(
@@ -1127,11 +1147,6 @@ void SceneRenderer::RecordDxrPass(
             m_dxrGiDispatch->GetOutputUvScaleX(),
             m_dxrGiDispatch->GetOutputUvScaleY());
         m_activeScreenSpaceEffects->SetDxrGiStrength(m_dxrSettings.GetGiStrength());
-
-        // Run the GI inject (and skip SSGI inject) whenever RT GI is ENABLED — not only on a fresh
-        // trace. The raster omits the SH diffuse ambient when GI is enabled, so the inject MUST run
-        // to replace it; it recomputes a transient SH ambient (uHasGiTrace=0) when there's no trace.
-        m_activeScreenSpaceEffects->SetDxrGiCompositeEnabled(m_dxrSettings.IsGiEnabled());
     }
 }
 
@@ -1225,7 +1240,10 @@ void SceneRenderer::RenderGeometryPass(
     const MotionVectorFrameState motionFrameState =
         usePostProcess ? m_activeScreenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
 
-    if (m_environmentMap != nullptr)
+    const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+
+    // Hybrid-only IBL omit flags: PT never runs the raster lit pass that consumes them.
+    if (!pathTracingActive && m_environmentMap != nullptr)
     {
         const bool iblReady = m_environmentMap->GetIBL().IsReady();
         const bool dxrReflectionsActive =
@@ -1241,7 +1259,15 @@ void SceneRenderer::RenderGeometryPass(
                    dxrGiActive, iblReady, activeDebugMode);
         m_environmentMap->GetIBL().SetGiReplacesDiffuseIbl(omitDiffuseIbl);
     }
+    else if (m_environmentMap != nullptr)
+    {
+        m_environmentMap->GetIBL().SetReflectionsReplaceSpecIbl(false);
+        m_environmentMap->GetIBL().SetGiReplacesDiffuseIbl(false);
+    }
 
+    // PT: keep a cleared G-buffer for shared root-sig SRV binding, but skip the full PBR draw
+    // (image comes from DispatchPathTracer). Still upload prev-transforms / emissives below.
+    if (!pathTracingActive)
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
@@ -1557,9 +1583,12 @@ void SceneRenderer::Render(
     const bool freezeTemporalJitter =
         ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
 
+    const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+
     SceneRenderTrace::Step(
         std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
-        + " shadowPass=" + (options.enableShadowPass ? "1" : "0"));
+        + " shadowPass=" + (options.enableShadowPass ? "1" : "0")
+        + " pathTracing=" + (pathTracingActive ? "1" : "0"));
 
     if (target != nullptr)
     {
@@ -1572,7 +1601,8 @@ void SceneRenderer::Render(
         lightingScope.Success();
     }
 
-    if (options.enableShadowPass)
+    // PT owns lighting/shadows via TraceRay — CSM only feeds the discarded raster lit pass.
+    if (options.enableShadowPass && !pathTracingActive)
     {
         SceneRenderTrace::Scope shadowScope("RenderShadowPass");
         const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");

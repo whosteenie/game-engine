@@ -13,7 +13,8 @@ enum class DxrReflectionsQuality
 
 // Top-level rendering mode (devdoc/dxr/path-tracing.md). Hybrid = the raster + hybrid-RT pipeline
 // (default, always retained). PathTraced = the unified path tracer owns the image. Mutually
-// exclusive; selecting PathTraced bypasses the hybrid RT effect passes and shows the PT output.
+// exclusive; selecting PathTraced skips CSM, scene raster, hybrid RT dispatches, and the hybrid
+// lighting post chain (AO/SSR/SSGI/composite/TAA), then presents PT via integrate/DLSS/bloom/tonemap.
 enum class RenderingMode
 {
     Hybrid,
