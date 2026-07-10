@@ -34,6 +34,8 @@ public:
     bool BuildReflectionTable(ID3D12StateObjectProperties* stateObjectProperties, std::string& outError);
     bool BuildShadowTable(ID3D12StateObjectProperties* stateObjectProperties, std::string& outError);
     bool BuildGiTable(ID3D12StateObjectProperties* stateObjectProperties, std::string& outError);
+    bool BuildRestirTemporalTable(ID3D12StateObjectProperties* stateObjectProperties, std::string& outError);
+    bool BuildRestirSpatialTable(ID3D12StateObjectProperties* stateObjectProperties, std::string& outError);
     void Release();
 
     std::uint64_t GetRaygenGpuAddress() const;

@@ -20,6 +20,8 @@ namespace
     ID3D12RootSignature* g_pathTracerRootSignature = nullptr;
     ID3D12RootSignature* g_shadowRootSignature = nullptr;
     ID3D12RootSignature* g_shadowLocalRootSignature = nullptr;
+    ID3D12RootSignature* g_restirRootSignature = nullptr;
+    ID3D12RootSignature* g_restirLocalRootSignature = nullptr;
 
     void SerializeSmokeGlobalRootSignatureBlob(ComPtr<ID3DBlob>& outBlob)
     {
@@ -723,6 +725,161 @@ void DxrRootSignature::ReleaseShadowLocalRootSignature()
     {
         g_shadowLocalRootSignature->Release();
         g_shadowLocalRootSignature = nullptr;
+    }
+}
+
+void DxrRootSignature::SerializeRestirGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
+{
+    D3D12_DESCRIPTOR_RANGE1 srvRange{};
+    srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    srvRange.NumDescriptors = 1;
+    srvRange.BaseShaderRegister = 0;
+    srvRange.RegisterSpace = 0;
+    srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+    srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+
+    D3D12_DESCRIPTOR_RANGE1 uavRanges[3]{};
+    for (std::uint32_t registerIndex = 0; registerIndex < 3; ++registerIndex)
+    {
+        uavRanges[registerIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        uavRanges[registerIndex].NumDescriptors = 1;
+        uavRanges[registerIndex].BaseShaderRegister = registerIndex;
+        uavRanges[registerIndex].RegisterSpace = 0;
+        uavRanges[registerIndex].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        uavRanges[registerIndex].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
+    }
+
+    D3D12_ROOT_PARAMETER1 rootParams[5]{};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[0].Descriptor.ShaderRegister = 0;
+    rootParams[0].Descriptor.RegisterSpace = 0;
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[1].DescriptorTable.pDescriptorRanges = &srvRange;
+    rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    for (std::uint32_t uavIndex = 0; uavIndex < 3; ++uavIndex)
+    {
+        rootParams[2 + uavIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[2 + uavIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[2 + uavIndex].DescriptorTable.pDescriptorRanges = &uavRanges[uavIndex];
+        rootParams[2 + uavIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
+    rootDesc.NumParameters = 5;
+    rootDesc.pParameters = rootParams;
+    rootDesc.Flags =
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc{};
+    versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    versionedDesc.Desc_1_1 = rootDesc;
+
+    ComPtr<ID3DBlob> signatureError;
+    ThrowIfFailed(
+        D3D12SerializeVersionedRootSignature(&versionedDesc, &outBlob, &signatureError),
+        "D3D12SerializeVersionedRootSignature failed for DXR ReSTIR");
+}
+
+void DxrRootSignature::SerializeRestirLocalRootSignature(ComPtr<ID3DBlob>& outBlob)
+{
+    D3D12_ROOT_SIGNATURE_DESC1 rootDesc{};
+    rootDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc{};
+    versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    versionedDesc.Desc_1_1 = rootDesc;
+
+    ComPtr<ID3DBlob> signatureError;
+    ThrowIfFailed(
+        D3D12SerializeVersionedRootSignature(&versionedDesc, &outBlob, &signatureError),
+        "D3D12SerializeVersionedRootSignature failed for DXR ReSTIR local root signature");
+}
+
+ID3D12RootSignature* DxrRootSignature::CreateRestirGlobalRootSignature()
+{
+    if (g_restirRootSignature != nullptr)
+    {
+        g_restirRootSignature->AddRef();
+        return g_restirRootSignature;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr)
+    {
+        throw std::runtime_error("CreateRestirGlobalRootSignature: GfxContext not initialized");
+    }
+
+    ComPtr<ID3DBlob> signatureBlob;
+    SerializeRestirGlobalRootSignature(signatureBlob);
+
+    ComPtr<ID3D12RootSignature> rootSignature;
+    ThrowIfFailed(
+        device->CreateRootSignature(
+            0,
+            signatureBlob->GetBufferPointer(),
+            signatureBlob->GetBufferSize(),
+            IID_PPV_ARGS(&rootSignature)),
+        "CreateRootSignature failed for DXR ReSTIR");
+
+    g_restirRootSignature = rootSignature.Detach();
+    g_restirRootSignature->AddRef();
+    return g_restirRootSignature;
+}
+
+ID3D12RootSignature* DxrRootSignature::CreateRestirLocalRootSignature()
+{
+    if (g_restirLocalRootSignature != nullptr)
+    {
+        g_restirLocalRootSignature->AddRef();
+        return g_restirLocalRootSignature;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr)
+    {
+        throw std::runtime_error("CreateRestirLocalRootSignature: GfxContext not initialized");
+    }
+
+    ComPtr<ID3DBlob> signatureBlob;
+    SerializeRestirLocalRootSignature(signatureBlob);
+
+    ComPtr<ID3D12RootSignature> rootSignature;
+    ThrowIfFailed(
+        device->CreateRootSignature(
+            0,
+            signatureBlob->GetBufferPointer(),
+            signatureBlob->GetBufferSize(),
+            IID_PPV_ARGS(&rootSignature)),
+        "CreateRootSignature failed for DXR ReSTIR local root signature");
+
+    g_restirLocalRootSignature = rootSignature.Detach();
+    g_restirLocalRootSignature->AddRef();
+    return g_restirLocalRootSignature;
+}
+
+void DxrRootSignature::ReleaseRestirGlobalRootSignature()
+{
+    if (g_restirRootSignature != nullptr)
+    {
+        g_restirRootSignature->Release();
+        g_restirRootSignature = nullptr;
+    }
+}
+
+void DxrRootSignature::ReleaseRestirLocalRootSignature()
+{
+    if (g_restirLocalRootSignature != nullptr)
+    {
+        g_restirLocalRootSignature->Release();
+        g_restirLocalRootSignature = nullptr;
     }
 }
 

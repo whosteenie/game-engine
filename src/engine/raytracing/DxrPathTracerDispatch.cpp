@@ -332,6 +332,11 @@ std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevNormalRoughnessSrvCpuHand
     return m_dispatchContext.GetPathTracerPrevNormalRoughnessSrvCpuHandle();
 }
 
+bool DxrPathTracerDispatch::HasRestirBuffers() const
+{
+    return m_dispatchContext.HasRestirBuffers();
+}
+
 std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState() const
 {
     return m_dispatchContext.GetPathTracerMotionResourceState();

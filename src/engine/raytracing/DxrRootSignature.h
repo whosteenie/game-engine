@@ -119,6 +119,10 @@ ID3D12RootSignature* CreateReflectionLocalRootSignature();
 ID3D12RootSignature* CreatePathTracerGlobalRootSignature();
 ID3D12RootSignature* CreateShadowGlobalRootSignature();
 ID3D12RootSignature* CreateShadowLocalRootSignature();
+void SerializeRestirGlobalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
+void SerializeRestirLocalRootSignature(Microsoft::WRL::ComPtr<ID3DBlob>& outBlob);
+ID3D12RootSignature* CreateRestirGlobalRootSignature();
+ID3D12RootSignature* CreateRestirLocalRootSignature();
 void ReleaseSmokeGlobalRootSignature();
 void ReleaseSmokeLocalRootSignature();
 void ReleasePrimaryDebugGlobalRootSignature();
@@ -128,5 +132,7 @@ void ReleaseReflectionLocalRootSignature();
 void ReleasePathTracerGlobalRootSignature();
 void ReleaseShadowGlobalRootSignature();
 void ReleaseShadowLocalRootSignature();
+void ReleaseRestirGlobalRootSignature();
+void ReleaseRestirLocalRootSignature();
 
 } // namespace DxrRootSignature

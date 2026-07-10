@@ -4,6 +4,7 @@
 #include "engine/raytracing/DxrGpuResource.h"
 #include "engine/raytracing/DxrPipeline.h"
 #include "engine/raytracing/DxrTrace.h"
+#include "engine/raytracing/RestirTypes.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/HresultFormat.h"
@@ -110,6 +111,14 @@ void DxrDispatchContext::Release()
     RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
     m_ptPrevSurfaceHistoryValid = false;
 
+    ReleaseRetiredRestirBuffers();
+    RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
+    RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
+    RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+    m_restirBufferWidth = 0;
+    m_restirBufferHeight = 0;
+    m_restirElementCount = 0;
+
     ReleaseRetiredReflectionOutputs();
     for (ReflectionTexture& texture : m_reflectionTextures)
     {
@@ -200,6 +209,20 @@ void DxrDispatchContext::ReleaseRetiredGiOutputs()
     }
 
     m_retiredGiOutputs.clear();
+}
+
+void DxrDispatchContext::ReleaseRetiredRestirBuffers()
+{
+    for (RetiredOutput& retired : m_retiredRestirBuffers)
+    {
+        DestroyOutputResource(
+            retired.resource,
+            retired.allocation,
+            retired.srvIndex,
+            retired.uavIndex);
+    }
+
+    m_retiredRestirBuffers.clear();
 }
 
 // DXR-03: dispatch constants are allocated per dispatch from the per-frame transient upload
@@ -622,6 +645,7 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     // descriptors/GPU memory (G4 doubled the leak rate) until the heap exhausted and PT/DLSS
     // permanently failed.
     ReleaseRetiredReflectionOutputs();
+    ReleaseRetiredRestirBuffers();
     for (RetiredOutput& retired : m_retiredPrimaryMetadata)
     {
         DestroyOutputResource(
@@ -782,7 +806,7 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         && m_ptPrevNormalRoughnessTexture.resource != nullptr
         && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
-        return true;
+        return EnsureRestirBuffers(width, height, outError);
     }
 
     RetireOrDestroyReflectionTexture(m_ptDepthTexture);
@@ -832,7 +856,151 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         }
     }
 
+    return EnsureRestirBuffers(width, height, outError);
+}
+
+bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, std::string& outError)
+{
+    outError.clear();
+    if (width <= 0 || height <= 0)
+    {
+        outError = "invalid ReSTIR buffer dimensions";
+        return false;
+    }
+
+    const std::uint32_t elementCount = static_cast<std::uint32_t>(width) * static_cast<std::uint32_t>(height);
+    if (HasRestirBuffers() && m_restirBufferWidth == width && m_restirBufferHeight == height
+        && m_restirElementCount == elementCount)
+    {
+        return true;
+    }
+
+    RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
+    RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
+    RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+    m_restirBufferWidth = 0;
+    m_restirBufferHeight = 0;
+    m_restirElementCount = 0;
+
+    if (!CreateStructuredBufferUav(
+            elementCount, sizeof(RestirReservoir), m_restirReservoirs[0], outError)
+        || !CreateStructuredBufferUav(
+            elementCount, sizeof(RestirReservoir), m_restirReservoirs[1], outError)
+        || !CreateStructuredBufferUav(
+            elementCount, sizeof(RestirInitialSample), m_restirInitialSample, outError))
+    {
+        RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
+        RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
+        RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+        return false;
+    }
+
+    m_restirBufferWidth = width;
+    m_restirBufferHeight = height;
+    m_restirElementCount = elementCount;
     return true;
+}
+
+bool DxrDispatchContext::CreateStructuredBufferUav(
+    const std::uint32_t elementCount,
+    const std::uint32_t structureByteStride,
+    StructuredBufferUav& outBuffer,
+    std::string& outError)
+{
+    outError.clear();
+    outBuffer = StructuredBufferUav{};
+
+    if (elementCount == 0 || structureByteStride == 0)
+    {
+        outError = "invalid structured buffer parameters";
+        return false;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
+    if (device == nullptr || !GfxContext::Get().IsInitialized())
+    {
+        outError = "GfxContext unavailable for ReSTIR structured buffer";
+        return false;
+    }
+
+    DxrGpuResource gpuResource{};
+    const std::uint64_t byteSize =
+        static_cast<std::uint64_t>(elementCount) * static_cast<std::uint64_t>(structureByteStride);
+    if (!CreateDxrDefaultBuffer(
+            byteSize, true, gpuResource, D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        outError = "failed to allocate ReSTIR structured buffer ("
+            + std::to_string(elementCount) + " x " + std::to_string(structureByteStride) + ")";
+        return false;
+    }
+
+    outBuffer.resource = gpuResource.resource;
+    outBuffer.allocation = gpuResource.allocation;
+    outBuffer.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    outBuffer.elementCount = elementCount;
+    outBuffer.structureByteStride = structureByteStride;
+    // Ownership transferred into outBuffer; clear so DxrGpuResource destructor does not release.
+    gpuResource.resource = nullptr;
+    gpuResource.allocation = nullptr;
+    gpuResource.sizeInBytes = 0;
+
+    outBuffer.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    outBuffer.uavIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (outBuffer.srvIndex == UINT32_MAX || outBuffer.uavIndex == UINT32_MAX)
+    {
+        outError = "failed to allocate ReSTIR structured buffer descriptors";
+        DestroyOutputResource(
+            outBuffer.resource, outBuffer.allocation, outBuffer.srvIndex, outBuffer.uavIndex);
+        outBuffer = StructuredBufferUav{};
+        return false;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
+    srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(outBuffer.srvIndex);
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+    srvDesc.Format = DXGI_FORMAT_UNKNOWN;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Buffer.FirstElement = 0;
+    srvDesc.Buffer.NumElements = elementCount;
+    srvDesc.Buffer.StructureByteStride = structureByteStride;
+    device->CreateShaderResourceView(outBuffer.resource, &srvDesc, srvHandle);
+    outBuffer.srvCpuHandle = srvHandle.ptr;
+
+    D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
+    uavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(outBuffer.uavIndex);
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+    uavDesc.Buffer.FirstElement = 0;
+    uavDesc.Buffer.NumElements = elementCount;
+    uavDesc.Buffer.StructureByteStride = structureByteStride;
+    device->CreateUnorderedAccessView(outBuffer.resource, nullptr, &uavDesc, uavHandle);
+    outBuffer.uavCpuHandle = uavHandle.ptr;
+    return true;
+}
+
+void DxrDispatchContext::RetireOrDestroyStructuredBufferUav(StructuredBufferUav& buffer)
+{
+    if (buffer.resource == nullptr)
+    {
+        return;
+    }
+
+    if (GfxContext::Get().IsFrameRecording())
+    {
+        RetiredOutput retired{};
+        retired.resource = buffer.resource;
+        retired.allocation = buffer.allocation;
+        retired.srvIndex = buffer.srvIndex;
+        retired.uavIndex = buffer.uavIndex;
+        m_retiredRestirBuffers.push_back(retired);
+        buffer = StructuredBufferUav{};
+        return;
+    }
+
+    DestroyOutputResource(buffer.resource, buffer.allocation, buffer.srvIndex, buffer.uavIndex);
+    buffer = StructuredBufferUav{};
 }
 
 void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList)

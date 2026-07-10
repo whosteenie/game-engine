@@ -120,6 +120,7 @@ set(ENGINE_DXR_SOURCES
     src/engine/raytracing/DxrReflectionsDispatch.cpp
     src/engine/raytracing/DxrShadowsDispatch.cpp
     src/engine/raytracing/DxrGiDispatch.cpp
+    src/engine/raytracing/DxrRestirDispatch.cpp
     src/engine/raytracing/NrdCommon.cpp
     src/engine/raytracing/NrdDenoiser.cpp
     src/engine/raytracing/NrdShadowDenoiser.cpp

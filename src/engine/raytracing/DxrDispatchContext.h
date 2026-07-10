@@ -243,6 +243,34 @@ public:
         return m_ptPrevNormalRoughnessTexture.srvCpuHandle;
     }
 
+    // G8 / ReSTIR: render-res structured buffers (unused until R1+). Exact-size rebuild on resize.
+    bool HasRestirBuffers() const
+    {
+        return m_restirReservoirs[0].resource != nullptr && m_restirReservoirs[1].resource != nullptr
+            && m_restirInitialSample.resource != nullptr;
+    }
+    int GetRestirBufferWidth() const { return m_restirBufferWidth; }
+    int GetRestirBufferHeight() const { return m_restirBufferHeight; }
+    std::uint32_t GetRestirElementCount() const { return m_restirElementCount; }
+    std::uintptr_t GetRestirReservoirUavCpuHandle(int pingPongIndex) const
+    {
+        return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].uavCpuHandle
+                                                         : 0;
+    }
+    std::uintptr_t GetRestirReservoirSrvCpuHandle(int pingPongIndex) const
+    {
+        return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].srvCpuHandle
+                                                         : 0;
+    }
+    std::uintptr_t GetRestirInitialSampleUavCpuHandle() const { return m_restirInitialSample.uavCpuHandle; }
+    std::uintptr_t GetRestirInitialSampleSrvCpuHandle() const { return m_restirInitialSample.srvCpuHandle; }
+    ID3D12Resource* GetRestirReservoirResource(int pingPongIndex) const
+    {
+        return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].resource
+                                                         : nullptr;
+    }
+    ID3D12Resource* GetRestirInitialSampleResource() const { return m_restirInitialSample.resource; }
+
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }
@@ -263,7 +291,9 @@ private:
     void CreateOutputDescriptors();
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
     bool EnsurePathTracerGuides(int width, int height, std::string& outError);
+    bool EnsureRestirBuffers(int width, int height, std::string& outError);
     void CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList);
+    void ReleaseRetiredRestirBuffers();
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
     bool EnsureShadowOutput(int width, int height, std::string& outError);
@@ -345,6 +375,34 @@ private:
     ReflectionTexture m_ptPrevDepthTexture{};
     ReflectionTexture m_ptPrevNormalRoughnessTexture{};
     bool m_ptPrevSurfaceHistoryValid = false;
+
+    // G8: ReSTIR structured buffers (48 B reservoir ping-pong + 32 B initial sample).
+    struct StructuredBufferUav
+    {
+        ID3D12Resource* resource = nullptr;
+        D3D12MA::Allocation* allocation = nullptr;
+        std::uint32_t srvIndex = UINT32_MAX;
+        std::uint32_t uavIndex = UINT32_MAX;
+        std::uintptr_t srvCpuHandle = 0;
+        std::uintptr_t uavCpuHandle = 0;
+        std::uint32_t state = 0;
+        std::uint32_t elementCount = 0;
+        std::uint32_t structureByteStride = 0;
+    };
+
+    bool CreateStructuredBufferUav(
+        std::uint32_t elementCount,
+        std::uint32_t structureByteStride,
+        StructuredBufferUav& outBuffer,
+        std::string& outError);
+    void RetireOrDestroyStructuredBufferUav(StructuredBufferUav& buffer);
+
+    StructuredBufferUav m_restirReservoirs[2]{};
+    StructuredBufferUav m_restirInitialSample{};
+    int m_restirBufferWidth = 0;
+    int m_restirBufferHeight = 0;
+    std::uint32_t m_restirElementCount = 0;
+    std::vector<RetiredOutput> m_retiredRestirBuffers;
 
     static constexpr int kReflectionTextureCount = 5;
     // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised

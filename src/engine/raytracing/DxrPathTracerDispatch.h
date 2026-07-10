@@ -99,6 +99,7 @@ public:
     bool IsPathTracerPrevSurfaceHistoryValid() const;
     std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle() const;
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const;
+    bool HasRestirBuffers() const;
     bool HasValidOutput() const;
 
     // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.

@@ -108,6 +108,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_dxrReflectionsDispatch.reset();
     self->m_dxrShadowsDispatch.reset();
     self->m_dxrGiDispatch.reset();
+    self->m_dxrRestirDispatch.reset();
     self->m_shadowDepthShader.reset();
     self->m_gpuResourceState = GpuResourceState::NotStarted;
 }
@@ -428,14 +429,21 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
         }
 
+        if (m_dxrRestirDispatch == nullptr)
+        {
+            m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
+        }
+
         const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
         const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
         const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
         const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
         const bool giReady = m_dxrGiDispatch->IsPipelineReady();
         const bool pathTracerReady = m_dxrPathTracerDispatch->IsPipelineReady();
+        const bool restirReady = m_dxrRestirDispatch->IsPipelineReady()
+            && m_dxrRestirDispatch->IsSpatialPipelineReady();
         if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady
-            && pathTracerReady)
+            && pathTracerReady && restirReady)
         {
             return;
         }
@@ -464,6 +472,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (!pathTracerReady)
         {
             m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
+        }
+        if (!restirReady)
+        {
+            m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }

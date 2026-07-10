@@ -24,6 +24,8 @@ public:
     bool CreateReflectionsPipeline(std::string& outError);
     bool CreateShadowsPipeline(std::string& outError);
     bool CreateGiPipeline(std::string& outError);
+    // G8 — ReSTIR temporal + spatial raygen stubs in one RTPSO (devdoc/dxr/pt/restir-pt.md).
+    bool CreateRestirPipeline(std::string& outError);
     void Release();
 
     ID3D12StateObject* GetStateObject() const { return m_stateObject; }
