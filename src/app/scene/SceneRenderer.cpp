@@ -1905,19 +1905,21 @@ void SceneRenderer::ApplyPtSceneVersionInvalidation()
 
     m_consumedPtSceneVersion = sceneVersion;
 
+    // Reference progressive accum must restart when materials/env/PT settings change.
+    // Do NOT InvalidateMotionHistory here: that clears DLSS-RR historyValid and forces a full
+    // temporal reset on every slider tick (full-screen noise until RR rebuilds). Pre-G1 material
+    // edits never did that. Reservoirs will key off ptSceneVersion directly when G8 lands.
     if (m_screenSpaceEffects != nullptr)
     {
-        m_screenSpaceEffects->InvalidateMotionHistory();
         m_screenSpaceEffects->ResetPathTracerAccumulation();
     }
 
     if (m_gameViewScreenSpaceEffects != nullptr)
     {
-        m_gameViewScreenSpaceEffects->InvalidateMotionHistory();
         m_gameViewScreenSpaceEffects->ResetPathTracerAccumulation();
     }
 
-    if (m_dxrPathTracerDispatch != nullptr)
+    if (m_dxrPathTracerDispatch != nullptr && m_dxrSettings.IsPtReferenceConvergence())
     {
         m_dxrPathTracerDispatch->ResetAccumulation();
     }
