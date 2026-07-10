@@ -83,9 +83,15 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
+// G7/P5: deep-bounce sun NEE keeps 1 cone sample — RR absorbs the extra variance.
+static const uint kPtSoftSunSampleCountDeep = 1u;
 
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
+// G7/P2: request bits OR'd into payload.hit before TraceRay (cleared/replaced on miss/hit).
+static const uint kPayloadReqShadingData = 4u; // normal-map, bary, triangleLod
+static const uint kPayloadReqPrimarySurface = 8u; // motion + depth (primary only)
+static const uint kPayloadHitBackFace = 16u; // packed into hit on closest-hit (G7/P1)
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
 // Below this roughness, specular uses a delta mirror bounce instead of VNDF (alpha floor ~0.032
@@ -102,8 +108,8 @@ struct Payload
     float hitDistance;
     uint instanceId;
     uint primitiveIndex;
+    // Pre-TraceRay: request bits. Post-hit: bit0=1, optional kPayloadHitBackFace.
     uint hit;
-    uint hitBackFace;      // 1 = ray hit the triangle's winding BACK face (emissive NEE can't reach it)
     float2 barycentrics;
     // Ray-cone LOD constant for the hit triangle's albedo texture: 0.5·log2(texelArea/worldArea)
     // (RTG ch. 20). Computed in closest-hit (needs ObjectToWorld); 0 for untextured materials.
@@ -167,11 +173,20 @@ void ResetPayload(inout Payload payload)
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
     payload.hit = 0;
-    payload.hitBackFace = 0;
     payload.barycentrics = 0.0.xx;
     payload.triangleLod = 0.0;
     payload.primaryMotionNdc = 0.0.xx;
     payload.primaryDepth = 1.0;
+}
+
+bool PayloadIsHit(Payload payload)
+{
+    return (payload.hit & 1u) != 0u;
+}
+
+bool PayloadHitBackFace(Payload payload)
+{
+    return (payload.hit & kPayloadHitBackFace) != 0u;
 }
 
 // Matches lit.vs + pbr.ps: interpolate unjittered curr/prev clip per vertex for MVs; DLSS depth
@@ -285,7 +300,11 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
 }
 
 // Soft sun visibility: cone-jittered shadow rays matching shadows.hlsl / reflections.hlsl.
-float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, inout PathRng rng)
+float TraceSoftSunVisibility(
+    float3 origin,
+    float3 shadingNormal,
+    inout PathRng rng,
+    uint sampleCount)
 {
     const float3 sunDir = normalize(g_SunDirection);
     if (dot(shadingNormal, sunDir) <= 0.0)
@@ -293,13 +312,14 @@ float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, inout PathRng 
         return 0.0;
     }
 
+    const uint count = max(sampleCount, 1u);
     float3 tangent;
     float3 bitangent;
     BuildTangentFrame(sunDir, tangent, bitangent);
 
     float visSum = 0.0;
     [loop]
-    for (uint sampleIndex = 0u; sampleIndex < kPtSoftSunSampleCount; ++sampleIndex)
+    for (uint sampleIndex = 0u; sampleIndex < count; ++sampleIndex)
     {
         const float4 xi = PathRngNext4(rng);
         const float diskRadius = sqrt(xi.x);
@@ -310,7 +330,7 @@ float TraceSoftSunVisibility(float3 origin, float3 shadingNormal, inout PathRng 
         visSum += TraceTransmissiveVisibility(origin, rayDir, g_MaxTraceDistance);
     }
 
-    return visSum / float(kPtSoftSunSampleCount);
+    return visSum / float(count);
 }
 
 // Ray-cone filtered albedo (RTG ch. 20): lod = triangleLod + log2(coneWidth) − log2(n·v).
@@ -512,7 +532,8 @@ float3 EvaluateRealTimeDiffuseAmbient(
 float TracePrimarySunVisibility(
     inout PathRng rng,
     float3 hitNormal,
-    float3 shadowOrigin)
+    float3 shadowOrigin,
+    uint softSunSampleCount)
 {
     const float3 sunL = normalize(g_SunDirection);
     const float ndotl = saturate(dot(hitNormal, sunL));
@@ -522,7 +543,7 @@ float TracePrimarySunVisibility(
     }
 
     return (g_SunAngularTanRadius > 1e-6)
-        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, rng)
+        ? TraceSoftSunVisibility(shadowOrigin, hitNormal, rng, softSunSampleCount)
         : TraceTransmissiveVisibility(shadowOrigin, sunL, g_MaxTraceDistance);
 }
 
@@ -1254,6 +1275,12 @@ void PathTracerRayGen()
     {
         Payload payload;
         ResetPayload(payload);
+        // G7/P2: primary needs motion/depth; every shading bounce needs LOD/bary/normal-map.
+        payload.hit = kPayloadReqShadingData;
+        if (bounce == 0u)
+        {
+            payload.hit |= kPayloadReqPrimarySurface;
+        }
         TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
 
         if (payload.hit == 0)
@@ -1371,7 +1398,7 @@ void PathTracerRayGen()
             // BACK face has no NEE partner and must take full weight — otherwise emissive panel back
             // faces render MIS-dimmed (C6). Emission itself stays two-sided.
             const float cosEmitter = saturate(dot(hitNormal, viewDir));
-            const float pdfNee = (payload.hitBackFace == 0u)
+            const float pdfNee = (!PayloadHitBackFace(payload))
                 ? EmissiveNeePdfSolidAngle(
                     emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter)
                 : 0.0;
@@ -1389,7 +1416,11 @@ void PathTracerRayGen()
             }
         }
 
-        const float sunVis = TracePrimarySunVisibility(rng, hitNormal, shadowOrigin);
+        // G7/P5: full soft-sun cone at the primary; 1 sample on the Lo_tail (and deeper).
+        const uint softSunSamples =
+            (bounce == 0u) ? kPtSoftSunSampleCount : kPtSoftSunSampleCountDeep;
+        const float sunVis =
+            TracePrimarySunVisibility(rng, hitNormal, shadowOrigin, softSunSamples);
         const float3 sunContrib = opaqueWeight
             * EvaluateDirectSun(
                 viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
@@ -1838,6 +1869,7 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         return;
     }
 
+    const uint request = payload.hit;
     const uint instanceId = InstanceID();
     const uint primitiveIndex = PrimitiveIndex();
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
@@ -1856,20 +1888,40 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         hitNormal = -hitNormal;
     }
 
-    payload.hit = 1;
-    payload.hitBackFace = hitBackFace ? 1u : 0u;
+    payload.hit = 1u | (hitBackFace ? kPayloadHitBackFace : 0u);
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;
     payload.normal = hitNormal;
-    payload.shadingNormal = ApplyWorldNormalMap(
-        instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
-    payload.barycentrics = attribs.barycentrics;
-    payload.triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
-    ComputeVertexInterpolatedPrimarySurface(
-        payload.primaryMotionNdc,
-        payload.primaryDepth,
-        instanceId,
-        primitiveIndex,
-        attribs.barycentrics);
+
+    // G7/P2: skip primary-only / shading work unless the raygen asked for it. Shadow and
+    // transmission-visibility segments only need geometric normal + instance + distance.
+    if ((request & kPayloadReqShadingData) != 0u)
+    {
+        payload.shadingNormal = ApplyWorldNormalMap(
+            instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
+        payload.barycentrics = attribs.barycentrics;
+        payload.triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
+    }
+    else
+    {
+        payload.shadingNormal = hitNormal;
+        payload.barycentrics = 0.0.xx;
+        payload.triangleLod = 0.0;
+    }
+
+    if ((request & kPayloadReqPrimarySurface) != 0u)
+    {
+        ComputeVertexInterpolatedPrimarySurface(
+            payload.primaryMotionNdc,
+            payload.primaryDepth,
+            instanceId,
+            primitiveIndex,
+            attribs.barycentrics);
+    }
+    else
+    {
+        payload.primaryMotionNdc = 0.0.xx;
+        payload.primaryDepth = 1.0;
+    }
 }

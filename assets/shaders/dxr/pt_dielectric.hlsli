@@ -286,6 +286,8 @@ TransmissionGuideHit TraceTransmissionGuide(
 
         Payload guidePayload;
         ResetPayload(guidePayload);
+        // Background hit feeds RR guides — need shading + primary motion/depth.
+        guidePayload.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
         TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
         if (guidePayload.hit == 0)
         {
