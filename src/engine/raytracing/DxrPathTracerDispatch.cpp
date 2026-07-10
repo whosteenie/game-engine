@@ -317,6 +317,21 @@ std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle()
     return m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
 }
 
+bool DxrPathTracerDispatch::IsPathTracerPrevSurfaceHistoryValid() const
+{
+    return m_dispatchContext.IsPathTracerPrevSurfaceHistoryValid();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevDepthSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerPrevDepthSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
+{
+    return m_dispatchContext.GetPathTracerPrevNormalRoughnessSrvCpuHandle();
+}
+
 std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState() const
 {
     return m_dispatchContext.GetPathTracerMotionResourceState();

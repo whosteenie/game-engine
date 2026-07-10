@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+struct ID3D12GraphicsCommandList;
 struct ID3D12GraphicsCommandList4;
 struct ID3D12Resource;
 struct ID3D12StateObject;
@@ -231,6 +232,17 @@ public:
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerNormalRoughnessResource() const { return m_ptNormalRoughnessTexture.resource; }
     std::uint32_t GetPathTracerNormalRoughnessResourceState() const { return m_ptNormalRoughnessTexture.state; }
+
+    // G4 / ReSTIR: previous-frame PT surface history (render-res copy of depth + normal/roughness).
+    // Valid after the first successful PT dispatch following create/resize. Temporal reuse (R2)
+    // must read these BEFORE the end-of-dispatch copy overwrites them for the next frame.
+    bool IsPathTracerPrevSurfaceHistoryValid() const { return m_ptPrevSurfaceHistoryValid; }
+    std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle() const { return m_ptPrevDepthTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
+    {
+        return m_ptPrevNormalRoughnessTexture.srvCpuHandle;
+    }
+
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
     int GetReflectionOutputHeight() const { return m_reflectionOutputHeight; }
@@ -251,6 +263,7 @@ private:
     void CreateOutputDescriptors();
     bool EnsurePrimaryOutput(int width, int height, std::string& outError);
     bool EnsurePathTracerGuides(int width, int height, std::string& outError);
+    void CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList);
     void CreatePrimaryOutputDescriptors();
     bool EnsureReflectionOutput(int width, int height, std::string& outError);
     bool EnsureShadowOutput(int width, int height, std::string& outError);
@@ -328,6 +341,10 @@ private:
     ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
     ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
     ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
+    // G4: previous-frame copies for ReSTIR temporal validation (same formats as current guides).
+    ReflectionTexture m_ptPrevDepthTexture{};
+    ReflectionTexture m_ptPrevNormalRoughnessTexture{};
+    bool m_ptPrevSurfaceHistoryValid = false;
 
     static constexpr int kReflectionTextureCount = 5;
     // [0] radiance+hitDist, [1] viewZ, [2] normal+roughness, [3] motion, [4] denoised

@@ -106,6 +106,9 @@ void DxrDispatchContext::Release()
     RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
+    m_ptPrevSurfaceHistoryValid = false;
 
     ReleaseRetiredReflectionOutputs();
     for (ReflectionTexture& texture : m_reflectionTextures)
@@ -614,6 +617,11 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     }
 
     ReleaseRetiredPrimaryOutputs();
+    // PT guides retire into m_retiredReflectionOutputs (shared helper). Drain them here —
+    // path-tracing mode never calls EnsureReflectionOutput, so without this every resize leaked
+    // descriptors/GPU memory (G4 doubled the leak rate) until the heap exhausted and PT/DLSS
+    // permanently failed.
+    ReleaseRetiredReflectionOutputs();
     for (RetiredOutput& retired : m_retiredPrimaryMetadata)
     {
         DestroyOutputResource(
@@ -624,8 +632,12 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
     }
     m_retiredPrimaryMetadata.clear();
 
-    if (m_primaryOutputResource != nullptr && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
+    if (m_primaryOutputResource != nullptr && m_primaryOutputWidth == width
+        && m_primaryOutputHeight == height)
     {
+        // Exact size match required: PT depth/motion/guides are tagged into DLSS-RR with
+        // renderWidth/Height. A larger kept allocation (grow-only) makes NGX return
+        // 0xbad00005 InvalidParameter ("subrect/size exceed dimensions").
         return EnsurePathTracerGuides(width, height, outError);
     }
 
@@ -664,6 +676,9 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+        RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
+        RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
+        m_ptPrevSurfaceHistoryValid = false;
     }
 
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
@@ -763,6 +778,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     }
 
     if (m_ptDepthTexture.resource != nullptr && m_ptNormalRoughnessTexture.resource != nullptr
+        && m_ptPrevDepthTexture.resource != nullptr
+        && m_ptPrevNormalRoughnessTexture.resource != nullptr
         && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
         return true;
@@ -773,9 +790,13 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
+    m_ptPrevSurfaceHistoryValid = false;
 
     // Formats match the RR internal targets they are copied into (rr_guides parity —
-    // devdoc/dxr/pt/full-rr-guides.md buffer contract).
+    // devdoc/dxr/pt/full-rr-guides.md buffer contract). Prev-surface history (G4) mirrors depth +
+    // normal/roughness for ReSTIR temporal validation.
     struct GuideDesc
     {
         DXGI_FORMAT format;
@@ -787,6 +808,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptDiffuseAlbedoTexture},
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptSpecularAlbedoTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptNormalRoughnessTexture},
+        {DXGI_FORMAT_R32_FLOAT, &m_ptPrevDepthTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPrevNormalRoughnessTexture},
     };
     for (const GuideDesc& guide : guides)
     {
@@ -802,11 +825,66 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
             RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+            RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
+            RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
+            m_ptPrevSurfaceHistoryValid = false;
             return false;
         }
     }
 
     return true;
+}
+
+void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList)
+{
+    if (commandList == nullptr || m_ptDepthTexture.resource == nullptr
+        || m_ptNormalRoughnessTexture.resource == nullptr || m_ptPrevDepthTexture.resource == nullptr
+        || m_ptPrevNormalRoughnessTexture.resource == nullptr)
+    {
+        return;
+    }
+
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
+    auto copyGuide = [&](ReflectionTexture& current, ReflectionTexture& prev) {
+        TransitionResource(
+            commandList,
+            current.resource,
+            static_cast<D3D12_RESOURCE_STATES>(current.state),
+            D3D12_RESOURCE_STATE_COPY_SOURCE);
+        current.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+        const D3D12_RESOURCE_STATES prevBefore =
+            prev.state == 0
+                ? D3D12_RESOURCE_STATE_COMMON
+                : static_cast<D3D12_RESOURCE_STATES>(prev.state);
+        TransitionResource(
+            commandList,
+            prev.resource,
+            prevBefore,
+            D3D12_RESOURCE_STATE_COPY_DEST);
+        prev.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_DEST);
+
+        commandList->CopyResource(prev.resource, current.resource);
+
+        TransitionResource(
+            commandList,
+            current.resource,
+            D3D12_RESOURCE_STATE_COPY_SOURCE,
+            kAllShaderRead);
+        current.state = static_cast<std::uint32_t>(kAllShaderRead);
+        TransitionResource(
+            commandList,
+            prev.resource,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            kAllShaderRead);
+        prev.state = static_cast<std::uint32_t>(kAllShaderRead);
+    };
+
+    copyGuide(m_ptDepthTexture, m_ptPrevDepthTexture);
+    copyGuide(m_ptNormalRoughnessTexture, m_ptPrevNormalRoughnessTexture);
+    m_ptPrevSurfaceHistoryValid = true;
 }
 
 bool DxrDispatchContext::CreateReflectionTexture(
@@ -1978,6 +2056,10 @@ bool DxrDispatchContext::DispatchPathTracer(
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         kAllShaderRead);
     m_primaryMetadataResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+
+    // G4: stash this frame's depth + normal/roughness for next frame's temporal validation.
+    // When R2 adds temporal reuse in this dispatch, run it before this copy.
+    CopyPathTracerSurfaceHistory(static_cast<ID3D12GraphicsCommandList*>(commandList));
 
     DxrBreadcrumb("dispatch DispatchPathTracer ok");
     return true;

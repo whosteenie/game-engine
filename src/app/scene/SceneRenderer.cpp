@@ -1847,7 +1847,13 @@ void SceneRenderer::MaybeInvalidateStaleViewportTemporalState(const RenderViewpo
         ? m_gameViewLastSubmissionFrame
         : m_sceneViewLastSubmissionFrame;
 
-    if (lastSubmissionFrame != 0 && lastSubmissionFrame + 1 != submissionFrame)
+    // Only treat a real multi-frame gap as "viewport was not drawn" (tab hide, long stall).
+    // A 1-frame hitch during resize/realloc used to call InvalidateAllTemporalState and force
+    // DLSS-RR reset — after G4's heavier resize that often flipped forever between converge/noise.
+    constexpr std::uint64_t kStaleViewportFrameGap = 3;
+    if (lastSubmissionFrame != 0
+        && submissionFrame > lastSubmissionFrame
+        && submissionFrame - lastSubmissionFrame >= kStaleViewportFrameGap)
     {
         InvalidateViewportTemporalState(viewport);
     }

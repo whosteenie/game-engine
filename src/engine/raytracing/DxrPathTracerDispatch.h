@@ -96,6 +96,9 @@ public:
     std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle() const;
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const;
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const;
+    bool IsPathTracerPrevSurfaceHistoryValid() const;
+    std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle() const;
+    std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const;
     bool HasValidOutput() const;
 
     // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.
