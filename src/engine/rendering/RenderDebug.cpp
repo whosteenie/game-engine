@@ -160,6 +160,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT isolate: pre-clamp radiance";
     case RenderDebugMode::PtIsolateSpecHitDist:
         return "PT isolate: spec hit distance";
+    case RenderDebugMode::PtTemporalRelativeSigma:
+        return "PT temporal: relative sigma";
+    case RenderDebugMode::PtTemporalFrameDelta:
+        return "PT temporal: frame delta";
     default:
         return "Unknown";
     }
@@ -348,6 +352,18 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtIsolateIndirect:
     case RenderDebugMode::PtIsolatePreClamp:
     case RenderDebugMode::PtIsolateSpecHitDist:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsPtTemporalStatsDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::PtTemporalRelativeSigma:
+    case RenderDebugMode::PtTemporalFrameDelta:
         return true;
     default:
         return false;

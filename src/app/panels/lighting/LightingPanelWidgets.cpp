@@ -144,6 +144,12 @@ namespace
         RenderDebugMode::PtIsolateSpecHitDist,
     };
 
+    const RenderDebugMode kPtDiagnosticModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::PtTemporalRelativeSigma,
+        RenderDebugMode::PtTemporalFrameDelta,
+    };
+
     const DebugViewCategory kDebugViewCategories[] = {
         {"Final image", kFinalImageModes, IM_ARRAYSIZE(kFinalImageModes)},
         {"Lighting & composite", kLightingModes, IM_ARRAYSIZE(kLightingModes)},
@@ -157,6 +163,7 @@ namespace
         {"Ray tracing", kRayTracingModes, IM_ARRAYSIZE(kRayTracingModes)},
         {"DLSS RR guides", kRrGuideModes, IM_ARRAYSIZE(kRrGuideModes)},
         {"Path tracer isolate", kPtIsolateModes, IM_ARRAYSIZE(kPtIsolateModes)},
+        {"Path tracer diagnostics", kPtDiagnosticModes, IM_ARRAYSIZE(kPtDiagnosticModes)},
     };
 
     int FindCategoryIndexForMode(const RenderDebugMode mode)
@@ -362,6 +369,11 @@ namespace LightingPanelWidgets
             return pathTracingActive && postEnabled;
         }
 
+        if (IsPtTemporalStatsDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled;
+        }
+
         if (!IsDxrDebugMode(mode))
         {
             return true;
@@ -416,6 +428,18 @@ namespace LightingPanelWidgets
         }
 
         if (IsPtIsolateDebugMode(mode))
+        {
+            if (!postEnabled)
+            {
+                return "Enable post-processing first.";
+            }
+            if (!pathTracingActive)
+            {
+                return "Enable path tracing first.";
+            }
+        }
+
+        if (IsPtTemporalStatsDebugMode(mode))
         {
             if (!postEnabled)
             {
@@ -575,6 +599,10 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtIsolatePreClamp:
         case RenderDebugMode::PtIsolateSpecHitDist:
             return "Raw PT term (DLSS/RR/bloom off). Scalar views (AO, sun vis, spec hit dist) are smooth; radiance views are noisy 1 spp. Sky is black except indirect / pre-clamp.";
+        case RenderDebugMode::PtTemporalRelativeSigma:
+            return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
+        case RenderDebugMode::PtTemporalFrameDelta:
+            return "Amplified per-frame luminance delta for the raw PT output. Use while toggling RR bundle modes or isolate terms.";
         default:
             return nullptr;
         }

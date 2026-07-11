@@ -1793,6 +1793,26 @@ bool GfxContext::IsRaytracingSupported() const
     return m_raytracingTier >= static_cast<int>(D3D12_RAYTRACING_TIER_1_0);
 }
 
+std::uint64_t GfxContext::GetCompletedFenceValue() const
+{
+    return m_impl != nullptr && m_impl->Fence != nullptr ? m_impl->Fence->GetCompletedValue() : 0;
+}
+
+std::uint64_t GfxContext::GetPendingFrameFenceValue() const
+{
+    if (m_impl == nullptr)
+    {
+        return m_submissionFenceValue;
+    }
+
+    if (!m_frameRecording)
+    {
+        return m_submissionFenceValue;
+    }
+
+    return AllocateNextFenceValue(m_impl->Frames[m_frameIndex].FenceValue);
+}
+
 void GfxContext::GetOutputRenderSize(int& outWidth, int& outHeight) const
 {
     outWidth = m_width;

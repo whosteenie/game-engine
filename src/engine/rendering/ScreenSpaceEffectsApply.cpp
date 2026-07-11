@@ -533,6 +533,11 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
             }
         }
     }
+    else if (m_dxrPathTracerOutputSrv != 0)
+    {
+        const GfxContext::GpuTimerScope gpuScopePtStats("Post-process/PT temporal diagnostics");
+        UpdatePathTracerTemporalDiagnostics(*state.camera);
+    }
 
     if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !state.effectiveWantDlss
         && !IsPbrMaterialDebugMode(m_debugMode))
@@ -667,6 +672,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssrTraceTarget = const_cast<InternalTarget*>(&m_ssrTraceTarget);
     debugInputs.ssrIndirectTarget = const_cast<InternalTarget*>(&m_ssrIndirectTarget);
     debugInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
+    debugInputs.ptTemporalStatsTarget = const_cast<InternalTarget*>(&m_ptTemporalStatsTarget);
     debugInputs.debugChannelShader = m_debugChannelShader.get();
     debugInputs.velocityDebugShader = m_velocityDebugShader.get();
     debugInputs.gbufferDebugShader = m_gbufferDebugShader.get();
@@ -676,6 +682,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssrDenoiseDebugShader = m_ssrDenoiseDebugShader.get();
     debugInputs.ssgiDenoiseDebugShader = m_ssgiDenoiseDebugShader.get();
     debugInputs.giTemporalDebugShader = m_giTemporalDebugShader.get();
+    debugInputs.ptTemporalStatsDebugShader = m_ptTemporalStatsDebugShader.get();
     debugInputs.logSsaoApplySnapshot = m_logSsaoApplySnapshot;
     debugInputs.captureSsaoDiagnostics =
         [this](

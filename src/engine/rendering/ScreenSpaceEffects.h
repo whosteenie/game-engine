@@ -14,6 +14,7 @@
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
 #include <glm/glm.hpp>
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -132,6 +133,10 @@ public:
         int height);
     std::uint32_t GetPathTracerAccumSampleCount() const { return m_ptAccumSampleCount; }
     void ResetPathTracerAccumulation();
+    std::uint32_t GetPathTracerTemporalStatsSampleCount() const { return m_ptTemporalStatsSampleCount; }
+    float GetPathTracerBoilMetric() const { return m_ptBoilMetric; }
+    bool IsPathTracerBoilMetricValid() const { return m_ptBoilMetricValid; }
+    void ResetPathTracerTemporalDiagnostics();
     void InvalidateAllTemporalState() const;
     // Motion/object discontinuity without resetting DLSS/TAA jitter history (play stop).
     void InvalidateMotionHistory() const;
@@ -490,6 +495,10 @@ private:
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
+    void FinalizePendingPtBoilMetricReadback() const;
+    void UpdatePathTracerTemporalDiagnostics(const Camera& camera) const;
+    void EnsurePtBoilMetricReadbackSlots() const;
+    void RecordPtBoilMetricReadback() const;
     void CaptureSsaoDiagnosticsCpu(
         const bool runSsao,
         const bool compositeRan,
@@ -504,6 +513,13 @@ private:
     PathTracerHdrCopyInputs BuildPathTracerHdrCopyInputs() const;
 
     struct ApplyFrameState;
+    struct PtBoilMetricReadbackSlot
+    {
+        void* resource = nullptr;
+        void* allocation = nullptr;
+        std::uint64_t fenceValue = 0;
+        bool pending = false;
+    };
     void InitApplyFrame(
         ApplyFrameState& state,
         const Camera& camera,
@@ -566,6 +582,10 @@ private:
     InternalTarget m_taaResolveTarget;
     InternalTarget m_ptAccumSumTarget;
     InternalTarget m_ptAccumScratchTarget;
+    InternalTarget m_ptTemporalStatsTarget;
+    InternalTarget m_ptTemporalStatsScratchTarget;
+    InternalTarget m_ptTemporalPrevRadianceTarget;
+    InternalTarget m_ptBoilMetricTarget;
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
     InternalDepthTarget m_dlssDisplayDepthTarget;
@@ -601,6 +621,9 @@ private:
     std::unique_ptr<Shader> m_dxrPrimaryDebugShader;
     std::unique_ptr<Shader> m_ptAccumulateShader;
     std::unique_ptr<Shader> m_ptMeanShader;
+    std::unique_ptr<Shader> m_ptTemporalStatsShader;
+    std::unique_ptr<Shader> m_ptTemporalStatsDebugShader;
+    std::unique_ptr<Shader> m_ptBoilMetricShader;
     std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
     std::unique_ptr<Shader> m_gbufferDebugShader;
@@ -725,6 +748,14 @@ private:
     mutable PathTracerHistoryKey m_ptAccumHistoryKey{};
     mutable bool m_ptAccumPingPongReadFromScratch = false;
     mutable std::uintptr_t m_ptAccumSumDisplaySrv = 0;
+    mutable std::uint32_t m_ptTemporalStatsSampleCount = 0;
+    mutable bool m_ptTemporalPrevRadianceValid = false;
+    mutable bool m_pendingPtBoilMetricReadback = false;
+    mutable bool m_ptBoilMetricValid = false;
+    mutable float m_ptBoilMetric = 0.0f;
+    mutable glm::mat4 m_ptTemporalStatsPrevViewProjection{1.0f};
+    mutable std::array<PtBoilMetricReadbackSlot, 3> m_ptBoilMetricReadbackSlots{};
+    mutable std::uint32_t m_ptBoilMetricReadbackWriteIndex = 0;
     std::uintptr_t m_dxrReflectionSrv = 0;
     std::uintptr_t m_dxrReflectionDenoisedSrv = 0;
     float m_dxrReflectionUvScaleX = 1.0f;

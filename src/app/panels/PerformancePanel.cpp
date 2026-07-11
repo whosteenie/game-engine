@@ -4,6 +4,7 @@
 #include "app/editor/EditorWidgets.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
+#include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
 
@@ -823,6 +824,16 @@ void PerformancePanel::Draw(
         ImGui::Text("Mesh shader G-buffer: %s", renderDiagnostics.meshShaderGBufferActive ? "active" : "off");
         ImGui::Text("Mesh shader dispatch groups: %u", renderDiagnostics.meshShaderDispatchCount);
         ImGui::Text("Path tracing active: %s", renderDiagnostics.pathTracingActive ? "yes" : "no");
+        const ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+        if (effects.IsPathTracerBoilMetricValid())
+        {
+            ImGui::Text("PT boil metric: %.5f", effects.GetPathTracerBoilMetric());
+        }
+        else
+        {
+            ImGui::TextDisabled("PT boil metric: pending");
+        }
+        ImGui::Text("PT temporal stats samples: %u", effects.GetPathTracerTemporalStatsSampleCount());
         ImGui::Separator();
         ImGui::Text("DXR BLAS: %u", dxrDiagnostics.blasCount);
         ImGui::Text("DXR TLAS instances: %u", dxrDiagnostics.tlasInstanceCount);

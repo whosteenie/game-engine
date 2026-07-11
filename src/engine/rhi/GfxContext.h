@@ -174,6 +174,9 @@ public:
     bool IsMsaaSampleCountSupported(int sampleCount) const;
     bool IsFrameRecording() const { return m_frameRecording; }
     std::uint32_t GetFrameIndex() const { return m_frameIndex; }
+    std::uint64_t GetCompletedFenceValue() const;
+    std::uint64_t GetPendingFrameFenceValue() const;
+    std::uint64_t GetLastSubmittedFenceValue() const { return m_submissionFenceValue; }
     // Monotonic counter incremented once per BeginFrame (not the swapchain ring index).
     std::uint64_t GetSubmissionFrameNumber() const { return m_submissionFrameNumber; }
 

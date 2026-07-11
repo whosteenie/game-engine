@@ -354,6 +354,19 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 {
                     ImGui::TextDisabled("    Path tracer GPU: %.3f ms", pathTracerMs);
                 }
+                const std::uint32_t statsSamples =
+                    screenSpaceEffects.GetPathTracerTemporalStatsSampleCount();
+                if (screenSpaceEffects.IsPathTracerBoilMetricValid())
+                {
+                    ImGui::TextDisabled(
+                        "    PT boil metric: %.5f (%u samples)",
+                        screenSpaceEffects.GetPathTracerBoilMetric(),
+                        statsSamples);
+                }
+                else if (statsSamples > 0u)
+                {
+                    ImGui::TextDisabled("    PT boil metric: pending (%u samples)", statsSamples);
+                }
             }
         }
 

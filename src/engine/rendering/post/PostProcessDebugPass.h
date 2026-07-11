@@ -67,6 +67,7 @@ struct PostProcessDebugPassInputs
     PostProcessTarget* ssrTraceTarget = nullptr;
     PostProcessTarget* ssrIndirectTarget = nullptr;
     PostProcessTarget* rtIndirectTarget = nullptr;
+    PostProcessTarget* ptTemporalStatsTarget = nullptr;
 
     Shader* debugChannelShader = nullptr;
     Shader* velocityDebugShader = nullptr;
@@ -77,6 +78,7 @@ struct PostProcessDebugPassInputs
     Shader* ssrDenoiseDebugShader = nullptr;
     Shader* ssgiDenoiseDebugShader = nullptr;
     Shader* giTemporalDebugShader = nullptr;
+    Shader* ptTemporalStatsDebugShader = nullptr;
 
     CaptureSsaoDiagnosticsFn captureSsaoDiagnostics;
     bool logSsaoApplySnapshot = false;

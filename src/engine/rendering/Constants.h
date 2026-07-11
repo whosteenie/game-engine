@@ -90,6 +90,12 @@ namespace EngineConstants
     inline constexpr const char* DxrPrimaryDebugFragmentShader = "assets/shaders/dxr_primary_debug.ps.hlsl";
     inline constexpr const char* PtAccumulateFragmentShader = "assets/shaders/pt_accumulate.ps.hlsl";
     inline constexpr const char* PtMeanFragmentShader = "assets/shaders/pt_mean.ps.hlsl";
+    inline constexpr const char* PtTemporalStatsFragmentShader =
+        "assets/shaders/pt_temporal_stats.ps.hlsl";
+    inline constexpr const char* PtTemporalStatsDebugFragmentShader =
+        "assets/shaders/pt_temporal_stats_debug.ps.hlsl";
+    inline constexpr const char* PtBoilMetricFragmentShader =
+        "assets/shaders/pt_boil_metric.ps.hlsl";
     inline constexpr const char* DxrReflectionsLibraryShader = "assets/shaders/dxr/reflections.hlsl";
     inline constexpr const char* DxrIndirectFragmentShader = "assets/shaders/dxr_indirect.ps.hlsl";
     inline constexpr const char* DxrShadowsLibraryShader = "assets/shaders/dxr/shadows.hlsl";

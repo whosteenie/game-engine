@@ -18,6 +18,7 @@ namespace
                IsGBufferDebugMode(mode) ||
                IsRadianceDebugMode(mode) ||
                IsGiTemporalDebugMode(mode) ||
+               IsPtTemporalStatsDebugMode(mode) ||
                IsSsgiDenoiseDebugMode(mode) ||
                IsSsrDebugMode(mode) ||
                IsDxrDebugMode(mode);
@@ -65,6 +66,11 @@ namespace
     int RadianceDebugModeIndex(const RenderDebugMode mode)
     {
         return mode == RenderDebugMode::RadianceValidity ? 1 : 0;
+    }
+
+    int PtTemporalStatsDebugModeIndex(const RenderDebugMode mode)
+    {
+        return mode == RenderDebugMode::PtTemporalFrameDelta ? 1 : 0;
     }
 
     int GBufferDebugModeIndex(const RenderDebugMode mode)
@@ -473,6 +479,30 @@ bool PostProcessDebugPass::TryExecute(
                 : (inputs.debugMode == RenderDebugMode::RadianceTemporalDelta
                       ? "radiance_temporal_delta"
                       : "radiance_temporal"));
+        return true;
+    }
+    else if (
+        IsPtTemporalStatsDebugMode(inputs.debugMode) &&
+        inputs.ptTemporalStatsTarget != nullptr &&
+        inputs.ptTemporalStatsTarget->srvCpuHandle != 0 &&
+        inputs.ptTemporalStatsDebugShader != nullptr)
+    {
+        inputs.ptTemporalStatsDebugShader->Use(false, true);
+        inputs.ptTemporalStatsDebugShader->SetInt("uStatsMap", 0);
+        inputs.ptTemporalStatsDebugShader->SetInt(
+            "uDebugMode",
+            PtTemporalStatsDebugModeIndex(inputs.debugMode));
+        inputs.ptTemporalStatsDebugShader->SetFloat("uDeltaGain", 25.0f);
+        inputs.ptTemporalStatsDebugShader->SetFloat("uRelativeSigmaGain", 1.0f);
+        inputs.ptTemporalStatsDebugShader->BindTextureSlot(0, inputs.ptTemporalStatsTarget->srvCpuHandle);
+        inputs.ptTemporalStatsDebugShader->FlushUniforms();
+        context.draw.DrawFullscreenQuad();
+        FinishDebugView(
+            inputs,
+            outputs,
+            inputs.debugMode == RenderDebugMode::PtTemporalFrameDelta
+                ? "pt_temporal_frame_delta"
+                : "pt_temporal_relative_sigma");
         return true;
     }
 

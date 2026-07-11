@@ -38,6 +38,7 @@
 #include <cstring>
 #include <random>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace
@@ -219,6 +220,20 @@ namespace
         readbackResource->Unmap(0, nullptr);
         readbackAllocation->Release();
         readbackResource->Release();
+        return true;
+    }
+
+    bool MatricesNearEqual(const glm::mat4& left, const glm::mat4& right)
+    {
+        const float* lhs = glm::value_ptr(left);
+        const float* rhs = glm::value_ptr(right);
+        for (int index = 0; index < 16; ++index)
+        {
+            if (std::abs(lhs[index] - rhs[index]) > 0.00001f)
+            {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -448,6 +463,18 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_ptMeanShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtMeanFragmentShader)),
+      m_ptTemporalStatsShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtTemporalStatsFragmentShader,
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true})),
+      m_ptTemporalStatsDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtTemporalStatsDebugFragmentShader,
+          ShaderSamplerOverrides{(1u << 0), true})),
+      m_ptBoilMetricShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtBoilMetricFragmentShader,
+          ShaderSamplerOverrides{(1u << 0), true})),
       m_dxrShadowDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrShadowDebugFragmentShader)),
@@ -623,10 +650,22 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_taaResolveTarget);
     DestroyInternalTarget(m_ptAccumSumTarget);
     DestroyInternalTarget(m_ptAccumScratchTarget);
+    DestroyInternalTarget(m_ptTemporalStatsTarget);
+    DestroyInternalTarget(m_ptTemporalStatsScratchTarget);
+    DestroyInternalTarget(m_ptTemporalPrevRadianceTarget);
+    DestroyInternalTarget(m_ptBoilMetricTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
     DestroyInternalDepthTarget(m_ptDlssDepthTarget);
     DestroyInternalTarget(m_ptDlssMotionTarget);
+    for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
+    {
+        if (slot.resource != nullptr || slot.allocation != nullptr)
+        {
+            GfxContext::Get().DeferredReleaseResource(slot.allocation, slot.resource);
+            slot = {};
+        }
+    }
     DestroyInternalTarget(m_dlssBloomExtractTarget);
     DestroyInternalTarget(m_dlssBloomBlurTarget);
     DestroyInternalTarget(m_dlssBloomBlur2Target);
@@ -1324,6 +1363,7 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_dlssHistoryValid = false;
     m_dlssBloomHistoryValid = false;
     m_dlssBloomTemporalWarmupFrames = 0;
+    const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
 }
 
 void ScreenSpaceEffects::ResetTaaHistory() const
@@ -1740,7 +1780,12 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 
 void ScreenSpaceEffects::SetPtRrBundleMode(const int mode)
 {
+    if (m_ptRrBundleMode == mode)
+    {
+        return;
+    }
     m_ptRrBundleMode = mode;
+    ResetPathTracerTemporalDiagnostics();
 }
 
 void ScreenSpaceEffects::EndScenePass() const
@@ -1833,6 +1878,7 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     if (!active)
     {
         ResetPathTracerAccumulation();
+        ResetPathTracerTemporalDiagnostics();
     }
 
     m_pathTracerActive = active;
@@ -1910,6 +1956,266 @@ void ScreenSpaceEffects::ResetPathTracerAccumulation()
     m_ptAccumHistoryKey = {};
     m_ptAccumPingPongReadFromScratch = false;
     m_ptAccumSumDisplaySrv = 0;
+}
+
+void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
+{
+    m_ptTemporalStatsSampleCount = 0;
+    m_ptTemporalPrevRadianceValid = false;
+    m_pendingPtBoilMetricReadback = false;
+    m_ptBoilMetricValid = false;
+    m_ptBoilMetric = 0.0f;
+    m_ptTemporalStatsPrevViewProjection = glm::mat4(1.0f);
+    for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
+    {
+        slot.pending = false;
+        slot.fenceValue = 0;
+    }
+}
+
+void ScreenSpaceEffects::EnsurePtBoilMetricReadbackSlots() const
+{
+    D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
+    if (allocator == nullptr)
+    {
+        return;
+    }
+
+    constexpr UINT64 kReadbackPitch = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+    for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
+    {
+        if (slot.resource != nullptr)
+        {
+            continue;
+        }
+
+        D3D12_RESOURCE_DESC readbackDesc{};
+        readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        readbackDesc.Width = kReadbackPitch;
+        readbackDesc.Height = 1;
+        readbackDesc.DepthOrArraySize = 1;
+        readbackDesc.MipLevels = 1;
+        readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+        readbackDesc.SampleDesc.Count = 1;
+        readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        D3D12MA::ALLOCATION_DESC allocationDesc{};
+        allocationDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+
+        ID3D12Resource* resource = nullptr;
+        D3D12MA::Allocation* allocation = nullptr;
+        if (FAILED(allocator->CreateResource(
+                &allocationDesc,
+                &readbackDesc,
+                D3D12_RESOURCE_STATE_COPY_DEST,
+                nullptr,
+                &allocation,
+                IID_PPV_ARGS(&resource))))
+        {
+            if (allocation != nullptr)
+            {
+                allocation->Release();
+            }
+            if (resource != nullptr)
+            {
+                resource->Release();
+            }
+            continue;
+        }
+
+        slot.resource = resource;
+        slot.allocation = allocation;
+    }
+}
+
+void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
+{
+    const std::uint64_t completedFence = GfxContext::Get().GetCompletedFenceValue();
+    bool anyPending = false;
+    bool readAny = false;
+    for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
+    {
+        if (!slot.pending)
+        {
+            continue;
+        }
+
+        if (slot.fenceValue == 0)
+        {
+            slot.fenceValue = GfxContext::Get().GetLastSubmittedFenceValue();
+            anyPending = true;
+            continue;
+        }
+
+        if (slot.fenceValue > completedFence)
+        {
+            anyPending = true;
+            continue;
+        }
+
+        auto* readbackResource = static_cast<ID3D12Resource*>(slot.resource);
+        if (readbackResource == nullptr)
+        {
+            slot.pending = false;
+            continue;
+        }
+
+        D3D12_RANGE readRange{0, sizeof(std::uint16_t) * 4};
+        void* mapped = nullptr;
+        if (SUCCEEDED(readbackResource->Map(0, &readRange, &mapped)) && mapped != nullptr)
+        {
+            const auto* halfChannels = static_cast<const std::uint16_t*>(mapped);
+            m_ptBoilMetric = std::max(HalfToFloat(halfChannels[0]), 0.0f);
+            m_ptBoilMetricValid = true;
+            readAny = true;
+            readbackResource->Unmap(0, nullptr);
+        }
+        slot.pending = false;
+    }
+
+    m_pendingPtBoilMetricReadback = anyPending;
+    if (!readAny && !anyPending)
+    {
+        m_pendingPtBoilMetricReadback = false;
+    }
+}
+
+void ScreenSpaceEffects::RecordPtBoilMetricReadback() const
+{
+    if (!GfxContext::Get().IsFrameRecording() || m_ptBoilMetricTarget.resource == nullptr)
+    {
+        return;
+    }
+
+    EnsurePtBoilMetricReadbackSlots();
+    PtBoilMetricReadbackSlot& slot =
+        m_ptBoilMetricReadbackSlots[m_ptBoilMetricReadbackWriteIndex % m_ptBoilMetricReadbackSlots.size()];
+    if (slot.resource == nullptr || slot.pending)
+    {
+        return;
+    }
+
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    auto* sourceResource = static_cast<ID3D12Resource*>(m_ptBoilMetricTarget.resource);
+    auto* readbackResource = static_cast<ID3D12Resource*>(slot.resource);
+    if (commandList == nullptr || sourceResource == nullptr || readbackResource == nullptr)
+    {
+        return;
+    }
+
+    constexpr UINT kReadbackPitch = D3D12_TEXTURE_DATA_PITCH_ALIGNMENT;
+    const D3D12_RESOURCE_STATES beforeState =
+        static_cast<D3D12_RESOURCE_STATES>(m_ptBoilMetricTarget.resourceState);
+    TransitionResource(
+        commandList,
+        sourceResource,
+        beforeState,
+        D3D12_RESOURCE_STATE_COPY_SOURCE);
+    m_ptBoilMetricTarget.resourceState = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_COPY_SOURCE);
+
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = sourceResource;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    source.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = readbackResource;
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint.Offset = 0;
+    destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    destination.PlacedFootprint.Footprint.Width = 1;
+    destination.PlacedFootprint.Footprint.Height = 1;
+    destination.PlacedFootprint.Footprint.Depth = 1;
+    destination.PlacedFootprint.Footprint.RowPitch = kReadbackPitch;
+
+    commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+    TransitionResource(
+        commandList,
+        sourceResource,
+        D3D12_RESOURCE_STATE_COPY_SOURCE,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_ptBoilMetricTarget.resourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    slot.fenceValue = 0;
+    slot.pending = true;
+    m_pendingPtBoilMetricReadback = true;
+    m_ptBoilMetricReadbackWriteIndex =
+        (m_ptBoilMetricReadbackWriteIndex + 1u)
+        % static_cast<std::uint32_t>(m_ptBoilMetricReadbackSlots.size());
+}
+
+void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camera) const
+{
+    if (!m_pathTracerActive || m_dxrPathTracerOutputSrv == 0 || m_width <= 0 || m_height <= 0)
+    {
+        const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
+        return;
+    }
+
+    constexpr int statsFormat = static_cast<int>(DXGI_FORMAT_R32G32B32A32_FLOAT);
+    constexpr int metricFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    auto* mutableThis = const_cast<ScreenSpaceEffects*>(this);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsTarget, m_width, m_height, statsFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsScratchTarget, m_width, m_height, statsFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalPrevRadianceTarget, m_width, m_height, statsFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptBoilMetricTarget, 1, 1, metricFormat);
+
+    const glm::mat4 viewProjection = camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+    const bool cameraChanged =
+        m_ptTemporalStatsSampleCount > 0
+        && !MatricesNearEqual(viewProjection, m_ptTemporalStatsPrevViewProjection);
+    const bool resetStats = m_ptTemporalStatsSampleCount == 0 || cameraChanged;
+
+    const float clearStats[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_ptTemporalStatsShader->Use(false, false);
+    m_ptTemporalStatsShader->SetInt("uCurrentRadiance", 0);
+    m_ptTemporalStatsShader->SetInt("uPrevRadiance", 1);
+    m_ptTemporalStatsShader->SetInt("uPrevStats", 2);
+    m_ptTemporalStatsShader->SetInt("uResetStats", resetStats ? 1 : 0);
+    m_ptTemporalStatsShader->SetInt("uPrevFrameValid", m_ptTemporalPrevRadianceValid ? 1 : 0);
+    m_ptTemporalStatsShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
+    m_ptTemporalStatsShader->BindTextureSlot(
+        1,
+        m_ptTemporalPrevRadianceValid
+            ? m_ptTemporalPrevRadianceTarget.srvCpuHandle
+            : m_dxrPathTracerOutputSrv);
+    m_ptTemporalStatsShader->BindTextureSlot(2, m_ptTemporalStatsTarget.srvCpuHandle);
+    DrawFullscreenToTarget(
+        *m_ptTemporalStatsShader,
+        const_cast<InternalTarget&>(m_ptTemporalStatsScratchTarget),
+        m_width,
+        m_height,
+        clearStats);
+
+    std::swap(mutableThis->m_ptTemporalStatsTarget, mutableThis->m_ptTemporalStatsScratchTarget);
+
+    const float clearRadiance[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_downsampleShader->Use(false, false);
+    m_downsampleShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
+    DrawFullscreenToTarget(
+        *m_downsampleShader,
+        const_cast<InternalTarget&>(m_ptTemporalPrevRadianceTarget),
+        m_width,
+        m_height,
+        clearRadiance);
+
+    const float clearMetric[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_ptBoilMetricShader->Use(false, false);
+    m_ptBoilMetricShader->SetInt("uStatsMap", 0);
+    m_ptBoilMetricShader->BindTextureSlot(0, m_ptTemporalStatsTarget.srvCpuHandle);
+    DrawFullscreenToTarget(
+        *m_ptBoilMetricShader,
+        const_cast<InternalTarget&>(m_ptBoilMetricTarget),
+        1,
+        1,
+        clearMetric);
+
+    m_ptTemporalStatsSampleCount = resetStats ? 1u : m_ptTemporalStatsSampleCount + 1u;
+    m_ptTemporalPrevRadianceValid = true;
+    m_ptTemporalStatsPrevViewProjection = viewProjection;
+    RecordPtBoilMetricReadback();
 }
 
 void ScreenSpaceEffects::InvalidateMotionHistory() const
@@ -2231,6 +2537,7 @@ void ScreenSpaceEffects::Apply(
     const EnvironmentMap& environmentMap) const
 {
     FinalizePendingSsaoGpuReadback();
+    FinalizePendingPtBoilMetricReadback();
 
     if (!m_enabled || !m_sceneFramebuffer->IsValid())
     {
@@ -2657,7 +2964,13 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
         m_rtPrimaryDebugSettleFrames = 0;
     }
 
+    const bool isolateChanged =
+        PtDebugIsolateModeFromRenderDebug(m_debugMode) != PtDebugIsolateModeFromRenderDebug(mode);
     m_debugMode = mode;
+    if (isolateChanged)
+    {
+        ResetPathTracerTemporalDiagnostics();
+    }
 }
 
 void ScreenSpaceEffects::ResetRtPrimaryDebugBlitSettle()
