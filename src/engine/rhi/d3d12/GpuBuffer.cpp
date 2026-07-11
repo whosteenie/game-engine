@@ -23,9 +23,16 @@ namespace
 
     D3D12_RESOURCE_STATES ResourceStateForType(const GpuBuffer::Type type)
     {
-        return type == GpuBuffer::Type::Index
-            ? D3D12_RESOURCE_STATE_INDEX_BUFFER
-            : D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        switch (type)
+        {
+        case GpuBuffer::Type::Index:
+            return D3D12_RESOURCE_STATE_INDEX_BUFFER;
+        case GpuBuffer::Type::ShaderResource:
+            return D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        case GpuBuffer::Type::Vertex:
+        default:
+            return D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        }
     }
 
     void RecordCopyAndTransition(

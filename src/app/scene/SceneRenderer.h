@@ -44,6 +44,10 @@ struct RenderFrameDiagnostics
 {
     std::uint32_t renderableObjectCount = 0;
     std::uint32_t uniqueMeshCount = 0;
+    std::uint32_t renderableMeshletCount = 0;
+    std::uint32_t uniqueMeshletCount = 0;
+    std::uint32_t meshletVertexReferenceCount = 0;
+    std::uint32_t meshletTriangleCount = 0;
     std::uint32_t geometryDrawCount = 0;
     std::uint32_t shadowDrawCount = 0;
     std::uint32_t shadowCascadeCount = 0;

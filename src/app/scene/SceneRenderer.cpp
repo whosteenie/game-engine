@@ -111,10 +111,18 @@ namespace
             }
 
             ++diagnostics.renderableObjectCount;
-            uniqueMeshes.insert(object.GetMesh());
+            const Mesh* mesh = object.GetMesh();
+            diagnostics.renderableMeshletCount += mesh->GetMeshletCount();
+            uniqueMeshes.insert(mesh);
         }
 
         diagnostics.uniqueMeshCount = static_cast<std::uint32_t>(uniqueMeshes.size());
+        for (const Mesh* mesh : uniqueMeshes)
+        {
+            diagnostics.uniqueMeshletCount += mesh->GetMeshletCount();
+            diagnostics.meshletVertexReferenceCount += mesh->GetMeshletVertexReferenceCount();
+            diagnostics.meshletTriangleCount += mesh->GetMeshletTriangleCount();
+        }
         return diagnostics;
     }
 }

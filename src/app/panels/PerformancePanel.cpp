@@ -776,6 +776,10 @@ void PerformancePanel::Draw(
         ImGui::Separator();
         ImGui::Text("Last renderable objects: %u", renderDiagnostics.renderableObjectCount);
         ImGui::Text("Last unique meshes: %u", renderDiagnostics.uniqueMeshCount);
+        ImGui::Text("Renderable meshlets: %u", renderDiagnostics.renderableMeshletCount);
+        ImGui::Text("Unique meshlets: %u", renderDiagnostics.uniqueMeshletCount);
+        ImGui::Text("Meshlet vertex refs: %u", renderDiagnostics.meshletVertexReferenceCount);
+        ImGui::Text("Meshlet triangles: %u", renderDiagnostics.meshletTriangleCount);
         ImGui::Text("Geometry draws: %u", renderDiagnostics.geometryDrawCount);
         ImGui::Text("Shadow draws: %u", renderDiagnostics.shadowDrawCount);
         ImGui::Text("Shadow cascades: %u", renderDiagnostics.shadowCascadeCount);

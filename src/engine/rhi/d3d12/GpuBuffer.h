@@ -14,6 +14,7 @@ public:
     {
         Vertex,
         Index,
+        ShaderResource,
     };
 
     GpuBuffer() = default;
