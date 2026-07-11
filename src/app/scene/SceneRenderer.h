@@ -40,6 +40,16 @@ class LightGizmoRenderer;
 class ScreenSpaceEffects;
 class Shader;
 
+struct RenderFrameDiagnostics
+{
+    std::uint32_t renderableObjectCount = 0;
+    std::uint32_t uniqueMeshCount = 0;
+    std::uint32_t geometryDrawCount = 0;
+    std::uint32_t shadowDrawCount = 0;
+    std::uint32_t shadowCascadeCount = 0;
+    bool pathTracingActive = false;
+};
+
 class SceneRenderer
 {
     enum class GpuResourceState
@@ -85,6 +95,7 @@ public:
     const DxrSettings& GetDxrSettings() const;
 
     const DxrDiagnostics& GetDxrDiagnostics() const;
+    const RenderFrameDiagnostics& GetRenderFrameDiagnostics() const { return m_renderFrameDiagnostics; }
 
     bool ComputeShadowCasterBounds(
         const Scene& scene,
@@ -224,4 +235,5 @@ private:
     std::uint32_t m_consumedPtSceneVersion = 0;
     std::uint64_t m_ptEnvironmentFingerprint = 0;
     std::uint64_t m_ptSettingsFingerprint = 0;
+    RenderFrameDiagnostics m_renderFrameDiagnostics{};
 };

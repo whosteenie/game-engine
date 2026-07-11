@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 class Scene;
+class SceneRenderer;
 
 class PerformancePanel
 {
@@ -15,6 +16,7 @@ public:
 
     void Draw(
         const Scene& scene,
+        const SceneRenderer& renderer,
         int sceneViewWidth,
         int sceneViewHeight,
         int windowWidth,

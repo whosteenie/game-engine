@@ -874,6 +874,7 @@ void Application::Update(double deltaTime)
             editorUndoStack);
         m_performancePanel->Draw(
             *editorScene,
+            editorScene->GetRenderer(),
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
             windowWidth,

@@ -3,6 +3,7 @@
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneRenderer.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
 
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -21,6 +23,8 @@ namespace
     {
         int objects = 0;
         int meshes = 0;
+        int renderables = 0;
+        int uniqueMeshes = 0;
         int lights = 0;
     };
 
@@ -34,6 +38,7 @@ namespace
     SceneCounts CountSceneObjects(const Scene& scene)
     {
         SceneCounts counts;
+        std::unordered_set<const Mesh*> uniqueMeshes;
         for (const SceneObject& object : scene.GetObjects())
         {
             ++counts.objects;
@@ -41,11 +46,17 @@ namespace
             {
                 ++counts.meshes;
             }
+            if (object.IsRenderable())
+            {
+                ++counts.renderables;
+                uniqueMeshes.insert(object.GetMesh());
+            }
             if (object.HasLight())
             {
                 ++counts.lights;
             }
         }
+        counts.uniqueMeshes = static_cast<int>(uniqueMeshes.size());
         return counts;
     }
 
@@ -520,6 +531,7 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
 
 void PerformancePanel::Draw(
     const Scene& scene,
+    const SceneRenderer& renderer,
     const int sceneViewWidth,
     const int sceneViewHeight,
     const int windowWidth,
@@ -753,10 +765,24 @@ void PerformancePanel::Draw(
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
     {
         const SceneCounts counts = CountSceneObjects(scene);
+        const RenderFrameDiagnostics& renderDiagnostics = renderer.GetRenderFrameDiagnostics();
+        const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();
         ImGui::Text("Objects: %d", counts.objects);
         ImGui::Text("Meshes: %d", counts.meshes);
+        ImGui::Text("Renderables: %d", counts.renderables);
+        ImGui::Text("Unique meshes: %d", counts.uniqueMeshes);
         ImGui::Text("Lights: %d", counts.lights);
         ImGui::Text("Selected: %d", static_cast<int>(scene.GetSelection().indices.size()));
+        ImGui::Separator();
+        ImGui::Text("Last renderable objects: %u", renderDiagnostics.renderableObjectCount);
+        ImGui::Text("Last unique meshes: %u", renderDiagnostics.uniqueMeshCount);
+        ImGui::Text("Geometry draws: %u", renderDiagnostics.geometryDrawCount);
+        ImGui::Text("Shadow draws: %u", renderDiagnostics.shadowDrawCount);
+        ImGui::Text("Shadow cascades: %u", renderDiagnostics.shadowCascadeCount);
+        ImGui::Text("Path tracing active: %s", renderDiagnostics.pathTracingActive ? "yes" : "no");
+        ImGui::Separator();
+        ImGui::Text("DXR BLAS: %u", dxrDiagnostics.blasCount);
+        ImGui::Text("DXR TLAS instances: %u", dxrDiagnostics.tlasInstanceCount);
     }
 
     if (ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen))

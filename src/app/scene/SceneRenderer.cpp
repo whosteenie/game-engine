@@ -41,6 +41,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 SceneRenderer::SceneRenderer() = default;
 
@@ -92,6 +93,29 @@ namespace
         {
             throw std::runtime_error(std::string("GPU init step '") + stepName + "' failed: unknown error");
         }
+    }
+
+    RenderFrameDiagnostics BuildRenderFrameDiagnostics(
+        const Scene& scene,
+        const bool pathTracingActive)
+    {
+        RenderFrameDiagnostics diagnostics{};
+        diagnostics.pathTracingActive = pathTracingActive;
+
+        std::unordered_set<const Mesh*> uniqueMeshes;
+        for (const SceneObject& object : scene.GetObjects())
+        {
+            if (!object.IsRenderable())
+            {
+                continue;
+            }
+
+            ++diagnostics.renderableObjectCount;
+            uniqueMeshes.insert(object.GetMesh());
+        }
+
+        diagnostics.uniqueMeshCount = static_cast<std::uint32_t>(uniqueMeshes.size());
+        return diagnostics;
     }
 }
 
@@ -360,6 +384,7 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
             m_directionalShadowSettings.GetCasterDepthBiasScale());
         m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
         m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
+        ++m_renderFrameDiagnostics.shadowCascadeCount;
 
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
         {
@@ -374,6 +399,7 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
             m_shadowDepthShader->SetMat4("uModel", scene.GetWorldMatrix(static_cast<int>(objectIndex)));
             m_shadowDepthShader->FlushUniforms();
             object.GetMesh()->Draw();
+            ++m_renderFrameDiagnostics.shadowDrawCount;
         }
     }
     }
@@ -1344,6 +1370,7 @@ void SceneRenderer::RenderGeometryPass(
                 motionFrameState,
                 (*m_activePreviousWorldMatrices)[objectIndex]);
             object.GetMesh()->Draw();
+            ++m_renderFrameDiagnostics.geometryDrawCount;
         }
 
         drawScope.Success();
@@ -1644,6 +1671,7 @@ void SceneRenderer::Render(
         ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
 
     const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+    m_renderFrameDiagnostics = BuildRenderFrameDiagnostics(scene, pathTracingActive);
 
     SceneRenderTrace::Step(
         std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
