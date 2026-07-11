@@ -1248,6 +1248,10 @@ void SceneHierarchyPanel::Draw(
         else
         {
             ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            {
+                scene.ClearSelection();
+            }
             DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
         }
     }

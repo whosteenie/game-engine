@@ -94,7 +94,7 @@ namespace
         else
         {
             field.value[axis] = EditorWidgets::SanitizeSignedZero(field.value[axis]);
-            changed = ImGui::DragFloat("##value", &field.value[axis], dragSpeed, 0.0f, 0.0f, format);
+            changed = EditorWidgets::DragFloat("##value", &field.value[axis], dragSpeed, 0.0f, 0.0f, format);
             if (changed)
             {
                 field.value[axis] = EditorWidgets::SanitizeSignedZero(field.value[axis]);

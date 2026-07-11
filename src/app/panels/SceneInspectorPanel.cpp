@@ -116,7 +116,7 @@ namespace
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-FLT_MIN);
         value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
-        const bool dragged = ImGui::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
+        const bool dragged = EditorWidgets::DragFloat("##value", &value[axis], dragSpeed, 0.0f, 0.0f, format);
         if (dragged)
         {
             value[axis] = EditorWidgets::SanitizeSignedZero(value[axis]);
@@ -412,7 +412,7 @@ namespace
 
         glm::vec3 emissive = material.GetEmissive();
         EditorWidgets::SanitizeSignedZero(emissive);
-        if (ImGui::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))
+        if (EditorWidgets::DragFloat3("Emission", &emissive.x, 0.05f, 0.0f, 0.0f, "%.3f"))
         {
             EditorWidgets::SanitizeSignedZero(emissive);
             material.SetEmissive(emissive);
@@ -935,13 +935,13 @@ namespace
         }
         HandleCameraFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Near", &camera.nearPlane, 0.01f, 0.01f, camera.farPlane - 0.01f))
+        if (EditorWidgets::DragFloat("Near", &camera.nearPlane, 0.01f, 0.01f, camera.farPlane - 0.01f))
         {
             scene.MarkDirty();
         }
         HandleCameraFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Far", &camera.farPlane, 1.0f, camera.nearPlane + 0.01f, 10000.0f))
+        if (EditorWidgets::DragFloat("Far", &camera.farPlane, 1.0f, camera.nearPlane + 0.01f, 10000.0f))
         {
             scene.MarkDirty();
         }
@@ -953,7 +953,7 @@ namespace
         }
         HandleCameraFieldEditEvents(editContext);
 
-        if (ImGui::DragInt("Depth", &camera.depth, 1.0f, -100, 100))
+        if (EditorWidgets::DragInt("Depth", &camera.depth, 1.0f, -100, 100))
         {
             scene.MarkDirty();
         }
@@ -1006,7 +1006,7 @@ namespace
         SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         RigidBodyComponent& rigidBody = object.GetRigidBody();
 
-        if (ImGui::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.001f, 10000.0f))
+        if (EditorWidgets::DragFloat("Mass", &rigidBody.mass, 0.1f, 0.001f, 10000.0f))
         {
             rigidBody.mass = std::max(rigidBody.mass, 0.001f);
             scene.MarkDirty();
@@ -1043,14 +1043,14 @@ namespace
         }
         HandleRigidBodyFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f, 10.0f))
+        if (EditorWidgets::DragFloat("Linear Damping", &rigidBody.linearDamping, 0.01f, 0.0f, 10.0f))
         {
             rigidBody.linearDamping = std::max(rigidBody.linearDamping, 0.0f);
             scene.MarkDirty();
         }
         HandleRigidBodyFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f, 10.0f))
+        if (EditorWidgets::DragFloat("Angular Damping", &rigidBody.angularDamping, 0.01f, 0.0f, 10.0f))
         {
             rigidBody.angularDamping = std::max(rigidBody.angularDamping, 0.0f);
             scene.MarkDirty();
@@ -1099,7 +1099,7 @@ namespace
 
         if (collider.shape == ColliderShape::Box)
         {
-            if (ImGui::DragFloat3(
+            if (EditorWidgets::DragFloat3(
                     "Half Extents",
                     &collider.halfExtents.x,
                     0.01f,
@@ -1113,7 +1113,7 @@ namespace
         }
         else
         {
-            if (ImGui::DragFloat("Radius", &collider.radius, 0.01f, kMinColliderDimension, 1000.0f))
+            if (EditorWidgets::DragFloat("Radius", &collider.radius, 0.01f, kMinColliderDimension, 1000.0f))
             {
                 collider.radius = std::max(collider.radius, kMinColliderDimension);
                 scene.MarkDirty();
@@ -1121,7 +1121,7 @@ namespace
             HandleColliderFieldEditEvents(editContext);
         }
 
-        if (ImGui::DragFloat3("Offset", &collider.offset.x, 0.01f))
+        if (EditorWidgets::DragFloat3("Offset", &collider.offset.x, 0.01f))
         {
             EditorWidgets::SanitizeSignedZero(collider.offset);
             scene.MarkDirty();
@@ -1135,14 +1135,14 @@ namespace
         }
         HandleColliderFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Friction", &collider.friction, 0.01f, 0.0f, 1.0f))
+        if (EditorWidgets::DragFloat("Friction", &collider.friction, 0.01f, 0.0f, 1.0f))
         {
             collider.friction = std::max(collider.friction, 0.0f);
             scene.MarkDirty();
         }
         HandleColliderFieldEditEvents(editContext);
 
-        if (ImGui::DragFloat("Restitution", &collider.restitution, 0.01f, 0.0f, 1.0f))
+        if (EditorWidgets::DragFloat("Restitution", &collider.restitution, 0.01f, 0.0f, 1.0f))
         {
             collider.restitution = std::max(collider.restitution, 0.0f);
             scene.MarkDirty();

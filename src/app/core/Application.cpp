@@ -754,6 +754,18 @@ void Application::Update(double deltaTime)
             && !gameViewBlocksSceneInput
             && !blockSceneInputEarly;
 
+        // Commit any active inspector text field before scene-view interaction (fly cam / pick).
+        // Otherwise WantTextInput stays true and immediately cancels mouse capture.
+        ImGuiIO& earlyIo = ImGui::GetIO();
+        const bool sceneViewMouseDown =
+            mouseOverSceneView
+            && (m_input->IsMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT)
+                || m_input->IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
+        if (sceneViewMouseDown && (earlyIo.WantTextInput || ImGui::IsAnyItemActive()))
+        {
+            ImGui::ClearActiveID();
+        }
+
         m_input->UpdateMouseCapture(allowFlyCameraCapture);
         if (m_input->IsCapturingMouse())
         {
@@ -932,10 +944,13 @@ void Application::Update(double deltaTime)
         && m_sceneViewportPanel->HasValidRenderTarget()
         && sceneInteractionHovered
         && !gameViewBlocksSceneInput;
-    const bool blockSceneInput = io.WantTextInput || m_pendingClose || m_pendingNewProject;
-
+    // WantTextInput must not cancel an in-progress fly-cam capture after we ClearActiveID above;
+    // io may still report text focus until widgets rebuild later this frame.
     const bool flyCameraActive = m_input->IsCapturingMouse();
-    if (flyCameraActive && blockSceneInput)
+    const bool blockSceneInput =
+        (!flyCameraActive && io.WantTextInput) || m_pendingClose || m_pendingNewProject;
+
+    if (flyCameraActive && (m_pendingClose || m_pendingNewProject))
     {
         m_input->ReleaseMouseCapture();
     }

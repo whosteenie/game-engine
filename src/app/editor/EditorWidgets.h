@@ -24,6 +24,32 @@ namespace EditorWidgets
         value.z = SanitizeSignedZero(value.z);
     }
 
+    // DragFloat that rejects letters in Ctrl+Click / typed entry (CharsScientific).
+    bool DragFloat(
+        const char* label,
+        float* value,
+        float speed = 1.0f,
+        float min = 0.0f,
+        float max = 0.0f,
+        const char* format = "%.3f",
+        ImGuiSliderFlags flags = 0);
+    bool DragFloat3(
+        const char* label,
+        float value[3],
+        float speed = 1.0f,
+        float min = 0.0f,
+        float max = 0.0f,
+        const char* format = "%.3f",
+        ImGuiSliderFlags flags = 0);
+    bool DragInt(
+        const char* label,
+        int* value,
+        float speed = 1.0f,
+        int min = 0,
+        int max = 0,
+        const char* format = "%d",
+        ImGuiSliderFlags flags = 0);
+
     bool ColorEditVec3(const char* label, glm::vec3& value);
     bool SliderVec3(const char* label, glm::vec3& value, float min, float max);
 
