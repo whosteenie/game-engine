@@ -921,6 +921,20 @@ void ScreenSpaceEffects::ResizeInternalTarget(
     const int height,
     const int format)
 {
+    // Idempotent: only (re)allocate when the target does not already match. `CreateInternalTarget`
+    // unconditionally destroys + reallocates a fresh (undefined-contents) texture, so recreating an
+    // already-correct target every frame both wastes an allocation and — critically — WIPES any
+    // accumulated contents. The path-tracer reference accumulation ping-pongs across frames into
+    // m_ptAccumSumTarget/m_ptAccumScratchTarget; recreating them each frame made the running sum
+    // never persist (dark, permanently-noisy image divided by an ever-growing sample count, with
+    // ghost content from recycled heap memory). A resize must preserve contents when nothing changed.
+    if (target.resource != nullptr
+        && target.width == width
+        && target.height == height
+        && target.format == format)
+    {
+        return;
+    }
     CreateInternalTarget(target, width, height, format);
 }
 
