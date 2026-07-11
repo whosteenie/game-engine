@@ -65,7 +65,7 @@ StructuredBuffer<uint> g_SceneIndices : register(t6);
 TextureCube<float4> g_PrefilterMap : register(t10);
 Texture2D<float4> g_VelocityMap : register(t11); // RT4 motion NDC (curr - prev)
 
-// Per-object material constants (indexed by InstanceID). Layout mirrors DxrMaterialEntry.
+// Material constants. InstanceID indexes g_GeometryLookup, then materialId indexes this table.
 static const uint kMaterialFlagMetallicRoughnessMap = 1u;
 
 struct MaterialEntry
@@ -91,6 +91,11 @@ struct MaterialEntry
 };
 
 StructuredBuffer<MaterialEntry> g_Materials : register(t12);
+
+MaterialEntry LoadMaterialForInstance(uint instanceId)
+{
+    return g_Materials[g_GeometryLookup[instanceId].materialId];
+}
 
 // Bindless: the whole shader-visible SRV heap, indexed by absolute descriptor index (space1).
 Texture2D<float4> g_BindlessTextures[] : register(t0, space1);
@@ -350,7 +355,7 @@ float3 ApplyWorldNormalMap(
     float textureLod)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
-    const MaterialEntry material = g_Materials[instanceId];
+    const MaterialEntry material = LoadMaterialForInstance(instanceId);
     float3 shadingNormal = normalize(worldGeomNormal);
     if (material.normalTexIndex == 0xFFFFFFFFu || material.normalUvOffsetFloats == 0xFFFFFFFFu)
     {
@@ -396,7 +401,7 @@ void ResolveSurfaceMaterialScalars(
     out float3 outEmissive)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
-    const MaterialEntry material = g_Materials[instanceId];
+    const MaterialEntry material = LoadMaterialForInstance(instanceId);
 
     outAlbedo = material.albedo;
     if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)

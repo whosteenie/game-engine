@@ -8,7 +8,7 @@ struct GeometryLookupEntry
     uint vertexFloatOffset;
     uint vertexStrideFloats;
     uint indexUintOffset;
-    uint _pad0;
+    uint materialId;
 };
 
 static const uint kHitKindTriangleBackFace = 255u;

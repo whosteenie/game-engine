@@ -21,11 +21,14 @@ struct DxrGeometryLookupEntry
     std::uint32_t vertexFloatOffset = 0;
     std::uint32_t vertexStrideFloats = 0;
     std::uint32_t indexUintOffset = 0;
-    std::uint32_t pad0 = 0;
+    // G0: compact render-instance row data. InstanceID() indexes this table, then materialId
+    // resolves into the material table. Geometry remains duplicated per instance in this bridge.
+    std::uint32_t materialId = 0;
 };
 
-// Per-object material constants for in-hit reflection shading. Indexed by TLAS InstanceID
-// (== scene object index). Layout must match MaterialEntry in assets/shaders/dxr/hit_shading.hlsli.
+// Material constants for in-hit reflection shading. Indexed by
+// g_GeometryLookup[InstanceID()].materialId. Layout must match MaterialEntry in
+// assets/shaders/dxr/hit_shading.hlsli.
 struct DxrMaterialEntry
 {
     float albedo[3] = {0.5f, 0.5f, 0.5f};
@@ -51,8 +54,8 @@ struct DxrMaterialEntry
 };
 static_assert(sizeof(DxrMaterialEntry) == 88);
 
-// P4b: per-instance previous-frame object-to-world transform, indexed by TLAS InstanceID
-// (== scene object index). Stored as explicit rows (row_i = (m[0][i], m[1][i], m[2][i], m[3][i]))
+// P4b: per-instance previous-frame object-to-world transform, indexed by compact TLAS InstanceID.
+// Stored as explicit rows (row_i = (m[0][i], m[1][i], m[2][i], m[3][i]))
 // so the HLSL side reconstructs prevWorld = (dot(row0, p), dot(row1, p), dot(row2, p)) without
 // depending on matrix packing rules. Layout must match PrevInstanceTransform in path_tracer.hlsl.
 struct DxrPrevInstanceTransformEntry
@@ -131,9 +134,9 @@ public:
     }
     std::size_t GetGeometryObjectCount() const { return m_geometryObjectCount; }
 
-    // P4b: upload previous-frame object-to-world matrices (indexed by scene object index ==
-    // InstanceID) for path-tracer object motion vectors. Must be recorded on the frame's command
-    // list BEFORE the PT dispatch, with the matrices as they were BEFORE this frame's advance.
+    // P4b: upload previous-frame object-to-world matrices (indexed by compact InstanceID) for
+    // path-tracer object motion vectors. Must be recorded on the frame's command list BEFORE the
+    // PT dispatch, with the matrices as they were BEFORE this frame's advance.
     // Returns false (and leaves the SRV stale) on allocation failure.
     bool UploadPrevInstanceTransforms(
         const std::vector<glm::mat4>& prevWorldMatrices,

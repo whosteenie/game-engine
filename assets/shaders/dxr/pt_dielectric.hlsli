@@ -364,7 +364,7 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
             return transmittance;
         }
 
-        const MaterialEntry mat = g_Materials[probe.instanceId];
+        const MaterialEntry mat = LoadMaterialForInstance(probe.instanceId);
         const float glassWeight = DielectricWeight(mat.transmission, mat.metallic);
         // Fully opaque hit — block the shadow ray. No 0.01 cutoff: partial transmission must fade
         // smoothly (gw * (1−F)), otherwise t=0 vs t≈0.01 snaps from full shadow to nearly clear.

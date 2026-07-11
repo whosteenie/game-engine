@@ -31,6 +31,38 @@ namespace
     constexpr std::uint32_t kMinTexturedStrideFloats = 8u;
     constexpr std::uint32_t kMinTangentStrideFloats = 14u;
 
+    struct DxrRenderableInstance
+    {
+        std::size_t objectIndex = 0;
+        Mesh* mesh = nullptr;
+    };
+
+    std::vector<DxrRenderableInstance> BuildDxrRenderableInstances(const Scene& scene)
+    {
+        std::vector<DxrRenderableInstance> instances;
+        const std::vector<SceneObject>& objects = scene.GetObjects();
+        instances.reserve(objects.size());
+
+        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        {
+            const SceneObject& object = objects[objectIndex];
+            if (!object.IsRenderable())
+            {
+                continue;
+            }
+
+            Mesh* mesh = object.GetMesh();
+            if (mesh == nullptr)
+            {
+                continue;
+            }
+
+            instances.push_back(DxrRenderableInstance{objectIndex, mesh});
+        }
+
+        return instances;
+    }
+
     std::uint32_t UvOffsetFloatsForTexCoordSet(const int texCoordSet)
     {
         return texCoordSet == 1 ? kUv1OffsetFloats : kUv0OffsetFloats;
@@ -342,7 +374,8 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 {
     outError.clear();
     const std::vector<SceneObject>& objects = scene.GetObjects();
-    if (objects.empty())
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    if (renderInstances.empty())
     {
         ReleaseGeometryBuffers();
         return true;
@@ -360,26 +393,18 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     BumpPtSceneVersion();
     m_pendingGeometryContentReupload = true;
 
-    std::vector<DxrGeometryLookupEntry> lookupEntries(objects.size());
-    std::vector<DxrMaterialEntry> materialEntries(objects.size());
+    std::vector<DxrGeometryLookupEntry> lookupEntries(renderInstances.size());
+    std::vector<DxrMaterialEntry> materialEntries(renderInstances.size());
     std::vector<float> vertexFloats;
     std::vector<std::uint32_t> indices;
     vertexFloats.reserve(1024);
     indices.reserve(1024);
 
-    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
     {
-        const SceneObject& object = objects[objectIndex];
-        if (!object.IsRenderable())
-        {
-            continue;
-        }
-
-        Mesh* mesh = object.GetMesh();
-        if (mesh == nullptr)
-        {
-            continue;
-        }
+        const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
+        const SceneObject& object = objects[renderInstance.objectIndex];
+        Mesh* mesh = renderInstance.mesh;
 
         mesh->EnsureGpuResources();
         const std::uint32_t vertexStrideFloats = mesh->GetFloatsPerVertex();
@@ -388,10 +413,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
             continue;
         }
 
-        DxrGeometryLookupEntry& entry = lookupEntries[objectIndex];
+        DxrGeometryLookupEntry& entry = lookupEntries[instanceIndex];
         entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
         entry.vertexStrideFloats = vertexStrideFloats;
         entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
+        entry.materialId = static_cast<std::uint32_t>(instanceIndex);
 
         // Upload the FULL interleaved vertex stride (position + normal + ...) so the reflection
         // closest-hit can read smooth vertex normals at float offset 3, not just positions.
@@ -420,7 +446,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         }
 
         const Material& material = object.GetMaterial();
-        DxrMaterialEntry& materialEntry = materialEntries[objectIndex];
+        DxrMaterialEntry& materialEntry = materialEntries[instanceIndex];
         const glm::vec3 albedo = material.GetAlbedo();
         const glm::vec3 emissive = material.GetEmissive();
         materialEntry.albedo[0] = albedo.x;
@@ -482,14 +508,14 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     }
 
     const bool sameLayout =
-        m_geometryObjectCount == objects.size()
+        m_geometryObjectCount == renderInstances.size()
         && m_geometryLookupStaging.GetCapacity()
-            >= sizeof(DxrGeometryLookupEntry) * objects.size()
-        && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
+            >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
+        && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * renderInstances.size()
         && m_sceneVertexFloatsStaging.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesStaging.GetCapacity() >= indices.size() * sizeof(std::uint32_t)
-        && m_geometryLookupGpu.GetCapacity() >= sizeof(DxrGeometryLookupEntry) * objects.size()
-        && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * objects.size()
+        && m_geometryLookupGpu.GetCapacity() >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
+        && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * renderInstances.size()
         && m_sceneVertexFloatsGpu.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesGpu.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
 
@@ -497,8 +523,8 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     {
         ReleaseGeometryBuffers();
 
-        const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * objects.size();
-        const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * objects.size();
+        const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * renderInstances.size();
+        const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * renderInstances.size();
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
@@ -550,7 +576,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
             lookupSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
             lookupSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             lookupSrvDesc.Buffer.FirstElement = 0;
-            lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+            lookupSrvDesc.Buffer.NumElements = static_cast<UINT>(renderInstances.size());
             lookupSrvDesc.Buffer.StructureByteStride = sizeof(DxrGeometryLookupEntry);
             device->CreateShaderResourceView(
                 m_geometryLookupGpu.Slot(frameIndex).resource,
@@ -564,7 +590,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
             materialSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
             materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             materialSrvDesc.Buffer.FirstElement = 0;
-            materialSrvDesc.Buffer.NumElements = static_cast<UINT>(objects.size());
+            materialSrvDesc.Buffer.NumElements = static_cast<UINT>(renderInstances.size());
             materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
             device->CreateShaderResourceView(
                 m_materialGpu.Slot(frameIndex).resource,
@@ -599,7 +625,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
                 indexHandle);
         }
 
-        m_geometryObjectCount = objects.size();
+        m_geometryObjectCount = renderInstances.size();
     }
 
     DxrGpuResource& geometryLookupUpload = m_geometryLookupStaging.Slot(frameIndex);
@@ -860,23 +886,16 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
     std::vector<DxrEmissiveLightEntry> entries;
     std::vector<DxrEmissiveTriangleEntry> triangles;
     const auto& objects = scene.GetObjects();
-    entries.reserve(objects.size());
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    entries.reserve(renderInstances.size());
 
     float pickWeightSum = 0.0f;
     bool sceneHasTransmission = false;
-    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
     {
-        const SceneObject& object = objects[objectIndex];
-        if (!object.IsRenderable())
-        {
-            continue;
-        }
-
-        Mesh* mesh = object.GetMesh();
-        if (mesh == nullptr)
-        {
-            continue;
-        }
+        const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
+        const SceneObject& object = objects[renderInstance.objectIndex];
+        Mesh* mesh = renderInstance.mesh;
 
         const Material& material = object.GetMaterial();
         // Match DielectricWeight in pt_dielectric.hlsli — any glass that can refract NEE shadows.
@@ -902,7 +921,8 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
             continue;
         }
 
-        const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+        const glm::mat4 worldMatrix =
+            scene.GetWorldMatrix(static_cast<int>(renderInstance.objectIndex));
         const std::uint32_t triangleOffset = static_cast<std::uint32_t>(triangles.size());
         float instanceArea = 0.0f;
         std::uint32_t triangleCount = 0;
@@ -965,7 +985,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
         entry.emissive[1] = emissive.y;
         entry.emissive[2] = emissive.z;
         entry.pickWeight = instancePickWeight;
-        entry.instanceId = static_cast<std::uint32_t>(objectIndex);
+        entry.instanceId = static_cast<std::uint32_t>(instanceIndex);
         entry.triangleOffset = triangleOffset;
         entry.triangleCount = triangleCount;
         entry.surfaceArea = std::max(instanceArea, 1e-4f);
@@ -1057,19 +1077,10 @@ void DxrAccelerationStructures::EnsureScene(
     std::string error;
     std::unordered_set<Mesh*> uniqueMeshes;
     const std::vector<SceneObject>& objects = scene.GetObjects();
-    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
-        const SceneObject& object = objects[objectIndex];
-        if (!object.IsRenderable())
-        {
-            continue;
-        }
-
-        Mesh* mesh = object.GetMesh();
-        if (mesh != nullptr)
-        {
-            uniqueMeshes.insert(mesh);
-        }
+        uniqueMeshes.insert(renderInstance.mesh);
     }
 
     std::uint64_t maxScratchBytes = 0;
@@ -1121,10 +1132,7 @@ void DxrAccelerationStructures::EnsureScene(
             maxScratchBytes = std::max(maxScratchBytes, prebuildInfo.ScratchDataSizeInBytes);
         }
 
-        const std::uint32_t renderableCount = static_cast<std::uint32_t>(std::count_if(
-            objects.begin(),
-            objects.end(),
-            [](const SceneObject& object) { return object.IsRenderable(); }));
+        const std::uint32_t renderableCount = static_cast<std::uint32_t>(renderInstances.size());
         if (renderableCount > 0)
         {
             D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlasInputs{};
@@ -1172,22 +1180,13 @@ void DxrAccelerationStructures::EnsureScene(
     }
 
     std::vector<D3D12_RAYTRACING_INSTANCE_DESC> instances;
-    instances.reserve(objects.size());
+    instances.reserve(renderInstances.size());
     std::uint64_t referencedTriangles = 0;
     std::unordered_set<Mesh*> referencedMeshes;
-    for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+    for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
-        const SceneObject& object = objects[objectIndex];
-        if (!object.IsRenderable())
-        {
-            continue;
-        }
-
-        Mesh* mesh = object.GetMesh();
-        if (mesh == nullptr)
-        {
-            continue;
-        }
+        const SceneObject& object = objects[renderInstance.objectIndex];
+        Mesh* mesh = renderInstance.mesh;
 
         Blas* blas = m_blasCache.Find(mesh);
         if (blas == nullptr || !blas->IsBuilt())
@@ -1201,11 +1200,12 @@ void DxrAccelerationStructures::EnsureScene(
         }
 
         D3D12_RAYTRACING_INSTANCE_DESC instanceDesc{};
-        const glm::mat4 worldMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
+        const glm::mat4 worldMatrix =
+            scene.GetWorldMatrix(static_cast<int>(renderInstance.objectIndex));
         WriteD3D12InstanceTransform(
             worldMatrix,
             reinterpret_cast<float*>(instanceDesc.Transform));
-        instanceDesc.InstanceID = static_cast<UINT>(objectIndex);
+        instanceDesc.InstanceID = static_cast<UINT>(instances.size());
         instanceDesc.InstanceMask = 0xFF;
         instanceDesc.InstanceContributionToHitGroupIndex = 0;
         bool flipWinding = glm::determinant(glm::mat3(worldMatrix)) < 0.0f;

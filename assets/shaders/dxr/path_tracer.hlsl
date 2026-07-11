@@ -22,7 +22,7 @@ RWStructuredBuffer<RestirReservoir> g_ReservoirCurrent : register(u8);
 // R2: bounce-0 direct only — temporal shades g_Output = direct + Y·W (never subtract packed Y).
 RWTexture2D<float4> g_DirectOutput : register(u9);
 
-// P4b: previous-frame object-to-world rows per instance (indexed by InstanceID == object index).
+// P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
 struct PrevInstanceTransform
 {
@@ -350,7 +350,7 @@ float TraceSoftSunVisibility(
 float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycentrics, float albedoLod)
 {
     const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
-    const MaterialEntry material = g_Materials[instanceId];
+    const MaterialEntry material = LoadMaterialForInstance(instanceId);
 
     float3 albedo = material.albedo;
     if (material.albedoTexIndex != 0xFFFFFFFFu && material.albedoUvOffsetFloats != 0xFFFFFFFFu)
@@ -462,7 +462,7 @@ float2 ComputeTransmissionVirtualMotion(
     }
 
     const float3 prevGlassHitPos = g_PrevCameraPos + prevRayDir * prevPrimaryPayload.hitDistance;
-    const MaterialEntry prevGlassMat = g_Materials[prevPrimaryPayload.instanceId];
+    const MaterialEntry prevGlassMat = LoadMaterialForInstance(prevPrimaryPayload.instanceId);
     const float prevDielectricWeight =
         DielectricWeight(prevGlassMat.transmission, prevGlassMat.metallic);
     if (prevDielectricWeight < 0.01)
@@ -1358,7 +1358,7 @@ void PathTracerRayGen()
 
         pathConeWidth += g_PtPixelSpreadAngle * payload.hitDistance;
 
-        const MaterialEntry material = g_Materials[payload.instanceId];
+        const MaterialEntry material = LoadMaterialForInstance(payload.instanceId);
         const float3 hitNormalGeom = payload.normal;
         const float3 hitNormal = payload.shadingNormal;
         const float albedoLod = ComputeAlbedoLod(payload, pathConeWidth, ray.Direction);
@@ -1573,7 +1573,7 @@ void PathTracerRayGen()
                     float3 bgNormal;
                     float bgRoughness;
                     const float3 bgViewDir = -txGuide.refractDir;
-                    const MaterialEntry bgMaterial = g_Materials[txGuide.instanceId];
+                    const MaterialEntry bgMaterial = LoadMaterialForInstance(txGuide.instanceId);
                     float3 bgAlbedo;
                     float bgMetallic;
                     float3 bgEmissive;
@@ -1858,7 +1858,7 @@ void PathTracerMiss(inout Payload payload)
 // Needs ObjectToWorld3x4, so it must run in the closest-hit; the raygen adds the per-path terms.
 float ComputeTriangleAlbedoLodConstant(uint instanceId, uint primitiveIndex)
 {
-    const MaterialEntry material = g_Materials[instanceId];
+    const MaterialEntry material = LoadMaterialForInstance(instanceId);
     if (material.albedoTexIndex == 0xFFFFFFFFu || material.albedoUvOffsetFloats == 0xFFFFFFFFu)
     {
         return 0.0;

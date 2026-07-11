@@ -1385,8 +1385,20 @@ void SceneRenderer::RenderGeometryPass(
         {
             if (!(*m_activePreviousWorldMatrices).empty())
             {
+                std::vector<glm::mat4> prevRenderableWorldMatrices;
+                prevRenderableWorldMatrices.reserve(objects.size());
+                for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+                {
+                    if (!objects[objectIndex].IsRenderable())
+                    {
+                        continue;
+                    }
+
+                    prevRenderableWorldMatrices.push_back((*m_activePreviousWorldMatrices)[objectIndex]);
+                }
+
                 m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
-                    *m_activePreviousWorldMatrices,
+                    prevRenderableWorldMatrices,
                     GfxContext::Get().GetCommandList());
             }
             m_dxrAccelerationStructures->UploadEmissiveLights(
