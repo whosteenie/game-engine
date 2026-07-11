@@ -28,6 +28,7 @@ public:
     {
         const Mesh* mesh = nullptr;
         std::uint32_t meshId = 0xFFFFFFFFu;
+        bool doubleSided = false;
         std::vector<std::uint32_t> instanceIds;
     };
 
@@ -105,6 +106,7 @@ private:
     void CreatePipelineState();
 
     void* m_rootSignature = nullptr;
-    void* m_pipelineState = nullptr;
+    void* m_pipelineState = nullptr;            // CULL_BACK (single-sided)
+    void* m_pipelineStateDoubleSided = nullptr; // CULL_NONE (double-sided materials)
     bool m_supported = false;
 };

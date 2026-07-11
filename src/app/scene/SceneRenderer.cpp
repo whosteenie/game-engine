@@ -1536,21 +1536,37 @@ void SceneRenderer::RenderGeometryPass(
 
         if (useMeshShaderGBufferPath)
         {
-            std::vector<MeshShaderGBufferRenderer::Batch> batches(m_gpuScene.GetMeshAssets().size());
-            for (const GpuSceneMeshAssetRecord& meshAsset : m_gpuScene.GetMeshAssets())
-            {
-                MeshShaderGBufferRenderer::Batch& batch = batches[meshAsset.meshId];
-                batch.mesh = meshAsset.mesh;
-                batch.meshId = meshAsset.meshId;
-            }
-
+            // Group by (meshId, doubleSided) so double-sided glTF materials dispatch with the
+            // CULL_NONE PSO. Keyed identically to the shadow path so shared meshes with mixed
+            // sidedness split into distinct batches.
+            const std::vector<GpuSceneMeshAssetRecord>& meshAssets = m_gpuScene.GetMeshAssets();
+            std::vector<MeshShaderGBufferRenderer::Batch> batches;
+            std::unordered_map<std::uint64_t, std::size_t> batchByKey;
             for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
             {
-                if (instance.meshId >= batches.size())
+                if (instance.meshId >= meshAssets.size())
                 {
                     continue;
                 }
-                batches[instance.meshId].instanceIds.push_back(instance.instanceId);
+                const bool doubleSided = (instance.flags & GpuSceneInstanceFlags::DoubleSided) != 0;
+                const std::uint64_t key =
+                    (static_cast<std::uint64_t>(instance.meshId) << 1) | (doubleSided ? 1ull : 0ull);
+                auto found = batchByKey.find(key);
+                std::size_t batchIndex;
+                if (found == batchByKey.end())
+                {
+                    batchIndex = batches.size();
+                    batchByKey.emplace(key, batchIndex);
+                    MeshShaderGBufferRenderer::Batch& batch = batches.emplace_back();
+                    batch.mesh = meshAssets[instance.meshId].mesh;
+                    batch.meshId = instance.meshId;
+                    batch.doubleSided = doubleSided;
+                }
+                else
+                {
+                    batchIndex = found->second;
+                }
+                batches[batchIndex].instanceIds.push_back(instance.instanceId);
             }
 
             const MeshShaderGBufferRenderer::SceneTables sceneTables{

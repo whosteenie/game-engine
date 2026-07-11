@@ -139,6 +139,10 @@ MeshShaderGBufferRenderer::~MeshShaderGBufferRenderer()
     {
         static_cast<ID3D12PipelineState*>(m_pipelineState)->Release();
     }
+    if (m_pipelineStateDoubleSided != nullptr)
+    {
+        static_cast<ID3D12PipelineState*>(m_pipelineStateDoubleSided)->Release();
+    }
     if (m_rootSignature != nullptr)
     {
         static_cast<ID3D12RootSignature*>(m_rootSignature)->Release();
@@ -300,7 +304,6 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
     }
 
     stream.rasterizer.data.FillMode = D3D12_FILL_MODE_SOLID;
-    stream.rasterizer.data.CullMode = D3D12_CULL_MODE_BACK;
     stream.rasterizer.data.FrontCounterClockwise = TRUE;
     stream.rasterizer.data.DepthBias = D3D12_DEFAULT_DEPTH_BIAS;
     stream.rasterizer.data.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
@@ -330,15 +333,25 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
     stream.sampleDesc.data.Count = 1;
     stream.sampleDesc.data.Quality = 0;
 
-    D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{};
-    streamDesc.SizeInBytes = sizeof(stream);
-    streamDesc.pPipelineStateSubobjectStream = &stream;
+    // Two cull-mode variants: CULL_BACK for single-sided materials, CULL_NONE for double-sided
+    // (glTF `doubleSided`). Without the double-sided variant, front faces of models authored for
+    // two-sided rendering get culled and you see through to the interior (mirrors the classic path's
+    // double-sided PSO and the mesh-shader shadow renderer).
+    auto createPipeline = [&](D3D12_CULL_MODE cullMode) {
+        stream.rasterizer.data.CullMode = cullMode;
+        D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{};
+        streamDesc.SizeInBytes = sizeof(stream);
+        streamDesc.pPipelineStateSubobjectStream = &stream;
 
-    ComPtr<ID3D12PipelineState> pipelineState;
-    ThrowIfFailed(
-        device2->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pipelineState)),
-        "CreatePipelineState(mesh shader G-buffer) failed");
-    m_pipelineState = pipelineState.Detach();
+        ComPtr<ID3D12PipelineState> pipelineState;
+        ThrowIfFailed(
+            device2->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pipelineState)),
+            "CreatePipelineState(mesh shader G-buffer) failed");
+        return pipelineState.Detach();
+    };
+
+    m_pipelineState = createPipeline(D3D12_CULL_MODE_BACK);
+    m_pipelineStateDoubleSided = createPipeline(D3D12_CULL_MODE_NONE);
 }
 
 MeshShaderGBufferRenderer::MeshLightingBindings MeshShaderGBufferRenderer::BuildLightingBindings(
@@ -532,7 +545,11 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
     ID3D12DescriptorHeap* heaps[] = {srvHeap};
     commandList6->SetDescriptorHeaps(1, heaps);
 
-    commandList6->SetPipelineState(static_cast<ID3D12PipelineState*>(m_pipelineState));
+    void* selectedPipeline =
+        batch.doubleSided && m_pipelineStateDoubleSided != nullptr
+            ? m_pipelineStateDoubleSided
+            : m_pipelineState;
+    commandList6->SetPipelineState(static_cast<ID3D12PipelineState*>(selectedPipeline));
     commandList6->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(m_rootSignature));
     commandList6->SetGraphicsRootConstantBufferView(0, upload.gpuAddress);
     commandList6->SetGraphicsRootShaderResourceView(
