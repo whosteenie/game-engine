@@ -32,6 +32,8 @@ public:
     // Companion to the above for RT diffuse GI: omit the SH diffuse ambient from RT1 because the
     // GI inject will replace it (see uOmitDiffuseIbl in pbr.ps.hlsl). Not persisted.
     void SetGiReplacesDiffuseIbl(bool replace) { m_giReplacesDiffuseIbl = replace; }
+    bool GetReflectionsReplaceSpecIbl() const { return m_reflectionsReplaceSpecIbl; }
+    bool GetGiReplacesDiffuseIbl() const { return m_giReplacesDiffuseIbl; }
     const IrradianceSh9& GetIrradianceSh9() const { return m_irradianceSh; }
 
     bool IsReady() const;

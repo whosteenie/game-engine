@@ -373,6 +373,7 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/scene/SceneEditor.cpp
     src/app/scene/SceneEditingController.cpp
+    src/app/scene/GpuScene.cpp
     src/app/scene/Scene.cpp
     src/app/scene/SceneHierarchyOps.cpp
     src/app/scene/SceneImportService.cpp
@@ -533,6 +534,7 @@ add_executable(engine-tests
     tests/mis_nee_test.cpp
     tests/env_importance_test.cpp
     tests/nee_mis_integration_test.cpp
+    tests/frustum_cull_test.cpp
     tests/shader_compile_test.cpp
 )
 

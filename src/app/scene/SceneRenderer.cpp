@@ -29,6 +29,9 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rendering/FrustumCull.h"
+#include "engine/rendering/MeshShaderGBufferRenderer.h"
+#include "engine/rendering/MeshShaderShadowRenderer.h"
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
@@ -39,9 +42,11 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
-#include <unordered_set>
+#include <unordered_map>
 
 SceneRenderer::SceneRenderer() = default;
 
@@ -75,6 +80,16 @@ namespace
     // single local switch avoids tearing out the experimental code while removing its runtime cost.
     constexpr bool kEnableRestirGiExperiment = false;
 
+    // C8: the mesh-shader + GpuScene scene path is the DEFAULT scene G-buffer and shadow renderer on
+    // supported hardware. The classic per-object Material::Apply + Mesh::Draw loop is retained only as
+    // a clearly-gated fallback: automatically for unsupported hardware, material debug views, and
+    // non-split-MRT output, and manually via kForceClassicRasterFallback for A/B parity comparison. It
+    // is no longer the path being optimized around. Outright deletion of the fallback waits on
+    // Hybrid-mode validation of the mesh-shader paths (they are skipped in PT mode, so PT testing does
+    // not exercise them).
+    constexpr bool kMeshShaderScenePathDefault = true;
+    constexpr bool kForceClassicRasterFallback = false;
+
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, Fn&& fn)
     {
@@ -97,32 +112,52 @@ namespace
 
     RenderFrameDiagnostics BuildRenderFrameDiagnostics(
         const Scene& scene,
-        const bool pathTracingActive)
+        const bool pathTracingActive,
+        const GpuScene& gpuScene)
     {
         RenderFrameDiagnostics diagnostics{};
         diagnostics.pathTracingActive = pathTracingActive;
+        diagnostics.meshShadersSupported = GfxContext::Get().IsMeshShaderSupported();
+        diagnostics.gpuSceneInstanceCount = static_cast<std::uint32_t>(gpuScene.GetInstances().size());
+        diagnostics.gpuSceneMeshAssetCount = static_cast<std::uint32_t>(gpuScene.GetMeshAssets().size());
+        diagnostics.gpuSceneMaterialCount = static_cast<std::uint32_t>(gpuScene.GetMaterials().size());
+        diagnostics.renderableObjectCount = diagnostics.gpuSceneInstanceCount;
+        diagnostics.uniqueMeshCount = diagnostics.gpuSceneMeshAssetCount;
+        diagnostics.selectedRenderInstanceCount = gpuScene.CountSelectedRenderInstances(scene);
+        diagnostics.instanceEditorIdMapValid = gpuScene.GetDiagnostics().valid;
+        diagnostics.previousWorldResolvedCount = gpuScene.GetDiagnostics().previousWorldResolvedCount;
+        diagnostics.previousWorldInitializedCount = gpuScene.GetDiagnostics().previousWorldInitializedCount;
+        diagnostics.gpuSceneUploadValid = gpuScene.GetGpuDiagnostics().uploadValid;
+        diagnostics.gpuSceneUploadFrameCount = gpuScene.GetGpuDiagnostics().uploadFrameCount;
+        diagnostics.gpuSceneResizeEventCount = gpuScene.GetGpuDiagnostics().resizeEventCount;
+        diagnostics.gpuSceneInstanceSrvIndex = gpuScene.GetGpuDiagnostics().instanceSrvIndex;
+        diagnostics.gpuSceneMeshAssetSrvIndex = gpuScene.GetGpuDiagnostics().meshAssetSrvIndex;
+        diagnostics.gpuSceneMaterialSrvIndex = gpuScene.GetGpuDiagnostics().materialSrvIndex;
+        diagnostics.gpuSceneInstanceBytes = gpuScene.GetGpuDiagnostics().instanceBytes;
+        diagnostics.gpuSceneMeshAssetBytes = gpuScene.GetGpuDiagnostics().meshAssetBytes;
+        diagnostics.gpuSceneMaterialBytes = gpuScene.GetGpuDiagnostics().materialBytes;
 
-        std::unordered_set<const Mesh*> uniqueMeshes;
-        for (const SceneObject& object : scene.GetObjects())
+        for (const GpuSceneInstanceRecord& instance : gpuScene.GetInstances())
         {
-            if (!object.IsRenderable())
-            {
-                continue;
-            }
-
-            ++diagnostics.renderableObjectCount;
-            const Mesh* mesh = object.GetMesh();
-            diagnostics.renderableMeshletCount += mesh->GetMeshletCount();
-            uniqueMeshes.insert(mesh);
+            const GpuSceneMeshAssetRecord& meshAsset = gpuScene.GetMeshAssets()[instance.meshId];
+            diagnostics.renderableMeshletCount += meshAsset.meshletCount;
         }
 
-        diagnostics.uniqueMeshCount = static_cast<std::uint32_t>(uniqueMeshes.size());
-        for (const Mesh* mesh : uniqueMeshes)
+        for (const GpuSceneMeshAssetRecord& meshAsset : gpuScene.GetMeshAssets())
         {
-            diagnostics.uniqueMeshletCount += mesh->GetMeshletCount();
-            diagnostics.meshletVertexReferenceCount += mesh->GetMeshletVertexReferenceCount();
-            diagnostics.meshletTriangleCount += mesh->GetMeshletTriangleCount();
+            diagnostics.uniqueMeshletCount += meshAsset.meshletCount;
+            diagnostics.meshletVertexReferenceCount += meshAsset.meshletVertexReferenceCount;
+            diagnostics.meshletTriangleCount += meshAsset.meshletTriangleCount;
         }
+
+        if (const GpuSceneInstanceRecord* primaryInstance = gpuScene.FindPrimarySelectionInstance(scene))
+        {
+            diagnostics.primarySelectionInstanceId = primaryInstance->instanceId;
+            diagnostics.primarySelectionEditorObjectId = primaryInstance->editorObjectId;
+            diagnostics.primarySelectionMeshId = primaryInstance->meshId;
+            diagnostics.primarySelectionMaterialId = primaryInstance->materialId;
+        }
+
         return diagnostics;
     }
 }
@@ -138,6 +173,8 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_environmentMap.reset();
     self->m_screenSpaceEffects.reset();
     self->m_gameViewScreenSpaceEffects.reset();
+    self->m_meshShaderGBufferRenderer.reset();
+    self->m_meshShaderShadowRenderer.reset();
     self->m_dxrAccelerationStructures.reset();
     self->m_dxrSmokeDispatch.reset();
     self->m_dxrPrimaryDebugDispatch.reset();
@@ -235,6 +272,58 @@ void SceneRenderer::EnsureGpuResources() const
             {
                 self->m_screenSpaceEffects->SetMsaaSampleCount(geometryMsaaSampleCount);
             }
+        });
+        RunGpuInitStep("mesh shader G-buffer renderer", [&]() {
+            if (GfxContext::Get().IsMeshShaderSupported())
+            {
+                try
+                {
+                    self->m_meshShaderGBufferRenderer = std::make_unique<MeshShaderGBufferRenderer>();
+                }
+                catch (const std::exception& exception)
+                {
+                    self->m_meshShaderGBufferRenderer.reset();
+                    EngineLog::Warn(
+                        "scene",
+                        std::string("Mesh shader G-buffer renderer unavailable, using classic "
+                            "raster fallback: ")
+                            + SafeExceptionMessage(exception));
+                }
+            }
+        });
+        RunGpuInitStep("mesh shader shadow renderer", [&]() {
+            if (GfxContext::Get().IsMeshShaderSupported())
+            {
+                try
+                {
+                    self->m_meshShaderShadowRenderer = std::make_unique<MeshShaderShadowRenderer>();
+                }
+                catch (const std::exception& exception)
+                {
+                    self->m_meshShaderShadowRenderer.reset();
+                    EngineLog::Warn(
+                        "scene",
+                        std::string("Mesh shader shadow renderer unavailable, using classic "
+                            "shadow fallback: ")
+                            + SafeExceptionMessage(exception));
+                }
+            }
+        });
+        RunGpuInitStep("scene path selection", [&]() {
+            // C8: report the default scene geometry/shadow renderer once at startup so the active
+            // path (and any fallback reason) is explicit rather than implied.
+            const bool meshShaderDefault =
+                kMeshShaderScenePathDefault
+                && !kForceClassicRasterFallback
+                && self->m_meshShaderGBufferRenderer != nullptr
+                && self->m_meshShaderGBufferRenderer->IsSupported();
+            const char* reason =
+                meshShaderDefault ? "mesh-shader + GpuScene (default)"
+                : kForceClassicRasterFallback ? "classic per-object (forced fallback)"
+                : GfxContext::Get().IsMeshShaderSupported()
+                    ? "classic per-object (mesh-shader renderer init failed)"
+                    : "classic per-object (mesh shaders unsupported on this device)";
+            EngineLog::Info("scene", std::string("Scene geometry renderer: ") + reason);
         });
         RunGpuInitStep("shadow depth shader", [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
@@ -373,14 +462,59 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
         m_directionalShadowSettings);
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
+
+    const bool useMeshShaderShadows =
+        kMeshShaderScenePathDefault
+        && !kForceClassicRasterFallback
+        && m_meshShaderShadowRenderer != nullptr
+        && m_meshShaderShadowRenderer->IsSupported()
+        && m_gpuScene.GetGpuDiagnostics().uploadValid
+        && m_gpuScene.GetInstanceTableGpuAddress() != 0;
+
+    // Batches are cascade-independent (same shared-mesh casters every cascade); build once, grouped
+    // by (meshId, doubleSided). The amplification shader culls per cascade from these instance lists.
+    std::vector<MeshShaderShadowRenderer::Batch> shadowBatches;
+    std::unordered_map<std::uint64_t, std::size_t> shadowBatchByKey;
+    if (useMeshShaderShadows)
+    {
+        const std::vector<GpuSceneMeshAssetRecord>& meshAssets = m_gpuScene.GetMeshAssets();
+        for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+        {
+            if ((instance.flags & GpuSceneInstanceFlags::CastsShadow) == 0
+                || instance.meshId >= meshAssets.size())
+            {
+                continue;
+            }
+            const bool doubleSided = (instance.flags & GpuSceneInstanceFlags::DoubleSided) != 0;
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(instance.meshId) << 1) | (doubleSided ? 1ull : 0ull);
+            auto found = shadowBatchByKey.find(key);
+            std::size_t batchIndex;
+            if (found == shadowBatchByKey.end())
+            {
+                batchIndex = shadowBatches.size();
+                shadowBatchByKey.emplace(key, batchIndex);
+                MeshShaderShadowRenderer::Batch& batch = shadowBatches.emplace_back();
+                batch.mesh = meshAssets[instance.meshId].mesh;
+                batch.meshId = instance.meshId;
+                batch.doubleSided = doubleSided;
+            }
+            else
+            {
+                batchIndex = found->second;
+            }
+            shadowBatches[batchIndex].instanceIds.push_back(instance.instanceId);
+        }
+    }
+
+    const MeshShaderShadowRenderer::SceneTables shadowSceneTables{
+        m_gpuScene.GetInstanceTableGpuAddress()};
+
     for (int cascadeIndex = 0; cascadeIndex < m_shadowMap->GetActiveCascadeCount(); ++cascadeIndex)
     {
         m_shadowMap->BeginCascade(cascadeIndex);
 
-        m_shadowDepthShader->SetMat4(
-            "uLightSpaceMatrix",
-            m_shadowMap->GetLightSpaceMatrix(cascadeIndex));
-
+        const glm::mat4 lightSpaceMatrix = m_shadowMap->GetLightSpaceMatrix(cascadeIndex);
         const ShadowLightSpaceSetup& cascadeSetup =
             m_shadowMap->GetCascadeSetups()[static_cast<std::size_t>(cascadeIndex)];
         const float texelSpan =
@@ -390,21 +524,46 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
             cascadeSetup.stableOrthoNear,
             cascadeSetup.stableOrthoFar,
             m_directionalShadowSettings.GetCasterDepthBiasScale());
-        m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
-        m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
         ++m_renderFrameDiagnostics.shadowCascadeCount;
 
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        if (useMeshShaderShadows)
         {
-            const SceneObject& object = objects[objectIndex];
-            if (!object.IsRenderable() || !object.CastsShadow())
+            const std::array<glm::vec4, 6> cascadePlanes = ExtractFrustumPlanesZO(lightSpaceMatrix);
+            for (const MeshShaderShadowRenderer::Batch& batch : shadowBatches)
+            {
+                m_renderFrameDiagnostics.shadowMeshShaderDispatchCount +=
+                    m_meshShaderShadowRenderer->DispatchMeshAssetBatch(
+                        batch,
+                        shadowSceneTables,
+                        lightSpaceMatrix,
+                        cascadePlanes,
+                        GetSunDirection(),
+                        casterDepthBias);
+            }
+            continue;
+        }
+
+        m_shadowDepthShader->SetMat4("uLightSpaceMatrix", lightSpaceMatrix);
+        m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
+        m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
+
+        for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+        {
+            if ((instance.flags & GpuSceneInstanceFlags::CastsShadow) == 0)
             {
                 continue;
             }
 
+            const std::size_t objectIndex = static_cast<std::size_t>(instance.objectIndex);
+            if (objectIndex >= objects.size())
+            {
+                continue;
+            }
+
+            const SceneObject& object = objects[objectIndex];
             const bool doubleSided = object.GetMaterial().IsDoubleSided();
             m_shadowDepthShader->Use(false, false, doubleSided);
-            m_shadowDepthShader->SetMat4("uModel", scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+            m_shadowDepthShader->SetMat4("uModel", instance.world);
             m_shadowDepthShader->FlushUniforms();
             object.GetMesh()->Draw();
             ++m_renderFrameDiagnostics.shadowDrawCount;
@@ -617,6 +776,7 @@ void SceneRenderer::RecordDxrPass(
 
     m_dxrAccelerationStructures->EnsureScene(
         scene,
+        m_gpuScene,
         true,
         GfxContext::Get().GetCommandList());
     DxrBreadcrumb("render: EnsureScene end");
@@ -1312,15 +1472,6 @@ void SceneRenderer::RenderGeometryPass(
     }
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
-    if ((*m_activePreviousWorldMatrices).size() != objects.size())
-    {
-        (*m_activePreviousWorldMatrices).resize(objects.size());
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
-        {
-            (*m_activePreviousWorldMatrices)[objectIndex] =
-                scene.GetWorldMatrix(static_cast<int>(objectIndex));
-        }
-    }
 
     const MotionVectorFrameState motionFrameState =
         usePostProcess ? m_activeScreenSpaceEffects->GetMotionVectorFrameState() : MotionVectorFrameState{};
@@ -1356,29 +1507,114 @@ void SceneRenderer::RenderGeometryPass(
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
-        {
-            const SceneObject& object = objects[objectIndex];
-            if (!object.IsRenderable())
-            {
-                continue;
-            }
+        bool useMeshShaderGBufferPath =
+            kMeshShaderScenePathDefault
+            && !kForceClassicRasterFallback
+            && splitLightingMrt
+            && materialDebugMode == RenderDebugMode::None
+            && m_gpuScene.GetGpuDiagnostics().uploadValid
+            && m_gpuScene.GetInstanceTableGpuAddress() != 0
+            && m_gpuScene.GetMaterialTableGpuAddress() != 0
+            && m_meshShaderGBufferRenderer != nullptr
+            && m_meshShaderGBufferRenderer->IsSupported();
 
-            const glm::mat4 modelMatrix = scene.GetWorldMatrix(static_cast<int>(objectIndex));
-            object.GetMaterial().Apply(
+        // Assemble the per-frame lighting bindings once. If any required resource (IBL prefilter /
+        // BRDF LUT / shadow depth SRV) is unavailable, fall back to the classic lit path rather than
+        // dispatch the mesh-shader G-buffer with unbound lighting descriptors.
+        MeshShaderGBufferRenderer::MeshLightingBindings meshLighting;
+        if (useMeshShaderGBufferPath)
+        {
+            meshLighting = m_meshShaderGBufferRenderer->BuildLightingBindings(
                 camera,
                 m_lighting,
-                m_environmentMap->GetIBL(),
-                modelMatrix,
                 m_shadowMap.get(),
-                object.ReceivesShadow(),
-                splitLightingMrt,
-                materialDebugMode,
-                m_directionalShadowSettings,
-                motionFrameState,
-                (*m_activePreviousWorldMatrices)[objectIndex]);
-            object.GetMesh()->Draw();
-            ++m_renderFrameDiagnostics.geometryDrawCount;
+                m_environmentMap->GetIBL(),
+                m_directionalShadowSettings);
+            useMeshShaderGBufferPath = meshLighting.valid;
+        }
+        m_renderFrameDiagnostics.meshShaderGBufferActive = useMeshShaderGBufferPath;
+
+        if (useMeshShaderGBufferPath)
+        {
+            // Group by (meshId, doubleSided) so double-sided glTF materials dispatch with the
+            // CULL_NONE PSO. Keyed identically to the shadow path so shared meshes with mixed
+            // sidedness split into distinct batches.
+            const std::vector<GpuSceneMeshAssetRecord>& meshAssets = m_gpuScene.GetMeshAssets();
+            std::vector<MeshShaderGBufferRenderer::Batch> batches;
+            std::unordered_map<std::uint64_t, std::size_t> batchByKey;
+            for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+            {
+                if (instance.meshId >= meshAssets.size())
+                {
+                    continue;
+                }
+                const bool doubleSided = (instance.flags & GpuSceneInstanceFlags::DoubleSided) != 0;
+                const std::uint64_t key =
+                    (static_cast<std::uint64_t>(instance.meshId) << 1) | (doubleSided ? 1ull : 0ull);
+                auto found = batchByKey.find(key);
+                std::size_t batchIndex;
+                if (found == batchByKey.end())
+                {
+                    batchIndex = batches.size();
+                    batchByKey.emplace(key, batchIndex);
+                    MeshShaderGBufferRenderer::Batch& batch = batches.emplace_back();
+                    batch.mesh = meshAssets[instance.meshId].mesh;
+                    batch.meshId = instance.meshId;
+                    batch.doubleSided = doubleSided;
+                }
+                else
+                {
+                    batchIndex = found->second;
+                }
+                batches[batchIndex].instanceIds.push_back(instance.instanceId);
+            }
+
+            const MeshShaderGBufferRenderer::SceneTables sceneTables{
+                m_gpuScene.GetInstanceTableGpuAddress(),
+                m_gpuScene.GetMaterialTableGpuAddress()};
+
+            for (const MeshShaderGBufferRenderer::Batch& batch : batches)
+            {
+                m_renderFrameDiagnostics.meshShaderDispatchCount +=
+                    m_meshShaderGBufferRenderer->DispatchMeshAssetBatch(
+                        batch,
+                        sceneTables,
+                        meshLighting,
+                        camera,
+                        motionFrameState.prevView,
+                        motionFrameState.prevUnjitteredProjection,
+                        motionFrameState.historyValid);
+            }
+
+            m_renderFrameDiagnostics.meshShaderGBufferActive =
+                m_renderFrameDiagnostics.meshShaderDispatchCount > 0;
+        }
+        else
+        {
+            for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+            {
+                const std::size_t objectIndex = static_cast<std::size_t>(instance.objectIndex);
+                if (objectIndex >= objects.size())
+                {
+                    continue;
+                }
+
+                const SceneObject& object = objects[objectIndex];
+                object.GetMaterial().Apply(
+                    camera,
+                    m_lighting,
+                    m_environmentMap->GetIBL(),
+                    instance.world,
+                    m_shadowMap.get(),
+                    object.ReceivesShadow(),
+                    splitLightingMrt,
+                    materialDebugMode,
+                    m_directionalShadowSettings,
+                    motionFrameState,
+                    instance.prevWorld);
+                object.GetMesh()->Draw();
+                ++m_renderFrameDiagnostics.geometryDrawCount;
+            }
         }
 
         drawScope.Success();
@@ -1391,18 +1627,13 @@ void SceneRenderer::RenderGeometryPass(
         // is recorded on this frame's command list ahead of the PT dispatch that reads it (t14).
         if (m_dxrSettings.IsPathTracingActive() && m_dxrAccelerationStructures != nullptr)
         {
-            if (!(*m_activePreviousWorldMatrices).empty())
+            if (!m_gpuScene.GetInstances().empty())
             {
                 std::vector<glm::mat4> prevRenderableWorldMatrices;
-                prevRenderableWorldMatrices.reserve(objects.size());
-                for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+                prevRenderableWorldMatrices.reserve(m_gpuScene.GetInstances().size());
+                for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
                 {
-                    if (!objects[objectIndex].IsRenderable())
-                    {
-                        continue;
-                    }
-
-                    prevRenderableWorldMatrices.push_back((*m_activePreviousWorldMatrices)[objectIndex]);
+                    prevRenderableWorldMatrices.push_back(instance.prevWorld);
                 }
 
                 m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
@@ -1411,16 +1642,14 @@ void SceneRenderer::RenderGeometryPass(
             }
             m_dxrAccelerationStructures->UploadEmissiveLights(
                 scene,
+                m_gpuScene,
                 GfxContext::Get().GetCommandList());
         }
-
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
-        {
-            (*m_activePreviousWorldMatrices)[objectIndex] =
-                scene.GetWorldMatrix(static_cast<int>(objectIndex));
-        }
     }
-    else if (target != nullptr)
+
+    AdvancePreviousWorldTransforms();
+
+    if (!usePostProcess && target != nullptr)
     {
         target->Unbind();
     }
@@ -1672,9 +1901,9 @@ void SceneRenderer::Render(
     m_activeScreenSpaceEffects = renderViewport == RenderViewport::GameView
         ? m_gameViewScreenSpaceEffects.get()
         : m_screenSpaceEffects.get();
-    m_activePreviousWorldMatrices = renderViewport == RenderViewport::GameView
-        ? &m_gameViewPreviousWorldMatrices
-        : &m_previousWorldMatrices;
+    m_activePreviousWorldByObjectId = renderViewport == RenderViewport::GameView
+        ? &m_gameViewPreviousWorldByObjectId
+        : &m_previousWorldByObjectId;
 
     MaybeInvalidateStaleViewportTemporalState(renderViewport);
 
@@ -1691,7 +1920,9 @@ void SceneRenderer::Render(
         ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
 
     const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
-    m_renderFrameDiagnostics = BuildRenderFrameDiagnostics(scene, pathTracingActive);
+    m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
+    m_gpuScene.UploadGpuTables(GfxContext::Get().GetCommandList());
+    m_renderFrameDiagnostics = BuildRenderFrameDiagnostics(scene, pathTracingActive, m_gpuScene);
 
     SceneRenderTrace::Step(
         std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")
@@ -1901,6 +2132,33 @@ const DxrDiagnostics& SceneRenderer::GetDxrDiagnostics() const
     return m_dxrAccelerationStructures->GetDiagnostics();
 }
 
+void SceneRenderer::AdvancePreviousWorldTransforms()
+{
+    if (m_activePreviousWorldByObjectId == nullptr)
+    {
+        return;
+    }
+
+    GpuScene::PreviousWorldMap nextPreviousWorldByObjectId;
+    nextPreviousWorldByObjectId.reserve(m_gpuScene.GetInstances().size());
+    for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+    {
+        if (instance.editorObjectId == kInvalidSceneObjectId)
+        {
+            continue;
+        }
+
+        nextPreviousWorldByObjectId[instance.editorObjectId] = instance.world;
+    }
+
+    *m_activePreviousWorldByObjectId = std::move(nextPreviousWorldByObjectId);
+}
+
+std::uint32_t SceneRenderer::FindRenderInstanceForObjectIndex(const std::uint32_t objectIndex) const
+{
+    return m_gpuScene.FindInstanceForObjectIndex(objectIndex);
+}
+
 const DirectionalShadowSettings& SceneRenderer::GetDirectionalShadowSettings() const
 {
     return m_directionalShadowSettings;
@@ -1984,10 +2242,10 @@ void SceneRenderer::InvalidateViewportTemporalState(const RenderViewport viewpor
         effects->InvalidateAllTemporalState();
     }
 
-    std::vector<glm::mat4>& previousWorldMatrices = viewport == RenderViewport::GameView
-        ? m_gameViewPreviousWorldMatrices
-        : m_previousWorldMatrices;
-    previousWorldMatrices.clear();
+    GpuScene::PreviousWorldMap& previousWorldByObjectId = viewport == RenderViewport::GameView
+        ? m_gameViewPreviousWorldByObjectId
+        : m_previousWorldByObjectId;
+    previousWorldByObjectId.clear();
 }
 
 void SceneRenderer::MaybeInvalidateStaleViewportTemporalState(const RenderViewport viewport)
@@ -2018,7 +2276,7 @@ void SceneRenderer::InvalidateGameViewMotionOnPlayStop()
         m_gameViewScreenSpaceEffects->InvalidateMotionHistory();
     }
 
-    m_gameViewPreviousWorldMatrices.clear();
+    m_gameViewPreviousWorldByObjectId.clear();
 }
 
 void SceneRenderer::SyncPtTemporalHistoryVersion()

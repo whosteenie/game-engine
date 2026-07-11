@@ -60,6 +60,31 @@ void RunShaderCompileTests()
             "main",
             "ps_6_0",
             "pbr.ps.hlsl should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/scene_gbuffer.as.hlsl",
+            "main",
+            "as_6_5",
+            "scene_gbuffer.as.hlsl (meshlet cull) should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/scene_gbuffer.ms.hlsl",
+            "main",
+            "ms_6_5",
+            "scene_gbuffer.ms.hlsl should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/scene_gbuffer_mesh.ps.hlsl",
+            "main",
+            "ps_6_0",
+            "scene_gbuffer_mesh.ps.hlsl (mesh G-buffer lighting) should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/scene_shadow.as.hlsl",
+            "main",
+            "as_6_5",
+            "scene_shadow.as.hlsl (meshlet cull) should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/scene_shadow.ms.hlsl",
+            "main",
+            "ms_6_5",
+            "scene_shadow.ms.hlsl should compile");
     }
     catch (const std::exception& exception)
     {
