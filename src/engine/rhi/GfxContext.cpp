@@ -56,6 +56,28 @@ namespace
 
     constexpr std::uint32_t TransientUploadCapacityBytes = 64u * 1024u * 1024u;
 
+    void ConfigureD3D12InfoQueueBreaks(ID3D12Device* device)
+    {
+#if defined(_DEBUG) && defined(GAME_ENGINE_D3D12_DEBUG_LAYER)
+        if (device == nullptr || !IsDebuggerPresent())
+        {
+            return;
+        }
+
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        if (FAILED(device->QueryInterface(IID_PPV_ARGS(&infoQueue))) || infoQueue == nullptr)
+        {
+            return;
+        }
+
+        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+        infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+        EngineLog::Info("gfx", "D3D12 debug-layer breaks enabled for corruption/error messages.");
+#else
+        (void)device;
+#endif
+    }
+
     struct FrameContext
     {
         ComPtr<ID3D12CommandAllocator> CommandAllocator;
@@ -273,6 +295,8 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         m_impl->Adapter = adapter;
     }
     pumpEvents();
+
+    ConfigureD3D12InfoQueueBreaks(m_impl->Device.Get());
 
     auto queryMsaaSupport = [](ID3D12Device* device, const DXGI_FORMAT format, const UINT sampleCount) {
         D3D12_FEATURE_DATA_MULTISAMPLE_QUALITY_LEVELS levels{};
