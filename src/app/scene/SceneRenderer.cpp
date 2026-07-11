@@ -1507,7 +1507,7 @@ void SceneRenderer::RenderGeometryPass(
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
-        const bool useMeshShaderGBufferPath =
+        bool useMeshShaderGBufferPath =
             kMeshShaderScenePathDefault
             && !kForceClassicRasterFallback
             && splitLightingMrt
@@ -1517,6 +1517,21 @@ void SceneRenderer::RenderGeometryPass(
             && m_gpuScene.GetMaterialTableGpuAddress() != 0
             && m_meshShaderGBufferRenderer != nullptr
             && m_meshShaderGBufferRenderer->IsSupported();
+
+        // Assemble the per-frame lighting bindings once. If any required resource (IBL prefilter /
+        // BRDF LUT / shadow depth SRV) is unavailable, fall back to the classic lit path rather than
+        // dispatch the mesh-shader G-buffer with unbound lighting descriptors.
+        MeshShaderGBufferRenderer::MeshLightingBindings meshLighting;
+        if (useMeshShaderGBufferPath)
+        {
+            meshLighting = m_meshShaderGBufferRenderer->BuildLightingBindings(
+                camera,
+                m_lighting,
+                m_shadowMap.get(),
+                m_environmentMap->GetIBL(),
+                m_directionalShadowSettings);
+            useMeshShaderGBufferPath = meshLighting.valid;
+        }
         m_renderFrameDiagnostics.meshShaderGBufferActive = useMeshShaderGBufferPath;
 
         if (useMeshShaderGBufferPath)
@@ -1548,6 +1563,7 @@ void SceneRenderer::RenderGeometryPass(
                     m_meshShaderGBufferRenderer->DispatchMeshAssetBatch(
                         batch,
                         sceneTables,
+                        meshLighting,
                         camera,
                         motionFrameState.prevView,
                         motionFrameState.prevUnjitteredProjection,

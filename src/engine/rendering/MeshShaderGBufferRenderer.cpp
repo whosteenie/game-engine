@@ -1,6 +1,13 @@
 #include "engine/rendering/MeshShaderGBufferRenderer.h"
 
 #include "engine/camera/Camera.h"
+#include "engine/lighting/CascadedShadowMap.h"
+#include "engine/lighting/DirectionalShadowSettings.h"
+#include "engine/lighting/IBL.h"
+#include "engine/lighting/IrradianceSh.h"
+#include "engine/lighting/Light.h"
+#include "engine/lighting/SceneLighting.h"
+#include "engine/lighting/ShadowMapMath.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/FrustumCull.h"
@@ -15,7 +22,9 @@
 
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <fstream>
 #include <climits>
 #include <iterator>
@@ -41,6 +50,31 @@ namespace
 
     // Amplification-shader group size; must match SCENE_GBUFFER_AS_GROUP_SIZE in the shaders.
     constexpr std::uint32_t kMeshShaderAsGroupSize = 32;
+
+    // Convert a shader-visible SRV heap CPU handle (as exposed by IBL) back to its heap index, so it
+    // can be bound as a descriptor table via GetSrvHeapGpuHandle. Mirrors
+    // DxrDispatchContext::DepthSrvIndexFromCpuHandle.
+    std::uint32_t SrvIndexFromCpuHandle(std::uintptr_t srvCpuHandle)
+    {
+        if (srvCpuHandle == 0)
+        {
+            return UINT32_MAX;
+        }
+
+        auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+        if (srvHeap == nullptr)
+        {
+            return UINT32_MAX;
+        }
+
+        const D3D12_CPU_DESCRIPTOR_HANDLE heapStart = srvHeap->GetCPUDescriptorHandleForHeapStart();
+        const std::uint32_t descriptorSize = GfxContext::Get().GetSrvDescriptorSize();
+        if (descriptorSize == 0)
+        {
+            return UINT32_MAX;
+        }
+        return static_cast<std::uint32_t>((srvCpuHandle - heapStart.ptr) / descriptorSize);
+    }
 
     struct MeshShaderFrameConstants
     {
@@ -115,7 +149,9 @@ void MeshShaderGBufferRenderer::CreateRootSignature()
 {
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
 
-    D3D12_ROOT_PARAMETER rootParams[9]{};
+    // 0: frame CBV (b0)  1-7: buffer SRVs (t0-t6)  8: bindless textures (space1)
+    // 9: lighting CBV (b1)  10-12: shadow(t7)/prefilter(t8)/brdf-LUT(t9) SRV tables
+    D3D12_ROOT_PARAMETER rootParams[13]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     rootParams[0].Descriptor.ShaderRegister = 0;
@@ -140,7 +176,31 @@ void MeshShaderGBufferRenderer::CreateRootSignature()
     rootParams[8].DescriptorTable.NumDescriptorRanges = 1;
     rootParams[8].DescriptorTable.pDescriptorRanges = &bindlessRange;
 
-    D3D12_STATIC_SAMPLER_DESC linearWrapSampler{};
+    rootParams[9].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[9].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootParams[9].Descriptor.ShaderRegister = 1;
+    rootParams[9].Descriptor.RegisterSpace = 0;
+
+    // One single-descriptor SRV range per lighting texture (they live at arbitrary, non-contiguous
+    // heap indices, so each is bound as its own table pointing at the resource's slot).
+    D3D12_DESCRIPTOR_RANGE lightingSrvRanges[3]{};
+    for (UINT lightingIndex = 0; lightingIndex < 3; ++lightingIndex)
+    {
+        lightingSrvRanges[lightingIndex].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        lightingSrvRanges[lightingIndex].NumDescriptors = 1;
+        lightingSrvRanges[lightingIndex].BaseShaderRegister = 7 + lightingIndex; // t7, t8, t9
+        lightingSrvRanges[lightingIndex].RegisterSpace = 0;
+        lightingSrvRanges[lightingIndex].OffsetInDescriptorsFromTableStart = 0;
+
+        const UINT rootIndex = 10 + lightingIndex;
+        rootParams[rootIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[rootIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        rootParams[rootIndex].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[rootIndex].DescriptorTable.pDescriptorRanges = &lightingSrvRanges[lightingIndex];
+    }
+
+    D3D12_STATIC_SAMPLER_DESC samplers[2]{};
+    D3D12_STATIC_SAMPLER_DESC& linearWrapSampler = samplers[0];
     linearWrapSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     linearWrapSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     linearWrapSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -155,11 +215,27 @@ void MeshShaderGBufferRenderer::CreateRootSignature()
     linearWrapSampler.RegisterSpace = 0;
     linearWrapSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
+    // s1: linear clamp for IBL prefilter cube + BRDF LUT (LUT edges must clamp).
+    D3D12_STATIC_SAMPLER_DESC& linearClampSampler = samplers[1];
+    linearClampSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    linearClampSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    linearClampSampler.MipLODBias = 0.0f;
+    linearClampSampler.MaxAnisotropy = 1;
+    linearClampSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    linearClampSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    linearClampSampler.MinLOD = 0.0f;
+    linearClampSampler.MaxLOD = D3D12_FLOAT32_MAX;
+    linearClampSampler.ShaderRegister = 1;
+    linearClampSampler.RegisterSpace = 0;
+    linearClampSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC rootDesc{};
     rootDesc.NumParameters = static_cast<UINT>(std::size(rootParams));
     rootDesc.pParameters = rootParams;
-    rootDesc.NumStaticSamplers = 1;
-    rootDesc.pStaticSamplers = &linearWrapSampler;
+    rootDesc.NumStaticSamplers = static_cast<UINT>(std::size(samplers));
+    rootDesc.pStaticSamplers = samplers;
     rootDesc.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
@@ -265,14 +341,123 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
     m_pipelineState = pipelineState.Detach();
 }
 
+MeshShaderGBufferRenderer::MeshLightingBindings MeshShaderGBufferRenderer::BuildLightingBindings(
+    const Camera& camera,
+    const SceneLighting& lighting,
+    const CascadedShadowMap* shadowMap,
+    const IBL& ibl,
+    const DirectionalShadowSettings& shadowSettings) const
+{
+    MeshLightingBindings bindings;
+    MeshLightingConstants& constants = bindings.constants;
+
+    constants.viewPos = glm::vec4(camera.GetPosition(), 0.0f);
+
+    const std::vector<Light>& lights = lighting.GetLights();
+    const int lightCount = std::min(static_cast<int>(lights.size()), 8);
+    const bool hasRenderedShadow = shadowMap != nullptr && shadowMap->HasRenderedDepth();
+    constants.lightMeta = glm::ivec4(
+        lightCount,
+        lighting.GetShadowLightIndex(),
+        hasRenderedShadow ? 1 : 0,
+        static_cast<int>(shadowSettings.GetFilterMode()));
+
+    for (int i = 0; i < lightCount; ++i)
+    {
+        const Light& light = lights[static_cast<std::size_t>(i)];
+        MeshLightData& dst = constants.lights[i];
+        dst.typeAndFlags = glm::ivec4(static_cast<int>(light.GetType()), 0, 0, 0);
+        dst.position = glm::vec4(light.GetPosition(), 0.0f);
+        dst.direction = glm::vec4(glm::normalize(light.GetDirection()), 0.0f);
+        dst.color = glm::vec4(light.GetColor(), 0.0f);
+        dst.params0 = glm::vec4(
+            light.GetIntensity(),
+            light.GetConstantAttenuation(),
+            light.GetLinearAttenuation(),
+            light.GetQuadraticAttenuation());
+        dst.params1 = glm::vec4(
+            light.GetRange(),
+            light.GetInnerCutoffCos(),
+            light.GetOuterCutoffCos(),
+            0.0f);
+    }
+
+    if (shadowMap != nullptr)
+    {
+        const int activeCascadeCount = shadowMap->GetActiveCascadeCount();
+        const std::array<glm::mat4, CascadedShadowMap::MaxCascades>& lightSpaceMatrices =
+            shadowMap->GetLightSpaceMatrices();
+        const std::array<float, CascadedShadowMap::MaxCascades>& cascadeEndSplits =
+            shadowMap->GetCascadeEndSplits();
+        const std::array<ShadowLightSpaceSetup, CascadedShadowMap::MaxCascades>& cascadeSetups =
+            shadowMap->GetCascadeSetups();
+
+        for (int cascadeIndex = 0; cascadeIndex < CascadedShadowMap::MaxCascades; ++cascadeIndex)
+        {
+            constants.lightSpaceMatrices[cascadeIndex] = lightSpaceMatrices[cascadeIndex];
+            constants.cascadeEndSplits[cascadeIndex] = cascadeEndSplits[cascadeIndex];
+            const ShadowLightSpaceSetup& setup = cascadeSetups[static_cast<std::size_t>(cascadeIndex)];
+            constants.cascadeTexelWorldSizes[cascadeIndex] =
+                std::max(setup.texelWorldSizeX, setup.texelWorldSizeY);
+            constants.cascadeClipDepthMin[cascadeIndex] = setup.clipDepthContentMin;
+            constants.cascadeClipDepthMax[cascadeIndex] = setup.clipDepthContentMax;
+        }
+
+        constants.shadowParams0 = glm::vec4(
+            shadowSettings.GetCascadeBlendRatio(),
+            static_cast<float>(activeCascadeCount),
+            camera.GetNearPlane(),
+            static_cast<float>(shadowMap->GetResolution()));
+        constants.shadowParams1 = glm::vec4(
+            static_cast<float>(shadowSettings.GetPcfKernelRadius()),
+            shadowSettings.GetUsePoissonPcf() ? 1.0f : 0.0f,
+            shadowSettings.GetMinPenumbraTexels(),
+            static_cast<float>(shadowSettings.GetPcssBlockerRadius()));
+        constants.shadowParams2 = glm::vec4(
+            shadowSettings.GetPcssLightAngularSize(),
+            shadowSettings.GetPcssMinPenumbraTexels(),
+            shadowSettings.GetPcssMaxPenumbraTexels(),
+            shadowSettings.GetWorldBiasScale());
+        constants.shadowParams3 = glm::vec4(shadowSettings.GetDepthBiasScale(), 0.0f, 0.0f, 0.0f);
+
+        bindings.shadowSrvIndex = shadowMap->GetDepthSrvIndex();
+    }
+
+    constants.iblParams = glm::vec4(
+        ibl.GetMaxReflectionLod(),
+        ibl.GetEnvironmentIntensity(),
+        ibl.GetReflectionsReplaceSpecIbl() ? 1.0f : 0.0f,
+        ibl.GetGiReplacesDiffuseIbl() ? 1.0f : 0.0f);
+
+    const IrradianceSh9& sh = ibl.GetIrradianceSh9();
+    for (std::size_t coeff = 0; coeff < sh.coefficients.size() && coeff < 9; ++coeff)
+    {
+        constants.irradianceSh[coeff] = sh.coefficients[coeff];
+    }
+
+    bindings.prefilterSrvIndex = SrvIndexFromCpuHandle(ibl.GetPrefilterMapSrvCpuHandle());
+    bindings.brdfSrvIndex = SrvIndexFromCpuHandle(ibl.GetBrdfLutSrvCpuHandle());
+
+    bindings.valid =
+        bindings.shadowSrvIndex != UINT32_MAX
+        && bindings.prefilterSrvIndex != UINT32_MAX
+        && bindings.brdfSrvIndex != UINT32_MAX;
+    return bindings;
+}
+
 std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
     const Batch& batch,
     const SceneTables& sceneTables,
+    const MeshLightingBindings& lightingBindings,
     const Camera& camera,
     const glm::mat4& prevView,
     const glm::mat4& prevUnjitteredProjection,
     const bool temporalHistoryValid) const
 {
+    if (!lightingBindings.valid)
+    {
+        return 0;
+    }
     const Mesh* mesh = batch.mesh;
     if (!m_supported || mesh == nullptr || mesh->GetMeshletCount() == 0)
     {
@@ -368,6 +553,27 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
 
     D3D12_GPU_DESCRIPTOR_HANDLE bindlessTable = srvHeap->GetGPUDescriptorHandleForHeapStart();
     commandList6->SetGraphicsRootDescriptorTable(8, bindlessTable);
+
+    const GfxContext::TransientUploadAllocation lightingUpload =
+        GfxContext::Get().AllocateTransientUpload(
+            &lightingBindings.constants, sizeof(lightingBindings.constants));
+    if (lightingUpload.gpuAddress == 0)
+    {
+        return 0;
+    }
+    commandList6->SetGraphicsRootConstantBufferView(9, lightingUpload.gpuAddress);
+
+    const std::uint32_t lightingSrvIndices[3] = {
+        lightingBindings.shadowSrvIndex,
+        lightingBindings.prefilterSrvIndex,
+        lightingBindings.brdfSrvIndex};
+    for (UINT lightingSlot = 0; lightingSlot < 3; ++lightingSlot)
+    {
+        D3D12_GPU_DESCRIPTOR_HANDLE handle{};
+        handle.ptr = reinterpret_cast<UINT64>(
+            GfxContext::Get().GetSrvHeapGpuHandle(lightingSrvIndices[lightingSlot]));
+        commandList6->SetGraphicsRootDescriptorTable(10 + lightingSlot, handle);
+    }
 
     const std::uint32_t meshletCount = mesh->GetMeshletCount();
     const std::uint32_t instanceCount = static_cast<std::uint32_t>(batch.instanceIds.size());

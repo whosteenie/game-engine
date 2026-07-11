@@ -1,3 +1,5 @@
+#include "mesh_lighting.hlsli"
+
 static const uint INVALID_INDEX = 0xFFFFFFFFu;
 static const uint MATERIAL_FLAG_METALLIC_ROUGHNESS_MAP = 1u;
 
@@ -126,11 +128,21 @@ PSOutput main(PSInput input)
             .rgb;
     }
 
-    const float3 directPreview = albedo * 0.04 + emissive;
-    output.oDirect = float4(directPreview, 1.0);
-    output.oIndirect = float4(0.0, 0.0, 0.0, 1.0);
+    MeshLightingSurface surface;
+    surface.worldPos = input.fragPos;
+    surface.shadingNormal = normal;
+    surface.geomNormal = input.normal;
+    surface.albedo = albedo;
+    surface.roughness = roughness;
+    surface.metallic = metallic;
+    surface.emissive = emissive;
+    surface.viewDepth = input.viewDepth;
+    const MeshLightingResult lighting = ComputeMeshSplitLighting(surface);
+
+    output.oDirect = float4(lighting.direct, 1.0);
+    output.oIndirect = float4(lighting.indirect, 1.0);
     output.oNormal = float4(normalize(normal), 1.0);
-    output.oSunShadow = float4(0.0, 0.0, 0.0, 1.0);
+    output.oSunShadow = float4(lighting.sunUnshadowed, lighting.shadowFactor);
     output.oVelocity = float4(ComputeMotionNdc(input.currClip, input.prevClip), 0.0, 1.0);
     output.oMaterial0 = float4(albedo, roughness);
     output.oMaterial1 = float4(metallic, emissive);

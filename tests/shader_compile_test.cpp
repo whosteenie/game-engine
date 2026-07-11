@@ -71,6 +71,11 @@ void RunShaderCompileTests()
             "ms_6_5",
             "scene_gbuffer.ms.hlsl should compile");
         ExpectShaderCompiles(
+            "assets/shaders/scene_gbuffer_mesh.ps.hlsl",
+            "main",
+            "ps_6_0",
+            "scene_gbuffer_mesh.ps.hlsl (mesh G-buffer lighting) should compile");
+        ExpectShaderCompiles(
             "assets/shaders/scene_shadow.as.hlsl",
             "main",
             "as_6_5",

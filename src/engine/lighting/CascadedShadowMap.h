@@ -41,6 +41,11 @@ public:
     void BindDepthTexture(unsigned int textureUnit) const;
     bool HasRenderedDepth() const;
 
+    // Shader-visible SRV heap index of the cascade depth Texture2DArray, for raw-D3D12 passes
+    // (e.g. the mesh-shader G-buffer lighting) that bind it via a descriptor table rather than the
+    // Shader texture-unit path. UINT32_MAX until resources are created.
+    std::uint32_t GetDepthSrvIndex() const { return m_depthSrvIndex; }
+
 private:
     void CreateResources();
     void DestroyResources();
