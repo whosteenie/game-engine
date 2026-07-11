@@ -534,6 +534,7 @@ add_executable(engine-tests
     tests/mis_nee_test.cpp
     tests/env_importance_test.cpp
     tests/nee_mis_integration_test.cpp
+    tests/frustum_cull_test.cpp
     tests/shader_compile_test.cpp
 )
 

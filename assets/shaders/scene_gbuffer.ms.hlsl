@@ -1,61 +1,8 @@
 #include "hlsl_common.hlsl"
+#include "scene_gbuffer_common.hlsli"
 
 static const uint MAX_MESHLET_VERTICES = 64;
 static const uint MAX_MESHLET_TRIANGLES = 64;
-
-cbuffer MeshFrame : register(b0)
-{
-    float4x4 uView;
-    float4x4 uPrevView;
-    float4x4 uProjection;
-    float4x4 uUnjitteredProjection;
-    float4x4 uPrevUnjitteredProjection;
-    float4 uHistoryStrideMeshId;
-};
-
-ByteAddressBuffer gVertexFloats : register(t0);
-
-struct MeshletRecord
-{
-    uint vertexOffset;
-    uint vertexCount;
-    uint triangleOffset;
-    uint triangleCount;
-    float3 boundsCenter;
-    float boundsRadius;
-    float3 boundsMin;
-    uint flags;
-    float3 boundsMax;
-    uint pad0;
-};
-
-struct MeshletTriangle
-{
-    uint v0;
-    uint v1;
-    uint v2;
-    uint pad0;
-};
-
-struct InstanceRecord
-{
-    float4x4 world;
-    float4x4 prevWorld;
-    uint meshId;
-    uint materialId;
-    uint flags;
-    uint objectIndex;
-    uint editorObjectIdLow;
-    uint editorObjectIdHigh;
-    uint pad0;
-    uint pad1;
-};
-
-StructuredBuffer<MeshletRecord> gMeshlets : register(t1);
-StructuredBuffer<uint> gMeshletVertices : register(t2);
-StructuredBuffer<MeshletTriangle> gMeshletTriangles : register(t3);
-StructuredBuffer<InstanceRecord> gInstances : register(t4);
-StructuredBuffer<uint> gInstanceIds : register(t6);
 
 struct VertexOut
 {
@@ -83,13 +30,17 @@ float LoadFloat(uint floatIndex)
 void main(
     uint groupThreadId : SV_GroupThreadID,
     uint3 groupId : SV_GroupID,
+    in payload MeshletCullPayload payloadData,
     out vertices VertexOut verts[MAX_MESHLET_VERTICES],
     out indices uint3 tris[MAX_MESHLET_TRIANGLES])
 {
-    const MeshletRecord meshlet = gMeshlets[groupId.x];
+    // The amplification shader already culled and compacted: groupId.x indexes the surviving meshlets
+    // it forwarded for this instance.
+    const uint meshletIndex = payloadData.meshletIndices[groupId.x];
+    const MeshletRecord meshlet = gMeshlets[meshletIndex];
     SetMeshOutputCounts(meshlet.vertexCount, meshlet.triangleCount);
 
-    const uint instanceId = gInstanceIds[groupId.y];
+    const uint instanceId = payloadData.instanceId;
     const InstanceRecord instance = gInstances[instanceId];
     const uint stride = max(1u, (uint)round(uHistoryStrideMeshId.y));
 

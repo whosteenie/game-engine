@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 
 #include <climits>
+#include <cstddef>
 #include <fstream>
 #include <iterator>
 #include <sstream>
@@ -21,6 +22,9 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
+    // Amplification-shader group size; must match SCENE_SHADOW_AS_GROUP_SIZE in the shaders.
+    constexpr std::uint32_t kShadowAsGroupSize = 32;
+
     std::string ReadTextFile(const char* filepath)
     {
         std::ifstream file(filepath);
@@ -36,10 +40,10 @@ namespace
 
     struct MeshShaderShadowConstants
     {
-        glm::mat4 model{1.0f};
         glm::mat4 lightSpaceMatrix{1.0f};
-        glm::vec4 lightDirectionBias{0.0f, 1.0f, 0.0f, 0.0f};
-        glm::vec4 vertexStridePad{14.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec4 lightDirectionBias{0.0f, 1.0f, 0.0f, 0.0f}; // xyz = dir, w = normal-offset bias
+        glm::vec4 cullParams{0.0f, 14.0f, 0.0f, 0.0f};        // x = meshlet count, y = float stride
+        glm::vec4 frustumPlanes[6]{};
     };
 
     template<typename T, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type>
@@ -52,6 +56,7 @@ namespace
     struct MeshShadowPipelineStream
     {
         PsoStreamSubobject<ID3D12RootSignature*, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE> rootSignature;
+        PsoStreamSubobject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS> amplificationShader;
         PsoStreamSubobject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS> meshShader;
         PsoStreamSubobject<D3D12_BLEND_DESC, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND> blend;
         PsoStreamSubobject<D3D12_RASTERIZER_DESC, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER> rasterizer;
@@ -104,15 +109,17 @@ void MeshShaderShadowRenderer::CreateRootSignature()
 {
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
 
-    D3D12_ROOT_PARAMETER rootParams[5]{};
+    // b0 = frame CBV; t0..t5 = vertex floats, meshlets, meshlet verts, meshlet tris, instances,
+    // instance ids. Visibility ALL because the amplification shader also reads meshlets/instances.
+    D3D12_ROOT_PARAMETER rootParams[7]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     rootParams[0].Descriptor.ShaderRegister = 0;
 
-    for (UINT rootIndex = 1; rootIndex < 5; ++rootIndex)
+    for (UINT rootIndex = 1; rootIndex < 7; ++rootIndex)
     {
         rootParams[rootIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-        rootParams[rootIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH;
+        rootParams[rootIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         rootParams[rootIndex].Descriptor.ShaderRegister = rootIndex - 1;
         rootParams[rootIndex].Descriptor.RegisterSpace = 0;
     }
@@ -154,13 +161,20 @@ void MeshShaderShadowRenderer::CreatePipelineStates()
     ComPtr<ID3D12Device2> device2;
     ThrowIfFailed(device->QueryInterface(IID_PPV_ARGS(&device2)), "QueryInterface(ID3D12Device2) failed");
 
+    const std::string amplificationSource =
+        ReadTextFile(EngineConstants::SceneShadowAmplificationShader);
     const std::string meshSource = ReadTextFile(EngineConstants::SceneShadowMeshShader);
+    const HlslCompileResult amplificationCompile = CompileHlsl(
+        amplificationSource, EngineConstants::SceneShadowAmplificationShader, "main", "as_6_5");
     const HlslCompileResult meshCompile =
         CompileHlsl(meshSource, EngineConstants::SceneShadowMeshShader, "main", "ms_6_5");
 
     auto buildStream = [&](const D3D12_CULL_MODE cullMode) {
         MeshShadowPipelineStream stream{};
         stream.rootSignature.data = static_cast<ID3D12RootSignature*>(m_rootSignature);
+        stream.amplificationShader.data = {
+            amplificationCompile.shader->GetBufferPointer(),
+            amplificationCompile.shader->GetBufferSize()};
         stream.meshShader.data = {
             meshCompile.shader->GetBufferPointer(),
             meshCompile.shader->GetBufferSize()};
@@ -216,24 +230,29 @@ void MeshShaderShadowRenderer::CreatePipelineStates()
     m_pipelineStateDoubleSided = createPipeline(doubleSided);
 }
 
-std::uint32_t MeshShaderShadowRenderer::DispatchMesh(
-    const Mesh& mesh,
-    const glm::mat4& model,
+std::uint32_t MeshShaderShadowRenderer::DispatchMeshAssetBatch(
+    const Batch& batch,
+    const SceneTables& sceneTables,
     const glm::mat4& lightSpaceMatrix,
+    const std::array<glm::vec4, 6>& cascadeFrustumPlanes,
     const glm::vec3& lightDirectionTowardSource,
-    const float casterDepthBias,
-    const bool doubleSided) const
+    const float casterDepthBias) const
 {
-    if (!m_supported || mesh.GetMeshletCount() == 0)
+    const Mesh* mesh = batch.mesh;
+    if (!m_supported || mesh == nullptr || mesh->GetMeshletCount() == 0)
+    {
+        return 0;
+    }
+    if (batch.instanceIds.empty() || sceneTables.instanceTableGpuAddress == 0)
     {
         return 0;
     }
 
-    mesh.EnsureGpuResources();
-    if (!mesh.GetVertexShaderResourceBuffer().IsValid()
-        || !mesh.GetMeshletBuffer().IsValid()
-        || !mesh.GetMeshletVertexBuffer().IsValid()
-        || !mesh.GetMeshletTriangleBuffer().IsValid())
+    mesh->EnsureGpuResources();
+    if (!mesh->GetVertexShaderResourceBuffer().IsValid()
+        || !mesh->GetMeshletBuffer().IsValid()
+        || !mesh->GetMeshletVertexBuffer().IsValid()
+        || !mesh->GetMeshletTriangleBuffer().IsValid())
     {
         return 0;
     }
@@ -247,11 +266,17 @@ std::uint32_t MeshShaderShadowRenderer::DispatchMesh(
     }
 
     MeshShaderShadowConstants constants{};
-    constants.model = model;
     constants.lightSpaceMatrix = lightSpaceMatrix;
-    constants.lightDirectionBias =
-        glm::vec4(lightDirectionTowardSource, casterDepthBias);
-    constants.vertexStridePad.x = static_cast<float>(mesh.GetFloatsPerVertex());
+    constants.lightDirectionBias = glm::vec4(lightDirectionTowardSource, casterDepthBias);
+    constants.cullParams = glm::vec4(
+        static_cast<float>(mesh->GetMeshletCount()),
+        static_cast<float>(mesh->GetFloatsPerVertex()),
+        0.0f,
+        0.0f);
+    for (std::size_t planeIndex = 0; planeIndex < cascadeFrustumPlanes.size(); ++planeIndex)
+    {
+        constants.frustumPlanes[planeIndex] = cascadeFrustumPlanes[planeIndex];
+    }
 
     const GfxContext::TransientUploadAllocation upload =
         GfxContext::Get().AllocateTransientUpload(&constants, sizeof(constants));
@@ -259,9 +284,17 @@ std::uint32_t MeshShaderShadowRenderer::DispatchMesh(
     {
         return 0;
     }
+    const GfxContext::TransientUploadAllocation instanceIdUpload =
+        GfxContext::Get().AllocateTransientUpload(
+            batch.instanceIds.data(),
+            static_cast<std::uint32_t>(batch.instanceIds.size() * sizeof(std::uint32_t)));
+    if (instanceIdUpload.gpuAddress == 0)
+    {
+        return 0;
+    }
 
     ID3D12PipelineState* pipeline = static_cast<ID3D12PipelineState*>(
-        doubleSided && m_pipelineStateDoubleSided != nullptr
+        batch.doubleSided && m_pipelineStateDoubleSided != nullptr
             ? m_pipelineStateDoubleSided
             : m_pipelineState);
     if (pipeline == nullptr)
@@ -274,18 +307,23 @@ std::uint32_t MeshShaderShadowRenderer::DispatchMesh(
     commandList6->SetGraphicsRootConstantBufferView(0, upload.gpuAddress);
     commandList6->SetGraphicsRootShaderResourceView(
         1,
-        mesh.GetVertexShaderResourceBuffer().GetGpuVirtualAddress());
+        mesh->GetVertexShaderResourceBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         2,
-        mesh.GetMeshletBuffer().GetGpuVirtualAddress());
+        mesh->GetMeshletBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         3,
-        mesh.GetMeshletVertexBuffer().GetGpuVirtualAddress());
+        mesh->GetMeshletVertexBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         4,
-        mesh.GetMeshletTriangleBuffer().GetGpuVirtualAddress());
+        mesh->GetMeshletTriangleBuffer().GetGpuVirtualAddress());
+    commandList6->SetGraphicsRootShaderResourceView(5, sceneTables.instanceTableGpuAddress);
+    commandList6->SetGraphicsRootShaderResourceView(6, instanceIdUpload.gpuAddress);
 
-    const std::uint32_t dispatchGroupCount = mesh.GetMeshletCount();
-    commandList6->DispatchMesh(dispatchGroupCount, 1, 1);
-    return dispatchGroupCount;
+    const std::uint32_t meshletCount = mesh->GetMeshletCount();
+    const std::uint32_t instanceCount = static_cast<std::uint32_t>(batch.instanceIds.size());
+    const std::uint32_t amplificationGroupsPerInstance =
+        (meshletCount + kShadowAsGroupSize - 1) / kShadowAsGroupSize;
+    commandList6->DispatchMesh(amplificationGroupsPerInstance, instanceCount, 1);
+    return meshletCount * instanceCount;
 }

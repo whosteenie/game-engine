@@ -29,6 +29,7 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
+#include "engine/rendering/FrustumCull.h"
 #include "engine/rendering/MeshShaderGBufferRenderer.h"
 #include "engine/rendering/MeshShaderShadowRenderer.h"
 #include "engine/rendering/MotionVectorFrameState.h"
@@ -41,8 +42,11 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
+#include <unordered_map>
 
 SceneRenderer::SceneRenderer() = default;
 
@@ -431,14 +435,57 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
         m_directionalShadowSettings);
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
+
+    const bool useMeshShaderShadows =
+        m_meshShaderShadowRenderer != nullptr
+        && m_meshShaderShadowRenderer->IsSupported()
+        && m_gpuScene.GetGpuDiagnostics().uploadValid
+        && m_gpuScene.GetInstanceTableGpuAddress() != 0;
+
+    // Batches are cascade-independent (same shared-mesh casters every cascade); build once, grouped
+    // by (meshId, doubleSided). The amplification shader culls per cascade from these instance lists.
+    std::vector<MeshShaderShadowRenderer::Batch> shadowBatches;
+    std::unordered_map<std::uint64_t, std::size_t> shadowBatchByKey;
+    if (useMeshShaderShadows)
+    {
+        const std::vector<GpuSceneMeshAssetRecord>& meshAssets = m_gpuScene.GetMeshAssets();
+        for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+        {
+            if ((instance.flags & GpuSceneInstanceFlags::CastsShadow) == 0
+                || instance.meshId >= meshAssets.size())
+            {
+                continue;
+            }
+            const bool doubleSided = (instance.flags & GpuSceneInstanceFlags::DoubleSided) != 0;
+            const std::uint64_t key =
+                (static_cast<std::uint64_t>(instance.meshId) << 1) | (doubleSided ? 1ull : 0ull);
+            auto found = shadowBatchByKey.find(key);
+            std::size_t batchIndex;
+            if (found == shadowBatchByKey.end())
+            {
+                batchIndex = shadowBatches.size();
+                shadowBatchByKey.emplace(key, batchIndex);
+                MeshShaderShadowRenderer::Batch& batch = shadowBatches.emplace_back();
+                batch.mesh = meshAssets[instance.meshId].mesh;
+                batch.meshId = instance.meshId;
+                batch.doubleSided = doubleSided;
+            }
+            else
+            {
+                batchIndex = found->second;
+            }
+            shadowBatches[batchIndex].instanceIds.push_back(instance.instanceId);
+        }
+    }
+
+    const MeshShaderShadowRenderer::SceneTables shadowSceneTables{
+        m_gpuScene.GetInstanceTableGpuAddress()};
+
     for (int cascadeIndex = 0; cascadeIndex < m_shadowMap->GetActiveCascadeCount(); ++cascadeIndex)
     {
         m_shadowMap->BeginCascade(cascadeIndex);
 
-        m_shadowDepthShader->SetMat4(
-            "uLightSpaceMatrix",
-            m_shadowMap->GetLightSpaceMatrix(cascadeIndex));
-
+        const glm::mat4 lightSpaceMatrix = m_shadowMap->GetLightSpaceMatrix(cascadeIndex);
         const ShadowLightSpaceSetup& cascadeSetup =
             m_shadowMap->GetCascadeSetups()[static_cast<std::size_t>(cascadeIndex)];
         const float texelSpan =
@@ -448,13 +495,29 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
             cascadeSetup.stableOrthoNear,
             cascadeSetup.stableOrthoFar,
             m_directionalShadowSettings.GetCasterDepthBiasScale());
-        m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
-        m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
         ++m_renderFrameDiagnostics.shadowCascadeCount;
 
-        const bool useMeshShaderShadows =
-            m_meshShaderShadowRenderer != nullptr
-            && m_meshShaderShadowRenderer->IsSupported();
+        if (useMeshShaderShadows)
+        {
+            const std::array<glm::vec4, 6> cascadePlanes = ExtractFrustumPlanesZO(lightSpaceMatrix);
+            for (const MeshShaderShadowRenderer::Batch& batch : shadowBatches)
+            {
+                m_renderFrameDiagnostics.shadowMeshShaderDispatchCount +=
+                    m_meshShaderShadowRenderer->DispatchMeshAssetBatch(
+                        batch,
+                        shadowSceneTables,
+                        lightSpaceMatrix,
+                        cascadePlanes,
+                        GetSunDirection(),
+                        casterDepthBias);
+            }
+            continue;
+        }
+
+        m_shadowDepthShader->SetMat4("uLightSpaceMatrix", lightSpaceMatrix);
+        m_shadowDepthShader->SetFloat("uCasterDepthBias", casterDepthBias);
+        m_shadowDepthShader->SetVec3("uLightDirectionTowardSource", GetSunDirection());
+
         for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
         {
             if ((instance.flags & GpuSceneInstanceFlags::CastsShadow) == 0)
@@ -470,26 +533,11 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
 
             const SceneObject& object = objects[objectIndex];
             const bool doubleSided = object.GetMaterial().IsDoubleSided();
-            const glm::mat4 modelMatrix = instance.world;
-            if (useMeshShaderShadows)
-            {
-                m_renderFrameDiagnostics.shadowMeshShaderDispatchCount +=
-                    m_meshShaderShadowRenderer->DispatchMesh(
-                        *object.GetMesh(),
-                        modelMatrix,
-                        m_shadowMap->GetLightSpaceMatrix(cascadeIndex),
-                        GetSunDirection(),
-                        casterDepthBias,
-                        doubleSided);
-            }
-            else
-            {
-                m_shadowDepthShader->Use(false, false, doubleSided);
-                m_shadowDepthShader->SetMat4("uModel", modelMatrix);
-                m_shadowDepthShader->FlushUniforms();
-                object.GetMesh()->Draw();
-                ++m_renderFrameDiagnostics.shadowDrawCount;
-            }
+            m_shadowDepthShader->Use(false, false, doubleSided);
+            m_shadowDepthShader->SetMat4("uModel", instance.world);
+            m_shadowDepthShader->FlushUniforms();
+            object.GetMesh()->Draw();
+            ++m_renderFrameDiagnostics.shadowDrawCount;
         }
     }
     }

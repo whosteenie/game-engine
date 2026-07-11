@@ -3,15 +3,19 @@
 #include "engine/camera/Camera.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/rendering/Constants.h"
+#include "engine/rendering/FrustumCull.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
+#include <glm/gtc/type_ptr.hpp>
+
 #include <d3d12.h>
 
 #include <wrl/client.h>
 
+#include <array>
 #include <fstream>
 #include <climits>
 #include <iterator>
@@ -35,6 +39,9 @@ namespace
         return buffer.str();
     }
 
+    // Amplification-shader group size; must match SCENE_GBUFFER_AS_GROUP_SIZE in the shaders.
+    constexpr std::uint32_t kMeshShaderAsGroupSize = 32;
+
     struct MeshShaderFrameConstants
     {
         glm::mat4 view{1.0f};
@@ -43,6 +50,8 @@ namespace
         glm::mat4 unjitteredProjection{1.0f};
         glm::mat4 prevUnjitteredProjection{1.0f};
         glm::vec4 historyStrideMeshId{1.0f, 14.0f, 0.0f, 0.0f};
+        glm::vec4 cullParams{0.0f, 0.0f, 0.0f, 0.0f}; // x = meshlet count
+        glm::vec4 frustumPlanes[6]{};
     };
 
     template<typename T, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type>
@@ -55,6 +64,7 @@ namespace
     struct MeshPipelineStream
     {
         PsoStreamSubobject<ID3D12RootSignature*, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE> rootSignature;
+        PsoStreamSubobject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_AS> amplificationShader;
         PsoStreamSubobject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_MS> meshShader;
         PsoStreamSubobject<D3D12_SHADER_BYTECODE, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS> pixelShader;
         PsoStreamSubobject<D3D12_BLEND_DESC, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND> blend;
@@ -183,8 +193,12 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
     ComPtr<ID3D12Device2> device2;
     ThrowIfFailed(device->QueryInterface(IID_PPV_ARGS(&device2)), "QueryInterface(ID3D12Device2) failed");
 
+    const std::string amplificationSource =
+        ReadTextFile(EngineConstants::SceneGBufferAmplificationShader);
     const std::string meshSource = ReadTextFile(EngineConstants::SceneGBufferMeshShader);
     const std::string pixelSource = ReadTextFile(EngineConstants::SceneGBufferMeshFragmentShader);
+    const HlslCompileResult amplificationCompile = CompileHlsl(
+        amplificationSource, EngineConstants::SceneGBufferAmplificationShader, "main", "as_6_5");
     const HlslCompileResult meshCompile =
         CompileHlsl(meshSource, EngineConstants::SceneGBufferMeshShader, "main", "ms_6_5");
     const HlslCompileResult pixelCompile =
@@ -192,6 +206,9 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
 
     MeshPipelineStream stream{};
     stream.rootSignature.data = static_cast<ID3D12RootSignature*>(m_rootSignature);
+    stream.amplificationShader.data = {
+        amplificationCompile.shader->GetBufferPointer(),
+        amplificationCompile.shader->GetBufferSize()};
     stream.meshShader.data = {
         meshCompile.shader->GetBufferPointer(),
         meshCompile.shader->GetBufferSize()};
@@ -296,6 +313,16 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
         static_cast<float>(mesh->GetFloatsPerVertex()),
         static_cast<float>(batch.meshId),
         0.0f);
+    constants.cullParams =
+        glm::vec4(static_cast<float>(mesh->GetMeshletCount()), 0.0f, 0.0f, 0.0f);
+    // Cull against the exact frustum being rasterized (jittered projection); conservative meshlet
+    // spheres make the sub-pixel jitter irrelevant, so nothing that draws is ever culled.
+    const std::array<glm::vec4, 6> frustumPlanes =
+        ExtractFrustumPlanesZO(camera.GetProjectionMatrix() * camera.GetViewMatrix());
+    for (std::size_t planeIndex = 0; planeIndex < frustumPlanes.size(); ++planeIndex)
+    {
+        constants.frustumPlanes[planeIndex] = frustumPlanes[planeIndex];
+    }
 
     const GfxContext::TransientUploadAllocation upload =
         GfxContext::Get().AllocateTransientUpload(&constants, sizeof(constants));
@@ -344,6 +371,9 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
 
     const std::uint32_t meshletCount = mesh->GetMeshletCount();
     const std::uint32_t instanceCount = static_cast<std::uint32_t>(batch.instanceIds.size());
-    commandList6->DispatchMesh(meshletCount, instanceCount, 1);
+    // The amplification shader frustum-culls; dispatch one AS group per (meshlet chunk, instance).
+    const std::uint32_t amplificationGroupsPerInstance =
+        (meshletCount + kMeshShaderAsGroupSize - 1) / kMeshShaderAsGroupSize;
+    commandList6->DispatchMesh(amplificationGroupsPerInstance, instanceCount, 1);
     return meshletCount * instanceCount;
 }
