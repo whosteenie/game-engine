@@ -68,6 +68,18 @@ struct GpuSceneMaterialRecord
     std::uint32_t flags = 0;
 };
 
+// Result of resolving a picked GPU instance id back to editor identity (C7). `objectIndex` is the
+// current scene index to select; `editorObjectId` is the stable identity that survives reordering.
+struct GpuScenePickResult
+{
+    bool valid = false;
+    std::uint32_t instanceId = 0xFFFFFFFFu;
+    std::uint32_t objectIndex = 0xFFFFFFFFu;
+    SceneObjectId editorObjectId = kInvalidSceneObjectId;
+    std::uint32_t meshId = 0xFFFFFFFFu;
+    std::uint32_t materialId = 0xFFFFFFFFu;
+};
+
 struct GpuSceneBuildDiagnostics
 {
     bool valid = true;
@@ -122,6 +134,13 @@ public:
     std::uint32_t FindInstanceForObjectIndex(std::uint32_t objectIndex) const;
     const GpuSceneInstanceRecord* FindInstance(std::uint32_t instanceId) const;
     std::vector<std::uint32_t> FindInstancesForEditorObjectId(SceneObjectId editorObjectId) const;
+
+    // C7 pick resolution: map a picked instance id (e.g. read back from a GPU instance-id target,
+    // where 0 = background and the stored value is instanceId + 1) to editor identity. Single entry
+    // point for the InstanceID -> editorObjectId -> SceneObject mapping so GPU picking can be wired
+    // without duplicating the lookup. Distinct duplicates of a shared mesh resolve to distinct
+    // instanceId/objectIndex/editorObjectId even though they share meshId.
+    GpuScenePickResult ResolvePickedInstanceId(std::uint32_t instanceId) const;
 
     std::uint32_t CountSelectedRenderInstances(const Scene& scene) const;
     const GpuSceneInstanceRecord* FindPrimarySelectionInstance(const Scene& scene) const;

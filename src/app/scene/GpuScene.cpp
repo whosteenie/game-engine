@@ -496,6 +496,24 @@ std::vector<std::uint32_t> GpuScene::FindInstancesForEditorObjectId(const SceneO
     return existing->second;
 }
 
+GpuScenePickResult GpuScene::ResolvePickedInstanceId(const std::uint32_t instanceId) const
+{
+    GpuScenePickResult result{};
+    const GpuSceneInstanceRecord* instance = FindInstance(instanceId);
+    if (instance == nullptr)
+    {
+        return result;
+    }
+
+    result.valid = true;
+    result.instanceId = instance->instanceId;
+    result.objectIndex = instance->objectIndex;
+    result.editorObjectId = instance->editorObjectId;
+    result.meshId = instance->meshId;
+    result.materialId = instance->materialId;
+    return result;
+}
+
 std::uint32_t GpuScene::CountSelectedRenderInstances(const Scene& scene) const
 {
     std::unordered_set<int> selectedObjectIndices;
