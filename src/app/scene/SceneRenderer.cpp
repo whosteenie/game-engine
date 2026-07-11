@@ -889,6 +889,9 @@ void SceneRenderer::RecordDxrPass(
             ptInputs.prevViewProjection = motionState.historyValid
                 ? motionState.prevViewProjection
                 : camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+            ptInputs.prevView = motionState.historyValid
+                ? motionState.prevView
+                : camera.GetViewMatrix();
             if (motionState.historyValid)
             {
                 ptInputs.prevCameraPos = glm::vec3(

@@ -2120,6 +2120,7 @@ namespace render_tests
         PtGlassTestFixture& fixture,
         Camera& camera,
         const glm::mat4& prevViewProjection,
+        const glm::mat4& prevView,
         const glm::vec3& prevCameraPos,
         const bool motionHistoryValid,
         const std::uint32_t frameIndex)
@@ -2133,6 +2134,7 @@ namespace render_tests
         params.width = kPtFramebufferSize;
         params.height = kPtFramebufferSize;
         params.prevViewProjection = prevViewProjection;
+        params.prevView = prevView;
         params.prevCameraPos = prevCameraPos;
         params.motionHistoryValid = motionHistoryValid;
         params.frameIndex = frameIndex;
@@ -2164,6 +2166,7 @@ namespace render_tests
                         baseline,
                         camera,
                         unjitteredViewProj,
+                        camera.GetViewMatrix(),
                         camera.GetPosition(),
                         false,
                         0u))
@@ -2209,6 +2212,7 @@ namespace render_tests
                 fixture,
                 camera,
                 unjitteredViewProj,
+                camera.GetViewMatrix(),
                 camera.GetPosition(),
                 false,
                 0u))
@@ -2300,6 +2304,7 @@ namespace render_tests
                 fixture,
                 camera,
                 prevViewProj,
+                prevCamera.GetViewMatrix(),
                 prevCamera.GetPosition(),
                 true,
                 1u))

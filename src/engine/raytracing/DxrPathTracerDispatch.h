@@ -39,6 +39,13 @@ public:
         float sunAngularRadiusDegrees = 0.27f;
         std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse sky irradiance (ambient floor)
         glm::mat4 prevViewProjection{1.0f};
+        // Previous frame's VIEW matrix alone: the glass virtual-motion replay composes it with the
+        // CURRENT jittered projection so the replayed prev ray shares the current sub-pixel offset
+        // (jitter cancels out of the virtual MV; static glass MV stays exactly 0). Composing with
+        // the prev UNJITTERED projection after the jittered-primaries change (cab2529) made the
+        // replayed refraction path differ from the current one by a per-frame jitter delta, which
+        // refraction amplifies into frame-varying MVs on static glass -> RR boiled static glass.
+        glm::mat4 prevView{1.0f};
         glm::vec3 prevCameraPos{0.0f};
         bool motionHistoryValid = false;
         // Real-time (DLSS): pixel-center primary rays through the jittered projection. Reference:

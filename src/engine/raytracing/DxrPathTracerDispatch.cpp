@@ -120,10 +120,22 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     // reference mode the shader adds its own sub-pixel offset on top of the current projection.
     // Motion vectors still use g_UnjitteredViewProj below (motionVectorsJittered = false).
     const glm::mat4 invViewProj = glm::inverse(viewProj);
+    // g_PrevViewProj (MV output projection + sky anchor): prev UNJITTERED — jitter must never
+    // appear in the emitted motion vectors (motionVectorsJittered = false).
     const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
         ? frameInputs.prevViewProjection
         : unjitteredViewProj;
-    const glm::mat4 prevInvViewProj = glm::inverse(prevViewProj);
+    // g_PrevInvViewProj (glass virtual-motion ray REPLAY only): prev VIEW composed with the
+    // CURRENT jittered projection, so the replayed prev primary ray enters the pane at the same
+    // sub-pixel offset as this frame's ray. Jitter then cancels out of the virtual MV: static
+    // camera -> replay ray == current ray -> refracted background points coincide -> glass MV is
+    // exactly 0; camera motion survives untouched. Deriving this from the prev UNJITTERED matrix
+    // (pre-cab2529 behavior) diverged the two refraction paths by the per-frame Halton delta,
+    // which refraction amplifies -> frame-varying MVs on STATIC glass -> RR boiled the glass.
+    const glm::mat4 prevInvViewProj = glm::inverse(
+        frameInputs.motionHistoryValid
+            ? projectionMatrix * frameInputs.prevView
+            : viewProj);
     const glm::vec3 cameraPos = camera.GetPosition();
     const glm::vec3 prevCameraPos = frameInputs.motionHistoryValid
         ? frameInputs.prevCameraPos

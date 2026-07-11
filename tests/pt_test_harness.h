@@ -108,6 +108,9 @@ struct PtFrameDispatchParams
     int width = 0;
     int height = 0;
     glm::mat4 prevViewProjection{1.0f};
+    // Prev VIEW alone: the glass virtual-motion replay composes it with the CURRENT jittered
+    // projection (see DxrPathTracerDispatch — jitter must cancel out of the virtual MV).
+    glm::mat4 prevView{1.0f};
     glm::vec3 prevCameraPos{0.0f};
     bool motionHistoryValid = false;
     std::uint32_t frameIndex = 0;

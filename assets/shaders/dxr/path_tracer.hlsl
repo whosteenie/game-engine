@@ -451,6 +451,12 @@ float2 ComputeTransmissionVirtualMotion(
     // a single straight segment from the glass hit is wrong once the path bends through a solid.
     const float3 worldCurr = currGuide.backgroundWorldPos;
 
+    // g_PrevInvViewProj = inverse(CURRENT jittered projection x prev view) — NOT the prev
+    // unjittered matrix. The replayed prev ray must share this frame's sub-pixel jitter offset so
+    // the two refraction paths coincide for a static camera (virtual MV exactly 0) and the jitter
+    // cancels out of the MV under motion. With the prev-unjittered inverse here, jittered primaries
+    // (cab2529) made the replay diverge from the current ray by the per-frame Halton delta, which
+    // refraction amplified into frame-varying MVs on STATIC glass -> RR boiled the glass (§E5).
     const float2 clipXY = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
     const float4 prevFarH = mul(g_PrevInvViewProj, float4(clipXY, 1.0, 1.0));
     const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);

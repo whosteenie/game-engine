@@ -652,7 +652,12 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     const glm::mat4 prevViewProj = params.motionHistoryValid
         ? params.prevViewProjection
         : unjitteredViewProj;
-    const glm::mat4 prevInvViewProj = glm::inverse(prevViewProj);
+    // Glass virtual-motion replay matrix: prev VIEW + CURRENT jittered projection (mirrors
+    // DxrPathTracerDispatch — jitter cancels out of the virtual MV; static glass MV stays 0).
+    const glm::mat4 prevInvViewProj = glm::inverse(
+        params.motionHistoryValid
+            ? projectionMatrix * params.prevView
+            : viewProj);
     const glm::vec3 cameraPos = params.camera->GetPosition();
     const glm::vec3 prevCameraPos =
         params.motionHistoryValid ? params.prevCameraPos : cameraPos;
