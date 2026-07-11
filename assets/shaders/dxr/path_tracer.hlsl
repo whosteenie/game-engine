@@ -548,6 +548,25 @@ float3 EvaluateRealTimeDiffuseAmbient(
         * g_PtAmbientStrength;
 }
 
+float3 EvaluateRealTimeEmitterDisplayAmbient(
+    float3 diffuseAlbedo,
+    float3 shadingNormal)
+{
+    const float diffuseWeight = max(diffuseAlbedo.r, max(diffuseAlbedo.g, diffuseAlbedo.b));
+    if (diffuseWeight <= 0.02)
+    {
+        return 0.0.xxx;
+    }
+
+    // Camera-visible emissive meshes should not become flat full-bright cards in real-time view.
+    // Use the emissive material for transport, but keep the primary surface display shaded without
+    // spending AO or secondary rays on the emitter terminal.
+    const float3 irradiance = EvaluateDiffuseIrradianceSh(shadingNormal);
+    return diffuseAlbedo * irradiance / kPi
+        * g_EnvironmentIntensity
+        * g_PtAmbientStrength;
+}
+
 float TracePrimarySunVisibility(
     inout PathRng rng,
     float3 hitNormal,
@@ -1416,7 +1435,8 @@ void PathTracerRayGen()
         // soft-sun + emissive + env NEE from the light surface and continuing high-throughput
         // bounces — view-dependent ~2× PT cost with no glass. Reference keeps full paths.
         const bool terminalEmissiveHit = kPtCenterPrimaryRays && emissiveLuminance > 1e-4;
-        if (emissiveLuminance > 1e-4)
+        const bool realTimePrimaryEmitterDisplay = terminalEmissiveHit && bounce == 0u;
+        if (emissiveLuminance > 1e-4 && !realTimePrimaryEmitterDisplay)
         {
             float emitterPickPdf;
             float emitterArea;
@@ -1503,7 +1523,7 @@ void PathTracerRayGen()
 
         // Real-time v2: primary-hit AO-gated SH ambient (devdoc/dxr/pt/crevice-darkening.md). Fills
         // crevices without the v1 washout from unoccluded per-bounce SH. Reference omits this.
-        // Skip on emissive terminals — AO/ambient on a light surface is wasted TraceRays.
+        // Emissive terminals get ray-free ambient display; AO on a light surface is wasted TraceRays.
         if (kPtCenterPrimaryRays && bounce == 0u && !terminalEmissiveHit)
         {
             primaryAoVis =
@@ -1515,6 +1535,21 @@ void PathTracerRayGen()
             const float3 ambientPathContrib = throughput * ambientContrib;
             directRadiance += ambientPathContrib;
             termAmbient += ambientPathContrib;
+        }
+        else if (realTimePrimaryEmitterDisplay)
+        {
+            primaryAoVis = 1.0;
+            primarySunVis = sunVis;
+            const float3 ambientContrib =
+                EvaluateRealTimeEmitterDisplayAmbient(diffuseAlbedo, hitNormal);
+            const float3 ambientPathContrib = throughput * ambientContrib;
+            directRadiance += ambientPathContrib;
+            termAmbient += ambientPathContrib;
+
+            const float3 visibleEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor);
+            const float3 visibleEmissiveContrib = throughput * visibleEmissive;
+            directRadiance += visibleEmissiveContrib;
+            termSurfaceEmissive += visibleEmissiveContrib;
         }
 
         if (bounce == 0u)
