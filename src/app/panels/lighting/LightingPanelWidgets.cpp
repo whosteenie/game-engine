@@ -24,6 +24,7 @@ namespace
     const RenderDebugMode kFinalImageModes[] = {RenderDebugMode::None};
 
     const RenderDebugMode kLightingModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::ShadowFactor,
         RenderDebugMode::DirectLighting,
         RenderDebugMode::DirectDiffuseGeom,
@@ -35,6 +36,7 @@ namespace
     };
 
     const RenderDebugMode kShadowMapModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::LightSpaceUv,
         RenderDebugMode::LightSpaceDepth,
         RenderDebugMode::CascadeIndex,
@@ -48,6 +50,7 @@ namespace
     };
 
     const RenderDebugMode kGBufferModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::GeometricNormal,
         RenderDebugMode::ShadedNormal,
         RenderDebugMode::TangentHandedness,
@@ -58,14 +61,19 @@ namespace
     };
 
     const RenderDebugMode kAoModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::Ssao,
         RenderDebugMode::GtaoRaw,
         RenderDebugMode::GtaoFiltered,
     };
 
-    const RenderDebugMode kMotionModes[] = {RenderDebugMode::MotionVectors};
+    const RenderDebugMode kMotionModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::MotionVectors,
+    };
 
     const RenderDebugMode kRadianceModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::RadianceBuffer,
         RenderDebugMode::RadianceValidity,
         RenderDebugMode::RadianceTemporal,
@@ -74,6 +82,7 @@ namespace
     };
 
     const RenderDebugMode kSsgiModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::SsgiTraceRaw,
         RenderDebugMode::SsgiTraceHitMask,
         RenderDebugMode::SsgiTraceHitDistance,
@@ -85,6 +94,7 @@ namespace
     };
 
     const RenderDebugMode kSsrModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::SsrSceneColor,
         RenderDebugMode::SsrSceneValidity,
         RenderDebugMode::SsrTraceRaw,
@@ -98,6 +108,7 @@ namespace
     };
 
     const RenderDebugMode kRayTracingModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::RtDispatchSmoke,
         RenderDebugMode::RtPrimaryHit,
         RenderDebugMode::RtPrimaryDepth,
@@ -114,12 +125,14 @@ namespace
     };
 
     const RenderDebugMode kRrGuideModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::RrDiffuseAlbedo,
         RenderDebugMode::RrSpecularAlbedo,
         RenderDebugMode::RrNormalRoughness,
     };
 
     const RenderDebugMode kPtIsolateModes[] = {
+        RenderDebugMode::None,
         RenderDebugMode::PtIsolateDirectSun,
         RenderDebugMode::PtIsolateDirectEmissive,
         RenderDebugMode::PtIsolateSurfaceEmissive,
@@ -148,6 +161,12 @@ namespace
 
     int FindCategoryIndexForMode(const RenderDebugMode mode)
     {
+        // None lives in every category; category membership is only meaningful for real views.
+        if (mode == RenderDebugMode::None)
+        {
+            return -1;
+        }
+
         for (int categoryIndex = 0; categoryIndex < IM_ARRAYSIZE(kDebugViewCategories); ++categoryIndex)
         {
             const DebugViewCategory& category = kDebugViewCategories[categoryIndex];
@@ -172,6 +191,16 @@ namespace
             }
         }
         return 0;
+    }
+
+    const char* DebugViewModeComboLabel(const RenderDebugMode mode)
+    {
+        if (mode == RenderDebugMode::None)
+        {
+            return "None";
+        }
+
+        return RenderDebugModeLabel(mode);
     }
 
     int FindFirstAvailableModeIndexInCategory(
@@ -240,7 +269,7 @@ namespace
         modeIndexInCategory = std::clamp(modeIndexInCategory, 0, category.modeCount - 1);
         const RenderDebugMode currentMode = category.modes[modeIndexInCategory];
         bool changed = false;
-        if (ImGui::BeginCombo("View", RenderDebugModeLabel(currentMode), ImGuiComboFlags_HeightLarge))
+        if (ImGui::BeginCombo("View", DebugViewModeComboLabel(currentMode), ImGuiComboFlags_HeightLarge))
         {
             ImGui::SetNextWindowSizeConstraints(ImVec2(260.0f, 0.0f), ImVec2(FLT_MAX, 420.0f));
             for (int index = 0; index < category.modeCount; ++index)
@@ -254,7 +283,7 @@ namespace
                 }
 
                 const bool selected = modeIndexInCategory == index;
-                if (ImGui::Selectable(RenderDebugModeLabel(mode), selected) && !selected && available)
+                if (ImGui::Selectable(DebugViewModeComboLabel(mode), selected) && !selected && available)
                 {
                     modeIndexInCategory = index;
                     ApplyDebugViewSelection(mode, screenSpaceEffects, renderer);
@@ -557,18 +586,27 @@ namespace LightingPanelWidgets
         static int modeIndexInCategory = 0;
         static RenderDebugMode lastSyncedMode = RenderDebugMode::None;
 
-        const RenderDebugMode activeMode = renderer.GetRenderDebugMode();
+        RenderDebugMode activeMode = renderer.GetRenderDebugMode();
         if (!IsDebugViewModeAvailable(activeMode, renderer, screenSpaceEffects))
         {
             ApplyDebugViewSelection(RenderDebugMode::None, screenSpaceEffects, renderer);
-            lastSyncedMode = RenderDebugMode::None;
+            activeMode = RenderDebugMode::None;
         }
 
         if (activeMode != lastSyncedMode)
         {
-            categoryIndex = FindCategoryIndexForMode(activeMode);
-            const DebugViewCategory& category = kDebugViewCategories[categoryIndex];
-            modeIndexInCategory = FindModeIndexInCategory(category, activeMode);
+            if (activeMode == RenderDebugMode::None)
+            {
+                // Stay in the current category; only the view drops back to None.
+                modeIndexInCategory = FindModeIndexInCategory(
+                    kDebugViewCategories[categoryIndex], RenderDebugMode::None);
+            }
+            else
+            {
+                categoryIndex = FindCategoryIndexForMode(activeMode);
+                const DebugViewCategory& category = kDebugViewCategories[categoryIndex];
+                modeIndexInCategory = FindModeIndexInCategory(category, activeMode);
+            }
             lastSyncedMode = activeMode;
         }
 
@@ -594,6 +632,7 @@ namespace LightingPanelWidgets
         if (ImGui::Button("Clear debug view"))
         {
             ApplyDebugViewSelection(RenderDebugMode::None, screenSpaceEffects, renderer);
+            modeIndexInCategory = FindModeIndexInCategory(selectedCategory, RenderDebugMode::None);
             lastSyncedMode = RenderDebugMode::None;
             changed = true;
         }
