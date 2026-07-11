@@ -103,6 +103,10 @@ namespace
         float indexOfRefraction = 1.5f;
     };
 
+    // Mirror of ComputePtPrimaryRrMaterialGuides in path_tracer.hlsl — NVIDIA-canonical semantics
+    // (ProgrammingGuideDLSS_RR.md §4.2.1): diffuse = albedo·(1−metallic) (black on metals), spec =
+    // EnvBRDFApprox2(F0, roughness², NoV). Settled by the 2026-07-11 guide 2x2 in
+    // rr-gi-diagnosis.md §E3 (metal diffuse lean -> boil; raw-F0 spec -> magenta fringe).
     void ComputePtPrimaryRrMaterialGuides(
         const GuideMaterial& material,
         const glm::vec3& hitNormal,
@@ -117,9 +121,7 @@ namespace
         const float dielectricWeight = DielectricWeight(material.transmission, material.metallic);
         const float nDotV = Saturate(glm::dot(hitNormal, viewDir));
 
-        const glm::vec3 diffuseGuideAlbedo =
-            albedo * (1.0f - material.metallic) * (1.0f - dielectricWeight);
-        diffuseGuide = glm::mix(diffuseGuideAlbedo, glm::vec3(0.5f), Saturate(material.metallic));
+        diffuseGuide = albedo * (1.0f - material.metallic) * (1.0f - dielectricWeight);
 
         const float dielectricSpec =
             FresnelDielectric(nDotV, 1.0f / std::max(material.indexOfRefraction, 1.0f));
@@ -290,8 +292,46 @@ void RunGuideEncodingTests()
             guideRoughness);
 
         test::ExpectNear(diffuseGuide.r, opaque.albedo.r, 1e-4f, "Opaque diffuse guide R");
-        test::ExpectTrue(specGuide.r >= 0.04f, "Opaque spec guide should use EnvBRDFApprox2");
+        test::ExpectTrue(specGuide.r >= 0.04f, "Opaque spec guide floors at 0.04 (EnvBRDFApprox2)");
         test::ExpectNear(guideRoughness, opaque.roughness, 1e-6f, "Guide roughness passthrough");
+    }
+
+    {
+        // Metal guide semantics guard (rr-gi-diagnosis.md §E3, 2026-07-11 guide 2x2): metals emit
+        // BLACK diffuse (a 0.5 lean routed the metal's noisy specular GI into RR's diffuse
+        // accumulation -> intense boil on metals) and EnvBRDFApprox2 spec (raw F0 under-attributed
+        // rough-metal reflectance -> magenta silhouette fringe). NVIDIA-canonical per
+        // ProgrammingGuideDLSS_RR.md §4.2.1.
+        GuideMaterial metal{};
+        metal.albedo = glm::vec3(0.1f, 0.7f, 0.15f); // green metal (the repro capsule)
+        metal.roughness = 0.3f;
+        metal.metallic = 1.0f;
+
+        glm::vec3 diffuseGuide{};
+        glm::vec3 specGuide{};
+        glm::vec3 guideNormal{};
+        float guideRoughness = 0.0f;
+        const glm::vec3 normal(0.0f, 1.0f, 0.0f);
+        const glm::vec3 viewDir = glm::normalize(glm::vec3(0.1f, 1.0f, 0.2f));
+
+        ComputePtPrimaryRrMaterialGuides(
+            metal,
+            normal,
+            viewDir,
+            diffuseGuide,
+            specGuide,
+            guideNormal,
+            guideRoughness);
+
+        test::ExpectNear(diffuseGuide.r, 0.0f, 1e-4f, "Metal diffuse guide is black R");
+        test::ExpectNear(diffuseGuide.g, 0.0f, 1e-4f, "Metal diffuse guide is black G");
+        // EnvBRDFApprox2 rescales F0 (scale may be < 1 at some roughness/NoV; bias adds back) —
+        // assert the guide stays colored like the metal and above the 0.04 floor, not a strict lift.
+        test::ExpectTrue(specGuide.g >= 0.04f, "Metal spec guide respects the 0.04 floor");
+        test::ExpectTrue(
+            specGuide.g > specGuide.r && specGuide.g > specGuide.b,
+            "Green metal spec guide stays green-dominant (carries the metal color)");
+        test::ExpectTrue(specGuide.g <= 1.0f, "Metal spec guide stays plausible (<= 1)");
     }
 
     {

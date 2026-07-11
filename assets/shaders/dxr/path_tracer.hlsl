@@ -142,8 +142,10 @@ float3 PrevWorldFromObject(uint instanceId, float3 objectPos)
     return float3(dot(prev.row0, p), dot(prev.row1, p), dot(prev.row2, p));
 }
 
-// DLSS-RR specular albedo guide (Integration Guide appendix, [Ray Tracing Gems ch. 32]):
-// preintegrated environment BRDF — NOT raw F0. alpha = roughness².
+// DLSS-RR specular albedo guide (vendored ProgrammingGuideDLSS_RR.md §4.2.1, [Ray Tracing Gems
+// ch. 32]): preintegrated environment BRDF — NOT raw F0. Canonical call passes alpha = roughness².
+// Raw F0 underestimates rough-metal reflectance (missing the scale/bias lift), which over-amplifies
+// RR's demodulated specular at metal silhouettes (the 2026-07-11 magenta-fringe episode).
 float3 EnvBRDFApprox2(float3 specularColor, float alpha, float NoV)
 {
     NoV = abs(NoV);
@@ -369,6 +371,11 @@ float ComputeAlbedoLod(Payload payload, float coneWidth, float3 rayDirection)
 }
 
 // P4b RR material guides — encoding must match full-rr-guides.md / rr_guides.ps.hlsl modes 0–2.
+// NVIDIA-canonical guide semantics (vendored ProgrammingGuideDLSS_RR.md §4.2.1), settled by the
+// 2026-07-11 guide 2x2 (rr-gi-diagnosis.md §E3): a metal diffuse lean toward neutral 0.5 makes RR
+// attribute the metal's noisy specular GI to its diffuse accumulation channel -> intense boil on
+// metals; black metal diffuse + RAW-F0 spec under-attributes rough-metal reflectance -> magenta
+// silhouette fringe. Canonical black metal diffuse + EnvBRDFApprox2 spec is the remaining quadrant.
 void ComputePtPrimaryRrMaterialGuides(
     float3 albedo,
     float3 hitNormal,
@@ -386,8 +393,8 @@ void ComputePtPrimaryRrMaterialGuides(
     const float dielectricWeight = DielectricWeight(transmission, metallic);
     const float nDotV = saturate(dot(hitNormal, viewDir));
 
-    const float3 diffuseGuideAlbedo = albedo * (1.0 - metallic) * (1.0 - dielectricWeight);
-    diffuseGuide = lerp(diffuseGuideAlbedo, float3(0.5, 0.5, 0.5), saturate(metallic));
+    diffuseGuide = albedo * (1.0 - metallic) * (1.0 - dielectricWeight);
+
     const float dielectricSpec = FresnelDielectric(
         nDotV,
         1.0 / max(indexOfRefraction, 1.0));
@@ -398,6 +405,7 @@ void ComputePtPrimaryRrMaterialGuides(
         opaqueSpecGuide,
         float3(dielectricSpec, dielectricSpec, dielectricSpec),
         dielectricWeight);
+
     guideNormal = normalize(hitNormal);
     guideRoughness = roughness;
 }
@@ -1572,7 +1580,6 @@ void PathTracerRayGen()
                     float3 bgSpec;
                     float3 bgNormal;
                     float bgRoughness;
-                    const float3 bgViewDir = -txGuide.refractDir;
                     const MaterialEntry bgMaterial = LoadMaterialForInstance(txGuide.instanceId);
                     float3 bgAlbedo;
                     float bgMetallic;
@@ -1586,6 +1593,7 @@ void PathTracerRayGen()
                         bgRoughness,
                         bgMetallic,
                         bgEmissive);
+                    const float3 bgViewDir = -txGuide.refractDir;
                     ComputePtPrimaryRrMaterialGuides(
                         bgAlbedo,
                         txGuide.shadingNormal,

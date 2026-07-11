@@ -400,7 +400,7 @@ private:
     ReflectionTexture m_ptMotionTexture{};
     // P4b bounce-0 RR material guides (devdoc/dxr/pt/full-rr-guides.md).
     ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
-    ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
+    ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: F0 = lerp(0.04, albedo, metallic)
     ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
     // R2: bounce-0 direct only (sun/emissive/env NEE + ambient) for temporal shade without (rgb−Y).
     ReflectionTexture m_ptDirectTexture{};
