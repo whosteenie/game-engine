@@ -5,8 +5,11 @@
 #include <windows.h>
 #include <commdlg.h>
 #include <shlobj.h>
+#include <shellapi.h>
 
 #include <cstring>
+#include <filesystem>
+#include <system_error>
 #endif
 
 namespace FileDialog
@@ -169,6 +172,40 @@ namespace FileDialog
         return true;
 #else
         (void)outPath;
+        return false;
+#endif
+    }
+
+    bool RevealInExplorer(const std::string& path)
+    {
+#ifdef _WIN32
+        namespace fs = std::filesystem;
+
+        std::error_code error;
+        const fs::path absolutePath = fs::absolute(path, error);
+        if (error || absolutePath.empty())
+        {
+            return false;
+        }
+
+        if (!fs::exists(absolutePath, error))
+        {
+            return false;
+        }
+
+        // Prefer selecting the item; fall back to opening the parent folder.
+        std::string nativePath = absolutePath.lexically_normal().make_preferred().string();
+        const std::string params = "/select,\"" + nativePath + "\"";
+        const HINSTANCE result = ShellExecuteA(
+            nullptr,
+            "open",
+            "explorer.exe",
+            params.c_str(),
+            nullptr,
+            SW_SHOWNORMAL);
+        return reinterpret_cast<INT_PTR>(result) > 32;
+#else
+        (void)path;
         return false;
 #endif
     }

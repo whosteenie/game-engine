@@ -1,13 +1,17 @@
 #include "app/panels/ProjectFilesPanel.h"
 
+#include "app/editor/EditorIcons.h"
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/project/ProjectSession.h"
+#include "engine/assets/FileDialog.h"
+#include "engine/platform/ImGuiFonts.h"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <system_error>
 #include <unordered_map>
@@ -63,6 +67,26 @@ namespace
         return "File";
     }
 
+    const char* EntryIcon(bool isDirectory, bool isOpen = false)
+    {
+        if (!ImGuiFonts::IconsAvailable())
+        {
+            return isDirectory ? "[D]" : "[F]";
+        }
+
+        if (isDirectory)
+        {
+            return isOpen ? ICON_EDITOR_FOLDER_OPEN : ICON_EDITOR_FOLDER;
+        }
+
+        return ICON_EDITOR_FILE;
+    }
+
+    std::string BuildEntryLabel(bool isDirectory, const std::string& name, bool isOpen = false)
+    {
+        return std::string(EntryIcon(isDirectory, isOpen)) + "  " + name;
+    }
+
     bool CollectDirectoryEntries(const std::string& directory, std::vector<DirectoryEntry>& outEntries)
     {
         outEntries.clear();
@@ -73,7 +97,8 @@ namespace
             return false;
         }
 
-        for (const fs::directory_entry& entry : fs::directory_iterator(directory, fs::directory_options::skip_permission_denied, error))
+        for (const fs::directory_entry& entry :
+             fs::directory_iterator(directory, fs::directory_options::skip_permission_denied, error))
         {
             if (error)
             {
@@ -115,7 +140,6 @@ namespace
     {
         if (folderPath == rootPath)
         {
-            // Root defaults to expanded so the tree isn't empty.
             const auto it = openStates.find(folderPath);
             return it != openStates.end() ? it->second : true;
         }
@@ -180,6 +204,80 @@ namespace
         {
             BuildVisibleFolderOrder(childFolder, rootPath, openStates, outVisibleFolders);
         }
+    }
+
+    bool PathsEqual(const fs::path& left, const fs::path& right)
+    {
+        std::error_code error;
+        return fs::equivalent(left, right, error) || left == right;
+    }
+
+    bool IsPathInsideOrEqual(const fs::path& candidate, const fs::path& root)
+    {
+        std::error_code error;
+        const fs::path absoluteCandidate = fs::weakly_canonical(candidate, error);
+        const fs::path absoluteRoot = fs::weakly_canonical(root, error);
+        if (error)
+        {
+            return false;
+        }
+
+        auto candidateIt = absoluteCandidate.begin();
+        for (const auto& rootPart : absoluteRoot)
+        {
+            if (candidateIt == absoluteCandidate.end() || *candidateIt != rootPart)
+            {
+                return false;
+            }
+            ++candidateIt;
+        }
+
+        return true;
+    }
+
+    bool IsValidEntryName(const std::string& name)
+    {
+        if (name.empty() || name == "." || name == "..")
+        {
+            return false;
+        }
+
+        return name.find_first_of("\\/:*?\"<>|") == std::string::npos;
+    }
+
+    bool DrawInlineRenameField(
+        char* renameBuffer,
+        std::size_t renameBufferSize,
+        bool& focusRenameInput,
+        bool& renameInputEngaged,
+        bool& cancelRename)
+    {
+        if (focusRenameInput)
+        {
+            ImGui::SetKeyboardFocusHere();
+        }
+
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        const ImGuiInputTextFlags inputFlags =
+            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll;
+        const bool confirmed = ImGui::InputText("##ProjectFileRename", renameBuffer, renameBufferSize, inputFlags);
+
+        if (ImGui::IsItemActive() || ImGui::IsItemFocused())
+        {
+            renameInputEngaged = true;
+            focusRenameInput = false;
+        }
+
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            cancelRename = true;
+        }
+        else if (renameInputEngaged && ImGui::IsItemDeactivated() && !confirmed)
+        {
+            cancelRename = true;
+        }
+
+        return confirmed;
     }
 
     void HandleProjectFilesKeyboardNavigation(
@@ -252,12 +350,15 @@ namespace
             const std::string selectedFolder = visibleFolders[currentIndex];
             if (HasChildFolders(selectedFolder))
             {
-                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) && !IsFolderExpanded(selectedFolder, rootPath, openStates))
+                if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)
+                    && !IsFolderExpanded(selectedFolder, rootPath, openStates))
                 {
                     openStates[selectedFolder] = true;
-                    selectionChanged = true; // keeps it visible/scrollable
+                    selectionChanged = true;
                 }
-                else if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) && IsFolderExpanded(selectedFolder, rootPath, openStates))
+                else if (
+                    ImGui::IsKeyPressed(ImGuiKey_LeftArrow)
+                    && IsFolderExpanded(selectedFolder, rootPath, openStates))
                 {
                     openStates[selectedFolder] = false;
                     selectionChanged = true;
@@ -270,6 +371,20 @@ namespace
             scrollSelectionIntoView = true;
         }
     }
+
+    const char* MenuLabel(const char* icon, const char* text)
+    {
+        static thread_local char buffer[96];
+        if (ImGuiFonts::IconsAvailable())
+        {
+            std::snprintf(buffer, sizeof(buffer), "%s  %s", icon, text);
+        }
+        else
+        {
+            std::snprintf(buffer, sizeof(buffer), "%s", text);
+        }
+        return buffer;
+    }
 }
 
 void ProjectFilesPanel::ResetBrowseState(const std::string& projectRoot)
@@ -279,6 +394,285 @@ void ProjectFilesPanel::ResetBrowseState(const std::string& projectRoot)
     m_trackedProjectRoot = projectRoot;
     m_folderOpenStates.clear();
     m_scrollSelectionIntoView = false;
+    CancelRename();
+    m_pendingDeletePath.clear();
+    m_openDeleteConfirmPopup = false;
+    m_statusMessage.clear();
+}
+
+void ProjectFilesPanel::CancelRename()
+{
+    m_renamePath.clear();
+    m_renameBuffer[0] = '\0';
+    m_beginRenameNextFrame = false;
+    m_focusRenameInput = false;
+    m_renameInputEngaged = false;
+}
+
+void ProjectFilesPanel::BeginRename(const std::string& entryPath)
+{
+    if (entryPath.empty() || PathsEqual(entryPath, m_trackedProjectRoot))
+    {
+        m_statusMessage = "Cannot rename the project root.";
+        return;
+    }
+
+    std::error_code error;
+    if (!fs::exists(entryPath, error))
+    {
+        m_statusMessage = "Selected item no longer exists.";
+        return;
+    }
+
+    m_selectedEntryPath = entryPath;
+    m_renamePath = entryPath;
+    const fs::path path(entryPath);
+    m_browsedDirectory = path.parent_path().string();
+    if (m_browsedDirectory.empty())
+    {
+        m_browsedDirectory = m_trackedProjectRoot;
+    }
+
+    const std::string filename = path.filename().string();
+    std::snprintf(m_renameBuffer, sizeof(m_renameBuffer), "%s", filename.c_str());
+    m_beginRenameNextFrame = true;
+    m_focusRenameInput = false;
+    m_renameInputEngaged = false;
+    m_statusMessage.clear();
+}
+
+bool ProjectFilesPanel::TryCommitRename()
+{
+    if (m_renamePath.empty())
+    {
+        return false;
+    }
+
+    const std::string newName = m_renameBuffer;
+    if (!IsValidEntryName(newName))
+    {
+        m_statusMessage = "Invalid name.";
+        return false;
+    }
+
+    const fs::path oldPath(m_renamePath);
+    const fs::path newPath = oldPath.parent_path() / newName;
+    if (PathsEqual(oldPath, newPath))
+    {
+        CancelRename();
+        return true;
+    }
+
+    if (!IsPathInsideOrEqual(newPath.parent_path(), m_trackedProjectRoot))
+    {
+        m_statusMessage = "Rename must stay inside the project.";
+        return false;
+    }
+
+    std::error_code error;
+    if (fs::exists(newPath, error))
+    {
+        m_statusMessage = "An item with that name already exists.";
+        return false;
+    }
+
+    fs::rename(oldPath, newPath, error);
+    if (error)
+    {
+        m_statusMessage = "Rename failed: " + error.message();
+        return false;
+    }
+
+    const std::string newPathString = newPath.string();
+    if (m_selectedEntryPath == m_renamePath)
+    {
+        m_selectedEntryPath = newPathString;
+    }
+    if (m_browsedDirectory == m_renamePath)
+    {
+        m_browsedDirectory = newPathString;
+    }
+
+    const auto openStateIt = m_folderOpenStates.find(m_renamePath);
+    if (openStateIt != m_folderOpenStates.end())
+    {
+        m_folderOpenStates[newPathString] = openStateIt->second;
+        m_folderOpenStates.erase(openStateIt);
+    }
+
+    CancelRename();
+    m_statusMessage.clear();
+    return true;
+}
+
+bool ProjectFilesPanel::TryDeletePath(const std::string& entryPath)
+{
+    if (entryPath.empty() || PathsEqual(entryPath, m_trackedProjectRoot))
+    {
+        m_statusMessage = "Cannot delete the project root.";
+        return false;
+    }
+
+    if (!IsPathInsideOrEqual(entryPath, m_trackedProjectRoot))
+    {
+        m_statusMessage = "Delete must stay inside the project.";
+        return false;
+    }
+
+    std::error_code error;
+    if (!fs::exists(entryPath, error))
+    {
+        m_statusMessage = "Selected item no longer exists.";
+        return false;
+    }
+
+    const bool wasDirectory = fs::is_directory(entryPath, error);
+    if (wasDirectory)
+    {
+        fs::remove_all(entryPath, error);
+    }
+    else
+    {
+        fs::remove(entryPath, error);
+    }
+
+    if (error)
+    {
+        m_statusMessage = "Delete failed: " + error.message();
+        return false;
+    }
+
+    if (m_selectedEntryPath == entryPath
+        || IsPathInsideOrEqual(m_selectedEntryPath, entryPath))
+    {
+        m_selectedEntryPath = fs::path(entryPath).parent_path().string();
+    }
+
+    if (m_browsedDirectory == entryPath
+        || IsPathInsideOrEqual(m_browsedDirectory, entryPath))
+    {
+        m_browsedDirectory = fs::path(entryPath).parent_path().string();
+    }
+
+    m_folderOpenStates.erase(entryPath);
+    if (m_renamePath == entryPath)
+    {
+        CancelRename();
+    }
+
+    m_statusMessage.clear();
+    return true;
+}
+
+void ProjectFilesPanel::DrawEntryContextMenu(
+    const std::string& entryPath,
+    const std::string& entryName,
+    bool isDirectory)
+{
+    if (!ImGui::BeginPopupContextItem())
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("%s", entryName.c_str());
+    ImGui::Separator();
+
+    if (ImGui::MenuItem(MenuLabel(ICON_EDITOR_REVEAL, "Show in Explorer")))
+    {
+        if (!FileDialog::RevealInExplorer(entryPath))
+        {
+            m_statusMessage = "Could not open Explorer for this path.";
+        }
+    }
+
+    const bool canMutate = !PathsEqual(entryPath, m_trackedProjectRoot);
+    if (ImGui::MenuItem(MenuLabel(ICON_EDITOR_RENAME, "Rename"), "F2", false, canMutate))
+    {
+        BeginRename(entryPath);
+    }
+
+    if (ImGui::MenuItem(MenuLabel(ICON_EDITOR_TRASH, "Delete"), "Del", false, canMutate))
+    {
+        m_pendingDeletePath = entryPath;
+        m_openDeleteConfirmPopup = true;
+    }
+
+    if (!isDirectory)
+    {
+        ImGui::Separator();
+        ImGui::BeginDisabled();
+        ImGui::MenuItem("Import Into Scene");
+        ImGui::EndDisabled();
+    }
+
+    ImGui::EndPopup();
+}
+
+void ProjectFilesPanel::DrawDeleteConfirmPopup()
+{
+    if (m_openDeleteConfirmPopup)
+    {
+        ImGui::OpenPopup("Delete Project Item");
+        m_openDeleteConfirmPopup = false;
+    }
+
+    if (!ImGui::BeginPopupModal("Delete Project Item", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+
+    const std::string name = fs::path(m_pendingDeletePath).filename().string();
+    ImGui::TextWrapped("Delete \"%s\"?\nThis cannot be undone.", name.c_str());
+    ImGui::Separator();
+
+    if (ImGui::Button("Delete", ImVec2(120.0f, 0.0f)))
+    {
+        TryDeletePath(m_pendingDeletePath);
+        m_pendingDeletePath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)))
+    {
+        m_pendingDeletePath.clear();
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
+}
+
+void ProjectFilesPanel::HandleFilesPanelHotkeys()
+{
+    if (ImGui::GetIO().WantTextInput || ImGui::IsAnyItemActive())
+    {
+        return;
+    }
+
+    if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
+    {
+        return;
+    }
+
+    if (m_selectedEntryPath.empty())
+    {
+        return;
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F2))
+    {
+        BeginRename(m_selectedEntryPath);
+    }
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+    {
+        if (!PathsEqual(m_selectedEntryPath, m_trackedProjectRoot))
+        {
+            m_pendingDeletePath = m_selectedEntryPath;
+            m_openDeleteConfirmPopup = true;
+        }
+    }
 }
 
 void ProjectFilesPanel::DrawToolbar(ProjectSession& project)
@@ -299,6 +693,7 @@ void ProjectFilesPanel::DrawToolbar(ProjectSession& project)
     ImGui::SameLine();
     if (ImGui::SmallButton("Refresh"))
     {
+        m_statusMessage.clear();
     }
 
     ImGui::SameLine();
@@ -330,6 +725,8 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
             continue;
         }
 
+        ImGui::PushID(entry.path.c_str());
+
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
         if (entry.path == m_selectedEntryPath)
         {
@@ -343,12 +740,14 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
         }
         else
         {
-            // Keep open state in our control so keyboard left/right works reliably.
             const bool isOpen = IsFolderExpanded(entry.path, m_trackedProjectRoot, m_folderOpenStates);
             ImGui::SetNextItemOpen(isOpen, ImGuiCond_Always);
         }
 
-        bool opened = ImGui::TreeNodeEx(entry.name.c_str(), flags);
+        const bool folderOpenPreview =
+            IsFolderExpanded(entry.path, m_trackedProjectRoot, m_folderOpenStates);
+        const std::string label = BuildEntryLabel(true, entry.name, folderOpenPreview);
+        bool opened = ImGui::TreeNodeEx(label.c_str(), flags);
         if (hasChildren)
         {
             m_folderOpenStates[entry.path] = opened;
@@ -361,10 +760,11 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
             m_scrollSelectionIntoView = false;
         }
 
+        DrawEntryContextMenu(entry.path, entry.name, true);
+
         if (m_scrollSelectionIntoView && entry.path == m_selectedEntryPath)
         {
             ImGui::SetScrollHereY(0.5f);
-            // Reset once we actually drew the selected row.
             m_scrollSelectionIntoView = false;
         }
 
@@ -373,6 +773,8 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
             DrawFolderTree(entry.path);
             ImGui::TreePop();
         }
+
+        ImGui::PopID();
     }
 }
 
@@ -388,7 +790,8 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
     if (ImGui::BeginTable(
             "ProjectFilesTable",
             3,
-            ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_BordersInnerV,
+            ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY
+                | ImGuiTableFlags_BordersInnerV,
             ImVec2(0.0f, 0.0f)))
     {
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch, 0.55f);
@@ -399,40 +802,54 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
 
         for (const DirectoryEntry& entry : entries)
         {
+            ImGui::PushID(entry.path.c_str());
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
 
             const bool isSelected = entry.path == m_selectedEntryPath;
-            if (ImGui::Selectable(entry.name.c_str(), isSelected, ImGuiSelectableFlags_SpanAllColumns))
+            const bool isRenaming = entry.path == m_renamePath;
+
+            if (isRenaming)
             {
-                m_selectedEntryPath = entry.path;
-            }
-
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) && entry.isDirectory)
-            {
-                m_browsedDirectory = entry.path;
-            }
-
-            if (ImGui::BeginPopupContextItem())
-            {
-                ImGui::TextDisabled("%s", entry.name.c_str());
-                ImGui::Separator();
-
-                ImGui::BeginDisabled();
-                ImGui::MenuItem("Show in Explorer");
-                ImGui::MenuItem("Rename");
-                ImGui::MenuItem("Delete");
-                ImGui::EndDisabled();
-
-                if (!entry.isDirectory)
+                if (ImGuiFonts::IconsAvailable())
                 {
-                    ImGui::Separator();
-                    ImGui::BeginDisabled();
-                    ImGui::MenuItem("Import Into Scene");
-                    ImGui::EndDisabled();
+                    ImGui::TextUnformatted(EntryIcon(entry.isDirectory));
+                    ImGui::SameLine();
                 }
 
-                ImGui::EndPopup();
+                bool cancelRename = false;
+                if (DrawInlineRenameField(
+                        m_renameBuffer,
+                        sizeof(m_renameBuffer),
+                        m_focusRenameInput,
+                        m_renameInputEngaged,
+                        cancelRename))
+                {
+                    TryCommitRename();
+                }
+                else if (cancelRename)
+                {
+                    CancelRename();
+                }
+            }
+            else
+            {
+                const std::string label = BuildEntryLabel(entry.isDirectory, entry.name);
+                if (ImGui::Selectable(
+                        label.c_str(),
+                        isSelected,
+                        ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                {
+                    m_selectedEntryPath = entry.path;
+                }
+
+                if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+                    && entry.isDirectory)
+                {
+                    m_browsedDirectory = entry.path;
+                }
+
+                DrawEntryContextMenu(entry.path, entry.name, entry.isDirectory);
             }
 
             ImGui::TableSetColumnIndex(1);
@@ -447,6 +864,8 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
             {
                 ImGui::TextUnformatted(FormatFileSize(entry.sizeBytes).c_str());
             }
+
+            ImGui::PopID();
         }
 
         ImGui::EndTable();
@@ -487,8 +906,14 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
 
     if (m_selectedEntryPath.empty())
     {
-        // Default selection drives the file list; needed for keyboard navigation to work immediately.
         m_selectedEntryPath = m_browsedDirectory;
+    }
+
+    if (m_beginRenameNextFrame)
+    {
+        m_focusRenameInput = true;
+        m_beginRenameNextFrame = false;
+        m_renameInputEngaged = false;
     }
 
     DrawToolbar(project);
@@ -509,6 +934,7 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_browsedDirectory,
         m_selectedEntryPath,
         m_scrollSelectionIntoView);
+    HandleFilesPanelHotkeys();
 
     ImGuiTreeNodeFlags rootFlags =
         ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -517,7 +943,7 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         rootFlags |= ImGuiTreeNodeFlags_Selected;
     }
 
-    const std::string rootLabel = fs::path(projectRoot).filename().string();
+    const std::string rootName = fs::path(projectRoot).filename().string();
     const bool rootHasChildren = HasChildFolders(projectRoot);
     const bool rootIsOpen = IsFolderExpanded(projectRoot, projectRoot, m_folderOpenStates);
     ImGui::SetNextItemOpen(rootIsOpen, ImGuiCond_Always);
@@ -527,6 +953,7 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         rootFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
     }
 
+    const std::string rootLabel = BuildEntryLabel(true, rootName, rootIsOpen);
     const bool rootOpen = ImGui::TreeNodeEx(rootLabel.c_str(), rootFlags);
     if (rootHasChildren)
     {
@@ -537,6 +964,8 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_browsedDirectory = projectRoot;
         m_selectedEntryPath = projectRoot;
     }
+
+    DrawEntryContextMenu(projectRoot, rootName, true);
 
     if (rootOpen)
     {
@@ -553,7 +982,13 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     DrawFileList(m_browsedDirectory);
     ImGui::EndChild();
 
-    if (m_selectedEntryPath.empty())
+    DrawDeleteConfirmPopup();
+
+    if (!m_statusMessage.empty())
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", m_statusMessage.c_str());
+    }
+    else if (m_selectedEntryPath.empty())
     {
         ImGui::TextDisabled("No selection");
     }
@@ -585,4 +1020,8 @@ void ProjectFilesPanel::SetBrowseState(
     m_folderOpenStates = folderOpenStates;
     m_trackedProjectRoot.clear();
     m_scrollSelectionIntoView = !selectedPath.empty();
+    CancelRename();
+    m_pendingDeletePath.clear();
+    m_openDeleteConfirmPopup = false;
+    m_statusMessage.clear();
 }

@@ -27,6 +27,13 @@ private:
     void DrawToolbar(ProjectSession& project);
     void DrawFolderTree(const std::string& directory);
     void DrawFileList(const std::string& directory);
+    void DrawEntryContextMenu(const std::string& entryPath, const std::string& entryName, bool isDirectory);
+    void DrawDeleteConfirmPopup();
+    void BeginRename(const std::string& entryPath);
+    void CancelRename();
+    bool TryCommitRename();
+    bool TryDeletePath(const std::string& entryPath);
+    void HandleFilesPanelHotkeys();
 
     mutable bool m_showPanel = true;
     mutable std::string m_browsedDirectory;
@@ -34,4 +41,14 @@ private:
     mutable std::string m_trackedProjectRoot;
     mutable std::unordered_map<std::string, bool> m_folderOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
+
+    mutable std::string m_renamePath;
+    mutable char m_renameBuffer[260] = {};
+    mutable bool m_beginRenameNextFrame = false;
+    mutable bool m_focusRenameInput = false;
+    mutable bool m_renameInputEngaged = false;
+
+    mutable std::string m_pendingDeletePath;
+    mutable bool m_openDeleteConfirmPopup = false;
+    mutable std::string m_statusMessage;
 };

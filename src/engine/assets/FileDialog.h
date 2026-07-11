@@ -12,4 +12,7 @@ namespace FileDialog
     bool OpenProjectFile(std::string& outPath, const std::string& initialDirectory = "");
     bool SaveProjectFile(std::string& outPath, const std::string& suggestedPath = "");
     bool ChooseProjectFolder(std::string& outPath);
+
+    // Opens Explorer/Finder and selects the path when possible.
+    bool RevealInExplorer(const std::string& path);
 }
