@@ -650,12 +650,13 @@ void ProjectFilesPanel::HandleFilesPanelHotkeys()
         return;
     }
 
+    // Called from the docked Project window so either folder tree or file list focus works.
     if (!ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows))
     {
         return;
     }
 
-    if (m_selectedEntryPath.empty())
+    if (m_selectedEntryPath.empty() || m_renamePath == m_selectedEntryPath)
     {
         return;
     }
@@ -904,11 +905,6 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_browsedDirectory = projectRoot;
     }
 
-    if (m_selectedEntryPath.empty())
-    {
-        m_selectedEntryPath = m_browsedDirectory;
-    }
-
     if (m_beginRenameNextFrame)
     {
         m_focusRenameInput = true;
@@ -934,7 +930,6 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_browsedDirectory,
         m_selectedEntryPath,
         m_scrollSelectionIntoView);
-    HandleFilesPanelHotkeys();
 
     ImGuiTreeNodeFlags rootFlags =
         ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
@@ -973,6 +968,19 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         ImGui::TreePop();
     }
 
+    {
+        const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
+        if (backgroundSpace.y > 0.0f)
+        {
+            ImGui::InvisibleButton("##ProjectFoldersBackground", backgroundSpace);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            {
+                m_selectedEntryPath.clear();
+                CancelRename();
+            }
+        }
+    }
+
     ImGui::EndChild();
 
     ImGui::SameLine();
@@ -980,8 +988,23 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     ImGui::TextDisabled("Files");
     ImGui::Separator();
     DrawFileList(m_browsedDirectory);
+
+    {
+        const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
+        if (backgroundSpace.y > 0.0f)
+        {
+            ImGui::InvisibleButton("##ProjectFilesBackground", backgroundSpace);
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            {
+                m_selectedEntryPath.clear();
+                CancelRename();
+            }
+        }
+    }
+
     ImGui::EndChild();
 
+    HandleFilesPanelHotkeys();
     DrawDeleteConfirmPopup();
 
     if (!m_statusMessage.empty())
@@ -995,6 +1018,17 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     else
     {
         ImGui::TextDisabled("%s", m_selectedEntryPath.c_str());
+    }
+
+    // Clear selection when clicking outside this panel (other panels, viewport, etc.).
+    // Skip while any popup is open so context-menu actions like Rename still apply.
+    if (!m_selectedEntryPath.empty()
+        && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        && !ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
+        && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+    {
+        m_selectedEntryPath.clear();
+        CancelRename();
     }
 
     ImGui::End();

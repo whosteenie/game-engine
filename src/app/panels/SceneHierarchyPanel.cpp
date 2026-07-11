@@ -477,7 +477,7 @@ namespace
         DrawCreateObjectMenu(panel, scene, project, objectIndex);
 
         ImGui::Separator();
-        if (ImGui::MenuItem("Rename"))
+        if (ImGui::MenuItem("Rename", "F2"))
         {
             renameTargetIndex = objectIndex;
             beginRenameNextFrame = true;
@@ -1480,6 +1480,24 @@ void SceneHierarchyPanel::Draw(
             primaryIndex,
             m_nodeOpenStates,
             m_scrollSelectionIntoView);
+
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows)
+            && !ImGui::GetIO().WantTextInput
+            && !ImGui::IsAnyItemActive()
+            && ImGui::IsKeyPressed(ImGuiKey_F2)
+            && primaryIndex >= 0
+            && primaryIndex < static_cast<int>(objects.size()))
+        {
+            m_renameTargetIndex = primaryIndex;
+            m_beginRenameNextFrame = true;
+            m_pendingRenameIndex = -1;
+            std::snprintf(
+                m_renameBuffer,
+                sizeof(m_renameBuffer),
+                "%s",
+                objects[static_cast<std::size_t>(primaryIndex)].GetName().c_str());
+            m_focusRenameInput = true;
+        }
     }
 
     if (!IsHierarchyDragActive())
