@@ -648,7 +648,7 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     const glm::mat4 unjitteredProjection = params.camera->GetUnjitteredProjectionMatrix();
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
     const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
-    const glm::mat4 invViewProj = glm::inverse(unjitteredViewProj);
+    const glm::mat4 invViewProj = glm::inverse(viewProj);
     const glm::mat4 prevViewProj = params.motionHistoryValid
         ? params.prevViewProjection
         : unjitteredViewProj;

@@ -115,11 +115,11 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
     const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
-    // Real-time / DLSS: primary rays through pixel-center unjittered frustum so the traced hit,
-    // unjittered MVs, and jittered HW depth describe one consistent surface point per pixel.
-    const glm::mat4 invViewProj = frameInputs.centerPrimaryRays
-        ? glm::inverse(unjitteredViewProj)
-        : glm::inverse(viewProj);
+    // Primary rays reconstruct from the jittered frustum. In real-time PT the shader uses the pixel
+    // center and the projection matrix supplies the Halton offset that DLSS/RR is told about; in
+    // reference mode the shader adds its own sub-pixel offset on top of the current projection.
+    // Motion vectors still use g_UnjitteredViewProj below (motionVectorsJittered = false).
+    const glm::mat4 invViewProj = glm::inverse(viewProj);
     const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
         ? frameInputs.prevViewProjection
         : unjitteredViewProj;

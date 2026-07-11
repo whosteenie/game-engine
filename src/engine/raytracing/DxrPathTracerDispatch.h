@@ -41,7 +41,8 @@ public:
         glm::mat4 prevViewProjection{1.0f};
         glm::vec3 prevCameraPos{0.0f};
         bool motionHistoryValid = false;
-        // Real-time (DLSS): pixel-center primary rays only. Reference: sub-pixel jitter for accumulation.
+        // Real-time (DLSS): pixel-center primary rays through the jittered projection. Reference:
+        // shader-side sub-pixel jitter for accumulation.
         bool centerPrimaryRays = false;
         std::uintptr_t envEquirectSrvCpuHandle = 0;
         std::uint32_t envImportanceCdfSrvIndex = UINT32_MAX;
