@@ -79,7 +79,16 @@ namespace
     // ReSTIR GI is disabled while PTGI baseline quality is under investigation. Keeping this as a
     // single local switch avoids tearing out the experimental code while removing its runtime cost.
     constexpr bool kEnableRestirGiExperiment = false;
-    constexpr bool kEnableMeshShaderGBufferSmokePath = true;
+
+    // C8: the mesh-shader + GpuScene scene path is the DEFAULT scene G-buffer and shadow renderer on
+    // supported hardware. The classic per-object Material::Apply + Mesh::Draw loop is retained only as
+    // a clearly-gated fallback: automatically for unsupported hardware, material debug views, and
+    // non-split-MRT output, and manually via kForceClassicRasterFallback for A/B parity comparison. It
+    // is no longer the path being optimized around. Outright deletion of the fallback waits on
+    // Hybrid-mode validation of the mesh-shader paths (they are skipped in PT mode, so PT testing does
+    // not exercise them).
+    constexpr bool kMeshShaderScenePathDefault = true;
+    constexpr bool kForceClassicRasterFallback = false;
 
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, Fn&& fn)
@@ -276,7 +285,8 @@ void SceneRenderer::EnsureGpuResources() const
                     self->m_meshShaderGBufferRenderer.reset();
                     EngineLog::Warn(
                         "scene",
-                        std::string("Mesh shader G-buffer smoke path unavailable: ")
+                        std::string("Mesh shader G-buffer renderer unavailable, using classic "
+                            "raster fallback: ")
                             + SafeExceptionMessage(exception));
                 }
             }
@@ -293,10 +303,27 @@ void SceneRenderer::EnsureGpuResources() const
                     self->m_meshShaderShadowRenderer.reset();
                     EngineLog::Warn(
                         "scene",
-                        std::string("Mesh shader shadow path unavailable: ")
+                        std::string("Mesh shader shadow renderer unavailable, using classic "
+                            "shadow fallback: ")
                             + SafeExceptionMessage(exception));
                 }
             }
+        });
+        RunGpuInitStep("scene path selection", [&]() {
+            // C8: report the default scene geometry/shadow renderer once at startup so the active
+            // path (and any fallback reason) is explicit rather than implied.
+            const bool meshShaderDefault =
+                kMeshShaderScenePathDefault
+                && !kForceClassicRasterFallback
+                && self->m_meshShaderGBufferRenderer != nullptr
+                && self->m_meshShaderGBufferRenderer->IsSupported();
+            const char* reason =
+                meshShaderDefault ? "mesh-shader + GpuScene (default)"
+                : kForceClassicRasterFallback ? "classic per-object (forced fallback)"
+                : GfxContext::Get().IsMeshShaderSupported()
+                    ? "classic per-object (mesh-shader renderer init failed)"
+                    : "classic per-object (mesh shaders unsupported on this device)";
+            EngineLog::Info("scene", std::string("Scene geometry renderer: ") + reason);
         });
         RunGpuInitStep("shadow depth shader", [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
@@ -437,7 +464,9 @@ void SceneRenderer::RenderShadowPass(const Scene& scene, const Camera& camera)
     const std::vector<SceneObject>& objects = scene.GetObjects();
 
     const bool useMeshShaderShadows =
-        m_meshShaderShadowRenderer != nullptr
+        kMeshShaderScenePathDefault
+        && !kForceClassicRasterFallback
+        && m_meshShaderShadowRenderer != nullptr
         && m_meshShaderShadowRenderer->IsSupported()
         && m_gpuScene.GetGpuDiagnostics().uploadValid
         && m_gpuScene.GetInstanceTableGpuAddress() != 0;
@@ -1479,7 +1508,8 @@ void SceneRenderer::RenderGeometryPass(
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
         const bool useMeshShaderGBufferPath =
-            kEnableMeshShaderGBufferSmokePath
+            kMeshShaderScenePathDefault
+            && !kForceClassicRasterFallback
             && splitLightingMrt
             && materialDebugMode == RenderDebugMode::None
             && m_gpuScene.GetGpuDiagnostics().uploadValid
