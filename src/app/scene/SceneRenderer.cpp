@@ -1430,47 +1430,71 @@ void SceneRenderer::RenderGeometryPass(
     {
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
-        const bool useMeshShaderSmokePath =
+        const bool useMeshShaderGBufferPath =
             kEnableMeshShaderGBufferSmokePath
             && splitLightingMrt
+            && materialDebugMode == RenderDebugMode::None
+            && m_gpuScene.GetGpuDiagnostics().uploadValid
+            && m_gpuScene.GetInstanceTableGpuAddress() != 0
+            && m_gpuScene.GetMaterialTableGpuAddress() != 0
             && m_meshShaderGBufferRenderer != nullptr
             && m_meshShaderGBufferRenderer->IsSupported();
-        m_renderFrameDiagnostics.meshShaderGBufferActive = useMeshShaderSmokePath;
+        m_renderFrameDiagnostics.meshShaderGBufferActive = useMeshShaderGBufferPath;
 
-        for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+        if (useMeshShaderGBufferPath)
         {
-            const std::size_t objectIndex = static_cast<std::size_t>(instance.objectIndex);
-            if (objectIndex >= objects.size())
+            std::vector<MeshShaderGBufferRenderer::Batch> batches(m_gpuScene.GetMeshAssets().size());
+            for (const GpuSceneMeshAssetRecord& meshAsset : m_gpuScene.GetMeshAssets())
             {
-                continue;
+                MeshShaderGBufferRenderer::Batch& batch = batches[meshAsset.meshId];
+                batch.mesh = meshAsset.mesh;
+                batch.meshId = meshAsset.meshId;
             }
 
-            const SceneObject& object = objects[objectIndex];
-            const glm::mat4 modelMatrix = instance.world;
-            if (useMeshShaderSmokePath)
+            for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
             {
-                const std::uint32_t dispatchedGroups = m_meshShaderGBufferRenderer->DispatchMesh(
-                    *object.GetMesh(),
-                    camera,
-                    modelMatrix,
-                    instance.prevWorld,
-                    motionFrameState.prevView,
-                    motionFrameState.prevUnjitteredProjection,
-                    motionFrameState.historyValid,
-                    object.GetMaterial().GetAlbedo(),
-                    object.GetMaterial().GetRoughness(),
-                    object.GetMaterial().GetMetallic());
-                m_renderFrameDiagnostics.meshShaderDispatchCount += dispatchedGroups;
-                m_renderFrameDiagnostics.meshShaderGBufferActive =
-                    m_renderFrameDiagnostics.meshShaderDispatchCount > 0;
+                if (instance.meshId >= batches.size())
+                {
+                    continue;
+                }
+                batches[instance.meshId].instanceIds.push_back(instance.instanceId);
             }
-            else
+
+            const MeshShaderGBufferRenderer::SceneTables sceneTables{
+                m_gpuScene.GetInstanceTableGpuAddress(),
+                m_gpuScene.GetMaterialTableGpuAddress()};
+
+            for (const MeshShaderGBufferRenderer::Batch& batch : batches)
             {
+                m_renderFrameDiagnostics.meshShaderDispatchCount +=
+                    m_meshShaderGBufferRenderer->DispatchMeshAssetBatch(
+                        batch,
+                        sceneTables,
+                        camera,
+                        motionFrameState.prevView,
+                        motionFrameState.prevUnjitteredProjection,
+                        motionFrameState.historyValid);
+            }
+
+            m_renderFrameDiagnostics.meshShaderGBufferActive =
+                m_renderFrameDiagnostics.meshShaderDispatchCount > 0;
+        }
+        else
+        {
+            for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+            {
+                const std::size_t objectIndex = static_cast<std::size_t>(instance.objectIndex);
+                if (objectIndex >= objects.size())
+                {
+                    continue;
+                }
+
+                const SceneObject& object = objects[objectIndex];
                 object.GetMaterial().Apply(
                     camera,
                     m_lighting,
                     m_environmentMap->GetIBL(),
-                    modelMatrix,
+                    instance.world,
                     m_shadowMap.get(),
                     object.ReceivesShadow(),
                     splitLightingMrt,

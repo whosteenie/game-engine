@@ -115,6 +115,9 @@ public:
     std::uint32_t GetInstanceTableSrvIndex() const { return m_instanceSrvIndices[GfxContext::Get().GetFrameIndex()]; }
     std::uint32_t GetMeshAssetTableSrvIndex() const { return m_meshAssetSrvIndices[GfxContext::Get().GetFrameIndex()]; }
     std::uint32_t GetMaterialTableSrvIndex() const { return m_materialSrvIndices[GfxContext::Get().GetFrameIndex()]; }
+    std::uint64_t GetInstanceTableGpuAddress() const;
+    std::uint64_t GetMeshAssetTableGpuAddress() const;
+    std::uint64_t GetMaterialTableGpuAddress() const;
 
     std::uint32_t FindInstanceForObjectIndex(std::uint32_t objectIndex) const;
     const GpuSceneInstanceRecord* FindInstance(std::uint32_t instanceId) const;

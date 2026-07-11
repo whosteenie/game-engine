@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 class Camera;
 class Mesh;
@@ -19,17 +20,26 @@ public:
 
     bool IsSupported() const { return m_supported; }
 
-    std::uint32_t DispatchMesh(
-        const Mesh& mesh,
+    struct Batch
+    {
+        const Mesh* mesh = nullptr;
+        std::uint32_t meshId = 0xFFFFFFFFu;
+        std::vector<std::uint32_t> instanceIds;
+    };
+
+    struct SceneTables
+    {
+        std::uint64_t instanceTableGpuAddress = 0;
+        std::uint64_t materialTableGpuAddress = 0;
+    };
+
+    std::uint32_t DispatchMeshAssetBatch(
+        const Batch& batch,
+        const SceneTables& sceneTables,
         const Camera& camera,
-        const glm::mat4& model,
-        const glm::mat4& prevModel,
         const glm::mat4& prevView,
         const glm::mat4& prevUnjitteredProjection,
-        bool temporalHistoryValid,
-        const glm::vec3& albedo,
-        float roughness,
-        float metallic) const;
+        bool temporalHistoryValid) const;
 
 private:
     void CreateRootSignature();

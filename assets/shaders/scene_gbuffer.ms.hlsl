@@ -5,15 +5,12 @@ static const uint MAX_MESHLET_TRIANGLES = 64;
 
 cbuffer MeshFrame : register(b0)
 {
-    float4x4 uModel;
-    float4x4 uPrevModel;
     float4x4 uView;
     float4x4 uPrevView;
     float4x4 uProjection;
     float4x4 uUnjitteredProjection;
     float4x4 uPrevUnjitteredProjection;
-    float4 uAlbedoRoughness;
-    float4 uMetallicHistoryStride;
+    float4 uHistoryStrideMeshId;
 };
 
 ByteAddressBuffer gVertexFloats : register(t0);
@@ -40,9 +37,25 @@ struct MeshletTriangle
     uint pad0;
 };
 
+struct InstanceRecord
+{
+    float4x4 world;
+    float4x4 prevWorld;
+    uint meshId;
+    uint materialId;
+    uint flags;
+    uint objectIndex;
+    uint editorObjectIdLow;
+    uint editorObjectIdHigh;
+    uint pad0;
+    uint pad1;
+};
+
 StructuredBuffer<MeshletRecord> gMeshlets : register(t1);
 StructuredBuffer<uint> gMeshletVertices : register(t2);
 StructuredBuffer<MeshletTriangle> gMeshletTriangles : register(t3);
+StructuredBuffer<InstanceRecord> gInstances : register(t4);
+StructuredBuffer<uint> gInstanceIds : register(t6);
 
 struct VertexOut
 {
@@ -56,8 +69,8 @@ struct VertexOut
     float viewDepth : TEXCOORD6;
     float4 currClip : TEXCOORD7;
     float4 prevClip : TEXCOORD8;
-    float4 albedoRoughness : TEXCOORD9;
-    float metallic : TEXCOORD10;
+    uint instanceId : TEXCOORD9;
+    uint materialId : TEXCOORD10;
 };
 
 float LoadFloat(uint floatIndex)
@@ -69,14 +82,16 @@ float LoadFloat(uint floatIndex)
 [outputtopology("triangle")]
 void main(
     uint groupThreadId : SV_GroupThreadID,
-    uint groupId : SV_GroupID,
+    uint3 groupId : SV_GroupID,
     out vertices VertexOut verts[MAX_MESHLET_VERTICES],
     out indices uint3 tris[MAX_MESHLET_TRIANGLES])
 {
-    const MeshletRecord meshlet = gMeshlets[groupId];
+    const MeshletRecord meshlet = gMeshlets[groupId.x];
     SetMeshOutputCounts(meshlet.vertexCount, meshlet.triangleCount);
 
-    const uint stride = max(1u, (uint)round(uMetallicHistoryStride.z));
+    const uint instanceId = gInstanceIds[groupId.y];
+    const InstanceRecord instance = gInstances[instanceId];
+    const uint stride = max(1u, (uint)round(uHistoryStrideMeshId.y));
 
     if (groupThreadId < meshlet.vertexCount)
     {
@@ -112,12 +127,12 @@ void main(
                 LoadFloat(baseFloat + 13));
         }
 
-        float4 worldPos = mul(uModel, float4(position, 1.0));
+        float4 worldPos = mul(instance.world, float4(position, 1.0));
         float4 viewPos = mul(uView, worldPos);
 
-        float3x3 normalMatrix = NormalMatrixFromModel(uModel);
+        float3x3 normalMatrix = NormalMatrixFromModel(instance.world);
         float tangentHandedness = tangent.w;
-        if (determinant((float3x3)uModel) < 0.0)
+        if (determinant((float3x3)instance.world) < 0.0)
         {
             tangentHandedness = -tangentHandedness;
         }
@@ -132,9 +147,9 @@ void main(
         output.viewDepth = viewPos.z;
         output.position = mul(uProjection, viewPos);
         output.currClip = mul(uUnjitteredProjection, viewPos);
-        if (uMetallicHistoryStride.y > 0.5)
+        if (uHistoryStrideMeshId.x > 0.5)
         {
-            float4 prevWorldPos = mul(uPrevModel, float4(position, 1.0));
+            float4 prevWorldPos = mul(instance.prevWorld, float4(position, 1.0));
             float4 prevViewPos = mul(uPrevView, prevWorldPos);
             output.prevClip = mul(uPrevUnjitteredProjection, prevViewPos);
         }
@@ -142,8 +157,8 @@ void main(
         {
             output.prevClip = output.currClip;
         }
-        output.albedoRoughness = uAlbedoRoughness;
-        output.metallic = uMetallicHistoryStride.x;
+        output.instanceId = instanceId;
+        output.materialId = instance.materialId;
         verts[groupThreadId] = output;
     }
 

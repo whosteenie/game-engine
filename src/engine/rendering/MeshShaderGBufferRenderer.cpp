@@ -37,15 +37,12 @@ namespace
 
     struct MeshShaderFrameConstants
     {
-        glm::mat4 model{1.0f};
-        glm::mat4 prevModel{1.0f};
         glm::mat4 view{1.0f};
         glm::mat4 prevView{1.0f};
         glm::mat4 projection{1.0f};
         glm::mat4 unjitteredProjection{1.0f};
         glm::mat4 prevUnjitteredProjection{1.0f};
-        glm::vec4 albedoRoughness{1.0f, 1.0f, 1.0f, 0.5f};
-        glm::vec4 metallicHistoryStride{0.0f, 1.0f, 14.0f, 0.0f};
+        glm::vec4 historyStrideMeshId{1.0f, 14.0f, 0.0f, 0.0f};
     };
 
     template<typename T, D3D12_PIPELINE_STATE_SUBOBJECT_TYPE Type>
@@ -108,22 +105,51 @@ void MeshShaderGBufferRenderer::CreateRootSignature()
 {
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
 
-    D3D12_ROOT_PARAMETER rootParams[5]{};
+    D3D12_ROOT_PARAMETER rootParams[9]{};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     rootParams[0].Descriptor.ShaderRegister = 0;
 
-    for (UINT rootIndex = 1; rootIndex < 5; ++rootIndex)
+    for (UINT rootIndex = 1; rootIndex < 8; ++rootIndex)
     {
         rootParams[rootIndex].ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV;
-        rootParams[rootIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH;
+        rootParams[rootIndex].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
         rootParams[rootIndex].Descriptor.ShaderRegister = rootIndex - 1;
         rootParams[rootIndex].Descriptor.RegisterSpace = 0;
     }
 
+    D3D12_DESCRIPTOR_RANGE bindlessRange{};
+    bindlessRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    bindlessRange.NumDescriptors = UINT_MAX;
+    bindlessRange.BaseShaderRegister = 0;
+    bindlessRange.RegisterSpace = 1;
+    bindlessRange.OffsetInDescriptorsFromTableStart = 0;
+
+    rootParams[8].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[8].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rootParams[8].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[8].DescriptorTable.pDescriptorRanges = &bindlessRange;
+
+    D3D12_STATIC_SAMPLER_DESC linearWrapSampler{};
+    linearWrapSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    linearWrapSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    linearWrapSampler.MipLODBias = 0.0f;
+    linearWrapSampler.MaxAnisotropy = 8;
+    linearWrapSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+    linearWrapSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    linearWrapSampler.MinLOD = 0.0f;
+    linearWrapSampler.MaxLOD = D3D12_FLOAT32_MAX;
+    linearWrapSampler.ShaderRegister = 0;
+    linearWrapSampler.RegisterSpace = 0;
+    linearWrapSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_ROOT_SIGNATURE_DESC rootDesc{};
     rootDesc.NumParameters = static_cast<UINT>(std::size(rootParams));
     rootDesc.pParameters = rootParams;
+    rootDesc.NumStaticSamplers = 1;
+    rootDesc.pStaticSamplers = &linearWrapSampler;
     rootDesc.Flags =
         D3D12_ROOT_SIGNATURE_FLAG_DENY_VERTEX_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
@@ -222,28 +248,31 @@ void MeshShaderGBufferRenderer::CreatePipelineState()
     m_pipelineState = pipelineState.Detach();
 }
 
-std::uint32_t MeshShaderGBufferRenderer::DispatchMesh(
-    const Mesh& mesh,
+std::uint32_t MeshShaderGBufferRenderer::DispatchMeshAssetBatch(
+    const Batch& batch,
+    const SceneTables& sceneTables,
     const Camera& camera,
-    const glm::mat4& model,
-    const glm::mat4& prevModel,
     const glm::mat4& prevView,
     const glm::mat4& prevUnjitteredProjection,
-    const bool temporalHistoryValid,
-    const glm::vec3& albedo,
-    const float roughness,
-    const float metallic) const
+    const bool temporalHistoryValid) const
 {
-    if (!m_supported || mesh.GetMeshletCount() == 0)
+    const Mesh* mesh = batch.mesh;
+    if (!m_supported || mesh == nullptr || mesh->GetMeshletCount() == 0)
+    {
+        return 0;
+    }
+    if (batch.instanceIds.empty()
+        || sceneTables.instanceTableGpuAddress == 0
+        || sceneTables.materialTableGpuAddress == 0)
     {
         return 0;
     }
 
-    mesh.EnsureGpuResources();
-    if (!mesh.GetVertexShaderResourceBuffer().IsValid()
-        || !mesh.GetMeshletBuffer().IsValid()
-        || !mesh.GetMeshletVertexBuffer().IsValid()
-        || !mesh.GetMeshletTriangleBuffer().IsValid())
+    mesh->EnsureGpuResources();
+    if (!mesh->GetVertexShaderResourceBuffer().IsValid()
+        || !mesh->GetMeshletBuffer().IsValid()
+        || !mesh->GetMeshletVertexBuffer().IsValid()
+        || !mesh->GetMeshletTriangleBuffer().IsValid())
     {
         return 0;
     }
@@ -257,18 +286,15 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMesh(
     }
 
     MeshShaderFrameConstants constants{};
-    constants.model = model;
-    constants.prevModel = prevModel;
     constants.view = camera.GetViewMatrix();
     constants.prevView = prevView;
     constants.projection = camera.GetProjectionMatrix();
     constants.unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     constants.prevUnjitteredProjection = prevUnjitteredProjection;
-    constants.albedoRoughness = glm::vec4(albedo, roughness);
-    constants.metallicHistoryStride = glm::vec4(
-        metallic,
+    constants.historyStrideMeshId = glm::vec4(
         temporalHistoryValid ? 1.0f : 0.0f,
-        static_cast<float>(mesh.GetFloatsPerVertex()),
+        static_cast<float>(mesh->GetFloatsPerVertex()),
+        static_cast<float>(batch.meshId),
         0.0f);
 
     const GfxContext::TransientUploadAllocation upload =
@@ -277,23 +303,47 @@ std::uint32_t MeshShaderGBufferRenderer::DispatchMesh(
     {
         return 0;
     }
+    const GfxContext::TransientUploadAllocation instanceIdUpload =
+        GfxContext::Get().AllocateTransientUpload(
+            batch.instanceIds.data(),
+            static_cast<std::uint32_t>(batch.instanceIds.size() * sizeof(std::uint32_t)));
+    if (instanceIdUpload.gpuAddress == 0)
+    {
+        return 0;
+    }
+
+    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
+    if (srvHeap == nullptr)
+    {
+        return 0;
+    }
+    ID3D12DescriptorHeap* heaps[] = {srvHeap};
+    commandList6->SetDescriptorHeaps(1, heaps);
 
     commandList6->SetPipelineState(static_cast<ID3D12PipelineState*>(m_pipelineState));
     commandList6->SetGraphicsRootSignature(static_cast<ID3D12RootSignature*>(m_rootSignature));
     commandList6->SetGraphicsRootConstantBufferView(0, upload.gpuAddress);
     commandList6->SetGraphicsRootShaderResourceView(
         1,
-        mesh.GetVertexShaderResourceBuffer().GetGpuVirtualAddress());
+        mesh->GetVertexShaderResourceBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         2,
-        mesh.GetMeshletBuffer().GetGpuVirtualAddress());
+        mesh->GetMeshletBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         3,
-        mesh.GetMeshletVertexBuffer().GetGpuVirtualAddress());
+        mesh->GetMeshletVertexBuffer().GetGpuVirtualAddress());
     commandList6->SetGraphicsRootShaderResourceView(
         4,
-        mesh.GetMeshletTriangleBuffer().GetGpuVirtualAddress());
-    const std::uint32_t dispatchGroupCount = mesh.GetMeshletCount();
-    commandList6->DispatchMesh(dispatchGroupCount, 1, 1);
-    return dispatchGroupCount;
+        mesh->GetMeshletTriangleBuffer().GetGpuVirtualAddress());
+    commandList6->SetGraphicsRootShaderResourceView(5, sceneTables.instanceTableGpuAddress);
+    commandList6->SetGraphicsRootShaderResourceView(6, sceneTables.materialTableGpuAddress);
+    commandList6->SetGraphicsRootShaderResourceView(7, instanceIdUpload.gpuAddress);
+
+    D3D12_GPU_DESCRIPTOR_HANDLE bindlessTable = srvHeap->GetGPUDescriptorHandleForHeapStart();
+    commandList6->SetGraphicsRootDescriptorTable(8, bindlessTable);
+
+    const std::uint32_t meshletCount = mesh->GetMeshletCount();
+    const std::uint32_t instanceCount = static_cast<std::uint32_t>(batch.instanceIds.size());
+    commandList6->DispatchMesh(meshletCount, instanceCount, 1);
+    return meshletCount * instanceCount;
 }

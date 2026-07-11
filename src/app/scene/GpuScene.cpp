@@ -291,6 +291,21 @@ bool GpuScene::UploadGpuTables(void* commandList)
     return true;
 }
 
+std::uint64_t GpuScene::GetInstanceTableGpuAddress() const
+{
+    return m_instanceGpuRing.Slot(GfxContext::Get().GetFrameIndex()).GetGpuVirtualAddress();
+}
+
+std::uint64_t GpuScene::GetMeshAssetTableGpuAddress() const
+{
+    return m_meshAssetGpuRing.Slot(GfxContext::Get().GetFrameIndex()).GetGpuVirtualAddress();
+}
+
+std::uint64_t GpuScene::GetMaterialTableGpuAddress() const
+{
+    return m_materialGpuRing.Slot(GfxContext::Get().GetFrameIndex()).GetGpuVirtualAddress();
+}
+
 void GpuScene::ReleaseGpuResources()
 {
     m_instanceUploadRing.Release();
