@@ -3,12 +3,17 @@
 #include "app/editor/EditorIcons.h"
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/project/ProjectSession.h"
+#include "app/scene/Scene.h"
+#include "app/scene/SceneImportService.h"
+#include "app/undo/UndoCommand.h"
+#include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/platform/ImGuiFonts.h"
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -385,6 +390,17 @@ namespace
         }
         return buffer;
     }
+
+    bool IsImportableModelFile(const std::string& path)
+    {
+        std::string extension = fs::path(path).extension().string();
+        for (char& character : extension)
+        {
+            character = static_cast<char>(std::tolower(static_cast<unsigned char>(character)));
+        }
+
+        return extension == ".gltf" || extension == ".glb";
+    }
 }
 
 void ProjectFilesPanel::ResetBrowseState(const std::string& projectRoot)
@@ -564,7 +580,52 @@ bool ProjectFilesPanel::TryDeletePath(const std::string& entryPath)
     return true;
 }
 
+void ProjectFilesPanel::ImportModelIntoScene(ProjectSession& project, const std::string& modelPath)
+{
+    if (m_drawScene == nullptr || m_drawUndoStack == nullptr)
+    {
+        m_statusMessage = "Scene is not available for import.";
+        return;
+    }
+
+    if (!IsImportableModelFile(modelPath))
+    {
+        m_statusMessage = "Unsupported model file type.";
+        return;
+    }
+
+    Scene& scene = *m_drawScene;
+    UndoStack& undoStack = *m_drawUndoStack;
+    const std::string& projectRoot = project.GetProjectRootDirectory();
+
+    PushInsertSubtree(undoStack, scene, "Import Model", [&](Scene& target) {
+        const std::vector<int> importedIndices = target.ImportModel(modelPath, -1, projectRoot);
+        if (!importedIndices.empty())
+        {
+            target.SelectSingle(importedIndices.front());
+        }
+
+        return importedIndices;
+    });
+
+    if (!scene.GetImportService().GetLastImportError().empty())
+    {
+        project.SetStatusMessage(scene.GetImportService().GetLastImportError());
+        m_statusMessage = scene.GetImportService().GetLastImportError();
+    }
+    else if (!scene.GetImportService().GetLastImportWarning().empty())
+    {
+        project.SetStatusMessage(scene.GetImportService().GetLastImportWarning());
+        m_statusMessage = scene.GetImportService().GetLastImportWarning();
+    }
+    else
+    {
+        m_statusMessage.clear();
+    }
+}
+
 void ProjectFilesPanel::DrawEntryContextMenu(
+    ProjectSession& project,
     const std::string& entryPath,
     const std::string& entryName,
     bool isDirectory)
@@ -600,9 +661,15 @@ void ProjectFilesPanel::DrawEntryContextMenu(
     if (!isDirectory)
     {
         ImGui::Separator();
-        ImGui::BeginDisabled();
-        ImGui::MenuItem("Import Into Scene");
-        ImGui::EndDisabled();
+        const bool canImport = IsImportableModelFile(entryPath);
+        if (ImGui::MenuItem(
+                MenuLabel(ICON_EDITOR_IMPORT, "Import Into Scene"),
+                nullptr,
+                false,
+                canImport))
+        {
+            ImportModelIntoScene(project, entryPath);
+        }
     }
 
     ImGui::EndPopup();
@@ -710,7 +777,7 @@ void ProjectFilesPanel::DrawToolbar(ProjectSession& project)
     ImGui::InputText("##BrowsePath", pathBuffer, sizeof(pathBuffer), ImGuiInputTextFlags_ReadOnly);
 }
 
-void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
+void ProjectFilesPanel::DrawFolderTree(ProjectSession& project, const std::string& directory)
 {
     std::vector<DirectoryEntry> entries;
     if (!CollectDirectoryEntries(directory, entries))
@@ -761,7 +828,7 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
             m_scrollSelectionIntoView = false;
         }
 
-        DrawEntryContextMenu(entry.path, entry.name, true);
+        DrawEntryContextMenu(project, entry.path, entry.name, true);
 
         if (m_scrollSelectionIntoView && entry.path == m_selectedEntryPath)
         {
@@ -771,7 +838,7 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
 
         if (opened && hasChildren)
         {
-            DrawFolderTree(entry.path);
+            DrawFolderTree(project, entry.path);
             ImGui::TreePop();
         }
 
@@ -779,7 +846,7 @@ void ProjectFilesPanel::DrawFolderTree(const std::string& directory)
     }
 }
 
-void ProjectFilesPanel::DrawFileList(const std::string& directory)
+void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string& directory)
 {
     std::vector<DirectoryEntry> entries;
     if (!CollectDirectoryEntries(directory, entries))
@@ -850,7 +917,7 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
                     m_browsedDirectory = entry.path;
                 }
 
-                DrawEntryContextMenu(entry.path, entry.name, entry.isDirectory);
+                DrawEntryContextMenu(project, entry.path, entry.name, entry.isDirectory);
             }
 
             ImGui::TableSetColumnIndex(1);
@@ -873,11 +940,16 @@ void ProjectFilesPanel::DrawFileList(const std::string& directory)
     }
 }
 
-void ProjectFilesPanel::Draw(ProjectSession& project)
+void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack)
 {
+    m_drawScene = &scene;
+    m_drawUndoStack = &undoStack;
+
     EditorPanelConstraints::ApplyProjectPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Project", m_showPanel))
     {
+        m_drawScene = nullptr;
+        m_drawUndoStack = nullptr;
         return;
     }
 
@@ -885,6 +957,8 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     if (projectRoot.empty())
     {
         ImGui::End();
+        m_drawScene = nullptr;
+        m_drawUndoStack = nullptr;
         return;
     }
 
@@ -960,11 +1034,11 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
         m_selectedEntryPath = projectRoot;
     }
 
-    DrawEntryContextMenu(projectRoot, rootName, true);
+    DrawEntryContextMenu(project, projectRoot, rootName, true);
 
     if (rootOpen)
     {
-        DrawFolderTree(projectRoot);
+        DrawFolderTree(project, projectRoot);
         ImGui::TreePop();
     }
 
@@ -987,7 +1061,7 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     ImGui::BeginChild("ProjectFiles", ImVec2(0.0f, -footerHeight), ImGuiChildFlags_Borders);
     ImGui::TextDisabled("Files");
     ImGui::Separator();
-    DrawFileList(m_browsedDirectory);
+    DrawFileList(project, m_browsedDirectory);
 
     {
         const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
@@ -1032,6 +1106,8 @@ void ProjectFilesPanel::Draw(ProjectSession& project)
     }
 
     ImGui::End();
+    m_drawScene = nullptr;
+    m_drawUndoStack = nullptr;
 }
 
 void ProjectFilesPanel::GetBrowseState(

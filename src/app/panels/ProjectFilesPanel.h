@@ -4,11 +4,13 @@
 #include <unordered_map>
 
 class ProjectSession;
+class Scene;
+class UndoStack;
 
 class ProjectFilesPanel
 {
 public:
-    void Draw(ProjectSession& project);
+    void Draw(Scene& scene, ProjectSession& project, UndoStack& undoStack);
 
     bool& ShowPanel() const { return m_showPanel; }
 
@@ -25,15 +27,20 @@ public:
 private:
     void ResetBrowseState(const std::string& projectRoot);
     void DrawToolbar(ProjectSession& project);
-    void DrawFolderTree(const std::string& directory);
-    void DrawFileList(const std::string& directory);
-    void DrawEntryContextMenu(const std::string& entryPath, const std::string& entryName, bool isDirectory);
+    void DrawFolderTree(ProjectSession& project, const std::string& directory);
+    void DrawFileList(ProjectSession& project, const std::string& directory);
+    void DrawEntryContextMenu(
+        ProjectSession& project,
+        const std::string& entryPath,
+        const std::string& entryName,
+        bool isDirectory);
     void DrawDeleteConfirmPopup();
     void BeginRename(const std::string& entryPath);
     void CancelRename();
     bool TryCommitRename();
     bool TryDeletePath(const std::string& entryPath);
     void HandleFilesPanelHotkeys();
+    void ImportModelIntoScene(ProjectSession& project, const std::string& modelPath);
 
     mutable bool m_showPanel = true;
     mutable std::string m_browsedDirectory;
@@ -51,4 +58,7 @@ private:
     mutable std::string m_pendingDeletePath;
     mutable bool m_openDeleteConfirmPopup = false;
     mutable std::string m_statusMessage;
+
+    mutable Scene* m_drawScene = nullptr;
+    mutable UndoStack* m_drawUndoStack = nullptr;
 };

@@ -934,7 +934,7 @@ void Application::Update(double deltaTime)
         m_sceneViewportPanel->Draw(*m_camera, *editorScene, sceneViewWillRender);
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
         m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
-        m_projectFilesPanel->Draw(*m_projectSession);
+        m_projectFilesPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack);
         m_lightingPanel->Draw(
             *editorScene,
             *m_camera,
