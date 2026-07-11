@@ -386,20 +386,6 @@ void Framebuffer::Create(const int width, const int height)
 
 
 
-        D3D12_CLEAR_VALUE clearValue{};
-
-        clearValue.Format = format;
-
-        clearValue.Color[0] = 0.08f;
-
-        clearValue.Color[1] = 0.09f;
-
-        clearValue.Color[2] = 0.15f;
-
-        clearValue.Color[3] = 1.0f;
-
-
-
         D3D12MA::ALLOCATION_DESC allocationDesc{};
 
         allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -418,7 +404,7 @@ void Framebuffer::Create(const int width, const int height)
 
                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 
-                &clearValue,
+                nullptr,
 
                 &allocation,
 
@@ -517,20 +503,6 @@ void Framebuffer::Create(const int width, const int height)
 
 
 
-            D3D12_CLEAR_VALUE clearValue{};
-
-            clearValue.Format = format;
-
-            clearValue.Color[0] = 0.08f;
-
-            clearValue.Color[1] = 0.09f;
-
-            clearValue.Color[2] = 0.15f;
-
-            clearValue.Color[3] = 1.0f;
-
-
-
             D3D12MA::ALLOCATION_DESC allocationDesc{};
 
             allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
@@ -549,7 +521,7 @@ void Framebuffer::Create(const int width, const int height)
 
                 D3D12_RESOURCE_STATE_RENDER_TARGET,
 
-                &clearValue,
+                nullptr,
 
                 &allocation,
 

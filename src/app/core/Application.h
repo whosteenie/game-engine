@@ -45,6 +45,7 @@ private:
     void Render();
     void OnFramebufferResize(int width, int height);
     void RequestClose();
+    void RequestForcedClose();
     void RequestNewProject();
     void DrawUnsavedChangesDialog();
     void CaptureProjectEditorState(ProjectEditorState& editorState) const;

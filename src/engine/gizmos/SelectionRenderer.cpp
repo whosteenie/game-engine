@@ -143,9 +143,6 @@ bool SelectionRenderer::CreateInternalTarget(InternalTarget& target, const int w
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-    D3D12_CLEAR_VALUE clearValue{};
-    clearValue.Format = format;
-
     D3D12MA::ALLOCATION_DESC allocationDesc{};
     allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -155,7 +152,7 @@ bool SelectionRenderer::CreateInternalTarget(InternalTarget& target, const int w
             &allocationDesc,
             &resourceDesc,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            &clearValue,
+            nullptr,
             &allocation,
             IID_PPV_ARGS(&resource))))
     {

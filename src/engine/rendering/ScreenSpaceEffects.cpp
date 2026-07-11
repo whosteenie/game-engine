@@ -665,13 +665,6 @@ void ScreenSpaceEffects::CreateInternalTarget(
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-    D3D12_CLEAR_VALUE clearValue{};
-    clearValue.Format = static_cast<DXGI_FORMAT>(format);
-    clearValue.Color[0] = 0.0f;
-    clearValue.Color[1] = 0.0f;
-    clearValue.Color[2] = 0.0f;
-    clearValue.Color[3] = 1.0f;
-
     D3D12MA::ALLOCATION_DESC allocationDesc{};
     allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -681,7 +674,7 @@ void ScreenSpaceEffects::CreateInternalTarget(
             &allocationDesc,
             &resourceDesc,
             D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-            &clearValue,
+            nullptr,
             &allocation,
             IID_PPV_ARGS(&resource))))
     {
@@ -831,13 +824,6 @@ void ScreenSpaceEffects::CreateUavTarget(
     resourceDesc.Flags =
         D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS | D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
 
-    D3D12_CLEAR_VALUE clearValue{};
-    clearValue.Format = static_cast<DXGI_FORMAT>(format);
-    clearValue.Color[0] = 0.0f;
-    clearValue.Color[1] = 0.0f;
-    clearValue.Color[2] = 0.0f;
-    clearValue.Color[3] = 1.0f;
-
     D3D12MA::ALLOCATION_DESC allocationDesc{};
     allocationDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
 
@@ -847,7 +833,7 @@ void ScreenSpaceEffects::CreateUavTarget(
             &allocationDesc,
             &resourceDesc,
             D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-            &clearValue,
+            nullptr,
             &allocation,
             IID_PPV_ARGS(&resource))))
     {

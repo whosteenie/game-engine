@@ -59,6 +59,7 @@
 #include <imgui_impl_glfw.h>
 
 #include <algorithm>
+#include <atomic>
 #include <stdexcept>
 
 #include <cfloat>
@@ -79,6 +80,33 @@
 
 namespace
 {
+#ifdef _WIN32
+    std::atomic_bool g_consoleCloseRequested{false};
+
+    BOOL WINAPI ConsoleControlHandler(const DWORD controlType)
+    {
+        switch (controlType)
+        {
+        case CTRL_C_EVENT:
+        case CTRL_BREAK_EVENT:
+            g_consoleCloseRequested.store(true, std::memory_order_release);
+            return TRUE;
+        default:
+            return FALSE;
+        }
+    }
+
+    bool ConsumeConsoleCloseRequest()
+    {
+        return g_consoleCloseRequested.exchange(false, std::memory_order_acq_rel);
+    }
+#else
+    bool ConsumeConsoleCloseRequest()
+    {
+        return false;
+    }
+#endif
+
     [[noreturn]] void RethrowAsRuntimeError(const char* phase, const std::exception& exception)
     {
         throw std::runtime_error(std::string(phase) + ": " + SafeExceptionMessage(exception));
@@ -285,6 +313,10 @@ Application::Application(int width, int height, const char* title)
 {
     InitGLFW();
 
+#ifdef _WIN32
+    SetConsoleCtrlHandler(ConsoleControlHandler, TRUE);
+#endif
+
     try
     {
         glfwPollEvents();
@@ -353,6 +385,10 @@ Application::Application(int width, int height, const char* title)
     }
     catch (...)
     {
+#ifdef _WIN32
+        SetConsoleCtrlHandler(ConsoleControlHandler, FALSE);
+#endif
+
         if (m_window != nullptr)
         {
             glfwDestroyWindow(m_window);
@@ -366,6 +402,10 @@ Application::Application(int width, int height, const char* title)
 
 Application::~Application()
 {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(ConsoleControlHandler, FALSE);
+#endif
+
     EditorSettings::SaveEditorLayout(
         m_projectSession != nullptr && m_projectSession->HasActiveProject()
             ? m_projectSession->GetProjectRootDirectory()
@@ -442,6 +482,12 @@ void Application::Run()
 
     while (!glfwWindowShouldClose(m_window))
     {
+        if (ConsumeConsoleCloseRequest())
+        {
+            RequestForcedClose();
+            break;
+        }
+
         double currentTime = glfwGetTime();
         double deltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
@@ -449,6 +495,11 @@ void Application::Run()
         try
         {
             RunApplicationPhase("Update", [&]() { Update(deltaTime); });
+            if (ConsumeConsoleCloseRequest())
+            {
+                RequestForcedClose();
+                break;
+            }
             RunApplicationPhase("Render", [&]() { Render(); });
             suppressedRepeatedFrameErrors = 0;
         }
@@ -1041,6 +1092,21 @@ void Application::RequestClose()
     }
 
     m_pendingClose = true;
+}
+
+void Application::RequestForcedClose()
+{
+    EngineLog::Breadcrumb("application", "Console close requested; skipping unsaved-project prompt.");
+    m_pendingClose = false;
+    m_pendingNewProject = false;
+    if (m_input != nullptr)
+    {
+        m_input->ReleaseMouseCapture();
+    }
+    if (m_window != nullptr)
+    {
+        glfwSetWindowShouldClose(m_window, GLFW_TRUE);
+    }
 }
 
 void Application::RequestNewProject()
