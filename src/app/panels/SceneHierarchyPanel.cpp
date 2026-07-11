@@ -868,11 +868,60 @@ namespace
         ImGui::PopID();
     }
 
+    struct HierarchyRowHit
+    {
+        int objectIndex = -1;
+        ImRect displayRect{};
+    };
+
     struct HierarchyDrawState
     {
         int previousVisibleIndex = -1;
         float previousRowMinX = 0.0f;
+        std::vector<HierarchyRowHit> rowHits;
     };
+
+    void RecordHierarchyRowHit(HierarchyDrawState& drawState, int objectIndex)
+    {
+        ImGuiContext& g = *GImGui;
+        ImRect rect = g.LastItemData.Rect;
+        if ((g.LastItemData.StatusFlags & ImGuiItemStatusFlags_HasDisplayRect) != 0)
+        {
+            rect = g.LastItemData.DisplayRect;
+        }
+
+        drawState.rowHits.push_back(HierarchyRowHit{objectIndex, rect});
+    }
+
+    // Selection uses a center band of the row, not the full TreeNode rect. ImGui can keep the
+    // full rect "hot" (and steal clicks) past where the hover header is actually painted —
+    // especially into reorder gaps — which previously blocked clear-on-empty-click.
+    bool IsHierarchyRowCenterBandHit(const ImRect& displayRect, const ImVec2& mouse)
+    {
+        if (mouse.x < displayRect.Min.x || mouse.x > displayRect.Max.x)
+        {
+            return false;
+        }
+
+        const float centerY = (displayRect.Min.y + displayRect.Max.y) * 0.5f;
+        const float halfHeight = displayRect.GetHeight() * 0.28f;
+        return mouse.y >= centerY - halfHeight && mouse.y <= centerY + halfHeight;
+    }
+
+    int FindHierarchyRowHitIndex(
+        const std::vector<HierarchyRowHit>& rowHits,
+        const ImVec2& mouse)
+    {
+        for (const HierarchyRowHit& hit : rowHits)
+        {
+            if (IsHierarchyRowCenterBandHit(hit.displayRect, mouse))
+            {
+                return hit.objectIndex;
+            }
+        }
+
+        return -1;
+    }
 
     int GetObjectParentIndex(const Scene& scene, int objectIndex)
     {
@@ -1168,10 +1217,7 @@ namespace
                 ImGui::SetScrollHereY(0.5f);
             }
 
-            if (ImGui::IsItemClicked())
-            {
-                HandleHierarchyRowSelection(panel, scene, objectIndex, openStates);
-            }
+            RecordHierarchyRowHit(drawState, objectIndex);
 
             const bool allowDragDrop = true;
             DrawHierarchyDragDropSource(scene, objectIndex, label, allowDragDrop);
@@ -1566,11 +1612,32 @@ void SceneHierarchyPanel::Draw(
         else
         {
             ImGui::InvisibleButton("##HierarchyBackground", backgroundSpace);
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
+        }
+    }
+
+    // Resolve selection from a tight center-band hit test so reorder gaps / padding
+    // around rows clear instead of counting as object picks.
+    if (!IsHierarchyDragActive()
+        && m_pendingRenameIndex < 0
+        && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+    {
+        const ImGuiWindow* listWindow = ImGui::GetCurrentWindow();
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        if (listWindow->InnerRect.Contains(mouse))
+        {
+            const int hitIndex =
+                FindHierarchyRowHitIndex(hierarchyDrawState.rowHits, mouse);
+            if (hitIndex >= 0)
+            {
+                HandleHierarchyRowSelection(*this, scene, hitIndex, m_nodeOpenStates);
+            }
+            else
             {
                 scene.ClearSelection();
+                ClearPendingSelectionCollapse();
             }
-            DrawHierarchyBackgroundContextMenu(*this, scene, project, undoStack, clipboard);
         }
     }
 
