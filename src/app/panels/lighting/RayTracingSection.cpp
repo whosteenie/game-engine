@@ -661,6 +661,19 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         }
         ImGui::Text("Last build status: %s", dxrDiagnostics.buildStatus.c_str());
         ImGui::Text("Last build time: %.3f ms", dxrDiagnostics.lastBuildTimeMs);
+        ImGui::Text(
+            "Emissive NEE lights: %u  (tris: %u)",
+            dxrDiagnostics.emissiveLightCount,
+            dxrDiagnostics.emissiveTriangleCount);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Emitters registered for path-tracer emissive NEE (refreshed each PT frame).\n"
+                "0 = NEE toward emitters is OFF, so the 'PT isolate: emissive NEE' view is\n"
+                "legitimately black and emitter light only arrives via random BSDF hits.\n"
+                "Non-zero = NEE is active; a dark isolate view just means few visible surfaces\n"
+                "directly face the emitter.");
+        }
 
         if (!raytracingSupported)
         {

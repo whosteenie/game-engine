@@ -878,6 +878,9 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
         m_emissiveLightCount = 0;
         m_emissiveLightPickWeightSum = 0.0f;
         m_sceneHasTransmission = false;
+        m_diagnostics.emissiveLightCount = 0;
+        m_diagnostics.emissiveTriangleCount = 0;
+        m_diagnostics.emissiveLightPickWeightSum = 0.0f;
         return false;
     }
 
@@ -995,6 +998,9 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
     m_emissiveLightCount = static_cast<std::uint32_t>(entries.size());
     m_emissiveLightPickWeightSum = pickWeightSum;
     m_sceneHasTransmission = sceneHasTransmission;
+    m_diagnostics.emissiveLightCount = m_emissiveLightCount;
+    m_diagnostics.emissiveTriangleCount = static_cast<std::uint32_t>(triangles.size());
+    m_diagnostics.emissiveLightPickWeightSum = pickWeightSum;
 
     const std::uint64_t lightsByteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
     const std::uint64_t trianglesByteSize = triangles.size() * sizeof(DxrEmissiveTriangleEntry);
@@ -1024,6 +1030,9 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
     {
         m_emissiveLightCount = 0;
         m_emissiveLightPickWeightSum = 0.0f;
+        m_diagnostics.emissiveLightCount = 0;
+        m_diagnostics.emissiveTriangleCount = 0;
+        m_diagnostics.emissiveLightPickWeightSum = 0.0f;
         return false;
     }
 
