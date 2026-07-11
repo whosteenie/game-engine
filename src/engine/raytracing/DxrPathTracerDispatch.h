@@ -88,6 +88,7 @@ public:
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const;
     ID3D12Resource* GetPrimaryOutputResource() const;
     std::uint32_t GetPrimaryOutputResourceState() const;
+    void SetPrimaryOutputResourceState(std::uint32_t state);
     ID3D12Resource* GetPathTracerDepthResource() const;
     std::uint32_t GetPathTracerDepthResourceState() const;
     std::uintptr_t GetPathTracerDepthSrvCpuHandle() const;

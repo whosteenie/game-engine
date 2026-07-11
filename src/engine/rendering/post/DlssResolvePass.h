@@ -96,6 +96,8 @@ struct DlssResolvePassOutputs
 {
     bool dlssRan = false;
     bool pathTracerDlssResolvedThisFrame = false;
+    bool pathTracerOutputResourceStateValid = false;
+    std::uint32_t pathTracerOutputResourceState = 0;
     bool dlssHistoryValid = false;
     bool dlssBloomHistoryValid = false;
     int dlssBloomTemporalWarmupFrames = 0;

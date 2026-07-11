@@ -350,9 +350,8 @@ namespace
     }
 
     void CreateTexture2DSrv(
-        ID3D12Device* device,
         ID3D12Resource* resource,
-        D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+        const std::uint32_t descriptorIndex,
         DXGI_FORMAT format,
         std::uint32_t mipLevels)
     {
@@ -361,7 +360,7 @@ namespace
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Texture2D.MipLevels = mipLevels;
-        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+        GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
     }
 
     [[noreturn]] void ThrowPostProcessTargetError(const char* phase)
@@ -710,12 +709,7 @@ void ScreenSpaceEffects::CreateInternalTarget(
         ThrowPostProcessTargetError("Failed to allocate post-process RTV descriptor");
     }
 
-    CreateTexture2DSrv(
-        device,
-        resource,
-        {target.srvCpuHandle},
-        static_cast<DXGI_FORMAT>(format),
-        1);
+    CreateTexture2DSrv(resource, target.srvIndex, static_cast<DXGI_FORMAT>(format), 1);
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
     device->CreateRenderTargetView(resource, nullptr, rtvHandle);
@@ -875,12 +869,7 @@ void ScreenSpaceEffects::CreateUavTarget(
     }
     target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
 
-    CreateTexture2DSrv(
-        device,
-        resource,
-        {target.srvCpuHandle},
-        static_cast<DXGI_FORMAT>(format),
-        1);
+    CreateTexture2DSrv(resource, target.srvIndex, static_cast<DXGI_FORMAT>(format), 1);
 
     target.rtvIndex = GfxContext::Get().AllocateOffscreenRtvBlock(1);
     if (target.rtvIndex == UINT32_MAX)
@@ -1092,7 +1081,7 @@ void ScreenSpaceEffects::CreateNoiseTexture()
         throw std::runtime_error("Failed to allocate SSAO noise SRV descriptor");
     }
     m_noiseTexture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_noiseTexture.srvIndex);
-    CreateTexture2DSrv(device, textureResource, {m_noiseTexture.srvCpuHandle}, format, 1);
+    CreateTexture2DSrv(textureResource, m_noiseTexture.srvIndex, format, 1);
 }
 
 void ScreenSpaceEffects::CreateKernel()
@@ -2804,10 +2793,12 @@ void ScreenSpaceEffects::PrepareSceneColorForDxrRead() const
 
     constexpr std::uint32_t kAllShaderRead = static_cast<std::uint32_t>(
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    m_sceneFramebuffer->TransitionDepthForDxrRead();
     m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::DirectLighting, kAllShaderRead);
     m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::IndirectLighting, kAllShaderRead);
     m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::ShadingNormal, kAllShaderRead);
     m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::SunShadowFactor, kAllShaderRead);
+    m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::MotionVelocity, kAllShaderRead);
     m_sceneFramebuffer->TransitionGBufferSlot(GBufferSlot::MaterialAlbedoRough, kAllShaderRead);
 }
 

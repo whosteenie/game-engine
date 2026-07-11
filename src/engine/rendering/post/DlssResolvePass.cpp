@@ -79,6 +79,8 @@ void DlssResolvePass::Execute(
 {
     outputs.dlssRan = false;
     outputs.pathTracerDlssResolvedThisFrame = false;
+    outputs.pathTracerOutputResourceStateValid = false;
+    outputs.pathTracerOutputResourceState = 0;
     outputs.dlssHistoryValid = inputs.dlssHistoryValid;
     outputs.dlssBloomHistoryValid = inputs.dlssBloomHistoryValid;
     outputs.dlssBloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
@@ -113,6 +115,8 @@ void DlssResolvePass::Execute(
     {
         hdrInputResource = inputs.pathTracerOutputResource;
         hdrInputState = inputs.pathTracerOutputResourceState;
+        outputs.pathTracerOutputResourceStateValid = true;
+        outputs.pathTracerOutputResourceState = hdrInputState;
     }
     else if (inputs.hdrCompositeTarget != nullptr
         && inputs.hdrColorSrv == inputs.hdrCompositeTarget->srvCpuHandle
@@ -144,6 +148,7 @@ void DlssResolvePass::Execute(
                 static_cast<D3D12_RESOURCE_STATES>(hdrInputState),
                 D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
             hdrInputState = kPixelSrv;
+            outputs.pathTracerOutputResourceState = hdrInputState;
         }
 
         auto* dlssOut = static_cast<ID3D12Resource*>(inputs.dlssOutputTarget->resource);

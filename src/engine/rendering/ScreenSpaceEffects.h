@@ -121,6 +121,7 @@ public:
     void SetPtRrBundleMode(int mode);
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
+    std::uint32_t GetPathTracerOutputResourceState() const { return m_pathTracerOutputResourceState; }
     // Editor grid drawn into HDR before bloom when path tracing is active (not into the PT trace).
     using PathTracerGridOverlayFn = std::function<void(const Camera&, bool useDepthTest)>;
     void SetPathTracerGridOverlayCallback(PathTracerGridOverlayFn fn);
@@ -321,8 +322,8 @@ public:
     void SetDxrGiStrength(float strength) { m_dxrGiStrength = strength; }
     // Scene MRT SRV for external (DXR) consumers; 0 when unavailable.
     std::uintptr_t GetSceneColorSrvCpuHandle(GBufferSlot slot) const;
-    // Transitions the scene MRTs the reflection trace reads (RT0/1/2/3/5) to a combined
-    // pixel + non-pixel shader-read state so DispatchRays can sample them legally.
+    // Transitions scene depth/MRTs used by DXR to a combined pixel + non-pixel shader-read state
+    // so DispatchRays can sample them legally.
     void PrepareSceneColorForDxrRead() const;
 
     AntiAliasingMode GetAntiAliasingMode() const;

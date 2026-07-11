@@ -774,6 +774,11 @@ void ScreenSpaceEffects::RunApplyPresentationStage(ApplyFrameState& state) const
         {
             const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = true;
         }
+        if (dlssOutputs.pathTracerOutputResourceStateValid)
+        {
+            const_cast<ScreenSpaceEffects*>(this)->m_pathTracerOutputResourceState =
+                dlssOutputs.pathTracerOutputResourceState;
+        }
         const_cast<ScreenSpaceEffects*>(this)->m_dlssHistoryValid = dlssOutputs.dlssHistoryValid;
         const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomHistoryValid = dlssOutputs.dlssBloomHistoryValid;
         const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomTemporalWarmupFrames =

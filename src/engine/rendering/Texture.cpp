@@ -34,6 +34,9 @@ namespace
     std::unique_ptr<GpuBuffer> g_mipmapQuadBuffer;
     std::unique_ptr<Shader> g_mipmapGenShader;
 
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
     GpuBuffer& GetMipmapQuadBuffer()
     {
         if (g_mipmapQuadBuffer == nullptr)
@@ -106,7 +109,7 @@ namespace
         barrier.Transition.pResource = textureResource;
         barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
         barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        barrier.Transition.StateAfter = kAllShaderRead;
         commandList->ResourceBarrier(1, &barrier);
     }
 
@@ -194,6 +197,7 @@ namespace
         std::uint32_t mipLevels,
         const D3D12_CPU_DESCRIPTOR_HANDLE tempRtvHandle,
         const D3D12_CPU_DESCRIPTOR_HANDLE tempSrvHandle,
+        const std::uint32_t tempSrvIndex,
         Shader& mipShader,
         GpuBuffer& quadBuffer)
     {
@@ -211,7 +215,7 @@ namespace
             sourceSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             sourceSrvDesc.Texture2D.MostDetailedMip = mipLevel - 1;
             sourceSrvDesc.Texture2D.MipLevels = 1;
-            device->CreateShaderResourceView(textureResource, &sourceSrvDesc, tempSrvHandle);
+            GfxContext::Get().CreateShaderResourceView(textureResource, &sourceSrvDesc, tempSrvIndex);
 
             D3D12_RENDER_TARGET_VIEW_DESC destRtvDesc{};
             destRtvDesc.Format = format;
@@ -310,6 +314,7 @@ namespace
                 mipLevels,
                 tempRtvHandle,
                 tempSrvHandle,
+                tempSrvIndex,
                 mipShader,
                 quadBuffer);
         }
@@ -326,6 +331,7 @@ namespace
                     mipLevels,
                     tempRtvHandle,
                     tempSrvHandle,
+                    tempSrvIndex,
                     mipShader,
                     quadBuffer);
             });

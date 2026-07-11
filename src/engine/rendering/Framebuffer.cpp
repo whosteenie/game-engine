@@ -202,6 +202,7 @@ void Framebuffer::Destroy()
 
         m_msaaColorResources[attachmentIndex] = nullptr;
         m_msaaColorStates[attachmentIndex] = 0;
+        m_msaaColorInitialized[attachmentIndex] = false;
     }
 
     if (m_msaaDepthAllocation != nullptr || m_msaaDepthResource != nullptr)
@@ -212,6 +213,7 @@ void Framebuffer::Destroy()
 
     m_msaaDepthResource = nullptr;
     m_msaaDepthState = 0;
+    m_msaaDepthInitialized = false;
 
     if (m_msaaRtvBaseIndex != UINT32_MAX)
     {
@@ -276,9 +278,11 @@ void Framebuffer::Destroy()
     for (int attachmentIndex = 0; attachmentIndex < MaxColorAttachments; ++attachmentIndex)
     {
         m_colorStates[attachmentIndex] = 0;
+        m_colorInitialized[attachmentIndex] = false;
     }
 
     m_depthState = 0;
+    m_depthInitialized = false;
 
 }
 
@@ -440,6 +444,7 @@ void Framebuffer::Create(const int width, const int height)
         m_colorAllocations[attachmentIndex] = allocation;
 
         m_colorStates[attachmentIndex] = kShaderResourceState;
+        m_colorInitialized[attachmentIndex] = false;
 
         m_colorSrvIndices[attachmentIndex] = GfxContext::Get().AllocateOffscreenSrv();
         if (m_colorSrvIndices[attachmentIndex] == UINT32_MAX)
@@ -569,6 +574,7 @@ void Framebuffer::Create(const int width, const int height)
             m_msaaColorAllocations[attachmentIndex] = allocation;
 
             m_msaaColorStates[attachmentIndex] = kRenderTargetState;
+            m_msaaColorInitialized[attachmentIndex] = false;
 
 
 
@@ -660,6 +666,7 @@ void Framebuffer::Create(const int width, const int height)
         m_depthAllocation = allocation;
 
         m_depthState = kShaderResourceState;
+        m_depthInitialized = false;
 
         m_depthSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
         if (m_depthSrvIndex == UINT32_MAX)
@@ -767,6 +774,7 @@ void Framebuffer::Create(const int width, const int height)
         m_msaaDepthAllocation = msaaAllocation;
 
         m_msaaDepthState = kDepthWriteState;
+        m_msaaDepthInitialized = false;
 
 
 
@@ -986,6 +994,14 @@ void Framebuffer::ClearRenderTarget() const
 
     const float clearColor[] = {0.12f, 0.14f, 0.20f, 1.0f};
     commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+    if (UsesMsaa())
+    {
+        m_msaaColorInitialized[0] = true;
+    }
+    else
+    {
+        m_colorInitialized[0] = true;
+    }
 
     if (UsesMsaa())
     {
@@ -1035,17 +1051,30 @@ void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float
         commandList->RSSetViewports(1, &viewport);
         commandList->RSSetScissorRects(1, &scissor);
 
-        if (clearAttachments)
+        if (clearAttachments || [&]() {
+                for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+                {
+                    if (!m_msaaColorInitialized[attachmentIndex])
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            }())
         {
             const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
             const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
             for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
             {
-                commandList->ClearRenderTargetView(
-                    rtvs[static_cast<std::size_t>(attachmentIndex)],
-                    resolvedClearColor,
-                    0,
-                    nullptr);
+                if (clearAttachments || !m_msaaColorInitialized[attachmentIndex])
+                {
+                    commandList->ClearRenderTargetView(
+                        rtvs[static_cast<std::size_t>(attachmentIndex)],
+                        resolvedClearColor,
+                        0,
+                        nullptr);
+                    m_msaaColorInitialized[attachmentIndex] = true;
+                }
             }
         }
 
@@ -1078,17 +1107,30 @@ void Framebuffer::BindColorRenderTarget(const bool clearAttachments, const float
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
 
-    if (clearAttachments)
+    if (clearAttachments || [&]() {
+            for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+            {
+                if (!m_colorInitialized[attachmentIndex])
+                {
+                    return true;
+                }
+            }
+            return false;
+        }())
     {
         const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
         const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
         for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
         {
-            commandList->ClearRenderTargetView(
-                rtvs[static_cast<std::size_t>(attachmentIndex)],
-                resolvedClearColor,
-                0,
-                nullptr);
+            if (clearAttachments || !m_colorInitialized[attachmentIndex])
+            {
+                commandList->ClearRenderTargetView(
+                    rtvs[static_cast<std::size_t>(attachmentIndex)],
+                    resolvedClearColor,
+                    0,
+                    nullptr);
+                m_colorInitialized[attachmentIndex] = true;
+            }
         }
     }
 }
@@ -1138,6 +1180,23 @@ bool Framebuffer::BindGizmoDrawTarget() const
         : GetDepthDsvCpuHandle();
 
     commandList->OMSetRenderTargets(1, &colorRtv, FALSE, &depthDsv);
+    if (!m_colorInitialized[0])
+    {
+        const float clearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+        commandList->ClearRenderTargetView(colorRtv, clearColor, 0, nullptr);
+        m_colorInitialized[0] = true;
+    }
+    if (!m_depthInitialized)
+    {
+        commandList->ClearDepthStencilView(
+            depthDsv,
+            D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+            1.0f,
+            0,
+            0,
+            nullptr);
+        m_depthInitialized = true;
+    }
     GfxContext::Get().SetBoundOutputFramebuffer(this);
     return true;
 }
@@ -1182,6 +1241,31 @@ bool Framebuffer::BindSplitLightingOverlayDrawTarget() const
         FALSE,
         &depthDsv);
 
+    const float clearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
+    for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+    {
+        if (!m_colorInitialized[attachmentIndex])
+        {
+            commandList->ClearRenderTargetView(
+                rtvs[static_cast<std::size_t>(attachmentIndex)],
+                clearColor,
+                0,
+                nullptr);
+            m_colorInitialized[attachmentIndex] = true;
+        }
+    }
+    if (!m_depthInitialized)
+    {
+        commandList->ClearDepthStencilView(
+            depthDsv,
+            D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+            1.0f,
+            0,
+            0,
+            nullptr);
+        m_depthInitialized = true;
+    }
+
     D3D12_VIEWPORT viewport{};
     viewport.Width = static_cast<float>(m_width);
     viewport.Height = static_cast<float>(m_height);
@@ -1215,6 +1299,7 @@ bool Framebuffer::CopyDepthFrom(const Framebuffer& source) const
     commandList->CopyResource(
         static_cast<ID3D12Resource*>(m_depthResource),
         static_cast<ID3D12Resource*>(source.m_depthResource));
+    m_depthInitialized = true;
 
     source.TransitionDepth(kShaderResourceState);
     return true;
@@ -1278,20 +1363,35 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearC
         commandList->RSSetViewports(1, &viewport);
         commandList->RSSetScissorRects(1, &scissor);
 
-        if (clearAttachments)
+        const bool needsColorInit = [&]() {
+            for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+            {
+                if (!m_msaaColorInitialized[attachmentIndex])
+                {
+                    return true;
+                }
+            }
+            return false;
+        }();
+        const bool needsDepthInit = dsvPointer != nullptr && !m_msaaDepthInitialized;
+        if (clearAttachments || needsColorInit || needsDepthInit)
         {
             const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
             const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
             for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
             {
-                commandList->ClearRenderTargetView(
-                    rtvs[static_cast<std::size_t>(attachmentIndex)],
-                    resolvedClearColor,
-                    0,
-                    nullptr);
+                if (clearAttachments || !m_msaaColorInitialized[attachmentIndex])
+                {
+                    commandList->ClearRenderTargetView(
+                        rtvs[static_cast<std::size_t>(attachmentIndex)],
+                        resolvedClearColor,
+                        0,
+                        nullptr);
+                    m_msaaColorInitialized[attachmentIndex] = true;
+                }
             }
 
-            if (dsvPointer != nullptr)
+            if (dsvPointer != nullptr && (clearAttachments || !m_msaaDepthInitialized))
             {
                 commandList->ClearDepthStencilView(
                     dsvHandle,
@@ -1300,6 +1400,7 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearC
                     0,
                     0,
                     nullptr);
+                m_msaaDepthInitialized = true;
             }
         }
 
@@ -1345,20 +1446,35 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearC
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
 
-    if (clearAttachments)
+    const bool needsColorInit = [&]() {
+        for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
+        {
+            if (!m_colorInitialized[attachmentIndex])
+            {
+                return true;
+            }
+        }
+        return false;
+    }();
+    const bool needsDepthInit = dsvPointer != nullptr && !m_depthInitialized;
+    if (clearAttachments || needsColorInit || needsDepthInit)
     {
         const float defaultClearColor[] = {0.08f, 0.09f, 0.15f, 1.0f};
         const float* resolvedClearColor = clearColor != nullptr ? clearColor : defaultClearColor;
         for (int attachmentIndex = 0; attachmentIndex < m_colorAttachmentCount; ++attachmentIndex)
         {
-            commandList->ClearRenderTargetView(
-                rtvs[static_cast<std::size_t>(attachmentIndex)],
-                resolvedClearColor,
-                0,
-                nullptr);
+            if (clearAttachments || !m_colorInitialized[attachmentIndex])
+            {
+                commandList->ClearRenderTargetView(
+                    rtvs[static_cast<std::size_t>(attachmentIndex)],
+                    resolvedClearColor,
+                    0,
+                    nullptr);
+                m_colorInitialized[attachmentIndex] = true;
+            }
         }
 
-        if (dsvPointer != nullptr)
+        if (dsvPointer != nullptr && (clearAttachments || !m_depthInitialized))
         {
             commandList->ClearDepthStencilView(
                 dsvHandle,
@@ -1367,6 +1483,7 @@ void Framebuffer::BindDrawTarget(const bool clearAttachments, const float clearC
                 0,
                 0,
                 nullptr);
+            m_depthInitialized = true;
         }
     }
 }
@@ -1410,6 +1527,7 @@ void Framebuffer::ResolveMsaa() const
             static_cast<ID3D12Resource*>(m_msaaColorResources[attachmentIndex]),
             0,
             ColorFormatForAttachment(attachmentIndex, m_colorMode));
+        m_colorInitialized[attachmentIndex] = true;
 
         TransitionColorAttachment(attachmentIndex, kShaderResourceState);
         TransitionMsaaColorAttachment(attachmentIndex, kRenderTargetState);
@@ -1440,6 +1558,17 @@ void Framebuffer::BeginMsaaDepthResolvePass() const
     D3D12_RECT scissor{0, 0, m_width, m_height};
     commandList->RSSetViewports(1, &viewport);
     commandList->RSSetScissorRects(1, &scissor);
+    if (!m_depthInitialized)
+    {
+        commandList->ClearDepthStencilView(
+            dsvHandle,
+            D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+            1.0f,
+            0,
+            0,
+            nullptr);
+        m_depthInitialized = true;
+    }
 }
 
 void Framebuffer::FinishMsaaDepthResolvePass() const
@@ -1635,6 +1764,13 @@ void* Framebuffer::GetGBufferColorResource(const GBufferSlot slot) const
 void Framebuffer::TransitionGBufferSlot(const GBufferSlot slot, const std::uint32_t newState) const
 {
     TransitionColorAttachment(ToGBufferAttachmentIndex(slot), newState);
+}
+
+void Framebuffer::TransitionDepthForDxrRead() const
+{
+    constexpr std::uint32_t kAllShaderRead = static_cast<std::uint32_t>(
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    TransitionDepth(kAllShaderRead);
 }
 
 

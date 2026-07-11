@@ -624,6 +624,11 @@ void SceneRenderer::RecordDxrPass(
         m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
     }
 
+    if (primaryTraceEnabled && usePostProcess && m_activeScreenSpaceEffects != nullptr)
+    {
+        m_activeScreenSpaceEffects->PrepareSceneColorForDxrRead();
+    }
+
     DxrBreadcrumb("render: primary-debug DispatchIfEnabled begin");
     const bool primaryDebugDispatched = m_dxrPrimaryDebugDispatch->DispatchIfEnabled(
         *m_dxrAccelerationStructures,
@@ -1434,6 +1439,15 @@ void SceneRenderer::RenderPostProcessPass(
             viewportHeight,
             m_directionalShadowSettings,
             *m_environmentMap);
+        if (pathTracingActive && m_dxrPathTracerDispatch != nullptr)
+        {
+            const std::uint32_t pathTracerOutputState =
+                m_activeScreenSpaceEffects->GetPathTracerOutputResourceState();
+            if (pathTracerOutputState != 0)
+            {
+                m_dxrPathTracerDispatch->SetPrimaryOutputResourceState(pathTracerOutputState);
+            }
+        }
         applyScope.Success();
     }
     {

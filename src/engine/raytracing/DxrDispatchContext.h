@@ -217,6 +217,7 @@ public:
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const { return m_primaryMetadataSrvCpuHandle; }
     ID3D12Resource* GetPrimaryOutputResource() const { return m_primaryOutputResource; }
     std::uint32_t GetPrimaryOutputResourceState() const { return m_primaryOutputResourceState; }
+    void SetPrimaryOutputResourceState(const std::uint32_t state) { m_primaryOutputResourceState = state; }
     ID3D12Resource* GetPathTracerDepthResource() const { return m_ptDepthTexture.resource; }
     std::uint32_t GetPathTracerDepthResourceState() const { return m_ptDepthTexture.state; }
     // R32 primary-depth SRV — P4 resolves this into a D24 target for the DLSS depth input.

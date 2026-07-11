@@ -407,14 +407,10 @@ bool DxrDispatchContext::EnsureOutput(const int width, const int height, std::st
 
 void DxrDispatchContext::CreateOutputDescriptors()
 {
-    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
-    if (device == nullptr || srvHeap == nullptr || m_outputResource == nullptr)
+    if (m_outputResource == nullptr)
     {
         return;
     }
-
-    const std::uint32_t descriptorSize = GfxContext::Get().GetSrvDescriptorSize();
 
     D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
     srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_outputSrvIndex);
@@ -423,15 +419,13 @@ void DxrDispatchContext::CreateOutputDescriptors()
     srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.Texture2D.MipLevels = 1;
-    device->CreateShaderResourceView(m_outputResource, &srvDesc, srvHandle);
+    GfxContext::Get().CreateShaderResourceView(m_outputResource, &srvDesc, m_outputSrvIndex);
     m_outputSrvCpuHandle = srvHandle.ptr;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
-    uavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_outputUavIndex);
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
     uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     uavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    device->CreateUnorderedAccessView(m_outputResource, nullptr, &uavDesc, uavHandle);
+    GfxContext::Get().CreateUnorderedAccessView(m_outputResource, nullptr, &uavDesc, m_outputUavIndex);
 }
 
 bool DxrDispatchContext::CreateTlasSrv(
@@ -461,21 +455,12 @@ bool DxrDispatchContext::CreateTlasSrv(
         }
     }
 
-    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
-    if (device == nullptr)
-    {
-        outError = "D3D12 device unavailable for TLAS SRV creation";
-        return false;
-    }
-
-    D3D12_CPU_DESCRIPTOR_HANDLE srvHandle{};
-    srvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_tlasSrvIndex);
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.RaytracingAccelerationStructure.Location = tlasGpuVirtualAddress;
     // RTAS SRVs take the GPUVA from the desc; pResource must be null.
-    device->CreateShaderResourceView(nullptr, &srvDesc, srvHandle);
+    GfxContext::Get().CreateShaderResourceView(nullptr, &srvDesc, m_tlasSrvIndex);
     (void)tlasResource;
     return true;
 }
@@ -592,8 +577,7 @@ void DxrDispatchContext::ReleaseRetiredPrimaryOutputs()
 
 void DxrDispatchContext::CreatePrimaryOutputDescriptors()
 {
-    auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
-    if (device == nullptr || m_primaryOutputResource == nullptr || m_primaryMetadataResource == nullptr)
+    if (m_primaryOutputResource == nullptr || m_primaryMetadataResource == nullptr)
     {
         return;
     }
@@ -605,15 +589,14 @@ void DxrDispatchContext::CreatePrimaryOutputDescriptors()
     outputSrvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
     outputSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     outputSrvDesc.Texture2D.MipLevels = 1;
-    device->CreateShaderResourceView(m_primaryOutputResource, &outputSrvDesc, outputSrvHandle);
+    GfxContext::Get().CreateShaderResourceView(m_primaryOutputResource, &outputSrvDesc, m_primaryOutputSrvIndex);
     m_primaryOutputSrvCpuHandle = outputSrvHandle.ptr;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE outputUavHandle{};
-    outputUavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryOutputUavIndex);
     D3D12_UNORDERED_ACCESS_VIEW_DESC outputUavDesc{};
     outputUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     outputUavDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    device->CreateUnorderedAccessView(m_primaryOutputResource, nullptr, &outputUavDesc, outputUavHandle);
+    GfxContext::Get().CreateUnorderedAccessView(
+        m_primaryOutputResource, nullptr, &outputUavDesc, m_primaryOutputUavIndex);
 
     D3D12_CPU_DESCRIPTOR_HANDLE metadataSrvHandle{};
     metadataSrvHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryMetadataSrvIndex);
@@ -622,15 +605,15 @@ void DxrDispatchContext::CreatePrimaryOutputDescriptors()
     metadataSrvDesc.Format = DXGI_FORMAT_R32G32_UINT;
     metadataSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     metadataSrvDesc.Texture2D.MipLevels = 1;
-    device->CreateShaderResourceView(m_primaryMetadataResource, &metadataSrvDesc, metadataSrvHandle);
+    GfxContext::Get().CreateShaderResourceView(
+        m_primaryMetadataResource, &metadataSrvDesc, m_primaryMetadataSrvIndex);
     m_primaryMetadataSrvCpuHandle = metadataSrvHandle.ptr;
 
-    D3D12_CPU_DESCRIPTOR_HANDLE metadataUavHandle{};
-    metadataUavHandle.ptr = GfxContext::Get().GetSrvCpuHandle(m_primaryMetadataUavIndex);
     D3D12_UNORDERED_ACCESS_VIEW_DESC metadataUavDesc{};
     metadataUavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     metadataUavDesc.Format = DXGI_FORMAT_R32G32_UINT;
-    device->CreateUnorderedAccessView(m_primaryMetadataResource, nullptr, &metadataUavDesc, metadataUavHandle);
+    GfxContext::Get().CreateUnorderedAccessView(
+        m_primaryMetadataResource, nullptr, &metadataUavDesc, m_primaryMetadataUavIndex);
 }
 
 bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, std::string& outError)
@@ -975,7 +958,7 @@ bool DxrDispatchContext::CreateStructuredBufferUav(
     srvDesc.Buffer.FirstElement = 0;
     srvDesc.Buffer.NumElements = elementCount;
     srvDesc.Buffer.StructureByteStride = structureByteStride;
-    device->CreateShaderResourceView(outBuffer.resource, &srvDesc, srvHandle);
+    GfxContext::Get().CreateShaderResourceView(outBuffer.resource, &srvDesc, outBuffer.srvIndex);
     outBuffer.srvCpuHandle = srvHandle.ptr;
 
     D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
@@ -986,7 +969,7 @@ bool DxrDispatchContext::CreateStructuredBufferUav(
     uavDesc.Buffer.FirstElement = 0;
     uavDesc.Buffer.NumElements = elementCount;
     uavDesc.Buffer.StructureByteStride = structureByteStride;
-    device->CreateUnorderedAccessView(outBuffer.resource, nullptr, &uavDesc, uavHandle);
+    GfxContext::Get().CreateUnorderedAccessView(outBuffer.resource, nullptr, &uavDesc, outBuffer.uavIndex);
     outBuffer.uavCpuHandle = uavHandle.ptr;
     return true;
 }
@@ -1423,7 +1406,7 @@ bool DxrDispatchContext::CreateReflectionTexture(
     srvDesc.Format = static_cast<DXGI_FORMAT>(dxgiFormat);
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.Texture2D.MipLevels = 1;
-    device->CreateShaderResourceView(outTexture.resource, &srvDesc, srvHandle);
+    GfxContext::Get().CreateShaderResourceView(outTexture.resource, &srvDesc, outTexture.srvIndex);
     outTexture.srvCpuHandle = srvHandle.ptr;
 
     D3D12_CPU_DESCRIPTOR_HANDLE uavHandle{};
@@ -1431,7 +1414,7 @@ bool DxrDispatchContext::CreateReflectionTexture(
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc{};
     uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     uavDesc.Format = static_cast<DXGI_FORMAT>(dxgiFormat);
-    device->CreateUnorderedAccessView(outTexture.resource, nullptr, &uavDesc, uavHandle);
+    GfxContext::Get().CreateUnorderedAccessView(outTexture.resource, nullptr, &uavDesc, outTexture.uavIndex);
     return true;
 }
 

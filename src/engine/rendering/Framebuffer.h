@@ -90,6 +90,7 @@ public:
     // callers move attachments to a combined shader-read state first (tracked transitions).
     void TransitionColorAttachment(int attachmentIndex, std::uint32_t newState) const;
     void TransitionGBufferSlot(GBufferSlot slot, std::uint32_t newState) const;
+    void TransitionDepthForDxrRead() const;
 
 private:
     void Destroy();
@@ -132,7 +133,11 @@ private:
     std::uint32_t m_msaaDsvIndex = UINT32_MAX;
     mutable std::uint32_t m_msaaColorStates[MaxColorAttachments] = {};
     mutable std::uint32_t m_msaaDepthState = 0;
+    mutable bool m_msaaColorInitialized[MaxColorAttachments] = {};
+    mutable bool m_msaaDepthInitialized = false;
     int m_colorAttachmentCount = 1;
     mutable std::uint32_t m_colorStates[MaxColorAttachments] = {};
     mutable std::uint32_t m_depthState = 0;
+    mutable bool m_colorInitialized[MaxColorAttachments] = {};
+    mutable bool m_depthInitialized = false;
 };

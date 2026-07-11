@@ -419,6 +419,11 @@ std::uint32_t DxrPathTracerDispatch::GetPrimaryOutputResourceState() const
     return m_dispatchContext.GetPrimaryOutputResourceState();
 }
 
+void DxrPathTracerDispatch::SetPrimaryOutputResourceState(const std::uint32_t state)
+{
+    m_dispatchContext.SetPrimaryOutputResourceState(state);
+}
+
 ID3D12Resource* DxrPathTracerDispatch::GetPathTracerDepthResource() const
 {
     return m_dispatchContext.GetPathTracerDepthResource();

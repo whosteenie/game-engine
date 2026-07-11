@@ -156,6 +156,7 @@ struct GfxContext::Impl
     ComPtr<ID3D12DescriptorHeap> OffscreenRtvHeap;
     ComPtr<ID3D12DescriptorHeap> OffscreenDsvHeap;
     ComPtr<ID3D12DescriptorHeap> SrvHeap;
+    ComPtr<ID3D12DescriptorHeap> SrvCpuHeap;
     std::uint32_t RtvDescriptorSize = 0;
     std::uint32_t DsvDescriptorSize = 0;
     std::uint32_t SrvDescriptorSize = 0;
@@ -522,6 +523,13 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
     srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     ThrowIfFailed(m_impl->Device->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&m_impl->SrvHeap)), "Create SRV heap failed");
+
+    D3D12_DESCRIPTOR_HEAP_DESC srvCpuHeapDesc = srvHeapDesc;
+    srvCpuHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    ThrowIfFailed(
+        m_impl->Device->CreateDescriptorHeap(&srvCpuHeapDesc, IID_PPV_ARGS(&m_impl->SrvCpuHeap)),
+        "Create CPU-readable SRV heap failed");
+
     m_impl->SrvDescriptorSize = m_impl->Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_impl->SrvAllocator = FixedDescriptorHeap(OffscreenSrvDescriptorCount);
     m_impl->SrvAllocator.SetIndexOffset(OffscreenSrvDescriptorStart);
@@ -1133,6 +1141,47 @@ std::uintptr_t GfxContext::GetSrvCpuHandle(const std::uint32_t descriptorIndex) 
     return handle.ptr;
 }
 
+std::uintptr_t GfxContext::GetSrvCopySourceCpuHandle(const std::uintptr_t srvCpuHandle) const
+{
+    if (srvCpuHandle == 0 || m_impl == nullptr || m_impl->SrvDescriptorSize == 0
+        || m_impl->SrvCpuHeap == nullptr)
+    {
+        return 0;
+    }
+
+    const SIZE_T visibleStart = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+    const SIZE_T visibleEnd = visibleStart + static_cast<SIZE_T>(SrvDescriptorCount)
+        * static_cast<SIZE_T>(m_impl->SrvDescriptorSize);
+    const SIZE_T copyStart = m_impl->SrvCpuHeap->GetCPUDescriptorHandleForHeapStart().ptr;
+    const SIZE_T copyEnd = copyStart + static_cast<SIZE_T>(SrvDescriptorCount)
+        * static_cast<SIZE_T>(m_impl->SrvDescriptorSize);
+
+    if (srvCpuHandle >= copyStart && srvCpuHandle < copyEnd)
+    {
+        const SIZE_T offset = srvCpuHandle - copyStart;
+        if (offset % static_cast<SIZE_T>(m_impl->SrvDescriptorSize) != 0)
+        {
+            return 0;
+        }
+        return srvCpuHandle;
+    }
+
+    if (srvCpuHandle < visibleStart || srvCpuHandle >= visibleEnd)
+    {
+        return 0;
+    }
+
+    const SIZE_T offset = srvCpuHandle - visibleStart;
+    if (offset % static_cast<SIZE_T>(m_impl->SrvDescriptorSize) != 0)
+    {
+        return 0;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE copyHandle = m_impl->SrvCpuHeap->GetCPUDescriptorHandleForHeapStart();
+    copyHandle.ptr += offset;
+    return copyHandle.ptr;
+}
+
 bool GfxContext::IsShaderVisibleSrvCpuHandle(const std::uintptr_t cpuHandle) const
 {
     if (cpuHandle == 0 || m_impl == nullptr || m_impl->SrvDescriptorSize == 0)
@@ -1471,37 +1520,85 @@ void GfxContext::CreateSrvForTexture(
     int height,
     const std::uint32_t mipLevels) const
 {
-    auto* d3dResource = static_cast<ID3D12Resource*>(resource);
-    auto* device = static_cast<ID3D12Device*>(GetDevice());
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GetSrvHeap());
-
-    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-    cpuHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * GetSrvDescriptorSize();
-
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.Format = static_cast<DXGI_FORMAT>(formatRgba_UNORM);
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.Texture2D.MipLevels = mipLevels;
-    device->CreateShaderResourceView(d3dResource, &srvDesc, cpuHandle);
+    CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
     (void)width;
     (void)height;
 }
 
 void GfxContext::CreateMsaaDepthSrv(void* resource, const std::uint32_t descriptorIndex) const
 {
-    auto* d3dResource = static_cast<ID3D12Resource*>(resource);
-    auto* device = static_cast<ID3D12Device*>(GetDevice());
-    auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GetSrvHeap());
-
-    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-    cpuHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * GetSrvDescriptorSize();
-
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-    device->CreateShaderResourceView(d3dResource, &srvDesc, cpuHandle);
+    CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
+}
+
+void GfxContext::CreateShaderResourceView(
+    void* resource,
+    const void* srvDesc,
+    const std::uint32_t descriptorIndex) const
+{
+    if (m_impl == nullptr || !m_impl->SrvAllocator.IsValidIndex(descriptorIndex))
+    {
+        return;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GetDevice());
+    auto* d3dResource = static_cast<ID3D12Resource*>(resource);
+    const auto* typedDesc = static_cast<const D3D12_SHADER_RESOURCE_VIEW_DESC*>(srvDesc);
+    if (device == nullptr)
+    {
+        return;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE visibleHandle = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
+    visibleHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * m_impl->SrvDescriptorSize;
+    device->CreateShaderResourceView(d3dResource, typedDesc, visibleHandle);
+
+    if (m_impl->SrvCpuHeap != nullptr)
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE copyHandle = m_impl->SrvCpuHeap->GetCPUDescriptorHandleForHeapStart();
+        copyHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * m_impl->SrvDescriptorSize;
+        device->CreateShaderResourceView(d3dResource, typedDesc, copyHandle);
+    }
+}
+
+void GfxContext::CreateUnorderedAccessView(
+    void* resource,
+    void* counterResource,
+    const void* uavDesc,
+    const std::uint32_t descriptorIndex) const
+{
+    if (m_impl == nullptr || !m_impl->SrvAllocator.IsValidIndex(descriptorIndex))
+    {
+        return;
+    }
+
+    auto* device = static_cast<ID3D12Device*>(GetDevice());
+    auto* d3dResource = static_cast<ID3D12Resource*>(resource);
+    auto* d3dCounterResource = static_cast<ID3D12Resource*>(counterResource);
+    const auto* typedDesc = static_cast<const D3D12_UNORDERED_ACCESS_VIEW_DESC*>(uavDesc);
+    if (device == nullptr)
+    {
+        return;
+    }
+
+    D3D12_CPU_DESCRIPTOR_HANDLE visibleHandle = m_impl->SrvHeap->GetCPUDescriptorHandleForHeapStart();
+    visibleHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * m_impl->SrvDescriptorSize;
+    device->CreateUnorderedAccessView(d3dResource, d3dCounterResource, typedDesc, visibleHandle);
+
+    if (m_impl->SrvCpuHeap != nullptr)
+    {
+        D3D12_CPU_DESCRIPTOR_HANDLE copyHandle = m_impl->SrvCpuHeap->GetCPUDescriptorHandleForHeapStart();
+        copyHandle.ptr += static_cast<SIZE_T>(descriptorIndex) * m_impl->SrvDescriptorSize;
+        device->CreateUnorderedAccessView(d3dResource, d3dCounterResource, typedDesc, copyHandle);
+    }
 }
 
 void GfxContext::ClearOffscreenTarget(

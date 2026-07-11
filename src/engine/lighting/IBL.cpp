@@ -113,6 +113,25 @@ namespace
         return after;
     }
 
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
+    void TransitionPixelSrvToAllShaderRead(ID3D12Resource* resource)
+    {
+        if (resource == nullptr)
+        {
+            return;
+        }
+
+        GfxContext::Get().ExecuteImmediate([&](void* commandListPointer) {
+            TransitionResource(
+                static_cast<ID3D12GraphicsCommandList*>(commandListPointer),
+                resource,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                kAllShaderRead);
+        });
+    }
+
     void CreateCubemapSrv(ID3D12Device* device, ID3D12Resource* resource, D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle, std::uint32_t mipLevels)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
@@ -121,6 +140,16 @@ namespace
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.TextureCube.MipLevels = mipLevels;
         device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+    }
+
+    void CreateCubemapSrv(ID3D12Resource* resource, const std::uint32_t descriptorIndex, const std::uint32_t mipLevels)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.TextureCube.MipLevels = mipLevels;
+        GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
     }
 
     void CreateTexture2DSrv(
@@ -138,6 +167,20 @@ namespace
         device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
     }
 
+    void CreateTexture2DSrv(
+        ID3D12Resource* resource,
+        const std::uint32_t descriptorIndex,
+        const DXGI_FORMAT format,
+        const std::uint32_t mipLevels)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = format;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Texture2D.MipLevels = mipLevels;
+        GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
+    }
+
     void CreateFloatBufferSrv(
         ID3D12Device* device,
         ID3D12Resource* resource,
@@ -152,6 +195,21 @@ namespace
         srvDesc.Buffer.NumElements = floatCount;
         srvDesc.Buffer.StructureByteStride = 0;
         device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+    }
+
+    void CreateFloatBufferSrv(
+        ID3D12Resource* resource,
+        const std::uint32_t descriptorIndex,
+        const std::uint32_t floatCount)
+    {
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+        srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+        srvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+        srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srvDesc.Buffer.FirstElement = 0;
+        srvDesc.Buffer.NumElements = floatCount;
+        srvDesc.Buffer.StructureByteStride = 0;
+        GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
     }
 }
 
@@ -196,11 +254,7 @@ IBL::GpuTexture IBL::CreateCubemapTextureResource(
     texture.allocation = allocation;
     texture.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
     texture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(texture.srvDescriptorIndex);
-    CreateCubemapSrv(
-        static_cast<ID3D12Device*>(GfxContext::Get().GetDevice()),
-        resource,
-        {texture.srvCpuHandle},
-        mipLevels);
+    CreateCubemapSrv(resource, texture.srvDescriptorIndex, mipLevels);
     return texture;
 }
 
@@ -246,12 +300,7 @@ IBL::GpuTexture IBL::CreateRenderTargetTexture2DResource(
     texture.allocation = allocation;
     texture.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
     texture.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(texture.srvDescriptorIndex);
-    CreateTexture2DSrv(
-        static_cast<ID3D12Device*>(GfxContext::Get().GetDevice()),
-        resource,
-        {texture.srvCpuHandle},
-        static_cast<DXGI_FORMAT>(format),
-        1);
+    CreateTexture2DSrv(resource, texture.srvDescriptorIndex, static_cast<DXGI_FORMAT>(format), 1);
     return texture;
 }
 
@@ -522,9 +571,8 @@ void IBL::BuildAndUploadEnvImportanceCdf(
     m_envImportanceCdfAllocation = bufferAllocation;
     m_envImportanceCdfSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
     CreateFloatBufferSrv(
-        device,
         bufferResource,
-        {GfxContext::Get().GetSrvCpuHandle(m_envImportanceCdfSrvIndex)},
+        m_envImportanceCdfSrvIndex,
         static_cast<std::uint32_t>(build.cdf.size()));
     m_envImportanceSampleCount =
         static_cast<std::uint32_t>(build.cdfWidth) * static_cast<std::uint32_t>(build.cdfHeight);
@@ -785,7 +833,7 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
             commandList,
             textureResourcePtr,
             D3D12_RESOURCE_STATE_COPY_DEST,
-            D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            kAllShaderRead);
     });
 
     uploadAllocation->Release();
@@ -796,12 +844,7 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
     m_hdrGpu.mipLevels = 1;
     m_hdrGpu.srvDescriptorIndex = GfxContext::Get().AllocateOffscreenSrv();
     m_hdrGpu.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(m_hdrGpu.srvDescriptorIndex);
-    CreateTexture2DSrv(
-        device,
-        textureResource,
-        {m_hdrGpu.srvCpuHandle},
-        DXGI_FORMAT_R32G32B32A32_FLOAT,
-        1);
+    CreateTexture2DSrv(textureResource, m_hdrGpu.srvDescriptorIndex, DXGI_FORMAT_R32G32B32A32_FLOAT, 1);
 
     BuildAndUploadEnvImportanceCdf(rgba, width, height);
 }
@@ -909,6 +952,7 @@ void IBL::CreateEnvironmentCubemap()
     m_activeCaptureTarget = &m_environmentCubemapGpu;
     CaptureCubemapFaces(0, equirectShader, faceResolution, 0, false);
     m_activeCaptureTarget = nullptr;
+    TransitionPixelSrvToAllShaderRead(static_cast<ID3D12Resource*>(m_environmentCubemapGpu.resource));
 }
 
 void IBL::CreatePrefilterMap()
@@ -944,6 +988,7 @@ void IBL::CreatePrefilterMap()
     }
 
     m_activeCaptureTarget = nullptr;
+    TransitionPixelSrvToAllShaderRead(static_cast<ID3D12Resource*>(m_prefilterMapGpu.resource));
 }
 
 void IBL::CreateBrdfLut()

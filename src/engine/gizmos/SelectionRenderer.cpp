@@ -56,9 +56,8 @@ namespace
     }
 
     void CreateTexture2DSrv(
-        ID3D12Device* device,
         ID3D12Resource* resource,
-        D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle,
+        const std::uint32_t descriptorIndex,
         DXGI_FORMAT format)
     {
         D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
@@ -66,7 +65,7 @@ namespace
         srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
         srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
         srvDesc.Texture2D.MipLevels = 1;
-        device->CreateShaderResourceView(resource, &srvDesc, cpuHandle);
+        GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, descriptorIndex);
     }
 
     void DrawMeshesMask(
@@ -182,7 +181,7 @@ bool SelectionRenderer::CreateInternalTarget(InternalTarget& target, const int w
         return false;
     }
 
-    CreateTexture2DSrv(device, resource, {target.srvCpuHandle}, format);
+    CreateTexture2DSrv(resource, target.srvIndex, format);
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle{GfxContext::Get().GetOffscreenRtvCpuHandle(target.rtvIndex)};
     device->CreateRenderTargetView(resource, nullptr, rtvHandle);
     return true;

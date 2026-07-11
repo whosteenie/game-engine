@@ -1156,7 +1156,8 @@ void Shader::FlushUniformsOnCommandList(void* commandList) const
             continue;
         }
 
-        if (!GfxContext::Get().IsShaderVisibleSrvCpuHandle(slotHandle))
+        const std::uintptr_t copySourceHandle = GfxContext::Get().GetSrvCopySourceCpuHandle(slotHandle);
+        if (copySourceHandle == 0)
         {
             static bool loggedInvalidSrv = false;
             if (!loggedInvalidSrv)
@@ -1164,14 +1165,14 @@ void Shader::FlushUniformsOnCommandList(void* commandList) const
                 loggedInvalidSrv = true;
                 EngineLog::Breadcrumb(
                     "shader",
-                    "BindTextureSlot: skipping CopyDescriptorsSimple for non-SRV CPU handle 0x"
+                    "BindTextureSlot: skipping CopyDescriptorsSimple for invalid SRV CPU handle 0x"
                         + std::to_string(slotHandle) + " (unit " + std::to_string(unit) + ")");
             }
             continue;
         }
 
         D3D12_CPU_DESCRIPTOR_HANDLE src{};
-        src.ptr = static_cast<SIZE_T>(slotHandle);
+        src.ptr = static_cast<SIZE_T>(copySourceHandle);
         D3D12_CPU_DESCRIPTOR_HANDLE dst = cpuBase;
         dst.ptr += static_cast<SIZE_T>(unit) * descriptorSize;
         device->CopyDescriptorsSimple(1, dst, src, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);

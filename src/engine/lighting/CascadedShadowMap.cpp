@@ -161,8 +161,9 @@ void CascadedShadowMap::CreateResources()
     srvDesc.Texture2DArray.MipLevels = 1;
     srvDesc.Texture2DArray.FirstArraySlice = 0;
     srvDesc.Texture2DArray.ArraySize = static_cast<UINT>(MaxCascades);
-    device->CreateShaderResourceView(depthResource, &srvDesc, srvCpuHandle);
+    GfxContext::Get().CreateShaderResourceView(depthResource, &srvDesc, m_depthSrvIndex);
     (void)srvHeap;
+    (void)srvCpuHandle;
 }
 
 void CascadedShadowMap::SetResolution(const int resolutionPerCascade)

@@ -76,7 +76,8 @@ public:
     D3D12MA::Allocator* GetMemoryAllocator() const;
     std::uint32_t GetSrvDescriptorSize() const;
     std::uintptr_t GetSrvCpuHandle(std::uint32_t descriptorIndex) const;
-    // True when cpuHandle lies in the shader-visible SRV heap (valid CopyDescriptorsSimple source).
+    std::uintptr_t GetSrvCopySourceCpuHandle(std::uintptr_t srvCpuHandle) const;
+    // True when cpuHandle lies in the shader-visible SRV heap.
     bool IsShaderVisibleSrvCpuHandle(std::uintptr_t cpuHandle) const;
     std::uint32_t AllocateOffscreenRtvBlock(std::uint32_t count);
     void FreeOffscreenRtvBlock(std::uint32_t baseIndex, std::uint32_t count);
@@ -92,6 +93,12 @@ public:
         int height,
         std::uint32_t mipLevels = 1) const;
     void CreateMsaaDepthSrv(void* resource, std::uint32_t descriptorIndex) const;
+    void CreateShaderResourceView(void* resource, const void* srvDesc, std::uint32_t descriptorIndex) const;
+    void CreateUnorderedAccessView(
+        void* resource,
+        void* counterResource,
+        const void* uavDesc,
+        std::uint32_t descriptorIndex) const;
     void ClearOffscreenTarget(
         void* resource,
         std::uint32_t rtvIndex,
