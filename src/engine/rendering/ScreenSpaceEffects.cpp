@@ -1935,7 +1935,12 @@ void ScreenSpaceEffects::AccumulatePathTracerReference(
     const int width,
     const int height)
 {
-    const int accumFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
+    // fp32 sum: reference accumulation runs to thousands of spp. fp16 overflowed bright HDR pixels
+    // past 65504 (stuck-white firefly speckles that never averaged out) and quantized the growing
+    // sum into visible gradient banding (worst on the sky). The pt_accumulate/pt_mean shaders always
+    // documented RGBA32F intent. The Shader class builds an RGBA32F fullscreen PSO variant selected
+    // by this target format (PostProcessDraw::ResolveFullscreenPipelineFlags).
+    const int accumFormat = static_cast<int>(DXGI_FORMAT_R32G32B32A32_FLOAT);
     ResizeInternalTarget(m_ptAccumSumTarget, width, height, accumFormat);
     ResizeInternalTarget(m_ptAccumScratchTarget, width, height, accumFormat);
 

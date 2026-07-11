@@ -54,7 +54,8 @@ public:
         bool doubleSided = false,
         bool depthReadOnly = false,
         bool skipDepthTest = false,
-        bool singleChannelRtv = false) const;
+        bool singleChannelRtv = false,
+        bool hdr32Rtv = false) const;
     void FlushUniforms() const;
     void UseOnCommandList(void* commandList) const;
     void FlushUniformsOnCommandList(void* commandList) const;
@@ -109,6 +110,9 @@ private:
     void* m_pipelineStateLdr = nullptr;
     void* m_pipelineStateLdrDepthRead = nullptr;
     void* m_pipelineStateSingleChannel = nullptr;
+    // RGBA32F fullscreen variant, for the path-tracer reference accumulation sum (needs fp32 to
+    // avoid fp16 overflow past 65504 and growing-sum quantization banding at high spp).
+    void* m_pipelineStateHdr32 = nullptr;
     void* m_pipelineStateNoDepth = nullptr;
     void* m_pipelineStateLdrNoDepth = nullptr;
     void* m_pipelineStateDoubleSided = nullptr;

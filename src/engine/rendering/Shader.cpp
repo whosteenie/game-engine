@@ -100,6 +100,7 @@ Shader::~Shader()
     releasePipeline(m_pipelineStateLdr);
     releasePipeline(m_pipelineStateLdrDepthRead);
     releasePipeline(m_pipelineStateSingleChannel);
+    releasePipeline(m_pipelineStateHdr32);
     releasePipeline(m_pipelineStateNoDepth);
     releasePipeline(m_pipelineStateLdrNoDepth);
     releasePipeline(m_pipelineStateDoubleSided);
@@ -131,6 +132,7 @@ Shader::Shader(Shader&& other) noexcept
       m_pipelineStateLdr(other.m_pipelineStateLdr),
       m_pipelineStateLdrDepthRead(other.m_pipelineStateLdrDepthRead),
       m_pipelineStateSingleChannel(other.m_pipelineStateSingleChannel),
+      m_pipelineStateHdr32(other.m_pipelineStateHdr32),
       m_pipelineStateNoDepth(other.m_pipelineStateNoDepth),
       m_pipelineStateLdrNoDepth(other.m_pipelineStateLdrNoDepth),
       m_pipelineStateDoubleSided(other.m_pipelineStateDoubleSided),
@@ -148,6 +150,7 @@ Shader::Shader(Shader&& other) noexcept
     other.m_pipelineStateLdr = nullptr;
     other.m_pipelineStateLdrDepthRead = nullptr;
     other.m_pipelineStateSingleChannel = nullptr;
+    other.m_pipelineStateHdr32 = nullptr;
     other.m_pipelineStateNoDepth = nullptr;
     other.m_pipelineStateLdrNoDepth = nullptr;
     other.m_pipelineStateDoubleSided = nullptr;
@@ -171,6 +174,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         m_pipelineStateLdr = other.m_pipelineStateLdr;
         m_pipelineStateLdrDepthRead = other.m_pipelineStateLdrDepthRead;
         m_pipelineStateSingleChannel = other.m_pipelineStateSingleChannel;
+        m_pipelineStateHdr32 = other.m_pipelineStateHdr32;
         m_pipelineStateNoDepth = other.m_pipelineStateNoDepth;
         m_pipelineStateLdrNoDepth = other.m_pipelineStateLdrNoDepth;
         m_pipelineStateDoubleSided = other.m_pipelineStateDoubleSided;
@@ -187,6 +191,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
         other.m_pipelineStateLdr = nullptr;
         other.m_pipelineStateLdrDepthRead = nullptr;
         other.m_pipelineStateSingleChannel = nullptr;
+        other.m_pipelineStateHdr32 = nullptr;
         other.m_pipelineStateNoDepth = nullptr;
         other.m_pipelineStateLdrNoDepth = nullptr;
         other.m_pipelineStateDoubleSided = nullptr;
@@ -901,11 +906,17 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
 
             applySingleRenderTarget(DXGI_FORMAT_R16_FLOAT);
             m_pipelineStateSingleChannel = createPipeline(psoDesc);
+
+            // RGBA32F variant: the PT reference accumulation sum uses fp32 storage (fp16 overflows
+            // bright HDR pixels past 65504 and quantizes the growing sum into gradient banding).
+            applySingleRenderTarget(DXGI_FORMAT_R32G32B32A32_FLOAT);
+            m_pipelineStateHdr32 = createPipeline(psoDesc);
         }
         else
         {
             m_pipelineStateLdr = nullptr;
             m_pipelineStateSingleChannel = nullptr;
+            m_pipelineStateHdr32 = nullptr;
         }
 
         m_pipelineStateMrt = nullptr;
@@ -1032,7 +1043,8 @@ void Shader::BindPipeline(
     const bool doubleSided,
     const bool depthReadOnly,
     const bool skipDepthTest,
-    const bool singleChannelRtv) const
+    const bool singleChannelRtv,
+    const bool hdr32Rtv) const
 {
     g_activeShader = this;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
@@ -1067,6 +1079,10 @@ void Shader::BindPipeline(
     else if (singleChannelRtv && m_pipelineStateSingleChannel != nullptr)
     {
         pipeline = m_pipelineStateSingleChannel;
+    }
+    else if (hdr32Rtv && m_pipelineStateHdr32 != nullptr)
+    {
+        pipeline = m_pipelineStateHdr32;
     }
     else if (viewportLdr && depthReadOnly && m_pipelineStateLdrDepthRead != nullptr)
     {

@@ -19,15 +19,23 @@ namespace
         return format == static_cast<int>(DXGI_FORMAT_R16_FLOAT);
     }
 
+    bool IsHdr32RenderTargetFormat(const int format)
+    {
+        return format == static_cast<int>(DXGI_FORMAT_R32G32B32A32_FLOAT);
+    }
+
     void ResolveFullscreenPipelineFlags(
         const int targetFormat,
         const bool viewportLdrOverride,
         bool& outViewportLdr,
-        bool& outSingleChannelRtv)
+        bool& outSingleChannelRtv,
+        bool& outHdr32Rtv)
     {
         outViewportLdr = viewportLdrOverride || IsLdrRenderTargetFormat(targetFormat);
         outSingleChannelRtv =
             !outViewportLdr && IsSingleChannelRenderTargetFormat(targetFormat);
+        outHdr32Rtv =
+            !outViewportLdr && !outSingleChannelRtv && IsHdr32RenderTargetFormat(targetFormat);
     }
 
     void TransitionResource(
@@ -108,8 +116,11 @@ void PostProcessDraw::DrawFullscreenToTarget(
 
     bool useLdrPipeline = viewportLdr;
     bool useSingleChannelPipeline = false;
-    ResolveFullscreenPipelineFlags(target.format, viewportLdr, useLdrPipeline, useSingleChannelPipeline);
-    shader.BindPipeline(false, useLdrPipeline, false, false, false, useSingleChannelPipeline);
+    bool useHdr32Pipeline = false;
+    ResolveFullscreenPipelineFlags(
+        target.format, viewportLdr, useLdrPipeline, useSingleChannelPipeline, useHdr32Pipeline);
+    shader.BindPipeline(
+        false, useLdrPipeline, false, false, false, useSingleChannelPipeline, useHdr32Pipeline);
     shader.FlushUniforms();
     DrawFullscreenQuad();
 
