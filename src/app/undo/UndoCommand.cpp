@@ -513,19 +513,12 @@ void PushReparentObjects(
     UndoStack& undoStack,
     Scene& scene,
     const std::string& commandName,
-    SceneObjectId objectId,
+    const std::vector<SceneObjectId>& objectIds,
     SceneObjectId referenceId,
     HierarchyInsertMode mode)
 {
-    const int objectIndex = scene.FindObjectIndex(objectId);
     const int referenceIndex = scene.FindObjectIndex(referenceId);
-    if (objectIndex < 0 || referenceIndex < 0)
-    {
-        return;
-    }
-
-    if (!scene.CanPlaceObjectInHierarchy(objectIndex, referenceIndex, mode)
-        || !scene.WouldPlaceObjectInHierarchyChange(objectIndex, referenceIndex, mode))
+    if (referenceIndex < 0 || objectIds.empty())
     {
         return;
     }
@@ -533,7 +526,35 @@ void PushReparentObjects(
     ReparentArchive archive;
     archive.selectionBefore = CaptureArchivedSelection(scene);
     archive.before = CaptureHierarchyArchive(scene);
-    if (!scene.PlaceObjectInHierarchy(objectIndex, referenceIndex, mode))
+
+    bool anyPlaced = false;
+    for (SceneObjectId objectId : objectIds)
+    {
+        if (objectId == referenceId)
+        {
+            continue;
+        }
+
+        const int objectIndex = scene.FindObjectIndex(objectId);
+        const int currentReferenceIndex = scene.FindObjectIndex(referenceId);
+        if (objectIndex < 0 || currentReferenceIndex < 0)
+        {
+            continue;
+        }
+
+        if (!scene.CanPlaceObjectInHierarchy(objectIndex, currentReferenceIndex, mode)
+            || !scene.WouldPlaceObjectInHierarchyChange(objectIndex, currentReferenceIndex, mode))
+        {
+            continue;
+        }
+
+        if (scene.PlaceObjectInHierarchy(objectIndex, currentReferenceIndex, mode))
+        {
+            anyPlaced = true;
+        }
+    }
+
+    if (!anyPlaced)
     {
         return;
     }
@@ -544,7 +565,19 @@ void PushReparentObjects(
         return;
     }
 
-    scene.SelectSingle(objectIndex);
+    // Keep multi-select after a package reparent; single-object matches prior SelectSingle.
+    if (objectIds.size() > 1)
+    {
+        ApplyArchivedSelection(scene, archive.selectionBefore);
+    }
+    else
+    {
+        const int selectedIndex = scene.FindObjectIndex(objectIds.front());
+        if (selectedIndex >= 0)
+        {
+            scene.SelectSingle(selectedIndex);
+        }
+    }
     archive.selectionAfter = CaptureArchivedSelection(scene);
     undoStack.Push(std::make_unique<ReparentObjectsCommand>(std::move(archive), commandName));
 }

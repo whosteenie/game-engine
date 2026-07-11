@@ -24,7 +24,7 @@ namespace EditorWidgets
         value.z = SanitizeSignedZero(value.z);
     }
 
-    // DragFloat that rejects letters in Ctrl+Click / typed entry (CharsScientific).
+    // DragFloat with Ctrl+Click / typed entry that blocks non-numeric keystrokes.
     bool DragFloat(
         const char* label,
         float* value,

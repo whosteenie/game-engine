@@ -96,6 +96,7 @@ namespace
     }
 
     void HandleHierarchyRowSelection(
+        const SceneHierarchyPanel& panel,
         Scene& scene,
         int objectIndex,
         const std::unordered_map<SceneObjectId, bool>& openStates)
@@ -106,10 +107,12 @@ namespace
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl)
         {
+            panel.ClearPendingSelectionCollapse();
             scene.ToggleSelected(objectIndex);
         }
         else if (io.KeyShift)
         {
+            panel.ClearPendingSelectionCollapse();
             const int anchorIndex = scene.GetPrimarySelection();
             if (anchorIndex >= 0)
             {
@@ -120,8 +123,17 @@ namespace
                 scene.SelectSingle(objectIndex);
             }
         }
+        else if (
+            scene.IsSelected(objectIndex)
+            && scene.GetSelection().indices.size() > 1)
+        {
+            // Keep the multi-select so a subsequent drag can reparent the package.
+            // Collapse to this row on mouse-up if no drag started.
+            panel.BeginPendingSelectionCollapse(objectIndex);
+        }
         else
         {
+            panel.ClearPendingSelectionCollapse();
             scene.SelectSingle(objectIndex);
         }
     }
@@ -572,7 +584,55 @@ namespace
         return confirmed;
     }
 
-    void DrawHierarchyDragDropSource(int objectIndex, const std::string& label, bool enabled)
+    std::vector<SceneObjectId> CollectHierarchyDragObjectIds(const Scene& scene, int draggedIndex)
+    {
+        std::vector<SceneObjectId> objectIds;
+        if (draggedIndex < 0 || static_cast<std::size_t>(draggedIndex) >= scene.GetObjects().size())
+        {
+            return objectIds;
+        }
+
+        if (scene.IsSelected(draggedIndex) && scene.GetSelection().indices.size() > 1)
+        {
+            const std::vector<int> roots =
+                FilterToTopmostSelectedIndices(scene.GetObjects(), scene.GetSelection().indices);
+            objectIds.reserve(roots.size());
+            for (int rootIndex : roots)
+            {
+                objectIds.push_back(GetObjectId(scene, rootIndex));
+            }
+            return objectIds;
+        }
+
+        objectIds.push_back(GetObjectId(scene, draggedIndex));
+        return objectIds;
+    }
+
+    bool CanAcceptHierarchyPackageDrop(
+        const Scene& scene,
+        const std::vector<SceneObjectId>& objectIds,
+        int referenceIndex,
+        HierarchyInsertMode mode)
+    {
+        for (SceneObjectId objectId : objectIds)
+        {
+            const int objectIndex = scene.FindObjectIndex(objectId);
+            if (objectIndex < 0 || objectIndex == referenceIndex)
+            {
+                continue;
+            }
+
+            if (scene.CanPlaceObjectInHierarchy(objectIndex, referenceIndex, mode)
+                && scene.WouldPlaceObjectInHierarchyChange(objectIndex, referenceIndex, mode))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void DrawHierarchyDragDropSource(const Scene& scene, int objectIndex, const std::string& label, bool enabled)
     {
         if (!enabled)
         {
@@ -585,7 +645,16 @@ namespace
                 EditorReorderDragDrop::kHierarchyDragDropPayload,
                 &objectIndex,
                 sizeof(int));
-            ImGui::TextUnformatted(label.c_str());
+
+            const std::vector<SceneObjectId> packageIds = CollectHierarchyDragObjectIds(scene, objectIndex);
+            if (packageIds.size() > 1)
+            {
+                ImGui::Text("%d objects", static_cast<int>(packageIds.size()));
+            }
+            else
+            {
+                ImGui::TextUnformatted(label.c_str());
+            }
             ImGui::EndDragDropSource();
         }
     }
@@ -665,7 +734,12 @@ namespace
             {
                 const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
                 const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
-                panel.PushReparentMutation(scene, "Reparent", draggedId, referenceId, mode);
+                panel.PushReparentMutation(
+                    scene,
+                    "Reparent",
+                    std::vector<SceneObjectId>{draggedId},
+                    referenceId,
+                    mode);
             }
 
             return true;
@@ -765,8 +839,9 @@ namespace
         {
             const int draggedIndex = *static_cast<const int*>(activePayload->Data);
             const HierarchyInsertMode mode = HierarchyInsertMode::AsChild;
-            if (scene.CanPlaceObjectInHierarchy(draggedIndex, referenceIndex, mode)
-                && scene.WouldPlaceObjectInHierarchyChange(draggedIndex, referenceIndex, mode))
+            const std::vector<SceneObjectId> packageIds =
+                CollectHierarchyDragObjectIds(scene, draggedIndex);
+            if (CanAcceptHierarchyPackageDrop(scene, packageIds, referenceIndex, mode))
             {
                 panel.ClearDragInsertLatch();
                 DrawHierarchyReparentIndicator();
@@ -787,12 +862,10 @@ namespace
                 {
                     if (payload->IsDelivery())
                     {
-                        const SceneObjectId draggedId = GetObjectId(scene, draggedIndex);
-                        const SceneObjectId referenceId = GetObjectId(scene, referenceIndex);
                         panel.PushReparentMutation(
                             scene,
                             "Reparent",
-                            draggedId,
+                            packageIds,
                             referenceId,
                             mode);
                     }
@@ -938,11 +1011,11 @@ namespace
 
             if (ImGui::IsItemClicked())
             {
-                HandleHierarchyRowSelection(scene, objectIndex, openStates);
+                HandleHierarchyRowSelection(panel, scene, objectIndex, openStates);
             }
 
             const bool allowDragDrop = true;
-            DrawHierarchyDragDropSource(objectIndex, label, allowDragDrop);
+            DrawHierarchyDragDropSource(scene, objectIndex, label, allowDragDrop);
             DrawHierarchyRowDropTarget(panel, scene, objectIndex, openStates);
         }
 
@@ -1023,22 +1096,39 @@ void SceneHierarchyPanel::PushInsertMutation(
 void SceneHierarchyPanel::PushReparentMutation(
     Scene& scene,
     const std::string& commandName,
-    SceneObjectId objectId,
+    const std::vector<SceneObjectId>& objectIds,
     SceneObjectId referenceId,
     HierarchyInsertMode mode) const
 {
     if (m_drawUndoStack != nullptr)
     {
-        PushReparentObjects(*m_drawUndoStack, scene, commandName, objectId, referenceId, mode);
+        PushReparentObjects(*m_drawUndoStack, scene, commandName, objectIds, referenceId, mode);
         return;
     }
 
-    const int objectIndex = scene.FindObjectIndex(objectId);
     const int referenceIndex = scene.FindObjectIndex(referenceId);
-    if (objectIndex >= 0 && referenceIndex >= 0)
+    if (referenceIndex < 0)
     {
-        scene.PlaceObjectInHierarchy(objectIndex, referenceIndex, mode);
-        scene.SelectSingle(objectIndex);
+        return;
+    }
+
+    for (SceneObjectId objectId : objectIds)
+    {
+        const int objectIndex = scene.FindObjectIndex(objectId);
+        const int currentReferenceIndex = scene.FindObjectIndex(referenceId);
+        if (objectIndex >= 0 && currentReferenceIndex >= 0)
+        {
+            scene.PlaceObjectInHierarchy(objectIndex, currentReferenceIndex, mode);
+        }
+    }
+
+    if (objectIds.size() == 1)
+    {
+        const int selectedIndex = scene.FindObjectIndex(objectIds.front());
+        if (selectedIndex >= 0)
+        {
+            scene.SelectSingle(selectedIndex);
+        }
     }
 }
 
@@ -1112,6 +1202,45 @@ void SceneHierarchyPanel::TryExpandNodeOnDragHover(
     {
         openStates[referenceId] = true;
     }
+}
+
+void SceneHierarchyPanel::BeginPendingSelectionCollapse(int objectIndex) const
+{
+    m_pendingSelectionCollapseIndex = objectIndex;
+    m_pendingSelectionCollapseDragged = false;
+}
+
+void SceneHierarchyPanel::ClearPendingSelectionCollapse() const
+{
+    m_pendingSelectionCollapseIndex = -1;
+    m_pendingSelectionCollapseDragged = false;
+}
+
+void SceneHierarchyPanel::UpdatePendingSelectionCollapse(Scene& scene) const
+{
+    if (m_pendingSelectionCollapseIndex < 0)
+    {
+        return;
+    }
+
+    if (IsHierarchyDragActive())
+    {
+        m_pendingSelectionCollapseDragged = true;
+    }
+
+    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+    {
+        return;
+    }
+
+    if (!m_pendingSelectionCollapseDragged
+        && m_pendingSelectionCollapseIndex >= 0
+        && static_cast<std::size_t>(m_pendingSelectionCollapseIndex) < scene.GetObjects().size())
+    {
+        scene.SelectSingle(m_pendingSelectionCollapseIndex);
+    }
+
+    ClearPendingSelectionCollapse();
 }
 
 void SceneHierarchyPanel::Draw(
@@ -1270,6 +1399,8 @@ void SceneHierarchyPanel::Draw(
     }
 
     m_scrollSelectionIntoView = false;
+
+    UpdatePendingSelectionCollapse(scene);
 
     ImGui::EndChild();
 

@@ -33,7 +33,7 @@ public:
     void PushReparentMutation(
         Scene& scene,
         const std::string& commandName,
-        SceneObjectId objectId,
+        const std::vector<SceneObjectId>& objectIds,
         SceneObjectId referenceId,
         HierarchyInsertMode mode) const;
 
@@ -54,6 +54,10 @@ public:
     bool HasDragInsertLatchFor(int referenceIndex) const;
     void DrawDragInsertLatchLine() const;
 
+    void BeginPendingSelectionCollapse(int objectIndex) const;
+    void ClearPendingSelectionCollapse() const;
+    void UpdatePendingSelectionCollapse(Scene& scene) const;
+
 private:
     mutable bool m_showPanel = true;
     mutable int m_pendingRenameIndex = -1;
@@ -73,4 +77,8 @@ private:
     mutable bool m_scrollSelectionIntoView = false;
     mutable UndoStack* m_drawUndoStack = nullptr;
     mutable EditorClipboard* m_drawClipboard = nullptr;
+    // Clicking an already-selected row in a multi-select must not collapse until
+    // mouse-up, otherwise drag-reparent loses the package on press.
+    mutable int m_pendingSelectionCollapseIndex = -1;
+    mutable bool m_pendingSelectionCollapseDragged = false;
 };
