@@ -381,15 +381,35 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
             }
         }
 
+        D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7{};
+        if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS7,
+                &options7,
+                sizeof(options7))))
+        {
+            m_meshShaderTier = static_cast<int>(options7.MeshShaderTier);
+        }
+        else
+        {
+            m_meshShaderTier = 0;
+        }
+
         EngineLog::Info(
             "gfx",
             "Adapter: " + m_adapterDescription + " | Ray tracing tier: "
-                + GetRaytracingTierLabel(m_raytracingTier));
+                + GetRaytracingTierLabel(m_raytracingTier) + " | Mesh shader tier: "
+                + std::to_string(m_meshShaderTier));
         if (m_raytracingTier == 0)
         {
             EngineLog::Warn(
                 "gfx",
                 "Ray tracing is not supported on this GPU or driver. DXR features will be disabled.");
+        }
+        if (m_meshShaderTier == 0)
+        {
+            EngineLog::Warn(
+                "gfx",
+                "Mesh shaders are not supported on this GPU or driver. Mesh-shader scene rendering will be disabled.");
         }
 
         // DLSS/Streamline (S0): init SL + probe DLSS support on a background thread so the

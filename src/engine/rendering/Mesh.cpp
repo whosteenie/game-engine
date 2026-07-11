@@ -155,7 +155,10 @@ void Mesh::EnsureGpuResources() const
         || (m_meshletBuffer.IsValid()
             && m_meshletVertexBuffer.IsValid()
             && m_meshletTriangleBuffer.IsValid());
-    if (m_vertexBuffer.IsValid() && m_indexBuffer.IsValid() && meshletBuffersReady)
+    if (m_vertexBuffer.IsValid()
+        && m_vertexShaderResourceBuffer.IsValid()
+        && m_indexBuffer.IsValid()
+        && meshletBuffersReady)
     {
         return;
     }
@@ -176,6 +179,10 @@ void Mesh::EnsureGpuResources() const
     const std::uint32_t indexByteSize =
         static_cast<std::uint32_t>(m_indices.size() * sizeof(unsigned int));
     self->m_vertexBuffer.Create(GpuBuffer::Type::Vertex, m_vertices.data(), vertexByteSize);
+    self->m_vertexShaderResourceBuffer.Create(
+        GpuBuffer::Type::ShaderResource,
+        m_vertices.data(),
+        vertexByteSize);
     self->m_indexBuffer.Create(GpuBuffer::Type::Index, m_indices.data(), indexByteSize);
 
     if (!m_meshlets.empty() && !m_meshletVertices.empty() && !m_meshletTriangles.empty())
@@ -216,6 +223,7 @@ Mesh::Mesh(Mesh&& other) noexcept
       m_meshletVertices(std::move(other.m_meshletVertices)),
       m_meshletTriangles(std::move(other.m_meshletTriangles)),
       m_vertexBuffer(std::move(other.m_vertexBuffer)),
+      m_vertexShaderResourceBuffer(std::move(other.m_vertexShaderResourceBuffer)),
       m_indexBuffer(std::move(other.m_indexBuffer)),
       m_meshletBuffer(std::move(other.m_meshletBuffer)),
       m_meshletVertexBuffer(std::move(other.m_meshletVertexBuffer)),
@@ -238,6 +246,7 @@ Mesh& Mesh::operator=(Mesh&& other) noexcept
         m_meshletVertices = std::move(other.m_meshletVertices);
         m_meshletTriangles = std::move(other.m_meshletTriangles);
         m_vertexBuffer = std::move(other.m_vertexBuffer);
+        m_vertexShaderResourceBuffer = std::move(other.m_vertexShaderResourceBuffer);
         m_indexBuffer = std::move(other.m_indexBuffer);
         m_meshletBuffer = std::move(other.m_meshletBuffer);
         m_meshletVertexBuffer = std::move(other.m_meshletVertexBuffer);
@@ -388,6 +397,7 @@ void Mesh::BakeMeshlets()
 void Mesh::ReleaseGpuResources()
 {
     m_vertexBuffer.Destroy();
+    m_vertexShaderResourceBuffer.Destroy();
     m_indexBuffer.Destroy();
     m_meshletBuffer.Destroy();
     m_meshletVertexBuffer.Destroy();

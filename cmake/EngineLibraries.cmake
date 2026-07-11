@@ -64,6 +64,8 @@ set(ENGINE_RENDER_SOURCES
     src/engine/assets/TextureCache.cpp
     src/engine/rendering/MaterialTextures.cpp
     src/engine/rendering/Mesh.cpp
+    src/engine/rendering/MeshShaderGBufferRenderer.cpp
+    src/engine/rendering/MeshShaderShadowRenderer.cpp
     src/engine/rendering/GridRenderer.cpp
     src/engine/rendering/SkyboxRenderer.cpp
     src/engine/assets/ModelImporter.cpp

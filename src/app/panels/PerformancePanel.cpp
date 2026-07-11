@@ -775,6 +775,41 @@ void PerformancePanel::Draw(
         ImGui::Text("Selected: %d", static_cast<int>(scene.GetSelection().indices.size()));
         ImGui::Separator();
         ImGui::Text("Last renderable objects: %u", renderDiagnostics.renderableObjectCount);
+        ImGui::Text("GPU scene instances: %u", renderDiagnostics.gpuSceneInstanceCount);
+        ImGui::Text("GPU scene mesh assets: %u", renderDiagnostics.gpuSceneMeshAssetCount);
+        ImGui::Text("GPU scene materials: %u", renderDiagnostics.gpuSceneMaterialCount);
+        ImGui::Text("Selected render instances: %u", renderDiagnostics.selectedRenderInstanceCount);
+        ImGui::Text("Prev transforms resolved: %u", renderDiagnostics.previousWorldResolvedCount);
+        ImGui::Text("Prev transforms initialized: %u", renderDiagnostics.previousWorldInitializedCount);
+        ImGui::Text("GPU scene upload: %s", renderDiagnostics.gpuSceneUploadValid ? "valid" : "invalid");
+        ImGui::Text("GPU scene uploads: %u", renderDiagnostics.gpuSceneUploadFrameCount);
+        ImGui::Text("GPU scene resizes: %u", renderDiagnostics.gpuSceneResizeEventCount);
+        ImGui::Text(
+            "GPU scene table bytes: %llu / %llu / %llu",
+            static_cast<unsigned long long>(renderDiagnostics.gpuSceneInstanceBytes),
+            static_cast<unsigned long long>(renderDiagnostics.gpuSceneMeshAssetBytes),
+            static_cast<unsigned long long>(renderDiagnostics.gpuSceneMaterialBytes));
+        ImGui::Text(
+            "GPU scene SRVs: %u / %u / %u",
+            renderDiagnostics.gpuSceneInstanceSrvIndex,
+            renderDiagnostics.gpuSceneMeshAssetSrvIndex,
+            renderDiagnostics.gpuSceneMaterialSrvIndex);
+        const std::string primaryInstanceText = renderDiagnostics.primarySelectionInstanceId == 0xFFFFFFFFu
+            ? std::string("n/a")
+            : std::to_string(renderDiagnostics.primarySelectionInstanceId);
+        const std::string primaryObjectIdText = renderDiagnostics.primarySelectionEditorObjectId == kInvalidSceneObjectId
+            ? std::string("n/a")
+            : std::to_string(static_cast<unsigned long long>(renderDiagnostics.primarySelectionEditorObjectId));
+        const std::string primaryMeshText = renderDiagnostics.primarySelectionMeshId == 0xFFFFFFFFu
+            ? std::string("n/a")
+            : std::to_string(renderDiagnostics.primarySelectionMeshId);
+        const std::string primaryMaterialText = renderDiagnostics.primarySelectionMaterialId == 0xFFFFFFFFu
+            ? std::string("n/a")
+            : std::to_string(renderDiagnostics.primarySelectionMaterialId);
+        ImGui::Text("Primary render instance: %s", primaryInstanceText.c_str());
+        ImGui::Text("Primary editor object id: %s", primaryObjectIdText.c_str());
+        ImGui::Text("Primary mesh/material id: %s / %s", primaryMeshText.c_str(), primaryMaterialText.c_str());
+        ImGui::Text("Instance editor ID map: %s", renderDiagnostics.instanceEditorIdMapValid ? "valid" : "invalid");
         ImGui::Text("Last unique meshes: %u", renderDiagnostics.uniqueMeshCount);
         ImGui::Text("Renderable meshlets: %u", renderDiagnostics.renderableMeshletCount);
         ImGui::Text("Unique meshlets: %u", renderDiagnostics.uniqueMeshletCount);
@@ -783,6 +818,10 @@ void PerformancePanel::Draw(
         ImGui::Text("Geometry draws: %u", renderDiagnostics.geometryDrawCount);
         ImGui::Text("Shadow draws: %u", renderDiagnostics.shadowDrawCount);
         ImGui::Text("Shadow cascades: %u", renderDiagnostics.shadowCascadeCount);
+        ImGui::Text("Shadow mesh dispatch groups: %u", renderDiagnostics.shadowMeshShaderDispatchCount);
+        ImGui::Text("Mesh shaders supported: %s", renderDiagnostics.meshShadersSupported ? "yes" : "no");
+        ImGui::Text("Mesh shader G-buffer: %s", renderDiagnostics.meshShaderGBufferActive ? "active" : "off");
+        ImGui::Text("Mesh shader dispatch groups: %u", renderDiagnostics.meshShaderDispatchCount);
         ImGui::Text("Path tracing active: %s", renderDiagnostics.pathTracingActive ? "yes" : "no");
         ImGui::Separator();
         ImGui::Text("DXR BLAS: %u", dxrDiagnostics.blasCount);

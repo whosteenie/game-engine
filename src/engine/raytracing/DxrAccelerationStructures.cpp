@@ -1,16 +1,15 @@
 #include "engine/raytracing/DxrAccelerationStructures.h"
 
+#include "app/scene/GpuScene.h"
 #include "app/scene/Scene.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/Blas.h"
 #include "engine/raytracing/DxrContext.h"
 #include "engine/raytracing/DxrInstanceTransform.h"
 #include "engine/raytracing/DxrTrace.h"
-#include "engine/rendering/Material.h"
 #include "engine/rendering/Mesh.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
-#include "engine/scene/SceneObject.h"
 
 #include "engine/raytracing/DxrHeaders.h"
 
@@ -33,31 +32,38 @@ namespace
 
     struct DxrRenderableInstance
     {
+        std::uint32_t instanceId = 0;
+        std::uint32_t materialId = 0;
         std::size_t objectIndex = 0;
         Mesh* mesh = nullptr;
+        glm::mat4 world{1.0f};
     };
 
-    std::vector<DxrRenderableInstance> BuildDxrRenderableInstances(const Scene& scene)
+    std::vector<DxrRenderableInstance> BuildDxrRenderableInstances(const GpuScene& gpuScene)
     {
         std::vector<DxrRenderableInstance> instances;
-        const std::vector<SceneObject>& objects = scene.GetObjects();
-        instances.reserve(objects.size());
+        instances.reserve(gpuScene.GetInstances().size());
 
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        for (const GpuSceneInstanceRecord& gpuInstance : gpuScene.GetInstances())
         {
-            const SceneObject& object = objects[objectIndex];
-            if (!object.IsRenderable())
+            if (gpuInstance.meshId >= gpuScene.GetMeshAssets().size())
             {
                 continue;
             }
 
-            Mesh* mesh = object.GetMesh();
+            Mesh* mesh = gpuScene.GetMeshAssets()[gpuInstance.meshId].mesh;
             if (mesh == nullptr)
             {
                 continue;
             }
 
-            instances.push_back(DxrRenderableInstance{objectIndex, mesh});
+            DxrRenderableInstance instance{};
+            instance.instanceId = gpuInstance.instanceId;
+            instance.materialId = gpuInstance.materialId;
+            instance.objectIndex = gpuInstance.objectIndex;
+            instance.mesh = mesh;
+            instance.world = gpuInstance.world;
+            instances.push_back(instance);
         }
 
         return instances;
@@ -66,23 +72,6 @@ namespace
     std::uint32_t UvOffsetFloatsForTexCoordSet(const int texCoordSet)
     {
         return texCoordSet == 1 ? kUv1OffsetFloats : kUv0OffsetFloats;
-    }
-
-    void AssignMaterialMapBinding(
-        const std::uint32_t srvIndex,
-        const int texCoordSet,
-        const std::uint32_t vertexStrideFloats,
-        const std::uint32_t minStride,
-        std::uint32_t& outTexIndex,
-        std::uint32_t& outUvOffset)
-    {
-        outTexIndex = UINT32_MAX;
-        outUvOffset = UINT32_MAX;
-        if (srvIndex != UINT32_MAX && vertexStrideFloats >= minStride)
-        {
-            outTexIndex = srvIndex;
-            outUvOffset = UvOffsetFloatsForTexCoordSet(texCoordSet);
-        }
     }
 
     std::uint64_t HashCombine(const std::uint64_t seed, const std::uint64_t value)
@@ -99,54 +88,52 @@ namespace
 
     // Fingerprint of mesh/material/layout inputs to EnsureGeometryBuffers. Transform changes
     // are excluded so moving objects does not trigger a full geometry re-upload (DXR-05).
-    std::uint64_t ComputeDxrGeometryFingerprint(const Scene& scene)
+    std::uint64_t ComputeDxrGeometryFingerprint(const GpuScene& gpuScene)
     {
-        const std::vector<SceneObject>& objects = scene.GetObjects();
-        std::uint64_t fingerprint = HashCombine(0, objects.size());
+        std::uint64_t fingerprint = HashCombine(0, gpuScene.GetInstances().size());
+        fingerprint = HashCombine(fingerprint, gpuScene.GetMeshAssets().size());
+        fingerprint = HashCombine(fingerprint, gpuScene.GetMaterials().size());
 
-        for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
+        for (const GpuSceneInstanceRecord& instance : gpuScene.GetInstances())
         {
-            const SceneObject& object = objects[objectIndex];
-            fingerprint = HashCombine(fingerprint, objectIndex);
-            fingerprint = HashCombine(fingerprint, object.IsRenderable() ? 1u : 0u);
-            if (!object.IsRenderable())
-            {
-                continue;
-            }
+            fingerprint = HashCombine(fingerprint, instance.instanceId);
+            fingerprint = HashCombine(fingerprint, instance.meshId);
+            fingerprint = HashCombine(fingerprint, instance.materialId);
+            fingerprint = HashCombine(fingerprint, instance.flags);
+        }
 
-            Mesh* mesh = object.GetMesh();
-            fingerprint = HashCombine(
-                fingerprint,
-                reinterpret_cast<std::uintptr_t>(mesh));
+        for (const GpuSceneMeshAssetRecord& meshAsset : gpuScene.GetMeshAssets())
+        {
+            Mesh* mesh = meshAsset.mesh;
+            fingerprint = HashCombine(fingerprint, reinterpret_cast<std::uintptr_t>(mesh));
             if (mesh == nullptr)
             {
                 continue;
             }
 
-            fingerprint = HashCombine(fingerprint, mesh->GetPositions().size());
-            fingerprint = HashCombine(fingerprint, mesh->GetIndices().size());
-            fingerprint = HashCombine(fingerprint, mesh->GetFloatsPerVertex());
+            fingerprint = HashCombine(fingerprint, meshAsset.vertexCount);
+            fingerprint = HashCombine(fingerprint, meshAsset.indexCount);
+            fingerprint = HashCombine(fingerprint, meshAsset.floatsPerVertex);
+        }
 
-            const Material& material = object.GetMaterial();
-            const glm::vec3 albedo = material.GetAlbedo();
-            const glm::vec3 emissive = material.GetEmissive();
-            fingerprint = HashFloatBits(fingerprint, albedo.x);
-            fingerprint = HashFloatBits(fingerprint, albedo.y);
-            fingerprint = HashFloatBits(fingerprint, albedo.z);
-            fingerprint = HashFloatBits(fingerprint, emissive.x);
-            fingerprint = HashFloatBits(fingerprint, emissive.y);
-            fingerprint = HashFloatBits(fingerprint, emissive.z);
-            fingerprint = HashFloatBits(fingerprint, material.GetMetallic());
-            fingerprint = HashFloatBits(fingerprint, material.GetRoughness());
-            fingerprint = HashFloatBits(fingerprint, material.GetTransmission());
-            fingerprint = HashFloatBits(fingerprint, material.GetIndexOfRefraction());
-            fingerprint = HashCombine(fingerprint, material.IsThinWalled() ? 1u : 0u);
-            fingerprint = HashCombine(fingerprint, material.GetAlbedoMapSrvIndex());
-            fingerprint = HashCombine(fingerprint, material.GetNormalMapSrvIndex());
-            fingerprint = HashCombine(fingerprint, material.GetRoughnessMapSrvIndex());
-            fingerprint = HashCombine(fingerprint, material.GetEmissiveMapSrvIndex());
-            fingerprint = HashCombine(
-                fingerprint, material.HasMetallicRoughnessMap() ? kMaterialFlagMetallicRoughnessMap : 0u);
+        for (const GpuSceneMaterialRecord& material : gpuScene.GetMaterials())
+        {
+            fingerprint = HashFloatBits(fingerprint, material.albedo[0]);
+            fingerprint = HashFloatBits(fingerprint, material.albedo[1]);
+            fingerprint = HashFloatBits(fingerprint, material.albedo[2]);
+            fingerprint = HashFloatBits(fingerprint, material.emissive[0]);
+            fingerprint = HashFloatBits(fingerprint, material.emissive[1]);
+            fingerprint = HashFloatBits(fingerprint, material.emissive[2]);
+            fingerprint = HashFloatBits(fingerprint, material.metallic);
+            fingerprint = HashFloatBits(fingerprint, material.roughness);
+            fingerprint = HashFloatBits(fingerprint, material.transmission);
+            fingerprint = HashFloatBits(fingerprint, material.indexOfRefraction);
+            fingerprint = HashFloatBits(fingerprint, material.thinWalled);
+            fingerprint = HashCombine(fingerprint, material.albedoTexIndex);
+            fingerprint = HashCombine(fingerprint, material.normalTexIndex);
+            fingerprint = HashCombine(fingerprint, material.roughnessTexIndex);
+            fingerprint = HashCombine(fingerprint, material.emissiveTexIndex);
+            fingerprint = HashCombine(fingerprint, material.flags);
         }
 
         return fingerprint;
@@ -369,19 +356,20 @@ bool DxrAccelerationStructures::EnsureScratchBuffer(
 
 bool DxrAccelerationStructures::EnsureGeometryBuffers(
     const Scene& scene,
+    const GpuScene& gpuScene,
     ID3D12GraphicsCommandList* commandList,
     std::string& outError)
 {
+    (void)scene;
     outError.clear();
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
     if (renderInstances.empty())
     {
         ReleaseGeometryBuffers();
         return true;
     }
 
-    const std::uint64_t fingerprint = ComputeDxrGeometryFingerprint(scene);
+    const std::uint64_t fingerprint = ComputeDxrGeometryFingerprint(gpuScene);
     const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
     const bool geometryContentChanged = m_uploadedGeometryFingerprint[frameIndex] != fingerprint
         || m_geometryLookupSrvIndices[frameIndex] == UINT32_MAX;
@@ -394,7 +382,10 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     m_pendingGeometryContentReupload = true;
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(renderInstances.size());
-    std::vector<DxrMaterialEntry> materialEntries(renderInstances.size());
+    std::vector<DxrMaterialEntry> materialEntries(gpuScene.GetMaterials().size());
+    std::vector<bool> materialTexturedStrideValid(materialEntries.size(), true);
+    std::vector<bool> materialTangentStrideValid(materialEntries.size(), true);
+    std::vector<bool> materialUsed(materialEntries.size(), false);
     std::vector<float> vertexFloats;
     std::vector<std::uint32_t> indices;
     vertexFloats.reserve(1024);
@@ -403,7 +394,6 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
     {
         const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
-        const SceneObject& object = objects[renderInstance.objectIndex];
         Mesh* mesh = renderInstance.mesh;
 
         mesh->EnsureGpuResources();
@@ -412,12 +402,22 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         {
             continue;
         }
+        if (renderInstance.materialId < materialEntries.size())
+        {
+            materialUsed[renderInstance.materialId] = true;
+            materialTexturedStrideValid[renderInstance.materialId] =
+                materialTexturedStrideValid[renderInstance.materialId]
+                && vertexStrideFloats >= kMinTexturedStrideFloats;
+            materialTangentStrideValid[renderInstance.materialId] =
+                materialTangentStrideValid[renderInstance.materialId]
+                && vertexStrideFloats >= kMinTangentStrideFloats;
+        }
 
         DxrGeometryLookupEntry& entry = lookupEntries[instanceIndex];
         entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
         entry.vertexStrideFloats = vertexStrideFloats;
         entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
-        entry.materialId = static_cast<std::uint32_t>(instanceIndex);
+        entry.materialId = renderInstance.materialId;
 
         // Upload the FULL interleaved vertex stride (position + normal + ...) so the reflection
         // closest-hit can read smooth vertex normals at float offset 3, not just positions.
@@ -445,60 +445,56 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
             }
         }
 
-        const Material& material = object.GetMaterial();
-        DxrMaterialEntry& materialEntry = materialEntries[instanceIndex];
-        const glm::vec3 albedo = material.GetAlbedo();
-        const glm::vec3 emissive = material.GetEmissive();
-        materialEntry.albedo[0] = albedo.x;
-        materialEntry.albedo[1] = albedo.y;
-        materialEntry.albedo[2] = albedo.z;
-        materialEntry.metallic = material.GetMetallic();
-        materialEntry.emissive[0] = emissive.x;
-        materialEntry.emissive[1] = emissive.y;
-        materialEntry.emissive[2] = emissive.z;
-        materialEntry.roughness = material.GetRoughness();
-        materialEntry.transmission = material.GetTransmission();
-        materialEntry.indexOfRefraction = material.GetIndexOfRefraction();
-        materialEntry.thinWalled = material.IsThinWalled() ? 1.0f : 0.0f;
-        materialEntry.materialFlags = 0;
-        materialEntry.tangentOffsetFloats =
-            vertexStrideFloats >= kMinTangentStrideFloats ? kTangentOffsetFloats : UINT32_MAX;
-
-        AssignMaterialMapBinding(
-            material.GetAlbedoMapSrvIndex(),
-            material.GetAlbedoTexCoordSet(),
-            vertexStrideFloats,
-            kMinTexturedStrideFloats,
-            materialEntry.albedoTexIndex,
-            materialEntry.albedoUvOffsetFloats);
-        AssignMaterialMapBinding(
-            material.GetNormalMapSrvIndex(),
-            material.GetNormalTexCoordSet(),
-            vertexStrideFloats,
-            kMinTangentStrideFloats,
-            materialEntry.normalTexIndex,
-            materialEntry.normalUvOffsetFloats);
-        AssignMaterialMapBinding(
-            material.GetRoughnessMapSrvIndex(),
-            material.GetRoughnessTexCoordSet(),
-            vertexStrideFloats,
-            kMinTexturedStrideFloats,
-            materialEntry.roughnessTexIndex,
-            materialEntry.roughnessUvOffsetFloats);
-        if (material.HasRoughnessMap() && material.HasMetallicRoughnessMap())
-        {
-            materialEntry.materialFlags |= kMaterialFlagMetallicRoughnessMap;
-        }
-        AssignMaterialMapBinding(
-            material.GetEmissiveMapSrvIndex(),
-            material.GetEmissiveTexCoordSet(),
-            vertexStrideFloats,
-            kMinTexturedStrideFloats,
-            materialEntry.emissiveTexIndex,
-            materialEntry.emissiveUvOffsetFloats);
-
         const std::vector<unsigned int>& meshIndices = mesh->GetIndices();
         indices.insert(indices.end(), meshIndices.begin(), meshIndices.end());
+    }
+
+    for (const GpuSceneMaterialRecord& gpuMaterial : gpuScene.GetMaterials())
+    {
+        if (gpuMaterial.materialId >= materialEntries.size())
+        {
+            continue;
+        }
+
+        DxrMaterialEntry& materialEntry = materialEntries[gpuMaterial.materialId];
+        const bool texturedStrideValid =
+            !materialUsed[gpuMaterial.materialId] || materialTexturedStrideValid[gpuMaterial.materialId];
+        const bool tangentStrideValid =
+            !materialUsed[gpuMaterial.materialId] || materialTangentStrideValid[gpuMaterial.materialId];
+        materialEntry.albedo[0] = gpuMaterial.albedo[0];
+        materialEntry.albedo[1] = gpuMaterial.albedo[1];
+        materialEntry.albedo[2] = gpuMaterial.albedo[2];
+        materialEntry.metallic = gpuMaterial.metallic;
+        materialEntry.emissive[0] = gpuMaterial.emissive[0];
+        materialEntry.emissive[1] = gpuMaterial.emissive[1];
+        materialEntry.emissive[2] = gpuMaterial.emissive[2];
+        materialEntry.roughness = gpuMaterial.roughness;
+        materialEntry.transmission = gpuMaterial.transmission;
+        materialEntry.indexOfRefraction = gpuMaterial.indexOfRefraction;
+        materialEntry.thinWalled = gpuMaterial.thinWalled;
+        materialEntry.materialFlags =
+            texturedStrideValid ? (gpuMaterial.flags & kMaterialFlagMetallicRoughnessMap) : 0u;
+        materialEntry.tangentOffsetFloats = tangentStrideValid ? kTangentOffsetFloats : UINT32_MAX;
+        materialEntry.albedoTexIndex =
+            texturedStrideValid ? gpuMaterial.albedoTexIndex : UINT32_MAX;
+        materialEntry.albedoUvOffsetFloats = materialEntry.albedoTexIndex == UINT32_MAX
+            ? UINT32_MAX
+            : UvOffsetFloatsForTexCoordSet(static_cast<int>(gpuMaterial.albedoTexCoordSet));
+        materialEntry.normalTexIndex =
+            tangentStrideValid ? gpuMaterial.normalTexIndex : UINT32_MAX;
+        materialEntry.normalUvOffsetFloats = materialEntry.normalTexIndex == UINT32_MAX
+            ? UINT32_MAX
+            : UvOffsetFloatsForTexCoordSet(static_cast<int>(gpuMaterial.normalTexCoordSet));
+        materialEntry.roughnessTexIndex =
+            texturedStrideValid ? gpuMaterial.roughnessTexIndex : UINT32_MAX;
+        materialEntry.roughnessUvOffsetFloats = materialEntry.roughnessTexIndex == UINT32_MAX
+            ? UINT32_MAX
+            : UvOffsetFloatsForTexCoordSet(static_cast<int>(gpuMaterial.roughnessTexCoordSet));
+        materialEntry.emissiveTexIndex =
+            texturedStrideValid ? gpuMaterial.emissiveTexIndex : UINT32_MAX;
+        materialEntry.emissiveUvOffsetFloats = materialEntry.emissiveTexIndex == UINT32_MAX
+            ? UINT32_MAX
+            : UvOffsetFloatsForTexCoordSet(static_cast<int>(gpuMaterial.emissiveTexCoordSet));
     }
 
     if (vertexFloats.empty() || indices.empty())
@@ -511,11 +507,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         m_geometryObjectCount == renderInstances.size()
         && m_geometryLookupStaging.GetCapacity()
             >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
-        && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * renderInstances.size()
+        && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * materialEntries.size()
         && m_sceneVertexFloatsStaging.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesStaging.GetCapacity() >= indices.size() * sizeof(std::uint32_t)
         && m_geometryLookupGpu.GetCapacity() >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
-        && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * renderInstances.size()
+        && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * materialEntries.size()
         && m_sceneVertexFloatsGpu.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesGpu.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
 
@@ -524,7 +520,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         ReleaseGeometryBuffers();
 
         const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * renderInstances.size();
-        const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * renderInstances.size();
+        const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * materialEntries.size();
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
@@ -590,7 +586,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
             materialSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
             materialSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
             materialSrvDesc.Buffer.FirstElement = 0;
-            materialSrvDesc.Buffer.NumElements = static_cast<UINT>(renderInstances.size());
+            materialSrvDesc.Buffer.NumElements = static_cast<UINT>(materialEntries.size());
             materialSrvDesc.Buffer.StructureByteStride = sizeof(DxrMaterialEntry);
             device->CreateShaderResourceView(
                 m_materialGpu.Slot(frameIndex).resource,
@@ -870,8 +866,12 @@ namespace
     }
 } // namespace
 
-bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* commandList)
+bool DxrAccelerationStructures::UploadEmissiveLights(
+    const Scene& scene,
+    const GpuScene& gpuScene,
+    void* commandList)
 {
+    (void)scene;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(commandList);
     if (d3dCommandList == nullptr || !GfxContext::Get().IsInitialized())
     {
@@ -885,29 +885,31 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
 
     std::vector<DxrEmissiveLightEntry> entries;
     std::vector<DxrEmissiveTriangleEntry> triangles;
-    const auto& objects = scene.GetObjects();
-    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
     entries.reserve(renderInstances.size());
 
     float pickWeightSum = 0.0f;
     bool sceneHasTransmission = false;
-    for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
+    for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
-        const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
-        const SceneObject& object = objects[renderInstance.objectIndex];
+        if (renderInstance.materialId >= gpuScene.GetMaterials().size())
+        {
+            continue;
+        }
+
         Mesh* mesh = renderInstance.mesh;
 
-        const Material& material = object.GetMaterial();
+        const GpuSceneMaterialRecord& material = gpuScene.GetMaterials()[renderInstance.materialId];
         // Match DielectricWeight in pt_dielectric.hlsli — any glass that can refract NEE shadows.
         const float dielectricWeight =
-            std::clamp(material.GetTransmission(), 0.0f, 1.0f)
-            * (1.0f - std::clamp(material.GetMetallic(), 0.0f, 1.0f));
+            std::clamp(material.transmission, 0.0f, 1.0f)
+            * (1.0f - std::clamp(material.metallic, 0.0f, 1.0f));
         if (dielectricWeight > 0.0f)
         {
             sceneHasTransmission = true;
         }
 
-        const glm::vec3 emissive = material.GetEmissive();
+        const glm::vec3 emissive(material.emissive[0], material.emissive[1], material.emissive[2]);
         const float luminance = EmissiveLuminance(emissive);
         if (luminance < kEmissiveThreshold)
         {
@@ -921,8 +923,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
             continue;
         }
 
-        const glm::mat4 worldMatrix =
-            scene.GetWorldMatrix(static_cast<int>(renderInstance.objectIndex));
+        const glm::mat4 worldMatrix = renderInstance.world;
         const std::uint32_t triangleOffset = static_cast<std::uint32_t>(triangles.size());
         float instanceArea = 0.0f;
         std::uint32_t triangleCount = 0;
@@ -985,7 +986,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
         entry.emissive[1] = emissive.y;
         entry.emissive[2] = emissive.z;
         entry.pickWeight = instancePickWeight;
-        entry.instanceId = static_cast<std::uint32_t>(instanceIndex);
+        entry.instanceId = renderInstance.instanceId;
         entry.triangleOffset = triangleOffset;
         entry.triangleCount = triangleCount;
         entry.surfaceArea = std::max(instanceArea, 1e-4f);
@@ -1031,6 +1032,7 @@ bool DxrAccelerationStructures::UploadEmissiveLights(const Scene& scene, void* c
 
 void DxrAccelerationStructures::EnsureScene(
     const Scene& scene,
+    const GpuScene& gpuScene,
     const bool dxrEnabled,
     void* commandList)
 {
@@ -1076,8 +1078,7 @@ void DxrAccelerationStructures::EnsureScene(
 
     std::string error;
     std::unordered_set<Mesh*> uniqueMeshes;
-    const std::vector<SceneObject>& objects = scene.GetObjects();
-    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(scene);
+    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
     for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
         uniqueMeshes.insert(renderInstance.mesh);
@@ -1185,7 +1186,6 @@ void DxrAccelerationStructures::EnsureScene(
     std::unordered_set<Mesh*> referencedMeshes;
     for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
-        const SceneObject& object = objects[renderInstance.objectIndex];
         Mesh* mesh = renderInstance.mesh;
 
         Blas* blas = m_blasCache.Find(mesh);
@@ -1200,16 +1200,18 @@ void DxrAccelerationStructures::EnsureScene(
         }
 
         D3D12_RAYTRACING_INSTANCE_DESC instanceDesc{};
-        const glm::mat4 worldMatrix =
-            scene.GetWorldMatrix(static_cast<int>(renderInstance.objectIndex));
+        const glm::mat4 worldMatrix = renderInstance.world;
         WriteD3D12InstanceTransform(
             worldMatrix,
             reinterpret_cast<float*>(instanceDesc.Transform));
-        instanceDesc.InstanceID = static_cast<UINT>(instances.size());
+        instanceDesc.InstanceID = static_cast<UINT>(renderInstance.instanceId);
         instanceDesc.InstanceMask = 0xFF;
         instanceDesc.InstanceContributionToHitGroupIndex = 0;
         bool flipWinding = glm::determinant(glm::mat3(worldMatrix)) < 0.0f;
-        if (object.GetMaterial().IsDoubleSided())
+        const bool doubleSided =
+            renderInstance.instanceId < gpuScene.GetInstances().size()
+            && (gpuScene.GetInstances()[renderInstance.instanceId].flags & GpuSceneInstanceFlags::DoubleSided) != 0;
+        if (doubleSided)
         {
             flipWinding = !flipWinding;
         }
@@ -1282,6 +1284,7 @@ void DxrAccelerationStructures::EnsureScene(
 
     if (!EnsureGeometryBuffers(
             scene,
+            gpuScene,
             static_cast<ID3D12GraphicsCommandList*>(commandList4),
             error))
     {

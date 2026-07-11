@@ -14,6 +14,7 @@
 #include <glm/mat4x4.hpp>
 
 class Scene;
+class GpuScene;
 struct ID3D12Resource;
 
 struct DxrGeometryLookupEntry
@@ -101,7 +102,7 @@ public:
     DxrAccelerationStructures(const DxrAccelerationStructures&) = delete;
     DxrAccelerationStructures& operator=(const DxrAccelerationStructures&) = delete;
 
-    void EnsureScene(const Scene& scene, bool dxrEnabled, void* commandList);
+    void EnsureScene(const Scene& scene, const GpuScene& gpuScene, bool dxrEnabled, void* commandList);
     const DxrDiagnostics& GetDiagnostics() const { return m_diagnostics; }
 
     bool IsTlasBuilt() const { return m_tlas.IsBuilt(); }
@@ -153,7 +154,7 @@ public:
 
     // F2: upload emissive instance list for path-tracer NEE. Must be recorded on this frame's
     // command list BEFORE the PT dispatch that reads it (t15).
-    bool UploadEmissiveLights(const Scene& scene, void* commandList);
+    bool UploadEmissiveLights(const Scene& scene, const GpuScene& gpuScene, void* commandList);
 
     std::uint32_t GetEmissiveLightCount() const { return m_emissiveLightCount; }
     float GetEmissiveLightPickWeightSum() const { return m_emissiveLightPickWeightSum; }
@@ -192,6 +193,7 @@ private:
     bool EnsureScratchBuffer(std::uint64_t requiredBytes, std::string& outError);
     bool EnsureGeometryBuffers(
         const Scene& scene,
+        const GpuScene& gpuScene,
         ID3D12GraphicsCommandList* commandList,
         std::string& outError);
     void ReleaseGeometryBuffers();

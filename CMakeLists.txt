@@ -373,6 +373,7 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/scene/SceneEditor.cpp
     src/app/scene/SceneEditingController.cpp
+    src/app/scene/GpuScene.cpp
     src/app/scene/Scene.cpp
     src/app/scene/SceneHierarchyOps.cpp
     src/app/scene/SceneImportService.cpp

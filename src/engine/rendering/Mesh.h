@@ -74,6 +74,7 @@ public:
 
     void EnsureGpuResources() const;
     const GpuBuffer& GetVertexBuffer() const { return m_vertexBuffer; }
+    const GpuBuffer& GetVertexShaderResourceBuffer() const { return m_vertexShaderResourceBuffer; }
     const GpuBuffer& GetIndexBuffer() const { return m_indexBuffer; }
     const GpuBuffer& GetMeshletBuffer() const { return m_meshletBuffer; }
     const GpuBuffer& GetMeshletVertexBuffer() const { return m_meshletVertexBuffer; }
@@ -93,6 +94,7 @@ private:
     std::vector<std::uint32_t> m_meshletVertices;
     std::vector<MeshletTriangle> m_meshletTriangles;
     GpuBuffer m_vertexBuffer;
+    GpuBuffer m_vertexShaderResourceBuffer;
     GpuBuffer m_indexBuffer;
     GpuBuffer m_meshletBuffer;
     GpuBuffer m_meshletVertexBuffer;

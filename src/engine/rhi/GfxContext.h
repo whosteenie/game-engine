@@ -180,6 +180,8 @@ public:
     // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
     bool IsRaytracingSupported() const;
     int GetRaytracingTier() const { return m_raytracingTier; }
+    bool IsMeshShaderSupported() const { return m_meshShaderTier > 0; }
+    int GetMeshShaderTier() const { return m_meshShaderTier; }
     const std::string& GetAdapterDescription() const { return m_adapterDescription; }
 
     struct GpuMemoryInfo
@@ -259,6 +261,7 @@ private:
     int m_activeMsaaSampleCount = 1;
     std::uint8_t m_supportedMsaaSampleCountsMask = 0;
     int m_raytracingTier = 0;
+    int m_meshShaderTier = 0;
     std::string m_adapterDescription;
     std::uint64_t m_adapterDedicatedVideoMemory = 0;
     GpuProfiler m_gpuProfiler;

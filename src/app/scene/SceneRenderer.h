@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/scene/GpuScene.h"
 #include "app/scene/Scene.h"
 #include "app/scene/RenderViewport.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
@@ -26,6 +27,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class Camera;
@@ -37,20 +39,46 @@ class GridRenderer;
 class EnvironmentMap;
 class IBL;
 class LightGizmoRenderer;
+class MeshShaderGBufferRenderer;
+class MeshShaderShadowRenderer;
 class ScreenSpaceEffects;
 class Shader;
 
 struct RenderFrameDiagnostics
 {
     std::uint32_t renderableObjectCount = 0;
+    std::uint32_t gpuSceneInstanceCount = 0;
+    std::uint32_t gpuSceneMeshAssetCount = 0;
+    std::uint32_t gpuSceneMaterialCount = 0;
     std::uint32_t uniqueMeshCount = 0;
     std::uint32_t renderableMeshletCount = 0;
     std::uint32_t uniqueMeshletCount = 0;
     std::uint32_t meshletVertexReferenceCount = 0;
     std::uint32_t meshletTriangleCount = 0;
+    std::uint32_t selectedRenderInstanceCount = 0;
+    std::uint32_t previousWorldResolvedCount = 0;
+    std::uint32_t previousWorldInitializedCount = 0;
+    std::uint32_t gpuSceneUploadFrameCount = 0;
+    std::uint32_t gpuSceneResizeEventCount = 0;
+    std::uint32_t gpuSceneInstanceSrvIndex = 0xFFFFFFFFu;
+    std::uint32_t gpuSceneMeshAssetSrvIndex = 0xFFFFFFFFu;
+    std::uint32_t gpuSceneMaterialSrvIndex = 0xFFFFFFFFu;
+    std::uint64_t gpuSceneInstanceBytes = 0;
+    std::uint64_t gpuSceneMeshAssetBytes = 0;
+    std::uint64_t gpuSceneMaterialBytes = 0;
+    std::uint32_t primarySelectionInstanceId = 0xFFFFFFFFu;
+    SceneObjectId primarySelectionEditorObjectId = kInvalidSceneObjectId;
+    std::uint32_t primarySelectionMeshId = 0xFFFFFFFFu;
+    std::uint32_t primarySelectionMaterialId = 0xFFFFFFFFu;
     std::uint32_t geometryDrawCount = 0;
     std::uint32_t shadowDrawCount = 0;
     std::uint32_t shadowCascadeCount = 0;
+    std::uint32_t shadowMeshShaderDispatchCount = 0;
+    std::uint32_t meshShaderDispatchCount = 0;
+    bool instanceEditorIdMapValid = true;
+    bool gpuSceneUploadValid = false;
+    bool meshShadersSupported = false;
+    bool meshShaderGBufferActive = false;
     bool pathTracingActive = false;
 };
 
@@ -100,6 +128,8 @@ public:
 
     const DxrDiagnostics& GetDxrDiagnostics() const;
     const RenderFrameDiagnostics& GetRenderFrameDiagnostics() const { return m_renderFrameDiagnostics; }
+    const GpuScene& GetGpuScene() const { return m_gpuScene; }
+    std::uint32_t FindRenderInstanceForObjectIndex(std::uint32_t objectIndex) const;
 
     bool ComputeShadowCasterBounds(
         const Scene& scene,
@@ -199,6 +229,7 @@ private:
     void InvalidateViewportTemporalState(RenderViewport viewport);
     void SyncPtTemporalHistoryVersion();
     void ApplyPtSceneVersionInvalidation();
+    void AdvancePreviousWorldTransforms();
 
     std::unique_ptr<CameraGizmoRenderer> m_cameraGizmos;
     std::unique_ptr<GridRenderer> m_grid;
@@ -209,6 +240,8 @@ private:
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<ScreenSpaceEffects> m_gameViewScreenSpaceEffects;
+    std::unique_ptr<MeshShaderGBufferRenderer> m_meshShaderGBufferRenderer;
+    std::unique_ptr<MeshShaderShadowRenderer> m_meshShaderShadowRenderer;
     ScreenSpaceEffects* m_activeScreenSpaceEffects = nullptr;
     std::unique_ptr<DxrAccelerationStructures> m_dxrAccelerationStructures;
     std::unique_ptr<DxrSmokeDispatch> m_dxrSmokeDispatch;
@@ -224,11 +257,11 @@ private:
     std::uint32_t m_textureAnisotropy = 8;
     float m_textureMipBias = 0.0f;
     SceneLighting m_lighting;
-    mutable std::vector<glm::mat4> m_previousWorldMatrices;
-    mutable std::vector<glm::mat4> m_gameViewPreviousWorldMatrices;
+    mutable GpuScene::PreviousWorldMap m_previousWorldByObjectId;
+    mutable GpuScene::PreviousWorldMap m_gameViewPreviousWorldByObjectId;
     std::uint64_t m_sceneViewLastSubmissionFrame = 0;
     std::uint64_t m_gameViewLastSubmissionFrame = 0;
-    std::vector<glm::mat4>* m_activePreviousWorldMatrices = nullptr;
+    GpuScene::PreviousWorldMap* m_activePreviousWorldByObjectId = nullptr;
     mutable GpuResourceState m_gpuResourceState = GpuResourceState::NotStarted;
     mutable std::string m_gpuResourcesInitError;
     nlohmann::json m_pendingRendererSettings;
@@ -240,4 +273,5 @@ private:
     std::uint64_t m_ptEnvironmentFingerprint = 0;
     std::uint64_t m_ptSettingsFingerprint = 0;
     RenderFrameDiagnostics m_renderFrameDiagnostics{};
+    GpuScene m_gpuScene;
 };

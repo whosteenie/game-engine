@@ -26,6 +26,10 @@ namespace EngineConstants
     inline constexpr const char* SsrIndirectFragmentShader = "assets/shaders/ssr_indirect.ps.hlsl";
     inline constexpr const char* LitVertexShader = "assets/shaders/lit.vs.hlsl";
     inline constexpr const char* PbrFragmentShader = "assets/shaders/pbr.ps.hlsl";
+    inline constexpr const char* SceneGBufferMeshShader = "assets/shaders/scene_gbuffer.ms.hlsl";
+    inline constexpr const char* SceneGBufferMeshFragmentShader =
+        "assets/shaders/scene_gbuffer_mesh.ps.hlsl";
+    inline constexpr const char* SceneShadowMeshShader = "assets/shaders/scene_shadow.ms.hlsl";
     inline constexpr const char* ShadowDepthVertexShader = "assets/shaders/shadow_depth.vs.hlsl";
     inline constexpr const char* ShadowDepthFragmentShader = "assets/shaders/shadow_depth.ps.hlsl";
     inline constexpr const char* GridVertexShader = "assets/shaders/grid.vs.hlsl";
