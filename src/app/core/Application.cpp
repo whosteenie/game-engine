@@ -807,12 +807,18 @@ void Application::Update(double deltaTime)
 
         // Commit any active inspector text field before scene-view interaction (fly cam / pick).
         // Otherwise WantTextInput stays true and immediately cancels mouse capture.
+        //
+        // Gate on the PRESS EDGE (button transitioning down this frame), not the held-down level.
+        // A held-down level check fires every frame the button stays down, so dragging a slider
+        // from a panel across the viewport (still holding LMB) would hit IsAnyItemActive() and
+        // ClearActiveID() the slider's grab mid-drag, invalidating it until re-grabbed. Only a
+        // press that STARTS while hovering the viewport should steal/commit the active widget.
         ImGuiIO& earlyIo = ImGui::GetIO();
-        const bool sceneViewMouseDown =
+        const bool sceneViewMousePressed =
             mouseOverSceneView
-            && (m_input->IsMouseButtonDown(GLFW_MOUSE_BUTTON_LEFT)
-                || m_input->IsMouseButtonDown(GLFW_MOUSE_BUTTON_RIGHT));
-        if (sceneViewMouseDown && (earlyIo.WantTextInput || ImGui::IsAnyItemActive()))
+            && (m_input->WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT)
+                || m_input->WasMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT));
+        if (sceneViewMousePressed && (earlyIo.WantTextInput || ImGui::IsAnyItemActive()))
         {
             ImGui::ClearActiveID();
         }
