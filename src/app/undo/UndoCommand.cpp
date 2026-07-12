@@ -1085,6 +1085,17 @@ void PushShadowFlagsMutation(
         mutate);
 }
 
+void BeginMaterialEditFrame(MaterialEditContext& context)
+{
+    if (context.scene == nullptr || context.objectIndices.empty())
+    {
+        context.hasFrameBefore = false;
+        return;
+    }
+    context.frameBefore = CaptureObjectMaterials(*context.scene, context.objectIndices);
+    context.hasFrameBefore = true;
+}
+
 void HandleMaterialFieldEditEvents(MaterialEditContext& context)
 {
     if (context.undoStack == nullptr || context.scene == nullptr || context.objectIndices.empty())
@@ -1096,8 +1107,10 @@ void HandleMaterialFieldEditEvents(MaterialEditContext& context)
     {
         if (context.sessionOpen)
         {
-            // Commit the previous widget's edit when focus moves to another material field
-            // without a deactivate (common when clicking between sliders).
+            // Commit the previous widget's edit when focus moves to another material field without
+            // a deactivate (common when clicking between sliders). ObjectMaterialMap is move-only
+            // (unique_ptr<Material>), so "after" is a fresh capture; the current field's frame-start
+            // snapshot below still gives that field's correct pre-edit value.
             ObjectMaterialMap after = CaptureObjectMaterials(*context.scene, context.objectIndices);
             if (!AreObjectMaterialMapsEqual(context.pendingBefore, after))
             {
@@ -1110,7 +1123,19 @@ void HandleMaterialFieldEditEvents(MaterialEditContext& context)
             context.sessionOpen = false;
         }
 
-        context.pendingBefore = CaptureObjectMaterials(*context.scene, context.objectIndices);
+        // Take "before" from the frame-start snapshot (moved — the map is move-only), NOT the
+        // current state: clicking a slider track jumps the value on the same frame IsItemActivated
+        // fires, so a live capture here would record the post-jump value and lose the click portion
+        // on undo. Only one widget activates per frame, so consuming the snapshot is safe.
+        if (context.hasFrameBefore)
+        {
+            context.pendingBefore = std::move(context.frameBefore);
+            context.hasFrameBefore = false;
+        }
+        else
+        {
+            context.pendingBefore = CaptureObjectMaterials(*context.scene, context.objectIndices);
+        }
         context.sessionOpen = true;
     }
 
@@ -1124,6 +1149,15 @@ void HandleMaterialFieldEditEvents(MaterialEditContext& context)
             context.commandName);
         context.sessionOpen = false;
     }
+}
+
+void BeginLightFieldEditFrame(LightEditContext& context)
+{
+    BeginPropertyEditFrame<LightComponent>(
+        context,
+        [](const Scene& scene, const std::vector<int>& indices) {
+            return CaptureObjectLights(scene, indices);
+        });
 }
 
 void HandleLightFieldEditEvents(LightEditContext& context)
@@ -1192,6 +1226,11 @@ void PushColliderMutation(
         mutate);
 }
 
+void BeginCameraFieldEditFrame(CameraEditContext& context)
+{
+    BeginPropertyEditFrame<CameraComponent>(context, CaptureObjectCameras);
+}
+
 void HandleCameraFieldEditEvents(CameraEditContext& context)
 {
     HandlePropertyFieldEditEvents<CameraComponent>(
@@ -1201,6 +1240,11 @@ void HandleCameraFieldEditEvents(CameraEditContext& context)
         ApplyObjectCamera);
 }
 
+void BeginRigidBodyFieldEditFrame(RigidBodyEditContext& context)
+{
+    BeginPropertyEditFrame<RigidBodyComponent>(context, CaptureObjectRigidBodies);
+}
+
 void HandleRigidBodyFieldEditEvents(RigidBodyEditContext& context)
 {
     HandlePropertyFieldEditEvents<RigidBodyComponent>(
@@ -1208,6 +1252,11 @@ void HandleRigidBodyFieldEditEvents(RigidBodyEditContext& context)
         CaptureObjectRigidBodies,
         AreObjectRigidBodyMapsEqual,
         ApplyObjectRigidBody);
+}
+
+void BeginColliderFieldEditFrame(ColliderEditContext& context)
+{
+    BeginPropertyEditFrame<ColliderComponent>(context, CaptureObjectColliders);
 }
 
 void HandleColliderFieldEditEvents(ColliderEditContext& context)

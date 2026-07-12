@@ -2108,6 +2108,15 @@ void SceneInspectorPanel::Draw(Scene& scene, UndoStack* undoStack) const
     m_colliderEditContext.objectIndices = selectedIndices;
     m_colliderEditContext.commandName = "Collider";
 
+    // Snapshot each context's pre-edit state BEFORE any inspector widget runs this frame, so a
+    // slider drag that begins with a track click (value jumps + IsItemActivated on the same frame)
+    // captures the true prior value for undo instead of the post-jump value.
+    BeginMaterialEditFrame(m_materialEditContext);
+    BeginLightFieldEditFrame(m_lightEditContext);
+    BeginCameraFieldEditFrame(m_cameraEditContext);
+    BeginRigidBodyFieldEditFrame(m_rigidBodyEditContext);
+    BeginColliderFieldEditFrame(m_colliderEditContext);
+
     if (selectedIndices.size() == 1)
     {
         DrawSingleObjectInspector(
