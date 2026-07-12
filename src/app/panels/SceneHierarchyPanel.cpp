@@ -1170,7 +1170,10 @@ namespace
 
         ImGui::PushID(objectIndex);
 
-        ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+        ImGuiTreeNodeFlags flags =
+            ImGuiTreeNodeFlags_OpenOnArrow
+            | ImGuiTreeNodeFlags_SpanAvailWidth
+            | ImGuiTreeNodeFlags_FramePadding;
         if (scene.IsSelected(objectIndex) && !isRenaming)
         {
             flags |= ImGuiTreeNodeFlags_Selected;
@@ -1547,6 +1550,22 @@ void SceneHierarchyPanel::Draw(
 
     ImGui::BeginChild("HierarchyList", ImVec2(0.0f, 0.0f), ImGuiChildFlags_Borders);
 
+    // Slightly taller row highlights / hit targets. TreeNodes only honor FramePadding.y
+    // when ImGuiTreeNodeFlags_FramePadding is set (see DrawHierarchyNode). Extra pad is
+    // offset by a matching ItemSpacing shrink so reorder gaps don't grow.
+    constexpr float kHierarchyRowExtraPadY = 2.0f;
+    const ImGuiStyle& hierarchyStyle = ImGui::GetStyle();
+    ImGui::PushStyleVar(
+        ImGuiStyleVar_FramePadding,
+        ImVec2(hierarchyStyle.FramePadding.x, hierarchyStyle.FramePadding.y + kHierarchyRowExtraPadY));
+    ImGui::PushStyleVar(
+        ImGuiStyleVar_ItemSpacing,
+        ImVec2(
+            hierarchyStyle.ItemSpacing.x,
+            hierarchyStyle.ItemSpacing.y > kHierarchyRowExtraPadY
+                ? hierarchyStyle.ItemSpacing.y - kHierarchyRowExtraPadY
+                : 0.0f));
+
     if (m_beginRenameNextFrame)
     {
         m_pendingRenameIndex = m_renameTargetIndex;
@@ -1697,6 +1716,7 @@ void SceneHierarchyPanel::Draw(
 
     UpdatePendingSelectionCollapse(scene);
 
+    ImGui::PopStyleVar(2);
     ImGui::EndChild();
 
     const std::string& importError = scene.GetImportService().GetLastImportError();
