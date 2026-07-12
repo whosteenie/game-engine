@@ -446,11 +446,11 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
 
 // P4b path tracer: reflection layout plus t14 (prev-instance transforms for object motion),
 // t15 (emissive NEE light list), t18 (emissive triangle geometry), u4-u6 (RR material guides),
-// u7-u8 (ReSTIR InitialSample + Reservoir), u9 (R2 direct radiance for temporal shade).
+// u7-u8 (ReSTIR InitialSample + Reservoir), u9 direct, u10-u11 P1 surface records.
 void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     SerializeHitShadingGlobalRootSignatureBlob(
-        19, 10, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
+        19, 12, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()

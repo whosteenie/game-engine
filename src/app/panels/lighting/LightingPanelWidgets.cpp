@@ -142,6 +142,10 @@ namespace
         RenderDebugMode::PtIsolateIndirect,
         RenderDebugMode::PtIsolatePreClamp,
         RenderDebugMode::PtIsolateSpecHitDist,
+        RenderDebugMode::PtRestirLinearDepth,
+        RenderDebugMode::PtRestirGeometricNormal,
+        RenderDebugMode::PtRestirMaterialId,
+        RenderDebugMode::PtRestirLobeClass,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {

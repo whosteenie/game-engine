@@ -24,7 +24,7 @@ struct RestirReservoir
     float wSum = 0.0f;
     float W = 0.0f;
     std::uint32_t M = 0; // confidence / sample count (doc allows fp16 packing; uint is fine)
-    std::uint32_t pad = 0;
+    std::uint32_t age = 0; // frames survived; reset for fresh samples and capped during reuse
 };
 
 static_assert(sizeof(RestirReservoir) == 48, "RestirReservoir must be 48 bytes");

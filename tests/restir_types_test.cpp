@@ -22,7 +22,8 @@ void RunRestirTypesTests(int& failures)
     if (offsetof(RestirReservoir, sample) != 0
         || offsetof(RestirReservoir, wSum) != 32
         || offsetof(RestirReservoir, W) != 36
-        || offsetof(RestirReservoir, M) != 40)
+        || offsetof(RestirReservoir, M) != 40
+        || offsetof(RestirReservoir, age) != 44)
     {
         std::cerr << "FAIL: RestirReservoir field offsets do not match G8 layout\n";
         ++failures;

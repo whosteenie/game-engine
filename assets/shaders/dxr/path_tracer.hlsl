@@ -21,6 +21,8 @@ RWStructuredBuffer<RestirInitialSample> g_InitialSample : register(u7);
 RWStructuredBuffer<RestirReservoir> g_ReservoirCurrent : register(u8);
 // R2: bounce-0 direct only — temporal shades g_Output = direct + Y·W (never subtract packed Y).
 RWTexture2D<float4> g_DirectOutput : register(u9);
+RWTexture2D<float4> g_RestirSurfacePositionDepth : register(u10);
+RWTexture2D<uint4> g_RestirSurfaceMaterial : register(u11);
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -81,7 +83,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
 // 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
 // views unreachable — clamp to the real [0,9] range instead.
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 9.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 13.0)))
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
@@ -1283,6 +1285,10 @@ void PathTracerRayGen()
     uint sampleFlags = 0u;
     float primaryRoughness = 1.0;
     float primaryDielectricWeight = 0.0;
+    float3 primaryWorldPos = 0.0.xxx;
+    float3 primaryGeomNormal = float3(0.0, 1.0, 0.0);
+    float3 primaryShadingNormal = float3(0.0, 1.0, 0.0);
+    uint primaryMaterialId = 0u;
 
     RayDesc ray;
     ray.Origin = g_CameraPos;
@@ -1566,6 +1572,10 @@ void PathTracerRayGen()
             primaryMotion = payload.primaryMotionNdc;
             primaryRoughness = surfaceRoughness;
             primaryDielectricWeight = dielectricWeight;
+            primaryWorldPos = hitPos;
+            primaryGeomNormal = hitNormalGeom;
+            primaryShadingNormal = hitNormal;
+            primaryMaterialId = g_GeometryLookup[payload.instanceId].materialId;
             const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
             float3 diffuseGuide;
@@ -1866,7 +1876,7 @@ void PathTracerRayGen()
     g_InitialSample[pixelIndex] = initialSample;
     g_ReservoirCurrent[pixelIndex] = RestirMakePassthroughReservoir(initialSample);
 
-    const float3 displayRadiance = SelectPtDebugRadiance(
+    float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
         primaryHit,
         radiance,
@@ -1880,8 +1890,48 @@ void PathTracerRayGen()
         primarySunVis,
         specHitDistGuide);
 
+    if (primaryHit && g_PtDebugIsolateMode == 10u)
+    {
+        const float linearDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
+        const float v = saturate(linearDepth / max(g_MaxTraceDistance, 1e-4));
+        displayRadiance = float3(v, v, v);
+    }
+    else if (primaryHit && g_PtDebugIsolateMode == 11u)
+    {
+        displayRadiance = primaryGeomNormal * 0.5 + 0.5;
+    }
+    else if (primaryHit && g_PtDebugIsolateMode == 12u)
+    {
+        displayRadiance = frac(float3(0.1031, 0.11369, 0.13787) * float(primaryMaterialId + 1u));
+    }
+    else if (primaryHit && g_PtDebugIsolateMode == 13u)
+    {
+        displayRadiance = float3(
+            primaryDielectricWeight > 0.01 ? 1.0 : 0.0,
+            primaryRoughness <= kPtDeltaSpecularRoughness ? 1.0 : 0.0,
+            0.15);
+    }
+
     // Unclamped bounce-0 direct for ReSTIR shade; g_Output keeps full M=1 / isolate AOVs.
     g_DirectOutput[pixel] = float4(directRadiance, 0.0);
+    if (primaryHit)
+    {
+        const uint surfaceFlags = 1u
+            | (primaryDielectricWeight > 0.01 ? 2u : 0u)
+            | (primaryRoughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
+        const float linearViewDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
+        g_RestirSurfacePositionDepth[pixel] = float4(primaryWorldPos, linearViewDepth);
+        g_RestirSurfaceMaterial[pixel] = uint4(
+            RestirPackOctNormal(primaryGeomNormal),
+            RestirPackOctNormal(primaryShadingNormal),
+            ((primaryInstanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
+            (primaryMaterialId & 0xffffu) | (f32tof16(primaryRoughness) << 16u));
+    }
+    else
+    {
+        g_RestirSurfacePositionDepth[pixel] = 0.0.xxxx;
+        g_RestirSurfaceMaterial[pixel] = 0u.xxxx;
+    }
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     g_DepthOutput[pixel] = primaryDepth;
     g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);

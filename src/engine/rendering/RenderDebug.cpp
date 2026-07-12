@@ -160,6 +160,14 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT isolate: pre-clamp radiance";
     case RenderDebugMode::PtIsolateSpecHitDist:
         return "PT isolate: spec hit distance";
+    case RenderDebugMode::PtRestirLinearDepth:
+        return "PT ReSTIR surface: linear depth";
+    case RenderDebugMode::PtRestirGeometricNormal:
+        return "PT ReSTIR surface: geometric normal";
+    case RenderDebugMode::PtRestirMaterialId:
+        return "PT ReSTIR surface: material ID";
+    case RenderDebugMode::PtRestirLobeClass:
+        return "PT ReSTIR surface: lobe class";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -352,6 +360,10 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtIsolateIndirect:
     case RenderDebugMode::PtIsolatePreClamp:
     case RenderDebugMode::PtIsolateSpecHitDist:
+    case RenderDebugMode::PtRestirLinearDepth:
+    case RenderDebugMode::PtRestirGeometricNormal:
+    case RenderDebugMode::PtRestirMaterialId:
+    case RenderDebugMode::PtRestirLobeClass:
         return true;
     default:
         return false;
@@ -383,6 +395,10 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtIsolateIndirect: return 7;
     case RenderDebugMode::PtIsolatePreClamp: return 8;
     case RenderDebugMode::PtIsolateSpecHitDist: return 9;
+    case RenderDebugMode::PtRestirLinearDepth: return 10;
+    case RenderDebugMode::PtRestirGeometricNormal: return 11;
+    case RenderDebugMode::PtRestirMaterialId: return 12;
+    case RenderDebugMode::PtRestirLobeClass: return 13;
     default: return 0;
     }
 }

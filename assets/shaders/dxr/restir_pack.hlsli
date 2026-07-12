@@ -7,6 +7,7 @@
 
 static const uint kRestirSampleNoReuse = 1u;
 static const uint kRestirMCap = 20u;
+static const uint kRestirAgeCap = 30u;
 static const float kRestirBoilingFactor = 10.0;
 static const float kRestirSpatialBoilingFactor = 1.5;
 static const float kRestirSpatialChromaDotMin = 0.92; // reject hue leaks (red bounce → gray soffit)
@@ -121,7 +122,7 @@ RestirReservoir RestirMakePassthroughReservoir(RestirInitialSample sample)
     reservoir.wSum = pHat;
     reservoir.W = 1.0;
     reservoir.M = 1u;
-    reservoir.pad = 0u;
+    reservoir.age = 0u;
     return reservoir;
 }
 

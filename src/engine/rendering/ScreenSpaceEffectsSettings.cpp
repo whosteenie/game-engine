@@ -160,6 +160,34 @@ namespace
         return DlssPreset::Quality;
     }
 
+    const char* DlssRrPresetToString(const DlssRrPreset preset)
+    {
+        switch (preset)
+        {
+        case DlssRrPreset::TransformerD:
+            return "transformer_d";
+        case DlssRrPreset::TransformerE:
+            return "transformer_e";
+        case DlssRrPreset::Default:
+        default:
+            return "default";
+        }
+    }
+
+    DlssRrPreset DlssRrPresetFromString(const std::string& value)
+    {
+        if (value == "transformer_d" || value == "TransformerD")
+        {
+            return DlssRrPreset::TransformerD;
+        }
+        if (value == "transformer_e" || value == "TransformerE")
+        {
+            return DlssRrPreset::TransformerE;
+        }
+
+        return DlssRrPreset::Default;
+    }
+
     bool AntiAliasingModeOwnsResolve(const AntiAliasingMode mode)
     {
         return mode == AntiAliasingMode::TAA || mode == AntiAliasingMode::DLAA
@@ -200,6 +228,7 @@ nlohmann::json ToJson(const ScreenSpaceEffects& effects)
         {"dlssPreset", DlssPresetToString(effects.GetDlssPreset())},
         {"dlssRayReconstruction", effects.GetRayReconstruction()},
         {"dlssSharpness", effects.GetDlssSharpness()},
+        {"dlssRrPreset", DlssRrPresetToString(effects.GetRrPreset())},
         {"msaaSampleCount", effects.GetMsaaSampleCount()},
         {"fxaaSubpixQuality", effects.GetFxaaSubpixQuality()},
         {"fxaaEdgeThreshold", effects.GetFxaaEdgeThreshold()},
@@ -334,6 +363,11 @@ void ApplyFromJson(ScreenSpaceEffects& effects, const nlohmann::json& effectsVal
     if (effectsValue.contains("dlssSharpness"))
     {
         effects.SetDlssSharpness(effectsValue.at("dlssSharpness").get<float>());
+    }
+    if (effectsValue.contains("dlssRrPreset"))
+    {
+        effects.SetRrPreset(
+            DlssRrPresetFromString(effectsValue.at("dlssRrPreset").get<std::string>()));
     }
     if (effectsValue.contains("fxaaSubpixQuality"))
     {

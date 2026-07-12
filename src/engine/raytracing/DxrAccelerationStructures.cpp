@@ -1252,6 +1252,7 @@ void DxrAccelerationStructures::EnsureScene(
         const std::uint64_t topologyFingerprint = ComputeDxrTlasTopologyFingerprint(instances);
         const std::uint64_t transformFingerprint = ComputeDxrTlasTransformFingerprint(instances);
         const bool topologyChanged = topologyFingerprint != m_builtTlasTopologyFingerprint;
+        const bool transformsChanged = transformFingerprint != m_builtTlasTransformFingerprint;
         const bool skipTlasBuild = !instances.empty()
             && m_tlas.IsBuilt()
             && !m_anyBlasBuiltThisFrame
@@ -1260,6 +1261,14 @@ void DxrAccelerationStructures::EnsureScene(
 
         if (!skipTlasBuild)
         {
+            if (m_builtTlasTransformFingerprint != 0 && transformsChanged)
+            {
+                ++m_ptMotionVersion;
+                if (m_ptMotionVersion == 0)
+                {
+                    m_ptMotionVersion = 1;
+                }
+            }
             if (topologyChanged || m_anyBlasBuiltThisFrame)
             {
                 BumpPtSceneVersion();

@@ -7,6 +7,7 @@
 #include "engine/raytracing/DxrRestirDispatch.h"
 #include "engine/raytracing/DxrRootSignature.h"
 #include "engine/raytracing/DxrTrace.h"
+#include "engine/rendering/RenderDebug.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <glm/gtc/type_ptr.hpp>
@@ -203,7 +204,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptBloomHaloIntensity = std::max(ptBloomHaloIntensity, 0.0f);
     constants.ptDebugIsolateMode =
-        static_cast<float>(std::clamp(ptDebugIsolateMode, 0, 9));
+        static_cast<float>(std::clamp(ptDebugIsolateMode, 0, kPtDebugIsolateModeMax));
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // Opaque-fast NEE shadows when the scene has no dielectrics (a0cc7f8 regression fix).
@@ -281,6 +282,7 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     void* commandList,
     const float maxTraceDistance,
     const std::uint32_t sceneVersion,
+    const std::uint32_t motionVersion,
     const bool realTimeMode,
     const bool shadeOutput)
 {
@@ -295,7 +297,7 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
         return false;
     }
 
-    m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion);
+    m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion, motionVersion);
 
     const glm::mat4 viewProj = camera.GetProjectionMatrix() * camera.GetViewMatrix();
     const glm::mat4 invViewProj = glm::inverse(viewProj);

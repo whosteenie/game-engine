@@ -168,6 +168,7 @@ public:
     // DLSS-RR, future reservoirs). Bumped on geometry/material/topology edits; SceneRenderer bumps
     // on environment and PT-setting fingerprint changes.
     std::uint32_t GetPtSceneVersion() const { return m_ptSceneVersion; }
+    std::uint32_t GetPtMotionVersion() const { return m_ptMotionVersion; }
     void BumpPtSceneVersion();
 
     // Valid only for the frame UploadEmissiveLights ran; UINT32_MAX otherwise.
@@ -259,6 +260,9 @@ private:
     std::uint64_t m_builtTlasTransformFingerprint = 0;
     bool m_pendingGeometryContentReupload = false;
     std::uint32_t m_ptSceneVersion = 1;
+    // P1: changes on any TLAS instance-transform change. ReSTIR conservatively invalidates all
+    // secondary samples until per-instance secondary-point transforms land in a later phase.
+    std::uint32_t m_ptMotionVersion = 1;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);
 };

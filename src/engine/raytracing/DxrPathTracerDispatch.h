@@ -122,6 +122,7 @@ public:
         void* commandList,
         float maxTraceDistance,
         std::uint32_t sceneVersion,
+        std::uint32_t motionVersion,
         bool realTimeMode,
         bool shadeOutput = true);
 

@@ -237,7 +237,7 @@ public:
     ID3D12Resource* GetPathTracerDirectResource() const { return m_ptDirectTexture.resource; }
     std::uint32_t GetPathTracerDirectResourceState() const { return m_ptDirectTexture.state; }
 
-    // G4 / ReSTIR: previous-frame PT surface history (render-res copy of depth + normal/roughness).
+    // P1 / ReSTIR: material-aware current/previous primary-surface records.
     // Valid after the first successful PT dispatch following create/resize. Temporal reuse (R2)
     // must read these BEFORE the end-of-dispatch copy overwrites them for the next frame.
     bool IsPathTracerPrevSurfaceHistoryValid() const { return m_ptPrevSurfaceHistoryValid; }
@@ -245,6 +245,14 @@ public:
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
     {
         return m_ptPrevNormalRoughnessTexture.srvCpuHandle;
+    }
+    std::uintptr_t GetPathTracerRestirSurfacePositionDepthSrvCpuHandle() const
+    {
+        return m_ptRestirSurfacePositionDepthTexture.srvCpuHandle;
+    }
+    std::uintptr_t GetPathTracerRestirSurfaceMaterialSrvCpuHandle() const
+    {
+        return m_ptRestirSurfaceMaterialTexture.srvCpuHandle;
     }
 
     // G8 / ReSTIR: render-res structured buffers (unused until R1+). Exact-size rebuild on resize.
@@ -300,7 +308,9 @@ public:
 
     // G4: copy current depth/N+R → prev (call AFTER R2 temporal).
     void FinalizePathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList);
-    void InvalidateRestirHistoryIfSceneChanged(std::uint32_t sceneVersion);
+    void InvalidateRestirHistoryIfSceneChanged(
+        std::uint32_t sceneVersion,
+        std::uint32_t motionVersion);
 
     std::uintptr_t GetReflectionOutputSrvCpuHandle() const { return m_reflectionOutputSrvCpuHandle; }
     int GetReflectionOutputWidth() const { return m_reflectionOutputWidth; }
@@ -407,6 +417,12 @@ private:
     // G4: previous-frame copies for ReSTIR temporal validation (same formats as current guides).
     ReflectionTexture m_ptPrevDepthTexture{};
     ReflectionTexture m_ptPrevNormalRoughnessTexture{};
+    // P1 surface contract. PositionDepth = world position xyz + positive linear view depth.
+    // Material = packed geom/shading normals, instance+flags, material+roughness.
+    ReflectionTexture m_ptRestirSurfacePositionDepthTexture{};
+    ReflectionTexture m_ptRestirSurfaceMaterialTexture{};
+    ReflectionTexture m_ptPrevRestirSurfacePositionDepthTexture{};
+    ReflectionTexture m_ptPrevRestirSurfaceMaterialTexture{};
     bool m_ptPrevSurfaceHistoryValid = false;
 
     // G8: ReSTIR structured buffers (48 B reservoir ping-pong + 32 B initial sample).
@@ -438,6 +454,7 @@ private:
     int m_restirWriteIndex = 0; // PT + temporal write; other index is prev-frame read
     bool m_restirReservoirHistoryValid = false;
     std::uint32_t m_restirLastSceneVersion = 0;
+    std::uint32_t m_restirLastMotionVersion = 0;
     std::vector<RetiredOutput> m_retiredRestirBuffers;
 
     static constexpr int kReflectionTextureCount = 5;

@@ -20,7 +20,7 @@ struct RestirReservoir
     float wSum;
     float W;
     uint M;
-    uint pad;
+    uint age;
 };
 
 #endif // RESTIR_TYPES_HLSLI

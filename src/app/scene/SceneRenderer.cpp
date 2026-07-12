@@ -974,6 +974,7 @@ void SceneRenderer::RecordDxrPass(
                     GfxContext::Get().GetCommandList(),
                     m_dxrSettings.GetMaxTraceDistance(),
                     m_dxrAccelerationStructures->GetPtSceneVersion(),
+                    m_dxrAccelerationStructures->GetPtMotionVersion(),
                     true,
                     shadeOutput);
                 DxrBreadcrumb("render: restir temporal end");

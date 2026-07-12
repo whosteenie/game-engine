@@ -81,6 +81,10 @@ enum class RenderDebugMode
     PtIsolateIndirect,
     PtIsolatePreClamp,
     PtIsolateSpecHitDist,
+    PtRestirLinearDepth,
+    PtRestirGeometricNormal,
+    PtRestirMaterialId,
+    PtRestirLobeClass,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
 };
@@ -104,5 +108,6 @@ bool IsRrGuideDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
+inline constexpr int kPtDebugIsolateModeMax = 13;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

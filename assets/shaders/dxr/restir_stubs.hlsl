@@ -18,10 +18,10 @@ cbuffer RestirTemporalConstants : register(b0)
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
-Texture2D<float> g_PrevDepth : register(t1);
-Texture2D<float4> g_PrevNormalRoughness : register(t2);
-Texture2D<float> g_CurrDepth : register(t3);
-Texture2D<float4> g_CurrNormalRoughness : register(t4);
+Texture2D<float4> g_PrevSurfacePositionDepth : register(t1);
+Texture2D<uint4> g_PrevSurfaceMaterial : register(t2);
+Texture2D<float4> g_CurrSurfacePositionDepth : register(t3);
+Texture2D<uint4> g_CurrSurfaceMaterial : register(t4);
 Texture2D<float4> g_Motion : register(t5);
 Texture2D<float4> g_Direct : register(t6); // PT bounce-0 direct (R2 shade)
 
@@ -94,34 +94,16 @@ float2 NdcToUv(float2 ndc)
 
 float3 ReconstructWorldPos(uint2 pixel, float depth)
 {
-    const float2 ndc = PixelToNdc(pixel, g_OutputSize);
-    const float4 worldH = mul(g_InvViewProj, float4(ndc, depth, 1.0));
-    return worldH.xyz / max(worldH.w, 1e-6);
+    (void)depth;
+    return g_CurrSurfacePositionDepth[pixel].xyz;
 }
 
 // Finite-difference geometric normal from PT depth — more stable than RR shading-normal guides
 // for horizon tests and validation-ray origins (Codex R2 lead).
 float3 ReconstructGeometricNormal(uint2 pixel, float depth)
 {
-    const int2 p = int2(pixel);
-    const int2 px = int2(min(pixel.x + 1u, g_OutputSize.x - 1u), pixel.y);
-    const int2 py = int2(pixel.x, min(pixel.y + 1u, g_OutputSize.y - 1u));
-    const float3 pos = ReconstructWorldPos(pixel, depth);
-    const float3 posX = ReconstructWorldPos(uint2(px), g_CurrDepth[px]);
-    const float3 posY = ReconstructWorldPos(uint2(py), g_CurrDepth[py]);
-    float3 geoN = cross(posY - pos, posX - pos);
-    const float lenSq = dot(geoN, geoN);
-    if (lenSq < 1e-12)
-    {
-        return float3(0.0, 1.0, 0.0);
-    }
-    geoN = normalize(geoN);
-    // Face toward camera so grazing/backface depth flips don't invert the offset.
-    if (dot(geoN, normalize(g_CameraPos - pos)) < 0.0)
-    {
-        geoN = -geoN;
-    }
-    return geoN;
+    (void)depth;
+    return RestirUnpackOctNormal(g_CurrSurfaceMaterial[pixel].x);
 }
 
 bool RestirSurfaceSimilar(
@@ -191,6 +173,38 @@ bool RestirSpatialSurfaceSimilar(
     return true;
 }
 
+bool RestirSurfaceRecordsSimilar(
+    float4 currPositionDepth,
+    float4 prevPositionDepth,
+    uint4 currMaterial,
+    uint4 prevMaterial,
+    float depthThreshold,
+    float normalThreshold,
+    float roughnessThreshold)
+{
+    const uint currFlags = currMaterial.z >> 24u;
+    const uint prevFlags = prevMaterial.z >> 24u;
+    if ((currFlags & 1u) == 0u || (prevFlags & 1u) == 0u)
+    {
+        return false;
+    }
+    if (abs(currPositionDepth.w - prevPositionDepth.w)
+        > depthThreshold * max(max(currPositionDepth.w, prevPositionDepth.w), 1e-3))
+    {
+        return false;
+    }
+    if (dot(RestirUnpackOctNormal(currMaterial.y), RestirUnpackOctNormal(prevMaterial.y))
+        < normalThreshold)
+    {
+        return false;
+    }
+    const float currRoughness = f16tof32(currMaterial.w >> 16u);
+    const float prevRoughness = f16tof32(prevMaterial.w >> 16u);
+    return abs(currRoughness - prevRoughness) <= roughnessThreshold
+        && (currMaterial.w & 0xffffu) == (prevMaterial.w & 0xffffu)
+        && (currFlags & 6u) == (prevFlags & 6u);
+}
+
 bool RestirSampleChanged(RestirInitialSample a, RestirInitialSample b)
 {
     return any(abs(a.xs - b.xs) > 1e-3)
@@ -232,29 +246,52 @@ void RestirTemporalRayGen()
         const float2 motion = g_Motion[pixel].xy; // currNdc - prevNdc
         const float2 prevNdc = currNdc - motion;
         const float2 prevUv = NdcToUv(prevNdc);
-        const int2 prevPixel = int2(floor(prevUv * float2(g_OutputSize)));
+        const int2 projectedPrevPixel = int2(floor(prevUv * float2(g_OutputSize)));
+        int2 prevPixel = int2(-1, -1);
+        const int2 fallbackOffsets[5] = {
+            int2(0, 0), int2(1, 0), int2(-1, 0), int2(0, 1), int2(0, -1)};
+        const float4 currSearchSurface = g_CurrSurfacePositionDepth[pixel];
+        const uint4 currSearchMaterial = g_CurrSurfaceMaterial[pixel];
+        [unroll]
+        for (uint fallbackIndex = 0u; fallbackIndex < 5u; ++fallbackIndex)
+        {
+            const int2 candidate = projectedPrevPixel + fallbackOffsets[fallbackIndex];
+            if (candidate.x < 0 || candidate.y < 0
+                || candidate.x >= int(g_OutputSize.x) || candidate.y >= int(g_OutputSize.y))
+            {
+                continue;
+            }
+            if (RestirSurfaceRecordsSimilar(
+                    currSearchSurface,
+                    g_PrevSurfacePositionDepth[candidate],
+                    currSearchMaterial,
+                    g_PrevSurfaceMaterial[candidate],
+                    0.02,
+                    0.9,
+                    0.1))
+            {
+                prevPixel = candidate;
+                break;
+            }
+        }
 
         if (prevPixel.x >= 0 && prevPixel.y >= 0
             && prevPixel.x < int(g_OutputSize.x) && prevPixel.y < int(g_OutputSize.y))
         {
-            const float currDepth = g_CurrDepth[pixel];
-            const float4 currNr = g_CurrNormalRoughness[pixel];
-            const float prevDepth = g_PrevDepth[prevPixel];
-            const float4 prevNr = g_PrevNormalRoughness[prevPixel];
+            const float4 currSurface = g_CurrSurfacePositionDepth[pixel];
+            const uint4 currMaterial = g_CurrSurfaceMaterial[pixel];
+            const float4 prevSurface = g_PrevSurfacePositionDepth[prevPixel];
+            const uint4 prevMaterial = g_PrevSurfaceMaterial[prevPixel];
 
-            if (RestirSurfaceSimilar(
-                    currDepth,
-                    prevDepth,
-                    normalize(currNr.xyz),
-                    normalize(prevNr.xyz),
-                    currNr.w,
-                    prevNr.w))
+            if (RestirSurfaceRecordsSimilar(
+                    currSurface, prevSurface, currMaterial, prevMaterial, 0.02, 0.9, 0.1))
             {
                 const uint prevIndex = uint(prevPixel.y) * g_OutputSize.x + uint(prevPixel.x);
                 RestirReservoir prevRes = g_ReservoirPrev[prevIndex];
                 const uint prevFlags = RestirSampleFlags(prevRes.sample);
 
-                if (prevRes.M > 0u && (prevFlags & kRestirSampleNoReuse) == 0u)
+                if (prevRes.M > 0u && prevRes.age < kRestirAgeCap
+                    && (prevFlags & kRestirSampleNoReuse) == 0u)
                 {
                     // M-cap confidence clamp (restir-pt.md §3).
                     prevRes.M = min(prevRes.M, kRestirMCap);
@@ -267,7 +304,7 @@ void RestirTemporalRayGen()
                     merged.wSum = 0.0;
                     merged.W = 0.0;
                     merged.M = 0u;
-                    merged.pad = 0u;
+                    merged.age = 0u;
 
                     RestirUpdate(
                         merged,
@@ -284,8 +321,8 @@ void RestirTemporalRayGen()
                     RestirFinalizeW(merged);
 
                     // Validation ray: current primary → kept xs (unshadowed p̂; V enters here).
-                    const float3 primaryPos = ReconstructWorldPos(pixel, currDepth);
-                    const float3 primaryN = ReconstructGeometricNormal(pixel, currDepth);
+                    const float3 primaryPos = currSurface.xyz;
+                    const float3 primaryN = RestirUnpackOctNormal(currMaterial.x);
                     const bool visible =
                         RestirValidateConnection(primaryPos, primaryN, merged.sample.xs);
 
@@ -299,6 +336,7 @@ void RestirTemporalRayGen()
                         {
                             outRes = merged;
                             outRes.M = min(max(outRes.M, 1u), kRestirMCap);
+                            outRes.age = min(prevRes.age + 1u, kRestirAgeCap);
                             reused = true;
                         }
                     }
@@ -352,15 +390,16 @@ void RestirSpatialRayGen()
     RestirReservoir outRes = center;
     bool spatialReused = false;
 
-    const float currDepth = g_CurrDepth[pixel];
+    const float currDepth = g_CurrSurfacePositionDepth[pixel].w;
     const bool skipReuse = (centerFlags & kRestirSampleNoReuse) != 0u || center.M == 0u
-        || currDepth >= 0.9999;
+        || currDepth <= 0.0;
 
     if (!skipReuse)
     {
-        const float4 currNr = g_CurrNormalRoughness[pixel];
-        const float3 receiverPos = ReconstructWorldPos(pixel, currDepth);
-        const float3 receiverN = ReconstructGeometricNormal(pixel, currDepth);
+        const float4 currSurface = g_CurrSurfacePositionDepth[pixel];
+        const uint4 currMaterial = g_CurrSurfaceMaterial[pixel];
+        const float3 receiverPos = currSurface.xyz;
+        const float3 receiverN = RestirUnpackOctNormal(currMaterial.x);
 
         // Fresh WRS over center + Jacobian-shifted neighbor contributions.
         RestirReservoir merged;
@@ -368,7 +407,7 @@ void RestirSpatialRayGen()
         merged.wSum = 0.0;
         merged.W = 0.0;
         merged.M = 0u;
-        merged.pad = 0u;
+        merged.age = center.age;
 
         RestirUpdate(
             merged,
@@ -401,15 +440,11 @@ void RestirSpatialRayGen()
                 continue;
             }
 
-            const float neighborDepth = g_CurrDepth[neighborPixel];
-            const float4 neighborNr = g_CurrNormalRoughness[neighborPixel];
-            if (!RestirSpatialSurfaceSimilar(
-                    currDepth,
-                    neighborDepth,
-                    normalize(currNr.xyz),
-                    normalize(neighborNr.xyz),
-                    currNr.w,
-                    neighborNr.w))
+            const float4 neighborSurface = g_CurrSurfacePositionDepth[neighborPixel];
+            const uint4 neighborMaterial = g_CurrSurfaceMaterial[neighborPixel];
+            const float neighborDepth = neighborSurface.w;
+            if (!RestirSurfaceRecordsSimilar(
+                    currSurface, neighborSurface, currMaterial, neighborMaterial, 0.01, 0.95, 0.05))
             {
                 continue;
             }
@@ -423,7 +458,7 @@ void RestirSpatialRayGen()
                 continue;
             }
 
-            const float3 neighborPos = ReconstructWorldPos(uint2(neighborPixel), neighborDepth);
+            const float3 neighborPos = neighborSurface.xyz;
             if (length(neighborPos - receiverPos) > kRestirSpatialMaxPrimaryDistance)
             {
                 continue;
@@ -510,8 +545,8 @@ void RestirSpatialRayGen()
         (void)g_Output;
         (void)g_InitialSample;
         (void)g_Motion;
-        (void)g_PrevDepth;
-        (void)g_PrevNormalRoughness;
+        (void)g_PrevSurfacePositionDepth;
+        (void)g_PrevSurfaceMaterial;
     }
 }
 
