@@ -21,6 +21,7 @@ void RunPtTemporalHistoryTests(int& failures);
 void RunPathRngTests(int& failures);
 void RunRestirTypesTests(int& failures);
 void RunRestirWrsTests(int& failures);
+void RunRestirDiTests(int& failures);
 void RunRestirSurfaceValidationTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
@@ -81,6 +82,7 @@ namespace
         maybeRun("path_rng", [] { RunPathRngTests(test::FailureCount()); });
         maybeRun("restir_types", [] { RunRestirTypesTests(test::FailureCount()); });
         maybeRun("restir_wrs", [] { RunRestirWrsTests(test::FailureCount()); });
+        maybeRun("restir_di", [] { RunRestirDiTests(test::FailureCount()); });
         maybeRun("restir_surface_validation", [] { RunRestirSurfaceValidationTests(test::FailureCount()); });
         maybeRun(
             "dxr_shader_infrastructure",
