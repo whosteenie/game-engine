@@ -760,9 +760,19 @@ namespace
         return false;
     }
 
+    void DrawHierarchyBackgroundContextMenu(
+        const SceneHierarchyPanel& panel,
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard);
+
     void DrawHierarchyInsertGap(
         const SceneHierarchyPanel& panel,
         Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
         int referenceIndex,
         HierarchyInsertMode mode,
         bool bottomStickyEligible = false,
@@ -773,6 +783,11 @@ namespace
         ImGui::InvisibleButton(
             "##HierarchyInsertGap",
             ImVec2(-FLT_MIN, EditorReorderDragDrop::kInsertGapHitHeight));
+
+        if (!IsHierarchyDragActive())
+        {
+            DrawHierarchyBackgroundContextMenu(panel, scene, project, undoStack, clipboard);
+        }
 
         if (ImGui::BeginDragDropTarget())
         {
@@ -799,6 +814,9 @@ namespace
     void DrawHierarchyTransitionInsertGap(
         const SceneHierarchyPanel& panel,
         Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
         int previousIndex,
         float previousRowMinX,
         int currentIndex)
@@ -809,6 +827,11 @@ namespace
         ImGui::InvisibleButton(
             "##HierarchyInsertGap",
             ImVec2(-FLT_MIN, EditorReorderDragDrop::kInsertGapHitHeight));
+
+        if (!IsHierarchyDragActive())
+        {
+            DrawHierarchyBackgroundContextMenu(panel, scene, project, undoStack, clipboard);
+        }
 
         if (ImGui::BeginDragDropTarget())
         {
@@ -893,19 +916,11 @@ namespace
         drawState.rowHits.push_back(HierarchyRowHit{objectIndex, rect});
     }
 
-    // Selection uses a center band of the row, not the full TreeNode rect. ImGui can keep the
-    // full rect "hot" (and steal clicks) past where the hover header is actually painted —
-    // especially into reorder gaps — which previously blocked clear-on-empty-click.
-    bool IsHierarchyRowCenterBandHit(const ImRect& displayRect, const ImVec2& mouse)
+    // Use the painted TreeNode display rect (selection highlight), not the larger interaction
+    // Rect that can spill into reorder gaps. Hit → select; miss → clear empty space.
+    bool IsHierarchyRowHit(const ImRect& displayRect, const ImVec2& mouse)
     {
-        if (mouse.x < displayRect.Min.x || mouse.x > displayRect.Max.x)
-        {
-            return false;
-        }
-
-        const float centerY = (displayRect.Min.y + displayRect.Max.y) * 0.5f;
-        const float halfHeight = displayRect.GetHeight() * 0.28f;
-        return mouse.y >= centerY - halfHeight && mouse.y <= centerY + halfHeight;
+        return displayRect.Contains(mouse);
     }
 
     int FindHierarchyRowHitIndex(
@@ -914,7 +929,7 @@ namespace
     {
         for (const HierarchyRowHit& hit : rowHits)
         {
-            if (IsHierarchyRowCenterBandHit(hit.displayRect, mouse))
+            if (IsHierarchyRowHit(hit.displayRect, mouse))
             {
                 return hit.objectIndex;
             }
@@ -954,6 +969,9 @@ namespace
     void DrawHierarchyLeadingInsertGap(
         const SceneHierarchyPanel& panel,
         Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        EditorClipboard& clipboard,
         int objectIndex,
         const HierarchyDrawState& drawState)
     {
@@ -965,13 +983,23 @@ namespace
             DrawHierarchyTransitionInsertGap(
                 panel,
                 scene,
+                project,
+                undoStack,
+                clipboard,
                 drawState.previousVisibleIndex,
                 drawState.previousRowMinX,
                 objectIndex);
             return;
         }
 
-        DrawHierarchyInsertGap(panel, scene, objectIndex, HierarchyInsertMode::Before);
+        DrawHierarchyInsertGap(
+            panel,
+            scene,
+            project,
+            undoStack,
+            clipboard,
+            objectIndex,
+            HierarchyInsertMode::Before);
     }
 
     void DrawHierarchyBottomDropZone(
@@ -1127,7 +1155,14 @@ namespace
         bool& renameInputEngaged,
         HierarchyDrawState& drawState)
     {
-        DrawHierarchyLeadingInsertGap(panel, scene, objectIndex, drawState);
+        DrawHierarchyLeadingInsertGap(
+            panel,
+            scene,
+            project,
+            undoStack,
+            clipboard,
+            objectIndex,
+            drawState);
 
         const SceneObject& object = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
         const std::vector<int> children = scene.GetChildren(objectIndex);
@@ -1591,6 +1626,9 @@ void SceneHierarchyPanel::Draw(
         DrawHierarchyInsertGap(
             *this,
             scene,
+            project,
+            undoStack,
+            clipboard,
             visibleObjectIndices.back(),
             HierarchyInsertMode::After,
             true,
@@ -1616,8 +1654,9 @@ void SceneHierarchyPanel::Draw(
         }
     }
 
-    // Resolve selection from a tight center-band hit test so reorder gaps / padding
-    // around rows clear instead of counting as object picks.
+    // Left-click in the list: hit a painted row highlight → select; otherwise clear.
+    // Scroll wheel does not clear (not a left click). Scrollbar / panel-resize clicks
+    // land outside InnerRect, so they also leave selection alone.
     if (!IsHierarchyDragActive()
         && m_pendingRenameIndex < 0
         && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
