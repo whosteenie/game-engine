@@ -10,6 +10,7 @@
 #include "engine/rendering/post/PostProcessDraw.h"
 #include "engine/rendering/post/PostProcessTarget.h"
 #include "engine/rendering/post/PathTracerDisplayPass.h"
+#include "engine/rhi/DlssContext.h"
 
 #include "engine/rhi/d3d12/GpuBuffer.h"
 
@@ -362,6 +363,11 @@ public:
     // In-DLSS sharpening (Streamline deprecated; 0 = off). Applied via sl::DLSSOptions::sharpness.
     float GetDlssSharpness() const;
     void SetDlssSharpness(float sharpness);
+
+    // D4: DLSS-RR model preset (Default / transformer D / transformer E). Hot-swappable at runtime
+    // — DLSSDOptions are pushed every frame and Streamline reloads the model when it changes.
+    DlssRrPreset GetRrPreset() const;
+    void SetRrPreset(DlssRrPreset preset);
 
     float GetTaaBlendFactor() const;
     void SetTaaBlendFactor(float factor);
@@ -784,6 +790,7 @@ private:
     DlssPreset m_dlssPreset = DlssPreset::Quality;
     bool m_rayReconstruction = false;
     float m_dlssSharpness = 0.0f;
+    DlssRrPreset m_rrPreset = DlssRrPreset::Default;
     float m_taaBlendFactor = 0.9f;
     float m_giTemporalBlendFactor = 0.9f;
     float m_giDepthThreshold = 0.003f;

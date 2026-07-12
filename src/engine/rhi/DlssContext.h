@@ -20,6 +20,17 @@ enum class DlssQuality
     UltraPerformance,
 };
 
+// DLSS-RR model preset (D4 experiment, devdoc/dxr/pt/rr-gi-diagnosis.md). Maps to sl::DLSSDPreset
+// inside DlssContext.cpp. Presets are plain fields on DLSSDOptions, which we push every frame
+// before evaluate — Streamline hot-swaps the model when the preset changes (one-frame hitch at
+// most; no feature re-creation or app restart needed), so this is safe to A/B live from the UI.
+enum class DlssRrPreset
+{
+    Default = 0,    // driver/SDK default model
+    TransformerD,   // ePresetD — "Default model (transformer)"
+    TransformerE,   // ePresetE — "Latest transformer model"
+};
+
 // Plain-old-data inputs for a single DLSS evaluate. Native pointers are ID3D12Resource*/command list;
 // states are D3D12_RESOURCE_STATES (as uint). Matrices are 16 floats each; the engine passes glm
 // column-major matrices which map byte-for-byte onto Streamline's row-major/row-vector float4x4 (see
@@ -75,6 +86,7 @@ struct DlssFrameInputs
     // instead of Super Resolution: it denoises the raw RT signal in colorInput using the guides
     // below (which MUST be non-null), then upscales/AAs — replacing NRD + the SR model in one pass.
     bool useRayReconstruction = false;
+    DlssRrPreset rrPreset = DlssRrPreset::Default; // D4: RR model preset, hot-swappable per frame
     void* diffuseAlbedo = nullptr;   // kBufferTypeAlbedo         = albedo * (1 - metallic)
     unsigned int diffuseAlbedoState = 0;
     void* specularAlbedo = nullptr;  // kBufferTypeSpecularAlbedo = F0

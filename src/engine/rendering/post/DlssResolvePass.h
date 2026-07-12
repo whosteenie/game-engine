@@ -37,6 +37,7 @@ struct DlssResolvePassInputs
     DlssQuality quality = DlssQuality::DLAA;
     float exposure = 1.0f;
     float dlssSharpness = 0.0f;
+    DlssRrPreset rrPreset = DlssRrPreset::Default; // D4: RR model preset (live A/B)
     int tonemapMode = 0;
 
     bool dlssHistoryValid = false;

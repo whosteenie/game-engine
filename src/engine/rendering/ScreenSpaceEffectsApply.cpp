@@ -304,6 +304,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
         : ToDlssQuality(m_dlssPreset);
     dlssInputs.exposure = m_exposure;
     dlssInputs.dlssSharpness = m_dlssSharpness;
+    dlssInputs.rrPreset = m_rrPreset;
     dlssInputs.tonemapMode = static_cast<int>(m_tonemapMode);
     dlssInputs.dlssHistoryValid = m_dlssHistoryValid;
     dlssInputs.bloomEnabled = m_bloomEnabled;

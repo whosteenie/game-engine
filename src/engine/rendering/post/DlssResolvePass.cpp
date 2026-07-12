@@ -258,6 +258,7 @@ void DlssResolvePass::Execute(
         in.exposureScale = DlssExposureScaleFromEv(inputs.exposure);
         in.preExposure = 1.0f;
         in.sharpness = inputs.dlssSharpness;
+        in.rrPreset = inputs.rrPreset;
 
         const glm::mat4 unjitteredProj = inputs.camera->GetUnjitteredProjectionMatrix();
         const glm::mat4 currViewProj = unjitteredProj * view;

@@ -3233,6 +3233,26 @@ void ScreenSpaceEffects::SetDlssSharpness(const float sharpness)
     }
 }
 
+DlssRrPreset ScreenSpaceEffects::GetRrPreset() const
+{
+    return m_rrPreset;
+}
+
+void ScreenSpaceEffects::SetRrPreset(const DlssRrPreset preset)
+{
+    if (m_rrPreset == preset)
+    {
+        return;
+    }
+    m_rrPreset = preset;
+    // The RR model swaps on the next evaluate; break temporal history so the new network starts
+    // from a clean accumulation instead of inheriting the previous model's history.
+    if (m_antiAliasingMode == AntiAliasingMode::DLAA || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        ResetTaaHistory();
+    }
+}
+
 int ScreenSpaceEffects::GetMsaaSampleCount() const
 {
     return m_msaaSampleCount;
@@ -3310,6 +3330,7 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_dlssPreset = source.m_dlssPreset;
     m_rayReconstruction = source.m_rayReconstruction;
     m_dlssSharpness = source.m_dlssSharpness;
+    m_rrPreset = source.m_rrPreset;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
     m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;

@@ -518,6 +518,18 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     {
         sl::DLSSDOptions rrOptions{};
         rrOptions.mode = ToDlssMode(inputs.quality);
+        // D4: RR model preset. Set every per-mode field so the choice applies regardless of the
+        // active quality mode; Streamline reloads the model internally when this changes.
+        const sl::DLSSDPreset rrPreset =
+            inputs.rrPreset == DlssRrPreset::TransformerD ? sl::DLSSDPreset::ePresetD
+            : inputs.rrPreset == DlssRrPreset::TransformerE ? sl::DLSSDPreset::ePresetE
+            : sl::DLSSDPreset::eDefault;
+        rrOptions.dlaaPreset = rrPreset;
+        rrOptions.qualityPreset = rrPreset;
+        rrOptions.balancedPreset = rrPreset;
+        rrOptions.performancePreset = rrPreset;
+        rrOptions.ultraPerformancePreset = rrPreset;
+        rrOptions.ultraQualityPreset = rrPreset;
         rrOptions.outputWidth = inputs.displayWidth;
         rrOptions.outputHeight = inputs.displayHeight;
         rrOptions.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;

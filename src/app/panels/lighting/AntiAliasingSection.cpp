@@ -297,6 +297,48 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     "    Active - reconstructing RT signal (NRD + SR bypassed).");
             }
 
+            // D4 (rr-gi-diagnosis.md): RR model preset A/B. DLSSDOptions are pushed every frame,
+            // so Streamline hot-swaps the model on change — no restart; history resets on switch.
+            {
+                const bool rrPresetSelectable = rrAvailable && rayReconstruction;
+                if (!rrPresetSelectable)
+                {
+                    ImGui::BeginDisabled();
+                }
+                int rrPresetIndex = static_cast<int>(screenSpaceEffects.GetRrPreset());
+                const char* rrPresetLabels[] = {
+                    "Default (driver)",
+                    "Preset D (transformer)",
+                    "Preset E (latest transformer)"};
+                if (ImGui::Combo(
+                        "RR model preset",
+                        &rrPresetIndex,
+                        rrPresetLabels,
+                        IM_ARRAYSIZE(rrPresetLabels)))
+                {
+                    const auto preset = static_cast<DlssRrPreset>(rrPresetIndex);
+                    ApplyRendererChange(
+                        editContext,
+                        scene,
+                        "RR model preset",
+                        [preset](Scene& target) {
+                            target.GetRenderer().GetScreenSpaceEffects().SetRrPreset(preset);
+                            target.MarkDirty();
+                        });
+                }
+                if (ImGui::IsItemHovered() && rrPresetSelectable)
+                {
+                    ImGui::SetTooltip(
+                        "Ray Reconstruction network to use (Streamline DLSSDPreset). Swaps live on the\n"
+                        "next frame - expect a brief hitch while the new model loads, then a clean\n"
+                        "history rebuild. A/B against GI boiling per rr-gi-diagnosis.md Phase 4 (D4).");
+                }
+                if (!rrPresetSelectable)
+                {
+                    ImGui::EndDisabled();
+                }
+            }
+
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
             UndoableRendererSliderFloat(
                 "DLSS sharpness",
