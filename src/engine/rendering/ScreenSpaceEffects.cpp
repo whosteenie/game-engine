@@ -1965,6 +1965,7 @@ void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
     m_pendingPtBoilMetricReadback = false;
     m_ptBoilMetricValid = false;
     m_ptBoilMetric = 0.0f;
+    m_ptMeanLuminance = 0.0f;
     m_ptTemporalStatsPrevViewProjection = glm::mat4(1.0f);
     for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
     {
@@ -2066,6 +2067,7 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
         {
             const auto* halfChannels = static_cast<const std::uint16_t*>(mapped);
             m_ptBoilMetric = std::max(HalfToFloat(halfChannels[0]), 0.0f);
+            m_ptMeanLuminance = std::max(HalfToFloat(halfChannels[1]), 0.0f);
             m_ptBoilMetricValid = true;
             readAny = true;
             readbackResource->Unmap(0, nullptr);

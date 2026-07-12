@@ -137,6 +137,7 @@ public:
     std::uint32_t GetPathTracerTemporalStatsSampleCount() const { return m_ptTemporalStatsSampleCount; }
     float GetPathTracerBoilMetric() const { return m_ptBoilMetric; }
     bool IsPathTracerBoilMetricValid() const { return m_ptBoilMetricValid; }
+    float GetPathTracerMeanLuminance() const { return m_ptMeanLuminance; }
     void ResetPathTracerTemporalDiagnostics();
     void InvalidateAllTemporalState() const;
     // Motion/object discontinuity without resetting DLSS/TAA jitter history (play stop).
@@ -759,6 +760,7 @@ private:
     mutable bool m_pendingPtBoilMetricReadback = false;
     mutable bool m_ptBoilMetricValid = false;
     mutable float m_ptBoilMetric = 0.0f;
+    mutable float m_ptMeanLuminance = 0.0f;
     mutable glm::mat4 m_ptTemporalStatsPrevViewProjection{1.0f};
     mutable std::array<PtBoilMetricReadbackSlot, 3> m_ptBoilMetricReadbackSlots{};
     mutable std::uint32_t m_ptBoilMetricReadbackWriteIndex = 0;

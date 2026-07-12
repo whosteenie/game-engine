@@ -303,6 +303,8 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
         ? DlssQuality::DLAA
         : ToDlssQuality(m_dlssPreset);
     dlssInputs.exposure = m_exposure;
+    dlssInputs.meanInputLuminance = m_ptMeanLuminance;
+    dlssInputs.meanInputLuminanceValid = m_ptBoilMetricValid;
     dlssInputs.dlssSharpness = m_dlssSharpness;
     dlssInputs.rrPreset = m_rrPreset;
     dlssInputs.tonemapMode = static_cast<int>(m_tonemapMode);

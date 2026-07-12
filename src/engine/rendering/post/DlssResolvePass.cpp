@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <iomanip>
+#include <limits>
+#include <sstream>
 
 namespace
 {
@@ -52,6 +55,37 @@ namespace
     float DlssExposureScaleFromEv(const float exposureEv)
     {
         return std::exp2(exposureEv);
+    }
+
+    void LogRrExposureDiagnosticsOnChange(
+        const float exposureEv,
+        const float exposureScale,
+        const float meanInputLuminance,
+        const bool meanInputLuminanceValid)
+    {
+        static float lastExposureEv = std::numeric_limits<float>::quiet_NaN();
+        static bool lastMeanValid = false;
+        if (exposureEv == lastExposureEv && meanInputLuminanceValid == lastMeanValid)
+        {
+            return;
+        }
+
+        lastExposureEv = exposureEv;
+        lastMeanValid = meanInputLuminanceValid;
+        std::ostringstream message;
+        message << std::fixed << std::setprecision(5)
+                << "tonemap exposure EV=" << exposureEv
+                << ", RR exposureScale=" << exposureScale
+                << ", mean pre-RR luminance=";
+        if (meanInputLuminanceValid)
+        {
+            message << meanInputLuminance;
+        }
+        else
+        {
+            message << "pending";
+        }
+        EngineLog::Breadcrumb("dlss-rr-exposure", message.str());
     }
 
     // DLSS reset on large translation only. Rotation is NOT a cut — valid motion vectors carry
@@ -256,6 +290,14 @@ void DlssResolvePass::Execute(
         in.jitterY = jitterPixels.y;
 
         in.exposureScale = DlssExposureScaleFromEv(inputs.exposure);
+        if (inputs.rayReconstructionActive)
+        {
+            LogRrExposureDiagnosticsOnChange(
+                inputs.exposure,
+                in.exposureScale,
+                inputs.meanInputLuminance,
+                inputs.meanInputLuminanceValid);
+        }
         in.preExposure = 1.0f;
         in.sharpness = inputs.dlssSharpness;
         in.rrPreset = inputs.rrPreset;

@@ -13,6 +13,7 @@ float4 main(PSInput input) : SV_Target
 {
     static const int kSampleSide = 64;
     float sumDelta = 0.0;
+    float sumMeanLuminance = 0.0;
 
     [loop]
     for (int y = 0; y < kSampleSide; ++y)
@@ -21,10 +22,13 @@ float4 main(PSInput input) : SV_Target
         for (int x = 0; x < kSampleSide; ++x)
         {
             const float2 uv = (float2(x, y) + 0.5) / float(kSampleSide);
-            sumDelta += uStatsMap.SampleLevel(uStatsSampler, uv, 0.0).b;
+            const float4 stats = uStatsMap.SampleLevel(uStatsSampler, uv, 0.0);
+            sumDelta += stats.b;
+            sumMeanLuminance += stats.r;
         }
     }
 
     const float meanDelta = sumDelta / float(kSampleSide * kSampleSide);
-    return float4(meanDelta, 0.0, 0.0, 1.0);
+    const float meanLuminance = sumMeanLuminance / float(kSampleSide * kSampleSide);
+    return float4(meanDelta, meanLuminance, 0.0, 1.0);
 }
