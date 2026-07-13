@@ -100,13 +100,31 @@ bool SurfaceCompatible(float4 aPos, uint4 aMat, float4 bPos, uint4 bMat)
     const uint bf = bMat.z >> 24u;
     if ((af & 1u) == 0u || (bf & 1u) == 0u || (af & 6u) != 0u || (bf & 6u) != 0u)
         return false; // invalid, transmission, and delta surfaces always use fresh DI
-    if (abs(aPos.w - bPos.w) > 0.02 * max(max(aPos.w, bPos.w), 1e-3))
+    if (aPos.w <= 0.0 || bPos.w <= 0.0)
         return false;
-    if (dot(RestirUnpackOctNormal(aMat.y), RestirUnpackOctNormal(bMat.y)) < 0.9)
+    // Linear view depth is camera-relative: a forward/back camera translation changes it even for
+    // the exact same static world-space point. Temporal identity is instead same instance/material
+    // plus a small plane/tangent footprint around the motion-reprojected sample.
+    if ((aMat.z & 0x00ffffffu) != (bMat.z & 0x00ffffffu))
+        return false;
+    const float3 aGeomN = RestirUnpackOctNormal(aMat.x);
+    const float3 bGeomN = RestirUnpackOctNormal(bMat.x);
+    if (dot(aGeomN, bGeomN) < 0.9
+        || dot(RestirUnpackOctNormal(aMat.y), RestirUnpackOctNormal(bMat.y)) < 0.9)
         return false;
     if ((aMat.w & 0xffffu) != (bMat.w & 0xffffu))
         return false;
-    return abs(f16tof32(aMat.w >> 16u) - f16tof32(bMat.w >> 16u)) <= 0.1;
+    if (abs(f16tof32(aMat.w >> 16u) - f16tof32(bMat.w >> 16u)) > 0.1)
+        return false;
+
+    const float3 worldDelta = bPos.xyz - aPos.xyz;
+    const float depthScale = max(max(aPos.w, bPos.w), 1.0);
+    const float planeTolerance = max(0.005, 0.0025 * depthScale);
+    if (abs(dot(worldDelta, aGeomN)) > planeTolerance
+        || abs(dot(worldDelta, bGeomN)) > planeTolerance)
+        return false;
+    const float3 tangentDelta = worldDelta - aGeomN * dot(worldDelta, aGeomN);
+    return length(tangentDelta) <= max(0.02, 0.01 * depthScale);
 }
 
 bool SpatialSurfaceCompatible(float4 centerPos, uint4 centerMat, float4 neighborPos, uint4 neighborMat)

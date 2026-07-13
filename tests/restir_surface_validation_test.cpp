@@ -6,6 +6,8 @@ void RunRestirSurfaceValidationTests(int& failures)
 {
     RestirSurfaceValidationRecord surface{};
     surface.linearDepth = 10.0f;
+    surface.worldPosition = {0.0f, 0.0f, 0.0f};
+    surface.geometricNormal = {0.0f, 1.0f, 0.0f};
     surface.shadingNormal = {0.0f, 1.0f, 0.0f};
     surface.roughness = 0.5f;
     surface.materialId = 7u;
@@ -19,9 +21,41 @@ void RunRestirSurfaceValidationTests(int& failures)
 
     auto changed = surface;
     changed.linearDepth = 10.21f;
+    if (!AreRestirSurfacesCompatible(surface, changed))
+    {
+        std::cerr << "FAIL: camera-relative depth change at the same world point must preserve history\n";
+        ++failures;
+    }
+
+    changed = surface;
+    changed.worldPosition = {0.0f, 0.2f, 0.0f};
     if (AreRestirSurfacesCompatible(surface, changed))
     {
-        std::cerr << "FAIL: linear-depth mismatch must reject ReSTIR history\n";
+        std::cerr << "FAIL: world-space surface-plane mismatch must reject ReSTIR history\n";
+        ++failures;
+    }
+
+    changed = surface;
+    changed.worldPosition = {0.2f, 0.0f, 0.0f};
+    if (AreRestirSurfacesCompatible(surface, changed))
+    {
+        std::cerr << "FAIL: excessive tangential reprojection mismatch must reject history\n";
+        ++failures;
+    }
+
+    changed = surface;
+    changed.instanceId = 1u;
+    if (AreRestirSurfacesCompatible(surface, changed))
+    {
+        std::cerr << "FAIL: instance mismatch must reject ReSTIR history\n";
+        ++failures;
+    }
+
+    changed = surface;
+    changed.geometricNormal = {1.0f, 0.0f, 0.0f};
+    if (AreRestirSurfacesCompatible(surface, changed))
+    {
+        std::cerr << "FAIL: geometric-normal mismatch must reject ReSTIR history\n";
         ++failures;
     }
 
