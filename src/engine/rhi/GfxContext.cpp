@@ -2067,10 +2067,9 @@ void GfxContext::WaitForFenceValue(const std::uint64_t fenceValue, const bool pu
             break;
         }
 
-        if (m_window != nullptr && glfwWindowShouldClose(m_window))
-        {
-            break;
-        }
+        // A close request must not weaken the fence guarantee. Shutdown destroys PSOs and
+        // resources immediately after this wait, so returning before the requested value has
+        // completed would release objects that the GPU can still be using.
     }
 }
 

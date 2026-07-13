@@ -60,10 +60,19 @@ inline bool IsInitialEligible(
     const float roughness,
     const float proposalPdf)
 {
-    return enabled && hasSecondary && transmissionWeight <= 0.01f && roughness >= 0.2f
+    return enabled && hasSecondary && transmissionWeight <= 0.01f && roughness > 0.03f
         && proposalPdf > 0.0f && proposalPdf < 1.0e9f && std::isfinite(proposalPdf);
 }
 
+inline bool MatchesExpectedPreviousDepth(
+    const float expectedPreviousDepth,
+    const float actualPreviousDepth,
+    const float relativeThreshold = 0.02f)
+{
+    return expectedPreviousDepth > 0.0f && actualPreviousDepth > 0.0f
+        && std::fabs(actualPreviousDepth - expectedPreviousDepth)
+            <= relativeThreshold * std::max(expectedPreviousDepth, 1e-3f);
+}
 
 // Ouyang/RTXDI reconnection mapping from a previous primary receiver to the current receiver.
 // Values outside the production support window are rejected, not silently clamped into history.

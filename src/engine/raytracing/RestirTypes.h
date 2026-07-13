@@ -16,9 +16,13 @@ struct RestirGiReservoir
     std::uint32_t instanceId = 0;
     std::uint32_t primitiveIndex = 0;
     std::uint32_t padding[2] = {};
+    float initialPosition[3] = {};
+    std::uint32_t initialNormalOct = 0;
+    float initialRadiance[3] = {};
+    float initialWeightSum = 0.0f;
 };
 
-static_assert(sizeof(RestirGiReservoir) == 64, "RestirGiReservoir must be 64 bytes");
+static_assert(sizeof(RestirGiReservoir) == 96, "RestirGiReservoir must be 96 bytes");
 
 // Retired experiment mirrors, kept only for its isolated CPU regression fixture until P8 cleanup.
 struct RestirInitialSample

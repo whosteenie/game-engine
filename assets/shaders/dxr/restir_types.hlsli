@@ -18,6 +18,12 @@ struct RestirGiReservoir
     uint primitiveIndex;
     uint padding0;
     uint padding1;
+    // NVIDIA's final-shading MIS needs the original current-frame GI input after temporal/spatial
+    // resampling. Keeping it with the reservoir avoids subtracting reconstructed fp16 signals.
+    float3 initialPosition;
+    uint initialNormalOct;
+    float3 initialRadiance;
+    float initialWeightSum;
 };
 
 // Layout retained only so the retired restir_stubs.hlsl experiment remains buildable until P8

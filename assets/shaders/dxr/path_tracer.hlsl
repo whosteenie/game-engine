@@ -130,6 +130,7 @@ struct Payload
     // reprojection shimmers under DLSS-RR because perspective needs clip-space interpolation.
     float2 primaryMotionNdc;
     float primaryDepth;
+    float primaryPreviousLinearDepth;
 };
 
 float2 PixelToClipXY(float2 texCoord)
@@ -190,6 +191,7 @@ void ResetPayload(inout Payload payload)
     payload.triangleLod = 0.0;
     payload.primaryMotionNdc = 0.0.xx;
     payload.primaryDepth = 1.0;
+    payload.primaryPreviousLinearDepth = 0.0;
 }
 
 bool PayloadIsHit(Payload payload)
@@ -207,6 +209,7 @@ bool PayloadHitBackFace(Payload payload)
 void ComputeVertexInterpolatedPrimarySurface(
     out float2 motionNdc,
     out float primaryDepth,
+    out float previousLinearDepth,
     uint instanceId,
     uint primitiveIndex,
     float2 barycentrics)
@@ -248,6 +251,9 @@ void ComputeVertexInterpolatedPrimarySurface(
 
     motionNdc = ComputeMotionNdc(currClipUnj, prevClipUnj);
     primaryDepth = saturate(currClipJit.z / max(currClipJit.w, 1e-6));
+    // Perspective clip W is positive linear view depth in this renderer. Unlike direct comparison
+    // of current/previous depths, carrying the expected previous value remains valid under dolly.
+    previousLinearDepth = abs(prevClipUnj.w);
 }
 
 // GGX VNDF half-vector sampling (Heitz 2018) — same as reflections.hlsl.
@@ -1529,6 +1535,7 @@ void PathTracerRayGen()
     bool primaryHit = false;
     float primaryDepth = 1.0;
     float2 primaryMotion = 0.0.xx;
+    float primaryPreviousLinearDepth = 0.0;
     float specHitDistGuide = g_MaxTraceDistance;
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
     float pathConeWidth = 0.0;
@@ -1843,6 +1850,7 @@ void PathTracerRayGen()
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
             primaryMotion = payload.primaryMotionNdc;
+            primaryPreviousLinearDepth = payload.primaryPreviousLinearDepth;
             primaryRoughness = surfaceRoughness;
             primaryDielectricWeight = dielectricWeight;
             primaryWorldPos = hitPos;
@@ -2134,7 +2142,9 @@ void PathTracerRayGen()
         && primaryHit
         && haveInitialSample
         && primaryDielectricWeight <= 0.01
-        && primaryRoughness >= 0.2
+        // Low-but-non-delta lobes remain in-domain. Final shading applies the RTXDI input/output
+        // MIS fallback instead of drawing a binary estimator boundary at roughness 0.2.
+        && primaryRoughness > kPtDeltaSpecularRoughness
         && (sampleFlags & kRestirSampleNoReuse) == 0u
         && samplePdf > 0.0
         && samplePdf < kRestirGiMaxProposalPdf;
@@ -2231,13 +2241,14 @@ void PathTracerRayGen()
         restirBaseRadiance = ClampRadiance(restirBaseRadiance);
     }
     g_DirectOutput[pixel] = float4(restirBaseRadiance, 0.0);
+    float restirLinearViewDepth = 0.0;
     if (primaryHit)
     {
         const uint surfaceFlags = 1u
             | (primaryDielectricWeight > 0.01 ? 2u : 0u)
             | (primaryRoughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
-        const float linearViewDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
-        g_RestirSurfacePositionDepth[pixel] = float4(primaryWorldPos, linearViewDepth);
+        restirLinearViewDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
+        g_RestirSurfacePositionDepth[pixel] = float4(primaryWorldPos, restirLinearViewDepth);
         g_RestirSurfaceMaterial[pixel] = uint4(
             RestirPackOctNormal(primaryGeomNormal),
             RestirPackOctNormal(primaryShadingNormal),
@@ -2253,7 +2264,11 @@ void PathTracerRayGen()
     }
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     g_DepthOutput[pixel] = primaryDepth;
-    g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);
+    // ReSTIR consumes Z as expected previous linear-depth delta. RR consumes XY only.
+    const float previousDepthDelta = primaryHit && primaryPreviousLinearDepth > 0.0
+        ? primaryPreviousLinearDepth - restirLinearViewDepth
+        : 0.0;
+    g_MotionOutput[pixel] = float4(primaryMotion, previousDepthDelta, 1.0);
     g_Metadata[pixel] = primaryHit
         ? uint2(primaryInstanceId + 1u, primaryPrimitiveIndex)
         : uint2(0, 0);
@@ -2369,6 +2384,7 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         ComputeVertexInterpolatedPrimarySurface(
             payload.primaryMotionNdc,
             payload.primaryDepth,
+            payload.primaryPreviousLinearDepth,
             instanceId,
             primitiveIndex,
             attribs.barycentrics);
@@ -2377,5 +2393,6 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     {
         payload.primaryMotionNdc = 0.0.xx;
         payload.primaryDepth = 1.0;
+        payload.primaryPreviousLinearDepth = 0.0;
     }
 }

@@ -65,8 +65,17 @@ void RunRestirGiTests(int& failures)
     expect(!IsInitialEligible(false, true, 0.0f, 0.5f, proposalPdf), "GI disabled must use baseline");
     expect(!IsInitialEligible(true, true, 1.0f, 0.5f, proposalPdf), "GI transmission must use baseline");
     expect(!IsInitialEligible(true, true, 0.0f, 0.03f, proposalPdf), "GI delta/smooth lobe must use baseline");
+    expect(IsInitialEligible(true, true, 0.0f, 0.1f, proposalPdf),
+        "GI glossy input must use final-shading MIS instead of a hard eligibility cutoff");
     expect(IsInitialEligible(true, true, 0.0f, 0.5f, proposalPdf), "GI rough opaque sample must be eligible");
-
+    // Expected previous depth carries the camera translation explicitly. A dolly can therefore
+    // match the same point without comparing two camera-relative depths for equality.
+    expect(
+        MatchesExpectedPreviousDepth(12.0f, 12.1f),
+        "GI expected previous depth must accept a matching dolly-reprojected surface");
+    expect(
+        !MatchesExpectedPreviousDepth(12.0f, 12.5f),
+        "GI expected previous depth must reject the wrong reprojected surface");
     const Float3 secondaryPosition{0.0f, 0.0f, 0.0f};
     const Float3 secondaryNormal{0.0f, 0.0f, 1.0f};
     const Float3 previousPrimary{0.0f, 0.0f, 2.0f};

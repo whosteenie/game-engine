@@ -214,6 +214,10 @@ RestirGiReservoir RestirGiMakeInitialReservoir(
     reservoir.seed = seed;
     reservoir.instanceId = instanceId;
     reservoir.primitiveIndex = primitiveIndex;
+    reservoir.initialPosition = secondaryPosition;
+    reservoir.initialNormalOct = reservoir.normalOct;
+    reservoir.initialRadiance = incomingRadiance;
+    reservoir.initialWeightSum = reservoir.weightSum;
     return reservoir;
 }
 

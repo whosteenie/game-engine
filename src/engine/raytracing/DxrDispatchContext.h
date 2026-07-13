@@ -449,7 +449,8 @@ private:
     ReflectionTexture m_ptPrevRestirSurfaceAlbedoMetallicTexture{};
     bool m_ptPrevSurfaceHistoryValid = false;
 
-    // ReSTIR structured buffers: DI ping-pong plus the independent 64 B P5 GI reservoir.
+    // ReSTIR structured buffers: DI ping-pong plus the independent GI reservoir. The GI record
+    // also retains the current-frame input sample for NVIDIA-style final-shading MIS.
     struct StructuredBufferUav
     {
         ID3D12Resource* resource = nullptr;

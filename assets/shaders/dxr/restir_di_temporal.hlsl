@@ -127,6 +127,20 @@ bool SurfaceCompatible(float4 aPos, uint4 aMat, float4 bPos, uint4 bMat)
     return length(tangentDelta) <= max(0.02, 0.01 * depthScale);
 }
 
+// P6-only expected-depth validation. Motion Z carries
+// previousLinearDepth-currentLinearDepth for the exact primary hit, matching RTXDI's temporal
+// surface contract without comparing camera-relative current/previous depths directly.
+bool GiPrimaryHistoryCompatible(float4 currentPos, float4 previousPos, float depthMotion)
+{
+    const float expectedPreviousDepth = currentPos.w + depthMotion;
+    if (expectedPreviousDepth <= 0.0 || previousPos.w <= 0.0)
+        return false;
+    if (abs(previousPos.w - expectedPreviousDepth)
+        > 0.02 * max(expectedPreviousDepth, 1e-3))
+        return false;
+    return true;
+}
+
 bool SpatialSurfaceCompatible(float4 centerPos, uint4 centerMat, float4 neighborPos, uint4 neighborMat)
 {
     const uint centerFlags = centerMat.z >> 24u;
@@ -481,6 +495,12 @@ RestirGiReservoir GiTemporalResample(
     out bool jacobianRejected)
 {
     RestirGiReservoir output = (RestirGiReservoir)0;
+    // Preserve the original current-frame input through every reuse pass. RTXDI's final-shading
+    // MIS evaluates this sample independently from the selected resampled output.
+    output.initialPosition = fresh.initialPosition;
+    output.initialNormalOct = fresh.initialNormalOct;
+    output.initialRadiance = fresh.initialRadiance;
+    output.initialWeightSum = fresh.initialWeightSum;
     usedHistory = false;
     jacobianRejected = false;
 
@@ -524,15 +544,6 @@ RestirGiReservoir GiTemporalResample(
         usedHistory = previousTargetAtCurrent > 0.0;
     }
 
-    if (output.M > kRestirMCap)
-    {
-        const float capScale = float(kRestirMCap) / float(output.M);
-        output.weightSum *= capScale;
-        freshM *= capScale;
-        previousM *= capScale;
-        output.M = kRestirMCap;
-    }
-
     // RTXDI BASIC temporal bias correction: evaluate the selected sample in both source domains.
     float pi = selectedTarget;
     float piSum = selectedTarget * freshM;
@@ -548,6 +559,13 @@ RestirGiReservoir GiTemporalResample(
     output.weightSum = denominator > 0.0 && isfinite(denominator) && isfinite(pi)
         ? output.weightSum * pi / denominator
         : 0.0;
+    // A shifted sample with no common target support must not erase the valid P5 path that was
+    // removed from g_BaseRadiance. Restore it before final shading, just like visibility failure.
+    if (!GiReservoirValid(output))
+    {
+        usedHistory = false;
+        return fresh;
+    }
     if (selectedPrevious) output.flags |= kRestirGiSampleTemporalReuse;
     else output.flags &= ~kRestirGiSampleTemporalReuse;
     return output;
@@ -578,10 +596,76 @@ float3 ShadeGi(
     const float3 toSecondary = r.position - receiver;
     const float distance = length(toSecondary);
     if (distance <= 0.002) return 0.0.xxx;
+    const float3 wi = normalize(r.position - primaryPosition);
     const float3 bsdfCos = EvaluateBsdfCos(
-        shadingNormal, viewDirection, normalize(r.position - primaryPosition),
+        shadingNormal, viewDirection, wi,
         albedo, metallic, roughness);
     return bsdfCos * max(r.radiance, 0.0.xxx) * r.weightSum;
+}
+
+// NVIDIA RTXDI final-shading MIS. ReSTIR GI intentionally roughens the comparison BRDF to avoid
+// sparse, stable specular samples; the original P5 input receives the complementary weight.
+// Applying the same scalar to the combined diffuse+specular signal is equivalent to the sample's
+// split-BRDF implementation for this renderer's combined output.
+float GiInitialMisWeight(
+    float3 samplePosition,
+    float3 primaryPosition,
+    float3 shadingNormal,
+    float3 viewDirection,
+    float3 albedo,
+    float metallic,
+    float roughness)
+{
+    const float3 toSecondary = samplePosition - primaryPosition;
+    const float distance = length(toSecondary);
+    if (distance <= 0.002) return 0.0;
+    const float3 wi = toSecondary / distance;
+    const float3 trueBsdf = clamp(
+        EvaluateBsdfCos(shadingNormal, viewDirection, wi, albedo, metallic, roughness),
+        0.0.xxx, 1.0e4.xxx);
+    const float3 roughBsdf = clamp(
+        EvaluateBsdfCos(shadingNormal, viewDirection, wi, albedo, metallic, max(roughness, 0.3)),
+        1.0e-4.xxx, 1.0e4.xxx);
+    const float trueLum = RestirDiTargetLuminance(trueBsdf);
+    const float weight = saturate(
+        trueLum / max(RestirDiTargetLuminance(trueBsdf + roughBsdf), 1.0e-8));
+    return weight * weight * weight;
+}
+
+float3 ShadeGiWithInputMis(
+    RestirGiReservoir r,
+    float3 primaryPosition,
+    float3 receiver,
+    float3 geomNormal,
+    float3 shadingNormal,
+    float3 viewDirection,
+    float3 albedo,
+    float metallic,
+    float roughness)
+{
+    if (!GiReservoirValid(r)) return 0.0.xxx;
+
+    const float finalInputWeight = GiInitialMisWeight(
+        r.position, primaryPosition, shadingNormal, viewDirection,
+        albedo, metallic, roughness);
+    const float initialInputWeight = GiInitialMisWeight(
+        r.initialPosition, primaryPosition, shadingNormal, viewDirection,
+        albedo, metallic, roughness);
+
+    const float3 finalRadiance = ShadeGi(
+        r, primaryPosition, receiver, geomNormal, shadingNormal, viewDirection,
+        albedo, metallic, roughness) * (1.0 - finalInputWeight);
+
+    RestirGiReservoir initial = (RestirGiReservoir)0;
+    initial.position = r.initialPosition;
+    initial.normalOct = r.initialNormalOct;
+    initial.radiance = r.initialRadiance;
+    initial.weightSum = r.initialWeightSum;
+    initial.M = r.initialWeightSum > 0.0 ? 1u : 0u;
+    const float3 initialRadiance = ShadeGi(
+        initial, primaryPosition, receiver, geomNormal, shadingNormal, viewDirection,
+        albedo, metallic, roughness) * initialInputWeight;
+    return finalRadiance + initialRadiance;
 }
 
 bool SameLightSample(RestirDiLightSample a, RestirDiLightSample b)
@@ -670,8 +754,10 @@ void RestirTemporalRayGen()
         {
             const RestirGiReservoir previousGi =
                 g_GiReservoirPrev[uint(prevPixel.y) * g_OutputSize.x + uint(prevPixel.x)];
+            const bool giPrimaryHistoryAccepted = GiPrimaryHistoryCompatible(
+                currPos, previousPos, g_Motion[pixel].z);
             outputGi = GiTemporalResample(
-                freshGi, previousGi, true, pixel,
+                freshGi, previousGi, giPrimaryHistoryAccepted, pixel,
                 hitPosition, n, v, am.rgb, am.a, roughness,
                 previousPos.xyz, previousN, previousV,
                 previousAm.rgb, previousAm.a, previousRoughness,
@@ -707,7 +793,7 @@ void RestirTemporalRayGen()
         float3 radiance = g_BaseRadiance[pixel].rgb
             + ShadeDomain(outputSet.emissive, receiver, geomN, n, v, am.rgb, am.a, roughness)
             + ShadeDomain(outputSet.environment, receiver, geomN, n, v, am.rgb, am.a, roughness)
-            + ShadeGi(outputGi, hitPosition, receiver, geomN, n, v,
+            + ShadeGiWithInputMis(outputGi, hitPosition, receiver, geomN, n, v,
                 am.rgb, am.a, roughness);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
@@ -971,7 +1057,8 @@ void RestirSpatialRayGen()
                 centerAm.rgb, centerAm.a, centerRoughness)
             + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
-            + ShadeGi(temporalGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
+            + ShadeGiWithInputMis(
+                temporalGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
