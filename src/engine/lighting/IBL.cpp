@@ -469,6 +469,7 @@ void IBL::DestroyEnvImportanceCdf()
     m_envImportanceCdfWidth = 0;
     m_envImportanceCdfHeight = 0;
     m_envImportanceWeightSum = 0.0f;
+    m_envDirectLightingLuminanceClamp = 0.0f;
 }
 
 void IBL::BuildAndUploadEnvImportanceCdf(
@@ -579,6 +580,7 @@ void IBL::BuildAndUploadEnvImportanceCdf(
     m_envImportanceCdfWidth = build.cdfWidth;
     m_envImportanceCdfHeight = build.cdfHeight;
     m_envImportanceWeightSum = build.weightSum;
+    m_envDirectLightingLuminanceClamp = build.directLightingLuminanceClamp;
 }
 
 void IBL::DestroyResources()

@@ -38,7 +38,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     // F2 path-tracer-only: emissive NEE (zero for non-PT dispatches).
     uint g_EmissiveLightCount;
     float g_EmissiveLightPickWeightSum;
-    float g_PtBloomHaloIntensity;
+    float _PadPtEmissiveTransport; // bloom is post-process only; never scales physical emission
     float _PadPtEmissiveNee; // path-tracer-only: radiance isolate mode (see RenderDebug.h)
     // PT-A: dual-frame refracted motion vectors (devdoc/dxr/pt/transmission-rr-guides.md).
     float4x4 g_PrevInvViewProj;
@@ -47,7 +47,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     // F2 environment importance sampling (path tracer only).
     uint g_EnvLightImportanceCount;
     uint g_EnvIsCdfWidth;
-    float g_EnvLightImportanceInvWeightSum;
+    float g_EnvDirectLightingLuminanceClamp;
     uint g_EnvIsCdfHeight;
     // ReSTIR DI initial sampling (roadmap P2). .x = per-category candidate count (0 = off), rest pad.
     float4 g_PtRestirDiParams;

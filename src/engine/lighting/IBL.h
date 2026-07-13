@@ -52,6 +52,7 @@ public:
     int GetEnvImportanceCdfWidth() const { return m_envImportanceCdfWidth; }
     int GetEnvImportanceCdfHeight() const { return m_envImportanceCdfHeight; }
     float GetEnvImportanceWeightSum() const { return m_envImportanceWeightSum; }
+    float GetEnvDirectLightingLuminanceClamp() const { return m_envDirectLightingLuminanceClamp; }
 
     void ReloadFromHdr(const char* hdrPath, float rotationYRadians = 0.0f);
 
@@ -139,4 +140,5 @@ private:
     int m_envImportanceCdfWidth = 0;
     int m_envImportanceCdfHeight = 0;
     float m_envImportanceWeightSum = 0.0f;
+    float m_envDirectLightingLuminanceClamp = 0.0f;
 };

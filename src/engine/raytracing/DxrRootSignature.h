@@ -69,7 +69,7 @@ struct ReflectionDispatchConstants
     // F2 path-tracer-only: emissive NEE light list (t15). Zero for non-PT dispatches.
     std::uint32_t emissiveLightCount = 0;
     float emissiveLightPickWeightSum = 0.0f;
-    float ptBloomHaloIntensity = 0.0f;
+    float paddingPtEmissiveTransport = 0.0f;
     float ptDebugIsolateMode = 0.0f; // path-tracer-only radiance term isolation (see RenderDebug.h)
     // PT-A transmission virtual motion: previous unjittered frustum + camera for dual-frame refract MV.
     float prevInvViewProj[16] = {};
@@ -79,7 +79,7 @@ struct ReflectionDispatchConstants
     // F2 path-tracer-only: environment importance sampling (t16 CDF + t17 HDR equirect).
     std::uint32_t envLightImportanceCount = 0;
     std::uint32_t envIsCdfWidth = 0;
-    float envLightImportanceInvWeightSum = 0.0f;
+    float envDirectLightingLuminanceClamp = 0.0f;
     std::uint32_t envIsCdfHeight = 0;
     // ReSTIR DI initial sampling (roadmap P2): per-category candidate count. 0 = off (plain NEE).
     // 1 = one emissive + one env candidate — byte-exact parity with DI off (A/B validation anchor).

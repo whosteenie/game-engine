@@ -57,6 +57,7 @@ public:
         std::uint32_t envImportanceCdfWidth = 0;
         std::uint32_t envImportanceCdfHeight = 0;
         float envImportanceWeightSum = 0.0f;
+        float envDirectLightingLuminanceClamp = 0.0f;
         // ReSTIR DI initial sampling (roadmap P2): per-category candidate count, 0 = off (plain NEE).
         std::uint32_t restirDiCandidateCount = 0;
     };
@@ -85,7 +86,6 @@ public:
         bool ptFireflyClamp,
         float ptAmbientStrength,
         int ptAmbientAoRayCount,
-        float ptBloomHaloIntensity = 0.0f,
         int ptDebugIsolateMode = 0);
 
     void Release();

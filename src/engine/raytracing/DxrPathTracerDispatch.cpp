@@ -62,7 +62,6 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool ptFireflyClamp,
     const float ptAmbientStrength,
     const int ptAmbientAoRayCount,
-    const float ptBloomHaloIntensity,
     const int ptDebugIsolateMode)
 {
     m_dispatchedThisFrame = false;
@@ -112,13 +111,18 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     SceneRenderTrace::Scope dispatchScope("dxr-dispatch-path-tracer");
 
     const glm::mat4 viewMatrix = camera.GetViewMatrix();
-    const glm::mat4 projectionMatrix = camera.GetProjectionMatrix();
     const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+    // Real-time primaries use the camera's Halton-jittered projection and pixel centers so the
+    // rendered sample matches the jitter reported to RR. Reference primaries generate their own
+    // uniform subpixel sample in PathTracerRayGen; composing camera jitter as well convolves two
+    // distributions and leaks samples outside the pixel footprint, preventing correct convergence.
+    const glm::mat4 projectionMatrix = frameInputs.centerPrimaryRays
+        ? camera.GetProjectionMatrix()
+        : unjitteredProjection;
     const glm::mat4 viewProj = projectionMatrix * viewMatrix;
     const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
-    // Primary rays reconstruct from the jittered frustum. In real-time PT the shader uses the pixel
-    // center and the projection matrix supplies the Halton offset that DLSS/RR is told about; in
-    // reference mode the shader adds its own sub-pixel offset on top of the current projection.
+    // Real-time reconstructs from the jittered frustum. Reference reconstructs from the unjittered
+    // frustum and supplies exactly one shader-side subpixel sample.
     // Motion vectors still use g_UnjitteredViewProj below (motionVectorsJittered = false).
     const glm::mat4 invViewProj = glm::inverse(viewProj);
     // g_PrevViewProj (MV output projection + sky anchor): prev UNJITTERED — jitter must never
@@ -202,7 +206,6 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         frameInputs.motionHistoryValid ? 1.0f : 0.0f;
     constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
-    constants.ptBloomHaloIntensity = std::max(ptBloomHaloIntensity, 0.0f);
     constants.ptDebugIsolateMode =
         static_cast<float>(std::clamp(ptDebugIsolateMode, 0, kPtDebugIsolateModeMax));
     constants.sunAngularTanRadius = std::tan(
@@ -221,10 +224,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.envLightImportanceCount = frameInputs.envImportanceSampleCount;
     constants.envIsCdfWidth = frameInputs.envImportanceCdfWidth;
     constants.envIsCdfHeight = frameInputs.envImportanceCdfHeight;
-    constants.envLightImportanceInvWeightSum =
-        frameInputs.envImportanceWeightSum > 0.0f
-            ? 1.0f / frameInputs.envImportanceWeightSum
-            : 0.0f;
+    constants.envDirectLightingLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
     constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};

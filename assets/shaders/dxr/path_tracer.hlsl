@@ -603,21 +603,6 @@ float BalanceHeuristic(float pdfA, float pdfB)
     return denom > 1e-6 ? pdfA / denom : 1.0;
 }
 
-// SSR injects previous-frame bloom into reflected scene color (ssr_scene_color.ps.hlsl). PT traces
-// emissive directly, so approximate display bloom on emissive sources for mirror/reflection paths.
-float3 EmissiveWithBloomHalo(float3 emissive)
-{
-    if (g_PtBloomHaloIntensity <= 0.0)
-    {
-        return emissive;
-    }
-
-    const float lum = max(emissive.r, max(emissive.g, emissive.b));
-    const float knee = max(lum - 1.0, 0.0);
-    const float halo = knee * knee * g_PtBloomHaloIntensity * 2.0;
-    return emissive + emissive * (halo / max(lum, 1e-4));
-}
-
 float EmissiveLightPickPdf(uint instanceId)
 {
     if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0)
@@ -935,7 +920,7 @@ float3 EvaluateDirectEmissive(
     const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
     const float geometryTerm = cosThetaEmitter / dist2;
 
-    return bsdf * EmissiveWithBloomHalo(light.emissive) * geometryTerm * visibility * misWeight
+    return bsdf * light.emissive * geometryTerm * visibility * misWeight
         / max(pickPdf * pdfArea, 1e-8);
 }
 
@@ -1085,7 +1070,7 @@ void SampleEmissiveDiCandidate(
 
     // f = BSDF·emissive·MIS (the directional integrand × MIS, visibility excluded). With
     // proposalPdf = pdfSolidAngle, M=1 gives f·V/pdfSolidAngle == EvaluateDirectEmissive.
-    contribution = bsdf * EmissiveWithBloomHalo(light.emissive) * misWeight;
+    contribution = bsdf * light.emissive * misWeight;
     shadowDist = dist - 0.001;
     proposalPdf = pdfSolidAngle;
 }
@@ -1577,7 +1562,13 @@ void PathTracerRayGen()
                 const float envMisPdf = EnvNeePdfForDirection(ray.Direction);
                 const float envMisWeight =
                     envMisPdf > 0.0 ? BalanceHeuristic(lastScatterPdf, envMisPdf) : 1.0;
-                missRadiance = SampleEnvEquirectRadiance(ray.Direction) * envMisWeight;
+                // Camera rays retain the authored HDR background. Scattered transport removes an
+                // embedded HDR sun when the analytic sun is active, preventing two directional
+                // lights and two shadows while keeping the importance PDF conservative.
+                const float3 envRadiance = bounce == 0u
+                    ? SampleEnvEquirectRadiance(ray.Direction)
+                    : ClampEmbeddedSunForTransport(SampleEnvEquirectRadiance(ray.Direction));
+                missRadiance = envRadiance * envMisWeight;
             }
             else if (addEnvOnMiss)
             {
@@ -1667,7 +1658,7 @@ void PathTracerRayGen()
                     emitterPickPdf, emitterArea, payload.hitDistance * payload.hitDistance, cosEmitter)
                 : 0.0;
             const float misHit = pdfNee > 0.0 ? BalanceHeuristic(lastScatterPdf, pdfNee) : 1.0;
-            const float3 surfaceEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor) * misHit;
+            const float3 surfaceEmissive = surfaceEmissiveColor * misHit;
             const float3 emissiveContrib = throughput * surfaceEmissive;
             if (inTail)
             {
@@ -1785,7 +1776,7 @@ void PathTracerRayGen()
             directRadiance += ambientPathContrib;
             termAmbient += ambientPathContrib;
 
-            const float3 visibleEmissive = EmissiveWithBloomHalo(surfaceEmissiveColor);
+            const float3 visibleEmissive = surfaceEmissiveColor;
             const float3 visibleEmissiveContrib = throughput * visibleEmissive;
             directRadiance += visibleEmissiveContrib;
             termSurfaceEmissive += visibleEmissiveContrib;

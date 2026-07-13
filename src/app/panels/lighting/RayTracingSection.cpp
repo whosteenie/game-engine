@@ -347,13 +347,12 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             {
                 const std::uint32_t spp =
                     scene.GetRenderer().GetScreenSpaceEffects().GetPathTracerAccumSampleCount();
-                if (spp >= 64u)
+                if (spp > 0u)
                 {
-                    ImGui::TextDisabled("    Reference: %u spp (converged)", spp);
-                }
-                else if (spp > 0u)
-                {
-                    ImGui::TextDisabled("    Reference: %u spp (converging...)", spp);
+                    // Spp alone cannot prove convergence; high-dynamic-range paths can retain
+                    // measurable variance for thousands of samples. Never label this converged
+                    // without an actual confidence/variance criterion.
+                    ImGui::TextDisabled("    Reference: %u spp (accumulating...)", spp);
                 }
                 else
                 {

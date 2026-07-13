@@ -71,6 +71,20 @@ float3 SampleEnvEquirectRadiance(float3 direction)
     return g_EnvEquirectMap.SampleLevel(g_LinearClampSampler, uv, 0.0).rgb * g_EnvironmentIntensity;
 }
 
+bool AnalyticSunActiveForEnvNee();
+
+float3 ClampEmbeddedSunForTransport(float3 radiance)
+{
+    if (!AnalyticSunActiveForEnvNee() || g_EnvDirectLightingLuminanceClamp <= 0.0)
+    {
+        return radiance;
+    }
+
+    const float luminance = Luminance(radiance);
+    const float scale = min(1.0, g_EnvDirectLightingLuminanceClamp / max(luminance, 1e-6));
+    return radiance * scale;
+}
+
 // When the analytic sun is active, it owns its angular cone — the HDR still contains a sun disk,
 // so env NEE must not re-light that region (double sun + mismatched shadow directions).
 bool AnalyticSunActiveForEnvNee()
@@ -100,7 +114,7 @@ float3 EnvNeeRadiance(float3 wi)
     {
         return 0.0.xxx;
     }
-    return SampleEnvEquirectRadiance(wi);
+    return ClampEmbeddedSunForTransport(SampleEnvEquirectRadiance(wi));
 }
 
 // Env NEE sampling density along an arbitrary direction — the MIS partner the BSDF-sampling (miss)
@@ -124,7 +138,7 @@ bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle)
     wi = float3(0.0, 1.0, 0.0);
     pdfSolidAngle = 0.0;
 
-    if (g_EnvLightImportanceCount == 0u || g_EnvLightImportanceInvWeightSum <= 0.0)
+    if (g_EnvLightImportanceCount == 0u)
     {
         return false;
     }

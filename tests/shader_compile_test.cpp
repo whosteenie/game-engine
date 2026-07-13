@@ -35,6 +35,13 @@ namespace
         const HlslCompileResult result = CompileHlsl(source, relativePath, entry, profile);
         test::ExpectTrue(result.shader != nullptr, message);
     }
+
+    void ExpectShaderLibraryCompiles(const char* relativePath, const char* message)
+    {
+        const std::string source = ReadShaderFile(relativePath);
+        const HlslCompileResult result = CompileHlslLibrary(source, relativePath);
+        test::ExpectTrue(result.shader != nullptr, message);
+    }
 #endif
 }
 
@@ -85,6 +92,9 @@ void RunShaderCompileTests()
             "main",
             "ms_6_5",
             "scene_shadow.ms.hlsl should compile");
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/path_tracer.hlsl",
+            "path_tracer.hlsl DXR library should compile");
     }
     catch (const std::exception& exception)
     {

@@ -29,8 +29,16 @@ namespace
 
         const float clampedU = std::clamp(u, 0.0f, 1.0f);
         const float clampedV = std::clamp(v, 0.0f, 1.0f);
-        const float x = clampedU * static_cast<float>(width - 1);
-        const float y = clampedV * static_cast<float>(height - 1);
+        // Match D3D normalized coordinates with a linear-clamp sampler. Texel centers are at
+        // (i + 0.5) / dimension; u * (dimension - 1) shifts the CDF lookup by almost half a texel.
+        const float x = std::clamp(
+            clampedU * static_cast<float>(width) - 0.5f,
+            0.0f,
+            static_cast<float>(width - 1));
+        const float y = std::clamp(
+            clampedV * static_cast<float>(height) - 0.5f,
+            0.0f,
+            static_cast<float>(height - 1));
 
         const int x0 = static_cast<int>(std::floor(x));
         const int y0 = static_cast<int>(std::floor(y));
@@ -100,6 +108,7 @@ EnvImportanceSamplingBuildResult BuildEquirectEnvImportanceCdf(
     const std::size_t cellCount =
         static_cast<std::size_t>(result.cdfWidth) * static_cast<std::size_t>(result.cdfHeight);
     std::vector<float> weights(cellCount, 0.0f);
+    std::vector<float> luminances(cellCount, 0.0f);
 
     for (int y = 0; y < result.cdfHeight; ++y)
     {
@@ -112,24 +121,19 @@ EnvImportanceSamplingBuildResult BuildEquirectEnvImportanceCdf(
             const std::size_t index =
                 static_cast<std::size_t>(y) * static_cast<std::size_t>(result.cdfWidth) +
                 static_cast<std::size_t>(x);
-            weights[index] = Luminance(radiance.r, radiance.g, radiance.b) * cosLat;
+            luminances[index] = Luminance(radiance.r, radiance.g, radiance.b);
+            weights[index] = luminances[index] * cosLat;
         }
     }
 
-    // Clamp hot HDR sun pixels out of the IS table — the analytic sun NEE handles the disk.
-    // Without this the CDF over-samples the env sun and fights g_SunDirection (double shadows).
-    if (!weights.empty())
-    {
-        std::vector<float> sorted = weights;
-        std::sort(sorted.begin(), sorted.end());
-        const std::size_t percentileIndex =
-            std::min(sorted.size() - 1, sorted.size() * 95 / 100);
-        const float lumClamp = std::max(sorted[percentileIndex], 1.0f);
-        for (float& weight : weights)
-        {
-            weight = std::min(weight, lumClamp);
-        }
-    }
+    // Separate an embedded HDR sun from the sky without corrupting the importance PDF. The CDF
+    // retains the original, conservative HDR weights; the shader applies this threshold only to
+    // transport when an analytic sun is active.
+    std::vector<float> sortedLuminances = luminances;
+    std::sort(sortedLuminances.begin(), sortedLuminances.end());
+    const std::size_t percentileIndex =
+        std::min(sortedLuminances.size() - 1, sortedLuminances.size() * 95 / 100);
+    result.directLightingLuminanceClamp = std::max(sortedLuminances[percentileIndex], 1.0f);
 
     result.cdf.resize(cellCount + 1);
     result.cdf[0] = 0.0f;
@@ -147,6 +151,7 @@ EnvImportanceSamplingBuildResult BuildEquirectEnvImportanceCdf(
         result.cdfWidth = 0;
         result.cdfHeight = 0;
         result.weightSum = 0.0f;
+        result.directLightingLuminanceClamp = 0.0f;
         return result;
     }
 

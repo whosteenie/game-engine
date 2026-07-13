@@ -10,6 +10,9 @@ struct EnvImportanceSamplingBuildResult
     int cdfWidth = 0;
     int cdfHeight = 0;
     float weightSum = 0.0f;
+    // 95th-percentile sky luminance used to remove embedded HDR suns from transport when the
+    // renderer supplies an analytic sun. The visible background remains unchanged.
+    float directLightingLuminanceClamp = 0.0f;
 };
 
 // Luminance-weighted equirect importance table (sin(latitude) solid-angle Jacobian).

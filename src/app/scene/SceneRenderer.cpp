@@ -873,6 +873,7 @@ void SceneRenderer::RecordDxrPass(
             ptInputs.envImportanceCdfWidth = static_cast<std::uint32_t>(ptIbl.GetEnvImportanceCdfWidth());
             ptInputs.envImportanceCdfHeight = static_cast<std::uint32_t>(ptIbl.GetEnvImportanceCdfHeight());
             ptInputs.envImportanceWeightSum = ptIbl.GetEnvImportanceWeightSum();
+            ptInputs.envDirectLightingLuminanceClamp = ptIbl.GetEnvDirectLightingLuminanceClamp();
         }
         {
             const IrradianceSh9& ptSh9 = ptIbl.GetIrradianceSh9();
@@ -954,9 +955,6 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.IsPtFireflyClampEnabled(),
             m_dxrSettings.GetPtAmbientStrength(),
             m_dxrSettings.GetPtAmbientAoRayCount(),
-            m_activeScreenSpaceEffects->IsBloomEnabled()
-                ? m_activeScreenSpaceEffects->GetBloomIntensity()
-                : 0.0f,
             PtDebugIsolateModeFromRenderDebug(debugMode));
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled end");
 

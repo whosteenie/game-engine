@@ -59,6 +59,31 @@ void RunEnvImportanceTests()
         maxDelta > 1.0f / static_cast<float>(width * height),
         "Bright texel IS weight exceeds uniform");
 
+    // Preserve the full HDR ratio in the sampling probabilities. Clamping the hot-cell weight
+    // while evaluating unclamped radiance severely undersamples that cell and creates fireflies.
+    std::vector<float> highDynamicRange(static_cast<std::size_t>(width * height * 4), 1.0f);
+    const std::size_t hotCell = static_cast<std::size_t>(brightY * width + brightX);
+    highDynamicRange[hotCell * 4 + 0] = 1000.0f;
+    highDynamicRange[hotCell * 4 + 1] = 1000.0f;
+    highDynamicRange[hotCell * 4 + 2] = 1000.0f;
+
+    const EnvImportanceSamplingBuildResult hdrBuild =
+        BuildEquirectEnvImportanceCdf(highDynamicRange, width, height, width, height);
+    const std::size_t neighborCell = hotCell + 1;
+    const float hotProbability = hdrBuild.cdf[hotCell + 1] - hdrBuild.cdf[hotCell];
+    const float neighborProbability =
+        hdrBuild.cdf[neighborCell + 1] - hdrBuild.cdf[neighborCell];
+    test::ExpectNear(
+        hotProbability / neighborProbability,
+        1000.0f,
+        0.5f,
+        "Env CDF preserves HDR radiance ratio");
+    test::ExpectNear(
+        hdrBuild.directLightingLuminanceClamp,
+        1.0f,
+        1e-6f,
+        "Embedded-sun transport clamp follows ordinary sky luminance");
+
     const EnvImportanceSamplingBuildResult empty =
         BuildEquirectEnvImportanceCdf({}, 0, 0);
     test::ExpectTrue(empty.cdf.empty(), "Empty HDR yields no CDF");
