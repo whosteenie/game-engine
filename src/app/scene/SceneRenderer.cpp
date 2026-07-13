@@ -1367,6 +1367,29 @@ void SceneRenderer::RenderPostProcessPass(
         gridScope.Success();
     }
 
+    // PT frame data consumed by RecordDxrPass. UploadEmissiveLights also refreshes the
+    // SceneHasTransmission flag that selects Fresnel/refractive NEE shadows instead of the opaque
+    // any-hit fast path. These calls were lost during the render-pass refactor.
+    if (pathTracingActive && m_dxrAccelerationStructures != nullptr)
+    {
+        if (!m_gpuScene.GetInstances().empty())
+        {
+            std::vector<glm::mat4> previousWorldMatrices;
+            previousWorldMatrices.reserve(m_gpuScene.GetInstances().size());
+            for (const GpuSceneInstanceRecord& instance : m_gpuScene.GetInstances())
+            {
+                previousWorldMatrices.push_back(instance.prevWorld);
+            }
+            m_dxrAccelerationStructures->UploadPrevInstanceTransforms(
+                previousWorldMatrices,
+                GfxContext::Get().GetCommandList());
+        }
+        m_dxrAccelerationStructures->UploadEmissiveLights(
+            scene,
+            m_gpuScene,
+            GfxContext::Get().GetCommandList());
+    }
+
     RecordDxrPass(
         scene,
         camera,
