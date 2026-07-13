@@ -66,4 +66,42 @@ void RunRestirGiTests(int& failures)
     expect(!IsInitialEligible(true, true, 1.0f, 0.5f, proposalPdf), "GI transmission must use baseline");
     expect(!IsInitialEligible(true, true, 0.0f, 0.03f, proposalPdf), "GI delta/smooth lobe must use baseline");
     expect(IsInitialEligible(true, true, 0.0f, 0.5f, proposalPdf), "GI rough opaque sample must be eligible");
+
+    const Float3 secondaryPosition{0.0f, 0.0f, 0.0f};
+    const Float3 secondaryNormal{0.0f, 0.0f, 1.0f};
+    const Float3 previousPrimary{0.0f, 0.0f, 2.0f};
+    expect(
+        Near(TemporalJacobian(
+            secondaryPosition, secondaryNormal, previousPrimary, previousPrimary), 1.0f),
+        "GI equal-geometry temporal Jacobian must be one");
+    expect(
+        Near(TemporalJacobian(
+            secondaryPosition, secondaryNormal, previousPrimary, Float3{0.0f, 0.0f, 1.0f}), 4.0f),
+        "GI half-distance temporal Jacobian must be four");
+    expect(
+        TemporalJacobian(
+            secondaryPosition, secondaryNormal, previousPrimary, Float3{0.0f, 0.0f, -2.0f}) == 0.0f,
+        "GI opposite secondary-normal support must reject temporal history");
+    expect(
+        TemporalJacobian(
+            secondaryPosition, secondaryNormal, previousPrimary, Float3{0.0f, 0.0f, 0.25f}) == 0.0f,
+        "GI out-of-policy temporal Jacobian must reject rather than clamp");
+
+    // With equal current/previous target densities and UCWs, RTXDI BASIC normalization preserves
+    // the original inverse PDF while carrying source confidence M.
+    constexpr float target = 2.0f;
+    constexpr float previousM = 5.0f;
+    const float initialUcw = InitialUcw(proposalPdf);
+    const float streamedWeight = target * initialUcw * (1.0f + previousM);
+    expect(
+        Near(FinalizeTemporalBasic(
+            streamedWeight, target, target, 1.0f, previousM, false), initialUcw),
+        "GI BASIC temporal normalization must preserve stationary M=1 expected weight");
+    expect(
+        Near(FinalizeTemporalBasic(
+            streamedWeight, target, target, 1.0f, previousM, true), initialUcw),
+        "GI BASIC normalization must be selection-invariant for equal domains");
+    expect(
+        FinalizeTemporalBasic(streamedWeight, 0.0f, target, 1.0f, previousM, true) == 0.0f,
+        "GI zero current-domain support must finalize to zero");
 }

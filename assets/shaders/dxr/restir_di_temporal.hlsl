@@ -29,7 +29,9 @@ cbuffer RestirTemporalConstants : register(b0)
     float3 g_SunDirection;
     float g_SunAngularTanRadius;
     uint g_DebugMode;
-    uint3 _PadDebug;
+    uint g_EnableDiTemporal;
+    uint g_EnableGiTemporal;
+    uint _PadDebug;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
@@ -70,8 +72,9 @@ SamplerState g_LinearClampSampler : register(s0);
 
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirCurrent : register(u0);
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirPrev : register(u1);
-RWStructuredBuffer<RestirGiReservoir> g_UnusedGiReservoir : register(u2);
+RWStructuredBuffer<RestirGiReservoir> g_GiReservoirCurrent : register(u2);
 RWTexture2D<float4> g_Output : register(u3);
+RWStructuredBuffer<RestirGiReservoir> g_GiReservoirPrev : register(u4);
 
 struct Payload { uint hit; };
 
@@ -363,10 +366,216 @@ float3 ShadeDomain(
     return f * r.W * Visibility(receiver, geomN, wi, dist);
 }
 
+bool GiReservoirValid(RestirGiReservoir r)
+{
+    return r.M > 0u && r.weightSum > 0.0 && isfinite(r.weightSum)
+        && (r.flags & kRestirSampleNoReuse) == 0u
+        && all(isfinite(r.position)) && all(isfinite(r.radiance));
+}
+
+float GiTarget(
+    RestirGiReservoir r,
+    float3 primaryPosition,
+    float3 primaryNormal,
+    float3 primaryView,
+    float3 albedo,
+    float metallic,
+    float roughness)
+{
+    if (!GiReservoirValid(r)) return 0.0;
+    const float3 toSecondary = r.position - primaryPosition;
+    const float distance = length(toSecondary);
+    if (distance <= 1e-4) return 0.0;
+    const float3 wi = toSecondary / distance;
+    const float3 bsdfCos = EvaluateBsdfCos(
+        primaryNormal, primaryView, wi, albedo, metallic, roughness);
+    return RestirDiTargetLuminance(bsdfCos * max(r.radiance, 0.0.xxx));
+}
+
+float GiTemporalJacobian(
+    RestirGiReservoir r, float3 previousPrimary, float3 currentPrimary)
+{
+    const float3 secondaryNormal = RestirUnpackOctNormal(r.normalOct);
+    const float3 toPrevious = previousPrimary - r.position;
+    const float3 toCurrent = currentPrimary - r.position;
+    const float previousDistance = length(toPrevious);
+    const float currentDistance = length(toCurrent);
+    if (previousDistance <= 1e-4 || currentDistance <= 1e-4) return 0.0;
+    const float previousCos = dot(secondaryNormal, toPrevious / previousDistance);
+    const float currentCos = dot(secondaryNormal, toCurrent / currentDistance);
+    if (previousCos <= 1e-4 || currentCos <= 1e-4) return 0.0;
+    const float jacobian = (currentCos / previousCos)
+        * ((previousDistance * previousDistance) / (currentDistance * currentDistance));
+    if (!isfinite(jacobian)
+        || jacobian < kRestirJacobianMin || jacobian > kRestirJacobianMax)
+    {
+        return 0.0;
+    }
+    return jacobian;
+}
+
+void GiCopySelectedSample(inout RestirGiReservoir destination, RestirGiReservoir source)
+{
+    destination.position = source.position;
+    destination.normalOct = source.normalOct;
+    destination.radiance = source.radiance;
+    destination.age = source.age;
+    destination.flags = source.flags;
+    destination.seed = source.seed;
+    destination.instanceId = source.instanceId;
+    destination.primitiveIndex = source.primitiveIndex;
+}
+
+bool GiCombine(
+    inout RestirGiReservoir destination,
+    RestirGiReservoir source,
+    float targetAtCurrent,
+    float random)
+{
+    if (!GiReservoirValid(source)) return false;
+    const float risWeight = targetAtCurrent * source.weightSum * float(source.M);
+    destination.M += source.M;
+    destination.weightSum += max(risWeight, 0.0);
+    const bool selected = risWeight > 0.0
+        && random * destination.weightSum <= risWeight;
+    if (selected) GiCopySelectedSample(destination, source);
+    return selected;
+}
+
+RestirGiReservoir GiTemporalResample(
+    RestirGiReservoir fresh,
+    RestirGiReservoir previous,
+    bool historyAccepted,
+    uint2 pixel,
+    float3 currentPrimary,
+    float3 currentNormal,
+    float3 currentView,
+    float3 currentAlbedo,
+    float currentMetallic,
+    float currentRoughness,
+    float3 previousPrimary,
+    float3 previousNormal,
+    float3 previousView,
+    float3 previousAlbedo,
+    float previousMetallic,
+    float previousRoughness,
+    out bool usedHistory,
+    out bool jacobianRejected)
+{
+    RestirGiReservoir output = (RestirGiReservoir)0;
+    usedHistory = false;
+    jacobianRejected = false;
+
+    const float freshTarget = GiTarget(
+        fresh, currentPrimary, currentNormal, currentView,
+        currentAlbedo, currentMetallic, currentRoughness);
+    float freshM = float(fresh.M);
+    float previousM = 0.0;
+    float selectedTarget = freshTarget;
+    GiCombine(output, fresh, freshTarget, 0.5);
+
+    bool previousAccepted = historyAccepted && GiReservoirValid(previous)
+        && previous.age < kRestirAgeCap;
+    if (previousAccepted)
+    {
+        const float jacobian = GiTemporalJacobian(previous, previousPrimary, currentPrimary);
+        if (jacobian <= 0.0)
+        {
+            previousAccepted = false;
+            jacobianRejected = true;
+        }
+        else
+        {
+            previous.weightSum *= jacobian;
+            previous.M = min(previous.M, kRestirMCap);
+            previousM = float(previous.M);
+            previous.age = min(previous.age + 1u, kRestirAgeCap);
+        }
+    }
+
+    bool selectedPrevious = false;
+    float previousTargetAtCurrent = 0.0;
+    if (previousAccepted)
+    {
+        previousTargetAtCurrent = GiTarget(
+            previous, currentPrimary, currentNormal, currentView,
+            currentAlbedo, currentMetallic, currentRoughness);
+        selectedPrevious = GiCombine(
+            output, previous, previousTargetAtCurrent, Hash(pixel, 700u));
+        if (selectedPrevious) selectedTarget = previousTargetAtCurrent;
+        usedHistory = previousTargetAtCurrent > 0.0;
+    }
+
+    if (output.M > kRestirMCap)
+    {
+        const float capScale = float(kRestirMCap) / float(output.M);
+        output.weightSum *= capScale;
+        freshM *= capScale;
+        previousM *= capScale;
+        output.M = kRestirMCap;
+    }
+
+    // RTXDI BASIC temporal bias correction: evaluate the selected sample in both source domains.
+    float pi = selectedTarget;
+    float piSum = selectedTarget * freshM;
+    if (previousAccepted)
+    {
+        const float temporalP = GiTarget(
+            output, previousPrimary, previousNormal, previousView,
+            previousAlbedo, previousMetallic, previousRoughness);
+        if (selectedPrevious) pi = temporalP;
+        piSum += temporalP * previousM;
+    }
+    const float denominator = piSum * selectedTarget;
+    output.weightSum = denominator > 0.0 && isfinite(denominator) && isfinite(pi)
+        ? output.weightSum * pi / denominator
+        : 0.0;
+    if (selectedPrevious) output.flags |= kRestirGiSampleTemporalReuse;
+    else output.flags &= ~kRestirGiSampleTemporalReuse;
+    return output;
+}
+
+float GiVisibility(RestirGiReservoir r, float3 receiver, float3 geomNormal)
+{
+    if (!GiReservoirValid(r)) return 0.0;
+    const float3 toSecondary = r.position - receiver;
+    const float distance = length(toSecondary);
+    if (distance <= 0.002) return 0.0;
+    return Visibility(
+        receiver, geomNormal, toSecondary / distance, max(distance - 0.003, 0.0011));
+}
+
+float3 ShadeGi(
+    RestirGiReservoir r,
+    float3 primaryPosition,
+    float3 receiver,
+    float3 geomNormal,
+    float3 shadingNormal,
+    float3 viewDirection,
+    float3 albedo,
+    float metallic,
+    float roughness)
+{
+    if (!GiReservoirValid(r)) return 0.0.xxx;
+    const float3 toSecondary = r.position - receiver;
+    const float distance = length(toSecondary);
+    if (distance <= 0.002) return 0.0.xxx;
+    const float3 bsdfCos = EvaluateBsdfCos(
+        shadingNormal, viewDirection, normalize(r.position - primaryPosition),
+        albedo, metallic, roughness);
+    return bsdfCos * max(r.radiance, 0.0.xxx) * r.weightSum;
+}
+
 bool SameLightSample(RestirDiLightSample a, RestirDiLightSample b)
 {
     return a.sampleType == b.sampleType && a.index0 == b.index0 && a.index1 == b.index1
         && all(abs(a.uv - b.uv) < 1e-6);
+}
+
+bool SameGiSample(RestirGiReservoir a, RestirGiReservoir b)
+{
+    return a.instanceId == b.instanceId && a.primitiveIndex == b.primitiveIndex
+        && all(abs(a.position - b.position) < 1e-4);
 }
 
 [shader("raygeneration")]
@@ -377,6 +586,8 @@ void RestirTemporalRayGen()
     uint index = pixel.y * g_OutputSize.x + pixel.x;
     RestirDiReservoirSet fresh = g_ReservoirCurrent[index];
     RestirDiReservoirSet outputSet = fresh;
+    RestirGiReservoir freshGi = g_GiReservoirCurrent[index];
+    RestirGiReservoir outputGi = freshGi;
     float4 currPos = g_CurrSurfacePositionDepth[pixel];
     uint4 currMat = g_CurrSurfaceMaterial[pixel];
     bool eligible = ((currMat.z >> 24u) & 7u) == 1u;
@@ -399,6 +610,9 @@ void RestirTemporalRayGen()
 
     bool historyAccepted = prevPixel.x >= 0;
     bool anyPreviousCandidateAccepted = false;
+    bool giHistoryAccepted = false;
+    bool giJacobianRejected = false;
+    bool giVisibilityRejected = false;
     if (historyAccepted)
     {
         RestirDiReservoirSet previous = g_ReservoirPrev[uint(prevPixel.y) * g_OutputSize.x + uint(prevPixel.x)];
@@ -419,30 +633,69 @@ void RestirTemporalRayGen()
             * max(length(previousPos.xyz - g_PrevCameraPos) * 0.001, 0.002);
         float previousRoughness = f16tof32(previousMat.w >> 16u);
         float4 previousAm = g_PrevAlbedoMetallic[prevPixel];
-        bool usedE, usedV;
-        outputSet.emissive = ResampleDomain(
-            fresh.emissive, previous.emissive, true, pixel, 10u,
-            receiver, n, v, am.rgb, am.a, roughness,
-            previousReceiver, previousGeomN, previousN, previousV,
-            previousAm.rgb, previousAm.a, previousRoughness, usedE);
-        outputSet.environment = ResampleDomain(
-            fresh.environment, previous.environment, true, pixel, 20u,
-            receiver, n, v, am.rgb, am.a, roughness,
-            previousReceiver, previousGeomN, previousN, previousV,
-            previousAm.rgb, previousAm.a, previousRoughness, usedV);
-        anyPreviousCandidateAccepted = usedE || usedV;
-        if (g_ShadeOutput != 0u && (usedE || usedV))
+        if (g_EnableDiTemporal != 0u)
         {
-            float3 radiance = g_BaseRadiance[pixel].rgb
-                + ShadeDomain(outputSet.emissive, receiver, geomN, n, v, am.rgb, am.a, roughness)
-                + ShadeDomain(outputSet.environment, receiver, geomN, n, v, am.rgb, am.a, roughness);
-            float lum = RestirDiTargetLuminance(radiance);
-            radiance *= min(1.0, 64.0 / max(lum, 1e-6));
-            float4 old = g_Output[pixel];
-            g_Output[pixel] = float4(radiance, old.a);
+            bool usedE, usedV;
+            outputSet.emissive = ResampleDomain(
+                fresh.emissive, previous.emissive, true, pixel, 10u,
+                receiver, n, v, am.rgb, am.a, roughness,
+                previousReceiver, previousGeomN, previousN, previousV,
+                previousAm.rgb, previousAm.a, previousRoughness, usedE);
+            outputSet.environment = ResampleDomain(
+                fresh.environment, previous.environment, true, pixel, 20u,
+                receiver, n, v, am.rgb, am.a, roughness,
+                previousReceiver, previousGeomN, previousN, previousV,
+                previousAm.rgb, previousAm.a, previousRoughness, usedV);
+            anyPreviousCandidateAccepted = usedE || usedV;
+        }
+        if (g_EnableGiTemporal != 0u && GiReservoirValid(freshGi))
+        {
+            const RestirGiReservoir previousGi =
+                g_GiReservoirPrev[uint(prevPixel.y) * g_OutputSize.x + uint(prevPixel.x)];
+            outputGi = GiTemporalResample(
+                freshGi, previousGi, true, pixel,
+                hitPosition, n, v, am.rgb, am.a, roughness,
+                previousPos.xyz, previousN, previousV,
+                previousAm.rgb, previousAm.a, previousRoughness,
+                giHistoryAccepted, giJacobianRejected);
+        }
+    }
+    if ((outputGi.flags & kRestirGiSampleTemporalReuse) != 0u)
+    {
+        const float3 geomN = RestirUnpackOctNormal(currMat.x);
+        const float3 receiver = currPos.xyz + geomN
+            * max(length(currPos.xyz - g_CameraPos) * 0.001, 0.002);
+        if (GiVisibility(outputGi, receiver, geomN) <= 0.0)
+        {
+            // P6's mandatory failure-safe: a rejected shifted winner restores the exact fresh P5
+            // reservoir instead of producing a black hole or keeping stale history.
+            outputGi = freshGi;
+            giVisibilityRejected = true;
         }
     }
     g_ReservoirCurrent[index] = outputSet;
+    g_GiReservoirCurrent[index] = outputGi;
+
+    if (g_ShadeOutput != 0u)
+    {
+        const float3 hitPosition = currPos.xyz;
+        const float3 geomN = RestirUnpackOctNormal(currMat.x);
+        const float3 n = RestirUnpackOctNormal(currMat.y);
+        const float3 v = normalize(g_CameraPos - hitPosition);
+        const float3 receiver = hitPosition + geomN
+            * max(length(hitPosition - g_CameraPos) * 0.001, 0.002);
+        const float roughness = f16tof32(currMat.w >> 16u);
+        const float4 am = g_CurrAlbedoMetallic[pixel];
+        float3 radiance = g_BaseRadiance[pixel].rgb
+            + ShadeDomain(outputSet.emissive, receiver, geomN, n, v, am.rgb, am.a, roughness)
+            + ShadeDomain(outputSet.environment, receiver, geomN, n, v, am.rgb, am.a, roughness)
+            + ShadeGi(outputGi, hitPosition, receiver, geomN, n, v,
+                am.rgb, am.a, roughness);
+        const float lum = RestirDiTargetLuminance(radiance);
+        radiance *= min(1.0, 64.0 / max(lum, 1e-6));
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(radiance, old.a);
+    }
 
     if (g_DebugMode >= 14u && g_DebugMode <= 17u)
     {
@@ -476,6 +729,35 @@ void RestirTemporalRayGen()
         float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
     }
+    else if (g_DebugMode >= 20u && g_DebugMode <= 23u)
+    {
+        float3 debug = 0.0.xxx;
+        if (g_DebugMode == 20u)
+        {
+            debug = saturate(float(outputGi.M) / float(kRestirMCap)).xxx;
+        }
+        else if (g_DebugMode == 21u)
+        {
+            debug = saturate(float(outputGi.age) / float(kRestirAgeCap)).xxx;
+        }
+        else if (g_DebugMode == 22u)
+        {
+            const bool selectedHistory = GiReservoirValid(freshGi)
+                && !SameGiSample(outputGi, freshGi);
+            debug = selectedHistory ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2);
+        }
+        else
+        {
+            debug = !GiReservoirValid(freshGi) ? float3(1.0, 0.0, 1.0)
+                : (giVisibilityRejected ? float3(0.65, 0.15, 0.85)
+                    : (giJacobianRejected ? float3(1.0, 0.75, 0.05)
+                    : (historyAccepted && giHistoryAccepted
+                        ? float3(0.1, 1.0, 0.2)
+                        : float3(1.0, 0.1, 0.05))));
+        }
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(debug, old.a);
+    }
 }
 
 [shader("raygeneration")]
@@ -489,6 +771,9 @@ void RestirSpatialRayGen()
     const bool eligible = ((centerMat.z >> 24u) & 7u) == 1u;
     RestirDiReservoirSet center = g_ReservoirPrev[index];
     RestirDiReservoirSet outputSet = center;
+    const RestirGiReservoir temporalGi = g_GiReservoirPrev[index];
+    // P7 owns GI spatial reuse. P6 history must nevertheless follow the DI spatial ping-pong.
+    g_GiReservoirCurrent[index] = temporalGi;
 
     if (!eligible)
     {
@@ -667,6 +952,8 @@ void RestirSpatialRayGen()
             + ShadeDomain(outputSet.emissive, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
             + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness)
+            + ShadeGi(temporalGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));

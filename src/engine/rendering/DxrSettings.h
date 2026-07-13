@@ -91,6 +91,8 @@ public:
     void SetRestirDiTemporalEnabled(bool enabled) { m_restirDiTemporalEnabled = enabled; }
     bool IsRestirGiInitialEnabled() const { return m_restirGiInitialEnabled; }
     void SetRestirGiInitialEnabled(bool enabled) { m_restirGiInitialEnabled = enabled; }
+    bool IsRestirGiTemporalEnabled() const { return m_restirGiTemporalEnabled; }
+    void SetRestirGiTemporalEnabled(bool enabled) { m_restirGiTemporalEnabled = enabled; }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -181,6 +183,7 @@ private:
     int m_restirDiCandidateCount = 0;
     bool m_restirDiTemporalEnabled = false;
     bool m_restirGiInitialEnabled = false;
+    bool m_restirGiTemporalEnabled = false;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

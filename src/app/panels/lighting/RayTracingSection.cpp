@@ -358,6 +358,24 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "smooth primaries remain on the original estimator. Temporal/spatial GI are not active.");
             }
 
+            bool restirGiTemporal = dxrSettings.IsRestirGiTemporalEnabled();
+            UndoableRendererCheckbox(
+                "PT ReSTIR GI temporal (P6)",
+                &restirGiTemporal,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetRestirGiTemporalEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "P6 temporal reuse of P5 secondary-surface GI reservoirs. Requires P5 initial.\n"
+                    "Uses receiver reevaluation, reconnection Jacobian, BASIC bias correction, and\n"
+                    "a current-receiver visibility ray. Every rejection falls back to the fresh sample.");
+            }
+
             float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
             UndoableRendererSliderFloat(
                 "PT sun angular radius",

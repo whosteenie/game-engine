@@ -127,6 +127,8 @@ public:
         std::uint32_t sceneVersion,
         std::uint32_t motionVersion,
         bool realTimeMode,
+        bool enableDiTemporal,
+        bool enableGiTemporal,
         bool shadeOutput = true);
 
     // R3 spatial reuse (real-time only). Call after temporal, before surface-history copy.

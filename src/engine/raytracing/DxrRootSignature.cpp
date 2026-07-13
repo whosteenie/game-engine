@@ -732,7 +732,7 @@ void DxrRootSignature::SerializeRestirGlobalRootSignature(ComPtr<ID3DBlob>& outB
     // t0-t12: TLAS, P1 history/current, motion/base, current/previous material params,
     // lights, and environment CDF/map.
     constexpr std::uint32_t kSrvCount = 13;
-    constexpr std::uint32_t kUavCount = 4;
+    constexpr std::uint32_t kUavCount = 5;
     D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
     for (std::uint32_t registerIndex = 0; registerIndex < kSrvCount; ++registerIndex)
     {

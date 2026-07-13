@@ -174,6 +174,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtRestirTemporalRejection: return "PT ReSTIR DI: temporal rejection";
     case RenderDebugMode::PtRestirSpatialSource: return "PT ReSTIR DI: spatial source";
     case RenderDebugMode::PtRestirSpatialRejection: return "PT ReSTIR DI: spatial rejection";
+    case RenderDebugMode::PtRestirGiReservoirM: return "PT ReSTIR GI: reservoir M";
+    case RenderDebugMode::PtRestirGiReservoirAge: return "PT ReSTIR GI: reservoir age";
+    case RenderDebugMode::PtRestirGiChosenSource: return "PT ReSTIR GI: chosen source";
+    case RenderDebugMode::PtRestirGiTemporalRejection: return "PT ReSTIR GI: temporal rejection";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -376,6 +380,10 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirTemporalRejection:
     case RenderDebugMode::PtRestirSpatialSource:
     case RenderDebugMode::PtRestirSpatialRejection:
+    case RenderDebugMode::PtRestirGiReservoirM:
+    case RenderDebugMode::PtRestirGiReservoirAge:
+    case RenderDebugMode::PtRestirGiChosenSource:
+    case RenderDebugMode::PtRestirGiTemporalRejection:
         return true;
     default:
         return false;
@@ -417,6 +425,10 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirTemporalRejection: return 17;
     case RenderDebugMode::PtRestirSpatialSource: return 18;
     case RenderDebugMode::PtRestirSpatialRejection: return 19;
+    case RenderDebugMode::PtRestirGiReservoirM: return 20;
+    case RenderDebugMode::PtRestirGiReservoirAge: return 21;
+    case RenderDebugMode::PtRestirGiChosenSource: return 22;
+    case RenderDebugMode::PtRestirGiTemporalRejection: return 23;
     default: return 0;
     }
 }

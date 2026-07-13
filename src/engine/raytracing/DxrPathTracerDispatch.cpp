@@ -299,6 +299,8 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     const std::uint32_t sceneVersion,
     const std::uint32_t motionVersion,
     const bool realTimeMode,
+    const bool enableDiTemporal,
+    const bool enableGiTemporal,
     const bool shadeOutput)
 {
     if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsPipelineReady())
@@ -348,6 +350,8 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     constants.sunDirection[2] = m_lastSunDirection.z;
     constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
     constants.debugMode = m_lastDebugMode;
+    constants.enableDiTemporal = enableDiTemporal ? 1u : 0u;
+    constants.enableGiTemporal = enableGiTemporal ? 1u : 0u;
 
     std::string error;
     const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR temporal");

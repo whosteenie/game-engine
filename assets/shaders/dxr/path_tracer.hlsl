@@ -90,7 +90,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
 // 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
 // views unreachable — clamp to the real [0,9] range instead.
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 19.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 23.0)))
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
@@ -2222,7 +2222,10 @@ void PathTracerRayGen()
 
     // P3 base signal excludes only fresh ReSTIR DI. Temporal shading adds its reevaluated
     // emissive+environment reservoirs back without subtracting from the displayed fp16 output.
-    float3 restirBaseRadiance = directRadiance - freshDiRadiance + shadedIndirect;
+    // Temporal DI/GI starts from a subtraction-free base. Eligible P5 GI is reconstructed from
+    // g_GiReservoirCurrent in the reuse pass; ineligible pixels retain their exact baseline tail.
+    float3 restirBaseRadiance = directRadiance - freshDiRadiance
+        + (giEligible ? 0.0.xxx : shadedIndirect);
     if (kPtFireflyClampEnabled)
     {
         restirBaseRadiance = ClampRadiance(restirBaseRadiance);

@@ -152,6 +152,10 @@ namespace
         RenderDebugMode::PtRestirTemporalRejection,
         RenderDebugMode::PtRestirSpatialSource,
         RenderDebugMode::PtRestirSpatialRejection,
+        RenderDebugMode::PtRestirGiReservoirM,
+        RenderDebugMode::PtRestirGiReservoirAge,
+        RenderDebugMode::PtRestirGiChosenSource,
+        RenderDebugMode::PtRestirGiTemporalRejection,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -617,6 +621,11 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtRestirSpatialSource:
         case RenderDebugMode::PtRestirSpatialRejection:
             return "ReSTIR DI P4 spatial diagnostics. Source: green=center, blue=neighbor. Rejection: green=compatible neighbor accepted, yellow=boiling-filter discard, purple=smooth-metal temporal fallback, red=no compatible candidate, magenta=ineligible surface.";
+        case RenderDebugMode::PtRestirGiReservoirM:
+        case RenderDebugMode::PtRestirGiReservoirAge:
+        case RenderDebugMode::PtRestirGiChosenSource:
+        case RenderDebugMode::PtRestirGiTemporalRejection:
+            return "ReSTIR GI P6 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=history accepted, yellow=Jacobian rejection, purple=visibility rejection/fresh fallback, red=no history/surface match, magenta=ineligible or invalid fresh GI sample.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

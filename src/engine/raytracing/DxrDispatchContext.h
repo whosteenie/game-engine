@@ -260,7 +260,8 @@ public:
     bool HasRestirBuffers() const
     {
         return m_restirReservoirs[0].resource != nullptr && m_restirReservoirs[1].resource != nullptr
-            && m_restirGiReservoir.resource != nullptr;
+            && m_restirGiReservoirs[0].resource != nullptr
+            && m_restirGiReservoirs[1].resource != nullptr;
     }
     int GetRestirBufferWidth() const { return m_restirBufferWidth; }
     int GetRestirBufferHeight() const { return m_restirBufferHeight; }
@@ -275,14 +276,23 @@ public:
         return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].srvCpuHandle
                                                          : 0;
     }
-    std::uintptr_t GetRestirGiReservoirUavCpuHandle() const { return m_restirGiReservoir.uavCpuHandle; }
-    std::uintptr_t GetRestirGiReservoirSrvCpuHandle() const { return m_restirGiReservoir.srvCpuHandle; }
+    std::uintptr_t GetRestirGiReservoirUavCpuHandle(int pingPongIndex) const
+    {
+        return m_restirGiReservoirs[pingPongIndex & 1].uavCpuHandle;
+    }
+    std::uintptr_t GetRestirGiReservoirSrvCpuHandle(int pingPongIndex) const
+    {
+        return m_restirGiReservoirs[pingPongIndex & 1].srvCpuHandle;
+    }
     ID3D12Resource* GetRestirReservoirResource(int pingPongIndex) const
     {
         return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].resource
                                                          : nullptr;
     }
-    ID3D12Resource* GetRestirGiReservoirResource() const { return m_restirGiReservoir.resource; }
+    ID3D12Resource* GetRestirGiReservoirResource(int pingPongIndex) const
+    {
+        return m_restirGiReservoirs[pingPongIndex & 1].resource;
+    }
     int GetRestirWriteIndex() const { return m_restirWriteIndex; }
 
     // R2: temporal reuse after PT DispatchRays, before CopyPathTracerSurfaceHistory.
@@ -461,7 +471,7 @@ private:
     void RetireOrDestroyStructuredBufferUav(StructuredBufferUav& buffer);
 
     StructuredBufferUav m_restirReservoirs[2]{};
-    StructuredBufferUav m_restirGiReservoir{};
+    StructuredBufferUav m_restirGiReservoirs[2]{};
     int m_restirBufferWidth = 0;
     int m_restirBufferHeight = 0;
     std::uint32_t m_restirElementCount = 0;

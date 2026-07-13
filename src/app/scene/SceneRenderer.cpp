@@ -794,9 +794,13 @@ void SceneRenderer::RecordDxrPass(
 
         if (pathTracerDispatched)
         {
-            const bool temporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+            const bool diTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
                 && m_dxrSettings.IsRestirDiTemporalEnabled()
-                && m_dxrSettings.GetRestirDiCandidateCount() > 0
+                && m_dxrSettings.GetRestirDiCandidateCount() > 0;
+            const bool giTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled()
+                && m_dxrSettings.IsRestirGiTemporalEnabled();
+            const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled)
                 && m_dxrRestirDispatch != nullptr;
             if (temporalEnabled)
             {
@@ -810,12 +814,14 @@ void SceneRenderer::RecordDxrPass(
                     m_dxrAccelerationStructures->GetPtSceneVersion(),
                     m_dxrAccelerationStructures->GetPtMotionVersion(),
                     true,
+                    diTemporalEnabled,
+                    giTemporalEnabled,
                     shadeRestirOutput);
                 if (!temporalSucceeded)
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();
                 }
-                else if (!m_dxrPathTracerDispatch->DispatchRestirSpatial(
+                else if (diTemporalEnabled && !m_dxrPathTracerDispatch->DispatchRestirSpatial(
                     *m_dxrRestirDispatch,
                     *m_dxrAccelerationStructures,
                     camera,
