@@ -227,6 +227,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.envIsCdfHeight = frameInputs.envImportanceCdfHeight;
     constants.envDirectLightingLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
     constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
+    constants.restirGiInitialEnabled = frameInputs.restirGiInitialEnabled ? 1.0f : 0.0f;
 
     m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
     m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;

@@ -739,6 +739,7 @@ void SceneRenderer::RecordDxrPass(
         ptInputs.centerPrimaryRays = !m_dxrSettings.IsPtReferenceConvergence();
         ptInputs.restirDiCandidateCount =
             static_cast<std::uint32_t>(std::max(0, m_dxrSettings.GetRestirDiCandidateCount()));
+        ptInputs.restirGiInitialEnabled = m_dxrSettings.IsRestirGiInitialEnabled();
         ptInputs.sunDirection = glm::normalize(GetSunDirection());
         ptInputs.sunAngularRadiusDegrees = m_dxrSettings.GetSunAngularRadiusDegrees();
         {

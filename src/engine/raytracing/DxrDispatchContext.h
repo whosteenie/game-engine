@@ -260,7 +260,7 @@ public:
     bool HasRestirBuffers() const
     {
         return m_restirReservoirs[0].resource != nullptr && m_restirReservoirs[1].resource != nullptr
-            && m_restirInitialSample.resource != nullptr;
+            && m_restirGiReservoir.resource != nullptr;
     }
     int GetRestirBufferWidth() const { return m_restirBufferWidth; }
     int GetRestirBufferHeight() const { return m_restirBufferHeight; }
@@ -275,14 +275,14 @@ public:
         return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].srvCpuHandle
                                                          : 0;
     }
-    std::uintptr_t GetRestirInitialSampleUavCpuHandle() const { return m_restirInitialSample.uavCpuHandle; }
-    std::uintptr_t GetRestirInitialSampleSrvCpuHandle() const { return m_restirInitialSample.srvCpuHandle; }
+    std::uintptr_t GetRestirGiReservoirUavCpuHandle() const { return m_restirGiReservoir.uavCpuHandle; }
+    std::uintptr_t GetRestirGiReservoirSrvCpuHandle() const { return m_restirGiReservoir.srvCpuHandle; }
     ID3D12Resource* GetRestirReservoirResource(int pingPongIndex) const
     {
         return (pingPongIndex == 0 || pingPongIndex == 1) ? m_restirReservoirs[pingPongIndex].resource
                                                          : nullptr;
     }
-    ID3D12Resource* GetRestirInitialSampleResource() const { return m_restirInitialSample.resource; }
+    ID3D12Resource* GetRestirGiReservoirResource() const { return m_restirGiReservoir.resource; }
     int GetRestirWriteIndex() const { return m_restirWriteIndex; }
 
     // R2: temporal reuse after PT DispatchRays, before CopyPathTracerSurfaceHistory.
@@ -439,7 +439,7 @@ private:
     ReflectionTexture m_ptPrevRestirSurfaceAlbedoMetallicTexture{};
     bool m_ptPrevSurfaceHistoryValid = false;
 
-    // G8: ReSTIR structured buffers (48 B reservoir ping-pong + 32 B initial sample).
+    // ReSTIR structured buffers: DI ping-pong plus the independent 64 B P5 GI reservoir.
     struct StructuredBufferUav
     {
         ID3D12Resource* resource = nullptr;
@@ -461,7 +461,7 @@ private:
     void RetireOrDestroyStructuredBufferUav(StructuredBufferUav& buffer);
 
     StructuredBufferUav m_restirReservoirs[2]{};
-    StructuredBufferUav m_restirInitialSample{};
+    StructuredBufferUav m_restirGiReservoir{};
     int m_restirBufferWidth = 0;
     int m_restirBufferHeight = 0;
     std::uint32_t m_restirElementCount = 0;

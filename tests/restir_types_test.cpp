@@ -5,6 +5,21 @@
 
 void RunRestirTypesTests(int& failures)
 {
+    if (sizeof(RestirGiReservoir) != 64)
+    {
+        std::cerr << "FAIL: RestirGiReservoir size is " << sizeof(RestirGiReservoir)
+                  << ", expected 64\n";
+        ++failures;
+    }
+    if (offsetof(RestirGiReservoir, radiance) != 16
+        || offsetof(RestirGiReservoir, weightSum) != 28
+        || offsetof(RestirGiReservoir, M) != 32
+        || offsetof(RestirGiReservoir, instanceId) != 48)
+    {
+        std::cerr << "FAIL: RestirGiReservoir field offsets do not match P5 layout\n";
+        ++failures;
+    }
+
     if (sizeof(RestirInitialSample) != 32)
     {
         std::cerr << "FAIL: RestirInitialSample size is " << sizeof(RestirInitialSample)

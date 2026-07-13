@@ -60,6 +60,7 @@ public:
         float envDirectLightingLuminanceClamp = 0.0f;
         // ReSTIR DI initial sampling (roadmap P2): per-category candidate count, 0 = off (plain NEE).
         std::uint32_t restirDiCandidateCount = 0;
+        bool restirGiInitialEnabled = false;
     };
 
     DxrPathTracerDispatch() = default;

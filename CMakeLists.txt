@@ -526,6 +526,7 @@ add_executable(engine-tests
     tests/path_rng_test.cpp
     tests/restir_types_test.cpp
     tests/restir_wrs_test.cpp
+    tests/restir_gi_test.cpp
     tests/restir_di_test.cpp
     tests/restir_surface_validation_test.cpp
     tests/dxr_shader_infrastructure_test.cpp

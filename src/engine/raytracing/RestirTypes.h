@@ -2,32 +2,46 @@
 
 #include <cstdint>
 
-// CPU mirror of assets/shaders/dxr/restir_types.hlsli (G8 / restir-pt.md §2).
-// Structured-buffer strides must stay in lockstep with the HLSL structs.
+// CPU mirrors of the structured-buffer layouts in assets/shaders/dxr.
+struct RestirGiReservoir
+{
+    float position[3] = {};
+    std::uint32_t normalOct = 0;
+    float radiance[3] = {};
+    float weightSum = 0.0f;
+    std::uint32_t M = 0;
+    std::uint32_t age = 0;
+    std::uint32_t flags = 0;
+    std::uint32_t seed = 0;
+    std::uint32_t instanceId = 0;
+    std::uint32_t primitiveIndex = 0;
+    std::uint32_t padding[2] = {};
+};
 
+static_assert(sizeof(RestirGiReservoir) == 64, "RestirGiReservoir must be 64 bytes");
+
+// Retired experiment mirrors, kept only for its isolated CPU regression fixture until P8 cleanup.
 struct RestirInitialSample
 {
-    float xs[3];
-    std::uint32_t nsOct = 0; // octahedral normal as two fp16
-    std::uint32_t loTailRg = 0; // Lo_tail.rg as fp16
-    std::uint32_t loTailBFlags = 0; // Lo_tail.b fp16 in low 16, flags in high 16
+    float xs[3] = {};
+    std::uint32_t nsOct = 0;
+    std::uint32_t loTailRg = 0;
+    std::uint32_t loTailBFlags = 0;
     float pdf = 0.0f;
     std::uint32_t seed = 0;
 };
 
-static_assert(sizeof(RestirInitialSample) == 32, "RestirInitialSample must be 32 bytes");
-
-// Note (R2): sample.loTail* stores Y = t1·Lo_tail (indirect contribution), not raw Lo_tail.
 struct RestirReservoir
 {
     RestirInitialSample sample{};
     float wSum = 0.0f;
     float W = 0.0f;
-    std::uint32_t M = 0; // confidence / sample count (doc allows fp16 packing; uint is fine)
-    std::uint32_t age = 0; // frames survived; reset for fresh samples and capped during reuse
+    std::uint32_t M = 0;
+    std::uint32_t age = 0;
 };
 
-static_assert(sizeof(RestirReservoir) == 48, "RestirReservoir must be 48 bytes");
+static_assert(sizeof(RestirInitialSample) == 32);
+static_assert(sizeof(RestirReservoir) == 48);
 
 struct RestirDiLightSample
 {

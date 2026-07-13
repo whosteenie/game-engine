@@ -121,7 +121,7 @@ void DxrDispatchContext::Release()
     ReleaseRetiredRestirBuffers();
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
-    RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+    RetireOrDestroyStructuredBufferUav(m_restirGiReservoir);
     m_restirBufferWidth = 0;
     m_restirBufferHeight = 0;
     m_restirElementCount = 0;
@@ -937,7 +937,7 @@ bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, 
 
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
-    RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+    RetireOrDestroyStructuredBufferUav(m_restirGiReservoir);
     m_restirWriteIndex = 0;
     m_restirReservoirHistoryValid = false;
     m_restirLastSceneVersion = 0;
@@ -951,11 +951,11 @@ bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, 
         || !CreateStructuredBufferUav(
             elementCount, sizeof(RestirDiReservoirSet), m_restirReservoirs[1], outError)
         || !CreateStructuredBufferUav(
-            elementCount, sizeof(RestirInitialSample), m_restirInitialSample, outError))
+            elementCount, sizeof(RestirGiReservoir), m_restirGiReservoir, outError))
     {
         RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
         RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
-        RetireOrDestroyStructuredBufferUav(m_restirInitialSample);
+        RetireOrDestroyStructuredBufferUav(m_restirGiReservoir);
         return false;
     }
 
@@ -1221,7 +1221,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     };
     ensureUav(m_restirReservoirs[writeIndex]);
     ensureUav(m_restirReservoirs[prevIndex]);
-    ensureUav(m_restirInitialSample);
+    ensureUav(m_restirGiReservoir);
 
     DxrRootSignature::RestirTemporalConstants dispatchConstants = constants;
     const bool historyOk = m_ptPrevSurfaceHistoryValid && m_restirReservoirHistoryValid
@@ -1266,7 +1266,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     const std::uint32_t uavIndices[4] = {
         m_restirReservoirs[writeIndex].uavIndex,
         m_restirReservoirs[prevIndex].uavIndex,
-        m_restirInitialSample.uavIndex,
+        m_restirGiReservoir.uavIndex,
         m_primaryOutputUavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < 4; ++uavIndex)
     {
@@ -1285,7 +1285,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
 
     RecordDxrUavBarrier(commandList, m_primaryOutputResource);
     RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);
-    RecordDxrUavBarrier(commandList, m_restirInitialSample.resource);
+    RecordDxrUavBarrier(commandList, m_restirGiReservoir.resource);
 
     TransitionResource(
         commandList,
@@ -1374,7 +1374,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     };
     ensureUav(m_restirReservoirs[writeIndex]);
     ensureUav(m_restirReservoirs[readIndex]);
-    ensureUav(m_restirInitialSample);
+    ensureUav(m_restirGiReservoir);
 
     // UAV barrier on the read buffer so this iteration sees the prior pass's writes.
     RecordDxrUavBarrier(commandList, m_restirReservoirs[readIndex].resource);
@@ -1418,7 +1418,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     const std::uint32_t uavIndices[4] = {
         m_restirReservoirs[writeIndex].uavIndex,
         m_restirReservoirs[readIndex].uavIndex,
-        m_restirInitialSample.uavIndex,
+        m_restirGiReservoir.uavIndex,
         m_primaryOutputUavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < 4; ++uavIndex)
     {
@@ -2552,7 +2552,7 @@ bool DxrDispatchContext::DispatchPathTracer(
     recorder.BindSrvTables(1, srvHeapIndices, kPathTracerSrvCount);
 
     if (!HasRestirBuffers()
-        || m_restirInitialSample.uavIndex == UINT32_MAX
+        || m_restirGiReservoir.uavIndex == UINT32_MAX
         || m_restirReservoirs[m_restirWriteIndex].uavIndex == UINT32_MAX
         || m_ptDirectTexture.uavIndex == UINT32_MAX
         || m_ptRestirSurfacePositionDepthTexture.uavIndex == UINT32_MAX
@@ -2563,7 +2563,7 @@ bool DxrDispatchContext::DispatchPathTracer(
         return false;
     }
 
-    // u0-u6 RR guides, u7 InitialSample, u8 DI reservoirs, u9 base, u10-u12 P1 surface records.
+    // u0-u6 RR guides, u7 GI reservoir, u8 DI reservoirs, u9 base, u10-u12 P1 surface records.
     constexpr std::uint32_t kPathTracerUavCount = 13;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
@@ -2573,7 +2573,7 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptDiffuseAlbedoTexture.uavIndex,
         m_ptSpecularAlbedoTexture.uavIndex,
         m_ptNormalRoughnessTexture.uavIndex,
-        m_restirInitialSample.uavIndex,
+        m_restirGiReservoir.uavIndex,
         m_restirReservoirs[m_restirWriteIndex].uavIndex,
         m_ptDirectTexture.uavIndex,
         m_ptRestirSurfacePositionDepthTexture.uavIndex,
@@ -2606,7 +2606,7 @@ bool DxrDispatchContext::DispatchPathTracer(
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptMotionTexture.resource);
     RecordDxrUavBarrier(
-        static_cast<ID3D12GraphicsCommandList*>(commandList), m_restirInitialSample.resource);
+        static_cast<ID3D12GraphicsCommandList*>(commandList), m_restirGiReservoir.resource);
     RecordDxrUavBarrier(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_restirReservoirs[m_restirWriteIndex].resource);

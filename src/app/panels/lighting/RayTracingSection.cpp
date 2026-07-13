@@ -340,6 +340,24 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "surfaces only; reference, transmission, delta lobes, and rejected history use fresh DI.");
             }
 
+            bool restirGiInitial = dxrSettings.IsRestirGiInitialEnabled();
+            UndoableRendererCheckbox(
+                "PT ReSTIR GI initial (P5)",
+                &restirGiInitial,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetRestirGiInitialEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "P5 M=1 production GI payload and receiver-side reconstruction. Eligible diffuse/\n"
+                    "moderately rough opaque primaries should match baseline PT. Glass, delta, and\n"
+                    "smooth primaries remain on the original estimator. Temporal/spatial GI are not active.");
+            }
+
             float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
             UndoableRendererSliderFloat(
                 "PT sun angular radius",

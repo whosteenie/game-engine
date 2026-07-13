@@ -6,6 +6,7 @@
 #include "restir_types.hlsli"
 
 static const uint kRestirSampleNoReuse = 1u;
+static const float kRestirGiMaxProposalPdf = 1.0e9;
 static const uint kRestirMCap = 20u;
 static const uint kRestirAgeCap = 30u;
 static const float kRestirBoilingFactor = 10.0;
@@ -186,6 +187,33 @@ float3 RestirShadeIndirect(RestirReservoir reservoir)
     float w = reservoir.W;
     w = (w == w && w > 0.0) ? w : 0.0;
     return y * w;
+}
+
+// P5 production payload: raw secondary radiance plus an explicit inverse directional PDF.
+// Unlike the retired helpers above, this never stores source-primary BSDF shading in the sample.
+RestirGiReservoir RestirGiMakeInitialReservoir(
+    float3 secondaryPosition,
+    float3 secondaryGeomNormal,
+    float3 incomingRadiance,
+    float proposalPdf,
+    uint seed,
+    uint flags,
+    uint instanceId,
+    uint primitiveIndex)
+{
+    RestirGiReservoir reservoir = (RestirGiReservoir)0;
+    reservoir.position = secondaryPosition;
+    reservoir.normalOct = RestirPackOctNormal(secondaryGeomNormal);
+    reservoir.radiance = incomingRadiance;
+    const bool valid = proposalPdf > 0.0 && proposalPdf < kRestirGiMaxProposalPdf
+        && (flags & kRestirSampleNoReuse) == 0u;
+    reservoir.weightSum = valid ? rcp(proposalPdf) : 0.0;
+    reservoir.M = valid ? 1u : 0u;
+    reservoir.flags = flags;
+    reservoir.seed = seed;
+    reservoir.instanceId = instanceId;
+    reservoir.primitiveIndex = primitiveIndex;
+    return reservoir;
 }
 
 // Ouyang ReSTIR GI reconnection Jacobian |J| = (cosφ_r/cosφ_q)·(d_q²/d_r²).

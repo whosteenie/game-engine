@@ -70,7 +70,7 @@ SamplerState g_LinearClampSampler : register(s0);
 
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirCurrent : register(u0);
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirPrev : register(u1);
-RWStructuredBuffer<RestirInitialSample> g_UnusedInitialSample : register(u2);
+RWStructuredBuffer<RestirGiReservoir> g_UnusedGiReservoir : register(u2);
 RWTexture2D<float4> g_Output : register(u3);
 
 struct Payload { uint hit; };

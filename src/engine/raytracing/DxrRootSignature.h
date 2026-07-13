@@ -85,7 +85,7 @@ struct ReflectionDispatchConstants
     // 1 = one emissive + one env candidate — byte-exact parity with DI off (A/B validation anchor).
     // N>1 = RIS over N candidates with one shadow ray each (lower variance, same expected value).
     float restirDiCandidateCount = 0.0f;
-    float _restirDiPad0 = 0.0f;
+    float restirGiInitialEnabled = 0.0f;
     float _restirDiPad1 = 0.0f;
     float _restirDiPad2 = 0.0f;
 };

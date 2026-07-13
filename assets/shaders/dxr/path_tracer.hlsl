@@ -18,7 +18,7 @@ RWTexture2D<float4> g_DiffuseAlbedoGuide : register(u4);   // RGBA8: albedo·(1�
 RWTexture2D<float4> g_SpecularAlbedoGuide : register(u5);  // RGBA8: EnvBRDFApprox2(F0, roughness², NoV)
 RWTexture2D<float4> g_NormalRoughnessGuide : register(u6); // RGBA16F: world normal xyz + roughness w
 // G5/R1: first-indirect-vertex sample + M=1 reservoir (passthrough until R2 reuse).
-RWStructuredBuffer<RestirInitialSample> g_InitialSample : register(u7);
+RWStructuredBuffer<RestirGiReservoir> g_GiReservoirCurrent : register(u7);
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirCurrent : register(u8);
 // R2: bounce-0 direct only — temporal shades g_Output = direct + Y·W (never subtract packed Y).
 RWTexture2D<float4> g_DirectOutput : register(u9);
@@ -66,6 +66,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 
 // ReSTIR DI initial sampling (roadmap P2): per-category candidate count (0 = off, plain NEE).
 #define g_PtRestirDiCandidateCount uint(round(max(g_PtRestirDiParams.x, 0.0)))
+#define kPtRestirGiInitialEnabled (g_PtRestirDiParams.y > 0.5)
 
 // The shared cbuffer field g_SamplesPerPixel carries the PT max-bounce count (reused verbatim; the
 // reflection/GI passes read it as an actual sample count). Alias it for readable PT intent.
@@ -1502,6 +1503,8 @@ void PathTracerRayGen()
     float3 sampleNs = float3(0.0, 1.0, 0.0);
     float samplePdf = 1.0;
     uint sampleFlags = 0u;
+    uint sampleInstanceId = 0u;
+    uint samplePrimitiveIndex = 0u;
     float primaryRoughness = 1.0;
     float primaryDielectricWeight = 0.0;
     float3 primaryWorldPos = 0.0.xxx;
@@ -1655,17 +1658,27 @@ void PathTracerRayGen()
         }
 
         // First indirect vertex (xs): record once when the post-primary scatter lands.
-        if (inTail && !haveInitialSample)
+        const bool firstIndirectVertex = inTail && !haveInitialSample;
+        if (firstIndirectVertex)
         {
             sampleXs = hitPos;
-            sampleNs = hitNormal;
+            sampleNs = hitNormalGeom;
             samplePdf = lastScatterPdf;
+            sampleInstanceId = payload.instanceId;
+            samplePrimitiveIndex = payload.primitiveIndex;
             haveInitialSample = true;
         }
 
         const float3 f0 = lerp(0.04.xxx, albedo, surfaceMetallic);
         const float dielectricWeight =
             DielectricWeight(material.transmission, surfaceMetallic);
+        if (firstIndirectVertex
+            && (dielectricWeight > 0.01 || surfaceRoughness <= kPtDeltaSpecularRoughness))
+        {
+            // RTXDI treats delta secondary shading as a separate baseline output. Its directional
+            // tail is not a reconnectable diffuse/rough GI sample.
+            sampleFlags |= kRestirSampleNoReuse;
+        }
         const float opaqueWeight = 1.0 - dielectricWeight;
         const float3 specularEnergy =
             FresnelSchlickRoughnessGi(saturate(dot(hitNormal, viewDir)), f0, max(surfaceRoughness, 0.55));
@@ -1674,6 +1687,12 @@ void PathTracerRayGen()
 
         const float emissiveLuminance =
             max(surfaceEmissiveColor.r, max(surfaceEmissiveColor.g, surfaceEmissiveColor.b));
+        if (firstIndirectVertex && emissiveLuminance > 1e-4)
+        {
+            // A BSDF-hit emitter carries primary-domain MIS against bounce-0 NEE. Do not expose
+            // that source-PDF-dependent radiance to P6 as a reusable secondary-lighting sample.
+            sampleFlags |= kRestirSampleNoReuse;
+        }
         // Real-time: treat emitters as path terminals. Staring at a bright cube was paying full
         // soft-sun + emissive + env NEE from the light surface and continuing high-throughput
         // bounces — view-dependent ~2× PT cost with no glass. Reference keeps full paths.
@@ -2108,28 +2127,61 @@ void PathTracerRayGen()
         loTailForStore = ClampRadiance(loTail);
     }
 
-    const float3 termIndirect = throughputAfterFirstScatter * loTail;
+    // P5 M=1 reconnection. For a fresh sample, the native solid-angle proposal already represents
+    // geometry and the traced primary-to-secondary segment proves visibility. Reused samples in P6
+    // must retrace visibility and apply the reconnection Jacobian.
+    const bool giEligible = kPtRestirGiInitialEnabled
+        && primaryHit
+        && haveInitialSample
+        && primaryDielectricWeight <= 0.01
+        && primaryRoughness >= 0.2
+        && (sampleFlags & kRestirSampleNoReuse) == 0u
+        && samplePdf > 0.0
+        && samplePdf < kRestirGiMaxProposalPdf;
+    if (!giEligible)
+    {
+        sampleFlags |= kRestirSampleNoReuse;
+    }
+    const RestirGiReservoir giReservoir = RestirGiMakeInitialReservoir(
+        sampleXs,
+        sampleNs,
+        loTailForStore,
+        samplePdf,
+        pathSeed,
+        sampleFlags,
+        sampleInstanceId,
+        samplePrimitiveIndex);
+    const float3 toSecondary = sampleXs - primaryWorldPos;
+    const float secondaryDistance = length(toSecondary);
+    const float3 secondaryDirection = secondaryDistance > 1e-5
+        ? toSecondary / secondaryDistance
+        : primaryShadingNormal;
+    const float3 primaryF0 = lerp(0.04.xxx, primaryAlbedo, primaryMetallic);
+    const float3 currentPrimaryBsdfCos = giEligible
+        ? EvaluateOpaqueBsdf(
+            primaryShadingNormal,
+            normalize(g_CameraPos - primaryWorldPos),
+            secondaryDirection,
+            primaryF0,
+            primaryAlbedo,
+            primaryRoughness,
+            primaryMetallic)
+        : 0.0.xxx;
+    const float3 restirGiIndirectRaw = currentPrimaryBsdfCos * loTail * giReservoir.weightSum;
+    const float3 restirGiIndirect = currentPrimaryBsdfCos * giReservoir.radiance * giReservoir.weightSum;
+    const float3 baselineIndirectRaw = throughputAfterFirstScatter * loTail;
+    const float3 baselineIndirect = throughputAfterFirstScatter * loTailForStore;
+    const float3 termIndirect = giEligible ? restirGiIndirectRaw : baselineIndirectRaw;
+    const float3 shadedIndirect = giEligible ? restirGiIndirect : baselineIndirect;
     const float3 radiancePreClamp = directRadiance + termIndirect;
-    float3 radiance = directRadiance + throughputAfterFirstScatter * loTailForStore;
+    float3 radiance = directRadiance + shadedIndirect;
     if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
     {
         radiance = ClampRadiance(radiance);
     }
 
-    // R1/R2: store Y = t1·Lo_tail (indirect contribution). Temporal shades direct + Y·W.
-    if (!haveInitialSample)
-    {
-        sampleFlags |= kRestirSampleNoReuse;
-    }
-    const float3 indirectContrib = throughputAfterFirstScatter * loTailForStore;
-    const RestirInitialSample initialSample = RestirMakeInitialSample(
-        sampleXs,
-        sampleNs,
-        indirectContrib,
-        samplePdf,
-        pathSeed,
-        sampleFlags);
-    g_InitialSample[pixelIndex] = initialSample;
+    // P5: write raw secondary radiance and an explicit initial UCW; no source-primary shading.
+    g_GiReservoirCurrent[pixelIndex] = giReservoir;
     g_ReservoirCurrent[pixelIndex] = freshDiReservoirs;
 
     float3 displayRadiance = SelectPtDebugRadiance(
@@ -2170,7 +2222,7 @@ void PathTracerRayGen()
 
     // P3 base signal excludes only fresh ReSTIR DI. Temporal shading adds its reevaluated
     // emissive+environment reservoirs back without subtracting from the displayed fp16 output.
-    float3 restirBaseRadiance = directRadiance - freshDiRadiance + indirectContrib;
+    float3 restirBaseRadiance = directRadiance - freshDiRadiance + shadedIndirect;
     if (kPtFireflyClampEnabled)
     {
         restirBaseRadiance = ClampRadiance(restirBaseRadiance);
