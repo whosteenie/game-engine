@@ -13,7 +13,7 @@ cbuffer RestirTemporalConstants : register(b0)
     float3 g_CameraPos;
     float g_MaxTraceDistance;
     float3 g_PrevCameraPos;
-    float _PadPrevCameraPos;
+    float g_SpatialFilterStrength;
     uint g_ShadeOutput;
     uint g_SpatialSampleCount;
     float g_SpatialRadius;
@@ -104,6 +104,33 @@ bool SurfaceCompatible(float4 aPos, uint4 aMat, float4 bPos, uint4 bMat)
     if ((aMat.w & 0xffffu) != (bMat.w & 0xffffu))
         return false;
     return abs(f16tof32(aMat.w >> 16u) - f16tof32(bMat.w >> 16u)) <= 0.1;
+}
+
+bool SpatialSurfaceCompatible(float4 centerPos, uint4 centerMat, float4 neighborPos, uint4 neighborMat)
+{
+    const uint centerFlags = centerMat.z >> 24u;
+    const uint neighborFlags = neighborMat.z >> 24u;
+    if ((centerFlags & 1u) == 0u || (neighborFlags & 1u) == 0u
+        || (centerFlags & 6u) != 0u || (neighborFlags & 6u) != 0u)
+    {
+        return false;
+    }
+    // RTXDI defines the threshold relative to the canonical/current surface's linear depth.
+    if (abs(centerPos.w - neighborPos.w)
+        > kRestirDiSpatialDepthThreshold * max(abs(centerPos.w), 1e-3))
+    {
+        return false;
+    }
+    if (dot(RestirUnpackOctNormal(centerMat.y), RestirUnpackOctNormal(neighborMat.y))
+        < kRestirDiSpatialNormalThreshold)
+    {
+        return false;
+    }
+    if ((centerMat.w & 0xffffu) != (neighborMat.w & 0xffffu))
+    {
+        return false;
+    }
+    return abs(f16tof32(centerMat.w >> 16u) - f16tof32(neighborMat.w >> 16u)) <= 0.1;
 }
 
 float GgxD(float noH, float alpha)
@@ -281,16 +308,17 @@ RestirDiTemporalReservoir ResampleDomain(
     if (historyAccepted && previous.M > 0u && previous.age < kRestirDiTemporalAgeCap)
     {
         float3 f, wi; float dist;
+        float previousTargetAtReceiver = 0.0;
         if (EvaluateSample(previous.sample, receiver, n, v, albedo, metallic, roughness, f, wi, dist))
         {
-            const float previousTargetAtReceiver = RestirDiTargetLuminance(f);
-            previous.age = min(previous.age + 1u, kRestirDiTemporalAgeCap);
-            const uint mBeforePrevious = outR.M;
-            selectedPrevious = RestirDiTemporalCombine(
-                outR, previous, previousTargetAtReceiver, Hash(pixel, salt + 1u));
-            previousM = float(outR.M - mBeforePrevious);
-            usedHistory = true;
+            previousTargetAtReceiver = RestirDiTargetLuminance(f);
         }
+        previous.age = min(previous.age + 1u, kRestirDiTemporalAgeCap);
+        const uint mBeforePrevious = outR.M;
+        selectedPrevious = RestirDiTemporalCombine(
+            outR, previous, previousTargetAtReceiver, Hash(pixel, salt + 1u));
+        previousM = float(outR.M - mBeforePrevious);
+        usedHistory = previousM > 0.0;
     }
     if (outR.M > kRestirDiTemporalMCap)
     {
@@ -310,8 +338,10 @@ RestirDiTemporalReservoir ResampleDomain(
             previousAlbedo, previousMetallic, previousRoughness,
             previousF, previousWi, previousDistance))
     {
-        selectedPreviousTarget = RestirDiTargetLuminance(previousF)
-            * Visibility(previousReceiver, previousGeomN, previousWi, previousDistance);
+        // RTXDI BASIC correction uses target density only. Visibility is evaluated once for the
+        // selected sample at the current receiver in ShadeDomain; source-domain visibility would
+        // be the separate ray-traced correction mode and causes binary temporal weight changes.
+        selectedPreviousTarget = RestirDiTargetLuminance(previousF);
     }
     const float selectedCurrentTarget = outR.targetPdf;
     const float pi = selectedPrevious ? selectedPreviousTarget : selectedCurrentTarget;
@@ -451,7 +481,209 @@ void RestirTemporalRayGen()
 [shader("raygeneration")]
 void RestirSpatialRayGen()
 {
-    // P4 owns spatial reuse. This export remains for RTPSO/SBT compatibility and is not dispatched.
+    const uint2 pixel = DispatchRaysIndex().xy;
+    if (any(pixel >= g_OutputSize)) return;
+    const uint index = pixel.y * g_OutputSize.x + pixel.x;
+    const uint4 centerMat = g_CurrSurfaceMaterial[pixel];
+    const float4 centerPos = g_CurrSurfacePositionDepth[pixel];
+    const bool eligible = ((centerMat.z >> 24u) & 7u) == 1u;
+    RestirDiReservoirSet center = g_ReservoirPrev[index];
+    RestirDiReservoirSet outputSet = center;
+
+    if (!eligible)
+    {
+        g_ReservoirCurrent[index] = outputSet;
+        return;
+    }
+
+    const float3 centerGeomN = RestirUnpackOctNormal(centerMat.x);
+    const float3 centerN = RestirUnpackOctNormal(centerMat.y);
+    const float3 centerV = normalize(g_CameraPos - centerPos.xyz);
+    const float3 centerReceiver = centerPos.xyz + centerGeomN
+        * max(length(centerPos.xyz - g_CameraPos) * 0.001, 0.002);
+    const float centerRoughness = f16tof32(centerMat.w >> 16u);
+    const float4 centerAm = g_CurrAlbedoMetallic[pixel];
+    if (centerAm.a > 0.5 && centerRoughness < kRestirDiSpatialMetalRoughnessCutoff)
+    {
+        // Production rough/specular fallback: keep the valid temporal estimate on smooth metals.
+        g_ReservoirCurrent[index] = outputSet;
+        if (g_DebugMode == 18u || g_DebugMode == 19u)
+        {
+            const float3 debug = g_DebugMode == 18u
+                ? float3(0.1, 1.0, 0.2) : float3(0.65, 0.15, 0.85);
+            const float4 old = g_Output[pixel];
+            g_Output[pixel] = float4(debug, old.a);
+        }
+        return;
+    }
+
+    const uint sourceLimit = min(g_SpatialSampleCount + 1u, 6u);
+    int2 sourcePixels[6];
+    sourcePixels[0] = int2(pixel);
+    uint sourceCount = 1u;
+    const float rotation = Hash(pixel, 100u + g_SpatialIteration * 17u) * 6.2831853;
+    const float goldenAngle = 2.3999632;
+    [loop]
+    for (uint sampleIndex = 0u; sampleIndex + 1u < sourceLimit; ++sampleIndex)
+    {
+        const float radius = g_SpatialRadius
+            * sqrt((float(sampleIndex) + 0.5) / max(float(sourceLimit - 1u), 1.0));
+        const float angle = rotation + float(sampleIndex) * goldenAngle;
+        const int2 offset = int2(round(float2(cos(angle), sin(angle)) * radius));
+        // Match RTXDI's ClampSamplePositionIntoView contract so a viewport-edge footprint does not
+        // lose half of its proposals.
+        const int2 q = clamp(
+            int2(pixel) + offset,
+            int2(0, 0),
+            int2(g_OutputSize) - int2(1, 1));
+        if (SpatialSurfaceCompatible(centerPos, centerMat,
+                g_CurrSurfacePositionDepth[q], g_CurrSurfaceMaterial[q]))
+        {
+            // Keep clamped duplicates. RTXDI samples a fixed number of neighbor proposals and does
+            // not deduplicate ClampSamplePositionIntoView results; dropping them lowers M in a
+            // moving band near the viewport edge and makes the edge footprint visibly discontinuous.
+            sourcePixels[sourceCount++] = q;
+        }
+    }
+
+    bool anyNeighborAccepted = false;
+    bool anyNeighborSelected = false;
+    bool anyFilterHit = false;
+    [unroll]
+    for (uint domain = 0u; domain < 2u; ++domain)
+    {
+        RestirDiTemporalReservoir combined = RestirDiTemporalInit();
+        float sourceM[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        uint selectedSource = 0u;
+
+        float nonzeroWeightSum = 0.0;
+        uint nonzeroWeightCount = 0u;
+        [loop]
+        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            const int2 q = sourcePixels[sourceIndex];
+            const RestirDiReservoirSet sourceSet =
+                g_ReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
+            RestirDiTemporalReservoir source = sourceSet.emissive;
+            if (domain != 0u) source = sourceSet.environment;
+            if (source.W > 0.0 && isfinite(source.W))
+            {
+                nonzeroWeightSum += source.W;
+                nonzeroWeightCount++;
+            }
+        }
+        const float averageNonzeroWeight = nonzeroWeightCount > 0u
+            ? nonzeroWeightSum / float(nonzeroWeightCount) : 0.0;
+        const float boilingMultiplier = 10.0 / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
+
+        [loop]
+        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            const int2 q = sourcePixels[sourceIndex];
+            const RestirDiReservoirSet sourceSet =
+                g_ReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
+            RestirDiTemporalReservoir source = sourceSet.emissive;
+            if (domain != 0u) source = sourceSet.environment;
+            if (g_SpatialFilterStrength > 0.0 && averageNonzeroWeight > 0.0
+                && source.W > averageNonzeroWeight * boilingMultiplier)
+            {
+                anyFilterHit = true;
+                continue;
+            }
+            float3 contribution, wi; float distance;
+            float targetAtCenter = 0.0;
+            if (EvaluateSample(source.sample, centerReceiver, centerN, centerV,
+                    centerAm.rgb, centerAm.a, centerRoughness,
+                    contribution, wi, distance))
+            {
+                targetAtCenter = RestirDiTargetLuminance(contribution);
+            }
+            const uint mBefore = combined.M;
+            const bool selected = RestirDiTemporalCombine(
+                combined, source, targetAtCenter,
+                Hash(pixel, 200u + domain * 31u + sourceIndex * 7u + g_SpatialIteration * 101u));
+            sourceM[sourceIndex] = float(combined.M - mBefore);
+            if (sourceIndex > 0u && sourceM[sourceIndex] > 0.0) anyNeighborAccepted = true;
+            if (selected)
+            {
+                selectedSource = sourceIndex;
+                if (sourceIndex > 0u) anyNeighborSelected = true;
+            }
+        }
+
+        if (combined.M > kRestirDiTemporalMCap)
+        {
+            const float capScale = float(kRestirDiTemporalMCap) / float(combined.M);
+            combined.wSum *= capScale;
+            [unroll] for (uint i = 0u; i < 6u; ++i) sourceM[i] *= capScale;
+            combined.M = kRestirDiTemporalMCap;
+        }
+
+        // RTXDI basic multi-source correction. Evaluate the selected sample's target in every
+        // source receiver domain, but defer binary visibility to the final center-domain shade.
+        // Ray-traced source-domain correction creates moving rejection discontinuities at clipped
+        // neighborhoods and is substantially more expensive; it is a separate optional policy.
+        float piSum = 0.0;
+        float selectedSourceTarget = 0.0;
+        [loop]
+        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            if (sourceM[sourceIndex] <= 0.0) continue;
+            const int2 q = sourcePixels[sourceIndex];
+            const float4 sourcePos = g_CurrSurfacePositionDepth[q];
+            const uint4 sourceMat = g_CurrSurfaceMaterial[q];
+            const float3 sourceGeomN = RestirUnpackOctNormal(sourceMat.x);
+            const float3 sourceN = RestirUnpackOctNormal(sourceMat.y);
+            const float3 sourceV = normalize(g_CameraPos - sourcePos.xyz);
+            const float3 sourceReceiver = sourcePos.xyz + sourceGeomN
+                * max(length(sourcePos.xyz - g_CameraPos) * 0.001, 0.002);
+            const float sourceRoughness = f16tof32(sourceMat.w >> 16u);
+            const float4 sourceAm = g_CurrAlbedoMetallic[q];
+            float3 contribution, wi; float distance;
+            float sourceTarget = 0.0;
+            if (EvaluateSample(combined.sample, sourceReceiver, sourceN, sourceV,
+                    sourceAm.rgb, sourceAm.a, sourceRoughness,
+                    contribution, wi, distance))
+            {
+                sourceTarget = RestirDiTargetLuminance(contribution);
+            }
+            piSum += sourceTarget * sourceM[sourceIndex];
+            if (sourceIndex == selectedSource) selectedSourceTarget = sourceTarget;
+        }
+        const float denominator = combined.targetPdf * piSum;
+        combined.W = denominator > 0.0 && isfinite(denominator)
+            && isfinite(selectedSourceTarget)
+            ? combined.wSum * selectedSourceTarget / denominator
+            : 0.0;
+
+        if (domain == 0u) outputSet.emissive = combined;
+        else outputSet.environment = combined;
+    }
+
+    g_ReservoirCurrent[index] = outputSet;
+    if (g_ShadeOutput != 0u)
+    {
+        float3 radiance = g_BaseRadiance[pixel].rgb
+            + ShadeDomain(outputSet.emissive, centerReceiver, centerGeomN, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness)
+            + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness);
+        const float lum = RestirDiTargetLuminance(radiance);
+        radiance *= min(1.0, 64.0 / max(lum, 1e-6));
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(radiance, old.a);
+    }
+
+    if (g_DebugMode == 18u || g_DebugMode == 19u)
+    {
+        const float3 debug = !eligible ? float3(1.0, 0.0, 1.0)
+            : (g_DebugMode == 18u
+                ? (anyNeighborSelected ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2))
+                : (anyFilterHit ? float3(1.0, 0.75, 0.05)
+                    : (anyNeighborAccepted ? float3(0.1, 1.0, 0.2) : float3(1.0, 0.1, 0.05))));
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(debug, old.a);
+    }
 }
 
 [shader("miss")]

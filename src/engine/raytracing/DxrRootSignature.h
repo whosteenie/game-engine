@@ -103,7 +103,7 @@ struct RestirTemporalConstants
     float cameraPos[3] = {};
     float maxTraceDistance = 100.0f;
     float prevCameraPos[3] = {};
-    float _padPrevCameraPos = 0.0f;
+    float spatialFilterStrength = 0.2f;
     std::uint32_t shadeOutput = 1; // rewrite g_Output = direct + Y·W (0 keeps isolate AOVs)
     std::uint32_t spatialSampleCount = 5;
     float spatialRadius = 20.0f;

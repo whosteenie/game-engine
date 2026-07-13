@@ -87,13 +87,22 @@ namespace restir_di
         const std::uint32_t mCap = 20u)
     {
         const std::uint32_t sourceM = std::min(source.M, mCap);
-        if (sourceM == 0u || source.W <= 0.0f || targetAtCurrentReceiver <= 0.0f)
+        if (sourceM == 0u)
+        {
+            return;
+        }
+        destination.M += sourceM;
+        if (!std::isfinite(source.W) || !std::isfinite(targetAtCurrentReceiver)
+            || source.W <= 0.0f || targetAtCurrentReceiver <= 0.0f)
         {
             return;
         }
         const float weight = targetAtCurrentReceiver * source.W * static_cast<float>(sourceM);
+        if (!std::isfinite(weight) || weight <= 0.0f)
+        {
+            return;
+        }
         destination.wSum += weight;
-        destination.M += sourceM;
         if (xi * destination.wSum < weight)
         {
             destination = Reservoir{
@@ -132,6 +141,18 @@ namespace restir_di
         const float denominator = reservoir.targetPdf * piSum;
         reservoir.W = denominator > 0.0f && std::isfinite(denominator) && std::isfinite(pi)
             ? reservoir.wSum * pi / denominator
+            : 0.0f;
+    }
+
+    inline void FinalizeSpatialBasic(
+        Reservoir& reservoir,
+        const float selectedSourceTarget,
+        const float sourceTargetTimesMSum)
+    {
+        const float denominator = reservoir.targetPdf * sourceTargetTimesMSum;
+        reservoir.W = denominator > 0.0f && std::isfinite(denominator)
+            && std::isfinite(selectedSourceTarget)
+            ? reservoir.wSum * selectedSourceTarget / denominator
             : 0.0f;
     }
 } // namespace restir_di

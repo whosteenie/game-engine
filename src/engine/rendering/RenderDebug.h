@@ -89,6 +89,8 @@ enum class RenderDebugMode
     PtRestirReservoirAge,
     PtRestirChosenSource,
     PtRestirTemporalRejection,
+    PtRestirSpatialSource,
+    PtRestirSpatialRejection,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
 };
@@ -112,6 +114,6 @@ bool IsRrGuideDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
-inline constexpr int kPtDebugIsolateModeMax = 17;
+inline constexpr int kPtDebugIsolateModeMax = 19;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

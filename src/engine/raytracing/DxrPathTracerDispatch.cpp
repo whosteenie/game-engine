@@ -403,9 +403,11 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     const glm::mat4 invViewProj = glm::inverse(viewProj);
     const glm::vec3 cameraPos = camera.GetPosition();
 
-    // Two iterations, radius 20 → 10 (restir-pt.md §3).
-    constexpr std::uint32_t kSpatialIterations = 2u;
-    constexpr float kSpatialRadii[kSpatialIterations] = {10.0f, 5.0f};
+    // RTXDI DI performs one spatial resampling pass over temporal reservoirs. Feeding spatially
+    // resampled reservoirs through another pass recursively correlates neighborhoods and produces
+    // large persistent blotches at low initial-candidate counts.
+    constexpr std::uint32_t kSpatialIterations = 1u;
+    constexpr float kSpatialRadii[kSpatialIterations] = {10.0f};
 
     for (std::uint32_t iteration = 0; iteration < kSpatialIterations; ++iteration)
     {
@@ -418,11 +420,27 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.cameraPos[0] = cameraPos.x;
         constants.cameraPos[1] = cameraPos.y;
         constants.cameraPos[2] = cameraPos.z;
+        constants.prevCameraPos[0] = m_lastPrevCameraPos.x;
+        constants.prevCameraPos[1] = m_lastPrevCameraPos.y;
+        constants.prevCameraPos[2] = m_lastPrevCameraPos.z;
         constants.maxTraceDistance = maxTraceDistance;
-        constants.shadeOutput = shadeOutput ? 1u : 0u;
+        constants.shadeOutput = shadeOutput && iteration + 1u == kSpatialIterations ? 1u : 0u;
         constants.spatialSampleCount = 5u;
         constants.spatialRadius = kSpatialRadii[iteration];
         constants.spatialIteration = iteration;
+        constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
+        constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
+        constants.envImportanceCount = m_lastEnvImportanceCount;
+        constants.envCdfWidth = m_lastEnvCdfWidth;
+        constants.envCdfHeight = m_lastEnvCdfHeight;
+        constants.environmentIntensity = m_lastEnvironmentIntensity;
+        constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
+        constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
+        constants.sunDirection[0] = m_lastSunDirection.x;
+        constants.sunDirection[1] = m_lastSunDirection.y;
+        constants.sunDirection[2] = m_lastSunDirection.z;
+        constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
+        constants.debugMode = m_lastDebugMode;
 
         std::string error;
         const GfxContext::GpuTimerScope gpuScope(
@@ -434,6 +452,16 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
                 restirDispatch.GetSpatialShaderBindingTable(),
                 accelerationStructures.GetTlasResource(),
                 accelerationStructures.GetTlasGpuVirtualAddress(),
+                accelerationStructures.GetEmissiveLightsSrvIndex() != UINT32_MAX
+                    ? accelerationStructures.GetEmissiveLightsSrvIndex()
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
+                    ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                    ? m_lastEnvImportanceCdfSrvIndex
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                m_lastEnvEquirectSrvCpuHandle,
                 constants,
                 error))
         {

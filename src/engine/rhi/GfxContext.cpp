@@ -628,6 +628,15 @@ void GfxContext::PrepareForDeviceShutdown()
         return;
     }
 
+    // Closing the window can leave the final frame recording. WaitForGpu cannot cover an
+    // unsubmitted command list, and ResetCommandListForTeardown deliberately refuses to reset one;
+    // releasing a DXR state object afterward therefore leaves the recorded RTPSO referenced.
+    // Finish/cancel that frame first so its submission receives a fence and can be drained below.
+    if (m_frameRecording)
+    {
+        CancelFrame();
+    }
+
     WaitForGpu();
     WaitForImGuiUploadQueueIdle();
     ResetCommandListForTeardown();

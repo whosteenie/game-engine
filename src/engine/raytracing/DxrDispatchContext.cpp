@@ -176,6 +176,14 @@ void DxrDispatchContext::Release()
         m_tlasSrvIndex = UINT32_MAX;
     }
 
+    for (const std::uint32_t index : m_retiredTlasSrvIndices)
+    {
+        GfxContext::Get().FreeOffscreenSrv(index);
+    }
+    m_retiredTlasSrvIndices.clear();
+    m_tlasSrvResource = nullptr;
+    m_tlasSrvGpuVirtualAddress = 0;
+
 }
 
 void DxrDispatchContext::ReleaseRetiredReflectionOutputs()
@@ -461,13 +469,38 @@ bool DxrDispatchContext::CreateTlasSrv(
         }
     }
 
+    // Descriptor tables are static while a dispatch is executing. All DXR passes in a frame use
+    // the same TLAS, so recreating this descriptor for temporal plus both spatial iterations is an
+    // illegal write to an in-flight descriptor.
+    if (m_tlasSrvResource == tlasResource
+        && m_tlasSrvGpuVirtualAddress == tlasGpuVirtualAddress)
+    {
+        return true;
+    }
+
+    if (m_tlasSrvResource != nullptr)
+    {
+        const std::uint32_t oldIndex = m_tlasSrvIndex;
+        m_tlasSrvIndex = GfxContext::Get().AllocateOffscreenSrv();
+        if (m_tlasSrvIndex == UINT32_MAX)
+        {
+            m_tlasSrvIndex = oldIndex;
+            outError = "failed to allocate replacement TLAS SRV descriptor";
+            return false;
+        }
+        // The prior slot may still be referenced by an executing command list. Keep it allocated
+        // until context release, which occurs after the device-shutdown GPU wait.
+        m_retiredTlasSrvIndices.push_back(oldIndex);
+    }
+
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
     srvDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
     srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     srvDesc.RaytracingAccelerationStructure.Location = tlasGpuVirtualAddress;
     // RTAS SRVs take the GPUVA from the desc; pResource must be null.
     GfxContext::Get().CreateShaderResourceView(nullptr, &srvDesc, m_tlasSrvIndex);
-    (void)tlasResource;
+    m_tlasSrvResource = tlasResource;
+    m_tlasSrvGpuVirtualAddress = tlasGpuVirtualAddress;
     return true;
 }
 
@@ -1273,6 +1306,10 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     const ShaderBindingTable& shaderBindingTable,
     ID3D12Resource* tlasResource,
     const std::uint64_t tlasGpuVirtualAddress,
+    const std::uint32_t emissiveLightsSrvIndex,
+    const std::uint32_t emissiveTrianglesSrvIndex,
+    const std::uint32_t envCdfSrvIndex,
+    const std::uintptr_t envMapSrvCpuHandle,
     const DxrRootSignature::RestirTemporalConstants& constants,
     std::string& outError)
 {
@@ -1283,7 +1320,9 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         return false;
     }
     if (!HasRestirBuffers() || m_primaryOutputResource == nullptr || m_primaryOutputUavIndex == UINT32_MAX
-        || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX)
+        || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX
+        || m_ptRestirSurfaceAlbedoMetallicTexture.resource == nullptr
+        || m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX)
     {
         outError = "ReSTIR spatial buffers unavailable";
         return false;
@@ -1350,8 +1389,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    // The temporal and spatial exports share one global root signature. Bind every declared SRV
-    // table even though the P4 spatial export currently consumes only t0-t6.
+    const std::uint32_t envMapSrvIndex = DepthSrvIndexFromCpuHandle(envMapSrvCpuHandle);
     const std::uint32_t srvIndices[13] = {
         m_tlasSrvIndex,
         m_ptPrevRestirSurfacePositionDepthTexture.srvIndex,
@@ -1362,10 +1400,10 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         m_ptDirectTexture.srvIndex,
         m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex,
         m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex,
-        m_ptDirectTexture.srvIndex,
-        m_ptDirectTexture.srvIndex,
-        m_ptDirectTexture.srvIndex,
-        m_ptDirectTexture.srvIndex};
+        emissiveLightsSrvIndex,
+        emissiveTrianglesSrvIndex,
+        envCdfSrvIndex,
+        envMapSrvIndex};
     for (const std::uint32_t srvIndex : srvIndices)
     {
         if (srvIndex == UINT32_MAX)

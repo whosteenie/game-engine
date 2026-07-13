@@ -308,6 +308,10 @@ public:
         const ShaderBindingTable& shaderBindingTable,
         ID3D12Resource* tlasResource,
         std::uint64_t tlasGpuVirtualAddress,
+        std::uint32_t emissiveLightsSrvIndex,
+        std::uint32_t emissiveTrianglesSrvIndex,
+        std::uint32_t envCdfSrvIndex,
+        std::uintptr_t envMapSrvCpuHandle,
         const DxrRootSignature::RestirTemporalConstants& constants,
         std::string& outError);
 
@@ -363,6 +367,9 @@ private:
     D3D12MA::Allocation* m_outputAllocation = nullptr;
 
     std::uint32_t m_tlasSrvIndex = UINT32_MAX;
+    ID3D12Resource* m_tlasSrvResource = nullptr;
+    std::uint64_t m_tlasSrvGpuVirtualAddress = 0;
+    std::vector<std::uint32_t> m_retiredTlasSrvIndices;
     std::uint32_t m_outputUavIndex = UINT32_MAX;
     std::uint32_t m_outputSrvIndex = UINT32_MAX;
     std::uintptr_t m_outputSrvCpuHandle = 0;

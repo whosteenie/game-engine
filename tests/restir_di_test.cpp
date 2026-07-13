@@ -277,4 +277,46 @@ void RunRestirDiTests(int& failures)
         }
     }
 
+    // 5b. Reservoir combination preserves the full candidate stream even when the source's
+    // selected sample has zero target at the destination. Its RIS weight is zero, but its M still
+    // participates in normalization; dropping it creates a positive energy bias.
+    {
+        restir_di::Reservoir source = restir_di::Init();
+        const float one[3] = {1.0f, 1.0f, 1.0f};
+        restir_di::Update(source, one, kDir, 1.0f, 1.0f, 0.0f);
+        restir_di::Finalize(source);
+
+        restir_di::Reservoir combined = restir_di::Init();
+        restir_di::CombineTemporal(combined, source, 0.0f, 0.0f);
+        if (combined.M != 1u || combined.wSum != 0.0f || combined.targetPdf != 0.0f)
+        {
+            std::cerr << "FAIL: zero-target reservoir source must preserve M without adding weight\n";
+            ++failures;
+        }
+    }
+
+    // 6. P4 multi-source correction uses the selected source in the numerator and every compatible
+    // source's target*M in the denominator. This is the three-pixel extension of the P3 test.
+    {
+        restir_di::Reservoir r = restir_di::Init();
+        r.targetPdf = 3.0f;
+        r.wSum = 18.0f;
+        r.M = 6u;
+        const float sourceTargetTimesMSum = 3.0f * 1.0f + 2.0f * 2.0f + 1.0f * 3.0f;
+        restir_di::FinalizeSpatialBasic(r, 2.0f, sourceTargetTimesMSum);
+        const float expected = 18.0f * 2.0f / (3.0f * sourceTargetTimesMSum);
+        if (std::fabs(r.W - expected) > 1e-6f)
+        {
+            std::cerr << "FAIL: P4 multi-source normalization mismatch\n";
+            ++failures;
+        }
+
+        restir_di::FinalizeSpatialBasic(r, 0.0f, sourceTargetTimesMSum);
+        if (r.W != 0.0f)
+        {
+            std::cerr << "FAIL: P4 unsupported selected source retained energy\n";
+            ++failures;
+        }
+    }
+
 }

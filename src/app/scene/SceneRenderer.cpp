@@ -634,6 +634,13 @@ void SceneRenderer::RecordDxrPass(
     const bool primaryTraceEnabled =
         m_dxrSettings.IsDebugTraceEnabled() || primaryDebugViewActive;
 
+    // Every DXR export uses non-pixel shader SRVs. This must precede smoke/primary debug as well as
+    // PT; doing it only immediately before PT leaves the earlier root-table bindings invalid.
+    if (usePostProcess && m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
+    }
+
     if (m_dxrSmokeDispatch == nullptr)
     {
         m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
@@ -680,6 +687,13 @@ void SceneRenderer::RecordDxrPass(
     if (pathTracingActive && usePostProcess && m_screenSpaceEffects != nullptr
         && m_environmentMap != nullptr && m_environmentMap->GetIBL().IsReady())
     {
+        // Post processing owns the PT output after RecordDxrPass and may leave it pixel-SRV-only
+        // (notably the DLSS/RR resolve). Synchronize that final state back into the DXR owner before
+        // it records this frame's SRV->UAV transition. Without this handoff the enhanced barriers
+        // validator rejects the command list and shutdown cannot safely drain/release the RTPSO.
+        m_dxrPathTracerDispatch->SetPrimaryOutputResourceState(
+            m_screenSpaceEffects->GetPathTracerOutputResourceState());
+
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled begin");
         const GfxContext::GpuTimerScope gpuScopePathTracer("Path tracer");
 
@@ -755,8 +769,6 @@ void SceneRenderer::RecordDxrPass(
             }
         }
 
-        m_screenSpaceEffects->PrepareSceneColorForDxrRead();
-
         const int ptDebugMode = PtDebugIsolateModeFromRenderDebug(debugMode);
 
         pathTracerDispatched = m_dxrPathTracerDispatch->DispatchIfEnabled(
@@ -787,6 +799,7 @@ void SceneRenderer::RecordDxrPass(
                 && m_dxrRestirDispatch != nullptr;
             if (temporalEnabled)
             {
+                const bool shadeRestirOutput = ptDebugMode == 0;
                 const bool temporalSucceeded = m_dxrPathTracerDispatch->DispatchRestirTemporal(
                     *m_dxrRestirDispatch,
                     *m_dxrAccelerationStructures,
@@ -796,8 +809,19 @@ void SceneRenderer::RecordDxrPass(
                     m_dxrAccelerationStructures->GetPtSceneVersion(),
                     m_dxrAccelerationStructures->GetPtMotionVersion(),
                     true,
-                    true);
+                    shadeRestirOutput);
                 if (!temporalSucceeded)
+                {
+                    m_dxrPathTracerDispatch->InvalidateRestirHistory();
+                }
+                else if (!m_dxrPathTracerDispatch->DispatchRestirSpatial(
+                    *m_dxrRestirDispatch,
+                    *m_dxrAccelerationStructures,
+                    camera,
+                    GfxContext::Get().GetCommandList(),
+                    m_dxrSettings.GetMaxTraceDistance(),
+                    true,
+                    shadeRestirOutput))
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();
                 }

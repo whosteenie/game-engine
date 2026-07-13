@@ -89,7 +89,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
 // 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
 // views unreachable — clamp to the real [0,9] range instead.
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 17.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 19.0)))
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
@@ -1114,7 +1114,11 @@ float3 RestirDiEmissiveDirect(
         SampleEmissiveDiCandidate(
             rng, viewDir, f0, albedo, roughness, metallic, hitNormal, shadowOrigin,
             contribution, wi, shadowDist, proposalPdf, lightSample);
-        const float selectXi = PathRngNext(rng);
+        // M=1 selection is deterministic. Do not consume an otherwise unused RNG dimension: this
+        // keeps DI=1 byte-for-byte aligned with plain one-sample NEE for the environment draw and
+        // every later path event (the P2 parity anchor).
+        float selectXi = 0.0;
+        if (candidateCount > 1u) selectXi = PathRngNext(rng);
         RestirDiUpdate(res, contribution, wi, shadowDist, proposalPdf, selectXi);
         RestirDiTemporalUpdate(
             temporalReservoir, lightSample, RestirDiTargetLuminance(contribution), proposalPdf, selectXi);
@@ -1175,7 +1179,8 @@ float3 RestirDiEnvironmentDirect(
             lightSample.sampleType = kRestirDiSampleEnvironment;
             lightSample.uv = DirectionToEquirectUv(wi);
         }
-        const float selectXi = PathRngNext(rng);
+        float selectXi = 0.0;
+        if (candidateCount > 1u) selectXi = PathRngNext(rng);
         RestirDiUpdate(res, contribution, wi, g_MaxTraceDistance, proposalPdf, selectXi);
         RestirDiTemporalUpdate(
             temporalReservoir, lightSample, RestirDiTargetLuminance(contribution), proposalPdf, selectXi);

@@ -150,6 +150,8 @@ namespace
         RenderDebugMode::PtRestirReservoirAge,
         RenderDebugMode::PtRestirChosenSource,
         RenderDebugMode::PtRestirTemporalRejection,
+        RenderDebugMode::PtRestirSpatialSource,
+        RenderDebugMode::PtRestirSpatialRejection,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -612,6 +614,9 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtRestirChosenSource:
         case RenderDebugMode::PtRestirTemporalRejection:
             return "ReSTIR DI P3 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=accepted, red=no history/match, magenta=ineligible transmission/delta.";
+        case RenderDebugMode::PtRestirSpatialSource:
+        case RenderDebugMode::PtRestirSpatialRejection:
+            return "ReSTIR DI P4 spatial diagnostics. Source: green=center, blue=neighbor. Rejection: green=compatible neighbor accepted, yellow=boiling-filter discard, purple=smooth-metal temporal fallback, red=no compatible candidate, magenta=ineligible surface.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

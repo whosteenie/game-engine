@@ -34,6 +34,14 @@ static const uint kRestirDiSampleEmissive = 1u;
 static const uint kRestirDiSampleEnvironment = 2u;
 static const uint kRestirDiTemporalMCap = 20u;
 static const uint kRestirDiTemporalAgeCap = 30u;
+// RTXDI's production defaults for spatial neighbor validation. Spatial neighbors are different
+// pixels in the current frame, so they must not use the stricter same-pixel temporal reprojection
+// thresholds (which turn ordinary perspective depth gradients into moving rejection contours).
+static const float kRestirDiSpatialDepthThreshold = 0.1;
+static const float kRestirDiSpatialNormalThreshold = 0.5;
+// Smooth metals retain the temporally resampled estimate: sparse spatial light selection produces
+// a less reconstructable signal than the input on this lobe class.
+static const float kRestirDiSpatialMetalRoughnessCutoff = 0.2;
 // Replayable light identity for P3. Emissive: index0=light, index1=triangle, uv=barycentric
 // randoms. Environment: uv=equirect coordinates. No receiver-side contribution is stored here.
 struct RestirDiLightSample
@@ -127,7 +135,17 @@ bool RestirDiTemporalCombine(
     float xi)
 {
     const uint sourceM = min(src.M, kRestirDiTemporalMCap);
-    if (sourceM == 0u || !isfinite(src.W) || !isfinite(targetAtReceiver)
+    if (sourceM == 0u)
+    {
+        return false;
+    }
+
+    // Combining reservoirs represents combining their complete candidate streams. Preserve M even
+    // when this source's selected sample has zero target at the destination receiver; omitting
+    // those zero-weight candidates biases every surviving sample high. This matches
+    // RTXDI_InternalSimpleResample, which increments M independently of the RIS weight.
+    dst.M += sourceM;
+    if (!isfinite(src.W) || !isfinite(targetAtReceiver)
         || src.W <= 0.0 || targetAtReceiver <= 0.0)
     {
         return false;
@@ -138,7 +156,6 @@ bool RestirDiTemporalCombine(
         return false;
     }
     dst.wSum += weight;
-    dst.M += sourceM;
     if (xi * dst.wSum < weight)
     {
         dst.sample = src.sample;
