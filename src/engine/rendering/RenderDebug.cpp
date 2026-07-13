@@ -168,6 +168,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT ReSTIR surface: material ID";
     case RenderDebugMode::PtRestirLobeClass:
         return "PT ReSTIR surface: lobe class";
+    case RenderDebugMode::PtRestirReservoirM: return "PT ReSTIR DI: reservoir M";
+    case RenderDebugMode::PtRestirReservoirAge: return "PT ReSTIR DI: reservoir age";
+    case RenderDebugMode::PtRestirChosenSource: return "PT ReSTIR DI: chosen source";
+    case RenderDebugMode::PtRestirTemporalRejection: return "PT ReSTIR DI: temporal rejection";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -364,6 +368,10 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGeometricNormal:
     case RenderDebugMode::PtRestirMaterialId:
     case RenderDebugMode::PtRestirLobeClass:
+    case RenderDebugMode::PtRestirReservoirM:
+    case RenderDebugMode::PtRestirReservoirAge:
+    case RenderDebugMode::PtRestirChosenSource:
+    case RenderDebugMode::PtRestirTemporalRejection:
         return true;
     default:
         return false;
@@ -399,6 +407,10 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGeometricNormal: return 11;
     case RenderDebugMode::PtRestirMaterialId: return 12;
     case RenderDebugMode::PtRestirLobeClass: return 13;
+    case RenderDebugMode::PtRestirReservoirM: return 14;
+    case RenderDebugMode::PtRestirReservoirAge: return 15;
+    case RenderDebugMode::PtRestirChosenSource: return 16;
+    case RenderDebugMode::PtRestirTemporalRejection: return 17;
     default: return 0;
     }
 }

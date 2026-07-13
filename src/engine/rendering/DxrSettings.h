@@ -87,6 +87,8 @@ public:
     {
         m_restirDiCandidateCount = count < 0 ? 0 : (count > 32 ? 32 : count);
     }
+    bool IsRestirDiTemporalEnabled() const { return m_restirDiTemporalEnabled; }
+    void SetRestirDiTemporalEnabled(bool enabled) { m_restirDiTemporalEnabled = enabled; }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -175,6 +177,7 @@ private:
     int m_ptAmbientAoRayCount = 0;
     int m_ptRrBundleMode = 0;
     int m_restirDiCandidateCount = 0;
+    bool m_restirDiTemporalEnabled = false;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

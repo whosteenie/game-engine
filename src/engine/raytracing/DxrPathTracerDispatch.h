@@ -139,6 +139,7 @@ public:
         bool shadeOutput = true);
 
     void FinalizePathTracerSurfaceHistory(void* commandList);
+    void InvalidateRestirHistory() { m_dispatchContext.InvalidateRestirHistory(); }
 
     // Resets per-pixel RNG salt so material edits (IOR, transmission, etc.) converge immediately.
     void ResetAccumulation() { m_frameIndex = 0; }
@@ -148,4 +149,16 @@ private:
 
     bool m_dispatchedThisFrame = false;
     std::uint32_t m_frameIndex = 0;
+    std::uintptr_t m_lastEnvEquirectSrvCpuHandle = 0;
+    std::uint32_t m_lastEnvImportanceCdfSrvIndex = UINT32_MAX;
+    std::uint32_t m_lastEnvImportanceCount = 0;
+    std::uint32_t m_lastEnvCdfWidth = 0;
+    std::uint32_t m_lastEnvCdfHeight = 0;
+    float m_lastEnvironmentIntensity = 1.0f;
+    float m_lastEnvDirectLuminanceClamp = 0.0f;
+    float m_lastSunIntensity = 0.0f;
+    glm::vec3 m_lastSunDirection{0.0f, 1.0f, 0.0f};
+    float m_lastSunAngularTanRadius = 0.0f;
+    std::uint32_t m_lastDebugMode = 0;
+    glm::vec3 m_lastPrevCameraPos{0.0f};
 };

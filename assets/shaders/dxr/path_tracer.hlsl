@@ -6,6 +6,7 @@
 
 #include "hit_shading.hlsli"
 #include "restir_pack.hlsli"
+#include "restir_di.hlsli"
 
 RWTexture2D<float4> g_Output : register(u0);   // rgb = HDR radiance, a = specular hit-distance guide (RR4)
 RWTexture2D<float> g_DepthOutput : register(u1); // hyperbolic depth [0,1] at primary hit (DLSS)
@@ -18,11 +19,12 @@ RWTexture2D<float4> g_SpecularAlbedoGuide : register(u5);  // RGBA8: EnvBRDFAppr
 RWTexture2D<float4> g_NormalRoughnessGuide : register(u6); // RGBA16F: world normal xyz + roughness w
 // G5/R1: first-indirect-vertex sample + M=1 reservoir (passthrough until R2 reuse).
 RWStructuredBuffer<RestirInitialSample> g_InitialSample : register(u7);
-RWStructuredBuffer<RestirReservoir> g_ReservoirCurrent : register(u8);
+RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirCurrent : register(u8);
 // R2: bounce-0 direct only — temporal shades g_Output = direct + Y·W (never subtract packed Y).
 RWTexture2D<float4> g_DirectOutput : register(u9);
 RWTexture2D<float4> g_RestirSurfacePositionDepth : register(u10);
 RWTexture2D<uint4> g_RestirSurfaceMaterial : register(u11);
+RWTexture2D<float4> g_RestirSurfaceAlbedoMetallic : register(u12);
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -87,7 +89,7 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
 // 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
 // views unreachable — clamp to the real [0,9] range instead.
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 13.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 17.0)))
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
@@ -991,12 +993,14 @@ void SampleEmissiveDiCandidate(
     out float3 contribution,
     out float3 wi,
     out float shadowDist,
-    out float proposalPdf)
+    out float proposalPdf,
+    out RestirDiLightSample lightSample)
 {
     contribution = 0.0.xxx;
     wi = float3(0.0, 0.0, 1.0);
     shadowDist = 0.0;
     proposalPdf = 0.0;
+    lightSample = RestirDiInvalidLightSample();
 
     const float4 xiPick = PathRngNext4(rng);
     const float4 xiSurface = PathRngNext4(rng);
@@ -1035,6 +1039,10 @@ void SampleEmissiveDiCandidate(
     }
 
     const EmissiveTriangleEntry emitterTri = g_EmissiveTriangles[triangleIndex];
+    lightSample.sampleType = kRestirDiSampleEmissive;
+    lightSample.index0 = lightIndex;
+    lightSample.index1 = triangleIndex;
+    lightSample.uv = xiSurface.xy;
 
     float3 lightPoint;
     float pdfArea;
@@ -1085,8 +1093,10 @@ float3 RestirDiEmissiveDirect(
     float metallic,
     float3 hitNormal,
     float3 shadowOrigin,
-    uint candidateCount)
+    uint candidateCount,
+    out RestirDiTemporalReservoir temporalReservoir)
 {
+    temporalReservoir = RestirDiTemporalInit();
     if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0 || candidateCount == 0u)
     {
         return 0.0.xxx;
@@ -1100,13 +1110,18 @@ float3 RestirDiEmissiveDirect(
         float3 wi;
         float shadowDist;
         float proposalPdf;
+        RestirDiLightSample lightSample;
         SampleEmissiveDiCandidate(
             rng, viewDir, f0, albedo, roughness, metallic, hitNormal, shadowOrigin,
-            contribution, wi, shadowDist, proposalPdf);
-        RestirDiUpdate(res, contribution, wi, shadowDist, proposalPdf, PathRngNext(rng));
+            contribution, wi, shadowDist, proposalPdf, lightSample);
+        const float selectXi = PathRngNext(rng);
+        RestirDiUpdate(res, contribution, wi, shadowDist, proposalPdf, selectXi);
+        RestirDiTemporalUpdate(
+            temporalReservoir, lightSample, RestirDiTargetLuminance(contribution), proposalPdf, selectXi);
     }
 
     RestirDiFinalize(res);
+    RestirDiTemporalFinalize(temporalReservoir);
     if (res.targetPdf <= 0.0)
     {
         return 0.0.xxx;
@@ -1127,8 +1142,10 @@ float3 RestirDiEnvironmentDirect(
     float metallic,
     float3 hitNormal,
     float3 shadowOrigin,
-    uint candidateCount)
+    uint candidateCount,
+    out RestirDiTemporalReservoir temporalReservoir)
 {
+    temporalReservoir = RestirDiTemporalInit();
     if (g_EnvLightImportanceCount == 0u || candidateCount == 0u)
     {
         return 0.0.xxx;
@@ -1141,6 +1158,7 @@ float3 RestirDiEnvironmentDirect(
         float3 contribution = 0.0.xxx;
         float3 wi = float3(0.0, 0.0, 1.0);
         float proposalPdf = 0.0;
+        RestirDiLightSample lightSample = RestirDiInvalidLightSample();
 
         const float4 xi = PathRngNext4(rng);
         float pdfEnv;
@@ -1154,11 +1172,17 @@ float3 RestirDiEnvironmentDirect(
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
             contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
             proposalPdf = pdfEnv;
+            lightSample.sampleType = kRestirDiSampleEnvironment;
+            lightSample.uv = DirectionToEquirectUv(wi);
         }
-        RestirDiUpdate(res, contribution, wi, g_MaxTraceDistance, proposalPdf, PathRngNext(rng));
+        const float selectXi = PathRngNext(rng);
+        RestirDiUpdate(res, contribution, wi, g_MaxTraceDistance, proposalPdf, selectXi);
+        RestirDiTemporalUpdate(
+            temporalReservoir, lightSample, RestirDiTargetLuminance(contribution), proposalPdf, selectXi);
     }
 
     RestirDiFinalize(res);
+    RestirDiTemporalFinalize(temporalReservoir);
     if (res.targetPdf <= 0.0)
     {
         return 0.0.xxx;
@@ -1478,7 +1502,13 @@ void PathTracerRayGen()
     float3 primaryWorldPos = 0.0.xxx;
     float3 primaryGeomNormal = float3(0.0, 1.0, 0.0);
     float3 primaryShadingNormal = float3(0.0, 1.0, 0.0);
+    float3 primaryAlbedo = 0.0.xxx;
+    float primaryMetallic = 0.0;
     uint primaryMaterialId = 0u;
+    RestirDiReservoirSet freshDiReservoirs;
+    freshDiReservoirs.emissive = RestirDiTemporalInit();
+    freshDiReservoirs.environment = RestirDiTemporalInit();
+    float3 freshDiRadiance = 0.0.xxx;
 
     RayDesc ray;
     ray.Origin = g_CameraPos;
@@ -1707,14 +1737,15 @@ void PathTracerRayGen()
                     const float3 emissiveNee = opaqueWeight
                         * RestirDiEmissiveDirect(
                             rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                            hitNormal, shadowOrigin, diCandidates);
+                            hitNormal, shadowOrigin, diCandidates, freshDiReservoirs.emissive);
                     emissiveNeeContrib = throughput * emissiveNee;
 
                     const float3 envNee = opaqueWeight
                         * RestirDiEnvironmentDirect(
                             rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                            hitNormal, shadowOrigin, diCandidates);
+                            hitNormal, shadowOrigin, diCandidates, freshDiReservoirs.environment);
                     envNeeContrib = throughput * envNee;
+                    freshDiRadiance = emissiveNeeContrib + envNeeContrib;
                 }
                 else
                 {
@@ -1794,6 +1825,8 @@ void PathTracerRayGen()
             primaryGeomNormal = hitNormalGeom;
             primaryShadingNormal = hitNormal;
             primaryMaterialId = g_GeometryLookup[payload.instanceId].materialId;
+            primaryAlbedo = albedo;
+            primaryMetallic = surfaceMetallic;
             const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
             float3 diffuseGuide;
@@ -2092,7 +2125,7 @@ void PathTracerRayGen()
         pathSeed,
         sampleFlags);
     g_InitialSample[pixelIndex] = initialSample;
-    g_ReservoirCurrent[pixelIndex] = RestirMakePassthroughReservoir(initialSample);
+    g_ReservoirCurrent[pixelIndex] = freshDiReservoirs;
 
     float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
@@ -2130,8 +2163,14 @@ void PathTracerRayGen()
             0.15);
     }
 
-    // Unclamped bounce-0 direct for ReSTIR shade; g_Output keeps full M=1 / isolate AOVs.
-    g_DirectOutput[pixel] = float4(directRadiance, 0.0);
+    // P3 base signal excludes only fresh ReSTIR DI. Temporal shading adds its reevaluated
+    // emissive+environment reservoirs back without subtracting from the displayed fp16 output.
+    float3 restirBaseRadiance = directRadiance - freshDiRadiance + indirectContrib;
+    if (kPtFireflyClampEnabled)
+    {
+        restirBaseRadiance = ClampRadiance(restirBaseRadiance);
+    }
+    g_DirectOutput[pixel] = float4(restirBaseRadiance, 0.0);
     if (primaryHit)
     {
         const uint surfaceFlags = 1u
@@ -2144,11 +2183,13 @@ void PathTracerRayGen()
             RestirPackOctNormal(primaryShadingNormal),
             ((primaryInstanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
             (primaryMaterialId & 0xffffu) | (f32tof16(primaryRoughness) << 16u));
+        g_RestirSurfaceAlbedoMetallic[pixel] = float4(primaryAlbedo, primaryMetallic);
     }
     else
     {
         g_RestirSurfacePositionDepth[pixel] = 0.0.xxxx;
         g_RestirSurfaceMaterial[pixel] = 0u.xxxx;
+        g_RestirSurfaceAlbedoMetallic[pixel] = 0.0.xxxx;
     }
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     g_DepthOutput[pixel] = primaryDepth;

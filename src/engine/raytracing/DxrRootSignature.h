@@ -102,11 +102,26 @@ struct RestirTemporalConstants
     float invViewProj[16] = {};
     float cameraPos[3] = {};
     float maxTraceDistance = 100.0f;
+    float prevCameraPos[3] = {};
+    float _padPrevCameraPos = 0.0f;
     std::uint32_t shadeOutput = 1; // rewrite g_Output = direct + Y·W (0 keeps isolate AOVs)
     std::uint32_t spatialSampleCount = 5;
     float spatialRadius = 20.0f;
     std::uint32_t spatialIteration = 0;
+    std::uint32_t emissiveLightCount = 0;
+    float emissiveLightPickWeightSum = 0.0f;
+    std::uint32_t envImportanceCount = 0;
+    std::uint32_t envCdfWidth = 0;
+    std::uint32_t envCdfHeight = 0;
+    float environmentIntensity = 1.0f;
+    float envDirectLuminanceClamp = 0.0f;
+    float analyticSunActive = 0.0f;
+    float sunDirection[3] = {0.0f, 1.0f, 0.0f};
+    float sunAngularTanRadius = 0.0f;
+    std::uint32_t debugMode = 0;
+    std::uint32_t _padDebug[3] = {};
 };
+static_assert(sizeof(RestirTemporalConstants) == 192, "ReSTIR DI temporal cbuffer layout mismatch");
 
 struct ShadowDispatchConstants
 {

@@ -78,4 +78,60 @@ namespace restir_di
         outRadiance[1] = r.contribution[1] * visibility * w;
         outRadiance[2] = r.contribution[2] * visibility * w;
     }
+
+    inline void CombineTemporal(
+        Reservoir& destination,
+        const Reservoir& source,
+        const float targetAtCurrentReceiver,
+        const float xi,
+        const std::uint32_t mCap = 20u)
+    {
+        const std::uint32_t sourceM = std::min(source.M, mCap);
+        if (sourceM == 0u || source.W <= 0.0f || targetAtCurrentReceiver <= 0.0f)
+        {
+            return;
+        }
+        const float weight = targetAtCurrentReceiver * source.W * static_cast<float>(sourceM);
+        destination.wSum += weight;
+        destination.M += sourceM;
+        if (xi * destination.wSum < weight)
+        {
+            destination = Reservoir{
+                {source.contribution[0], source.contribution[1], source.contribution[2]},
+                {source.direction[0], source.direction[1], source.direction[2]},
+                source.distance,
+                targetAtCurrentReceiver,
+                destination.wSum,
+                destination.M,
+                0.0f};
+        }
+    }
+
+    inline void CapAndFinalizeTemporal(Reservoir& reservoir, const std::uint32_t mCap = 20u)
+    {
+        if (reservoir.M > mCap)
+        {
+            reservoir.wSum *= static_cast<float>(mCap) / static_cast<float>(reservoir.M);
+            reservoir.M = mCap;
+        }
+        Finalize(reservoir);
+    }
+
+    // RTXDI BASIC source-mixture correction. The selected sample is evaluated at the current and
+    // previous receivers; selectedFromPrevious identifies the source reservoir that selected it.
+    inline void FinalizeTemporalBasic(
+        Reservoir& reservoir,
+        const float currentTarget,
+        const float previousTarget,
+        const float currentM,
+        const float previousM,
+        const bool selectedFromPrevious)
+    {
+        const float pi = selectedFromPrevious ? previousTarget : currentTarget;
+        const float piSum = currentTarget * currentM + previousTarget * previousM;
+        const float denominator = reservoir.targetPdf * piSum;
+        reservoir.W = denominator > 0.0f && std::isfinite(denominator) && std::isfinite(pi)
+            ? reservoir.wSum * pi / denominator
+            : 0.0f;
+    }
 } // namespace restir_di

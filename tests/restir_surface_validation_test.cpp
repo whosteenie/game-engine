@@ -56,4 +56,5 @@ void RunRestirSurfaceValidationTests(int& failures)
         std::cerr << "FAIL: invalid ReSTIR surface must reject history\n";
         ++failures;
     }
+
 }

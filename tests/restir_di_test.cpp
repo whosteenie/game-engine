@@ -222,4 +222,59 @@ void RunRestirDiTests(int& failures)
             ++failures;
         }
     }
+
+    // 4. P3 two-pixel temporal combine: source M is preserved and current-domain targets drive
+    // selection. For scalar candidates 1 and 3, canonical reservoir combination evaluates to the
+    // plain-MC mean 2 regardless of which candidate wins.
+    {
+        restir_di::Reservoir fresh = restir_di::Init();
+        restir_di::Reservoir previous = restir_di::Init();
+        const float one[3] = {1.0f, 1.0f, 1.0f};
+        const float three[3] = {3.0f, 3.0f, 3.0f};
+        restir_di::Update(fresh, one, kDir, 1.0f, 1.0f, 0.0f);
+        restir_di::Update(previous, three, kDir, 1.0f, 1.0f, 0.0f);
+        restir_di::Finalize(fresh);
+        restir_di::Finalize(previous);
+
+        for (const float xi : {0.1f, 0.9f})
+        {
+            restir_di::Reservoir combined = restir_di::Init();
+            restir_di::CombineTemporal(combined, fresh, 1.0f, 0.0f);
+            restir_di::CombineTemporal(combined, previous, 3.0f, xi);
+            restir_di::CapAndFinalizeTemporal(combined);
+            float shade[3];
+            restir_di::Shade(combined, 1.0f, shade);
+            if (combined.M != 2u || std::fabs(shade[0] - 2.0f) > 1e-5f)
+            {
+                std::cerr << "FAIL: P3 temporal combine expected M=2 and mean=2, got M="
+                          << combined.M << " shade=" << shade[0] << "\n";
+                ++failures;
+            }
+        }
+    }
+
+    // 5. P3 BASIC correction removes unsupported history energy. A history-selected sample that
+    // has zero target/visibility at its source receiver must contribute zero instead of producing
+    // an edge-energy gain through biased M normalization.
+    {
+        restir_di::Reservoir r = restir_di::Init();
+        r.targetPdf = 4.0f;
+        r.wSum = 8.0f;
+        r.M = 2u;
+        restir_di::FinalizeTemporalBasic(r, 4.0f, 0.0f, 1.0f, 1.0f, true);
+        if (r.W != 0.0f)
+        {
+            std::cerr << "FAIL: P3 BASIC correction retained unsupported history energy\n";
+            ++failures;
+        }
+
+        restir_di::FinalizeTemporalBasic(r, 4.0f, 2.0f, 1.0f, 1.0f, false);
+        const float expected = 8.0f * 4.0f / (4.0f * (4.0f + 2.0f));
+        if (std::fabs(r.W - expected) > 1e-6f)
+        {
+            std::cerr << "FAIL: P3 BASIC source-mixture normalization mismatch\n";
+            ++failures;
+        }
+    }
+
 }

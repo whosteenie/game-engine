@@ -145,6 +145,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const glm::vec3 prevCameraPos = frameInputs.motionHistoryValid
         ? frameInputs.prevCameraPos
         : cameraPos;
+    m_lastPrevCameraPos = prevCameraPos;
 
     DxrRootSignature::ReflectionDispatchConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(width);
@@ -226,6 +227,18 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.envIsCdfHeight = frameInputs.envImportanceCdfHeight;
     constants.envDirectLightingLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
     constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
+
+    m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
+    m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
+    m_lastEnvImportanceCount = frameInputs.envImportanceSampleCount;
+    m_lastEnvCdfWidth = frameInputs.envImportanceCdfWidth;
+    m_lastEnvCdfHeight = frameInputs.envImportanceCdfHeight;
+    m_lastEnvironmentIntensity = frameInputs.environmentIntensity;
+    m_lastEnvDirectLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
+    m_lastSunIntensity = frameInputs.sunIntensity;
+    m_lastSunDirection = frameInputs.sunDirection;
+    m_lastSunAngularTanRadius = std::tan(glm::radians(frameInputs.sunAngularRadiusDegrees));
+    m_lastDebugMode = static_cast<std::uint32_t>(std::max(ptDebugIsolateMode, 0));
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
@@ -313,11 +326,27 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     constants.cameraPos[0] = cameraPos.x;
     constants.cameraPos[1] = cameraPos.y;
     constants.cameraPos[2] = cameraPos.z;
+    constants.prevCameraPos[0] = m_lastPrevCameraPos.x;
+    constants.prevCameraPos[1] = m_lastPrevCameraPos.y;
+    constants.prevCameraPos[2] = m_lastPrevCameraPos.z;
     constants.maxTraceDistance = maxTraceDistance;
     constants.shadeOutput = shadeOutput ? 1u : 0u;
     constants.spatialSampleCount = 5u;
     constants.spatialRadius = 10.0f;
     constants.spatialIteration = 0u;
+    constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
+    constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
+    constants.envImportanceCount = m_lastEnvImportanceCount;
+    constants.envCdfWidth = m_lastEnvCdfWidth;
+    constants.envCdfHeight = m_lastEnvCdfHeight;
+    constants.environmentIntensity = m_lastEnvironmentIntensity;
+    constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
+    constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
+    constants.sunDirection[0] = m_lastSunDirection.x;
+    constants.sunDirection[1] = m_lastSunDirection.y;
+    constants.sunDirection[2] = m_lastSunDirection.z;
+    constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
+    constants.debugMode = m_lastDebugMode;
 
     std::string error;
     const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR temporal");
@@ -328,6 +357,16 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
             restirDispatch.GetTemporalShaderBindingTable(),
             accelerationStructures.GetTlasResource(),
             accelerationStructures.GetTlasGpuVirtualAddress(),
+            accelerationStructures.GetEmissiveLightsSrvIndex() != UINT32_MAX
+                ? accelerationStructures.GetEmissiveLightsSrvIndex()
+                : accelerationStructures.GetGeometryLookupSrvIndex(),
+            accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
+                ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
+                : accelerationStructures.GetGeometryLookupSrvIndex(),
+            m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                ? m_lastEnvImportanceCdfSrvIndex
+                : accelerationStructures.GetGeometryLookupSrvIndex(),
+            m_lastEnvEquirectSrvCpuHandle,
             constants,
             error))
     {

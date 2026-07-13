@@ -95,6 +95,9 @@ void RunShaderCompileTests()
         ExpectShaderLibraryCompiles(
             "assets/shaders/dxr/path_tracer.hlsl",
             "path_tracer.hlsl DXR library should compile");
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/restir_di_temporal.hlsl",
+            "restir_di_temporal.hlsl DXR library should compile");
     }
     catch (const std::exception& exception)
     {

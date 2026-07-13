@@ -33,11 +33,11 @@ inline bool AreRestirSurfacesCompatible(
         return false;
     }
 
-    const float normalDot =
+    const float shadingNormalDot =
         current.shadingNormal[0] * history.shadingNormal[0]
         + current.shadingNormal[1] * history.shadingNormal[1]
         + current.shadingNormal[2] * history.shadingNormal[2];
-    return normalDot >= normalThreshold
+    return shadingNormalDot >= normalThreshold
         && std::fabs(current.roughness - history.roughness) <= roughnessThreshold
         && current.materialId == history.materialId
         && current.lobeFlags == history.lobeFlags;

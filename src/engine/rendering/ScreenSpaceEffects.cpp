@@ -1724,8 +1724,9 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
         return 0;
     }
 
-    const bool wantGuides = mode == 0 || mode == 2;
-    const bool wantDepth = mode == 0 || mode == 3 || mode == 4;
+    const bool fullPtBundle = mode == 0;
+    const bool wantGuides = fullPtBundle || mode == 2;
+    const bool wantDepth = fullPtBundle || mode == 3 || mode == 4;
     std::uint32_t ready = 0;
 
     if (wantDepth)
@@ -1734,7 +1735,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
         {
             ready |= kDepthReady;
         }
-        else if (mode == 0)
+        else if (fullPtBundle)
         {
             return 0; // full bundle is all-or-nothing (never a partial swap)
         }
@@ -1750,7 +1751,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
             && m_rrNormalRoughnessTarget.resource != nullptr;
         if (!guidesAvailable)
         {
-            return mode == 0 ? 0u : ready; // full bundle: all-or-nothing
+            return fullPtBundle ? 0u : ready; // full bundle: all-or-nothing
         }
 
         // Copy the PT bounce-0 guides into the RR internal targets (format-identical blits) so
@@ -1773,6 +1774,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 
         m_ptFullGuidesThisFrame = true;
         ready |= kGuidesReady;
+
     }
 
     return ready;

@@ -323,6 +323,23 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "shadow ray each: less emissive/env noise at equal cost, same converged image.");
             }
 
+            bool restirDiTemporal = dxrSettings.IsRestirDiTemporalEnabled();
+            UndoableRendererCheckbox(
+                "PT ReSTIR DI temporal",
+                &restirDiTemporal,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetRestirDiTemporalEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "P3 temporal reuse for typed emissive/environment reservoirs. Real-time opaque\n"
+                    "surfaces only; reference, transmission, delta lobes, and rejected history use fresh DI.");
+            }
+
             float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
             UndoableRendererSliderFloat(
                 "PT sun angular radius",

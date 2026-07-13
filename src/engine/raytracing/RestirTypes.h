@@ -28,3 +28,34 @@ struct RestirReservoir
 };
 
 static_assert(sizeof(RestirReservoir) == 48, "RestirReservoir must be 48 bytes");
+
+struct RestirDiLightSample
+{
+    std::uint32_t sampleType = 0;
+    std::uint32_t index0 = 0;
+    std::uint32_t index1 = 0;
+    std::uint32_t padding0 = 0;
+    float uv[2] = {};
+    float padding1[2] = {};
+};
+
+struct RestirDiTemporalReservoir
+{
+    RestirDiLightSample sample{};
+    float wSum = 0.0f;
+    float targetPdf = 0.0f;
+    float W = 0.0f;
+    std::uint32_t M = 0;
+    std::uint32_t age = 0;
+    std::uint32_t padding[3] = {};
+};
+
+struct RestirDiReservoirSet
+{
+    RestirDiTemporalReservoir emissive{};
+    RestirDiTemporalReservoir environment{};
+};
+
+static_assert(sizeof(RestirDiLightSample) == 32);
+static_assert(sizeof(RestirDiTemporalReservoir) == 64);
+static_assert(sizeof(RestirDiReservoirSet) == 128);

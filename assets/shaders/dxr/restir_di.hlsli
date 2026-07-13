@@ -29,6 +29,126 @@ struct RestirDiReservoir
     float W;             // unbiased contribution weight (UCW), set by RestirDiFinalize
 };
 
+static const uint kRestirDiSampleInvalid = 0u;
+static const uint kRestirDiSampleEmissive = 1u;
+static const uint kRestirDiSampleEnvironment = 2u;
+static const uint kRestirDiTemporalMCap = 20u;
+static const uint kRestirDiTemporalAgeCap = 30u;
+// Replayable light identity for P3. Emissive: index0=light, index1=triangle, uv=barycentric
+// randoms. Environment: uv=equirect coordinates. No receiver-side contribution is stored here.
+struct RestirDiLightSample
+{
+    uint sampleType;
+    uint index0;
+    uint index1;
+    uint _pad0;
+    float2 uv;
+    float2 _pad1;
+};
+
+struct RestirDiTemporalReservoir
+{
+    RestirDiLightSample sample;
+    float wSum;
+    float targetPdf;
+    float W;
+    uint M;
+    uint age;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct RestirDiReservoirSet
+{
+    RestirDiTemporalReservoir emissive;
+    RestirDiTemporalReservoir environment;
+};
+
+RestirDiLightSample RestirDiInvalidLightSample()
+{
+    RestirDiLightSample s;
+    s.sampleType = kRestirDiSampleInvalid;
+    s.index0 = 0u;
+    s.index1 = 0u;
+    s._pad0 = 0u;
+    s.uv = 0.0.xx;
+    s._pad1 = 0.0.xx;
+    return s;
+}
+
+RestirDiTemporalReservoir RestirDiTemporalInit()
+{
+    RestirDiTemporalReservoir r;
+    r.sample = RestirDiInvalidLightSample();
+    r.wSum = 0.0;
+    r.targetPdf = 0.0;
+    r.W = 0.0;
+    r.M = 0u;
+    r.age = 0u;
+    r._pad0 = r._pad1 = r._pad2 = 0u;
+    return r;
+}
+
+void RestirDiTemporalUpdate(
+    inout RestirDiTemporalReservoir r,
+    RestirDiLightSample sample,
+    float targetPdf,
+    float proposalPdf,
+    float xi)
+{
+    r.M += 1u;
+    if (targetPdf <= 0.0 || proposalPdf <= 0.0)
+    {
+        return;
+    }
+    const float weight = targetPdf / proposalPdf;
+    r.wSum += weight;
+    if (xi * r.wSum < weight)
+    {
+        r.sample = sample;
+        r.targetPdf = targetPdf;
+    }
+}
+
+void RestirDiTemporalFinalize(inout RestirDiTemporalReservoir r)
+{
+    r.W = r.targetPdf > 0.0
+        ? r.wSum / (max(float(r.M), 1.0) * r.targetPdf)
+        : 0.0;
+}
+
+// Reservoir-of-reservoir combine. `targetAtReceiver` is the selected source sample reevaluated in
+// the current domain. Source M is confidence, not one candidate, and is preserved through the cap.
+bool RestirDiTemporalCombine(
+    inout RestirDiTemporalReservoir dst,
+    RestirDiTemporalReservoir src,
+    float targetAtReceiver,
+    float xi)
+{
+    const uint sourceM = min(src.M, kRestirDiTemporalMCap);
+    if (sourceM == 0u || !isfinite(src.W) || !isfinite(targetAtReceiver)
+        || src.W <= 0.0 || targetAtReceiver <= 0.0)
+    {
+        return false;
+    }
+    const float weight = targetAtReceiver * src.W * float(sourceM);
+    if (!isfinite(weight) || weight <= 0.0)
+    {
+        return false;
+    }
+    dst.wSum += weight;
+    dst.M += sourceM;
+    if (xi * dst.wSum < weight)
+    {
+        dst.sample = src.sample;
+        dst.targetPdf = targetAtReceiver;
+        dst.age = src.age;
+        return true;
+    }
+    return false;
+}
+
 float RestirDiTargetLuminance(float3 f)
 {
     return max(0.2126 * f.r + 0.7152 * f.g + 0.0722 * f.b, 0.0);

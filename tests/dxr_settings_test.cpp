@@ -22,6 +22,8 @@ void RunDxrSettingsTests(int& failures)
     settings.SetReflectionsSamplesPerPixel(32);
     settings.SetMaxTraceDistance(1000.0f);
     settings.SetTemporalBlend(2.0f);
+    settings.SetRestirDiCandidateCount(4);
+    settings.SetRestirDiTemporalEnabled(true);
     settings.ClampToHardwareCapabilities(true);
     expectTrue(settings.IsEnabled(), "enabled preserved when RT supported");
     expectTrue(settings.GetReflectionsSamplesPerPixel() == 16, "samples clamped to 16");
@@ -40,4 +42,6 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         roundTrip.GetGiStrength() == settings.GetGiStrength(),
         "json round-trip gi strength");
+    expectTrue(roundTrip.GetRestirDiCandidateCount() == 4, "json round-trip ReSTIR DI candidates");
+    expectTrue(roundTrip.IsRestirDiTemporalEnabled(), "json round-trip ReSTIR DI temporal toggle");
 }

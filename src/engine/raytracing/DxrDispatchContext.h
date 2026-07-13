@@ -241,6 +241,7 @@ public:
     // Valid after the first successful PT dispatch following create/resize. Temporal reuse (R2)
     // must read these BEFORE the end-of-dispatch copy overwrites them for the next frame.
     bool IsPathTracerPrevSurfaceHistoryValid() const { return m_ptPrevSurfaceHistoryValid; }
+    void InvalidateRestirHistory() { m_restirReservoirHistoryValid = false; }
     std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle() const { return m_ptPrevDepthTexture.srvCpuHandle; }
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
     {
@@ -292,6 +293,10 @@ public:
         const ShaderBindingTable& shaderBindingTable,
         ID3D12Resource* tlasResource,
         std::uint64_t tlasGpuVirtualAddress,
+        std::uint32_t emissiveLightsSrvIndex,
+        std::uint32_t emissiveTrianglesSrvIndex,
+        std::uint32_t envCdfSrvIndex,
+        std::uintptr_t envMapSrvCpuHandle,
         const DxrRootSignature::RestirTemporalConstants& constants,
         std::string& outError);
 
@@ -421,8 +426,10 @@ private:
     // Material = packed geom/shading normals, instance+flags, material+roughness.
     ReflectionTexture m_ptRestirSurfacePositionDepthTexture{};
     ReflectionTexture m_ptRestirSurfaceMaterialTexture{};
+    ReflectionTexture m_ptRestirSurfaceAlbedoMetallicTexture{};
     ReflectionTexture m_ptPrevRestirSurfacePositionDepthTexture{};
     ReflectionTexture m_ptPrevRestirSurfaceMaterialTexture{};
+    ReflectionTexture m_ptPrevRestirSurfaceAlbedoMetallicTexture{};
     bool m_ptPrevSurfaceHistoryValid = false;
 
     // G8: ReSTIR structured buffers (48 B reservoir ping-pong + 32 B initial sample).

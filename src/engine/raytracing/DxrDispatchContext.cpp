@@ -112,8 +112,10 @@ void DxrDispatchContext::Release()
     RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
     RetireOrDestroyReflectionTexture(m_ptRestirSurfacePositionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptRestirSurfaceMaterialTexture);
+    RetireOrDestroyReflectionTexture(m_ptRestirSurfaceAlbedoMetallicTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfacePositionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceMaterialTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceAlbedoMetallicTexture);
     m_ptPrevSurfaceHistoryValid = false;
 
     ReleaseRetiredRestirBuffers();
@@ -695,8 +697,10 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
         RetireOrDestroyReflectionTexture(m_ptRestirSurfacePositionDepthTexture);
         RetireOrDestroyReflectionTexture(m_ptRestirSurfaceMaterialTexture);
+        RetireOrDestroyReflectionTexture(m_ptRestirSurfaceAlbedoMetallicTexture);
         RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfacePositionDepthTexture);
         RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceMaterialTexture);
+        RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceAlbedoMetallicTexture);
         m_ptPrevSurfaceHistoryValid = false;
     }
 
@@ -802,8 +806,10 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         && m_ptPrevNormalRoughnessTexture.resource != nullptr
         && m_ptRestirSurfacePositionDepthTexture.resource != nullptr
         && m_ptRestirSurfaceMaterialTexture.resource != nullptr
+        && m_ptRestirSurfaceAlbedoMetallicTexture.resource != nullptr
         && m_ptPrevRestirSurfacePositionDepthTexture.resource != nullptr
         && m_ptPrevRestirSurfaceMaterialTexture.resource != nullptr
+        && m_ptPrevRestirSurfaceAlbedoMetallicTexture.resource != nullptr
         && m_primaryOutputWidth == width && m_primaryOutputHeight == height)
     {
         return EnsureRestirBuffers(width, height, outError);
@@ -819,8 +825,10 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
     RetireOrDestroyReflectionTexture(m_ptRestirSurfacePositionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptRestirSurfaceMaterialTexture);
+    RetireOrDestroyReflectionTexture(m_ptRestirSurfaceAlbedoMetallicTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfacePositionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceMaterialTexture);
+    RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceAlbedoMetallicTexture);
     m_ptPrevSurfaceHistoryValid = false;
 
     // Formats match the RR internal targets they are copied into (rr_guides parity —
@@ -842,8 +850,10 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPrevNormalRoughnessTexture},
         {DXGI_FORMAT_R32G32B32A32_FLOAT, &m_ptRestirSurfacePositionDepthTexture},
         {DXGI_FORMAT_R32G32B32A32_UINT, &m_ptRestirSurfaceMaterialTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptRestirSurfaceAlbedoMetallicTexture},
         {DXGI_FORMAT_R32G32B32A32_FLOAT, &m_ptPrevRestirSurfacePositionDepthTexture},
         {DXGI_FORMAT_R32G32B32A32_UINT, &m_ptPrevRestirSurfaceMaterialTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPrevRestirSurfaceAlbedoMetallicTexture},
     };
     for (const GuideDesc& guide : guides)
     {
@@ -864,8 +874,10 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
             RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
             RetireOrDestroyReflectionTexture(m_ptRestirSurfacePositionDepthTexture);
             RetireOrDestroyReflectionTexture(m_ptRestirSurfaceMaterialTexture);
+            RetireOrDestroyReflectionTexture(m_ptRestirSurfaceAlbedoMetallicTexture);
             RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfacePositionDepthTexture);
             RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceMaterialTexture);
+            RetireOrDestroyReflectionTexture(m_ptPrevRestirSurfaceAlbedoMetallicTexture);
             m_ptPrevSurfaceHistoryValid = false;
             return false;
         }
@@ -902,9 +914,9 @@ bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, 
     m_restirElementCount = 0;
 
     if (!CreateStructuredBufferUav(
-            elementCount, sizeof(RestirReservoir), m_restirReservoirs[0], outError)
+            elementCount, sizeof(RestirDiReservoirSet), m_restirReservoirs[0], outError)
         || !CreateStructuredBufferUav(
-            elementCount, sizeof(RestirReservoir), m_restirReservoirs[1], outError)
+            elementCount, sizeof(RestirDiReservoirSet), m_restirReservoirs[1], outError)
         || !CreateStructuredBufferUav(
             elementCount, sizeof(RestirInitialSample), m_restirInitialSample, outError))
     {
@@ -1030,7 +1042,8 @@ void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList*
         || m_ptRestirSurfacePositionDepthTexture.resource == nullptr
         || m_ptRestirSurfaceMaterialTexture.resource == nullptr
         || m_ptPrevRestirSurfacePositionDepthTexture.resource == nullptr
-        || m_ptPrevRestirSurfaceMaterialTexture.resource == nullptr)
+        || m_ptPrevRestirSurfaceMaterialTexture.resource == nullptr
+        || m_ptPrevRestirSurfaceAlbedoMetallicTexture.resource == nullptr)
     {
         return;
     }
@@ -1077,6 +1090,7 @@ void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList*
     copyGuide(m_ptNormalRoughnessTexture, m_ptPrevNormalRoughnessTexture);
     copyGuide(m_ptRestirSurfacePositionDepthTexture, m_ptPrevRestirSurfacePositionDepthTexture);
     copyGuide(m_ptRestirSurfaceMaterialTexture, m_ptPrevRestirSurfaceMaterialTexture);
+    copyGuide(m_ptRestirSurfaceAlbedoMetallicTexture, m_ptPrevRestirSurfaceAlbedoMetallicTexture);
     m_ptPrevSurfaceHistoryValid = true;
 }
 
@@ -1104,6 +1118,10 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     const ShaderBindingTable& shaderBindingTable,
     ID3D12Resource* tlasResource,
     const std::uint64_t tlasGpuVirtualAddress,
+    const std::uint32_t emissiveLightsSrvIndex,
+    const std::uint32_t emissiveTrianglesSrvIndex,
+    const std::uint32_t envCdfSrvIndex,
+    const std::uintptr_t envMapSrvCpuHandle,
     const DxrRootSignature::RestirTemporalConstants& constants,
     std::string& outError)
 {
@@ -1114,7 +1132,11 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         return false;
     }
     if (!HasRestirBuffers() || m_primaryOutputResource == nullptr || m_primaryOutputUavIndex == UINT32_MAX
-        || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX)
+        || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX
+        || m_ptRestirSurfaceAlbedoMetallicTexture.resource == nullptr
+        || m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX
+        || m_ptPrevRestirSurfaceAlbedoMetallicTexture.resource == nullptr
+        || m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX)
     {
         outError = "ReSTIR temporal buffers unavailable";
         return false;
@@ -1183,14 +1205,21 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    const std::uint32_t srvIndices[7] = {
+    const std::uint32_t envMapSrvIndex = DepthSrvIndexFromCpuHandle(envMapSrvCpuHandle);
+    const std::uint32_t srvIndices[13] = {
         m_tlasSrvIndex,
         m_ptPrevRestirSurfacePositionDepthTexture.srvIndex,
         m_ptPrevRestirSurfaceMaterialTexture.srvIndex,
         m_ptRestirSurfacePositionDepthTexture.srvIndex,
         m_ptRestirSurfaceMaterialTexture.srvIndex,
         m_ptMotionTexture.srvIndex,
-        m_ptDirectTexture.srvIndex};
+        m_ptDirectTexture.srvIndex,
+        m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex,
+        m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex,
+        emissiveLightsSrvIndex,
+        emissiveTrianglesSrvIndex,
+        envCdfSrvIndex,
+        envMapSrvIndex};
     for (const std::uint32_t srvIndex : srvIndices)
     {
         if (srvIndex == UINT32_MAX)
@@ -1199,7 +1228,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
             return false;
         }
     }
-    recorder.BindSrvTables(1, srvIndices, 7);
+    recorder.BindSrvTables(1, srvIndices, 13);
 
     const std::uint32_t uavIndices[4] = {
         m_restirReservoirs[writeIndex].uavIndex,
@@ -1211,7 +1240,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(uavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(8 + uavIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(14 + uavIndex, uavTableHandle);
     }
 
     if (tlasResource != nullptr)
@@ -1321,13 +1350,21 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    const std::uint32_t srvIndices[7] = {
+    // The temporal and spatial exports share one global root signature. Bind every declared SRV
+    // table even though the P4 spatial export currently consumes only t0-t6.
+    const std::uint32_t srvIndices[13] = {
         m_tlasSrvIndex,
         m_ptPrevRestirSurfacePositionDepthTexture.srvIndex,
         m_ptPrevRestirSurfaceMaterialTexture.srvIndex,
         m_ptRestirSurfacePositionDepthTexture.srvIndex,
         m_ptRestirSurfaceMaterialTexture.srvIndex,
         m_ptMotionTexture.srvIndex,
+        m_ptDirectTexture.srvIndex,
+        m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex,
+        m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex,
+        m_ptDirectTexture.srvIndex,
+        m_ptDirectTexture.srvIndex,
+        m_ptDirectTexture.srvIndex,
         m_ptDirectTexture.srvIndex};
     for (const std::uint32_t srvIndex : srvIndices)
     {
@@ -1337,7 +1374,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
             return false;
         }
     }
-    recorder.BindSrvTables(1, srvIndices, 7);
+    recorder.BindSrvTables(1, srvIndices, 13);
 
     // u0 = spatial write, u1 = prior reservoirs (temporal / previous spatial iter).
     const std::uint32_t uavIndices[4] = {
@@ -1350,7 +1387,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(uavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(8 + uavIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(14 + uavIndex, uavTableHandle);
     }
 
     if (tlasResource != nullptr)
@@ -2402,7 +2439,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         &m_ptNormalRoughnessTexture,
         &m_ptDirectTexture,
         &m_ptRestirSurfacePositionDepthTexture,
-        &m_ptRestirSurfaceMaterialTexture};
+        &m_ptRestirSurfaceMaterialTexture,
+        &m_ptRestirSurfaceAlbedoMetallicTexture};
     for (ReflectionTexture* guide : ptGuideTextures)
     {
         if (guide->state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
@@ -2480,14 +2518,15 @@ bool DxrDispatchContext::DispatchPathTracer(
         || m_restirReservoirs[m_restirWriteIndex].uavIndex == UINT32_MAX
         || m_ptDirectTexture.uavIndex == UINT32_MAX
         || m_ptRestirSurfacePositionDepthTexture.uavIndex == UINT32_MAX
-        || m_ptRestirSurfaceMaterialTexture.uavIndex == UINT32_MAX)
+        || m_ptRestirSurfaceMaterialTexture.uavIndex == UINT32_MAX
+        || m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex == UINT32_MAX)
     {
         outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
         return false;
     }
 
-    // u0-u6 RR guides, u7 InitialSample, u8 Reservoir, u9 direct, u10-u11 P1 surface records.
-    constexpr std::uint32_t kPathTracerUavCount = 12;
+    // u0-u6 RR guides, u7 InitialSample, u8 DI reservoirs, u9 base, u10-u12 P1 surface records.
+    constexpr std::uint32_t kPathTracerUavCount = 13;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -2500,7 +2539,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_restirReservoirs[m_restirWriteIndex].uavIndex,
         m_ptDirectTexture.uavIndex,
         m_ptRestirSurfacePositionDepthTexture.uavIndex,
-        m_ptRestirSurfaceMaterialTexture.uavIndex};
+        m_ptRestirSurfaceMaterialTexture.uavIndex,
+        m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};

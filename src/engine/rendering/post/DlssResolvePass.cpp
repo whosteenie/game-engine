@@ -220,7 +220,8 @@ void DlssResolvePass::Execute(
             && inputs.pathTracerMotionResource != nullptr
             && (bundleMode == 5
                 || bundleMode == 3
-                || (bundleMode == 0 && usePtDepth && (ptBundleReady & 1u) != 0u));
+                || (bundleMode == 0
+                    && usePtDepth && (ptBundleReady & 1u) != 0u));
         ptBloomTemporalMotion = usePtMotion;
         ptBloomTemporalDepth = usePtDepth;
 
@@ -335,14 +336,14 @@ void DlssResolvePass::Execute(
         in.cameraUp[1] = camUp.y;
         in.cameraUp[2] = camUp.z;
 
-        const bool pathTracerRealTimeRr =
+        const bool pathTracerRealTime =
             pathTracerDlssActive
-            && inputs.pathTracerConvergenceMode == PtConvergenceMode::RealTime;
+        && inputs.pathTracerConvergenceMode == PtConvergenceMode::RealTime;
         const bool useRr = dlss.IsRrSupported()
             && inputs.sceneFramebuffer->HasMaterialGbuffer()
             && inputs.rrNormalRoughnessTarget != nullptr
             && inputs.rrNormalRoughnessTarget->resource != nullptr
-            && (inputs.rayReconstructionActive || pathTracerRealTimeRr);
+            && inputs.rayReconstructionActive;
         if (useRr && inputs.generateRrGuides)
         {
             {
@@ -357,7 +358,7 @@ void DlssResolvePass::Execute(
             in.normalRoughness = inputs.rrNormalRoughnessTarget->resource;
             in.normalRoughnessState = inputs.rrNormalRoughnessTarget->resourceState;
             const bool ptSpecGuideActive =
-                pathTracerRealTimeRr && inputs.dxrPathTracerOutputSrv != 0;
+                pathTracerRealTime && inputs.dxrPathTracerOutputSrv != 0;
             if ((inputs.dxrReflectionSrv != 0 || ptSpecGuideActive)
                 && inputs.rrSpecularHitDistanceTarget != nullptr
                 && inputs.rrSpecularHitDistanceTarget->resource != nullptr)

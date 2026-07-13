@@ -18,6 +18,12 @@ void RunRestirTypesTests(int& failures)
                   << ", expected 48\n";
         ++failures;
     }
+    if (sizeof(RestirDiReservoirSet) != 128)
+    {
+        std::cerr << "FAIL: RestirDiReservoirSet size is " << sizeof(RestirDiReservoirSet)
+                  << ", expected 128\n";
+        ++failures;
+    }
 
     if (offsetof(RestirReservoir, sample) != 0
         || offsetof(RestirReservoir, wSum) != 32

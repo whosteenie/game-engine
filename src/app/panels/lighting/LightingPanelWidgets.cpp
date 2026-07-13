@@ -146,6 +146,10 @@ namespace
         RenderDebugMode::PtRestirGeometricNormal,
         RenderDebugMode::PtRestirMaterialId,
         RenderDebugMode::PtRestirLobeClass,
+        RenderDebugMode::PtRestirReservoirM,
+        RenderDebugMode::PtRestirReservoirAge,
+        RenderDebugMode::PtRestirChosenSource,
+        RenderDebugMode::PtRestirTemporalRejection,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -603,6 +607,11 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtIsolatePreClamp:
         case RenderDebugMode::PtIsolateSpecHitDist:
             return "Raw PT term (DLSS/RR/bloom off). Scalar views (AO, sun vis, spec hit dist) are smooth; radiance views are noisy 1 spp. Sky is black except indirect / pre-clamp.";
+        case RenderDebugMode::PtRestirReservoirM:
+        case RenderDebugMode::PtRestirReservoirAge:
+        case RenderDebugMode::PtRestirChosenSource:
+        case RenderDebugMode::PtRestirTemporalRejection:
+            return "ReSTIR DI P3 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=accepted, red=no history/match, magenta=ineligible transmission/delta.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:
