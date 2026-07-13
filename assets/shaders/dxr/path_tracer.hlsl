@@ -60,6 +60,10 @@ struct EmissiveTriangleEntry
 StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 
 #include "pt_env_light.hlsli"
+#include "restir_di.hlsli"
+
+// ReSTIR DI initial sampling (roadmap P2): per-category candidate count (0 = off, plain NEE).
+#define g_PtRestirDiCandidateCount uint(round(max(g_PtRestirDiParams.x, 0.0)))
 
 // The shared cbuffer field g_SamplesPerPixel carries the PT max-bounce count (reused verbatim; the
 // reflection/GI passes read it as an actual sample count). Alias it for readable PT intent.
@@ -978,6 +982,207 @@ float3 EvaluateDirectEnvironment(
     return bsdf * radiance * visibility * misWeight / max(pdfEnv, 1e-8);
 }
 
+// ===== ReSTIR DI initial sampling, M=1 (restir-production-roadmap.md P2) =====
+// Emitters and the environment are DISJOINT sources (a direction either hits an emissive triangle or
+// escapes to sky), so — exactly like the existing EvaluateDirectEmissive + EvaluateDirectEnvironment
+// which are ADDED — they resample as two independent single-proposal RIS reservoirs whose shaded
+// results are summed. Each candidate stores its UNSHADOWED contribution f = BSDF·radiance·MIS and its
+// proposal pdf (solid angle); one visibility ray validates the reservoir winner. At candidateCount=1
+// the RIS UCW is W=1/p, so the shade is BSDF·radiance·MIS·V/p — byte-for-byte the plain NEE above
+// (the built-in A/B parity anchor). The resampling math is proven in tests/restir_di_test.cpp.
+
+// Draw one emissive-triangle candidate: fills the UNSHADOWED contribution (BSDF·emissive·MIS), the
+// direction/distance for the winner's shadow ray, and the solid-angle proposal pdf. contribution
+// stays 0 (a valid zero-target candidate that still counts toward M) on backface/degenerate picks.
+void SampleEmissiveDiCandidate(
+    inout PathRng rng,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float3 hitNormal,
+    float3 shadowOrigin,
+    out float3 contribution,
+    out float3 wi,
+    out float shadowDist,
+    out float proposalPdf)
+{
+    contribution = 0.0.xxx;
+    wi = float3(0.0, 0.0, 1.0);
+    shadowDist = 0.0;
+    proposalPdf = 0.0;
+
+    const float4 xiPick = PathRngNext4(rng);
+    const float4 xiSurface = PathRngNext4(rng);
+
+    float pick = xiPick.x * g_EmissiveLightPickWeightSum;
+    uint lightIndex = g_EmissiveLightCount - 1u;
+    [loop]
+    for (uint i = 0u; i < g_EmissiveLightCount; ++i)
+    {
+        pick -= g_EmissiveLights[i].pickWeight;
+        if (pick <= 0.0)
+        {
+            lightIndex = i;
+            break;
+        }
+    }
+
+    const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
+    if (light.triangleCount == 0u)
+    {
+        return;
+    }
+
+    float triPick = xiPick.y * light.pickWeight;
+    uint triangleIndex = light.triangleOffset + light.triangleCount - 1u;
+    [loop]
+    for (uint triLocal = 0u; triLocal < light.triangleCount; ++triLocal)
+    {
+        const EmissiveTriangleEntry tri = g_EmissiveTriangles[light.triangleOffset + triLocal];
+        triPick -= tri.pickWeight;
+        if (triPick <= 0.0)
+        {
+            triangleIndex = light.triangleOffset + triLocal;
+            break;
+        }
+    }
+
+    const EmissiveTriangleEntry emitterTri = g_EmissiveTriangles[triangleIndex];
+
+    float3 lightPoint;
+    float pdfArea;
+    SampleUniformPointOnTriangle(
+        emitterTri.v0, emitterTri.v1, emitterTri.v2, emitterTri.triangleArea,
+        xiSurface.xy, lightPoint, pdfArea);
+
+    const float3 toLight = lightPoint - shadowOrigin;
+    const float dist2 = max(dot(toLight, toLight), 1e-8);
+    const float dist = sqrt(dist2);
+    wi = toLight / dist;
+
+    if (saturate(dot(hitNormal, wi)) <= 0.0)
+    {
+        return;
+    }
+    const float cosThetaEmitter = saturate(dot(emitterTri.faceNormal, -wi));
+    if (cosThetaEmitter <= 0.0)
+    {
+        return;
+    }
+
+    const float pickPdf = emitterTri.pickWeight / g_EmissiveLightPickWeightSum;
+    const float pdfSolidAngle =
+        EmissiveNeePdfSolidAngle(pickPdf, emitterTri.triangleArea, dist2, cosThetaEmitter);
+    if (pdfSolidAngle <= 0.0)
+    {
+        return;
+    }
+    const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+    const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
+    const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+
+    // f = BSDF·emissive·MIS (the directional integrand × MIS, visibility excluded). With
+    // proposalPdf = pdfSolidAngle, M=1 gives f·V/pdfSolidAngle == EvaluateDirectEmissive.
+    contribution = bsdf * EmissiveWithBloomHalo(light.emissive) * misWeight;
+    shadowDist = dist - 0.001;
+    proposalPdf = pdfSolidAngle;
+}
+
+// Bounce-0 emissive direct via RIS over `candidateCount` emitter candidates + one shadow ray.
+float3 RestirDiEmissiveDirect(
+    inout PathRng rng,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float3 hitNormal,
+    float3 shadowOrigin,
+    uint candidateCount)
+{
+    if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0 || candidateCount == 0u)
+    {
+        return 0.0.xxx;
+    }
+
+    RestirDiReservoir res = RestirDiInit();
+    [loop]
+    for (uint c = 0u; c < candidateCount; ++c)
+    {
+        float3 contribution;
+        float3 wi;
+        float shadowDist;
+        float proposalPdf;
+        SampleEmissiveDiCandidate(
+            rng, viewDir, f0, albedo, roughness, metallic, hitNormal, shadowOrigin,
+            contribution, wi, shadowDist, proposalPdf);
+        RestirDiUpdate(res, contribution, wi, shadowDist, proposalPdf, PathRngNext(rng));
+    }
+
+    RestirDiFinalize(res);
+    if (res.targetPdf <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    // Opaque any-hit visibility (glass blocks emissive NEE), matching EvaluateDirectEmissive.
+    const float visibility = TraceVisibility(shadowOrigin, res.direction, res.distance);
+    return RestirDiShade(res, visibility);
+}
+
+// Bounce-0 environment direct via RIS over `candidateCount` env-direction candidates + one shadow ray.
+float3 RestirDiEnvironmentDirect(
+    inout PathRng rng,
+    float3 viewDir,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float3 hitNormal,
+    float3 shadowOrigin,
+    uint candidateCount)
+{
+    if (g_EnvLightImportanceCount == 0u || candidateCount == 0u)
+    {
+        return 0.0.xxx;
+    }
+
+    RestirDiReservoir res = RestirDiInit();
+    [loop]
+    for (uint c = 0u; c < candidateCount; ++c)
+    {
+        float3 contribution = 0.0.xxx;
+        float3 wi = float3(0.0, 0.0, 1.0);
+        float proposalPdf = 0.0;
+
+        const float4 xi = PathRngNext4(rng);
+        float pdfEnv;
+        if (SampleEnvLightDirection(xi, wi, pdfEnv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
+        {
+            const float pdfBsdf =
+                OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+            const float misWeight = BalanceHeuristic(pdfEnv, pdfBsdf);
+            const float3 bsdf =
+                EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+            // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
+            contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
+            proposalPdf = pdfEnv;
+        }
+        RestirDiUpdate(res, contribution, wi, g_MaxTraceDistance, proposalPdf, PathRngNext(rng));
+    }
+
+    RestirDiFinalize(res);
+    if (res.targetPdf <= 0.0)
+    {
+        return 0.0.xxx;
+    }
+
+    const float visibility = TraceVisibility(shadowOrigin, res.direction, res.distance);
+    return RestirDiShade(res, visibility);
+}
+
 // Opaque BRDF bounce: stochastic diffuse/GGX-specular lobe pick, weighted by the FULL BRDF over the
 // mixture pdf — the one-sample MIS estimator (Veach 1997 §9.2.4). Specular carries the correct VNDF
 // estimator weight F(VoH)*G2/G1 (Heitz 2018), NOT constant f0; diffuse is Fresnel-attenuated by
@@ -1501,20 +1706,42 @@ void PathTracerRayGen()
 
             if (!terminalEmissiveHit)
             {
-                // Mesh-light NEE must run in the GI tail too. Otherwise Cornell-box indirect
-                // lighting relies on random BSDF rays hitting the ceiling light, which is extreme
-                // variance and presents as frame-to-frame boiling before ReSTIR even runs.
-                const float3 emissiveNee = opaqueWeight
-                    * EvaluateDirectEmissive(
-                        rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                        hitNormal, shadowOrigin);
-                emissiveNeeContrib = throughput * emissiveNee;
+                // ReSTIR DI initial sampling (roadmap P2): resample bounce-0 emissive + env direct
+                // when enabled. Gated to the primary hit (bounce 0); the GI tail keeps plain NEE
+                // (its reuse is P5+). Sun and SH ambient are untouched. candidateCount=1 reproduces
+                // the plain-NEE estimator exactly (A/B parity anchor).
+                const uint diCandidates = g_PtRestirDiCandidateCount;
+                if (diCandidates > 0u && bounce == 0u)
+                {
+                    const float3 emissiveNee = opaqueWeight
+                        * RestirDiEmissiveDirect(
+                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                            hitNormal, shadowOrigin, diCandidates);
+                    emissiveNeeContrib = throughput * emissiveNee;
 
-                const float3 envNee = opaqueWeight
-                    * EvaluateDirectEnvironment(
-                        rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
-                        hitNormal, shadowOrigin);
-                envNeeContrib = throughput * envNee;
+                    const float3 envNee = opaqueWeight
+                        * RestirDiEnvironmentDirect(
+                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                            hitNormal, shadowOrigin, diCandidates);
+                    envNeeContrib = throughput * envNee;
+                }
+                else
+                {
+                    // Mesh-light NEE must run in the GI tail too. Otherwise Cornell-box indirect
+                    // lighting relies on random BSDF rays hitting the ceiling light, which is extreme
+                    // variance and presents as frame-to-frame boiling before ReSTIR even runs.
+                    const float3 emissiveNee = opaqueWeight
+                        * EvaluateDirectEmissive(
+                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                            hitNormal, shadowOrigin);
+                    emissiveNeeContrib = throughput * emissiveNee;
+
+                    const float3 envNee = opaqueWeight
+                        * EvaluateDirectEnvironment(
+                            rng, viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                            hitNormal, shadowOrigin);
+                    envNeeContrib = throughput * envNee;
+                }
             }
         }
         if (inTail)

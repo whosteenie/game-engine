@@ -302,6 +302,27 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "0 = unoccluded ambient (recommended). Raise only if open shadows wash out.");
             }
 
+            int restirDiCandidates = dxrSettings.GetRestirDiCandidateCount();
+            UndoableRendererSliderInt(
+                "PT ReSTIR DI candidates",
+                &restirDiCandidates,
+                0,
+                16,
+                editContext,
+                [](Scene& target, int count) {
+                    target.GetRenderer().GetDxrSettings().SetRestirDiCandidateCount(count);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "ReSTIR DI initial sampling for bounce-0 emissive + environment direct light\n"
+                    "(roadmap P2). 0 = off (plain NEE). 1 = one candidate each — should look IDENTICAL\n"
+                    "to off (converged), the A/B parity check. N>1 = resample N candidates with one\n"
+                    "shadow ray each: less emissive/env noise at equal cost, same converged image.");
+            }
+
             float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
             UndoableRendererSliderFloat(
                 "PT sun angular radius",

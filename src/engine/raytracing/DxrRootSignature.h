@@ -81,6 +81,13 @@ struct ReflectionDispatchConstants
     std::uint32_t envIsCdfWidth = 0;
     float envLightImportanceInvWeightSum = 0.0f;
     std::uint32_t envIsCdfHeight = 0;
+    // ReSTIR DI initial sampling (roadmap P2): per-category candidate count. 0 = off (plain NEE).
+    // 1 = one emissive + one env candidate — byte-exact parity with DI off (A/B validation anchor).
+    // N>1 = RIS over N candidates with one shadow ray each (lower variance, same expected value).
+    float restirDiCandidateCount = 0.0f;
+    float _restirDiPad0 = 0.0f;
+    float _restirDiPad1 = 0.0f;
+    float _restirDiPad2 = 0.0f;
 };
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in

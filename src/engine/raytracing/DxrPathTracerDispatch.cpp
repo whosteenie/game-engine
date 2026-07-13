@@ -225,6 +225,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         frameInputs.envImportanceWeightSum > 0.0f
             ? 1.0f / frameInputs.envImportanceWeightSum
             : 0.0f;
+    constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();

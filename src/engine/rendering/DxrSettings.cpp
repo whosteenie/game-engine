@@ -143,6 +143,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptFireflyClamp = source.m_ptFireflyClamp;
     m_ptAmbientStrength = source.m_ptAmbientStrength;
     m_ptAmbientAoRayCount = source.m_ptAmbientAoRayCount;
+    m_restirDiCandidateCount = source.m_restirDiCandidateCount;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
@@ -197,6 +198,7 @@ nlohmann::json DxrSettings::ToJson() const
         {"ptFireflyClamp", m_ptFireflyClamp},
         {"ptAmbientStrength", m_ptAmbientStrength},
         {"ptAmbientAoRayCount", m_ptAmbientAoRayCount},
+        {"restirDiCandidateCount", m_restirDiCandidateCount},
         {"reflectionsEnabled", m_reflectionsEnabled},
         {"reflectionsQuality", ReflectionsQualityToString(m_reflectionsQuality)},
         {"reflectionsSamplesPerPixel", m_reflectionsSamplesPerPixel},
@@ -251,6 +253,10 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     if (value.contains("ptAmbientAoRayCount"))
     {
         SetPtAmbientAoRayCount(value.at("ptAmbientAoRayCount").get<int>());
+    }
+    if (value.contains("restirDiCandidateCount"))
+    {
+        SetRestirDiCandidateCount(value.at("restirDiCandidateCount").get<int>());
     }
     if (value.contains("reflectionsEnabled"))
     {

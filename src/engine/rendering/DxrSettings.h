@@ -79,6 +79,15 @@ public:
         m_ptRrBundleMode = mode < 0 ? 0 : (mode > 5 ? 5 : mode);
     }
 
+    // ReSTIR DI initial sampling (restir-production-roadmap.md P2): per-category candidate count for
+    // bounce-0 emissive + environment direct lighting. 0 = off (plain NEE). 1 = one candidate each,
+    // byte-exact with off (A/B parity anchor). N>1 = RIS over N candidates, one shadow ray each.
+    int GetRestirDiCandidateCount() const { return m_restirDiCandidateCount; }
+    void SetRestirDiCandidateCount(const int count)
+    {
+        m_restirDiCandidateCount = count < 0 ? 0 : (count > 32 ? 32 : count);
+    }
+
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
 
@@ -165,6 +174,7 @@ private:
     float m_ptAmbientStrength = 1.0f;
     int m_ptAmbientAoRayCount = 0;
     int m_ptRrBundleMode = 0;
+    int m_restirDiCandidateCount = 0;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

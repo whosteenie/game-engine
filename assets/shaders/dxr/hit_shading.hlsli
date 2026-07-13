@@ -49,6 +49,8 @@ cbuffer ReflectionDispatchConstants : register(b0)
     uint g_EnvIsCdfWidth;
     float g_EnvLightImportanceInvWeightSum;
     uint g_EnvIsCdfHeight;
+    // ReSTIR DI initial sampling (roadmap P2). .x = per-category candidate count (0 = off), rest pad.
+    float4 g_PtRestirDiParams;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
