@@ -532,6 +532,7 @@ add_executable(engine-tests
     tests/dxr_shader_infrastructure_test.cpp
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
+    tests/payload_pack_test.cpp
     tests/refraction_test.cpp
     tests/brdf_energy_test.cpp
     tests/mis_nee_test.cpp

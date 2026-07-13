@@ -27,6 +27,7 @@ void RunRestirSurfaceValidationTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
+void RunPayloadPackTests();
 void RunRefractionTests();
 void RunBrdfEnergyTests();
 void RunMisNeeTests();
@@ -91,6 +92,7 @@ namespace
             [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });
         maybeRun("material", RunMaterialTests);
         maybeRun("guide_encoding", RunGuideEncodingTests);
+        maybeRun("payload_pack", RunPayloadPackTests);
         maybeRun("refraction", RunRefractionTests);
         maybeRun("brdf_energy", RunBrdfEnergyTests);
         maybeRun("mis_nee", RunMisNeeTests);

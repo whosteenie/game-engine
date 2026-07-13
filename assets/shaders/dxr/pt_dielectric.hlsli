@@ -301,13 +301,13 @@ TransmissionGuideHit TraceTransmissionGuide(
         {
             result.valid = true;
             result.depth = guidePayload.primaryDepth;
-            result.motion = guidePayload.primaryMotionNdc;
+            result.motion = PayloadPrimaryMotion(guidePayload);
             result.instanceId = guidePayload.instanceId;
             result.primitiveIndex = guidePayload.primitiveIndex;
-            result.barycentrics = guidePayload.barycentrics;
-            result.normal = guidePayload.normal;
-            result.shadingNormal = guidePayload.shadingNormal;
-            result.triangleLod = guidePayload.triangleLod;
+            result.barycentrics = PayloadBarycentrics(guidePayload);
+            result.normal = PayloadGeomNormal(guidePayload);
+            result.shadingNormal = PayloadShadingNormal(guidePayload);
+            result.triangleLod = PayloadTriangleLod(guidePayload);
             result.refractDir = refractDir;
             result.refractedHitDistance = guidePayload.hitDistance;
             result.backgroundWorldPos = interfaceHitPos;
@@ -320,14 +320,15 @@ TransmissionGuideHit TraceTransmissionGuide(
         // straight-through direction (their radiance model transmits straight).
         if (!thinWalled)
         {
+            const float3 guideGeomNormal = PayloadGeomNormal(guidePayload);
             float3 exitDir;
-            if (RefractSnell(-refractDir, guidePayload.normal, max(ior, 1.0), exitDir))
+            if (RefractSnell(-refractDir, guideGeomNormal, max(ior, 1.0), exitDir))
             {
                 refractDir = normalize(exitDir);
             }
             else
             {
-                refractDir = normalize(reflect(refractDir, guidePayload.normal));
+                refractDir = normalize(reflect(refractDir, guideGeomNormal));
             }
         }
         guideOrigin = interfaceHitPos + refractDir * kThinShellMinExitBias;
@@ -382,7 +383,7 @@ float TraceTransmissiveVisibility(float3 origin, float3 direction, float tMax)
 
         const float3 hitPos = rayOrigin + rayDir * probe.hitDistance;
         const float3 wi = -rayDir;
-        float3 n = probe.normal;
+        float3 n = PayloadGeomNormal(probe);
         if (dot(wi, n) < 0.0)
         {
             n = -n;

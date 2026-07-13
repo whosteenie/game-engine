@@ -112,26 +112,54 @@ static const float kPtDeltaSpecularRoughness = 0.03;
 // weight ≈ 1 when no BSDF-sampling partner exists (PBRT 14.3.x).
 static const float kDeltaScatterPdf = 1.0e10;
 
+// Payload PACKED to 40 bytes (10 dwords, down from 68/17). MaxPayloadSizeInBytes in DxrPipeline.cpp
+// must match. Normals are snorm16 octahedral (uniform ~0.03deg worst-case — precise enough for glass
+// refraction, tighter than fp16-oct); barycentrics/lod/prevDepth/motion are fp16 (their consumers —
+// UV lookup, a log2 LOD, a relative-depth compare, and an R16G16_FLOAT motion target — are already
+// lower precision).
+// hitDistance and primaryDepth stay fp32. Access via the Payload* helpers below, never the raw
+// fields. Encoding roundtrip is gate-tested in tests/payload_pack_test.cpp.
 struct Payload
 {
-    float3 normal;         // interpolated vertex normal (world); use for shadow/AO bias
-    float3 shadingNormal;  // normal-map perturbed (world); from closest-hit only
+    uint normalOct;         // geometric vertex normal (world), snorm16x2 oct
+    uint shadingNormalOct;  // normal-map perturbed normal (world), snorm16x2 oct
     float hitDistance;
     uint instanceId;
     uint primitiveIndex;
     // Pre-TraceRay: request bits. Post-hit: bit0=1, optional kPayloadHitBackFace.
     uint hit;
-    float2 barycentrics;
-    // Ray-cone LOD constant for the hit triangle's albedo texture: 0.5·log2(texelArea/worldArea)
-    // (RTG ch. 20). Computed in closest-hit (needs ObjectToWorld); 0 for untextured materials.
-    float triangleLod;
-    // Primary-surface motion/depth from closest-hit: raster-style clip-space interpolation of the
-    // hit triangle's vertices (lit.vs currClip/prevClip → pbr.ps ComputeMotionNdc). Per-hit world
-    // reprojection shimmers under DLSS-RR because perspective needs clip-space interpolation.
-    float2 primaryMotionNdc;
-    float primaryDepth;
-    float primaryPreviousLinearDepth;
+    uint barycentricsHalf;  // barycentrics.xy as fp16 pair
+    // low 16: ray-cone albedo LOD constant 0.5*log2(texelArea/worldArea) (RTG ch.20), fp16;
+    // high 16: primaryPreviousLinearDepth (GI history validation), fp16.
+    uint lodPrevDepthHalf;
+    // Primary-surface motion from closest-hit: raster-style clip-space interpolation of the hit
+    // triangle's vertices (lit.vs currClip/prevClip -> pbr.ps ComputeMotionNdc). fp16 pair; the
+    // velocity target is R16G16_FLOAT so this loses nothing.
+    uint primaryMotionHalf;
+    float primaryDepth;     // hyperbolic HW depth [0,1] for the DLSS-RR depth guide; keep fp32
 };
+
+// snorm16x2 pack/unpack (uniform ~3e-5 precision on [-1,1]; sign-extended unpack).
+uint PtPackSnorm16x2(float2 v)
+{
+    const int2 q = int2(round(clamp(v, -1.0, 1.0) * 32767.0));
+    return (uint(q.x) & 0xffffu) | (uint(q.y) << 16);
+}
+float2 PtUnpackSnorm16x2(uint p)
+{
+    const int2 q = int2(int(p << 16) >> 16, int(p) >> 16);
+    return clamp(float2(q) * (1.0 / 32767.0), -1.0.xx, 1.0.xx);
+}
+uint PtPackOctNormal(float3 n) { return PtPackSnorm16x2(RestirOctEncode(n)); }
+float3 PtUnpackOctNormal(uint p) { return RestirOctDecode(PtUnpackSnorm16x2(p)); }
+
+// Payload field accessors (packed storage — always read through these).
+float3 PayloadGeomNormal(Payload p) { return PtUnpackOctNormal(p.normalOct); }
+float3 PayloadShadingNormal(Payload p) { return PtUnpackOctNormal(p.shadingNormalOct); }
+float2 PayloadBarycentrics(Payload p) { return RestirUnpackHalf2(p.barycentricsHalf); }
+float PayloadTriangleLod(Payload p) { return f16tof32(p.lodPrevDepthHalf & 0xffffu); }
+float PayloadPrevLinearDepth(Payload p) { return f16tof32(p.lodPrevDepthHalf >> 16); }
+float2 PayloadPrimaryMotion(Payload p) { return RestirUnpackHalf2(p.primaryMotionHalf); }
 
 float2 PixelToClipXY(float2 texCoord)
 {
@@ -181,17 +209,16 @@ float3 EnvBRDFApprox2(float3 specularColor, float alpha, float NoV)
 
 void ResetPayload(inout Payload payload)
 {
-    payload.normal = float3(0.0, 0.0, 1.0);
-    payload.shadingNormal = float3(0.0, 0.0, 1.0);
+    payload.normalOct = PtPackOctNormal(float3(0.0, 0.0, 1.0));
+    payload.shadingNormalOct = PtPackOctNormal(float3(0.0, 0.0, 1.0));
     payload.hitDistance = 0.0;
     payload.instanceId = 0;
     payload.primitiveIndex = 0;
     payload.hit = 0;
-    payload.barycentrics = 0.0.xx;
-    payload.triangleLod = 0.0;
-    payload.primaryMotionNdc = 0.0.xx;
+    payload.barycentricsHalf = 0u;
+    payload.lodPrevDepthHalf = 0u;
+    payload.primaryMotionHalf = 0u;
     payload.primaryDepth = 1.0;
-    payload.primaryPreviousLinearDepth = 0.0;
 }
 
 bool PayloadIsHit(Payload payload)
@@ -381,8 +408,8 @@ float3 SampleSurfaceAlbedo(uint instanceId, uint primitiveIndex, float2 barycent
 
 float ComputeAlbedoLod(Payload payload, float coneWidth, float3 rayDirection)
 {
-    const float nDotD = max(saturate(dot(payload.normal, -rayDirection)), 0.05);
-    return payload.triangleLod + log2(max(coneWidth, 1e-6)) - log2(nDotD);
+    const float nDotD = max(saturate(dot(PayloadGeomNormal(payload), -rayDirection)), 0.05);
+    return PayloadTriangleLod(payload) + log2(max(coneWidth, 1e-6)) - log2(nDotD);
 }
 
 // P4b RR material guides — encoding must match full-rr-guides.md / rr_guides.ps.hlsl modes 0–2.
@@ -499,14 +526,15 @@ float2 ComputeTransmissionVirtualMotion(
         return currGuide.motion;
     }
 
-    const float prevNdotV = saturate(dot(prevPrimaryPayload.normal, -prevRayDir));
+    const float3 prevGeomNormal = PayloadGeomNormal(prevPrimaryPayload);
+    const float prevNdotV = saturate(dot(prevGeomNormal, -prevRayDir));
     const float prevOriginBias =
         max(prevPrimaryPayload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - prevNdotV));
     const bool prevThinPane = prevGlassMat.thinWalled > 0.5;
 
     const TransmissionGuideHit prevGuide = TraceTransmissionGuide(
         prevGlassHitPos,
-        prevPrimaryPayload.normal,
+        prevGeomNormal,
         prevRayDir,
         prevGlassMat.indexOfRefraction,
         prevThinPane,
@@ -1639,8 +1667,8 @@ void PathTracerRayGen()
         pathConeWidth += g_PtPixelSpreadAngle * payload.hitDistance;
 
         const MaterialEntry material = LoadMaterialForInstance(payload.instanceId);
-        const float3 hitNormalGeom = payload.normal;
-        const float3 hitNormal = payload.shadingNormal;
+        const float3 hitNormalGeom = PayloadGeomNormal(payload);
+        const float3 hitNormal = PayloadShadingNormal(payload);
         const float albedoLod = ComputeAlbedoLod(payload, pathConeWidth, ray.Direction);
         float3 albedo;
         float surfaceRoughness;
@@ -1649,7 +1677,7 @@ void PathTracerRayGen()
         ResolveSurfaceMaterialScalars(
             payload.instanceId,
             payload.primitiveIndex,
-            payload.barycentrics,
+            PayloadBarycentrics(payload),
             albedoLod,
             albedo,
             surfaceRoughness,
@@ -1849,8 +1877,8 @@ void PathTracerRayGen()
             primaryHit = true;
             primaryInstanceId = payload.instanceId;
             primaryPrimitiveIndex = payload.primitiveIndex;
-            primaryMotion = payload.primaryMotionNdc;
-            primaryPreviousLinearDepth = payload.primaryPreviousLinearDepth;
+            primaryMotion = PayloadPrimaryMotion(payload);
+            primaryPreviousLinearDepth = PayloadPrevLinearDepth(payload);
             primaryRoughness = surfaceRoughness;
             primaryDielectricWeight = dielectricWeight;
             primaryWorldPos = hitPos;
@@ -1908,7 +1936,7 @@ void PathTracerRayGen()
                 if (txGuide.valid)
                 {
                     primaryDepth = txGuide.depth;
-                    primaryMotion = lerp(payload.primaryMotionNdc, virtualMotion, transmitWeight);
+                    primaryMotion = lerp(PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
 
                     float3 bgDiffuse;
                     float3 bgSpec;
@@ -1949,7 +1977,7 @@ void PathTracerRayGen()
                 else
                 {
                     primaryDepth = 1.0;
-                    primaryMotion = lerp(payload.primaryMotionNdc, virtualMotion, transmitWeight);
+                    primaryMotion = lerp(PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
                     const float3 skyGuide = float3(0.5, 0.5, 0.5);
                     diffuseGuide = lerp(diffuseGuide, skyGuide, transmitWeight);
                     specGuide = lerp(specGuide, skyGuide, transmitWeight);
@@ -2357,42 +2385,45 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
         hitNormal = -hitNormal;
     }
 
-    payload.hit = 1u | (hitBackFace ? kPayloadHitBackFace : 0u);
-    payload.instanceId = instanceId;
-    payload.primitiveIndex = primitiveIndex;
-    payload.hitDistance = hitT;
-    payload.normal = hitNormal;
+    // Compute everything into locals first, then pack once — avoids read-modify-write coupling on
+    // the shared lodPrevDepthHalf dword and keeps the packing centralized.
+    float3 shadingNormal = hitNormal;
+    float2 barycentrics = 0.0.xx;
+    float triangleLod = 0.0;
 
     // G7/P2: skip primary-only / shading work unless the raygen asked for it. Shadow and
     // transmission-visibility segments only need geometric normal + instance + distance.
     if ((request & kPayloadReqShadingData) != 0u)
     {
-        payload.shadingNormal = ApplyWorldNormalMap(
+        shadingNormal = ApplyWorldNormalMap(
             instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
-        payload.barycentrics = attribs.barycentrics;
-        payload.triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
-    }
-    else
-    {
-        payload.shadingNormal = hitNormal;
-        payload.barycentrics = 0.0.xx;
-        payload.triangleLod = 0.0;
+        barycentrics = attribs.barycentrics;
+        triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
     }
 
+    float2 primaryMotion = 0.0.xx;
+    float primaryDepth = 1.0;
+    float primaryPrevLinearDepth = 0.0;
     if ((request & kPayloadReqPrimarySurface) != 0u)
     {
         ComputeVertexInterpolatedPrimarySurface(
-            payload.primaryMotionNdc,
-            payload.primaryDepth,
-            payload.primaryPreviousLinearDepth,
+            primaryMotion,
+            primaryDepth,
+            primaryPrevLinearDepth,
             instanceId,
             primitiveIndex,
             attribs.barycentrics);
     }
-    else
-    {
-        payload.primaryMotionNdc = 0.0.xx;
-        payload.primaryDepth = 1.0;
-        payload.primaryPreviousLinearDepth = 0.0;
-    }
+
+    payload.hit = 1u | (hitBackFace ? kPayloadHitBackFace : 0u);
+    payload.instanceId = instanceId;
+    payload.primitiveIndex = primitiveIndex;
+    payload.hitDistance = hitT;
+    payload.normalOct = PtPackOctNormal(hitNormal);
+    payload.shadingNormalOct = PtPackOctNormal(shadingNormal);
+    payload.barycentricsHalf = RestirPackHalf2(barycentrics);
+    payload.lodPrevDepthHalf =
+        (f32tof16(triangleLod) & 0xffffu) | (f32tof16(primaryPrevLinearDepth) << 16);
+    payload.primaryMotionHalf = RestirPackHalf2(primaryMotion);
+    payload.primaryDepth = primaryDepth;
 }

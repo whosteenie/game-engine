@@ -833,10 +833,11 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     }
 
     SmokeRtpsoSubobjects subobjects{};
-    // Must be >= the path_tracer.hlsl Payload struct size. P6 carries the previous-frame
-    // primary depth for GI history validation, bringing the payload to 17 DWORDs (68 B).
-    // Keep this declaration in sync with the HLSL struct or CreateStateObject will fail.
-    subobjects.shaderConfig.MaxPayloadSizeInBytes = 68;
+    // Must be >= the path_tracer.hlsl Payload struct size. The payload is packed to 10 DWORDs
+    // (40 B): snorm16-oct normals, fp16 barycentrics/lod/prevDepth/motion, fp32 hitDistance +
+    // primaryDepth, uint instance/primitive/hit. Keep this in sync with the HLSL struct (and the
+    // Payload* accessors) or CreateStateObject will fail / reads will corrupt.
+    subobjects.shaderConfig.MaxPayloadSizeInBytes = 40;
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
     subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
 
