@@ -1,6 +1,7 @@
 #include "test_expect.h"
 
 #ifdef _WIN32
+#include "engine/rendering/DxrCapabilities.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
 #include <fstream>
@@ -36,10 +37,13 @@ namespace
         test::ExpectTrue(result.shader != nullptr, message);
     }
 
-    void ExpectShaderLibraryCompiles(const char* relativePath, const char* message)
+    void ExpectShaderLibraryCompiles(
+        const char* relativePath,
+        const char* message,
+        const HlslLibraryCompileOptions& options = {})
     {
         const std::string source = ReadShaderFile(relativePath);
-        const HlslCompileResult result = CompileHlslLibrary(source, relativePath);
+        const HlslCompileResult result = CompileHlslLibrary(source, relativePath, options);
         test::ExpectTrue(result.shader != nullptr, message);
     }
 #endif
@@ -98,6 +102,42 @@ void RunShaderCompileTests()
         ExpectShaderLibraryCompiles(
             "assets/shaders/dxr/restir_di_temporal.hlsl",
             "restir_di_temporal.hlsl DXR library should compile");
+
+        HlslLibraryCompileOptions modernDxrOptions{};
+        modernDxrOptions.targetProfile = "lib_6_6";
+        modernDxrOptions.defines = {
+            "DXR_MODERN_LIBRARY=1",
+            "DXR_SER_PERMUTATION=0",
+            "DXR_INLINE_VISIBILITY_PERMUTATION=0",
+        };
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/path_tracer.hlsl",
+            "path_tracer.hlsl modern DXR library should compile",
+            modernDxrOptions);
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/dxr_modern_smoke.hlsl",
+            "dxr_modern_smoke.hlsl inline-ray-query library should compile",
+            modernDxrOptions);
+
+        const DxrFeatureCapabilities legacyCapabilities{
+            static_cast<int>(D3D12_RAYTRACING_TIER_1_0),
+            static_cast<int>(D3D_SHADER_MODEL_6_4)};
+        test::ExpectTrue(
+            !legacyCapabilities.SupportsModernDxrLibrary()
+                && !legacyCapabilities.SupportsInlineRaytracing()
+                && !legacyCapabilities.SupportsShaderExecutionReordering()
+                && std::string(legacyCapabilities.GetPreferredLibraryProfile()) == "lib_6_3",
+            "legacy DXR capabilities should choose the clean lib_6_3 fallback");
+
+        const DxrFeatureCapabilities modernCapabilities{
+            static_cast<int>(D3D12_RAYTRACING_TIER_1_2),
+            static_cast<int>(D3D_SHADER_MODEL_6_6)};
+        test::ExpectTrue(
+            modernCapabilities.SupportsModernDxrLibrary()
+                && modernCapabilities.SupportsInlineRaytracing()
+                && modernCapabilities.SupportsShaderExecutionReordering()
+                && std::string(modernCapabilities.GetPreferredLibraryProfile()) == "lib_6_6",
+            "modern DXR capabilities should enable the lib_6_6 path and report future features");
     }
     catch (const std::exception& exception)
     {

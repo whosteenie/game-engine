@@ -355,6 +355,20 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
             m_raytracingTier = 0;
         }
 
+        D3D12_FEATURE_DATA_SHADER_MODEL shaderModel{};
+        shaderModel.HighestShaderModel = D3D_HIGHEST_SHADER_MODEL;
+        if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
+                D3D12_FEATURE_SHADER_MODEL,
+                &shaderModel,
+                sizeof(shaderModel))))
+        {
+            m_highestShaderModel = static_cast<int>(shaderModel.HighestShaderModel);
+        }
+        else
+        {
+            m_highestShaderModel = 0;
+        }
+
         // Some drivers report tier 0 on ID3D12Device even when ID3D12Device5 + AS builds work.
         if (m_raytracingTier < static_cast<int>(D3D12_RAYTRACING_TIER_1_0))
         {
@@ -397,8 +411,11 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         EngineLog::Info(
             "gfx",
             "Adapter: " + m_adapterDescription + " | Ray tracing tier: "
-                + GetRaytracingTierLabel(m_raytracingTier) + " | Mesh shader tier: "
-                + std::to_string(m_meshShaderTier));
+                + GetRaytracingTierLabel(m_raytracingTier) + " | Shader model: "
+                + GetShaderModelLabel(m_highestShaderModel) + " | Inline ray tracing: "
+                + (IsInlineRaytracingSupported() ? "yes" : "no") + " | SER: "
+                + (IsShaderExecutionReorderingSupported() ? "yes" : "no") + " | DXR library: "
+                + GetPreferredDxrLibraryProfile() + " | Mesh shader tier: " + std::to_string(m_meshShaderTier));
         if (m_raytracingTier == 0)
         {
             EngineLog::Warn(
@@ -1812,6 +1829,27 @@ void GfxContext::SetActiveMsaaSampleCount(const int sampleCount)
 bool GfxContext::IsRaytracingSupported() const
 {
     return m_raytracingTier >= static_cast<int>(D3D12_RAYTRACING_TIER_1_0);
+}
+
+bool GfxContext::IsInlineRaytracingSupported() const
+{
+    return DxrFeatureCapabilities{m_raytracingTier, m_highestShaderModel}.SupportsInlineRaytracing();
+}
+
+bool GfxContext::IsShaderExecutionReorderingSupported() const
+{
+    return DxrFeatureCapabilities{m_raytracingTier, m_highestShaderModel}
+        .SupportsShaderExecutionReordering();
+}
+
+bool GfxContext::SupportsModernDxrLibrary() const
+{
+    return DxrFeatureCapabilities{m_raytracingTier, m_highestShaderModel}.SupportsModernDxrLibrary();
+}
+
+const char* GfxContext::GetPreferredDxrLibraryProfile() const
+{
+    return DxrFeatureCapabilities{m_raytracingTier, m_highestShaderModel}.GetPreferredLibraryProfile();
 }
 
 std::uint64_t GfxContext::GetCompletedFenceValue() const

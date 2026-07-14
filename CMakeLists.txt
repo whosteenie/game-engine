@@ -291,10 +291,12 @@ target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
 
 
 include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/AgilitySdk.cmake")
 
 set(GAME_ENGINE_APP_SOURCES
     src/main.cpp
 
+    src/app/core/AgilitySdkExports.cpp
     src/app/core/Application.cpp
 
     src/app/editor/EditorSettings.cpp
@@ -387,6 +389,8 @@ target_link_libraries(game-engine PRIVATE
     nlohmann_json::nlohmann_json
     Jolt
 )
+
+game_engine_enable_agility_sdk(game-engine)
 
 # Streamline (DLSS SR, Phase S0): headers only + copy the prebuilt SL/DLSS plugin DLLs next to the
 # exe. We do NOT statically link sl.interposer.lib — it exports DXGI/D3D entry points that would

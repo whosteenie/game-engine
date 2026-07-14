@@ -1,8 +1,10 @@
 #include "engine/raytracing/DxrShaderCache.h"
 
 #include "engine/platform/EngineLog.h"
+#include "engine/rhi/GfxContext.h"
 #include "engine/raytracing/DxrTrace.h"
 
+#include <algorithm>
 #include <fstream>
 #include <functional>
 #include <mutex>
@@ -14,6 +16,31 @@ namespace
 {
     std::mutex g_dxrShaderCacheMutex;
     std::unordered_map<std::string, std::weak_ptr<DxrCompiledLibrary>> g_dxrShaderCache;
+
+    void AppendUniqueDefine(std::vector<std::string>& defines, const char* define)
+    {
+        if (std::find(defines.begin(), defines.end(), define) == defines.end())
+        {
+            defines.emplace_back(define);
+        }
+    }
+
+    std::string MakeCacheKey(
+        const char* libraryPath,
+        const std::size_t sourceHash,
+        const DxrShaderLibraryCompileOptions& options)
+    {
+        std::string key = std::string(libraryPath) + "#" + std::to_string(sourceHash)
+            + "#profile=" + options.targetProfile + "#diagnostic="
+            + (options.diagnosticPermutation ? "1" : "0") + "#ser="
+            + (options.serPermutation ? "1" : "0") + "#inline-visibility="
+            + (options.inlineVisibilityPermutation ? "1" : "0");
+        for (const std::string& define : options.featureDefines)
+        {
+            key += "#define=" + define;
+        }
+        return key;
+    }
 }
 
 std::string DxrShaderCache::ReadShaderSource(const char* libraryPath)
@@ -33,11 +60,60 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
     const char* const libraryPath,
     const bool diagnosticPermutation)
 {
+    return Load(libraryPath, MakeActiveDeviceCompileOptions(diagnosticPermutation));
+}
+
+DxrShaderLibraryCompileOptions DxrShaderCache::MakeActiveDeviceCompileOptions(
+    const bool diagnosticPermutation)
+{
+    DxrShaderLibraryCompileOptions options{};
+    options.diagnosticPermutation = diagnosticPermutation;
+
+    const GfxContext& gfx = GfxContext::Get();
+    if (gfx.IsInitialized())
+    {
+        options.targetProfile = gfx.GetPreferredDxrLibraryProfile();
+    }
+
+    AppendUniqueDefine(
+        options.featureDefines,
+        options.targetProfile == "lib_6_6" ? "DXR_MODERN_LIBRARY=1" : "DXR_MODERN_LIBRARY=0");
+    AppendUniqueDefine(options.featureDefines, "DXR_SER_PERMUTATION=0");
+    AppendUniqueDefine(options.featureDefines, "DXR_INLINE_VISIBILITY_PERMUTATION=0");
+    if (diagnosticPermutation)
+    {
+        AppendUniqueDefine(options.featureDefines, "PT_DIAGNOSTIC_PERMUTATION=1");
+    }
+    return options;
+}
+
+std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
+    const char* const libraryPath,
+    const DxrShaderLibraryCompileOptions& requestedOptions)
+{
     const std::string source = ReadShaderSource(libraryPath);
     const std::size_t sourceHash = std::hash<std::string>{}(source);
-    const char* const define = diagnosticPermutation ? "PT_DIAGNOSTIC_PERMUTATION=1" : nullptr;
-    const std::string cacheKey = std::string(libraryPath) + "#" + std::to_string(sourceHash)
-        + (diagnosticPermutation ? "#diagnostic" : "#production");
+    DxrShaderLibraryCompileOptions options = requestedOptions;
+    if (options.targetProfile.empty())
+    {
+        options.targetProfile = "lib_6_3";
+    }
+    AppendUniqueDefine(
+        options.featureDefines,
+        options.targetProfile == "lib_6_6" ? "DXR_MODERN_LIBRARY=1" : "DXR_MODERN_LIBRARY=0");
+    AppendUniqueDefine(
+        options.featureDefines,
+        options.serPermutation ? "DXR_SER_PERMUTATION=1" : "DXR_SER_PERMUTATION=0");
+    AppendUniqueDefine(
+        options.featureDefines,
+        options.inlineVisibilityPermutation
+            ? "DXR_INLINE_VISIBILITY_PERMUTATION=1"
+            : "DXR_INLINE_VISIBILITY_PERMUTATION=0");
+    if (options.diagnosticPermutation)
+    {
+        AppendUniqueDefine(options.featureDefines, "PT_DIAGNOSTIC_PERMUTATION=1");
+    }
+    const std::string cacheKey = MakeCacheKey(libraryPath, sourceHash, options);
 
     std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
 
@@ -51,7 +127,10 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
     }
 
     DxrBreadcrumb(std::string("shader compile begin: ") + libraryPath);
-    const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath, define);
+    HlslLibraryCompileOptions compileOptions{};
+    compileOptions.targetProfile = options.targetProfile.c_str();
+    compileOptions.defines = options.featureDefines;
+    const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath, compileOptions);
     DxrBreadcrumb(std::string("shader compile ok: ") + libraryPath);
     if (compileResult.shader == nullptr)
     {
@@ -69,7 +148,10 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
     EngineLog::Info(
         "dxr-shader",
         std::string("Compiled DXR library: ") + libraryPath
-            + (diagnosticPermutation ? " [diagnostic]" : " [production]") + " containerBytes="
+            + (options.diagnosticPermutation ? " [diagnostic]" : " [production]") + " profile="
+            + options.targetProfile + " ser=" + (options.serPermutation ? "on" : "off")
+            + " inlineVisibility=" + (options.inlineVisibilityPermutation ? "on" : "off")
+            + " containerBytes="
             + std::to_string(preparedBytecode.containerByteCount) + " dxilBytes="
             + std::to_string(library->dxilBytecode->GetBufferSize()) + " extracted="
             + (library->extractedFromDxbcContainer ? "yes" : "no"));

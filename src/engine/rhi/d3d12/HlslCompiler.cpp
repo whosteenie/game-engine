@@ -388,7 +388,7 @@ DxilLibraryBytecode PrepareDxilLibraryBytecode(ComPtr<IDxcBlob> dxcOutput)
 HlslCompileResult CompileHlslLibrary(
     const std::string& source,
     const std::string& sourcePath,
-    const char* const define)
+    const HlslLibraryCompileOptions& options)
 {
     ComPtr<IDxcUtils> utils;
     ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)), "DxcCreateInstance(DxcUtils)");
@@ -404,21 +404,28 @@ HlslCompileResult CompileHlslLibrary(
         "CreateBlob(shader source)");
 
     const std::wstring wideSourcePath = Utf8ToWide(sourcePath);
+    const std::wstring wideTargetProfile = Utf8ToWide(
+        options.targetProfile != nullptr && options.targetProfile[0] != '\0' ? options.targetProfile : "lib_6_3");
 
-    const wchar_t* compilerArgs[] = {
+    std::vector<const wchar_t*> compilerArgs = {
         wideSourcePath.c_str(),
         L"-T",
-        L"lib_6_3",
+        wideTargetProfile.c_str(),
         L"-Zi",
     };
     std::vector<std::wstring> wideDefines;
-    std::vector<const wchar_t*> compilerArgsWithDefines(
-        std::begin(compilerArgs), std::end(compilerArgs));
-    if (define != nullptr && define[0] != '\0')
+    wideDefines.reserve(options.defines.size());
+    for (const std::string& define : options.defines)
     {
-        wideDefines.push_back(Utf8ToWide(define));
-        compilerArgsWithDefines.push_back(L"-D");
-        compilerArgsWithDefines.push_back(wideDefines.back().c_str());
+        if (!define.empty())
+        {
+            wideDefines.push_back(Utf8ToWide(define));
+        }
+    }
+    for (const std::wstring& define : wideDefines)
+    {
+        compilerArgs.push_back(L"-D");
+        compilerArgs.push_back(define.c_str());
     }
 
     DxcBuffer sourceBuffer{};
@@ -432,8 +439,8 @@ HlslCompileResult CompileHlslLibrary(
     ComPtr<IDxcResult> compileResult;
     const HRESULT compileHr = compiler->Compile(
         &sourceBuffer,
-        compilerArgsWithDefines.data(),
-        static_cast<UINT32>(compilerArgsWithDefines.size()),
+        compilerArgs.data(),
+        static_cast<UINT32>(compilerArgs.size()),
         &includeHandler,
         IID_PPV_ARGS(&compileResult));
     includeHandler.Release();
@@ -441,7 +448,8 @@ HlslCompileResult CompileHlslLibrary(
     if (FAILED(compileHr))
     {
         ThrowShaderCompileError(
-            std::string("DXC Compile call failed for library ") + sourcePath);
+            std::string("DXC Compile call failed for library ") + sourcePath + " ("
+            + (options.targetProfile != nullptr ? options.targetProfile : "lib_6_3") + ")");
     }
 
     HRESULT status = S_OK;
@@ -451,7 +459,8 @@ HlslCompileResult CompileHlslLibrary(
     compileResult->GetOutput(DXC_OUT_ERRORS, IID_PPV_ARGS(&errors), nullptr);
     if (FAILED(status))
     {
-        std::string message = "Shader library compile failed: " + sourcePath;
+        std::string message = "Shader library compile failed: " + sourcePath + " ("
+            + (options.targetProfile != nullptr ? options.targetProfile : "lib_6_3") + ")";
         if (errors != nullptr && errors->GetStringLength() > 0)
         {
             message.append("\n");

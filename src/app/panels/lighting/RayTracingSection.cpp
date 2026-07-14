@@ -52,6 +52,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         const GfxContext& gfx = GfxContext::Get();
         const bool raytracingSupported = gfx.IsInitialized() && gfx.IsRaytracingSupported();
         const int raytracingTier = gfx.IsInitialized() ? gfx.GetRaytracingTier() : 0;
+        const int shaderModel = gfx.IsInitialized() ? gfx.GetHighestShaderModel() : 0;
         const std::string& adapterName =
             gfx.IsInitialized() ? gfx.GetAdapterDescription() : std::string("(GPU not initialized)");
 
@@ -59,6 +60,12 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         char tierText[64]{};
         FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
         ImGui::Text("Ray tracing tier: %s", tierText);
+        ImGui::Text("Shader model: %s", GetShaderModelLabel(shaderModel));
+        ImGui::Text("Inline ray tracing: %s", gfx.IsInlineRaytracingSupported() ? "available" : "unavailable");
+        ImGui::Text(
+            "Shader execution reordering: %s",
+            gfx.IsShaderExecutionReorderingSupported() ? "available (disabled)" : "unavailable");
+        ImGui::Text("DXR library profile: %s", gfx.GetPreferredDxrLibraryProfile());
 
         if (!raytracingSupported)
         {

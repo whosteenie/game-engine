@@ -4,6 +4,7 @@
 #include <dxcapi.h>
 
 #include <string>
+#include <vector>
 
 #include <wrl/client.h>
 
@@ -21,6 +22,15 @@ struct DxilLibraryBytecode
     std::size_t containerByteCount = 0;
 };
 
+// The target profile and defines are part of the compiled DXIL contract. Keeping them explicit
+// makes a modern DXR library a deliberate, cacheable permutation rather than an ambient toolchain
+// setting.
+struct HlslLibraryCompileOptions
+{
+    const char* targetProfile = "lib_6_3";
+    std::vector<std::string> defines;
+};
+
 DxilLibraryBytecode PrepareDxilLibraryBytecode(Microsoft::WRL::ComPtr<IDxcBlob> dxcOutput);
 
 HlslCompileResult CompileHlsl(
@@ -32,4 +42,4 @@ HlslCompileResult CompileHlsl(
 HlslCompileResult CompileHlslLibrary(
     const std::string& source,
     const std::string& sourcePath,
-    const char* define = nullptr);
+    const HlslLibraryCompileOptions& options = {});
