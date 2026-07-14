@@ -260,12 +260,33 @@ namespace
 
     std::vector<GpuProfiler::Entry> BuildCpuTimings(const RenderFrameDiagnostics& diagnostics)
     {
+        const float topLevelMeasuredMs =
+            static_cast<float>(
+                diagnostics.gpuSceneBuildCpuMs
+                + diagnostics.gpuSceneUploadCpuMs
+                + diagnostics.lightingSyncCpuMs
+                + diagnostics.shadowRecordCpuMs
+                + diagnostics.rasterTargetSetupCpuMs
+                + diagnostics.rasterRecordCpuMs
+                + diagnostics.postProcessCpuMs
+                + diagnostics.gizmoCpuMs);
+        const float otherRendererMs = std::max(
+            0.0f,
+            static_cast<float>(diagnostics.rendererCpuMs) - topLevelMeasuredMs);
+
         return {
-            {"Scene tables/Build", static_cast<float>(diagnostics.gpuSceneBuildCpuMs)},
-            {"Scene tables/Upload", static_cast<float>(diagnostics.gpuSceneUploadCpuMs)},
-            {"Raster/Command recording", static_cast<float>(diagnostics.rasterRecordCpuMs)},
-            {"DXR/Scene preparation", static_cast<float>(diagnostics.dxrScenePrepCpuMs)},
-            {"DXR/PT frame data", static_cast<float>(diagnostics.pathTracerFrameDataCpuMs)},
+            {"Renderer", static_cast<float>(diagnostics.rendererCpuMs)},
+            {"Renderer/Scene tables/Build", static_cast<float>(diagnostics.gpuSceneBuildCpuMs)},
+            {"Renderer/Scene tables/Upload", static_cast<float>(diagnostics.gpuSceneUploadCpuMs)},
+            {"Renderer/Lighting sync", static_cast<float>(diagnostics.lightingSyncCpuMs)},
+            {"Renderer/Shadow maps", static_cast<float>(diagnostics.shadowRecordCpuMs)},
+            {"Renderer/Raster target setup", static_cast<float>(diagnostics.rasterTargetSetupCpuMs)},
+            {"Renderer/Raster command recording", static_cast<float>(diagnostics.rasterRecordCpuMs)},
+            {"Renderer/Post process", static_cast<float>(diagnostics.postProcessCpuMs)},
+            {"Renderer/Post process/DXR scene preparation", static_cast<float>(diagnostics.dxrScenePrepCpuMs)},
+            {"Renderer/Post process/PT frame data", static_cast<float>(diagnostics.pathTracerFrameDataCpuMs)},
+            {"Renderer/Gizmos", static_cast<float>(diagnostics.gizmoCpuMs)},
+            {"Renderer/Other renderer work", otherRendererMs},
         };
     }
 

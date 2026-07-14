@@ -1703,10 +1703,27 @@ void SceneRenderer::Render(
     const RenderViewport renderViewport)
 {
     SceneRenderTrace::Scope renderScope("SceneRenderer::Render");
+    const auto renderCpuStart = std::chrono::steady_clock::now();
+    m_renderFrameDiagnostics.rendererCpuMs = 0.0;
+    m_renderFrameDiagnostics.gpuSceneBuildCpuMs = 0.0;
+    m_renderFrameDiagnostics.gpuSceneUploadCpuMs = 0.0;
+    m_renderFrameDiagnostics.lightingSyncCpuMs = 0.0;
+    m_renderFrameDiagnostics.shadowRecordCpuMs = 0.0;
+    m_renderFrameDiagnostics.rasterTargetSetupCpuMs = 0.0;
+    m_renderFrameDiagnostics.rasterRecordCpuMs = 0.0;
+    m_renderFrameDiagnostics.postProcessCpuMs = 0.0;
+    m_renderFrameDiagnostics.gizmoCpuMs = 0.0;
+    m_renderFrameDiagnostics.dxrScenePrepCpuMs = 0.0;
+    m_renderFrameDiagnostics.pathTracerFrameDataCpuMs = 0.0;
+
     NativeProgressWindow::Instance().Report("Recording first scene frame...", 0.970f);
     EnsureGpuResources();
     if (!IsGpuResourcesReady())
     {
+        m_renderFrameDiagnostics.rendererCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - renderCpuStart)
+                .count();
         renderScope.Success();
         return;
     }
@@ -1716,11 +1733,6 @@ void SceneRenderer::Render(
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
     m_activeScreenSpaceEffects = m_screenSpaceEffects.get();
-    m_renderFrameDiagnostics.gpuSceneBuildCpuMs = 0.0;
-    m_renderFrameDiagnostics.gpuSceneUploadCpuMs = 0.0;
-    m_renderFrameDiagnostics.rasterRecordCpuMs = 0.0;
-    m_renderFrameDiagnostics.dxrScenePrepCpuMs = 0.0;
-    m_renderFrameDiagnostics.pathTracerFrameDataCpuMs = 0.0;
 
     const auto gpuSceneBuildStart = std::chrono::steady_clock::now();
     m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
@@ -1760,7 +1772,12 @@ void SceneRenderer::Render(
     {
         SceneRenderTrace::Scope lightingScope("SyncLighting");
         NativeProgressWindow::Instance().Report("Syncing scene lighting...", 0.973f);
+        const auto lightingSyncStart = std::chrono::steady_clock::now();
         SyncLighting(scene);
+        m_renderFrameDiagnostics.lightingSyncCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - lightingSyncStart)
+                .count();
         lightingScope.Success();
     }
 
@@ -1768,9 +1785,14 @@ void SceneRenderer::Render(
     {
         SceneRenderTrace::Scope shadowScope("RenderShadowPass");
         NativeProgressWindow::Instance().Report("Rendering shadow maps...", 0.974f);
+        const auto shadowRecordStart = std::chrono::steady_clock::now();
         const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
         RenderShadowPass(scene, camera);
         m_shadowMap->EndFrame();
+        m_renderFrameDiagnostics.shadowRecordCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - shadowRecordStart)
+                .count();
         shadowScope.Success();
     }
 
@@ -1783,6 +1805,7 @@ void SceneRenderer::Render(
 
     bool splitLightingMrt = false;
     NativeProgressWindow::Instance().Report("Rasterizing scene...", 0.976f);
+    const auto rasterTargetSetupStart = std::chrono::steady_clock::now();
     PrepareSceneRasterTarget(
         scene,
         camera,
@@ -1792,6 +1815,10 @@ void SceneRenderer::Render(
         usePostProcess,
         freezeTemporalJitter,
         splitLightingMrt);
+    m_renderFrameDiagnostics.rasterTargetSetupCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - rasterTargetSetupStart)
+            .count();
 
     RenderGeometryPass(
         scene,
@@ -1805,6 +1832,7 @@ void SceneRenderer::Render(
     if (usePostProcess)
     {
         NativeProgressWindow::Instance().Report("Running post-process and ray tracing...", 0.977f);
+        const auto postProcessStart = std::chrono::steady_clock::now();
         RenderPostProcessPass(
             scene,
             camera,
@@ -1814,6 +1842,10 @@ void SceneRenderer::Render(
             options,
             freezeTemporalJitter,
             splitLightingMrt);
+        m_renderFrameDiagnostics.postProcessCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - postProcessStart)
+                .count();
     }
     else if (options.showGrid && scene.GetShowGrid())
     {
@@ -1833,9 +1865,19 @@ void SceneRenderer::Render(
         }
     }
 
+    const auto gizmoStart = std::chrono::steady_clock::now();
     RenderGizmoPass(scene, camera, target, options, usePostProcess);
+    m_renderFrameDiagnostics.gizmoCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - gizmoStart)
+            .count();
 
     AdvancePreviousWorldTransforms();
+
+    m_renderFrameDiagnostics.rendererCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - renderCpuStart)
+            .count();
 
     renderScope.Success();
     SceneRenderTrace::CompleteFirstFrame();
