@@ -1184,8 +1184,8 @@ void SampleEmissiveDiCandidate(
         return;
     }
     const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
-    const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
     const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+    const float misWeight = BalanceHeuristic(pdfSolidAngle, pdfBsdf);
 
     // f = BSDF·emissive·MIS (the directional integrand × MIS, visibility excluded). With
     // proposalPdf = pdfSolidAngle, M=1 gives f·V/pdfSolidAngle == EvaluateDirectEmissive.
@@ -1279,11 +1279,9 @@ float3 RestirDiEnvironmentDirect(
         float pdfEnv;
         if (SampleEnvLightDirection(xi, wi, pdfEnv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
         {
-            const float pdfBsdf =
-                OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+            const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+            const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
             const float misWeight = BalanceHeuristic(pdfEnv, pdfBsdf);
-            const float3 bsdf =
-                EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
             contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
             proposalPdf = pdfEnv;
