@@ -29,4 +29,7 @@ HlslCompileResult CompileHlsl(
     const char* entry,
     const char* targetProfile);
 
-HlslCompileResult CompileHlslLibrary(const std::string& source, const std::string& sourcePath);
+HlslCompileResult CompileHlslLibrary(
+    const std::string& source,
+    const std::string& sourcePath,
+    const char* define = nullptr);

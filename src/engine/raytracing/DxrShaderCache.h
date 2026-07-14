@@ -16,7 +16,8 @@ struct DxrCompiledLibrary
 class DxrShaderCache
 {
 public:
-    static std::shared_ptr<DxrCompiledLibrary> Load(const char* libraryPath);
+    // Path tracer diagnostics are a separate compile-time permutation. Other libraries use normal.
+    static std::shared_ptr<DxrCompiledLibrary> Load(const char* libraryPath, bool diagnosticPermutation = false);
     static void Clear();
 
 private:

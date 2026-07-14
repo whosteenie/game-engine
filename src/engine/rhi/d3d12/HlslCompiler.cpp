@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include <fstream>
+#include <iterator>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -384,7 +385,10 @@ DxilLibraryBytecode PrepareDxilLibraryBytecode(ComPtr<IDxcBlob> dxcOutput)
     return result;
 }
 
-HlslCompileResult CompileHlslLibrary(const std::string& source, const std::string& sourcePath)
+HlslCompileResult CompileHlslLibrary(
+    const std::string& source,
+    const std::string& sourcePath,
+    const char* const define)
 {
     ComPtr<IDxcUtils> utils;
     ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)), "DxcCreateInstance(DxcUtils)");
@@ -407,6 +411,15 @@ HlslCompileResult CompileHlslLibrary(const std::string& source, const std::strin
         L"lib_6_3",
         L"-Zi",
     };
+    std::vector<std::wstring> wideDefines;
+    std::vector<const wchar_t*> compilerArgsWithDefines(
+        std::begin(compilerArgs), std::end(compilerArgs));
+    if (define != nullptr && define[0] != '\0')
+    {
+        wideDefines.push_back(Utf8ToWide(define));
+        compilerArgsWithDefines.push_back(L"-D");
+        compilerArgsWithDefines.push_back(wideDefines.back().c_str());
+    }
 
     DxcBuffer sourceBuffer{};
     sourceBuffer.Ptr = sourceBlob->GetBufferPointer();
@@ -419,8 +432,8 @@ HlslCompileResult CompileHlslLibrary(const std::string& source, const std::strin
     ComPtr<IDxcResult> compileResult;
     const HRESULT compileHr = compiler->Compile(
         &sourceBuffer,
-        compilerArgs,
-        static_cast<UINT32>(sizeof(compilerArgs) / sizeof(compilerArgs[0])),
+        compilerArgsWithDefines.data(),
+        static_cast<UINT32>(compilerArgsWithDefines.size()),
         &includeHandler,
         IID_PPV_ARGS(&compileResult));
     includeHandler.Release();

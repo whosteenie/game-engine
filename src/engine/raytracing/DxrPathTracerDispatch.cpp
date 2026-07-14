@@ -23,21 +23,56 @@ DxrPathTracerDispatch::~DxrPathTracerDispatch()
 void DxrPathTracerDispatch::Release()
 {
     ReleaseCore();
+    m_diagnosticShaderBindingTable.Release();
+    m_diagnosticPipeline.Release();
+    m_diagnosticPipelineReady = false;
+    m_activeDiagnosticPermutation = false;
     m_frameIndex = 0;
 }
 
 bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded()
 {
     std::string error;
-    return EnsurePipeline(error);
+    // Build both permutations during the existing DXR warmup window. Switching debug views then
+    // selects already-created state objects instead of compiling in an interactive frame.
+    return EnsurePipeline(false, error) && EnsurePipeline(true, error);
 }
 
-bool DxrPathTracerDispatch::EnsurePipeline(std::string& outError)
+bool DxrPathTracerDispatch::EnsurePipeline(
+    const bool diagnosticPermutation,
+    std::string& outError)
 {
+    if (diagnosticPermutation)
+    {
+        outError.clear();
+        if (m_diagnosticPipelineReady)
+        {
+            return true;
+        }
+
+        DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline begin");
+        if (!m_diagnosticPipeline.CreatePathTracerPipeline(outError, true))
+        {
+            DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: create pipeline");
+            return false;
+        }
+        if (!m_diagnosticShaderBindingTable.BuildPathTracerTable(
+                m_diagnosticPipeline.GetProperties(), outError))
+        {
+            DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: build SBT");
+            m_diagnosticPipeline.Release();
+            return false;
+        }
+
+        m_diagnosticPipelineReady = true;
+        DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline ok");
+        return true;
+    }
+
     return EnsurePipelineWith(
         "path-tracer",
         [](DxrPipeline& pipeline, std::string& pipelineError) {
-            return pipeline.CreatePathTracerPipeline(pipelineError);
+            return pipeline.CreatePathTracerPipeline(pipelineError, false);
         },
         [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
             return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), tableError);
@@ -101,10 +136,23 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
 
     std::string error;
 
-    if (!m_pipelineReady && !EnsurePipeline(error))
+    const bool diagnosticPermutation = ptDebugIsolateMode != 0;
+    if ((!diagnosticPermutation && !m_pipelineReady)
+        || (diagnosticPermutation && !m_diagnosticPipelineReady))
     {
-        DxrBreadcrumb("path-tracer skipped: pipeline not ready");
-        return false;
+        if (!EnsurePipeline(diagnosticPermutation, error))
+        {
+            DxrBreadcrumb("path-tracer skipped: pipeline not ready");
+            return false;
+        }
+    }
+
+    if (m_activeDiagnosticPermutation != diagnosticPermutation)
+    {
+        // Reservoir contents and the displayed PT output must never cross a permutation boundary.
+        // This is intentionally the only invalidation performed for a switch.
+        m_dispatchContext.InvalidateRestirHistory();
+        m_activeDiagnosticPermutation = diagnosticPermutation;
     }
 
     DxrBreadcrumb("path-tracer dispatch begin");
@@ -265,9 +313,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const GfxContext::GpuTimerScope gpuScopePrimary("Path tracer/Primary rays");
     if (!m_dispatchContext.DispatchPathTracer(
             commandList4,
-            m_pipeline.GetStateObject(),
-            m_pipeline.GetGlobalRootSignature(),
-            m_shaderBindingTable,
+            diagnosticPermutation ? m_diagnosticPipeline.GetStateObject() : m_pipeline.GetStateObject(),
+            diagnosticPermutation ? m_diagnosticPipeline.GetGlobalRootSignature() : m_pipeline.GetGlobalRootSignature(),
+            diagnosticPermutation ? m_diagnosticShaderBindingTable : m_shaderBindingTable,
             dispatchInputs,
             width,
             height,

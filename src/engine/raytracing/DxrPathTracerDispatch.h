@@ -148,9 +148,15 @@ public:
     void ResetAccumulation() { m_frameIndex = 0; }
 
 private:
-    bool EnsurePipeline(std::string& outError);
+    bool EnsurePipeline(bool diagnosticPermutation, std::string& outError);
 
     bool m_dispatchedThisFrame = false;
+    // The production pipeline lives in DxrDispatchBase. Diagnostics use an identical root/SBT
+    // layout but a separate compile-time shader permutation, kept warm to make mode changes cheap.
+    DxrPipeline m_diagnosticPipeline;
+    ShaderBindingTable m_diagnosticShaderBindingTable;
+    bool m_diagnosticPipelineReady = false;
+    bool m_activeDiagnosticPermutation = false;
     std::uint32_t m_frameIndex = 0;
     std::uintptr_t m_lastEnvEquirectSrvCpuHandle = 0;
     std::uint32_t m_lastEnvImportanceCdfSrvIndex = UINT32_MAX;

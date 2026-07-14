@@ -29,11 +29,15 @@ std::string DxrShaderCache::ReadShaderSource(const char* libraryPath)
     return buffer.str();
 }
 
-std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(const char* libraryPath)
+std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
+    const char* const libraryPath,
+    const bool diagnosticPermutation)
 {
     const std::string source = ReadShaderSource(libraryPath);
     const std::size_t sourceHash = std::hash<std::string>{}(source);
-    const std::string cacheKey = std::string(libraryPath) + "#" + std::to_string(sourceHash);
+    const char* const define = diagnosticPermutation ? "PT_DIAGNOSTIC_PERMUTATION=1" : nullptr;
+    const std::string cacheKey = std::string(libraryPath) + "#" + std::to_string(sourceHash)
+        + (diagnosticPermutation ? "#diagnostic" : "#production");
 
     std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
 
@@ -47,7 +51,7 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(const char* libraryPath
     }
 
     DxrBreadcrumb(std::string("shader compile begin: ") + libraryPath);
-    const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath);
+    const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath, define);
     DxrBreadcrumb(std::string("shader compile ok: ") + libraryPath);
     if (compileResult.shader == nullptr)
     {
@@ -64,7 +68,8 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(const char* libraryPath
 
     EngineLog::Info(
         "dxr-shader",
-        std::string("Compiled DXR library: ") + libraryPath + " containerBytes="
+        std::string("Compiled DXR library: ") + libraryPath
+            + (diagnosticPermutation ? " [diagnostic]" : " [production]") + " containerBytes="
             + std::to_string(preparedBytecode.containerByteCount) + " dxilBytes="
             + std::to_string(library->dxilBytecode->GetBufferSize()) + " extracted="
             + (library->extractedFromDxbcContainer ? "yes" : "no"));

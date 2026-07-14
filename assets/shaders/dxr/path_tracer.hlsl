@@ -90,7 +90,12 @@ StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 // Radiance-term isolation for black-edge debugging (RenderDebugMode PtIsolate*). Host packs modes
 // 0..9 as a float; saturate() would collapse every mode >= 2 to DirectSun, making most isolate
 // views unreachable — clamp to the real [0,9] range instead.
+#ifndef PT_DIAGNOSTIC_PERMUTATION
+#define PT_DIAGNOSTIC_PERMUTATION 0
+#endif
+#if PT_DIAGNOSTIC_PERMUTATION
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 23.0)))
+#endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
 static const uint kPtSoftSunSampleCount = 4u;
@@ -1450,6 +1455,7 @@ bool SampleMaterialBounce(
     return isSpecular;
 }
 
+#if PT_DIAGNOSTIC_PERMUTATION
 float3 SelectPtDebugRadiance(
     uint isolateMode,
     bool primaryHit,
@@ -1524,6 +1530,7 @@ float3 SelectPtDebugRadiance(
 
     return radiancePreClamp;
 }
+#endif
 
 [shader("raygeneration")]
 void PathTracerRayGen()
@@ -1605,12 +1612,14 @@ void PathTracerRayGen()
     bool pathInMedium = false;
     float3 mediumTint = 1.0.xxx;
 
+#if PT_DIAGNOSTIC_PERMUTATION
     float3 termDirectSun = 0.0.xxx;
     float3 termDirectEmissive = 0.0.xxx;
     float3 termSurfaceEmissive = 0.0.xxx;
     float3 termAmbient = 0.0.xxx;
     float primaryAoVis = 1.0;
     float primarySunVis = 0.0;
+#endif
 
     [loop]
     for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
@@ -1781,7 +1790,9 @@ void PathTracerRayGen()
             else
             {
                 directRadiance += emissiveContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
                 termSurfaceEmissive += emissiveContrib;
+#endif
             }
         }
 
@@ -1859,9 +1870,13 @@ void PathTracerRayGen()
         else
         {
             directRadiance += sunPathContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
             termDirectSun += sunPathContrib;
+#endif
             directRadiance += emissiveNeeContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
             termDirectEmissive += emissiveNeeContrib;
+#endif
             // Bounce-0 env NEE is part of direct (no dedicated term AOV historically).
             directRadiance += envNeeContrib;
         }
@@ -1871,30 +1886,45 @@ void PathTracerRayGen()
         // Emissive terminals get ray-free ambient display; AO on a light surface is wasted TraceRays.
         if (kPtCenterPrimaryRays && bounce == 0u && !terminalEmissiveHit)
         {
+#if PT_DIAGNOSTIC_PERMUTATION
             primaryAoVis =
                 TracePrimaryAmbientOcclusion(rng, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
+#else
+            const float primaryAoVis =
+                TracePrimaryAmbientOcclusion(rng, shadowOrigin, hitNormalGeom, g_PtAmbientAoRayCount);
+#endif
             // Same soft-sun sample as the radiance path (G3: do not re-draw — AOV must match).
+#if PT_DIAGNOSTIC_PERMUTATION
             primarySunVis = sunVis;
+#endif
             const float3 ambientContrib =
                 EvaluateRealTimeDiffuseAmbient(diffuseAlbedo, hitNormal, primaryAoVis);
             const float3 ambientPathContrib = throughput * ambientContrib;
             directRadiance += ambientPathContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
             termAmbient += ambientPathContrib;
+#endif
         }
         else if (realTimePrimaryEmitterDisplay)
         {
+#if PT_DIAGNOSTIC_PERMUTATION
             primaryAoVis = 1.0;
             primarySunVis = sunVis;
+#endif
             const float3 ambientContrib =
                 EvaluateRealTimeEmitterDisplayAmbient(diffuseAlbedo, hitNormal);
             const float3 ambientPathContrib = throughput * ambientContrib;
             directRadiance += ambientPathContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
             termAmbient += ambientPathContrib;
+#endif
 
             const float3 visibleEmissive = surfaceEmissiveColor;
             const float3 visibleEmissiveContrib = throughput * visibleEmissive;
             directRadiance += visibleEmissiveContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
             termSurfaceEmissive += visibleEmissiveContrib;
+#endif
         }
 
         if (bounce == 0u)
@@ -2183,7 +2213,11 @@ void PathTracerRayGen()
 
     // G6: clamp Lo_tail before reservoir write; composite safety clamp remains below.
     float3 loTailForStore = loTail;
-    if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
+    if (kPtFireflyClampEnabled
+#if PT_DIAGNOSTIC_PERMUTATION
+        && g_PtDebugIsolateMode != 8u
+#endif
+        )
     {
         loTailForStore = ClampRadiance(loTail);
     }
@@ -2238,7 +2272,11 @@ void PathTracerRayGen()
     const float3 shadedIndirect = giEligible ? restirGiIndirect : baselineIndirect;
     const float3 radiancePreClamp = directRadiance + termIndirect;
     float3 radiance = directRadiance + shadedIndirect;
-    if (kPtFireflyClampEnabled && g_PtDebugIsolateMode != 8u)
+    if (kPtFireflyClampEnabled
+#if PT_DIAGNOSTIC_PERMUTATION
+        && g_PtDebugIsolateMode != 8u
+#endif
+        )
     {
         radiance = ClampRadiance(radiance);
     }
@@ -2247,6 +2285,7 @@ void PathTracerRayGen()
     g_GiReservoirCurrent[pixelIndex] = giReservoir;
     g_ReservoirCurrent[pixelIndex] = freshDiReservoirs;
 
+#if PT_DIAGNOSTIC_PERMUTATION
     float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
         primaryHit,
@@ -2282,6 +2321,9 @@ void PathTracerRayGen()
             primaryRoughness <= kPtDeltaSpecularRoughness ? 1.0 : 0.0,
             0.15);
     }
+#else
+    const float3 displayRadiance = radiance;
+#endif
 
     // P3 base signal excludes only fresh ReSTIR DI. Temporal shading adds its reevaluated
     // emissive+environment reservoirs back without subtracting from the displayed fp16 output.

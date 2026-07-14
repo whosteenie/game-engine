@@ -752,7 +752,9 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
 
 // Phase P0/P1 path-tracer RTPSO (devdoc/dxr/path-tracing.md). P4b: uses the path-tracer global
 // root signature (reflection layout + t14 prev-instance transforms + u4-u6 RR guide outputs).
-bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
+bool DxrPipeline::CreatePathTracerPipeline(
+    std::string& outError,
+    const bool diagnosticPermutation)
 {
     outError.clear();
     Release();
@@ -805,7 +807,8 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     std::shared_ptr<DxrCompiledLibrary> library;
     try
     {
-        library = DxrShaderCache::Load(EngineConstants::DxrPathTracerLibraryShader);
+        library = DxrShaderCache::Load(
+            EngineConstants::DxrPathTracerLibraryShader, diagnosticPermutation);
     }
     catch (const std::exception& exception)
     {
@@ -941,7 +944,11 @@ bool DxrPipeline::CreatePathTracerPipeline(std::string& outError)
     m_stateObject = stateObject.Detach();
     m_stateObjectProperties = stateObjectProperties;
 
-    EngineLog::Info("dxr-pipeline", "Created DXR path tracer RTPSO");
+    EngineLog::Info(
+        "dxr-pipeline",
+        diagnosticPermutation
+            ? "Created DXR path tracer diagnostic RTPSO"
+            : "Created DXR path tracer production RTPSO");
     DxrBreadcrumb("pipeline CreatePathTracerPipeline ok");
     return true;
 }
