@@ -1959,6 +1959,20 @@ void PathTracerRayGen()
                         hitNormal, sunVis);
                 sunPathContrib = throughput * sunContrib;
             }
+            else
+            {
+                // A reflected/refracted real-time ray that reaches an emitter must still see the
+                // emitter's base material under the scene lighting. Returning emission alone turns
+                // a white, red-emissive cube into a flat red card through mirrors and glass. Keep
+                // the terminal cost bounded, but spend a visually stable four-sample sun estimate.
+                sunVis = TracePrimarySunVisibility(
+                    rng, hitNormal, shadowOrigin, kPtSoftSunSampleCount);
+                const float3 sunContrib = opaqueWeight
+                    * EvaluateDirectSun(
+                        viewDir, f0, albedo, surfaceRoughness, surfaceMetallic,
+                        hitNormal, sunVis);
+                sunPathContrib = throughput * sunContrib;
+            }
 
             if (!terminalEmissiveHit)
             {
@@ -2065,6 +2079,30 @@ void PathTracerRayGen()
 #if PT_DIAGNOSTIC_PERMUTATION
             termSurfaceEmissive += visibleEmissiveContrib;
 #endif
+        }
+        else if (terminalEmissiveHit && bounce > 0u && opaqueWeight > 0.0)
+        {
+            // Real-time emitters remain terminal for cost, but their secondary-ray appearance
+            // needs the same non-emissive surface response as a directly visible emitter. SH
+            // diffuse plus one occluded specular-environment ray gives a white base material real
+            // face shading without launching a recursive continuation or emitter/env NEE.
+            const float3 ambientContrib =
+                EvaluateRealTimeEmitterDisplayAmbient(diffuseAlbedo, hitNormal);
+            const float nDotV = saturate(dot(hitNormal, viewDir));
+            const float3 reflectedEnv = SampleEnvironment(reflect(-viewDir, hitNormal), surfaceRoughness)
+                * EnvBrdfApprox(f0, surfaceRoughness, nDotV);
+            const float3 reflectDir = reflect(-viewDir, hitNormal);
+            const float specularVisibility = TraceVisibility(shadowOrigin, reflectDir, g_MaxTraceDistance);
+            const float3 terminalSurfaceContrib = throughput * (
+                ambientContrib + opaqueWeight * reflectedEnv * specularVisibility);
+            if (inTail)
+            {
+                loTail += terminalSurfaceContrib;
+            }
+            else
+            {
+                directRadiance += terminalSurfaceContrib;
+            }
         }
 
         if (bounce == 0u)
