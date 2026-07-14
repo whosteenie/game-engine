@@ -98,6 +98,12 @@ namespace
         }
 
         DWORD style = static_cast<DWORD>(GetWindowLongPtr(progressBar, GWL_STYLE));
+        const bool marqueeEnabled = (style & PBS_MARQUEE) != 0;
+        if (marqueeEnabled == enabled)
+        {
+            return;
+        }
+
         if (enabled)
         {
             style |= PBS_MARQUEE;
@@ -109,7 +115,6 @@ namespace
             SendMessage(progressBar, PBM_SETMARQUEE, FALSE, 0);
             style &= ~PBS_MARQUEE;
             SetWindowLongPtr(progressBar, GWL_STYLE, style);
-            SendMessage(progressBar, PBM_SETPOS, 0, 0);
         }
     }
 
@@ -515,6 +520,8 @@ void NativeProgressWindow::Begin(const std::string& title, const std::string& me
     ++m_depth;
     if (m_depth == 1)
     {
+        m_lastProgress = 0.0f;
+        m_hasDeterminateProgress = false;
         Win32ProgressWindow::Get().Begin(title, message);
     }
 }
@@ -529,10 +536,30 @@ void NativeProgressWindow::SetMessage(const std::string& message)
 
 void NativeProgressWindow::SetProgress(float progress)
 {
-    if (m_depth > 0)
+    if (m_depth <= 0)
     {
-        Win32ProgressWindow::Get().SetProgress(progress);
+        return;
     }
+
+    if (progress < 0.0f)
+    {
+        // Once a load has a concrete position, keep it determinate and stable until it ends.
+        if (!m_hasDeterminateProgress)
+        {
+            Win32ProgressWindow::Get().SetProgress(progress);
+        }
+        return;
+    }
+
+    const float clampedProgress = std::clamp(progress, 0.0f, 1.0f);
+    if (m_hasDeterminateProgress && clampedProgress < m_lastProgress)
+    {
+        return;
+    }
+
+    m_lastProgress = clampedProgress;
+    m_hasDeterminateProgress = true;
+    Win32ProgressWindow::Get().SetProgress(clampedProgress);
 }
 
 void NativeProgressWindow::Report(const std::string& message, float progress)
@@ -547,10 +574,7 @@ void NativeProgressWindow::Report(const std::string& message, float progress)
         Win32ProgressWindow::Get().SetMessage(message);
     }
 
-    if (progress >= 0.0f)
-    {
-        Win32ProgressWindow::Get().SetProgress(progress);
-    }
+    SetProgress(progress);
 }
 
 void NativeProgressWindow::End()
@@ -564,6 +588,8 @@ void NativeProgressWindow::End()
     if (m_depth == 0)
     {
         Win32ProgressWindow::Get().End();
+        m_lastProgress = 0.0f;
+        m_hasDeterminateProgress = false;
     }
 }
 
@@ -574,6 +600,8 @@ void NativeProgressWindow::Shutdown()
         m_depth = 0;
         Win32ProgressWindow::Get().End();
     }
+    m_lastProgress = 0.0f;
+    m_hasDeterminateProgress = false;
 
     Win32ProgressWindow::Get().Shutdown();
 }
