@@ -8,6 +8,7 @@
 #include <GLFW/glfw3.h>
 
 #include "app/core/Application.h"
+#include "app/core/AutomatedBenchmarkCapture.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorDockSpace.h"
 #include "app/editor/EditorPanelConstraints.h"
@@ -455,6 +456,8 @@ Application::~Application()
 
 void Application::Run()
 {
+    m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
+
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
     {
         std::string error;
@@ -514,6 +517,19 @@ void Application::Run()
             frameDiagnostics.frameCpuMs =
                 std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameWorkStart).count();
             m_performancePanel->SetApplicationFrameDiagnostics(frameDiagnostics);
+            if (m_automatedBenchmarkCapture != nullptr)
+            {
+                const bool sceneReady = m_projectSession->HasActiveProject()
+                    && !m_projectChooser->IsBlockingEditor()
+                    && m_scene->GetRenderer().IsGpuResourcesReady();
+                if (m_automatedBenchmarkCapture->ObserveFrame(
+                        sceneReady,
+                        GfxContext::Get().GetGpuTimings(),
+                        frameDiagnostics))
+                {
+                    RequestForcedClose();
+                }
+            }
             suppressedRepeatedFrameErrors = 0;
         }
         catch (const std::exception& exception)

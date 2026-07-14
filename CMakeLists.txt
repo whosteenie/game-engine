@@ -298,6 +298,7 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/core/AgilitySdkExports.cpp
     src/app/core/Application.cpp
+    src/app/core/AutomatedBenchmarkCapture.cpp
 
     src/app/editor/EditorSettings.cpp
     src/app/editor/TuningSectionState.cpp
