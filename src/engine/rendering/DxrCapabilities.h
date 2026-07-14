@@ -45,8 +45,8 @@ inline const char* GetShaderModelLabel(const int shaderModel)
     }
 }
 
-// Capability policy shared by device reporting, DXR library selection, and tests. These are
-// availability checks only: PF5 deliberately keeps both SER and inline visibility disabled.
+// Capability policy shared by device reporting, DXR library selection, and tests. PF6 uses
+// inline visibility when supported; SER remains an availability check until PF7.
 struct DxrFeatureCapabilities
 {
     int raytracingTier = 0;
@@ -72,7 +72,13 @@ struct DxrFeatureCapabilities
 
     const char* GetPreferredLibraryProfile() const
     {
-        return SupportsModernDxrLibrary() ? "lib_6_6" : "lib_6_3";
+        if (SupportsModernDxrLibrary())
+        {
+            return "lib_6_6";
+        }
+        // Inline RayQuery was introduced with SM 6.5. Keep that capable tier on a matching
+        // library target even if it cannot expose the SM 6.6+ PF5/PF7 feature set.
+        return SupportsInlineRaytracing() ? "lib_6_5" : "lib_6_3";
     }
 };
 

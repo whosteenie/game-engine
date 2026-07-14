@@ -114,6 +114,20 @@ void RunShaderCompileTests()
             "assets/shaders/dxr/path_tracer.hlsl",
             "path_tracer.hlsl modern DXR library should compile",
             modernDxrOptions);
+
+        HlslLibraryCompileOptions inlineVisibilityOptions = modernDxrOptions;
+        inlineVisibilityOptions.defines[2] = "DXR_INLINE_VISIBILITY_PERMUTATION=1";
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/path_tracer.hlsl",
+            "path_tracer.hlsl inline-visibility DXR library should compile",
+            inlineVisibilityOptions);
+
+        HlslLibraryCompileOptions inlineVisibility65Options = inlineVisibilityOptions;
+        inlineVisibility65Options.targetProfile = "lib_6_5";
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/path_tracer.hlsl",
+            "path_tracer.hlsl SM 6.5 inline-visibility library should compile",
+            inlineVisibility65Options);
         ExpectShaderLibraryCompiles(
             "assets/shaders/dxr/dxr_modern_smoke.hlsl",
             "dxr_modern_smoke.hlsl inline-ray-query library should compile",
@@ -138,6 +152,15 @@ void RunShaderCompileTests()
                 && modernCapabilities.SupportsShaderExecutionReordering()
                 && std::string(modernCapabilities.GetPreferredLibraryProfile()) == "lib_6_6",
             "modern DXR capabilities should enable the lib_6_6 path and report future features");
+
+        const DxrFeatureCapabilities inlineCapabilities{
+            static_cast<int>(D3D12_RAYTRACING_TIER_1_1),
+            static_cast<int>(D3D_SHADER_MODEL_6_5)};
+        test::ExpectTrue(
+            inlineCapabilities.SupportsInlineRaytracing()
+                && !inlineCapabilities.SupportsModernDxrLibrary()
+                && std::string(inlineCapabilities.GetPreferredLibraryProfile()) == "lib_6_5",
+            "SM 6.5 inline DXR capabilities should select the lib_6_5 permutation");
     }
     catch (const std::exception& exception)
     {

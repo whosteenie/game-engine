@@ -104,6 +104,9 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #ifndef PT_DIAGNOSTIC_PERMUTATION
 #define PT_DIAGNOSTIC_PERMUTATION 0
 #endif
+#ifndef DXR_INLINE_VISIBILITY_PERMUTATION
+#define DXR_INLINE_VISIBILITY_PERMUTATION 0
+#endif
 #if PT_DIAGNOSTIC_PERMUTATION
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 23.0)))
 #endif
@@ -370,14 +373,24 @@ float TraceVisibilityMasked(float3 origin, float3 direction, float tMax, uint in
     ray.TMin = 0.001;
     ray.TMax = tMax;
 
+    const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
+        | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
+#if DXR_INLINE_VISIBILITY_PERMUTATION
+    // PF6: boolean opaque visibility needs neither a hit group nor the 40-byte surface payload.
+    // Keep the flags, mask, and ray interval identical to the legacy TraceRay path below.
+    RayQuery<RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_FORCE_OPAQUE> query;
+    query.TraceRayInline(g_SceneTlas, occlusionFlags, instanceMask, ray);
+    while (query.Proceed())
+    {
+    }
+    return query.CommittedStatus() == COMMITTED_NOTHING ? 1.0 : 0.0;
+#else
     Payload probe;
     ResetPayload(probe);
     probe.hit = kPayloadFlagVisibility;
-
-    const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
-        | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
     TraceRay(g_SceneTlas, occlusionFlags, instanceMask, 0, 0, 0, ray, probe);
     return probe.hit == 0 ? 1.0 : 0.0;
+#endif
 }
 
 float TraceVisibility(float3 origin, float3 direction, float tMax)

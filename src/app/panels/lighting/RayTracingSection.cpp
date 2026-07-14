@@ -61,7 +61,11 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
         ImGui::Text("Ray tracing tier: %s", tierText);
         ImGui::Text("Shader model: %s", GetShaderModelLabel(shaderModel));
-        ImGui::Text("Inline ray tracing: %s", gfx.IsInlineRaytracingSupported() ? "available" : "unavailable");
+        ImGui::Text(
+            "Inline ray tracing: %s",
+            gfx.IsInlineRaytracingSupported()
+                ? "enabled for PT opaque visibility"
+                : "unavailable (legacy visibility fallback)");
         ImGui::Text(
             "Shader execution reordering: %s",
             gfx.IsShaderExecutionReorderingSupported() ? "available (disabled)" : "unavailable");
