@@ -97,14 +97,16 @@ namespace TuningSectionState
         const std::string key = MakeKey(label);
 
         bool seeded = defaultOpen;
-        if (g_searchSection == label)
-        {
-            seeded = true;
-        }
         const auto persisted = g_sectionOpen.find(key);
         if (persisted != g_sectionOpen.end())
         {
             seeded = persisted->second;
+        }
+        // Search navigation must take precedence over the saved collapsed state; otherwise a
+        // target inside a previously closed section can never render to scroll to or highlight.
+        if (g_searchSection == label)
+        {
+            seeded = true;
         }
 
         // NoSavedSettings: dock/imgui.ini window state must not override our custom handler.
