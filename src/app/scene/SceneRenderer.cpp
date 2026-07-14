@@ -794,15 +794,11 @@ void SceneRenderer::RecordDxrPass(
 
         if (pathTracerDispatched)
         {
-            // DIAGNOSTIC (temporary): the `!IsPtReferenceConvergence()` prefixes are removed so
-            // temporal reuse runs INSIDE reference accumulation (a true unbounded averager). This is
-            // the only test that reveals a temporal-reuse mean bias — stock reference disables reuse
-            // and is always clean. Used to validate the visibility-in-target fix: if the converged
-            // reference image is now line-free, the estimator bias is gone. Restore both
-            // `!m_dxrSettings.IsPtReferenceConvergence() &&` prefixes to revert.
-            const bool diTemporalEnabled = m_dxrSettings.IsRestirDiTemporalEnabled()
+            const bool diTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirDiTemporalEnabled()
                 && m_dxrSettings.GetRestirDiCandidateCount() > 0;
-            const bool giTemporalEnabled = m_dxrSettings.IsRestirGiInitialEnabled()
+            const bool giTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled()
                 && m_dxrSettings.IsRestirGiTemporalEnabled();
             const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled)
                 && m_dxrRestirDispatch != nullptr;
