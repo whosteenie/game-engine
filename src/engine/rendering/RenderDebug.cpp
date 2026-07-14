@@ -178,6 +178,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiReservoirAge: return "PT ReSTIR GI: reservoir age";
     case RenderDebugMode::PtRestirGiChosenSource: return "PT ReSTIR GI: chosen source";
     case RenderDebugMode::PtRestirGiTemporalRejection: return "PT ReSTIR GI: temporal rejection";
+    case RenderDebugMode::PtRestirGiUcw: return "PT ReSTIR GI: UCW / weight";
+    case RenderDebugMode::PtRestirGiContribution: return "PT ReSTIR GI: contribution";
+    case RenderDebugMode::PtRestirGiReuseMinusFresh: return "PT ReSTIR GI: reuse - fresh (bias)";
+    case RenderDebugMode::PtRestirGiReusedRadiance: return "PT ReSTIR GI: reused radiance";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -384,6 +388,10 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiReservoirAge:
     case RenderDebugMode::PtRestirGiChosenSource:
     case RenderDebugMode::PtRestirGiTemporalRejection:
+    case RenderDebugMode::PtRestirGiUcw:
+    case RenderDebugMode::PtRestirGiContribution:
+    case RenderDebugMode::PtRestirGiReuseMinusFresh:
+    case RenderDebugMode::PtRestirGiReusedRadiance:
         return true;
     default:
         return false;
@@ -429,6 +437,10 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiReservoirAge: return 21;
     case RenderDebugMode::PtRestirGiChosenSource: return 22;
     case RenderDebugMode::PtRestirGiTemporalRejection: return 23;
+    case RenderDebugMode::PtRestirGiUcw: return 24;
+    case RenderDebugMode::PtRestirGiContribution: return 25;
+    case RenderDebugMode::PtRestirGiReuseMinusFresh: return 26;
+    case RenderDebugMode::PtRestirGiReusedRadiance: return 27;
     default: return 0;
     }
 }

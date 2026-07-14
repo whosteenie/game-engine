@@ -95,6 +95,10 @@ enum class RenderDebugMode
     PtRestirGiReservoirAge,
     PtRestirGiChosenSource,
     PtRestirGiTemporalRejection,
+    PtRestirGiUcw,
+    PtRestirGiContribution,
+    PtRestirGiReuseMinusFresh,
+    PtRestirGiReusedRadiance,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
 };

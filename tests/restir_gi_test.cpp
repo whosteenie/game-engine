@@ -113,4 +113,42 @@ void RunRestirGiTests(int& failures)
     expect(
         FinalizeTemporalBasic(streamedWeight, 0.0f, target, 1.0f, previousM, true) == 0.0f,
         "GI zero current-domain support must finalize to zero");
+
+    // Multi-domain expected-value (roadmap §6). The stationary test above uses one target for both
+    // domains and therefore cannot see a domain-dependent bias. This drives the full two-source
+    // streaming+finalize with ASYMMETRIC current/previous targets (the curved-surface / camera-motion
+    // regime where the P6 grain and hard line appear) and checks the selection-probability-weighted
+    // estimator against the analytic RTXDI BASIC MIS combination E = Σ m_i(X_i)·f_i·W_i. Passing
+    // proves those artifacts are estimator VARIANCE, not normalization bias — i.e. a P7 spatial-reuse
+    // concern, not a P6 correctness bug.
+    {
+        const float Wf = InitialUcw(0.37f);
+        const float Wp = InitialUcw(0.21f);
+        constexpr float Mf = 1.0f;
+        constexpr float Mp = 12.0f;
+        // Selected-sample targets at (current, previous) domains for the fresh and previous winners.
+        constexpr float Tcf = 2.0f;   // fresh sample, current domain
+        constexpr float Tpf = 1.3f;   // fresh sample, previous domain
+        constexpr float Tcp = 0.8f;   // previous sample, current domain
+        constexpr float Tpp = 1.7f;   // previous sample, previous domain
+        constexpr float ff = 5.0f;    // fresh sample actual shaded contribution (scalar proxy)
+        constexpr float fp = 4.0f;    // previous sample actual shaded contribution
+
+        // GiCombine streams risWeight = targetAtCurrent · sourceUcw · sourceM for each source.
+        const float wSum = Tcf * Wf * Mf + Tcp * Wp * Mp;
+        const float pFresh = (Tcf * Wf * Mf) / wSum;
+        const float pPrev = (Tcp * Wp * Mp) / wSum;
+        const float wyFresh = FinalizeTemporalBasic(wSum, Tcf, Tpf, Mf, Mp, false);
+        const float wyPrev = FinalizeTemporalBasic(wSum, Tcp, Tpp, Mf, Mp, true);
+        const float eCode = pFresh * ff * wyFresh + pPrev * fp * wyPrev;
+
+        // Analytic RTXDI BASIC MIS: m_i uses the source sample evaluated in every domain, ×M_i.
+        const float mf = (Mf * Tcf) / (Mf * Tcf + Mp * Tpf);
+        const float mp = (Mp * Tpp) / (Mf * Tcp + Mp * Tpp);
+        const float eRef = mf * ff * Wf + mp * fp * Wp;
+
+        expect(
+            Near(eCode, eRef, 1e-4f),
+            "GI BASIC temporal normalization must stay unbiased across differing reconnection domains");
+    }
 }

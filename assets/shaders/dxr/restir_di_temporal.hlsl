@@ -318,6 +318,21 @@ float Visibility(float3 receiver, float3 geomN, float3 wi, float distance)
     return p.hit == 0u ? 1.0 : 0.0;
 }
 
+// Shadowed RIS target: the unshadowed contribution with the sample's visibility folded in (one
+// shadow ray). Keeping visibility OUT of the target lets an occluded high-target sample persist in
+// the reservoir and inflate the UCW of whatever visible sample wins next, a recursive brightening
+// bias proven in tests/restir_temporal_chain_test.cpp (+1.5%) and observed as the constant P6/DI
+// hard line. Folding visibility into the target makes temporal reuse unbiased (verified in sim).
+float EvaluateShadowedTarget(
+    RestirDiLightSample sample, float3 receiver, float3 n, float3 v,
+    float3 albedo, float metallic, float roughness)
+{
+    float3 f, wi; float dist;
+    if (!EvaluateSample(sample, receiver, n, v, albedo, metallic, roughness, f, wi, dist))
+        return 0.0;
+    return RestirDiTargetLuminance(f) * Visibility(receiver, 0.0.xxx, wi, dist);
+}
+
 RestirDiTemporalReservoir ResampleDomain(
     RestirDiTemporalReservoir fresh, RestirDiTemporalReservoir previous,
     bool historyAccepted, uint2 pixel, uint salt,
@@ -327,13 +342,8 @@ RestirDiTemporalReservoir ResampleDomain(
     out bool usedHistory)
 {
     RestirDiTemporalReservoir outR = RestirDiTemporalInit();
-    float3 freshF, freshWi; float freshDist;
-    float freshTarget = 0.0;
-    if (EvaluateSample(fresh.sample, receiver, n, v, albedo, metallic, roughness,
-            freshF, freshWi, freshDist))
-    {
-        freshTarget = RestirDiTargetLuminance(freshF);
-    }
+    const float freshTarget = EvaluateShadowedTarget(
+        fresh.sample, receiver, n, v, albedo, metallic, roughness);
     const uint mBeforeFresh = outR.M;
     bool selectedPrevious = false;
     RestirDiTemporalCombine(outR, fresh, freshTarget, Hash(pixel, salt));
@@ -342,12 +352,8 @@ RestirDiTemporalReservoir ResampleDomain(
     usedHistory = false;
     if (historyAccepted && previous.M > 0u && previous.age < kRestirDiTemporalAgeCap)
     {
-        float3 f, wi; float dist;
-        float previousTargetAtReceiver = 0.0;
-        if (EvaluateSample(previous.sample, receiver, n, v, albedo, metallic, roughness, f, wi, dist))
-        {
-            previousTargetAtReceiver = RestirDiTargetLuminance(f);
-        }
+        const float previousTargetAtReceiver = EvaluateShadowedTarget(
+            previous.sample, receiver, n, v, albedo, metallic, roughness);
         previous.age = min(previous.age + 1u, kRestirDiTemporalAgeCap);
         const uint mBeforePrevious = outR.M;
         selectedPrevious = RestirDiTemporalCombine(
@@ -364,20 +370,15 @@ RestirDiTemporalReservoir ResampleDomain(
         outR.M = kRestirDiTemporalMCap;
     }
 
-    // RTXDI BASIC temporal bias correction. Reevaluate the selected output sample at every
-    // source receiver, then normalize by the source mixture that could have selected it.
-    float selectedPreviousTarget = 0.0;
-    float3 previousF, previousWi; float previousDistance;
-    if (previousM > 0.0 && EvaluateSample(
+    // RTXDI ray-traced bias correction. Reevaluate the selected output sample's SHADOWED target at
+    // every source receiver, then normalize by the source mixture that could have selected it. The
+    // source-domain visibility ray is required for the fully unbiased mode (the cheaper target-only
+    // BASIC mode is what produced the recursive brightening bias).
+    const float selectedPreviousTarget = previousM > 0.0
+        ? EvaluateShadowedTarget(
             outR.sample, previousReceiver, previousN, previousV,
-            previousAlbedo, previousMetallic, previousRoughness,
-            previousF, previousWi, previousDistance))
-    {
-        // RTXDI BASIC correction uses target density only. Visibility is evaluated once for the
-        // selected sample at the current receiver in ShadeDomain; source-domain visibility would
-        // be the separate ray-traced correction mode and causes binary temporal weight changes.
-        selectedPreviousTarget = RestirDiTargetLuminance(previousF);
-    }
+            previousAlbedo, previousMetallic, previousRoughness)
+        : 0.0;
     const float selectedCurrentTarget = outR.targetPdf;
     const float pi = selectedPrevious ? selectedPreviousTarget : selectedCurrentTarget;
     const float piSum = selectedCurrentTarget * freshM + selectedPreviousTarget * previousM;
@@ -405,9 +406,14 @@ bool GiReservoirValid(RestirGiReservoir r)
         && all(isfinite(r.position)) && all(isfinite(r.radiance));
 }
 
+// `receiver` is the ray-offset primary point used for the reconnection visibility ray; visibility
+// is folded into the target so an occluded reused secondary cannot persist and inflate visible
+// winners (the recursive brightening bias — see EvaluateShadowedTarget). A native fresh sample is
+// visible by construction (visibility == 1), preserving M=1 parity.
 float GiTarget(
     RestirGiReservoir r,
     float3 primaryPosition,
+    float3 receiver,
     float3 primaryNormal,
     float3 primaryView,
     float3 albedo,
@@ -421,7 +427,13 @@ float GiTarget(
     const float3 wi = toSecondary / distance;
     const float3 bsdfCos = EvaluateBsdfCos(
         primaryNormal, primaryView, wi, albedo, metallic, roughness);
-    return RestirDiTargetLuminance(bsdfCos * max(r.radiance, 0.0.xxx));
+    const float baseTarget = RestirDiTargetLuminance(bsdfCos * max(r.radiance, 0.0.xxx));
+    if (baseTarget <= 0.0) return 0.0;
+    const float3 toSecFromReceiver = r.position - receiver;
+    const float visDist = length(toSecFromReceiver);
+    if (visDist <= 0.002) return 0.0;
+    return baseTarget * Visibility(
+        receiver, 0.0.xxx, toSecFromReceiver / visDist, max(visDist - 0.003, 0.0011));
 }
 
 float GiTemporalJacobian(
@@ -480,12 +492,14 @@ RestirGiReservoir GiTemporalResample(
     bool historyAccepted,
     uint2 pixel,
     float3 currentPrimary,
+    float3 currentReceiver,
     float3 currentNormal,
     float3 currentView,
     float3 currentAlbedo,
     float currentMetallic,
     float currentRoughness,
     float3 previousPrimary,
+    float3 previousReceiver,
     float3 previousNormal,
     float3 previousView,
     float3 previousAlbedo,
@@ -505,7 +519,7 @@ RestirGiReservoir GiTemporalResample(
     jacobianRejected = false;
 
     const float freshTarget = GiTarget(
-        fresh, currentPrimary, currentNormal, currentView,
+        fresh, currentPrimary, currentReceiver, currentNormal, currentView,
         currentAlbedo, currentMetallic, currentRoughness);
     float freshM = float(fresh.M);
     float previousM = 0.0;
@@ -536,7 +550,7 @@ RestirGiReservoir GiTemporalResample(
     if (previousAccepted)
     {
         previousTargetAtCurrent = GiTarget(
-            previous, currentPrimary, currentNormal, currentView,
+            previous, currentPrimary, currentReceiver, currentNormal, currentView,
             currentAlbedo, currentMetallic, currentRoughness);
         selectedPrevious = GiCombine(
             output, previous, previousTargetAtCurrent, Hash(pixel, 700u));
@@ -544,20 +558,23 @@ RestirGiReservoir GiTemporalResample(
         usedHistory = previousTargetAtCurrent > 0.0;
     }
 
-    // RTXDI BASIC temporal bias correction: evaluate the selected sample in both source domains.
-    float pi = selectedTarget;
-    float piSum = selectedTarget * freshM;
-    if (previousAccepted)
-    {
-        const float temporalP = GiTarget(
-            output, previousPrimary, previousNormal, previousView,
-            previousAlbedo, previousMetallic, previousRoughness);
-        if (selectedPrevious) pi = temporalP;
-        piSum += temporalP * previousM;
-    }
-    const float denominator = piSum * selectedTarget;
-    output.weightSum = denominator > 0.0 && isfinite(denominator) && isfinite(pi)
-        ? output.weightSum * pi / denominator
+    // Same-domain temporal combine: simple RIS UCW W = wSum / (M * selectedTarget).
+    //
+    // TEMPORAL reuse reprojects the SAME world surface point across frames, so the current and
+    // previous source domains are identical and the selected sample's target is the same in both
+    // (temporalP == selectedTarget). The RTXDI BASIC multi-source correction (piSum with a distinct
+    // previous-domain temporalP) is only needed for genuinely different domains — i.e. SPATIAL reuse
+    // (P7). Evaluating a distinct temporalP here from the previous frame's stored (jittered / noisy /
+    // possibly grazing) surface made temporalP << selectedTarget for a bright held secondary at
+    // lighting boundaries, crushing the valid weight and producing a hard DARK line (measured: mode
+    // 26 dark step, bright held radiance in mode 27, killed by disabling history). With
+    // temporalP == selectedTarget the BASIC formula collapses to exactly this simple UCW, which the
+    // CPU chain test proves unbiased (tests/restir_temporal_chain_test.cpp). Restore a distinct
+    // previous-domain evaluation only when GI spatial reuse (P7) introduces real cross-domain sources.
+    (void)freshM; (void)previousM; (void)selectedPrevious;
+    const float simpleDenom = float(max(output.M, 1u)) * selectedTarget;
+    output.weightSum = simpleDenom > 0.0 && isfinite(simpleDenom)
+        ? output.weightSum / simpleDenom
         : 0.0;
     // A shifted sample with no common target support must not erase the valid P5 path that was
     // removed from g_BaseRadiance. Restore it before final shading, just like visibility failure.
@@ -600,7 +617,11 @@ float3 ShadeGi(
     const float3 bsdfCos = EvaluateBsdfCos(
         shadingNormal, viewDirection, wi,
         albedo, metallic, roughness);
-    return bsdfCos * max(r.radiance, 0.0.xxx) * r.weightSum;
+    // Reconnection visibility (must match the visibility folded into GiTarget so the shaded value
+    // and the RIS weight agree). A native fresh sample is visible, so this is 1 for M=1.
+    const float vis = Visibility(
+        receiver, geomNormal, toSecondary / distance, max(distance - 0.003, 0.0011));
+    return bsdfCos * max(r.radiance, 0.0.xxx) * r.weightSum * vis;
 }
 
 // NVIDIA RTXDI final-shading MIS. ReSTIR GI intentionally roughens the comparison BRDF to avoid
@@ -758,25 +779,16 @@ void RestirTemporalRayGen()
                 currPos, previousPos, g_Motion[pixel].z);
             outputGi = GiTemporalResample(
                 freshGi, previousGi, giPrimaryHistoryAccepted, pixel,
-                hitPosition, n, v, am.rgb, am.a, roughness,
-                previousPos.xyz, previousN, previousV,
+                hitPosition, receiver, n, v, am.rgb, am.a, roughness,
+                previousPos.xyz, previousReceiver, previousN, previousV,
                 previousAm.rgb, previousAm.a, previousRoughness,
                 giHistoryAccepted, giJacobianRejected);
         }
     }
-    if ((outputGi.flags & kRestirGiSampleTemporalReuse) != 0u)
-    {
-        const float3 geomN = RestirUnpackOctNormal(currMat.x);
-        const float3 receiver = currPos.xyz + geomN
-            * max(length(currPos.xyz - g_CameraPos) * 0.001, 0.002);
-        if (GiVisibility(outputGi, receiver, geomN) <= 0.0)
-        {
-            // P6's mandatory failure-safe: a rejected shifted winner restores the exact fresh P5
-            // reservoir instead of producing a black hole or keeping stale history.
-            outputGi = freshGi;
-            giVisibilityRejected = true;
-        }
-    }
+    // The post-selection visibility fallback is gone: reconnection visibility now lives inside
+    // GiTarget (an occluded reused sample gets target 0 and can never win) and inside ShadeGi, so a
+    // selected winner is always visible by construction. Replacing it with fresh here would instead
+    // reintroduce bias.
     g_ReservoirCurrent[index] = outputSet;
     g_GiReservoirCurrent[index] = outputGi;
 
@@ -833,7 +845,7 @@ void RestirTemporalRayGen()
         float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
     }
-    else if (g_DebugMode >= 20u && g_DebugMode <= 23u)
+    else if (g_DebugMode >= 20u && g_DebugMode <= 27u)
     {
         float3 debug = 0.0.xxx;
         if (g_DebugMode == 20u)
@@ -850,7 +862,7 @@ void RestirTemporalRayGen()
                 && !SameGiSample(outputGi, freshGi);
             debug = selectedHistory ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2);
         }
-        else
+        else if (g_DebugMode == 23u)
         {
             debug = !GiReservoirValid(freshGi) ? float3(1.0, 0.0, 1.0)
                 : (giVisibilityRejected ? float3(0.65, 0.15, 0.85)
@@ -858,6 +870,56 @@ void RestirTemporalRayGen()
                     : (historyAccepted && giHistoryAccepted
                         ? float3(0.1, 1.0, 0.2)
                         : float3(1.0, 0.1, 0.05))));
+        }
+        else if (g_DebugMode == 24u)
+        {
+            // Reinhard-normalized UCW. A hard spatial step here = reused vs fresh weight bias;
+            // per-frame flicker = weight variance.
+            debug = saturate(outputGi.weightSum / (outputGi.weightSum + 4.0)).xxx;
+        }
+        else if (g_DebugMode == 25u)
+        {
+            // Isolated GI contribution (base excluded), tonemapped luminance.
+            const float3 hitPosition = currPos.xyz;
+            const float3 geomN = RestirUnpackOctNormal(currMat.x);
+            const float3 n = RestirUnpackOctNormal(currMat.y);
+            const float3 v = normalize(g_CameraPos - hitPosition);
+            const float3 receiver = hitPosition + geomN
+                * max(length(hitPosition - g_CameraPos) * 0.001, 0.002);
+            const float roughness = f16tof32(currMat.w >> 16u);
+            const float4 am = g_CurrAlbedoMetallic[pixel];
+            const float3 gi = ShadeGiWithInputMis(
+                outputGi, hitPosition, receiver, geomN, n, v, am.rgb, am.a, roughness);
+            const float l = RestirDiTargetLuminance(gi);
+            debug = (l / (l + 1.0)).xxx;
+        }
+        else if (g_DebugMode == 26u)
+        {
+            // Reuse-minus-fresh GI bias map. In REFERENCE accumulation this averages to the mean
+            // bias: 0.5 = none, >0.5 (brighter) = reuse over-brightens, <0.5 = reuse darkens. The
+            // reuse estimate is ShadeGiWithInputMis(outputGi); the fresh reference is the same shade
+            // on the untouched P5 reservoir. Their difference IS the P6 error, localized per pixel.
+            const float3 hitPosition = currPos.xyz;
+            const float3 geomN = RestirUnpackOctNormal(currMat.x);
+            const float3 n = RestirUnpackOctNormal(currMat.y);
+            const float3 v = normalize(g_CameraPos - hitPosition);
+            const float3 receiver = hitPosition + geomN
+                * max(length(hitPosition - g_CameraPos) * 0.001, 0.002);
+            const float roughness = f16tof32(currMat.w >> 16u);
+            const float4 am = g_CurrAlbedoMetallic[pixel];
+            const float lReuse = RestirDiTargetLuminance(ShadeGiWithInputMis(
+                outputGi, hitPosition, receiver, geomN, n, v, am.rgb, am.a, roughness));
+            const float lFresh = RestirDiTargetLuminance(ShadeGiWithInputMis(
+                freshGi, hitPosition, receiver, geomN, n, v, am.rgb, am.a, roughness));
+            const float d = lReuse - lFresh;
+            debug = saturate(0.5 + 0.5 * (d / (abs(d) + 0.05))).xxx;
+        }
+        else
+        {
+            // Reused reservoir's stored secondary radiance (tonemapped luminance). Reveals whether
+            // the held secondary's radiance is systematically off across the line vs the weight.
+            const float l = RestirDiTargetLuminance(max(outputGi.radiance, 0.0.xxx));
+            debug = (l / (l + 1.0)).xxx;
         }
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);

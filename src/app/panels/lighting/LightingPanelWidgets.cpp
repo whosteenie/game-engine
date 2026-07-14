@@ -156,6 +156,10 @@ namespace
         RenderDebugMode::PtRestirGiReservoirAge,
         RenderDebugMode::PtRestirGiChosenSource,
         RenderDebugMode::PtRestirGiTemporalRejection,
+        RenderDebugMode::PtRestirGiUcw,
+        RenderDebugMode::PtRestirGiContribution,
+        RenderDebugMode::PtRestirGiReuseMinusFresh,
+        RenderDebugMode::PtRestirGiReusedRadiance,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -626,6 +630,14 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtRestirGiChosenSource:
         case RenderDebugMode::PtRestirGiTemporalRejection:
             return "ReSTIR GI P6 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=history accepted, yellow=Jacobian rejection, purple=visibility rejection/fresh fallback, red=no history/surface match, magenta=ineligible or invalid fresh GI sample.";
+        case RenderDebugMode::PtRestirGiUcw:
+            return "ReSTIR GI reservoir UCW (unbiased contribution weight), Reinhard-normalized grayscale. Spatial discontinuities here (e.g. a hard line at a selection boundary) mean the reused weight differs from the fresh weight = BASIC bias; frame-to-frame flicker means weight variance.";
+        case RenderDebugMode::PtRestirGiContribution:
+            return "ReSTIR GI final shaded contribution only (base signal excluded), tonemapped grayscale. Isolates exactly what P6 adds: use this to see whether the fly-in grain / curved-surface line lives in the GI term itself.";
+        case RenderDebugMode::PtRestirGiReuseMinusFresh:
+            return "ReSTIR GI reuse-minus-fresh bias map. 0.5 gray = no bias; brighter = temporal reuse over-brightens vs the fresh P5 estimate; darker = reuse darkens. In reference/path-traced convergence this averages to the exact mean P6 bias, localized per pixel.";
+        case RenderDebugMode::PtRestirGiReusedRadiance:
+            return "ReSTIR GI reused reservoir's stored secondary radiance (tonemapped). Compare across the line to see whether the held secondary's radiance (vs the weight) carries the bias.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:
