@@ -67,7 +67,7 @@ function Find-NsightExecutable {
 function Invoke-NativeCapture {
     param(
         [Parameter(Mandatory)][string]$Executable,
-        [Parameter(Mandatory)][string[]]$Arguments,
+        [string[]]$Arguments = @(),
         [Parameter(Mandatory)][string]$LogPath
     )
 
@@ -201,6 +201,19 @@ if (-not (Test-Path -LiteralPath $configPath)) {
 }
 $settings = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
 
+function Get-OptionalConfigValue {
+    param(
+        [object]$Object,
+        [string]$Name
+    )
+
+    $property = $Object.PSObject.Properties[$Name]
+    if ($null -ne $property) {
+        return $property.Value
+    }
+    return $null
+}
+
 foreach ($requiredProperty in @("engineExe", "workingDirectory", "views")) {
     if ($null -eq $settings.PSObject.Properties[$requiredProperty]) {
         throw "Config must specify '$requiredProperty'."
@@ -215,26 +228,36 @@ $workingDirectory = Resolve-ConfigPath ([string]$settings.workingDirectory)
 if (-not (Test-Path -LiteralPath $engineExe)) { throw "Engine executable not found: $engineExe" }
 if (-not (Test-Path -LiteralPath $workingDirectory)) { throw "Working directory not found: $workingDirectory" }
 
-$warmupSeconds = if ($null -ne $settings.warmupSeconds) { [int]$settings.warmupSeconds } else { 30 }
-$traceFrames = if ($null -ne $settings.traceFrames) { [int]$settings.traceFrames } else { 5 }
+$warmupSecondsValue = Get-OptionalConfigValue $settings "warmupSeconds"
+$traceFramesValue = Get-OptionalConfigValue $settings "traceFrames"
+$warmupSeconds = if ($null -ne $warmupSecondsValue) { [int]$warmupSecondsValue } else { 30 }
+$traceFrames = if ($null -ne $traceFramesValue) { [int]$traceFramesValue } else { 5 }
 if ($warmupSeconds -lt 1) { throw "warmupSeconds must be at least 1." }
 if ($traceFrames -lt 1 -or $traceFrames -gt 15) {
     throw "traceFrames must be in Nsight GPU Trace's supported 1..15 range."
 }
 
 $captureFrame = -not $SkipFrameCapture
-if ($null -ne $settings.captureFrame) { $captureFrame = [bool]$settings.captureFrame -and -not $SkipFrameCapture }
+$captureFrameValue = Get-OptionalConfigValue $settings "captureFrame"
+if ($null -ne $captureFrameValue) { $captureFrame = [bool]$captureFrameValue -and -not $SkipFrameCapture }
 $captureTimestampBaseline = $true
-if ($null -ne $settings.captureTimestampBaseline) { $captureTimestampBaseline = [bool]$settings.captureTimestampBaseline }
-$baselineWarmupSeconds = if ($null -ne $settings.baselineWarmupSeconds) { [int]$settings.baselineWarmupSeconds } else { 10 }
-$baselineWarmupFrames = if ($null -ne $settings.baselineWarmupFrames) { [int]$settings.baselineWarmupFrames } else { 120 }
-$baselineSampleFrames = if ($null -ne $settings.baselineSampleFrames) { [int]$settings.baselineSampleFrames } else { 300 }
+$captureTimestampBaselineValue = Get-OptionalConfigValue $settings "captureTimestampBaseline"
+if ($null -ne $captureTimestampBaselineValue) { $captureTimestampBaseline = [bool]$captureTimestampBaselineValue }
+$baselineWarmupSecondsValue = Get-OptionalConfigValue $settings "baselineWarmupSeconds"
+$baselineWarmupFramesValue = Get-OptionalConfigValue $settings "baselineWarmupFrames"
+$baselineSampleFramesValue = Get-OptionalConfigValue $settings "baselineSampleFrames"
+$baselineWarmupSeconds = if ($null -ne $baselineWarmupSecondsValue) { [int]$baselineWarmupSecondsValue } else { 10 }
+$baselineWarmupFrames = if ($null -ne $baselineWarmupFramesValue) { [int]$baselineWarmupFramesValue } else { 120 }
+$baselineSampleFrames = if ($null -ne $baselineSampleFramesValue) { [int]$baselineSampleFramesValue } else { 300 }
 if ($baselineWarmupSeconds -lt 0 -or $baselineWarmupFrames -lt 1 -or $baselineSampleFrames -lt 1) {
     throw "baselineWarmupSeconds must be non-negative; baselineWarmupFrames and baselineSampleFrames must be positive."
 }
-$architecture = if ($null -ne $settings.architecture) { [string]$settings.architecture } else { "" }
-$metricSetId = if ($null -ne $settings.metricSetId) { [string]$settings.metricSetId } else { "" }
-$perArchConfig = if ($null -ne $settings.perArchConfig) { Resolve-ConfigPath ([string]$settings.perArchConfig) } else { "" }
+$architectureValue = Get-OptionalConfigValue $settings "architecture"
+$metricSetIdValue = Get-OptionalConfigValue $settings "metricSetId"
+$perArchConfigValue = Get-OptionalConfigValue $settings "perArchConfig"
+$architecture = if ($null -ne $architectureValue) { [string]$architectureValue } else { "" }
+$metricSetId = if ($null -ne $metricSetIdValue) { [string]$metricSetIdValue } else { "" }
+$perArchConfig = if ($null -ne $perArchConfigValue) { Resolve-ConfigPath ([string]$perArchConfigValue) } else { "" }
 if ($perArchConfig -and -not (Test-Path -LiteralPath $perArchConfig)) {
     throw "perArchConfig not found: $perArchConfig"
 }
@@ -244,8 +267,9 @@ $ngfxCapture = if ($captureFrame) {
     Find-NsightExecutable -FileName "ngfx-capture.exe" -InstallRoot $NsightRoot
 }
 
-$sessionName = if ($null -ne $settings.sessionName -and -not [string]::IsNullOrWhiteSpace([string]$settings.sessionName)) {
-    [string]$settings.sessionName
+$sessionNameValue = Get-OptionalConfigValue $settings "sessionName"
+$sessionName = if ($null -ne $sessionNameValue -and -not [string]::IsNullOrWhiteSpace([string]$sessionNameValue)) {
+    [string]$sessionNameValue
 } else {
     "pt-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 }
@@ -284,13 +308,13 @@ foreach ($view in $settings.views) {
     Write-Host ("Capturing GPU Trace: {0}" -f $viewName) -ForegroundColor Cyan
     $gpuTraceArgs = @(
         '--activity=GPU Trace Profiler',
-        '--platform=Windows',
+        '--platform=Windows (x86_64)',
         "--exe=$engineExe",
         "--dir=$workingDirectory",
         "--env=$targetEnv",
         "--output-dir=$viewDirectory",
         "--start-after-ms=$($warmupSeconds * 1000)",
-        "--num-frames=$traceFrames",
+        "--limit-to-frames=$traceFrames",
         '--auto-export'
     )
     if ($architecture) { $gpuTraceArgs += "--architecture=$architecture" }
