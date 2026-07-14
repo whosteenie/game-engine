@@ -151,7 +151,13 @@ int SceneObjectOperations::DuplicateObject(Scene& scene, int objectIndex)
             std::move(components.rigidBody),
             std::move(components.collider));
 
-        scene.GetObjectStore().FinalizeNewObject(objects.back());
+        SceneObject& duplicatedObject = objects.back();
+        if (!source.GetImportAssetPath().empty() && source.GetImportNodeIndex() >= 0)
+        {
+            duplicatedObject.SetImportSource(source.GetImportAssetPath(), source.GetImportNodeIndex());
+        }
+
+        scene.GetObjectStore().FinalizeNewObject(duplicatedObject);
         const int newIndex = static_cast<int>(objects.size()) - 1;
         indexMap[sourceIndex] = newIndex;
         if (sourceIndex == objectIndex)

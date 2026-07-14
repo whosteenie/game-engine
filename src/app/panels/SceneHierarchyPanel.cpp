@@ -504,6 +504,22 @@ namespace
             });
         }
 
+        const SceneObject& contextObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
+        if (!contextObject.GetImportAssetPath().empty()
+            && ImGui::MenuItem("Create Model Instance"))
+        {
+            panel.PushInsertMutation(scene, "Create Model Instance", [objectIndex](Scene& target) {
+                const int duplicatedIndex = target.DuplicateObject(objectIndex);
+                if (duplicatedIndex >= 0)
+                {
+                    target.SelectSingle(duplicatedIndex);
+                    return std::vector<int>{duplicatedIndex};
+                }
+
+                return std::vector<int>{};
+            });
+        }
+
         ImGui::Separator();
 
         if (ImGui::MenuItem("Cut", "Ctrl+X"))

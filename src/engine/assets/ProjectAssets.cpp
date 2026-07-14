@@ -51,6 +51,35 @@ namespace
         return modelsRoot / (baseName + "_copy");
     }
 
+    bool IsPathInsideOrEqual(const fs::path& candidate, const fs::path& root)
+    {
+        std::error_code error;
+        const fs::path absoluteCandidate = fs::weakly_canonical(candidate, error);
+        if (error)
+        {
+            return false;
+        }
+
+        const fs::path absoluteRoot = fs::weakly_canonical(root, error);
+        if (error)
+        {
+            return false;
+        }
+
+        auto candidateIt = absoluteCandidate.begin();
+        for (const fs::path& rootPart : absoluteRoot)
+        {
+            if (candidateIt == absoluteCandidate.end() || *candidateIt != rootPart)
+            {
+                return false;
+            }
+
+            ++candidateIt;
+        }
+
+        return true;
+    }
+
     void CopyFileCreateParents(const fs::path& source, const fs::path& destination)
     {
         std::error_code error;
@@ -163,6 +192,14 @@ ImportModelAssetResult ImportModelToProject(
     }
 
     const fs::path modelsRoot = fs::path(projectRoot) / "Assets" / "Models";
+    if (IsPathInsideOrEqual(sourcePath, fs::path(projectRoot)))
+    {
+        result.success = true;
+        result.absolutePath = sourcePath.string();
+        result.projectRelativePath = MakeProjectRelativePath(projectRoot, result.absolutePath);
+        return result;
+    }
+
     const fs::path destinationDirectory = MakeUniqueAssetDirectory(modelsRoot, sourcePath.stem().string());
     fs::create_directories(destinationDirectory, error);
     if (error)

@@ -211,24 +211,34 @@ namespace SceneProjectIODetail
         std::string errorMessage;
     };
 
+    using LoadedImportedMeshMap = std::unordered_map<ImportMeshKey, Mesh*, ImportMeshKeyHash>;
+
     Mesh* AcquireImportedMesh(
         Scene& scene,
         const std::string& projectRoot,
         const std::string& storedAssetPath,
         int nodeIndex,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        LoadedImportedMeshMap& loadedImportedMeshes,
         ImportedMeshReusePool* meshReusePool,
         std::string& outError)
     {
         const std::string resolvedPath = ResolveProjectPath(projectRoot, storedAssetPath);
+        const ImportMeshKey meshKey{resolvedPath, nodeIndex};
+        const auto loadedIterator = loadedImportedMeshes.find(meshKey);
+        if (loadedIterator != loadedImportedMeshes.end())
+        {
+            return loadedIterator->second;
+        }
+
         if (meshReusePool != nullptr)
         {
-            const ImportMeshKey reuseKey{resolvedPath, nodeIndex};
-            const auto reuseIterator = meshReusePool->find(reuseKey);
+            const auto reuseIterator = meshReusePool->find(meshKey);
             if (reuseIterator != meshReusePool->end())
             {
                 Mesh* reusedMesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(reuseIterator->second));
                 meshReusePool->erase(reuseIterator);
+                loadedImportedMeshes.emplace(meshKey, reusedMesh);
                 return reusedMesh;
             }
         }
@@ -264,7 +274,9 @@ namespace SceneProjectIODetail
             return nullptr;
         }
 
-        return scene.GetMeshLibrary().AdoptImportedMesh(std::move(node.mesh));
+        Mesh* importedMesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(node.mesh));
+        loadedImportedMeshes.emplace(meshKey, importedMesh);
+        return importedMesh;
     }
 
     bool DeserializeObjectMesh(
@@ -272,6 +284,7 @@ namespace SceneProjectIODetail
         const json& meshValue,
         const std::string& projectRoot,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        LoadedImportedMeshMap& loadedImportedMeshes,
         ImportedMeshReusePool* meshReusePool,
         Mesh*& outMesh,
         std::string& outImportAssetPath,
@@ -311,6 +324,7 @@ namespace SceneProjectIODetail
                 assetPath,
                 nodeIndex,
                 importCache,
+                loadedImportedMeshes,
                 meshReusePool,
                 outError);
             if (outMesh == nullptr)
@@ -975,6 +989,7 @@ namespace SceneProjectIODetail
         bool showProgress)
     {
         std::unordered_map<std::string, ImportedAssetCacheEntry> importCache;
+        LoadedImportedMeshMap loadedImportedMeshes;
         std::vector<SceneObject>& sceneObjects = scene.GetObjects();
         sceneObjects.reserve(objectValues.size());
 
@@ -1034,6 +1049,7 @@ namespace SceneProjectIODetail
                     objectValue.at("mesh"),
                     projectRoot,
                     importCache,
+                    loadedImportedMeshes,
                     meshReusePool,
                     mesh,
                     importAssetPath,
