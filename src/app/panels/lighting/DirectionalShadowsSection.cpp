@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -80,6 +81,7 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            RendererSettingUi::MarkRendered("shadow_filter");
 
             int shadowResolution = shadowSettings.GetShadowMapResolution();
             const char* resolutionLabels[] = {"512", "1024", "2048", "4096", "8192"};
@@ -99,6 +101,7 @@ void DrawDirectionalShadowsSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            RendererSettingUi::MarkRendered("shadow_map_resolution");
 
             int pcfRadius = shadowSettings.GetPcfKernelRadius();
             if (ImGui::SliderInt("PCF kernel radius", &pcfRadius, 1, 8))

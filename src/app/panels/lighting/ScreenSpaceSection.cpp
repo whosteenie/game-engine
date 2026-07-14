@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -99,6 +100,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
             }
             ImGui::EndCombo();
         }
+
+        RendererSettingUi::MarkRendered("ao_mode");
 
         if (aoMode == AmbientOcclusionMode::SSAO)
         {

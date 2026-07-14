@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -182,6 +183,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetSsgiEnabled(ssgiEnabledValue);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ssgi_enabled");
+
             float ssgiStrength = screenSpaceEffects.GetSsgiStrength();
             UndoableRendererSliderFloat(
                 "SSGI strength",
@@ -194,6 +197,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetSsgiStrength(ssgiStrength);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ssgi_strength");
+
             float traceDistance = screenSpaceEffects.GetSsgiMaxTraceDistance();
             UndoableRendererSliderFloat(
                 "Max trace distance",
