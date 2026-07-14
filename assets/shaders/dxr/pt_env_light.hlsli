@@ -71,11 +71,6 @@ float3 SampleEnvEquirectRadiance(float3 direction)
     return g_EnvEquirectMap.SampleLevel(g_LinearClampSampler, uv, 0.0).rgb * g_EnvironmentIntensity;
 }
 
-float3 SampleEnvEquirectRadianceUv(float2 uv)
-{
-    return g_EnvEquirectMap.SampleLevel(g_LinearClampSampler, uv, 0.0).rgb * g_EnvironmentIntensity;
-}
-
 bool AnalyticSunActiveForEnvNee();
 
 float3 ClampEmbeddedSunForTransport(float3 radiance)
@@ -122,15 +117,6 @@ float3 EnvNeeRadiance(float3 wi)
     return ClampEmbeddedSunForTransport(SampleEnvEquirectRadiance(wi));
 }
 
-float3 EnvNeeRadianceUv(float3 wi, float2 uv)
-{
-    if (IsInAnalyticSunCone(wi))
-    {
-        return 0.0.xxx;
-    }
-    return ClampEmbeddedSunForTransport(SampleEnvEquirectRadianceUv(uv));
-}
-
 // Env NEE sampling density along an arbitrary direction — the MIS partner the BSDF-sampling (miss)
 // side needs. Returns 0 inside the analytic sun cone: NEE deposits no radiance there (EnvNeeRadiance
 // zeroes it), so BSDF sampling owns that region and its miss-add must take full weight. Outside the
@@ -172,25 +158,5 @@ bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle)
     return pdfSolidAngle > 0.0;
 }
 
-bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle, out float2 uv)
-{
-    uv = float2(0.0, 0.0);
-    wi = float3(0.0, 1.0, 0.0);
-    pdfSolidAngle = 0.0;
-    if (g_EnvLightImportanceCount == 0u)
-    {
-        return false;
-    }
-
-    const uint cellIndex = EnvIsFindCellIndex(xi.x);
-    const uint cdfW = g_EnvIsCdfWidth;
-    const uint cdfH = g_EnvIsCdfHeight;
-    const uint ix = cellIndex % cdfW;
-    const uint iy = cellIndex / cdfW;
-    uv = float2((float(ix) + xi.y) / float(cdfW), (float(iy) + xi.z) / float(cdfH));
-    wi = EquirectUvToDirection(uv);
-    pdfSolidAngle = EnvNeeCellPdf(cellIndex);
-    return pdfSolidAngle > 0.0;
-}
 
 #endif
