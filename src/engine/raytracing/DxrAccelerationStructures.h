@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,6 +16,7 @@
 
 class Scene;
 class GpuScene;
+class Mesh;
 struct ID3D12Resource;
 
 struct DxrGeometryLookupEntry
@@ -221,6 +223,7 @@ private:
             : UINT32_MAX;
     }
     bool EnsureScratchBuffer(std::uint64_t requiredBytes, std::string& outError);
+    Mesh* EnsureEmptySceneMesh();
     bool EnsureGeometryBuffers(
         const Scene& scene,
         const GpuScene& gpuScene,
@@ -231,6 +234,9 @@ private:
     DxrDiagnostics m_diagnostics{};
     BlasCache m_blasCache;
     Tlas m_tlas;
+    // Kept outside the user scene.  Its sole TLAS instance uses mask 0, so it provides a valid
+    // all-miss acceleration structure for an otherwise empty path-traced scene.
+    std::unique_ptr<Mesh> m_emptySceneMesh;
     DxrGpuResource m_scratchBuffer{};
     std::uint64_t m_scratchHighWaterMark = 0;
     std::uint32_t m_scratchResourceState = 0;

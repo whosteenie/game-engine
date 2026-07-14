@@ -381,6 +381,7 @@ void DxrAccelerationStructures::Release()
 {
     m_blasCache.Release();
     m_tlas.Release();
+    m_emptySceneMesh.reset();
     m_scratchBuffer.Release();
     ReleaseGeometryBuffers();
     m_scratchHighWaterMark = 0;
@@ -388,6 +389,30 @@ void DxrAccelerationStructures::Release()
     m_anyBlasBuiltThisFrame = false;
     m_builtTlasTopologyFingerprint = 0;
     m_builtTlasTransformFingerprint = 0;
+}
+
+Mesh* DxrAccelerationStructures::EnsureEmptySceneMesh()
+{
+    if (m_emptySceneMesh == nullptr)
+    {
+        // This triangle is never visible to a ray: its only TLAS instance has mask 0.  It exists
+        // solely because DXR requires a non-empty BLAS/TLAS and valid structured-buffer SRVs for
+        // DispatchRays.  Keeping the PT miss shader active preserves sky color and camera motion.
+        constexpr float vertices[] = {
+            0.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,
+            1.0f, 0.0f, 0.0f,  0.0f, 1.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,  0.0f, 1.0f, 0.0f,
+        };
+        constexpr unsigned int indices[] = {0u, 1u, 2u};
+        m_emptySceneMesh = std::make_unique<Mesh>(
+            vertices,
+            3u,
+            Mesh::BasicVertexFloatCount,
+            indices,
+            3u);
+    }
+
+    return m_emptySceneMesh.get();
 }
 
 void DxrAccelerationStructures::EnsureScratchBufferReadyForBuild(
@@ -452,11 +477,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 {
     (void)scene;
     outError.clear();
-    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
-    if (renderInstances.empty())
+    std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
+    const bool emptyScene = renderInstances.empty();
+    if (emptyScene)
     {
-        ReleaseGeometryBuffers();
-        return true;
+        renderInstances.push_back(DxrRenderableInstance{0u, 0u, 0u, EnsureEmptySceneMesh(), glm::mat4(1.0f)});
     }
 
     const std::uint64_t fingerprint = ComputeDxrGeometryFingerprint(gpuScene);
@@ -472,7 +497,8 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     m_pendingGeometryContentReupload = true;
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(renderInstances.size());
-    std::vector<DxrMaterialEntry> materialEntries(gpuScene.GetMaterials().size());
+    std::vector<DxrMaterialEntry> materialEntries(
+        std::max<std::size_t>(gpuScene.GetMaterials().size(), 1u));
     std::vector<bool> materialTexturedStrideValid(materialEntries.size(), true);
     std::vector<bool> materialTangentStrideValid(materialEntries.size(), true);
     std::vector<bool> materialUsed(materialEntries.size(), false);
@@ -612,8 +638,9 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         return true;
     }
 
+    const std::size_t sceneGeometryObjectCount = emptyScene ? 0u : renderInstances.size();
     const bool sameLayout =
-        m_geometryObjectCount == renderInstances.size()
+        m_geometryObjectCount == sceneGeometryObjectCount
         && m_geometryLookupStaging.GetCapacity()
             >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
         && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * materialEntries.size()
@@ -730,7 +757,6 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
                 indexHandle);
         }
 
-        m_geometryObjectCount = renderInstances.size();
     }
 
     DxrGpuResource& geometryLookupUpload = m_geometryLookupStaging.Slot(frameIndex);
@@ -789,6 +815,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         m_sceneIndicesGpu.Slot(frameIndex),
         indexBytes);
 
+    m_geometryObjectCount = sceneGeometryObjectCount;
     m_uploadedGeometryFingerprint[frameIndex] = fingerprint;
     return true;
 }
@@ -1249,7 +1276,12 @@ void DxrAccelerationStructures::EnsureScene(
 
     std::string error;
     std::unordered_set<Mesh*> uniqueMeshes;
-    const std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
+    std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
+    const bool emptyScene = renderInstances.empty();
+    if (emptyScene)
+    {
+        renderInstances.push_back(DxrRenderableInstance{0u, 0u, 0u, EnsureEmptySceneMesh(), glm::mat4(1.0f)});
+    }
     for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
         uniqueMeshes.insert(renderInstance.mesh);
@@ -1386,8 +1418,8 @@ void DxrAccelerationStructures::EnsureScene(
         // Split opaque vs dielectric so sun NEE can any-hit each class without paying
         // TraceTransmissiveVisibility when glass is not on the sun ray (see path_tracer.hlsl).
         // TraceRay inclusion = InstanceInclusionMask & InstanceMask != 0; primary rays still use 0xFF.
-        UINT instanceMask = 0x1u;
-        if (renderInstance.materialId < gpuScene.GetMaterials().size())
+        UINT instanceMask = emptyScene ? 0u : 0x1u;
+        if (!emptyScene && renderInstance.materialId < gpuScene.GetMaterials().size())
         {
             const GpuSceneMaterialRecord& material =
                 gpuScene.GetMaterials()[renderInstance.materialId];
@@ -1477,7 +1509,7 @@ void DxrAccelerationStructures::EnsureScene(
     const auto buildEnd = std::chrono::steady_clock::now();
     DxrBreadcrumb("AS complete ok");
     m_diagnostics.blasCount = m_blasCache.GetCount();
-    m_diagnostics.tlasInstanceCount = static_cast<std::uint32_t>(instances.size());
+    m_diagnostics.tlasInstanceCount = emptyScene ? 0u : static_cast<std::uint32_t>(instances.size());
     m_diagnostics.totalRtTriangles = referencedTriangles;
     m_diagnostics.asGpuMemoryBytes =
         m_blasCache.GetTotalMemoryBytes() + m_tlas.GetSizeInBytes() + m_scratchHighWaterMark;
