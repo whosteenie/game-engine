@@ -183,25 +183,9 @@ endif()
 
 
 
-FetchContent_Declare(
-
-    imguizmo
-
-    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
-
-    GIT_TAG be8aa4aeab86b402701c8c1df011bd8cd776760b
-
-)
-
-
-
-FetchContent_GetProperties(imguizmo)
-
-if(NOT imguizmo_POPULATED)
-    FetchContent_Populate(imguizmo)
-endif()
-
-
+# Vendored ImGuizmo (based on CedricGuillemet/ImGuizmo@be8aa4a) with edge-on
+# rotation screen-space drag. See vendor/imguizmo for LICENSE.
+set(imguizmo_SOURCE_DIR "${CMAKE_SOURCE_DIR}/vendor/imguizmo")
 
 set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
