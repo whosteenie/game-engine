@@ -22,7 +22,7 @@ int main()
 
     try
     {
-        Application app(1280, 720, "Game Engine");
+        Application app(1280, 720, "Who Engine");
         app.Run();
     }
     catch (const std::exception& e)

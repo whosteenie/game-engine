@@ -28,6 +28,7 @@ struct EditorPanelVisibility
 
 using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;
 using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
+using QueueProjectOpenFn = std::function<bool(const std::string&)>;
 
 class MainMenuBar
 {
@@ -41,6 +42,7 @@ public:
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState,
         const ApplyEditorStateFn& applyEditorState,
+        const QueueProjectOpenFn& queueProjectOpen,
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
         const std::function<void()>& requestResetLayout,

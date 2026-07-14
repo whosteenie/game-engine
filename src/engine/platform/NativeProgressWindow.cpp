@@ -47,9 +47,10 @@ namespace
     constexpr UINT WM_PROGRESS_SHUTDOWN = WM_APP + 6;
 
     constexpr int kClientWidth = 460;
-    constexpr int kClientHeight = 120;
+    constexpr int kClientHeight = 140;
     constexpr int kPadding = 16;
     constexpr int kControlGap = 12;
+    constexpr int kPercentageHeight = 18;
     constexpr int kProgressHeight = 22;
     constexpr int kProgressRange = 1000;
 
@@ -57,6 +58,7 @@ namespace
     {
         HWND window = nullptr;
         HWND messageLabel = nullptr;
+        HWND percentageLabel = nullptr;
         HWND progressBar = nullptr;
     };
 
@@ -134,8 +136,12 @@ namespace
         const int progressY = clientHeight - kPadding - kProgressHeight > kPadding
             ? clientHeight - kPadding - kProgressHeight
             : kPadding;
+        const int percentageY = progressY - kControlGap - kPercentageHeight > kPadding
+            ? progressY - kControlGap - kPercentageHeight
+            : kPadding;
         const int messageY = kPadding;
-        const int messageHeight = progressY - kControlGap - messageY > 24 ? progressY - kControlGap - messageY : 24;
+        const int messageHeight = percentageY - kControlGap - messageY > 24
+            ? percentageY - kControlGap - messageY : 24;
 
         if (controls->messageLabel != nullptr)
         {
@@ -146,6 +152,18 @@ namespace
                 messageY,
                 contentWidth,
                 messageHeight,
+                SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+
+        if (controls->percentageLabel != nullptr)
+        {
+            SetWindowPos(
+                controls->percentageLabel,
+                nullptr,
+                kPadding,
+                percentageY,
+                contentWidth,
+                kPercentageHeight,
                 SWP_NOZORDER | SWP_NOACTIVATE);
         }
 
@@ -227,6 +245,21 @@ namespace
                 nullptr);
             SendMessage(controls->messageLabel, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
 
+            controls->percentageLabel = CreateWindowExW(
+                0,
+                L"STATIC",
+                L"0%",
+                WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+                0,
+                0,
+                0,
+                0,
+                window,
+                nullptr,
+                createStruct->hInstance,
+                nullptr);
+            SendMessage(controls->percentageLabel, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+
             controls->progressBar = CreateWindowExW(
                 0,
                 PROGRESS_CLASSW,
@@ -285,6 +318,20 @@ namespace
             {
                 const bool indeterminate = wParam == 0;
                 SetMarqueeMode(controls->progressBar, indeterminate);
+                if (controls->percentageLabel != nullptr)
+                {
+                    if (indeterminate)
+                    {
+                        SetWindowTextW(controls->percentageLabel, L"Working...");
+                    }
+                    else
+                    {
+                        const int position = static_cast<int>(std::clamp<LPARAM>(lParam, 0, kProgressRange));
+                        const int percentage = (position * 100 + kProgressRange / 2) / kProgressRange;
+                        const std::wstring text = std::to_wstring(percentage) + L"%";
+                        SetWindowTextW(controls->percentageLabel, text.c_str());
+                    }
+                }
                 if (!indeterminate)
                 {
                     const int position = static_cast<int>(std::clamp<LPARAM>(lParam, 0, kProgressRange));
@@ -548,6 +595,7 @@ void NativeProgressWindow::SetProgress(float progress)
         {
             Win32ProgressWindow::Get().SetProgress(progress);
         }
+
         return;
     }
 

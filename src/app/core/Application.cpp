@@ -892,6 +892,9 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
             m_projectEditorState,
             [this](ProjectEditorState& editorState) { CaptureProjectEditorState(editorState); },
             [this](const ProjectEditorState& editorState) { ApplyProjectEditorState(editorState); },
+            [this](const std::string& projectPath) {
+                return m_projectChooser->QueueProjectOpen(projectPath);
+            },
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
             [this]() { ResetEditorLayout(); },
@@ -1512,7 +1515,7 @@ void Application::Render()
                 {
                     NativeProgressWindow::Instance().Report(
                         "Preparing GPU resources for first frame...",
-                        0.86f);
+                        0.76f);
                 }
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
@@ -1562,7 +1565,7 @@ void Application::Render()
                 {
                     NativeProgressWindow::Instance().Report(
                         "Rendering Scene View first frame...",
-                        0.970f);
+                        0.950f);
                 }
                 SceneRenderTrace::FirstFrameGuard firstFrameGuard;
                 m_camera->SetAspectFromFramebuffer(
@@ -1579,7 +1582,7 @@ void Application::Render()
                 {
                     NativeProgressWindow::Instance().Report(
                         "Compositing Scene View...",
-                        0.990f);
+                        0.980f);
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
@@ -1623,6 +1626,12 @@ void Application::Render()
                     m_gameViewportPanel->EnsureFramebufferSized();
                     if (m_gameViewportPanel->HasGpuFramebuffer())
                     {
+                        if (presentingProjectLoad)
+                        {
+                            NativeProgressWindow::Instance().Report(
+                                "Rendering Game View first frame...",
+                                0.950f);
+                        }
                         const Camera renderCamera = sceneCamera->ToRenderCamera();
                         const SceneRenderOptions gameViewOptions{
                             false,
@@ -1639,7 +1648,17 @@ void Application::Render()
                             m_gameViewportPanel->GetFramebuffer(),
                             gameViewOptions,
                             RenderViewport::GameView);
+                        if (presentingProjectLoad)
+                        {
+                            NativeProgressWindow::Instance().Report(
+                                "Compositing Game View...",
+                                0.980f);
+                        }
                         m_gameViewportPanel->CompositeRenderedFrame();
+                        if (presentingProjectLoad)
+                        {
+                            m_projectChooser->NotifyEditorCompositeReady();
+                        }
                     }
                 }
             }

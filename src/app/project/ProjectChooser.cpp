@@ -178,12 +178,12 @@ bool ProjectChooser::OpenProjectAtPath(
         }
         openProjectScope.Success();
         ProjectLoadTrace::Step("scene and project file loaded");
-        NativeProgressWindow::Instance().Report("Scene loaded.", 0.84f);
+        NativeProgressWindow::Instance().Report("Scene loaded.", 0.72f);
 
         undoStack.Clear();
         clipboard.Clear();
         ProjectLoadTrace::Step("undo and clipboard cleared");
-        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.845f);
+        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.73f);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
@@ -191,7 +191,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
-            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.850f);
+            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.74f);
             ProjectLoadTrace::Scope editorStateScope("apply editor state");
             try
             {
@@ -210,7 +210,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.855f);
+            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.75f);
             ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
@@ -219,7 +219,7 @@ bool ProjectChooser::OpenProjectAtPath(
         m_showNewProjectForm = false;
         m_errorMessage.clear();
         // First-frame GPU work fills 0.86 -> 1.0 (see SceneRenderer / IBL progress reports).
-        NativeProgressWindow::Instance().Report("Preparing GPU resources for first frame...", 0.86f);
+        NativeProgressWindow::Instance().Report("Preparing GPU resources for first frame...", 0.76f);
         m_startupMode = false;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
@@ -561,35 +561,12 @@ bool ProjectChooser::DrawStartupScreen(
         ImVec2(panelWidth, mainPanelHeight),
         ImGuiChildFlags_Borders);
 
-    ImGui::TextUnformatted("Game Engine Editor");
+    ImGui::TextUnformatted("Who Engine Editor");
     ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::TextUnformatted("Open an existing project or create a new one to begin.");
     ImGui::Spacing();
-
-    if (ImGui::Button("Open Project...", ImVec2(-FLT_MIN, 0.0f)))
-    {
-        settings.ValidateLastNewProjectParentDirectory();
-        std::string projectPath;
-        if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
-        {
-            std::string error;
-                if (!TryOpenProject(
-                    project,
-                    scene,
-                    settings,
-                    editorState,
-                    projectPath,
-                    applyEditorState,
-                    undoStack,
-                    clipboard,
-                    error))
-                {
-                    m_errorMessage = error.empty() ? "Failed to open project." : error;
-                }
-        }
-    }
 
     if (ImGui::Button("New Project...", ImVec2(-FLT_MIN, 0.0f)))
     {
@@ -606,7 +583,9 @@ bool ProjectChooser::DrawStartupScreen(
 
         const float recentListHeight = std::max(
             80.0f,
-            mainPanelHeight - ImGui::GetCursorPosY() - ImGui::GetFrameHeightWithSpacing() * 3.0f);
+            // Reserve the separator, its surrounding spacing, and the footer button row. Three
+            // full rows left an obvious empty band below Exit/Browse in the fixed-height panel.
+            mainPanelHeight - ImGui::GetCursorPosY() - ImGui::GetFrameHeightWithSpacing() * 2.0f);
         ImGui::BeginChild("ProjectChooserRecentList", ImVec2(0.0f, recentListHeight), ImGuiChildFlags_None);
 
         for (const std::string& projectPath : recentProjects)
@@ -653,6 +632,30 @@ bool ProjectChooser::DrawStartupScreen(
         if (requestClose)
         {
             requestClose();
+        }
+    }
+
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - 120.0f);
+    if (ImGui::Button("Browse...", ImVec2(120.0f, 0.0f)))
+    {
+        settings.ValidateLastNewProjectParentDirectory();
+        std::string projectPath;
+        if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
+        {
+            std::string error;
+            if (!TryOpenProject(
+                    project,
+                    scene,
+                    settings,
+                    editorState,
+                    projectPath,
+                    applyEditorState,
+                    undoStack,
+                    clipboard,
+                    error))
+            {
+                m_errorMessage = error.empty() ? "Failed to open project." : error;
+            }
         }
     }
 

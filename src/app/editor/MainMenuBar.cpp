@@ -27,7 +27,7 @@ namespace
     {
         if (ImGui::BeginPopupModal("About", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
-            ImGui::TextUnformatted("Game Engine Editor");
+            ImGui::TextUnformatted("Who Engine Editor");
             ImGui::Separator();
             ImGui::TextUnformatted("Projects are saved as JSON .gameproject files.");
             if (ImGui::Button("Close"))
@@ -87,30 +87,6 @@ namespace
         settings.AddRecentProject(projectFilePath);
         settings.SetLastNewProjectParentDirectoryFromProjectFile(projectFilePath);
         settings.Save();
-    }
-
-    bool OpenProjectAtPath(
-        Scene& scene,
-        ProjectSession& project,
-        EditorSettings& settings,
-        ProjectEditorState& editorState,
-        const ApplyEditorStateFn& applyEditorState,
-        UndoStack& undoStack,
-        EditorClipboard& clipboard,
-        const std::string& projectPath)
-    {
-        if (project.OpenProject(scene, projectPath, editorState))
-        {
-            undoStack.Clear();
-            clipboard.Clear();
-            RecordRecentProject(settings, project.GetProjectFilePath());
-            if (applyEditorState)
-            {
-                applyEditorState(editorState);
-            }
-            return true;
-        }
-        return false;
     }
 
     void SaveProject(
@@ -311,6 +287,7 @@ void MainMenuBar::Draw(
     ProjectEditorState& editorState,
     const CaptureEditorStateFn& captureEditorState,
     const ApplyEditorStateFn& applyEditorState,
+    const QueueProjectOpenFn& queueProjectOpen,
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
     const std::function<void()>& requestResetLayout,
@@ -594,15 +571,7 @@ void MainMenuBar::Draw(
             {
                 playMode.TogglePlayStop(scene, project.GetProjectRootDirectory());
             }
-            if (OpenProjectAtPath(
-                    scene,
-                    project,
-                    settings,
-                    editorState,
-                    applyEditorState,
-                    undoStack,
-                    clipboard,
-                    projectPath))
+            if (queueProjectOpen && queueProjectOpen(projectPath))
             {
                 m_showOpenProjectModal = false;
                 m_openProjectError.clear();
@@ -610,9 +579,7 @@ void MainMenuBar::Draw(
             }
             else
             {
-                m_openProjectError = project.GetStatusMessage().empty()
-                    ? "Failed to open the selected project."
-                    : project.GetStatusMessage();
+                m_openProjectError = "Could not queue the selected project for opening.";
             }
         };
 
