@@ -125,6 +125,7 @@ bool IsRrGuideDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
+RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
 inline constexpr int kPtDebugIsolateModeMax = 30;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

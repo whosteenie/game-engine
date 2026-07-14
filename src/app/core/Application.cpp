@@ -481,6 +481,24 @@ void Application::Run()
         }
     }
 
+    if (const char* rawProbe = std::getenv("GAME_ENGINE_BENCHMARK_PT_PROBE"))
+    {
+        try
+        {
+            const RenderDebugMode mode = RenderDebugModeFromPtDebugIsolateMode(std::stoi(rawProbe));
+            if (mode == RenderDebugMode::None)
+            {
+                throw std::runtime_error("must be one of 28, 29, or 30");
+            }
+            m_scene->GetRenderer().SetRenderDebugMode(mode);
+            EngineLog::Info("benchmark", "Enabled PT environment-DI performance probe " + std::string(rawProbe));
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error("GAME_ENGINE_BENCHMARK_PT_PROBE must be 28, 29, or 30.");
+        }
+    }
+
     double lastFrameTime = glfwGetTime();
     std::string lastLoggedFrameError;
     int suppressedRepeatedFrameErrors = 0;

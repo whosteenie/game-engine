@@ -454,6 +454,17 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     }
 }
 
+RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(const int mode)
+{
+    switch (mode)
+    {
+    case 28: return RenderDebugMode::PtEnvDiProbeSampling;
+    case 29: return RenderDebugMode::PtEnvDiProbeBsdfMis;
+    case 30: return RenderDebugMode::PtEnvDiProbeCandidate;
+    default: return RenderDebugMode::None;
+    }
+}
+
 bool IsRtShadowDebugMode(const RenderDebugMode mode)
 {
     switch (mode)

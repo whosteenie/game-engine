@@ -149,7 +149,8 @@ function Invoke-TimestampBaseline {
         [Parameter(Mandatory)][string]$CaptureDirectory,
         [Parameter(Mandatory)][int]$WarmupSeconds,
         [Parameter(Mandatory)][int]$WarmupFrames,
-        [Parameter(Mandatory)][int]$SampleFrames
+        [Parameter(Mandatory)][int]$SampleFrames,
+        [string]$PtProbe = ""
     )
 
     $csvPath = Join-Path $CaptureDirectory "timestamp-samples.csv"
@@ -161,6 +162,7 @@ function Invoke-TimestampBaseline {
         "GAME_ENGINE_BENCHMARK_WARMUP_SECONDS",
         "GAME_ENGINE_BENCHMARK_WARMUP_FRAMES",
         "GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES"
+        ,"GAME_ENGINE_BENCHMARK_PT_PROBE"
     )
     $previousEnvironment = @{}
     foreach ($name in $environmentNames) { $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name, "Process") }
@@ -172,6 +174,7 @@ function Invoke-TimestampBaseline {
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_WARMUP_SECONDS", "$WarmupSeconds", "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_WARMUP_FRAMES", "$WarmupFrames", "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES", "$SampleFrames", "Process")
+        [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_PT_PROBE", $PtProbe, "Process")
         Push-Location $EngineWorkingDirectory
         try {
             Invoke-NativeCapture -Executable $EngineExecutable -Arguments @() -LogPath $logPath | Out-Null
@@ -289,6 +292,8 @@ foreach ($view in $settings.views) {
         throw "Each view must specify both 'name' and 'project'."
     }
     $viewName = [string]$view.name
+    $ptProbeValue = Get-OptionalConfigValue $view "ptProbe"
+    $ptProbe = if ($null -ne $ptProbeValue) { [string]$ptProbeValue } else { "" }
     if ($viewName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
         throw "View name contains invalid filename characters: $viewName"
     }
@@ -312,7 +317,8 @@ foreach ($view in $settings.views) {
             -CaptureDirectory $viewDirectory `
             -WarmupSeconds $baselineWarmupSeconds `
             -WarmupFrames $baselineWarmupFrames `
-            -SampleFrames $baselineSampleFrames
+            -SampleFrames $baselineSampleFrames `
+            -PtProbe $ptProbe
     }
 
     Write-Host ("Capturing GPU Trace: {0}" -f $viewName) -ForegroundColor Cyan

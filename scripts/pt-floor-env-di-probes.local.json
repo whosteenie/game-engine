@@ -1,0 +1,18 @@
+{
+  "sessionName": "pt-floor-env-di-probes-20260714",
+  "engineExe": "build/Release/game-engine.exe",
+  "workingDirectory": "build/Release",
+  "warmupSeconds": 10,
+  "traceFrames": 5,
+  "captureTimestampBaseline": true,
+  "baselineWarmupSeconds": 10,
+  "baselineWarmupFrames": 120,
+  "baselineSampleFrames": 300,
+  "captureFrame": false,
+  "architecture": "Ada",
+  "views": [
+    { "name": "sampling", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 28 },
+    { "name": "sampling_bsdf_mis", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 29 },
+    { "name": "candidate_no_reservoir", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 30 }
+  ]
+}

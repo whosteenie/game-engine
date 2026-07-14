@@ -1331,7 +1331,8 @@ float3 RestirDiEnvironmentDirect(
 
         const float4 xi = PathRngNext4(rng);
         float pdfEnv;
-        if (SampleEnvLightDirection(xi, wi, pdfEnv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
+        float2 envUv;
+        if (SampleEnvLightDirection(xi, wi, pdfEnv, envUv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
         {
 #if PT_DIAGNOSTIC_PERMUTATION
             if (!envDiProbeSampling)
@@ -1347,10 +1348,10 @@ float3 RestirDiEnvironmentDirect(
             {
 #endif
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
-            contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
+            contribution = bsdf * EnvNeeRadianceUv(wi, envUv) * misWeight;
             proposalPdf = pdfEnv;
             lightSample.sampleType = kRestirDiSampleEnvironment;
-            lightSample.uv = DirectionToEquirectUv(wi);
+            lightSample.uv = envUv;
 #if PT_DIAGNOSTIC_PERMUTATION
             }
             }
