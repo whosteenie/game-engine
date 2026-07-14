@@ -77,9 +77,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
             ImGui::BeginDisabled();
         }
 
-        if (ImGui::TreeNode("GI temporal"))
-        {
-            float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
+        ImGui::SeparatorText("GI temporal");
+        float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
             UndoableRendererSliderFloat(
                 "GI history blend",
                 &giBlend,
@@ -108,12 +107,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                 });
             ImGui::TextDisabled(
                 "Lower rejects more history at geometry changes; higher keeps more accumulation.");
-            ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Denoise"))
-        {
-            bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
+        ImGui::SeparatorText("Denoise");
+        bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
             UndoableRendererCheckbox(
                 "Enable spatial + temporal denoise",
                 &denoiseEnabled,
@@ -169,12 +164,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                 });
             ImGui::TextDisabled(
                 "Optional noise → spatial → temporal. Disable synthetic noise for real trace.");
-            ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Trace & inject"))
-        {
-            bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
+        ImGui::SeparatorText("Trace & inject");
+        bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
             UndoableRendererCheckbox(
                 "Enable SSGI",
                 &ssgiEnabled,
@@ -224,9 +215,6 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                 });
             ImGui::TextDisabled(
                 "Trace → denoise → inject into indirect before SSAO. AA = None recommended for tuning.");
-            ImGui::TreePop();
-        }
-
         if (sectionDisabled)
         {
             ImGui::EndDisabled();
