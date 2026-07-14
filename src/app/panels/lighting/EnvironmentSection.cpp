@@ -63,7 +63,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 static_cast<EnvironmentBackgroundMode>(backgroundMode));
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("environment_background", editContext);
+        RendererSettingUi::MarkRendered("environment_background");
 
         const bool skyboxBackground =
             environmentMap.GetBackgroundMode() == EnvironmentBackgroundMode::Skybox;
@@ -121,6 +122,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::MarkRendered("skybox_hdr_path");
 
         ImGui::SameLine();
         if (ImGui::Button("Browse##SkyboxHdr"))
@@ -170,31 +172,6 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         RendererSettingUi::HandleFieldEdit("skybox_rotation", editContext);
         RendererSettingUi::MarkRendered("skybox_rotation");
 
-        if (ImGui::Button("Align linked lights to detected HDR sun"))
-        {
-            const IBL& activeIbl = environmentMap.GetIBL();
-            if (activeIbl.HasDetectedSunDirection())
-            {
-                const glm::vec3 sunDirection = activeIbl.GetDetectedSunDirection();
-                for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
-                {
-                    const SceneObject& object = scene.GetObjects()[objectIndex];
-                    if (!object.HasLight() || object.GetLight().type != LightType::Directional
-                        || !object.GetLight().autoAlignWithHdrSkybox)
-                    {
-                        continue;
-                    }
-                    Transform worldTransform = Transform::FromMatrix(scene.GetWorldMatrix(static_cast<int>(objectIndex)));
-                    worldTransform.rotation = RotationUtils::QuatFromLocalYAxis(sunDirection);
-                    scene.SetObjectWorldMatrix(static_cast<int>(objectIndex), worldTransform.ToMatrix());
-                }
-            }
-        }
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Uses the brightest upper-hemisphere HDR highlight. Linked directional lights only.");
-        }
-
         float skyboxExposure = environmentMap.GetExposure();
         if (ImGui::SliderFloat("Skybox exposure", &skyboxExposure, 0.1f, 4.0f))
         {
@@ -223,7 +200,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 IblCubemapResolutionFromComboIndex(iblCubemapResolutionIndex));
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("ibl_cubemap_resolution", editContext);
+        RendererSettingUi::MarkRendered("ibl_cubemap_resolution");
         LightingPanelUi::DrawWrappedNote(
             "Sky background uses the HDR file at full resolution. IBL cubemap resolution affects reflections only.");
 

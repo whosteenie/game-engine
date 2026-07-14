@@ -5,7 +5,7 @@
 
 namespace SettingRegistry
 {
-    enum class ControlType { Checkbox, Slider, Dropdown };
+    enum class ControlType { Checkbox, Slider, Dropdown, TextInput, FilePicker, ColorPicker };
     enum class PersistenceScope { SceneProject, GlobalEditor, SessionOnly };
     enum class UndoPolicy { Undoable, NotUndoable };
 
