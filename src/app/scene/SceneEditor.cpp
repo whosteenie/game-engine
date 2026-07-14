@@ -11,6 +11,7 @@
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/ScenePicker.h"
 #include "engine/scene/SceneHierarchy.h"
+#include "engine/rendering/Mesh.h"
 #include "engine/gizmos/SelectionRenderer.h"
 
 #include <GLFW/glfw3.h>
@@ -182,7 +183,7 @@ namespace
         return center + extents * glm::sign(direction);
     }
 
-    // Full 3D place: put the AABB support (contact) point exactly on the hit.
+    // AABB fallback when the selection has no mesh vertices (lights/cameras/etc.).
     glm::vec3 ComputeBoundsSurfacePlaceTranslation(
         const glm::vec3& boundsMin,
         const glm::vec3& boundsMax,
@@ -198,6 +199,82 @@ namespace
         const glm::vec3 normal = hitNormal / normalLength;
         const glm::vec3 support = AabbSupportPoint(boundsMin, boundsMax, -normal);
         return hitPoint - support;
+    }
+
+    // Vertex with minimum projection along the outward surface normal = mesh support /
+    // contact point. Places rotated meshes flush without the AABB hover gap.
+    bool TryGetSelectionMeshSupportPoint(
+        const Scene& scene,
+        const glm::vec3& outwardNormal,
+        glm::vec3& outSupport)
+    {
+        const float normalLength = glm::length(outwardNormal);
+        if (normalLength < 1e-8f)
+        {
+            return false;
+        }
+
+        const glm::vec3 normal = outwardNormal / normalLength;
+        std::vector<SelectionMeshDraw> meshes;
+        CollectSelectionMeshes(scene.GetObjects(), scene.GetSelection().indices, meshes);
+
+        bool found = false;
+        float minProjection = std::numeric_limits<float>::max();
+        glm::vec3 bestSupport(0.0f);
+
+        for (const SelectionMeshDraw& draw : meshes)
+        {
+            if (draw.mesh == nullptr)
+            {
+                continue;
+            }
+
+            for (const glm::vec3& localPosition : draw.mesh->GetPositions())
+            {
+                const glm::vec3 worldPosition =
+                    glm::vec3(draw.worldMatrix * glm::vec4(localPosition, 1.0f));
+                const float projection = glm::dot(worldPosition, normal);
+                if (!found || projection < minProjection)
+                {
+                    found = true;
+                    minProjection = projection;
+                    bestSupport = worldPosition;
+                }
+            }
+        }
+
+        if (!found)
+        {
+            return false;
+        }
+
+        outSupport = bestSupport;
+        return true;
+    }
+
+    bool TryComputeSelectionSurfacePlaceTranslation(
+        const Scene& scene,
+        const glm::vec3& hitPoint,
+        const glm::vec3& hitNormal,
+        glm::vec3& outTranslation)
+    {
+        glm::vec3 support(0.0f);
+        if (TryGetSelectionMeshSupportPoint(scene, hitNormal, support))
+        {
+            outTranslation = hitPoint - support;
+            return true;
+        }
+
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        if (!TryGetSelectionWorldAabb(scene, boundsMin, boundsMax))
+        {
+            return false;
+        }
+
+        outTranslation =
+            ComputeBoundsSurfacePlaceTranslation(boundsMin, boundsMax, hitPoint, hitNormal);
+        return true;
     }
 
     bool IntersectRayPlane(
@@ -400,15 +477,13 @@ namespace
 
             if (havePlaceTarget)
             {
-                glm::vec3 boundsMin;
-                glm::vec3 boundsMax;
-                if (TryGetSelectionWorldAabb(scene, boundsMin, boundsMax))
-                {
-                    const glm::vec3 translation = ComputeBoundsSurfacePlaceTranslation(
-                        boundsMin,
-                        boundsMax,
+                glm::vec3 translation(0.0f);
+                if (TryComputeSelectionSurfacePlaceTranslation(
+                        scene,
                         placePoint,
-                        placeNormal);
+                        placeNormal,
+                        translation))
+                {
                     desiredMatrix = manipulateMatrix;
                     desiredMatrix[3] += glm::vec4(translation, 0.0f);
                 }
