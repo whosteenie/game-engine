@@ -178,12 +178,12 @@ bool ProjectChooser::OpenProjectAtPath(
         }
         openProjectScope.Success();
         ProjectLoadTrace::Step("scene and project file loaded");
-        NativeProgressWindow::Instance().Report("Scene loaded.", 0.72f);
+        NativeProgressWindow::Instance().Report("Scene loaded.", 0.84f);
 
         undoStack.Clear();
         clipboard.Clear();
         ProjectLoadTrace::Step("undo and clipboard cleared");
-        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.76f);
+        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.845f);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
@@ -191,7 +191,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
-            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.80f);
+            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.850f);
             ProjectLoadTrace::Scope editorStateScope("apply editor state");
             try
             {
@@ -210,7 +210,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.84f);
+            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.855f);
             ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
@@ -218,7 +218,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         m_showNewProjectForm = false;
         m_errorMessage.clear();
-        // First-frame GPU work fills 0.86 → 1.0 (see SceneRenderer / IBL progress reports).
+        // First-frame GPU work fills 0.86 -> 1.0 (see SceneRenderer / IBL progress reports).
         NativeProgressWindow::Instance().Report("Preparing GPU resources for first frame...", 0.86f);
         m_startupMode = false;
         m_projectLoadInProgress = true;

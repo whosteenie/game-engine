@@ -543,6 +543,11 @@ void Scene::ResetToDefault()
     m_spawnService->ResetToDefault(*this);
 }
 
+void Scene::ClearImportedModelCache()
+{
+    m_importService->ClearCache();
+}
+
 const std::vector<SceneObject>& Scene::GetObjects() const
 {
     return m_objectStore->Objects();

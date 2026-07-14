@@ -3,6 +3,7 @@
 #include "app/editor/EditorSettings.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneImportService.h"
 #include "app/scene/SceneMeshLibrary.h"
 #include "app/project/SceneProjectIO.h"
 #include "engine/platform/EngineLog.h"
@@ -215,9 +216,16 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
     }
     loadScope.Success();
 
+    ProjectLoadTrace::Scope prewarmScope("Prewarm imported model assets");
+    const int warmedModelCount =
+        scene.GetImportService().PrewarmProjectModels(scene, m_projectRootDirectory, 0.70f, 0.84f);
+    prewarmScope.Success();
+
     MarkClean();
     m_hasActiveProject = true;
-    m_statusMessage = "Opened " + m_displayName;
+    m_statusMessage = warmedModelCount > 0
+        ? "Opened " + m_displayName + " (" + std::to_string(warmedModelCount) + " models ready)"
+        : "Opened " + m_displayName;
     return true;
 }
 

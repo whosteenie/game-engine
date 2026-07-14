@@ -4,6 +4,7 @@
 #include "engine/scene/ScenePrimitive.h"
 
 #include <memory>
+#include <unordered_set>
 #include <vector>
 
 class Mesh;
@@ -23,6 +24,7 @@ public:
     Mesh* AdoptImportedMesh(std::unique_ptr<Mesh> mesh);
     Mesh* AdoptClonedImportedMesh(const Mesh& source);
     std::unique_ptr<Mesh> ExtractImportedMesh(Mesh* mesh);
+    void PinImportedMesh(Mesh* mesh);
 
     void PruneUnusedImportedMeshes(const std::vector<SceneObject>& objects);
     void HarvestImportedMeshes(
@@ -42,4 +44,5 @@ private:
     std::unique_ptr<Mesh> m_capsuleMesh;
     std::unique_ptr<Mesh> m_planeMesh;
     std::vector<std::unique_ptr<Mesh>> m_importedMeshes;
+    std::unordered_set<Mesh*> m_pinnedImportedMeshes;
 };

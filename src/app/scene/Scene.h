@@ -153,6 +153,7 @@ public:
     void SetShowGrid(bool showGrid);
 
     void ResetToDefault();
+    void ClearImportedModelCache();
 
     bool CreateDeleteArchive(
         const std::vector<int>& rootIndices,

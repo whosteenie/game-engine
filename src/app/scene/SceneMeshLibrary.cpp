@@ -145,6 +145,14 @@ Mesh* SceneMeshLibrary::AdoptImportedMesh(std::unique_ptr<Mesh> mesh)
     return m_importedMeshes.back().get();
 }
 
+void SceneMeshLibrary::PinImportedMesh(Mesh* mesh)
+{
+    if (IsImportedMesh(mesh))
+    {
+        m_pinnedImportedMeshes.insert(mesh);
+    }
+}
+
 std::unique_ptr<Mesh> SceneMeshLibrary::ExtractImportedMesh(Mesh* mesh)
 {
     if (mesh == nullptr)
@@ -160,6 +168,7 @@ std::unique_ptr<Mesh> SceneMeshLibrary::ExtractImportedMesh(Mesh* mesh)
         }
 
         std::unique_ptr<Mesh> extracted = std::move(ownedMesh);
+        m_pinnedImportedMeshes.erase(mesh);
         m_importedMeshes.erase(
             std::remove_if(
                 m_importedMeshes.begin(),
@@ -190,7 +199,9 @@ void SceneMeshLibrary::PruneUnusedImportedMeshes(const std::vector<SceneObject>&
             m_importedMeshes.begin(),
             m_importedMeshes.end(),
             [&](const std::unique_ptr<Mesh>& mesh) {
-                return mesh == nullptr || referencedMeshes.find(mesh.get()) == referencedMeshes.end();
+                return mesh == nullptr
+                    || (referencedMeshes.find(mesh.get()) == referencedMeshes.end()
+                        && m_pinnedImportedMeshes.find(mesh.get()) == m_pinnedImportedMeshes.end());
             }),
         m_importedMeshes.end());
 }
@@ -238,5 +249,6 @@ void SceneMeshLibrary::HarvestImportedMeshes(
 
 void SceneMeshLibrary::ClearImportedMeshes()
 {
+    m_pinnedImportedMeshes.clear();
     m_importedMeshes.clear();
 }

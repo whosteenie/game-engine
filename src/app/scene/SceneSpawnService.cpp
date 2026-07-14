@@ -158,6 +158,7 @@ void SceneSpawnService::SetupObjects(Scene& scene)
 void SceneSpawnService::ResetToDefault(Scene& scene)
 {
     scene.GetObjectStore().Clear();
+    scene.GetImportService().ClearCache();
     scene.GetMeshLibrary().ClearImportedMeshes();
     scene.GetMeshLibrary().InvalidatePrimitives();
     scene.GetSelectionController().Clear();

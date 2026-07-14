@@ -1244,6 +1244,7 @@ namespace SceneProjectIODetail
         }
 
         scene.GetObjectStore().Clear();
+        scene.ClearImportedModelCache();
         scene.GetMeshLibrary().ClearImportedMeshes();
 
         if (!DeserializeObjects(
@@ -1256,6 +1257,7 @@ namespace SceneProjectIODetail
                 showProgress))
         {
             scene.GetObjectStore().Clear();
+            scene.ClearImportedModelCache();
             scene.GetMeshLibrary().ClearImportedMeshes();
             scene.ClearSelection();
             return false;
@@ -1342,6 +1344,7 @@ bool SceneProjectIO::DeserializeScene(
         }
 
         scene.GetObjectStore().Clear();
+        scene.ClearImportedModelCache();
         scene.GetMeshLibrary().ClearImportedMeshes();
         ProjectLoadTrace::Step("scene stores cleared");
 
@@ -1355,6 +1358,7 @@ bool SceneProjectIO::DeserializeScene(
                 true))
         {
             scene.GetObjectStore().Clear();
+            scene.ClearImportedModelCache();
             scene.GetMeshLibrary().ClearImportedMeshes();
             scene.ClearSelection();
             return false;
@@ -1457,7 +1461,7 @@ bool SceneProjectIO::Load(
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
-        progress.SetProgress(0.04f);
+        progress.SetProgress(0.09f);
 
         ProjectLoadTrace::Step("open project file");
         std::ifstream input(projectFilePath, std::ios::binary);
