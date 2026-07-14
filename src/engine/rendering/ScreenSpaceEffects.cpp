@@ -2554,12 +2554,23 @@ void ScreenSpaceEffects::Apply(
 
     ApplyFrameState state;
     InitApplyFrame(state, camera, viewportWidth, viewportHeight, shadowSettings, environmentMap);
-    RunApplyLightingStage(state);
-    if (RunApplyDebugStage(state))
+    {
+        const GfxContext::GpuTimerScope gpuScopeLighting("Post-process/Lighting stage");
+        RunApplyLightingStage(state);
+    }
+    bool debugEarlyOut = false;
+    {
+        const GfxContext::GpuTimerScope gpuScopeDebug("Post-process/Debug stage");
+        debugEarlyOut = RunApplyDebugStage(state);
+    }
+    if (debugEarlyOut)
     {
         return;
     }
-    RunApplyPresentationStage(state);
+    {
+        const GfxContext::GpuTimerScope gpuScopePresentation("Post-process/Presentation stage");
+        RunApplyPresentationStage(state);
+    }
     FinalizeApplyFrame(state);
 }
 

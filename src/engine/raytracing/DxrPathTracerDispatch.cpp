@@ -262,6 +262,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.envImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
     dispatchInputs.envEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
 
+    const GfxContext::GpuTimerScope gpuScopePrimary("Path tracer/Primary rays");
     if (!m_dispatchContext.DispatchPathTracer(
             commandList4,
             m_pipeline.GetStateObject(),

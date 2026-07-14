@@ -917,8 +917,11 @@ void SceneRenderer::RecordDxrPass(
             {
                 m_dxrPathTracerDispatch->InvalidateRestirHistory();
             }
-            m_dxrPathTracerDispatch->FinalizePathTracerSurfaceHistory(
-                GfxContext::Get().GetCommandList());
+            {
+                const GfxContext::GpuTimerScope gpuScopePtHistory("Path tracer/Surface history");
+                m_dxrPathTracerDispatch->FinalizePathTracerSurfaceHistory(
+                    GfxContext::Get().GetCommandList());
+            }
         }
 
         if (pathTracerDispatched && m_dxrSettings.IsPtReferenceConvergence())
