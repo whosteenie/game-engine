@@ -407,6 +407,7 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
     }
 
     ApplyArchivedSelection(*this, selection);
+    NotifyRenderContentChanged();
     MarkDirty();
     return true;
 }

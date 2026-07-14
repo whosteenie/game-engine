@@ -533,6 +533,11 @@ void Scene::MarkDirty()
     }
 }
 
+void Scene::NotifyRenderContentChanged()
+{
+    GetRenderer().NotifySceneContentChanged();
+}
+
 void Scene::SetDirtyCallback(std::function<void()> callback)
 {
     m_dirtyCallback = std::move(callback);

@@ -190,6 +190,9 @@ public:
 
     void WarmUpDxrPipelineIfNeeded();
     void PrepareFrameGpuResources();
+    // Structural scene edits cannot be reconstructed from motion vectors. Reset temporal consumers
+    // immediately before the next render so deleted/inserted content never survives in history.
+    void NotifySceneContentChanged();
     // Must run before BeginFrame — constructing ScreenSpaceEffects uploads shaders via ExecuteImmediate.
     void PrepareGameViewGpuResources();
     void InvalidateGameViewMotionOnPlayStop();
@@ -198,6 +201,7 @@ private:
     [[noreturn]] void ThrowGpuResourcesUnavailable() const;
     void EnsureGpuResources() const;
     void ResetPartialGpuResources() const;
+    void ApplyPendingSceneContentInvalidation();
     void SyncLighting(const Scene& scene);
     glm::vec3 GetSunDirection() const;
     void RenderShadowPass(const Scene& scene, const Camera& camera);
@@ -287,6 +291,7 @@ private:
     bool m_geometryMsaaReloadRequested = false;
     bool m_geometryMsaaReloadFailed = false;
     std::string m_geometryMsaaReloadError;
+    bool m_sceneContentInvalidationPending = false;
     std::uint32_t m_consumedPtSceneVersion = 0;
     std::uint64_t m_ptEnvironmentFingerprint = 0;
     std::uint64_t m_ptSettingsFingerprint = 0;

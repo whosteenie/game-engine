@@ -37,6 +37,7 @@ bool SceneObjectOperations::RemoveObject(Scene& scene, std::size_t index)
 
     scene.GetSelectionController().Sanitize(objects);
     scene.GetMeshLibrary().PruneUnusedImportedMeshes(objects);
+    scene.NotifyRenderContentChanged();
     scene.MarkDirty();
     return true;
 }

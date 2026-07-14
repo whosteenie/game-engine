@@ -85,6 +85,40 @@ void SceneRenderer::PrepareGameViewGpuResources()
     SyncGameViewScreenSpaceSettings();
 }
 
+void SceneRenderer::NotifySceneContentChanged()
+{
+    m_sceneContentInvalidationPending = true;
+}
+
+void SceneRenderer::ApplyPendingSceneContentInvalidation()
+{
+    if (!m_sceneContentInvalidationPending)
+    {
+        return;
+    }
+
+    // Keep the reset at the render boundary: edits can happen while UI code is running, while the
+    // effect histories are only safe to invalidate before their next GPU use. This covers TAA,
+    // DLSS/RR, temporal bloom, screen-space histories, and reference PT accumulation.
+    if (m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->InvalidateAllTemporalState();
+    }
+    if (m_gameViewScreenSpaceEffects != nullptr)
+    {
+        m_gameViewScreenSpaceEffects->InvalidateAllTemporalState();
+    }
+
+    // Real-time PT owns ReSTIR and its own accumulation independently of ScreenSpaceEffects.
+    if (m_dxrPathTracerDispatch != nullptr)
+    {
+        m_dxrPathTracerDispatch->ResetAccumulation();
+        m_dxrPathTracerDispatch->InvalidateRestirHistory();
+    }
+
+    m_sceneContentInvalidationPending = false;
+}
+
 void SceneRenderer::InvalidateGameViewMotionOnPlayStop()
 {
     m_gameViewPreviousWorldByObjectId.clear();
@@ -1770,6 +1804,8 @@ void SceneRenderer::Render(
         renderScope.Success();
         return;
     }
+
+    ApplyPendingSceneContentInvalidation();
 
     NativeProgressWindow::Instance().Report("Uploading scene GPU tables...", 0.955f);
     m_activePreviousWorldByObjectId = renderViewport == RenderViewport::GameView

@@ -117,6 +117,9 @@ public:
     void UseSharedPlayModeResources(const Scene& editScene);
 
     void MarkDirty();
+    // Request a render-boundary temporal reset for a structural scene edit (add/remove/restore).
+    // Do not use for normal transform motion: valid motion vectors handle that case.
+    void NotifyRenderContentChanged();
     void SetDirtyCallback(std::function<void()> callback);
     void SetDirtyNotificationsSuppressed(bool suppressed);
 
