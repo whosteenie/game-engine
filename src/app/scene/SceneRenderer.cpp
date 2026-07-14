@@ -949,8 +949,11 @@ void SceneRenderer::RecordDxrPass(
 
     if (usePostProcess && m_screenSpaceEffects != nullptr)
     {
-        const bool pathTracerShow =
-            pathTracingActive && m_dxrPathTracerDispatch->HasValidOutput();
+        // A zero-instance scene deliberately has no TLAS, so the PT dispatch is skipped.  Its
+        // output resources remain allocated for reuse when geometry returns, but their contents
+        // are from the last populated frame.  Only present an output written this frame; otherwise
+        // let the normal composite draw the camera-relative environment background.
+        const bool pathTracerShow = pathTracingActive && pathTracerDispatched;
         m_screenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
         m_screenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,

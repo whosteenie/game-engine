@@ -179,6 +179,7 @@ struct GfxContext::Impl
         std::uint64_t FenceValue = 0;
         D3D12MA::Allocation* Allocation = nullptr;
         ID3D12Resource* Resource = nullptr;
+        IUnknown* GpuObject = nullptr;
         std::uint32_t SrvIndex = UINT32_MAX;
         std::uint32_t RtvBaseIndex = UINT32_MAX;
         std::uint32_t RtvCount = 0;
@@ -1453,6 +1454,27 @@ void GfxContext::DeferredReleaseResource(void* d3d12maAllocation, void* d3d12Res
     m_impl->DeferredDestroys.push_back(entry);
 }
 
+void GfxContext::DeferredReleaseGpuObject(void* d3d12Object)
+{
+    auto* object = static_cast<IUnknown*>(d3d12Object);
+    if (object == nullptr)
+    {
+        return;
+    }
+
+    if (m_impl == nullptr)
+    {
+        // Context shutdown has already waited for the queue.
+        object->Release();
+        return;
+    }
+
+    Impl::DeferredDestroy entry{};
+    entry.FenceValue = DeferredDestroyFenceValue();
+    entry.GpuObject = object;
+    m_impl->DeferredDestroys.push_back(entry);
+}
+
 void GfxContext::DeferredFreeOffscreenSrv(const std::uint32_t descriptorIndex)
 {
     if (m_impl == nullptr || descriptorIndex == UINT32_MAX)
@@ -1517,6 +1539,10 @@ void GfxContext::ProcessDeferredDestroys(const bool flushAll)
         if (entry.Resource != nullptr)
         {
             entry.Resource->Release();
+        }
+        if (entry.GpuObject != nullptr)
+        {
+            entry.GpuObject->Release();
         }
         if (entry.Allocation != nullptr)
         {

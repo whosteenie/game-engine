@@ -66,6 +66,10 @@ public:
     // Takes ownership of one resource reference (the one returned by D3D12MA::CreateResource,
     // which call sites previously leaked) and of the allocation reference.
     void DeferredReleaseResource(void* d3d12maAllocation, void* d3d12Resource);
+    // Takes ownership of one COM reference to a GPU object such as a pipeline state or root
+    // signature.  These objects are also retained by submitted command lists, so releasing them
+    // synchronously during scene/material destruction is unsafe.
+    void DeferredReleaseGpuObject(void* d3d12Object);
     void DeferredFreeOffscreenSrv(std::uint32_t descriptorIndex);
     void DeferredFreeOffscreenRtvBlock(std::uint32_t baseIndex, std::uint32_t count);
     void DeferredFreeOffscreenDsv(std::uint32_t descriptorIndex);

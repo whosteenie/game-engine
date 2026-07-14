@@ -88,11 +88,11 @@ Shader::~Shader()
         }
     }
 
+    // A material can be destroyed while the current or a previously submitted command list still
+    // binds one of these objects.  Hand their existing COM references to GfxContext's fence-based
+    // retirement queue rather than final-releasing them from the scene deletion call stack.
     auto releasePipeline = [](void* pipeline) {
-        if (pipeline != nullptr)
-        {
-            static_cast<ID3D12PipelineState*>(pipeline)->Release();
-        }
+        GfxContext::Get().DeferredReleaseGpuObject(pipeline);
     };
 
     releasePipeline(m_pipelineState);
@@ -109,7 +109,7 @@ Shader::~Shader()
 
     if (m_rootSignature != nullptr)
     {
-        static_cast<ID3D12RootSignature*>(m_rootSignature)->Release();
+        GfxContext::Get().DeferredReleaseGpuObject(m_rootSignature);
     }
 
     if (m_vertexShader != nullptr)
