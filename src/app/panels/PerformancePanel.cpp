@@ -559,6 +559,7 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         RefreshSmoothedGpuTimings(timings, m_smoothedGpuPassMs, kPerfSmoothAlpha);
         RefreshSmoothedSystemResources(m_systemResources.GetSnapshot(), kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = true;
     }
 }
 
@@ -755,6 +756,7 @@ void PerformancePanel::Draw(
 
     if (ImGui::CollapsingHeader("GPU passes", ImGuiTreeNodeFlags_DefaultOpen))
     {
+        ImGui::Checkbox("Smooth display##gpu_passes", &m_gpuPassSmoothingEnabled);
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         if (timings.empty())
         {
@@ -764,8 +766,9 @@ void PerformancePanel::Draw(
         }
         else
         {
-            const std::vector<GpuProfiler::Entry> displayTimings =
-                BuildSmoothedGpuTimings(timings, m_smoothedGpuPassMs);
+            const std::vector<GpuProfiler::Entry> displayTimings = m_gpuPassSmoothingEnabled
+                ? BuildSmoothedGpuTimings(timings, m_smoothedGpuPassMs)
+                : timings;
             const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
             const float gpuTotalMs = ComputeGpuRootTotalMs(passTree);
             const float maxPassMs = MaxGpuRootMilliseconds(passTree);
@@ -789,18 +792,29 @@ void PerformancePanel::Draw(
             }
 
             ImGui::Text("GPU total (top-level passes): %.3f ms", gpuTotalMs);
-            EditorWidgets::TextWrappedDisabled(
-                "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
-                "double-counted. Pass order is fixed; timings are smoothed (~8 Hz).");
+            EditorWidgets::TextWrappedDisabled(m_gpuPassSmoothingEnabled
+                ? "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
+                  "double-counted. Pass order is fixed; display is smoothed (~8 Hz)."
+                : "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
+                  "double-counted. Pass order is fixed; display shows live timestamp results.");
         }
     }
 
     const std::vector<GpuProfiler::Entry> cpuTimings =
         BuildCpuTimings(renderer.GetRenderFrameDiagnostics());
+    if (m_cpuTimingSamplePending)
+    {
+        RefreshSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs, kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = false;
+    }
 
     if (ImGui::CollapsingHeader("CPU passes", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(cpuTimings);
+        ImGui::Checkbox("Smooth display##cpu_passes", &m_cpuPassSmoothingEnabled);
+        const std::vector<GpuProfiler::Entry> displayTimings = m_cpuPassSmoothingEnabled
+            ? BuildSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs)
+            : cpuTimings;
+        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
         const float cpuTotalMs = ComputeGpuRootTotalMs(passTree);
         const float maxPassMs = MaxGpuRootMilliseconds(passTree);
 
@@ -823,9 +837,11 @@ void PerformancePanel::Draw(
         }
 
         ImGui::Text("CPU total (instrumented passes): %.3f ms", cpuTotalMs);
-        EditorWidgets::TextWrappedDisabled(
-            "Live command-recording and scene-preparation time on the main thread. It does not include "
-            "editor UI or present/wait time.");
+        EditorWidgets::TextWrappedDisabled(m_cpuPassSmoothingEnabled
+            ? "Sampled main-thread command-recording and scene-preparation time. It does not include "
+              "editor UI or present/wait time. Display is smoothed (~8 Hz)."
+            : "Live main-thread command-recording and scene-preparation time. It does not include editor "
+              "UI or present/wait time.");
     }
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))

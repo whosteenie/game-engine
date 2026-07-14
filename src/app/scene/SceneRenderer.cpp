@@ -685,11 +685,14 @@ void SceneRenderer::RecordDxrPass(
     }
 
     const auto dxrScenePrepStart = std::chrono::steady_clock::now();
-    m_dxrAccelerationStructures->EnsureScene(
-        scene,
-        m_gpuScene,
-        true,
-        GfxContext::Get().GetCommandList());
+    {
+        const GfxContext::GpuTimerScope gpuScope("DXR acceleration structures");
+        m_dxrAccelerationStructures->EnsureScene(
+            scene,
+            m_gpuScene,
+            true,
+            GfxContext::Get().GetCommandList());
+    }
     m_renderFrameDiagnostics.dxrScenePrepCpuMs =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - dxrScenePrepStart)

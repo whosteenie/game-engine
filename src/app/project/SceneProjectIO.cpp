@@ -784,6 +784,11 @@ namespace SceneProjectIODetail
                  {"sceneView", editorState.showSceneView},
                  {"gameView", editorState.showGameView},
              }},
+            {"performance",
+             json{
+                 {"gpuPassSmoothing", editorState.performanceGpuPassSmoothing},
+                 {"cpuPassSmoothing", editorState.performanceCpuPassSmoothing},
+             }},
             {"hierarchyOpenNodes", SerializeHierarchyOpenStates(editorState.hierarchyNodeOpenStates)},
             {"projectFiles",
              json{
@@ -822,6 +827,15 @@ namespace SceneProjectIODetail
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
             editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
             editorState.showGameView = panelsValue.value("gameView", editorState.showGameView);
+        }
+
+        if (editorValue.contains("performance"))
+        {
+            const json& performanceValue = editorValue.at("performance");
+            editorState.performanceGpuPassSmoothing =
+                performanceValue.value("gpuPassSmoothing", editorState.performanceGpuPassSmoothing);
+            editorState.performanceCpuPassSmoothing =
+                performanceValue.value("cpuPassSmoothing", editorState.performanceCpuPassSmoothing);
         }
 
         if (editorValue.contains("hierarchyOpenNodes"))

@@ -1180,6 +1180,8 @@ void Application::CaptureProjectEditorState(ProjectEditorState& editorState) con
     editorState.showToolbar = m_sceneToolbarPanel->ShowPanel();
     editorState.showLighting = m_lightingPanel->ShowPanel();
     editorState.showPerformance = m_performancePanel->ShowPanel();
+    editorState.performanceGpuPassSmoothing = m_performancePanel->GpuPassSmoothingEnabled();
+    editorState.performanceCpuPassSmoothing = m_performancePanel->CpuPassSmoothingEnabled();
     editorState.showProjectFiles = m_projectFilesPanel->ShowPanel();
     editorState.showSceneView = m_sceneViewportPanel->ShowPanel();
     editorState.showGameView = m_gameViewportPanel->ShowPanel();
@@ -1200,6 +1202,8 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_sceneToolbarPanel->ShowPanel() = editorState.showToolbar;
     m_lightingPanel->ShowPanel() = editorState.showLighting;
     m_performancePanel->ShowPanel() = editorState.showPerformance;
+    m_performancePanel->GpuPassSmoothingEnabled() = editorState.performanceGpuPassSmoothing;
+    m_performancePanel->CpuPassSmoothingEnabled() = editorState.performanceCpuPassSmoothing;
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
     m_sceneViewportPanel->ShowPanel() = editorState.showSceneView;
     m_gameViewportPanel->ShowPanel() = editorState.showGameView;
