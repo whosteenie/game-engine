@@ -277,35 +277,6 @@ namespace
         return true;
     }
 
-    bool IntersectRayPlane(
-        const Ray& ray,
-        const glm::vec3& planePoint,
-        const glm::vec3& planeNormal,
-        glm::vec3& outPoint)
-    {
-        const float normalLength = glm::length(planeNormal);
-        if (normalLength < 1e-8f)
-        {
-            return false;
-        }
-
-        const glm::vec3 normal = planeNormal / normalLength;
-        const float denominator = glm::dot(normal, ray.direction);
-        if (std::fabs(denominator) < 1e-8f)
-        {
-            return false;
-        }
-
-        const float distance = glm::dot(planePoint - ray.origin, normal) / denominator;
-        if (distance < 0.0f)
-        {
-            return false;
-        }
-
-        outPoint = ray.origin + ray.direction * distance;
-        return true;
-    }
-
     bool IsFrontFacingSurfaceHit(const SurfaceHit& hit, const Ray& ray)
     {
         return glm::dot(hit.normal, -ray.direction) > 0.05f;
@@ -455,24 +426,11 @@ namespace
             }
             else if (surfaceSnapHasLastHit)
             {
-                // Cursor left geometry (e.g. sky): scrub along the last hit's plane.
-                glm::vec3 planePoint(0.0f);
-                if (IntersectRayPlane(
-                        ray,
-                        surfaceSnapLastPoint,
-                        surfaceSnapLastNormal,
-                        planePoint))
-                {
-                    placePoint = planePoint;
-                    placeNormal = surfaceSnapLastNormal;
-                    havePlaceTarget = true;
-                }
-                else
-                {
-                    placePoint = surfaceSnapLastPoint;
-                    placeNormal = surfaceSnapLastNormal;
-                    havePlaceTarget = true;
-                }
+                // No mesh under the cursor (sky / empty). Freeze on the last real hit
+                // instead of extending an infinite plane past the floor edge.
+                placePoint = surfaceSnapLastPoint;
+                placeNormal = surfaceSnapLastNormal;
+                havePlaceTarget = true;
             }
 
             if (havePlaceTarget)
