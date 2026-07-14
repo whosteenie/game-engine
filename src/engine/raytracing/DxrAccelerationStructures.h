@@ -22,8 +22,8 @@ struct DxrGeometryLookupEntry
     std::uint32_t vertexFloatOffset = 0;
     std::uint32_t vertexStrideFloats = 0;
     std::uint32_t indexUintOffset = 0;
-    // G0: compact render-instance row data. InstanceID() indexes this table, then materialId
-    // resolves into the material table. Geometry remains duplicated per instance in this bridge.
+    // Compact render-instance row data. InstanceID() indexes this table, then materialId resolves
+    // into the material table. Geometry offsets may be shared by every instance of one Mesh.
     std::uint32_t materialId = 0;
 };
 

@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstring>
 #include <limits>
+#include <unordered_map>
 #include <unordered_set>
 
 #include <glm/glm.hpp>
@@ -37,6 +38,13 @@ namespace
         std::size_t objectIndex = 0;
         Mesh* mesh = nullptr;
         glm::mat4 world{1.0f};
+    };
+
+    struct DxrMeshGeometryRange
+    {
+        std::uint32_t vertexFloatOffset = 0;
+        std::uint32_t vertexStrideFloats = 0;
+        std::uint32_t indexUintOffset = 0;
     };
 
     std::vector<DxrRenderableInstance> BuildDxrRenderableInstances(const GpuScene& gpuScene)
@@ -388,15 +396,16 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     std::vector<bool> materialUsed(materialEntries.size(), false);
     std::vector<float> vertexFloats;
     std::vector<std::uint32_t> indices;
+    std::unordered_map<Mesh*, DxrMeshGeometryRange> geometryRanges;
     vertexFloats.reserve(1024);
     indices.reserve(1024);
+    geometryRanges.reserve(gpuScene.GetMeshAssets().size());
 
     for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
     {
         const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
         Mesh* mesh = renderInstance.mesh;
 
-        mesh->EnsureGpuResources();
         const std::uint32_t vertexStrideFloats = mesh->GetFloatsPerVertex();
         if (vertexStrideFloats < 3)
         {
@@ -414,10 +423,21 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         }
 
         DxrGeometryLookupEntry& entry = lookupEntries[instanceIndex];
+        entry.materialId = renderInstance.materialId;
+
+        const auto existingGeometry = geometryRanges.find(mesh);
+        if (existingGeometry != geometryRanges.end())
+        {
+            entry.vertexFloatOffset = existingGeometry->second.vertexFloatOffset;
+            entry.vertexStrideFloats = existingGeometry->second.vertexStrideFloats;
+            entry.indexUintOffset = existingGeometry->second.indexUintOffset;
+            continue;
+        }
+
+        mesh->EnsureGpuResources();
         entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
         entry.vertexStrideFloats = vertexStrideFloats;
         entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
-        entry.materialId = renderInstance.materialId;
 
         // Upload the FULL interleaved vertex stride (position + normal + ...) so the reflection
         // closest-hit can read smooth vertex normals at float offset 3, not just positions.
@@ -447,6 +467,13 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 
         const std::vector<unsigned int>& meshIndices = mesh->GetIndices();
         indices.insert(indices.end(), meshIndices.begin(), meshIndices.end());
+
+        geometryRanges.emplace(
+            mesh,
+            DxrMeshGeometryRange{
+                entry.vertexFloatOffset,
+                entry.vertexStrideFloats,
+                entry.indexUintOffset});
     }
 
     for (const GpuSceneMaterialRecord& gpuMaterial : gpuScene.GetMaterials())
@@ -1100,6 +1127,12 @@ void DxrAccelerationStructures::EnsureScene(
     {
         for (Mesh* mesh : uniqueMeshes)
         {
+            const Blas* existing = m_blasCache.Find(mesh);
+            if (existing != nullptr && existing->IsBuilt())
+            {
+                continue;
+            }
+
             mesh->EnsureGpuResources();
             const std::uint32_t indexCount = static_cast<std::uint32_t>(mesh->GetIndices().size());
             if (indexCount < 3)
