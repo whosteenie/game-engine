@@ -51,6 +51,8 @@ public:
         bool allowUndoRedo = true);
 
 private:
+    bool m_showOpenProjectModal = false;
+    std::string m_openProjectError;
     bool m_showSaveAsModal = false;
     bool m_focusSaveAsName = false;
     char m_saveAsProjectName[64] = {};

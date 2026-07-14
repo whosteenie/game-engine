@@ -89,22 +89,16 @@ namespace
         settings.Save();
     }
 
-    void OpenProject(
+    bool OpenProjectAtPath(
         Scene& scene,
         ProjectSession& project,
         EditorSettings& settings,
         ProjectEditorState& editorState,
         const ApplyEditorStateFn& applyEditorState,
         UndoStack& undoStack,
-        EditorClipboard& clipboard)
+        EditorClipboard& clipboard,
+        const std::string& projectPath)
     {
-        settings.ValidateLastNewProjectParentDirectory();
-        std::string projectPath;
-        if (!FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
-        {
-            return;
-        }
-
         if (project.OpenProject(scene, projectPath, editorState))
         {
             undoStack.Clear();
@@ -114,7 +108,9 @@ namespace
             {
                 applyEditorState(editorState);
             }
+            return true;
         }
+        return false;
     }
 
     void SaveProject(
@@ -153,7 +149,14 @@ namespace
         return !io.WantTextInput && !ImGui::IsAnyItemActive();
     }
 
-    bool HandleFileMenuShortcuts(
+    enum class FileMenuShortcut
+    {
+        None,
+        OpenProject,
+        SaveAs,
+    };
+
+    FileMenuShortcut HandleFileMenuShortcuts(
         Scene& scene,
         ProjectSession& project,
         EditorSettings& settings,
@@ -165,13 +168,13 @@ namespace
     {
         if (!AllowFileMenuShortcuts())
         {
-            return false;
+            return FileMenuShortcut::None;
         }
 
         const ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_O, false))
         {
-            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack, clipboard);
+            return FileMenuShortcut::OpenProject;
         }
 
         if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
@@ -181,10 +184,10 @@ namespace
 
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            return true;
+            return FileMenuShortcut::SaveAs;
         }
 
-        return false;
+        return FileMenuShortcut::None;
     }
 
     void PasteClipboardDefault(
@@ -317,7 +320,7 @@ void MainMenuBar::Draw(
     EditorClipboard& clipboard,
     bool allowUndoRedo)
 {
-    const bool saveAsShortcut = HandleFileMenuShortcuts(
+    const FileMenuShortcut fileMenuShortcut = HandleFileMenuShortcuts(
         scene,
         project,
         settings,
@@ -363,7 +366,16 @@ void MainMenuBar::Draw(
         m_showSaveAsModal = true;
     };
 
-    if (saveAsShortcut)
+    auto queueOpenProjectModal = [&]() {
+        m_openProjectError.clear();
+        m_showOpenProjectModal = true;
+    };
+
+    if (fileMenuShortcut == FileMenuShortcut::OpenProject)
+    {
+        queueOpenProjectModal();
+    }
+    else if (fileMenuShortcut == FileMenuShortcut::SaveAs)
     {
         queueSaveAsModal();
     }
@@ -385,12 +397,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Open Project...", "Ctrl+O"))
         {
-            if (playMode.IsActive())
-            {
-                playMode.TogglePlayStop(scene, project.GetProjectRootDirectory());
-            }
-
-            OpenProject(scene, project, settings, editorState, applyEditorState, undoStack, clipboard);
+            queueOpenProjectModal();
         }
 
         ImGui::Separator();
@@ -562,6 +569,114 @@ void MainMenuBar::Draw(
     }
 
     ImGui::EndMainMenuBar();
+
+    if (m_showOpenProjectModal)
+    {
+        ImGui::OpenPopup("Open Project###OpenProject");
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(
+        ImGui::GetMainViewport()->GetCenter(),
+        ImGuiCond_Appearing,
+        ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(
+            "Open Project###OpenProject",
+            nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImGui::TextUnformatted("Open a recent project");
+        ImGui::TextDisabled("Recent projects are stored locally by the editor.");
+        ImGui::Spacing();
+
+        auto tryOpenProject = [&](const std::string& projectPath) {
+            if (playMode.IsActive())
+            {
+                playMode.TogglePlayStop(scene, project.GetProjectRootDirectory());
+            }
+            if (OpenProjectAtPath(
+                    scene,
+                    project,
+                    settings,
+                    editorState,
+                    applyEditorState,
+                    undoStack,
+                    clipboard,
+                    projectPath))
+            {
+                m_showOpenProjectModal = false;
+                m_openProjectError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                m_openProjectError = project.GetStatusMessage().empty()
+                    ? "Failed to open the selected project."
+                    : project.GetStatusMessage();
+            }
+        };
+
+        const std::vector<std::string>& recentProjects = settings.GetRecentProjects();
+        if (recentProjects.empty())
+        {
+            ImGui::TextDisabled("No recent projects yet.");
+        }
+        else if (ImGui::BeginChild("Recent projects", ImVec2(0.0f, 210.0f), ImGuiChildFlags_Borders))
+        {
+            for (const std::string& projectPath : recentProjects)
+            {
+                std::error_code existsError;
+                const bool exists = std::filesystem::is_regular_file(projectPath, existsError);
+                const std::string label = std::filesystem::path(projectPath).stem().string();
+                ImGui::PushID(projectPath.c_str());
+                if (!exists)
+                {
+                    ImGui::BeginDisabled();
+                }
+                if (ImGui::Selectable(label.empty() ? projectPath.c_str() : label.c_str(), false, 0, ImVec2(0.0f, 0.0f)))
+                {
+                    tryOpenProject(projectPath);
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGui::SetTooltip("%s%s", projectPath.c_str(), exists ? "" : "\nMissing file");
+                }
+                if (!exists)
+                {
+                    ImGui::EndDisabled();
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndChild();
+        }
+
+        if (!m_openProjectError.empty())
+        {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", m_openProjectError.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        if (ImGui::Button("Browse...", ImVec2(120.0f, 0.0f)))
+        {
+            settings.ValidateLastNewProjectParentDirectory();
+            std::string projectPath;
+            if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
+            {
+                tryOpenProject(projectPath);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_showOpenProjectModal = false;
+            m_openProjectError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     if (m_showSaveAsModal)
     {
