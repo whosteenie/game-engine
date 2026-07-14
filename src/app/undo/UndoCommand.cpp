@@ -1772,6 +1772,11 @@ void HandleRendererFieldEditEvents(RendererEditContext& context)
 {
     TuningSectionState::MarkCurrentItemIfSearchTarget();
 
+    if (!TuningSectionState::CurrentItemIsUndoable())
+    {
+        return;
+    }
+
     if (context.undoStack == nullptr || context.scene == nullptr)
     {
         return;

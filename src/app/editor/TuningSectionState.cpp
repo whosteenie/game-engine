@@ -178,4 +178,31 @@ namespace TuningSectionState
             MarkSearchTarget(descriptor->id.data());
         }
     }
+
+    bool CurrentItemIsUndoable()
+    {
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            return true;
+        }
+
+        ImGuiWindow* const window = ImGui::GetCurrentWindow();
+        if (window == nullptr)
+        {
+            return true;
+        }
+
+        for (const SettingRegistry::Descriptor& descriptor : SettingRegistry::GetAll())
+        {
+            if (descriptor.section != g_activeSection)
+            {
+                continue;
+            }
+            if (window->GetID(descriptor.label.data()) == GImGui->LastItemData.ID)
+            {
+                return descriptor.undoPolicy == SettingRegistry::UndoPolicy::Undoable;
+            }
+        }
+        return true;
+    }
 }

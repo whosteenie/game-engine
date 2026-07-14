@@ -18,4 +18,5 @@ namespace TuningSectionState
     bool IsSearchTarget(const char* targetId);
     void MarkSearchTarget(const char* targetId);
     void MarkCurrentItemIfSearchTarget();
+    bool CurrentItemIsUndoable();
 }

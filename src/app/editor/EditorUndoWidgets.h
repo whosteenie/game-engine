@@ -31,6 +31,14 @@ inline void ApplyRendererChange(
     const char* commandName,
     const std::function<void(Scene&)>& mutate)
 {
+    const SettingRegistry::Descriptor* descriptor = SettingRegistry::FindBySectionAndLabel(
+        TuningSectionState::ActiveSection(), commandName != nullptr ? commandName : "");
+    if (descriptor != nullptr && descriptor->undoPolicy == SettingRegistry::UndoPolicy::NotUndoable)
+    {
+        mutate(scene);
+        return;
+    }
+
     if (editContext.undoStack != nullptr)
     {
         PushRendererMutation(*editContext.undoStack, scene, commandName, mutate);

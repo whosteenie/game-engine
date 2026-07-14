@@ -83,7 +83,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 const bool selected = aoMode == mode;
                 if (ImGui::Selectable(AmbientOcclusionModeLabel(mode), selected) && !selected)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "ao_mode",
                         editContext,
                         scene,
                         "Ambient occlusion mode",

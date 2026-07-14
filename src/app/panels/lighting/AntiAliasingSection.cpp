@@ -425,7 +425,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 const bool selected = msaaSampleCount == preset.count;
                 if (ImGui::Selectable(preset.label, selected) && !selected && !disabled)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "geometry_msaa",
                         editContext,
                         scene,
                         "Geometry MSAA",
