@@ -196,6 +196,39 @@ void SceneRenderer::ResetGpuResourcesIfInitFailed() const
     self->m_gpuResourcesInitError.clear();
 }
 
+void SceneRenderer::ReleaseProjectRayTracingResources()
+{
+    // DxrAccelerationStructures owns a BLAS cache keyed by Mesh*. Project deserialization destroys
+    // the old meshes but deliberately keeps this SceneRenderer alive, so retaining the cache here
+    // leaked stale BLASes across every project open in one editor session. The caller has already
+    // waited for submitted swapchain work; DxrGpuResource still uses deferred release as the final
+    // safety net for any descriptor/resource retirement.
+    m_dxrAccelerationStructures.reset();
+
+    // No object from the incoming project may inherit transform, motion, accumulation, or ReSTIR
+    // history from the replaced scene. Keep pipeline objects alive: they are scene-independent and
+    // the next project is expected to render without a shader recompilation hitch.
+    m_previousWorldByObjectId.clear();
+    m_gameViewPreviousWorldByObjectId.clear();
+    m_activePreviousWorldByObjectId = nullptr;
+    m_sceneViewLastSubmissionFrame = 0;
+    m_gameViewLastSubmissionFrame = 0;
+
+    if (m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->InvalidateMotionHistory();
+    }
+    if (m_gameViewScreenSpaceEffects != nullptr)
+    {
+        m_gameViewScreenSpaceEffects->InvalidateMotionHistory();
+    }
+    if (m_dxrPathTracerDispatch != nullptr)
+    {
+        m_dxrPathTracerDispatch->ResetAccumulation();
+        m_dxrPathTracerDispatch->InvalidateRestirHistory();
+    }
+}
+
 void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount) const
 {
     GfxContext::Get().SetActiveMsaaSampleCount(msaaSampleCount);

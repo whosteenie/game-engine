@@ -170,6 +170,10 @@ public:
     void PrepareGpuResources() const { EnsureGpuResources(); }
     void PrepareGpuResourcesForGeometryMsaa(int msaaSampleCount) const;
     void ResetGpuResourcesIfInitFailed() const;
+    // Project replacement clears scene-owned meshes. Call after the previous frame is GPU-idle and
+    // before those meshes are destroyed so BLAS entries keyed by their addresses cannot outlive a
+    // project. DXR pipelines stay warm; only scene-dependent state is released.
+    void ReleaseProjectRayTracingResources();
     bool ApplyGeometryMsaaReload(Scene& scene, int viewportWidth, int viewportHeight, std::string* outError = nullptr);
 
     // Geometry MSAA reload recreates GPU pipelines/framebuffers, so it must run at a frame boundary

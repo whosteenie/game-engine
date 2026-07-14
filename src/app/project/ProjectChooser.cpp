@@ -6,6 +6,7 @@
 #include "app/project/ProjectSession.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneMeshLibrary.h"
+#include "app/scene/SceneRenderer.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/platform/EngineLog.h"
@@ -155,6 +156,11 @@ bool ProjectChooser::OpenProjectAtPath(
             // Do not pump GLFW events here: OpenProjectAtPath runs during Update before
             // the current frame's ImGui NewFrame and resize callbacks can corrupt GPU state.
             GfxContext::Get().WaitForSwapchainFrames(false);
+
+            // A SceneRenderer survives project replacement, but its DXR BLAS cache is keyed by
+            // Mesh*. Release that scene-owned cache before SceneProjectIO destroys the old meshes;
+            // otherwise every opened project permanently contributes stale BLASes until app exit.
+            scene.GetRenderer().ReleaseProjectRayTracingResources();
 
             std::string deviceRemovedReason;
             if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
