@@ -5,6 +5,7 @@
 #include "app/editor/EditorSettings.h"
 #include "app/editor/MainMenuBar.h"
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/SettingRegistry.h"
 #include "app/core/PlayModeController.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/project/ProjectSession.h"
@@ -524,16 +525,7 @@ void MainMenuBar::Draw(
         ImGui::TextUnformatted("Search Renderer Tuning");
         ImGui::SetNextItemWidth(260.0f);
         ImGui::InputTextWithHint("##SettingsSearch", "Type a setting...", search, sizeof(search));
-        struct Entry { const char* name; const char* keywords; const char* section; const char* id; };
-        static const Entry entries[] = {
-            {"Vertical sync", "vsync v sync", "Scene", "vsync"},
-            {"Skybox rotation", "sky hdr rotation", "Environment", "skybox_rotation"},
-            {"Skybox exposure", "sky hdr exposure", "Environment", "skybox_exposure"},
-            {"Environment intensity", "ibl ambient environment", "Environment", "environment_intensity"},
-            {"Path tracing", "path traced rendering mode", "Ray tracing", "path_tracing"},
-        };
-        std::string query(search);
-        std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        const std::string query(search);
         if (!query.empty())
         {
             const ImVec2 menuPos = ImGui::GetWindowPos();
@@ -547,20 +539,19 @@ void MainMenuBar::Draw(
                         | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
             {
                 bool anyMatch = false;
-                for (const Entry& entry : entries)
+                const std::vector<const SettingRegistry::Descriptor*> matches =
+                    SettingRegistry::FindSearchMatches(query);
+                for (const SettingRegistry::Descriptor* entry : matches)
                 {
-                    std::string haystack = std::string(entry.name) + " " + entry.keywords;
-                    std::transform(haystack.begin(), haystack.end(), haystack.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                    if (haystack.find(query) == std::string::npos) continue;
                     anyMatch = true;
-                    if (ImGui::Selectable(entry.name))
+                    if (ImGui::Selectable(entry->label.data()))
                     {
                         if (panels.lighting != nullptr) *panels.lighting = true;
-                        TuningSectionState::RequestSearchNavigation(entry.section, entry.id);
+                        TuningSectionState::RequestSearchNavigation(entry->section.data(), entry->id.data());
                         ImGui::SetWindowFocus("Renderer Tuning");
                     }
                     ImGui::SameLine();
-                    ImGui::TextDisabled("%s", entry.section);
+                    ImGui::TextDisabled("%s", entry->section.data());
                 }
                 if (!anyMatch) ImGui::TextDisabled("No matching Renderer Tuning settings.");
             }

@@ -302,6 +302,7 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/editor/EditorSettings.cpp
     src/app/editor/TuningSectionState.cpp
+    src/app/editor/SettingRegistry.cpp
 
     src/app/editor/EditorDockSpace.cpp
     src/app/editor/EditorDockLayout.cpp
