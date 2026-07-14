@@ -78,7 +78,9 @@ bool Tlas::Build(
 
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlasInputs{};
     tlasInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    tlasInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+    // The caller skips this build when topology and transforms are unchanged, so
+    // path tracing benefits more from optimizing the retained TLAS for traversal.
+    tlasInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
     tlasInputs.NumDescs = instanceCount;
     tlasInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
     tlasInputs.InstanceDescs = instanceUpload.GetGpuVirtualAddress();

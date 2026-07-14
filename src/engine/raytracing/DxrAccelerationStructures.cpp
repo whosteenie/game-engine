@@ -1315,7 +1315,8 @@ void DxrAccelerationStructures::EnsureScene(
         {
             D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS tlasInputs{};
             tlasInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-            tlasInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+            // Keep prebuild sizing consistent with Tlas::Build's retained-TLAS policy.
+            tlasInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
             tlasInputs.NumDescs = renderableCount;
             tlasInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
 
