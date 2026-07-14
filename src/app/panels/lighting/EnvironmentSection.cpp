@@ -16,6 +16,8 @@
 #include "engine/lighting/EnvironmentPresets.h"
 #include "engine/lighting/IBL.h"
 #include "engine/components/LightComponent.h"
+#include "engine/scene/RotationUtils.h"
+#include "engine/scene/Transform.h"
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/rendering/Constants.h"
@@ -135,11 +137,11 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         {
             const float previousRotation = environmentMap.GetRotationDegrees();
             environmentMap.SetRotationDegrees(skyboxRotation);
-            const float deltaRadians = glm::radians(skyboxRotation - previousRotation);
+            // Environment lookup rotates world directions by +Y; the visible HDR (and linked
+            // directional light) therefore moves through world space by the inverse angle.
+            const float deltaRadians = -glm::radians(skyboxRotation - previousRotation);
             if (std::abs(deltaRadians) > 1e-6f)
             {
-                const glm::mat4 yaw = glm::rotate(
-                    glm::mat4(1.0f), deltaRadians, glm::vec3(0.0f, 1.0f, 0.0f));
                 for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
                 {
                     const SceneObject& object = scene.GetObjects()[objectIndex];
@@ -149,8 +151,13 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                     {
                         continue;
                     }
-                    scene.SetObjectWorldMatrix(
-                        static_cast<int>(objectIndex), yaw * scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+                    Transform worldTransform = Transform::FromMatrix(
+                        scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+                    worldTransform.rotation = glm::normalize(
+                        glm::angleAxis(deltaRadians, glm::vec3(0.0f, 1.0f, 0.0f))
+                        * worldTransform.rotation);
+                    // Preserve the directional-light gizmo anchor: only its direction follows sky rotation.
+                    scene.SetObjectWorldMatrix(static_cast<int>(objectIndex), worldTransform.ToMatrix());
                 }
             }
             scene.MarkDirty();
@@ -160,6 +167,31 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             environmentMap.CommitRotation();
         }
         HandleRendererFieldEditEvents(editContext);
+
+        if (ImGui::Button("Align linked lights to detected HDR sun"))
+        {
+            const IBL& activeIbl = environmentMap.GetIBL();
+            if (activeIbl.HasDetectedSunDirection())
+            {
+                const glm::vec3 sunDirection = activeIbl.GetDetectedSunDirection();
+                for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
+                {
+                    const SceneObject& object = scene.GetObjects()[objectIndex];
+                    if (!object.HasLight() || object.GetLight().type != LightType::Directional
+                        || !object.GetLight().autoAlignWithHdrSkybox)
+                    {
+                        continue;
+                    }
+                    Transform worldTransform = Transform::FromMatrix(scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+                    worldTransform.rotation = RotationUtils::QuatFromLocalYAxis(sunDirection);
+                    scene.SetObjectWorldMatrix(static_cast<int>(objectIndex), worldTransform.ToMatrix());
+                }
+            }
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Uses the brightest upper-hemisphere HDR highlight. Linked directional lights only.");
+        }
 
         float skyboxExposure = environmentMap.GetExposure();
         if (ImGui::SliderFloat("Skybox exposure", &skyboxExposure, 0.1f, 4.0f))

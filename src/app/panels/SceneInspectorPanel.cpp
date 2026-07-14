@@ -7,6 +7,7 @@
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/inspector/InspectorTransform.h"
 #include "app/scene/Scene.h"
+#include "app/scene/SceneRenderer.h"
 #include "app/scene/SceneComponentCatalog.h"
 #include "app/undo/UndoCommand.h"
 #include "app/editor/EditorMouseWrapping.h"
@@ -23,6 +24,9 @@
 #include "engine/rendering/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/scene/Transform.h"
+#include "engine/scene/RotationUtils.h"
+#include "engine/lighting/EnvironmentMap.h"
+#include "engine/lighting/IBL.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -765,6 +769,17 @@ namespace
             if (ImGui::Checkbox("Auto-align with HDR skybox", &autoAlignWithHdrSkybox))
             {
                 light.autoAlignWithHdrSkybox = autoAlignWithHdrSkybox;
+                if (autoAlignWithHdrSkybox)
+                {
+                    const IBL& ibl = scene.GetRenderer().GetEnvironmentMap().GetIBL();
+                    if (ibl.HasDetectedSunDirection())
+                    {
+                        Transform worldTransform = Transform::FromMatrix(scene.GetWorldMatrix(objectIndex));
+                        worldTransform.rotation = RotationUtils::QuatFromLocalYAxis(
+                            ibl.GetDetectedSunDirection());
+                        scene.SetObjectWorldMatrix(objectIndex, worldTransform.ToMatrix());
+                    }
+                }
                 scene.MarkDirty();
             }
             HandleLightFieldEditEvents(editContext);

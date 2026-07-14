@@ -29,6 +29,19 @@
 
 namespace
 {
+    glm::vec3 EquirectUvToDirection(const float u, const float v)
+    {
+        const float phi = (u - 0.5f) * glm::two_pi<float>();
+        const float y = std::sin(glm::pi<float>() * (v - 0.5f));
+        const float horizontal = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        return glm::vec3(std::cos(phi) * horizontal, y, std::sin(phi) * horizontal);
+    }
+
+    glm::vec3 RotateY(const glm::vec3& direction, const float angle)
+    {
+        const float c = std::cos(angle); const float s = std::sin(angle);
+        return glm::vec3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+    }
     const float kCubeVertices[] = {
         -1.0f,  1.0f, -1.0f,
         -1.0f, -1.0f, -1.0f,
@@ -713,6 +726,30 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
 
     m_irradianceSh = ProjectIrradianceSh9FromEquirect(rgba, width, height);
 
+    // Heuristic by design: choose the brightest non-negative-elevation HDR texel as the sun.
+    // This favors a visible sky sun over ground reflections; lamps/windows can still win in an
+    // ambiguous HDR, which is why alignment remains opt-in per directional light.
+    float brightestLuminance = 0.0f;
+    m_hasDetectedSunDirection = false;
+    for (int y = 0; y < height; ++y)
+    {
+        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
+        const glm::vec3 direction = EquirectUvToDirection(0.5f, v);
+        if (direction.y < 0.0f) continue;
+        for (int x = 0; x < width; ++x)
+        {
+            const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
+            const float luminance = 0.2126f * rgba[index] + 0.7152f * rgba[index + 1] + 0.0722f * rgba[index + 2];
+            if (luminance > brightestLuminance)
+            {
+                brightestLuminance = luminance;
+                m_detectedSunDirectionLocal = EquirectUvToDirection(
+                    (static_cast<float>(x) + 0.5f) / static_cast<float>(width), v);
+                m_hasDetectedSunDirection = true;
+            }
+        }
+    }
+
     float maxHdrChannel = 0.0f;
     for (const float channel : rgba)
     {
@@ -1173,6 +1210,11 @@ const std::string& IBL::GetHdrPath() const
 float IBL::GetRotationYRadians() const
 {
     return m_rotationYRadians;
+}
+
+glm::vec3 IBL::GetDetectedSunDirection() const
+{
+    return RotateY(m_detectedSunDirectionLocal, -m_rotationYRadians);
 }
 
 std::uintptr_t IBL::GetEnvironmentCubemapSrvCpuHandle() const

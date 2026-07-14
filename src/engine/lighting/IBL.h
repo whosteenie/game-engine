@@ -40,6 +40,8 @@ public:
     const std::string& GetLoadError() const;
     const std::string& GetHdrPath() const;
     float GetRotationYRadians() const;
+    bool HasDetectedSunDirection() const { return m_hasDetectedSunDirection; }
+    glm::vec3 GetDetectedSunDirection() const;
     std::uintptr_t GetEnvironmentCubemapSrvCpuHandle() const;
     std::uintptr_t GetPrefilterMapSrvCpuHandle() const;
     std::uintptr_t GetBrdfLutSrvCpuHandle() const;
@@ -123,6 +125,8 @@ private:
     std::string m_hdrPath;
     std::string m_loadError;
     float m_rotationYRadians = 0.0f;
+    glm::vec3 m_detectedSunDirectionLocal{0.0f, 1.0f, 0.0f};
+    bool m_hasDetectedSunDirection = false;
 
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;
