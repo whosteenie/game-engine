@@ -100,7 +100,7 @@ function Export-CsvCopiesAsJson {
             $columns = @($rows[0].PSObject.Properties.Name)
         }
         $exports += [pscustomobject]@{
-            source = $csv.FullName.Substring($CaptureDirectory.Length).TrimStart('\\', '/')
+            source = $csv.FullName.Substring($CaptureDirectory.Length).TrimStart('\', '/')
             columns = $columns
             rows = $rows
         }
@@ -174,7 +174,7 @@ function Invoke-TimestampBaseline {
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES", "$SampleFrames", "Process")
         Push-Location $EngineWorkingDirectory
         try {
-            Invoke-NativeCapture -Executable $EngineExecutable -Arguments @() -LogPath $logPath
+            Invoke-NativeCapture -Executable $EngineExecutable -Arguments @() -LogPath $logPath | Out-Null
         }
         finally {
             Pop-Location
@@ -290,7 +290,10 @@ foreach ($view in $settings.views) {
 
     $viewDirectory = Join-Path $sessionDirectory $viewName
     New-Item -ItemType Directory -Path $viewDirectory -Force | Out-Null
-    $targetEnv = "GAME_ENGINE_AUTO_OPEN=$project;GAME_ENGINE_AUTO_OPEN_DEFERRED=1"
+    # Set this in the launcher process instead of using Nsight's --env parser.
+    # The latter does not reliably preserve an absolute Windows project path.
+    [Environment]::SetEnvironmentVariable("GAME_ENGINE_AUTO_OPEN", $project, "Process")
+    [Environment]::SetEnvironmentVariable("GAME_ENGINE_AUTO_OPEN_DEFERRED", "1", "Process")
 
     $timestampBaseline = $null
     if ($captureTimestampBaseline) {
@@ -311,7 +314,6 @@ foreach ($view in $settings.views) {
         '--platform=Windows (x86_64)',
         "--exe=$engineExe",
         "--dir=$workingDirectory",
-        "--env=$targetEnv",
         "--output-dir=$viewDirectory",
         "--start-after-ms=$($warmupSeconds * 1000)",
         "--limit-to-frames=$traceFrames",
@@ -329,7 +331,6 @@ foreach ($view in $settings.views) {
         $frameCaptureArgs = @(
             "--exe=$engineExe",
             "--working-dir=$workingDirectory",
-            "--env=$targetEnv",
             "--output-dir=$viewDirectory",
             "--output-file=$viewName",
             "--capture-countdown-timer=$($warmupSeconds * 1000)",
@@ -344,20 +345,20 @@ foreach ($view in $settings.views) {
     $jsonExport = Export-CsvCopiesAsJson -CaptureDirectory $viewDirectory
     $files = @(Get-ChildItem -LiteralPath $viewDirectory -File -Recurse |
         Sort-Object FullName |
-        ForEach-Object { $_.FullName.Substring($viewDirectory.Length).TrimStart('\\', '/') })
+        ForEach-Object { $_.FullName.Substring($viewDirectory.Length).TrimStart('\', '/') })
     $manifestViews += [pscustomobject]@{
         name = $viewName
         project = $project
         timestampBaseline = if ($null -ne $timestampBaseline) {
             [pscustomobject]@{
-                csv = $timestampBaseline.csv.Substring($sessionDirectory.Length).TrimStart('\\', '/')
-                summary = $timestampBaseline.summary.Substring($sessionDirectory.Length).TrimStart('\\', '/')
-                log = $timestampBaseline.log.Substring($sessionDirectory.Length).TrimStart('\\', '/')
+                csv = $timestampBaseline.csv.Substring($sessionDirectory.Length).TrimStart('\', '/')
+                summary = $timestampBaseline.summary.Substring($sessionDirectory.Length).TrimStart('\', '/')
+                log = $timestampBaseline.log.Substring($sessionDirectory.Length).TrimStart('\', '/')
             }
         } else { $null }
-        gpuTraceLog = $gpuTraceLog.Substring($sessionDirectory.Length).TrimStart('\\', '/')
-        frameCaptureLog = if ($frameCaptureLog) { $frameCaptureLog.Substring($sessionDirectory.Length).TrimStart('\\', '/') } else { $null }
-        csvJson = $jsonExport.Substring($sessionDirectory.Length).TrimStart('\\', '/')
+        gpuTraceLog = $gpuTraceLog.Substring($sessionDirectory.Length).TrimStart('\', '/')
+        frameCaptureLog = if ($frameCaptureLog) { $frameCaptureLog.Substring($sessionDirectory.Length).TrimStart('\', '/') } else { $null }
+        csvJson = $jsonExport.Substring($sessionDirectory.Length).TrimStart('\', '/')
         files = $files
     }
 }
