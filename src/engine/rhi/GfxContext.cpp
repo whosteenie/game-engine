@@ -1075,7 +1075,7 @@ void GfxContext::EndFrame()
     PumpWindowEvents(m_window);
 
     const auto presentStart = std::chrono::steady_clock::now();
-    const HRESULT presentResult = m_impl->SwapChain->Present(1, 0);
+    const HRESULT presentResult = m_impl->SwapChain->Present(m_vsyncEnabled ? 1u : 0u, 0);
     m_framePacingDiagnostics.presentCallMs =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
 

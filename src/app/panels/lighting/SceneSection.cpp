@@ -46,6 +46,18 @@ void DrawSceneSection(const LightingPanelContext& ctx)
 
     if (TuningSectionState::SectionHeader("Scene", true))
     {
+        bool vsyncEnabled = GfxContext::Get().IsVsyncEnabled();
+        if (ImGui::Checkbox("Vertical sync", &vsyncEnabled))
+        {
+            GfxContext::Get().SetVsyncEnabled(vsyncEnabled);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Synchronizes presentation to the display refresh rate. Disable to test lower input latency; "
+                "your display driver controls G-Sync/FreeSync.");
+        }
+
         bool showGizmos = scene.GetShowLightGizmos();
         if (ImGui::Checkbox("Show light gizmos", &showGizmos))
         {

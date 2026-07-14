@@ -688,6 +688,7 @@ namespace
             {
                 ImGui::BeginDisabled();
             }
+            ImGui::BeginGroup();
             if (DrawTransformRow(
                     "Rotation",
                     rotationDegrees,
@@ -698,6 +699,7 @@ namespace
                 transform.SetRotationDegrees(rotationDegrees);
                 scene.MarkDirty();
             }
+            ImGui::EndGroup();
             if (rotationLockedByHdrAlignment)
             {
                 ImGui::EndDisabled();

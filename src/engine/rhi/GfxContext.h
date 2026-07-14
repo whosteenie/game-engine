@@ -31,6 +31,8 @@ public:
     bool Initialize(GLFWwindow* window, int width, int height);
     void Shutdown();
     bool IsInitialized() const { return m_impl != nullptr; }
+    bool IsVsyncEnabled() const { return m_vsyncEnabled; }
+    void SetVsyncEnabled(bool enabled) { m_vsyncEnabled = enabled; }
     void WaitForGpuIdle();
     // Full device idle + deferred-release flush for teardown (ImGui upload queue, command list reset).
     void PrepareForDeviceShutdown();
@@ -272,6 +274,7 @@ private:
     FramePacingDiagnostics m_framePacingDiagnostics{};
     const Framebuffer* m_boundOutputFramebuffer = nullptr;
     bool m_frameRecording = false;
+    bool m_vsyncEnabled = true;
     bool m_frameCommandsSubmitted = false;
     int m_frameGpuScopeId = -1;
     int m_pendingResizeWidth = 0;
