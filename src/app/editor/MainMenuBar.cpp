@@ -550,6 +550,10 @@ void MainMenuBar::Draw(
                 for (const SettingRegistry::Descriptor* entry : matches)
                 {
                     anyMatch = true;
+                    // Labels are intentionally human-facing and may repeat across sections
+                    // (for example, two different temporal-blend controls). Scope each row by
+                    // the registry's stable identifier rather than changing the visible label.
+                    ImGui::PushID(entry->id.data());
                     if (ImGui::Selectable(entry->label.data()))
                     {
                         if (panels.lighting != nullptr) *panels.lighting = true;
@@ -558,6 +562,7 @@ void MainMenuBar::Draw(
                     }
                     ImGui::SameLine();
                     ImGui::TextDisabled("%s", entry->section.data());
+                    ImGui::PopID();
                 }
                 if (!anyMatch) ImGui::TextDisabled("No matching Renderer Tuning settings.");
             }
