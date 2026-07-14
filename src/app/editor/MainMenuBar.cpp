@@ -4,6 +4,7 @@
 #include "app/editor/EditorClipboard.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/MainMenuBar.h"
+#include "app/editor/TuningSectionState.h"
 #include "app/core/PlayModeController.h"
 #include "app/project/ProjectEditorState.h"
 #include "app/project/ProjectSession.h"
@@ -519,6 +520,53 @@ void MainMenuBar::Draw(
 
     if (ImGui::BeginMenu("Help"))
     {
+        static char search[128] = {};
+        ImGui::TextUnformatted("Search Renderer Tuning");
+        ImGui::SetNextItemWidth(260.0f);
+        ImGui::InputTextWithHint("##SettingsSearch", "Type a setting...", search, sizeof(search));
+        struct Entry { const char* name; const char* keywords; const char* section; const char* id; };
+        static const Entry entries[] = {
+            {"Vertical sync", "vsync v sync", "Scene", "vsync"},
+            {"Skybox rotation", "sky hdr rotation", "Environment", "skybox_rotation"},
+            {"Skybox exposure", "sky hdr exposure", "Environment", "skybox_exposure"},
+            {"Environment intensity", "ibl ambient environment", "Environment", "environment_intensity"},
+            {"Path tracing", "path traced rendering mode", "Ray tracing", "path_tracing"},
+        };
+        std::string query(search);
+        std::transform(query.begin(), query.end(), query.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (!query.empty())
+        {
+            const ImVec2 menuPos = ImGui::GetWindowPos();
+            const ImVec2 menuSize = ImGui::GetWindowSize();
+            ImGui::SetNextWindowPos(ImVec2(menuPos.x + menuSize.x + 4.0f, menuPos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(280.0f, 0.0f), ImGuiCond_Always);
+            if (ImGui::Begin(
+                    "##RendererTuningSearchResults",
+                    nullptr,
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+                        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
+            {
+                bool anyMatch = false;
+                for (const Entry& entry : entries)
+                {
+                    std::string haystack = std::string(entry.name) + " " + entry.keywords;
+                    std::transform(haystack.begin(), haystack.end(), haystack.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                    if (haystack.find(query) == std::string::npos) continue;
+                    anyMatch = true;
+                    if (ImGui::Selectable(entry.name))
+                    {
+                        if (panels.lighting != nullptr) *panels.lighting = true;
+                        TuningSectionState::RequestSearchNavigation(entry.section, entry.id);
+                        ImGui::SetWindowFocus("Renderer Tuning");
+                    }
+                    ImGui::SameLine();
+                    ImGui::TextDisabled("%s", entry.section);
+                }
+                if (!anyMatch) ImGui::TextDisabled("No matching Renderer Tuning settings.");
+            }
+            ImGui::End();
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("About"))
         {
             ImGui::OpenPopup("About");

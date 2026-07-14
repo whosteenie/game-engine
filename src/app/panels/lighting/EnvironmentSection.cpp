@@ -167,6 +167,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             environmentMap.CommitRotation();
         }
         HandleRendererFieldEditEvents(editContext);
+        TuningSectionState::MarkSearchTarget("skybox_rotation");
 
         if (ImGui::Button("Align linked lights to detected HDR sun"))
         {
@@ -200,6 +201,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+        TuningSectionState::MarkSearchTarget("skybox_exposure");
 
         int iblCubemapResolutionIndex =
             IblCubemapResolutionToComboIndex(environmentMap.GetIblCubemapResolution());
@@ -265,6 +267,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+        TuningSectionState::MarkSearchTarget("environment_intensity");
         LightingPanelUi::DrawWrappedNote(
             "Scales diffuse and specular IBL in the deferred composite. Lower this if RT GI or SSGI washes the scene out.");
     }

@@ -4,6 +4,7 @@
 #include <imgui_internal.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -15,6 +16,10 @@ namespace
 
     std::map<std::string, bool> g_sectionOpen;
     bool g_handlerRegistered = false;
+    std::string g_searchSection;
+    std::string g_searchTarget;
+    int g_searchHighlightFrames = 0;
+    bool g_searchScrollPending = false;
 
     // ImGui ini keys must be free of spaces and '='; derive a stable key from the label.
     std::string MakeKey(const char* label)
@@ -89,6 +94,10 @@ namespace TuningSectionState
         const std::string key = MakeKey(label);
 
         bool seeded = defaultOpen;
+        if (g_searchSection == label)
+        {
+            seeded = true;
+        }
         const auto persisted = g_sectionOpen.find(key);
         if (persisted != g_sectionOpen.end())
         {
@@ -111,5 +120,35 @@ namespace TuningSectionState
         }
 
         return open;
+    }
+
+    void RequestSearchNavigation(const char* sectionLabel, const char* targetId)
+    {
+        g_searchSection = sectionLabel != nullptr ? sectionLabel : "";
+        g_searchTarget = targetId != nullptr ? targetId : "";
+        g_searchHighlightFrames = 90;
+        g_searchScrollPending = true;
+    }
+
+    bool IsSearchTarget(const char* targetId)
+    {
+        return targetId != nullptr && g_searchTarget == targetId;
+    }
+
+    void MarkSearchTarget(const char* targetId)
+    {
+        if (!IsSearchTarget(targetId)) return;
+        if (g_searchScrollPending)
+        {
+            ImGui::SetScrollHereY(0.35f);
+            g_searchScrollPending = false;
+        }
+        if (g_searchHighlightFrames > 0)
+        {
+            const float alpha = 0.18f + 0.16f * std::sin(static_cast<float>(g_searchHighlightFrames) * 0.18f);
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(255, 210, 70, static_cast<int>(alpha * 255.0f)), 4.0f);
+            --g_searchHighlightFrames;
+        }
     }
 }

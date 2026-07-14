@@ -51,6 +51,7 @@ void DrawSceneSection(const LightingPanelContext& ctx)
         {
             GfxContext::Get().SetVsyncEnabled(vsyncEnabled);
         }
+        TuningSectionState::MarkSearchTarget("vsync");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(
