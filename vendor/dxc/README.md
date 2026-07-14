@@ -1,6 +1,7 @@
 # DXC runtime (local)
 
-PF5 pins DXC **1.8.2505.28** (`dxcompiler.dll` / `dxil.dll`) for builds and local testing. Place
+PF7 pins DXC **1.9.2602.24** (`dxcompiler.dll` / `dxil.dll`) for builds and local testing. This is
+the retail compiler release that supports Shader Model 6.9 and native DXR 1.2 SER. Place
 the matching **x64** runtime DLLs here:
 
 ```
@@ -13,8 +14,6 @@ The build currently accepts the Windows SDK `Redist/D3D/x64` copies as a develop
 release/CI should provision this directory from the pinned compiler package so shader output does
 not vary with the installed SDK.
 
-Typical source (Windows SDK):
-
-`C:\Program Files (x86)\Windows Kits\10\Redist\D3D\x64\`
+Typical source: the official [DirectXShaderCompiler v1.9.2602.24 release](https://github.com/microsoft/DirectXShaderCompiler/releases/tag/v1.9.2602.24).
 
 DLLs are gitignored by default (`*.dll`); keep them local or commit intentionally if your team prefers vendoring.

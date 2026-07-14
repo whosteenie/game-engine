@@ -754,7 +754,8 @@ bool DxrPipeline::CreatePrimaryDebugPipeline(std::string& outError)
 // root signature (reflection layout + t14 prev-instance transforms + u4-u6 RR guide outputs).
 bool DxrPipeline::CreatePathTracerPipeline(
     std::string& outError,
-    const bool diagnosticPermutation)
+    const bool diagnosticPermutation,
+    const bool serPermutation)
 {
     outError.clear();
     Release();
@@ -807,8 +808,18 @@ bool DxrPipeline::CreatePathTracerPipeline(
     std::shared_ptr<DxrCompiledLibrary> library;
     try
     {
-        library = DxrShaderCache::Load(
-            EngineConstants::DxrPathTracerLibraryShader, diagnosticPermutation);
+        // SER is deliberately a path-tracer-only library permutation. Other DXR pipelines keep
+        // their normal CompileOptions even on SER-capable devices.
+        DxrShaderLibraryCompileOptions compileOptions =
+            DxrShaderCache::MakeActiveDeviceCompileOptions(diagnosticPermutation);
+        compileOptions.serPermutation = serPermutation;
+        if (serPermutation)
+        {
+            // lib_6_9 enables native HitObject/MaybeReorderThread. Keep this target scoped to
+            // PT: unrelated DXR libraries do not carry the SM 6.9 payload contract.
+            compileOptions.targetProfile = "lib_6_9";
+        }
+        library = DxrShaderCache::Load(EngineConstants::DxrPathTracerLibraryShader, compileOptions);
     }
     catch (const std::exception& exception)
     {
@@ -946,9 +957,9 @@ bool DxrPipeline::CreatePathTracerPipeline(
 
     EngineLog::Info(
         "dxr-pipeline",
-        diagnosticPermutation
-            ? "Created DXR path tracer diagnostic RTPSO"
-            : "Created DXR path tracer production RTPSO");
+        std::string("Created DXR path tracer ")
+            + (diagnosticPermutation ? "diagnostic" : "production")
+            + (serPermutation ? " SER RTPSO" : " RTPSO"));
     DxrBreadcrumb("pipeline CreatePathTracerPipeline ok");
     return true;
 }

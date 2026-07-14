@@ -46,7 +46,7 @@ inline const char* GetShaderModelLabel(const int shaderModel)
 }
 
 // Capability policy shared by device reporting, DXR library selection, and tests. PF6 uses
-// inline visibility when supported; SER remains an availability check until PF7.
+// inline visibility when supported. Native HitObject/SER is a Shader Model 6.9 feature.
 struct DxrFeatureCapabilities
 {
     int raytracingTier = 0;
@@ -61,7 +61,7 @@ struct DxrFeatureCapabilities
     bool SupportsShaderExecutionReordering() const
     {
         return raytracingTier >= static_cast<int>(D3D12_RAYTRACING_TIER_1_2)
-            && highestShaderModel >= static_cast<int>(D3D_SHADER_MODEL_6_6);
+            && highestShaderModel >= static_cast<int>(D3D_SHADER_MODEL_6_9);
     }
 
     bool SupportsModernDxrLibrary() const

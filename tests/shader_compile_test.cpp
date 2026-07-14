@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 #include "engine/rendering/DxrCapabilities.h"
+#include "engine/raytracing/DxrPathTracerDispatch.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
 #include <fstream>
@@ -133,6 +134,18 @@ void RunShaderCompileTests()
             "dxr_modern_smoke.hlsl inline-ray-query library should compile",
             modernDxrOptions);
 
+        HlslLibraryCompileOptions serDxrOptions{};
+        serDxrOptions.targetProfile = "lib_6_9";
+        serDxrOptions.defines = {
+            "DXR_MODERN_LIBRARY=1",
+            "DXR_SER_PERMUTATION=1",
+            "DXR_INLINE_VISIBILITY_PERMUTATION=1",
+        };
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/dxr/path_tracer.hlsl",
+            "path_tracer.hlsl SER DXR library should compile",
+            serDxrOptions);
+
         const DxrFeatureCapabilities legacyCapabilities{
             static_cast<int>(D3D12_RAYTRACING_TIER_1_0),
             static_cast<int>(D3D_SHADER_MODEL_6_4)};
@@ -149,9 +162,23 @@ void RunShaderCompileTests()
         test::ExpectTrue(
             modernCapabilities.SupportsModernDxrLibrary()
                 && modernCapabilities.SupportsInlineRaytracing()
-                && modernCapabilities.SupportsShaderExecutionReordering()
+                && !modernCapabilities.SupportsShaderExecutionReordering()
                 && std::string(modernCapabilities.GetPreferredLibraryProfile()) == "lib_6_6",
-            "modern DXR capabilities should enable the lib_6_6 path and report future features");
+            "SM 6.6 DXR capabilities should retain the lib_6_6 non-SER path");
+
+        const DxrFeatureCapabilities serCapabilities{
+            static_cast<int>(D3D12_RAYTRACING_TIER_1_2),
+            static_cast<int>(D3D_SHADER_MODEL_6_9)};
+        test::ExpectTrue(
+            serCapabilities.SupportsShaderExecutionReordering()
+                && std::string(serCapabilities.GetPreferredLibraryProfile()) == "lib_6_6"
+                && DxrPathTracerDispatch::ShouldUseSerPermutation(
+                    true, DxrPathTracerDispatch::SerOverride::Automatic)
+                && !DxrPathTracerDispatch::ShouldUseSerPermutation(
+                    true, DxrPathTracerDispatch::SerOverride::ForceOff)
+                && !DxrPathTracerDispatch::ShouldUseSerPermutation(
+                    false, DxrPathTracerDispatch::SerOverride::ForceOn),
+            "SER selection should require SM 6.9 and always preserve the fallback");
 
         const DxrFeatureCapabilities inlineCapabilities{
             static_cast<int>(D3D12_RAYTRACING_TIER_1_1),

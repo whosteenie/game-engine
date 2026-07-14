@@ -19,8 +19,7 @@ struct DxrShaderLibraryCompileOptions
     std::string targetProfile = "lib_6_3";
     std::vector<std::string> featureDefines;
     bool diagnosticPermutation = false;
-    // Reserved, explicit states for PF6/PF7. PF5 keeps both false, but they must never alias
-    // a future library that enables inline visibility or SER.
+    // Explicit feature states participating in the library cache key.
     bool serPermutation = false;
     bool inlineVisibilityPermutation = false;
 };

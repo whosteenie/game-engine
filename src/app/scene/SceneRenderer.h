@@ -136,6 +136,9 @@ public:
 
     DxrSettings& GetDxrSettings();
     const DxrSettings& GetDxrSettings() const;
+    DxrPathTracerDispatch::SerOverride GetPathTracerSerOverride() const;
+    void SetPathTracerSerOverride(DxrPathTracerDispatch::SerOverride value);
+    bool IsPathTracerSerActive() const;
 
     const DxrDiagnostics& GetDxrDiagnostics() const;
     const RenderFrameDiagnostics& GetRenderFrameDiagnostics() const { return m_renderFrameDiagnostics; }

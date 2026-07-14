@@ -68,7 +68,9 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 : "unavailable (legacy visibility fallback)");
         ImGui::Text(
             "Shader execution reordering: %s",
-            gfx.IsShaderExecutionReorderingSupported() ? "available (disabled)" : "unavailable");
+            gfx.IsShaderExecutionReorderingSupported()
+                ? (renderer.IsPathTracerSerActive() ? "active for PT path rays" : "available (automatic)")
+                : "unavailable");
         ImGui::Text("DXR library profile: %s", gfx.GetPreferredDxrLibraryProfile());
 
         if (!raytracingSupported)
@@ -164,6 +166,30 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (dxrSettings.GetRenderingMode() == RenderingMode::PathTraced && dxrEnabled)
         {
+            // PF7 runtime A/B selector. This belongs to DxrPathTracerDispatch, rather than
+            // DxrSettings, so it never becomes scene/project state or an undo command.
+            int serOverride = static_cast<int>(renderer.GetPathTracerSerOverride());
+            const char* serOverrideLabels[] = {"Automatic", "Force off", "Force on"};
+            if (ImGui::Combo(
+                    "PT SER (debug)",
+                    &serOverride,
+                    serOverrideLabels,
+                    IM_ARRAYSIZE(serOverrideLabels)))
+            {
+                renderer.SetPathTracerSerOverride(
+                    static_cast<DxrPathTracerDispatch::SerOverride>(serOverride));
+                // All permutations are warmed before interactive rendering. Reset reference
+                // accumulation as well as the dispatcher's ReSTIR history on the switch.
+                renderer.WarmUpDxrPipelineIfNeeded();
+                screenSpaceEffects.ResetPathTracerAccumulation();
+            }
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Runtime-only A/B selector. Automatic uses SER when the GPU supports native\n"
+                    "HitObject reordering; Force on still falls back safely on unsupported hardware.");
+            }
+
             const bool rrConvergenceSelectable = ptRrSupported;
             if (!rrConvergenceSelectable)
             {

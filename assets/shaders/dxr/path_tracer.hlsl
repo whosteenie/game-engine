@@ -107,6 +107,9 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #ifndef DXR_INLINE_VISIBILITY_PERMUTATION
 #define DXR_INLINE_VISIBILITY_PERMUTATION 0
 #endif
+#ifndef DXR_SER_PERMUTATION
+#define DXR_SER_PERMUTATION 0
+#endif
 #if PT_DIAGNOSTIC_PERMUTATION
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 23.0)))
 #endif
@@ -143,25 +146,34 @@ static const float kDeltaScatterPdf = 1.0e10;
 // lower precision).
 // hitDistance and primaryDepth stay fp32. Access via the Payload* helpers below, never the raw
 // fields. Encoding roundtrip is gate-tested in tests/payload_pack_test.cpp.
-struct Payload
+#if DXR_SER_PERMUTATION
+#define PT_RAY_PAYLOAD_ACCESS : read(caller) : write(closesthit, miss)
+#define PT_RAY_PAYLOAD [raypayload]
+#else
+#define PT_RAY_PAYLOAD_ACCESS
+#define PT_RAY_PAYLOAD
+#endif
+struct PT_RAY_PAYLOAD Payload
 {
-    uint normalOct;         // geometric vertex normal (world), snorm16x2 oct
-    uint shadingNormalOct;  // normal-map perturbed normal (world), snorm16x2 oct
-    float hitDistance;
-    uint instanceId;
-    uint primitiveIndex;
+    uint normalOct PT_RAY_PAYLOAD_ACCESS;         // geometric vertex normal (world), snorm16x2 oct
+    uint shadingNormalOct PT_RAY_PAYLOAD_ACCESS;  // normal-map perturbed normal (world), snorm16x2 oct
+    float hitDistance PT_RAY_PAYLOAD_ACCESS;
+    uint instanceId PT_RAY_PAYLOAD_ACCESS;
+    uint primitiveIndex PT_RAY_PAYLOAD_ACCESS;
     // Pre-TraceRay: request bits. Post-hit: bit0=1, optional kPayloadHitBackFace.
-    uint hit;
-    uint barycentricsHalf;  // barycentrics.xy as fp16 pair
+    uint hit : read(caller, closesthit, miss) : write(caller, closesthit, miss);
+    uint barycentricsHalf PT_RAY_PAYLOAD_ACCESS;  // barycentrics.xy as fp16 pair
     // low 16: ray-cone albedo LOD constant 0.5*log2(texelArea/worldArea) (RTG ch.20), fp16;
     // high 16: primaryPreviousLinearDepth (GI history validation), fp16.
-    uint lodPrevDepthHalf;
+    uint lodPrevDepthHalf PT_RAY_PAYLOAD_ACCESS;
     // Primary-surface motion from closest-hit: raster-style clip-space interpolation of the hit
     // triangle's vertices (lit.vs currClip/prevClip -> pbr.ps ComputeMotionNdc). fp16 pair; the
     // velocity target is R16G16_FLOAT so this loses nothing.
-    uint primaryMotionHalf;
-    float primaryDepth;     // hyperbolic HW depth [0,1] for the DLSS-RR depth guide; keep fp32
+    uint primaryMotionHalf PT_RAY_PAYLOAD_ACCESS;
+    float primaryDepth PT_RAY_PAYLOAD_ACCESS;     // hyperbolic HW depth [0,1] for the DLSS-RR depth guide; keep fp32
 };
+#undef PT_RAY_PAYLOAD_ACCESS
+#undef PT_RAY_PAYLOAD
 
 // PF2: only the primary attributes required to reconnect ReSTIR GI survive the bounce loop.
 // Identity, guides, depth, motion, and metadata are committed while processing bounce zero.
@@ -390,6 +402,28 @@ float TraceVisibilityMasked(float3 origin, float3 direction, float tMax, uint in
     probe.hit = kPayloadFlagVisibility;
     TraceRay(g_SceneTlas, occlusionFlags, instanceMask, 0, 0, 0, ray, probe);
     return probe.hit == 0 ? 1.0 : 0.0;
+#endif
+}
+
+// PF7: keep the legacy TraceRay path intact for every non-SER profile. Native HitObject splits
+// traversal from closest-hit/miss invocation, allowing the driver to regroup path rays by hit
+// coherence. The one-bit continuation hint distinguishes primary-surface setup from continuation
+// paths without fragmenting material or texture locality. RNG stays entirely in PathRng/path state.
+#if DXR_SER_PERMUTATION
+using namespace dx;
+#endif
+void TracePathRay(inout RayDesc ray, inout Payload payload)
+{
+#if DXR_SER_PERMUTATION
+    const uint continuationHint = (payload.hit & kPayloadReqPrimarySurface) == 0u ? 1u : 0u;
+    HitObject hit = HitObject::TraceRay(
+        g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
+    // Keep this explicitly scoped: current DXC releases accept the namespace import for
+    // HitObject but can emit invalid DXIL for an unqualified MaybeReorderThread call.
+    dx::MaybeReorderThread(hit, continuationHint, 1u);
+    HitObject::Invoke(hit, payload);
+#else
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
 #endif
 }
 
@@ -1642,7 +1676,7 @@ void PathTracerRayGen()
         {
             payload.hit |= kPayloadReqPrimarySurface;
         }
-        TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, ray, payload);
+        TracePathRay(ray, payload);
 
         if (payload.hit == 0)
         {

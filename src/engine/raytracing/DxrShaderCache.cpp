@@ -78,7 +78,6 @@ DxrShaderLibraryCompileOptions DxrShaderCache::MakeActiveDeviceCompileOptions(
     AppendUniqueDefine(
         options.featureDefines,
         options.targetProfile != "lib_6_3" ? "DXR_MODERN_LIBRARY=1" : "DXR_MODERN_LIBRARY=0");
-    AppendUniqueDefine(options.featureDefines, "DXR_SER_PERMUTATION=0");
     // PF6 is correctness-preserving and only selected when the device supports inline DXR.
     // Unsupported hardware keeps the exact legacy TraceRay visibility path.
     options.inlineVisibilityPermutation = gfx.IsInitialized() && gfx.IsInlineRaytracingSupported();

@@ -20,6 +20,13 @@ class DxrRestirDispatch;
 class DxrPathTracerDispatch : public DxrDispatchBase
 {
 public:
+    enum class SerOverride : std::uint8_t
+    {
+        Automatic,
+        ForceOff,
+        ForceOn,
+    };
+
     struct FrameInputs
     {
         std::uintptr_t depthSrvCpuHandle = 0;
@@ -92,8 +99,15 @@ public:
     void Release();
 
     bool WarmUpPipelineIfNeeded();
-    bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
+    bool IsPipelineReady() const;
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
+    SerOverride GetSerOverride() const { return m_serOverride; }
+    void SetSerOverride(SerOverride value) { m_serOverride = value; }
+    bool IsSerActive() const { return m_activeSerPermutation; }
+    static bool ShouldUseSerPermutation(const bool supported, const SerOverride override)
+    {
+        return supported && override != SerOverride::ForceOff;
+    }
 
     std::uintptr_t GetPrimaryOutputSrvCpuHandle() const;
     std::uintptr_t GetPrimaryMetadataSrvCpuHandle() const;
@@ -148,7 +162,7 @@ public:
     void ResetAccumulation() { m_frameIndex = 0; }
 
 private:
-    bool EnsurePipeline(bool diagnosticPermutation, std::string& outError);
+    bool EnsurePipeline(bool diagnosticPermutation, bool serPermutation, std::string& outError);
 
     bool m_dispatchedThisFrame = false;
     // The production pipeline lives in DxrDispatchBase. Diagnostics use an identical root/SBT
@@ -156,7 +170,15 @@ private:
     DxrPipeline m_diagnosticPipeline;
     ShaderBindingTable m_diagnosticShaderBindingTable;
     bool m_diagnosticPipelineReady = false;
+    DxrPipeline m_serPipeline;
+    ShaderBindingTable m_serShaderBindingTable;
+    bool m_serPipelineReady = false;
+    DxrPipeline m_serDiagnosticPipeline;
+    ShaderBindingTable m_serDiagnosticShaderBindingTable;
+    bool m_serDiagnosticPipelineReady = false;
     bool m_activeDiagnosticPermutation = false;
+    bool m_activeSerPermutation = false;
+    SerOverride m_serOverride = SerOverride::Automatic;
     std::uint32_t m_frameIndex = 0;
     std::uintptr_t m_lastEnvEquirectSrvCpuHandle = 0;
     std::uint32_t m_lastEnvImportanceCdfSrvIndex = UINT32_MAX;
