@@ -85,6 +85,7 @@ void DrawSceneSection(const LightingPanelContext& ctx)
                 scene.SetShowLightGizmos(showGizmos);
             }
         }
+        RendererSettingUi::MarkRendered("show_light_gizmos");
 
         ImGui::TextUnformatted("Create and edit lights from the Hierarchy and Inspector.");
     }
