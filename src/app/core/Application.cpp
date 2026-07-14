@@ -1459,6 +1459,12 @@ void Application::Render()
                 SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
             });
             RunApplicationPhase("prepare-frame-gpu", [&]() {
+                if (presentingProjectLoad)
+                {
+                    NativeProgressWindow::Instance().Report(
+                        "Preparing GPU resources for first frame...",
+                        0.86f);
+                }
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
         }
@@ -1503,6 +1509,12 @@ void Application::Render()
             if (sceneViewScene != nullptr && m_sceneViewportPanel->HasGpuFramebuffer()
                 && sceneViewScene->GetRenderer().IsGpuResourcesReady())
             {
+                if (presentingProjectLoad)
+                {
+                    NativeProgressWindow::Instance().Report(
+                        "Rendering Scene View first frame...",
+                        0.970f);
+                }
                 SceneRenderTrace::FirstFrameGuard firstFrameGuard;
                 m_camera->SetAspectFromFramebuffer(
                     m_sceneViewportPanel->GetRenderWidth(),
@@ -1514,6 +1526,12 @@ void Application::Render()
                     m_sceneViewportPanel->GetFramebuffer(),
                     SceneRenderOptions{},
                     RenderViewport::SceneView);
+                if (presentingProjectLoad)
+                {
+                    NativeProgressWindow::Instance().Report(
+                        "Compositing Scene View...",
+                        0.990f);
+                }
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
                 if (presentingProjectLoad)

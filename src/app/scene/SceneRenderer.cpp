@@ -13,6 +13,7 @@
 
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/SceneRenderTrace.h"
 
 #include "app/scene/SceneEditor.h"
@@ -137,8 +138,11 @@ void SceneRenderer::ThrowGpuResourcesUnavailable() const
 namespace
 {
     template<typename Fn>
-    void RunGpuInitStep(const char* stepName, Fn&& fn)
+    void RunGpuInitStep(const char* stepName, float progress, Fn&& fn)
     {
+        NativeProgressWindow::Instance().Report(
+            std::string("Initializing GPU: ") + stepName + "...",
+            progress);
         SceneRenderTrace::Scope initScope(stepName);
         try
         {
@@ -251,13 +255,13 @@ void SceneRenderer::EnsureGpuResources() const
     SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
-        RunGpuInitStep("camera gizmos", [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
-        RunGpuInitStep("grid", [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
-        RunGpuInitStep("collider gizmos", [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
-        RunGpuInitStep("light gizmos", [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
-        RunGpuInitStep("shadow map", [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
-        RunGpuInitStep("environment map", [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
-        RunGpuInitStep("screen-space effects", [&]() {
+        RunGpuInitStep("camera gizmos", 0.865f, [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
+        RunGpuInitStep("grid", 0.868f, [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
+        RunGpuInitStep("collider gizmos", 0.871f, [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
+        RunGpuInitStep("light gizmos", 0.874f, [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
+        RunGpuInitStep("shadow map", 0.878f, [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
+        RunGpuInitStep("environment map", 0.882f, [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
+        RunGpuInitStep("screen-space effects", 0.886f, [&]() {
             self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
             const int geometryMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
             if (geometryMsaaSampleCount > 1)
@@ -265,7 +269,7 @@ void SceneRenderer::EnsureGpuResources() const
                 self->m_screenSpaceEffects->SetMsaaSampleCount(geometryMsaaSampleCount);
             }
         });
-        RunGpuInitStep("shadow depth shader", [&]() {
+        RunGpuInitStep("shadow depth shader", 0.890f, [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
                 EngineConstants::ShadowDepthVertexShader,
                 EngineConstants::ShadowDepthFragmentShader);
@@ -514,30 +518,37 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
         if (!smokeReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling DXR smoke pipeline...", 0.938f);
             m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
         }
         if (!primaryReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling DXR primary-debug pipeline...", 0.942f);
             m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded();
         }
         if (!reflectionsReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling DXR reflections pipeline...", 0.946f);
             m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded();
         }
         if (!shadowsReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling DXR shadows pipeline...", 0.950f);
             m_dxrShadowsDispatch->WarmUpPipelineIfNeeded();
         }
         if (!giReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling DXR GI pipeline...", 0.954f);
             m_dxrGiDispatch->WarmUpPipelineIfNeeded();
         }
         if (!pathTracerReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling path tracer pipeline...", 0.960f);
             m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
         }
         if (!restirReady)
         {
+            NativeProgressWindow::Instance().Report("Compiling ReSTIR pipeline...", 0.966f);
             m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
@@ -561,6 +572,7 @@ void SceneRenderer::PrepareFrameGpuResources()
 
     if (m_environmentMap != nullptr)
     {
+        NativeProgressWindow::Instance().Report("Loading / syncing HDR environment...", 0.900f);
         SceneRenderTrace::Scope envScope("SyncGpuResources");
         try
         {
@@ -575,7 +587,16 @@ void SceneRenderer::PrepareFrameGpuResources()
         }
     }
 
-    WarmUpDxrPipelineIfNeeded();
+    if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
+    {
+        NativeProgressWindow::Instance().Report("Warming ray tracing pipelines...", 0.935f);
+        WarmUpDxrPipelineIfNeeded();
+        NativeProgressWindow::Instance().Report("Ray tracing pipelines ready.", 0.968f);
+    }
+    else
+    {
+        NativeProgressWindow::Instance().Report("Preparing first scene frame...", 0.968f);
+    }
 }
 
 void SceneRenderer::RecordDxrPass(
@@ -608,6 +629,9 @@ void SceneRenderer::RecordDxrPass(
     }
 
     DxrBreadcrumb("render: EnsureScene begin");
+    NativeProgressWindow::Instance().Report(
+        "Building ray tracing acceleration structures...",
+        0.978f);
     if (m_dxrAccelerationStructures == nullptr)
     {
         m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
@@ -619,6 +643,7 @@ void SceneRenderer::RecordDxrPass(
         true,
         GfxContext::Get().GetCommandList());
     DxrBreadcrumb("render: EnsureScene end");
+    NativeProgressWindow::Instance().Report("Dispatching ray tracing passes...", 0.985f);
 
     const RenderDebugMode debugMode =
         usePostProcess && m_screenSpaceEffects != nullptr ? m_screenSpaceEffects->GetDebugMode()
@@ -1616,6 +1641,7 @@ void SceneRenderer::Render(
     const RenderViewport renderViewport)
 {
     SceneRenderTrace::Scope renderScope("SceneRenderer::Render");
+    NativeProgressWindow::Instance().Report("Recording first scene frame...", 0.970f);
     EnsureGpuResources();
     if (!IsGpuResourcesReady())
     {
@@ -1623,6 +1649,7 @@ void SceneRenderer::Render(
         return;
     }
 
+    NativeProgressWindow::Instance().Report("Uploading scene GPU tables...", 0.972f);
     m_activePreviousWorldByObjectId = renderViewport == RenderViewport::GameView
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
@@ -1653,6 +1680,7 @@ void SceneRenderer::Render(
 
     {
         SceneRenderTrace::Scope lightingScope("SyncLighting");
+        NativeProgressWindow::Instance().Report("Syncing scene lighting...", 0.973f);
         SyncLighting(scene);
         lightingScope.Success();
     }
@@ -1660,6 +1688,7 @@ void SceneRenderer::Render(
     if (options.enableShadowPass)
     {
         SceneRenderTrace::Scope shadowScope("RenderShadowPass");
+        NativeProgressWindow::Instance().Report("Rendering shadow maps...", 0.974f);
         const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
         RenderShadowPass(scene, camera);
         m_shadowMap->EndFrame();
@@ -1674,6 +1703,7 @@ void SceneRenderer::Render(
     }
 
     bool splitLightingMrt = false;
+    NativeProgressWindow::Instance().Report("Rasterizing scene...", 0.976f);
     PrepareSceneRasterTarget(
         scene,
         camera,
@@ -1695,6 +1725,7 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
+        NativeProgressWindow::Instance().Report("Running post-process and ray tracing...", 0.977f);
         RenderPostProcessPass(
             scene,
             camera,

@@ -57,8 +57,8 @@ using json = nlohmann::json;
 namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
-    constexpr float kProjectObjectLoadProgressStart = 0.15f;
-    constexpr float kProjectObjectLoadProgressEnd = 0.75f;
+    constexpr float kProjectObjectLoadProgressStart = 0.12f;
+    constexpr float kProjectObjectLoadProgressEnd = 0.70f;
 
     std::string NormalizeSlashes(std::string path)
     {

@@ -159,7 +159,7 @@ function(game_engine_apply_render_library_config target)
         target_compile_definitions(${target} PUBLIC GAME_ENGINE_D3D12_DEBUG_LAYER)
     endif()
     if(WIN32)
-        target_link_libraries(${target} PUBLIC Dbghelp comdlg32 shell32 ole32)
+        target_link_libraries(${target} PUBLIC Dbghelp comdlg32 shell32 ole32 comctl32)
     endif()
 endfunction()
 

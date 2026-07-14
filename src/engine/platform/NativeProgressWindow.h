@@ -14,6 +14,8 @@ public:
     void Begin(const std::string& title, const std::string& message);
     void SetMessage(const std::string& message);
     void SetProgress(float progress);
+    // No-op when inactive. progress < 0 leaves the bar position unchanged.
+    void Report(const std::string& message, float progress = -1.0f);
     void End();
 
     void Shutdown();

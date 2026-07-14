@@ -178,13 +178,12 @@ bool ProjectChooser::OpenProjectAtPath(
         }
         openProjectScope.Success();
         ProjectLoadTrace::Step("scene and project file loaded");
-        NativeProgressWindow::Instance().SetProgress(0.78f);
+        NativeProgressWindow::Instance().Report("Scene loaded.", 0.72f);
 
         undoStack.Clear();
         clipboard.Clear();
         ProjectLoadTrace::Step("undo and clipboard cleared");
-        NativeProgressWindow::Instance().SetMessage("Saving recent project settings...");
-        NativeProgressWindow::Instance().SetProgress(0.82f);
+        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.76f);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
@@ -192,8 +191,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
-            NativeProgressWindow::Instance().SetMessage("Applying editor preferences...");
-            NativeProgressWindow::Instance().SetProgress(0.86f);
+            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.80f);
             ProjectLoadTrace::Scope editorStateScope("apply editor state");
             try
             {
@@ -212,8 +210,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().SetMessage("Preparing editor...");
-            NativeProgressWindow::Instance().SetProgress(0.90f);
+            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.84f);
             ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
@@ -221,8 +218,8 @@ bool ProjectChooser::OpenProjectAtPath(
 
         m_showNewProjectForm = false;
         m_errorMessage.clear();
-        NativeProgressWindow::Instance().SetMessage("Preparing first frame...");
-        NativeProgressWindow::Instance().SetProgress(0.96f);
+        // First-frame GPU work fills 0.86 → 1.0 (see SceneRenderer / IBL progress reports).
+        NativeProgressWindow::Instance().Report("Preparing GPU resources for first frame...", 0.86f);
         m_startupMode = false;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;

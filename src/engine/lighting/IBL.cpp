@@ -2,6 +2,7 @@
 #include "engine/lighting/EnvironmentImportanceSampling.h"
 #include "engine/lighting/IrradianceSh.h"
 
+#include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
@@ -21,6 +22,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -1112,20 +1114,30 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
     try
     {
         SceneRenderTrace::Step("ibl: reload begin");
+        NativeProgressWindow::Instance().Report("Building IBL capture targets...", 0.905f);
         if (m_captureDepthResource == nullptr)
         {
             SceneRenderTrace::Step("ibl: create capture resources");
             CreateCaptureResources();
         }
 
+        {
+            const std::string hdrName = std::filesystem::path(m_hdrPath).filename().string();
+            NativeProgressWindow::Instance().Report(
+                hdrName.empty() ? "Loading HDR environment..." : ("Loading HDR: " + hdrName),
+                0.910f);
+        }
         SceneRenderTrace::Step("ibl: load hdr equirect");
         LoadHdrEquirectangular(m_hdrPath.c_str());
+        NativeProgressWindow::Instance().Report("Generating environment cubemap...", 0.918f);
         SceneRenderTrace::Step("ibl: create environment cubemap");
         CreateEnvironmentCubemap();
+        NativeProgressWindow::Instance().Report("Prefiltering specular IBL...", 0.926f);
         SceneRenderTrace::Step("ibl: create prefilter map");
         CreatePrefilterMap();
         if (m_brdfLutGpu.resource == nullptr)
         {
+            NativeProgressWindow::Instance().Report("Generating BRDF lookup table...", 0.932f);
             SceneRenderTrace::Step("ibl: create brdf lut");
             CreateBrdfLut();
         }

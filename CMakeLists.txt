@@ -404,10 +404,6 @@ target_link_libraries(game-engine PRIVATE
     Jolt
 )
 
-if(WIN32)
-    target_link_libraries(game-engine PRIVATE comctl32)
-endif()
-
 # Streamline (DLSS SR, Phase S0): headers only + copy the prebuilt SL/DLSS plugin DLLs next to the
 # exe. We do NOT statically link sl.interposer.lib — it exports DXGI/D3D entry points that would
 # clash with our dxgi.lib/d3d12.lib and interpose the whole device. Instead DlssContext loads

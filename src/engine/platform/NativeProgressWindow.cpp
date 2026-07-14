@@ -15,6 +15,7 @@ bool NativeProgressWindow::IsActive() const { return m_depth > 0; }
 void NativeProgressWindow::Begin(const std::string&, const std::string&) {}
 void NativeProgressWindow::SetMessage(const std::string&) {}
 void NativeProgressWindow::SetProgress(float) {}
+void NativeProgressWindow::Report(const std::string&, float) {}
 void NativeProgressWindow::End() {}
 void NativeProgressWindow::Shutdown() {}
 
@@ -529,6 +530,24 @@ void NativeProgressWindow::SetMessage(const std::string& message)
 void NativeProgressWindow::SetProgress(float progress)
 {
     if (m_depth > 0)
+    {
+        Win32ProgressWindow::Get().SetProgress(progress);
+    }
+}
+
+void NativeProgressWindow::Report(const std::string& message, float progress)
+{
+    if (m_depth <= 0)
+    {
+        return;
+    }
+
+    if (!message.empty())
+    {
+        Win32ProgressWindow::Get().SetMessage(message);
+    }
+
+    if (progress >= 0.0f)
     {
         Win32ProgressWindow::Get().SetProgress(progress);
     }
