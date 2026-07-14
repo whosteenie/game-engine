@@ -681,6 +681,13 @@ namespace
             }
 
             glm::vec3 rotationDegrees = transform.GetRotationDegrees();
+            const bool rotationLockedByHdrAlignment = object.HasLight()
+                && object.GetLight().type == LightType::Directional
+                && object.GetLight().autoAlignWithHdrSkybox;
+            if (rotationLockedByHdrAlignment)
+            {
+                ImGui::BeginDisabled();
+            }
             if (DrawTransformRow(
                     "Rotation",
                     rotationDegrees,
@@ -690,6 +697,14 @@ namespace
             {
                 transform.SetRotationDegrees(rotationDegrees);
                 scene.MarkDirty();
+            }
+            if (rotationLockedByHdrAlignment)
+            {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGui::SetTooltip("Rotation is controlled by HDR skybox auto-alignment.");
+                }
             }
 
             if (DrawTransformRow(
