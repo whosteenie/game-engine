@@ -1,4 +1,5 @@
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/SettingRegistry.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -17,6 +18,7 @@ namespace
     std::map<std::string, bool> g_sectionOpen;
     bool g_handlerRegistered = false;
     std::string g_searchSection;
+    std::string g_activeSection;
     std::string g_searchTarget;
     int g_searchHighlightFrames = 0;
     bool g_searchScrollPending = false;
@@ -91,6 +93,7 @@ namespace TuningSectionState
 
     bool SectionHeader(const char* label, const bool defaultOpen)
     {
+        g_activeSection = label != nullptr ? label : "";
         const std::string key = MakeKey(label);
 
         bool seeded = defaultOpen;
@@ -122,6 +125,8 @@ namespace TuningSectionState
         return open;
     }
 
+    const char* ActiveSection() { return g_activeSection.c_str(); }
+
     void RequestSearchNavigation(const char* sectionLabel, const char* targetId)
     {
         g_searchSection = sectionLabel != nullptr ? sectionLabel : "";
@@ -149,6 +154,26 @@ namespace TuningSectionState
             ImGui::GetWindowDrawList()->AddRectFilled(
                 ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(255, 210, 70, static_cast<int>(alpha * 255.0f)), 4.0f);
             --g_searchHighlightFrames;
+        }
+    }
+
+    void MarkCurrentItemIfSearchTarget()
+    {
+        if (g_searchTarget.empty() || ImGui::GetCurrentContext() == nullptr)
+        {
+            return;
+        }
+
+        const SettingRegistry::Descriptor* descriptor = SettingRegistry::FindById(g_searchTarget);
+        if (descriptor == nullptr || descriptor->section != g_activeSection)
+        {
+            return;
+        }
+
+        ImGuiWindow* const window = ImGui::GetCurrentWindow();
+        if (window != nullptr && window->GetID(descriptor->label.data()) == GImGui->LastItemData.ID)
+        {
+            MarkSearchTarget(descriptor->id.data());
         }
     }
 }

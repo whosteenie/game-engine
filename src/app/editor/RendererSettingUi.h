@@ -23,10 +23,7 @@ namespace RendererSettingUi
     inline void MarkRendered(const char* id)
     {
         const SettingRegistry::Descriptor& descriptor = Require(id);
-        if (descriptor.searchIndexed)
-        {
-            TuningSectionState::MarkSearchTarget(id);
-        }
+        TuningSectionState::MarkSearchTarget(id);
     }
 
     inline void HandleFieldEdit(const char* id, RendererEditContext& context)

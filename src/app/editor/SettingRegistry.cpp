@@ -26,8 +26,9 @@ namespace
         {"pt_ambient_ao_rays", "PT ambient AO rays", "path tracing ambient occlusion", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
         {"pt_restir_di_candidates", "PT ReSTIR DI candidates", "path tracing direct illumination reservoir", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
         {"pt_restir_di_temporal", "PT ReSTIR DI temporal", "path tracing direct illumination temporal reuse", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
-        {"pt_restir_gi_initial", "PT ReSTIR GI initial", "path tracing global illumination reservoir", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
-        {"pt_restir_gi_temporal", "PT ReSTIR GI temporal", "path tracing global illumination temporal reuse", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
+        {"pt_restir_gi_initial", "PT ReSTIR GI initial (P5)", "path tracing global illumination reservoir", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
+        {"pt_restir_gi_temporal", "PT ReSTIR GI temporal (P6)", "path tracing global illumination temporal reuse", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
+        {"pt_sun_angular_radius", "PT sun angular radius", "path tracing sun shadow softness penumbra", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
         {"sun_angular_radius", "Sun angular radius", "sun shadow softness penumbra", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
         {"rt_debug_trace", "Enable RT debug trace", "ray tracing diagnostic", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, false},
         {"rt_reflections_enabled", "Enable RT reflections", "ray traced reflections", "Renderer Tuning", "Ray tracing", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
@@ -65,6 +66,51 @@ namespace
         {"ssgi_strength", "SSGI strength", "screen space global illumination intensity", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
         {"shadow_filter", "Shadow filter", "directional shadow pcf pcss", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Dropdown, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
         {"shadow_map_resolution", "Shadow map resolution", "directional shadow quality", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Dropdown, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"bloom_threshold", "Bloom threshold", "post processing bloom", "Renderer Tuning", "Post-processing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"bloom_soft_knee", "Bloom soft knee", "post processing bloom", "Renderer Tuning", "Post-processing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"bloom_intensity", "Bloom intensity", "post processing bloom", "Renderer Tuning", "Post-processing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"bloom_blur_radius", "Bloom blur radius", "post processing bloom", "Renderer Tuning", "Post-processing", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"dlss_sharpness", "DLSS sharpness", "dlss upscaling sharpen", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"msaa_samples", "MSAA samples", "geometry multisample anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Dropdown, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"fxaa_subpixel_quality", "FXAA subpixel quality", "fxaa anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"fxaa_edge_threshold", "FXAA edge threshold", "fxaa anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"smaa_edge_threshold", "SMAA edge threshold", "smaa anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"smaa_search_steps", "SMAA search steps", "smaa anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"taa_history_blend", "TAA history blend", "taa temporal anti aliasing", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"render_scale", "Render scale", "ssaa supersample scale", "Renderer Tuning", "Anti-aliasing & upscaling", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssao_radius", "SSAO radius", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssao_bias", "SSAO bias", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssao_intensity", "SSAO intensity", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_radius", "GTAO radius", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_thickness", "GTAO thickness", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_falloff", "GTAO falloff", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_intensity", "GTAO intensity", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_directions", "GTAO directions", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_steps", "GTAO steps", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"gtao_denoise", "GTAO denoise", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssao_blur_depth_threshold", "SSAO blur depth threshold", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ao_blend_strength", "AO blend strength", "ambient occlusion", "Renderer Tuning", "Ambient occlusion", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_trace_steps", "Trace steps", "screen space reflections trace", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_trace_samples", "Trace samples", "screen space reflections trace", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_thickness", "Thickness", "screen space reflections trace", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_roughness_cutoff", "Roughness cutoff", "screen space reflections trace", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_denoise", "Enable denoise", "screen space reflections denoiser", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssr_temporal_blend", "Temporal blend", "screen space reflections denoiser", "Renderer Tuning", "Screen-space reflections (SSR)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_history_blend", "GI history blend", "screen space global illumination temporal", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_depth_reject", "GI depth reject threshold", "screen space global illumination temporal", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_denoise", "Enable spatial + temporal denoise", "screen space global illumination denoiser", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_test_noise", "Synthetic trace noise (test)", "screen space global illumination diagnostic", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_noise_strength", "Noise strength", "screen space global illumination", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_blur_spread", "Spatial blur spread", "screen space global illumination denoiser", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_spatial_depth", "Spatial depth threshold", "screen space global illumination denoiser", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_trace_distance", "Max trace distance", "screen space global illumination trace", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"ssgi_trace_steps", "Trace steps", "screen space global illumination trace", "Renderer Tuning", "Screen-space GI (SSGI)", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_pcf_radius", "PCF kernel radius", "directional shadow filtering", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_pcf_samples", "PCF sample count", "directional shadow filtering", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_rotated_pcf", "Rotated PCF", "directional shadow filtering", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_sun_diameter", "Sun angular diameter (deg)", "directional shadow softness", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_min_penumbra", "Min penumbra (texels)", "directional shadow pcss", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Slider, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
+        {"shadow_penumbra_blur", "Shadow penumbra blur", "directional shadow pcss", "Renderer Tuning", "Directional Shadows", SettingRegistry::ControlType::Checkbox, SettingRegistry::PersistenceScope::SceneProject, SettingRegistry::UndoPolicy::Undoable, true},
     };
 
     std::string Lower(std::string_view value)
@@ -84,6 +130,17 @@ const SettingRegistry::Descriptor* SettingRegistry::FindById(const std::string_v
     return it != kDescriptors.end() ? &*it : nullptr;
 }
 
+const SettingRegistry::Descriptor* SettingRegistry::FindBySectionAndLabel(
+    const std::string_view section,
+    const std::string_view label)
+{
+    const auto it = std::find_if(kDescriptors.begin(), kDescriptors.end(),
+        [section, label](const Descriptor& descriptor) {
+            return descriptor.section == section && descriptor.label == label;
+        });
+    return it != kDescriptors.end() ? &*it : nullptr;
+}
+
 std::vector<const SettingRegistry::Descriptor*> SettingRegistry::FindSearchMatches(const std::string_view query)
 {
     const std::string needle = Lower(query);
@@ -91,7 +148,6 @@ std::vector<const SettingRegistry::Descriptor*> SettingRegistry::FindSearchMatch
     if (needle.empty()) return matches;
     for (const Descriptor& descriptor : kDescriptors)
     {
-        if (!descriptor.searchIndexed) continue;
         const std::string haystack = Lower(std::string(descriptor.label) + " " + std::string(descriptor.keywords));
         if (haystack.find(needle) != std::string::npos) matches.push_back(&descriptor);
     }

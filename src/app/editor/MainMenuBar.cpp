@@ -19,6 +19,7 @@
 #include <imgui.h>
 
 #include <filesystem>
+#include <algorithm>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -528,19 +529,24 @@ void MainMenuBar::Draw(
         const std::string query(search);
         if (!query.empty())
         {
+            const std::vector<const SettingRegistry::Descriptor*> matches =
+                SettingRegistry::FindSearchMatches(query);
             const ImVec2 menuPos = ImGui::GetWindowPos();
             const ImVec2 menuSize = ImGui::GetWindowSize();
+            const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+            const float resultHeight = std::clamp(
+                12.0f + rowHeight * static_cast<float>(std::max<std::size_t>(matches.size(), 1u)),
+                rowHeight + 12.0f,
+                420.0f);
             ImGui::SetNextWindowPos(ImVec2(menuPos.x + menuSize.x + 4.0f, menuPos.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(280.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(320.0f, resultHeight), ImGuiCond_Always);
             if (ImGui::Begin(
                     "##RendererTuningSearchResults",
                     nullptr,
-                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+                    ImGuiWindowFlags_NoDecoration
                         | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
             {
                 bool anyMatch = false;
-                const std::vector<const SettingRegistry::Descriptor*> matches =
-                    SettingRegistry::FindSearchMatches(query);
                 for (const SettingRegistry::Descriptor* entry : matches)
                 {
                     anyMatch = true;

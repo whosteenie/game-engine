@@ -1,6 +1,7 @@
 #include "app/undo/UndoCommand.h"
 
 #include "app/editor/EditorClipboard.h"
+#include "app/editor/TuningSectionState.h"
 #include "app/scene/Scene.h"
 #include "app/project/SceneDocument.h"
 #include "app/project/SceneProjectIODetail.h"
@@ -1769,6 +1770,8 @@ void BeginRendererEditFrame(RendererEditContext& context)
 
 void HandleRendererFieldEditEvents(RendererEditContext& context)
 {
+    TuningSectionState::MarkCurrentItemIfSearchTarget();
+
     if (context.undoStack == nullptr || context.scene == nullptr)
     {
         return;

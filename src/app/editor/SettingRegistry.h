@@ -24,5 +24,6 @@ namespace SettingRegistry
 
     const std::vector<Descriptor>& GetAll();
     const Descriptor* FindById(std::string_view id);
+    const Descriptor* FindBySectionAndLabel(std::string_view section, std::string_view label);
     std::vector<const Descriptor*> FindSearchMatches(std::string_view query);
 }
