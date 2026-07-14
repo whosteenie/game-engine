@@ -149,6 +149,20 @@ struct Payload
     float primaryDepth;     // hyperbolic HW depth [0,1] for the DLSS-RR depth guide; keep fp32
 };
 
+// PF2: only the primary attributes required to reconnect ReSTIR GI survive the bounce loop.
+// Identity, guides, depth, motion, and metadata are committed while processing bounce zero.
+struct PtPrimaryReconnectState
+{
+    bool hit;
+    float roughness;
+    float dielectricWeight;
+    float3 worldPos;
+    float3 geomNormal;
+    float3 shadingNormal;
+    float3 albedo;
+    float metallic;
+};
+
 // snorm16x2 pack/unpack (uniform ~3e-5 precision on [-1,1]; sign-extended unpack).
 uint PtPackSnorm16x2(float2 v)
 {
@@ -1571,14 +1585,15 @@ void PathTracerRayGen()
     uint sampleFlags = 0u;
     uint sampleInstanceId = 0u;
     uint samplePrimitiveIndex = 0u;
-    float primaryRoughness = 1.0;
-    float primaryDielectricWeight = 0.0;
-    float3 primaryWorldPos = 0.0.xxx;
-    float3 primaryGeomNormal = float3(0.0, 1.0, 0.0);
-    float3 primaryShadingNormal = float3(0.0, 1.0, 0.0);
-    float3 primaryAlbedo = 0.0.xxx;
-    float primaryMetallic = 0.0;
-    uint primaryMaterialId = 0u;
+    PtPrimaryReconnectState primary;
+    primary.hit = false;
+    primary.roughness = 1.0;
+    primary.dielectricWeight = 0.0;
+    primary.worldPos = 0.0.xxx;
+    primary.geomNormal = float3(0.0, 1.0, 0.0);
+    primary.shadingNormal = float3(0.0, 1.0, 0.0);
+    primary.albedo = 0.0.xxx;
+    primary.metallic = 0.0;
     RestirDiReservoirSet freshDiReservoirs;
     freshDiReservoirs.emissive = RestirDiTemporalInit();
     freshDiReservoirs.environment = RestirDiTemporalInit();
@@ -1590,13 +1605,10 @@ void PathTracerRayGen()
     ray.TMin = 0.001;
     ray.TMax = g_MaxTraceDistance;
 
-    uint primaryInstanceId = 0u;
-    uint primaryPrimitiveIndex = 0u;
-    bool primaryHit = false;
-    float primaryDepth = 1.0;
-    float2 primaryMotion = 0.0.xx;
-    float primaryPreviousLinearDepth = 0.0;
     float specHitDistGuide = g_MaxTraceDistance;
+#if PT_DIAGNOSTIC_PERMUTATION
+    uint primaryMaterialIdForDebug = 0u;
+#endif
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
     float pathConeWidth = 0.0;
     // Roughness of the surface that launched the current ray — drives env mip on miss, matching
@@ -1646,14 +1658,19 @@ void PathTracerRayGen()
                 {
                     prevClipUnj = currClipUnj;
                 }
-                primaryMotion = ComputeMotionNdc(currClipUnj, prevClipUnj);
-                primaryDepth = 1.0;
+                const float2 skyMotion = ComputeMotionNdc(currClipUnj, prevClipUnj);
 
                 // Sky RR guides: (0.5, 0.5, 0.5) albedo per the DLSS-RR Integration Guide §3.4.2
                 // (white/black diffuse and zero specular are known-bad — devdoc/dxr/pt/sky-motion.md).
                 g_DiffuseAlbedoGuide[pixel] = float4(0.5, 0.5, 0.5, 1.0);
                 g_SpecularAlbedoGuide[pixel] = float4(0.5, 0.5, 0.5, 1.0);
                 g_NormalRoughnessGuide[pixel] = float4(0.0, 0.0, 1.0, 1.0);
+                g_RestirSurfacePositionDepth[pixel] = 0.0.xxxx;
+                g_RestirSurfaceMaterial[pixel] = 0u.xxxx;
+                g_RestirSurfaceAlbedoMetallic[pixel] = 0.0.xxxx;
+                g_DepthOutput[pixel] = 1.0;
+                g_MotionOutput[pixel] = float4(skyMotion, 0.0, 1.0);
+                g_Metadata[pixel] = uint2(0, 0);
             }
 
             float3 missRadiance = 0.0.xxx;
@@ -1929,19 +1946,21 @@ void PathTracerRayGen()
 
         if (bounce == 0u)
         {
-            primaryHit = true;
-            primaryInstanceId = payload.instanceId;
-            primaryPrimitiveIndex = payload.primitiveIndex;
-            primaryMotion = PayloadPrimaryMotion(payload);
-            primaryPreviousLinearDepth = PayloadPrevLinearDepth(payload);
-            primaryRoughness = surfaceRoughness;
-            primaryDielectricWeight = dielectricWeight;
-            primaryWorldPos = hitPos;
-            primaryGeomNormal = hitNormalGeom;
-            primaryShadingNormal = hitNormal;
-            primaryMaterialId = g_GeometryLookup[payload.instanceId].materialId;
-            primaryAlbedo = albedo;
-            primaryMetallic = surfaceMetallic;
+            primary.hit = true;
+            primary.roughness = surfaceRoughness;
+            primary.dielectricWeight = dielectricWeight;
+            primary.worldPos = hitPos;
+            primary.geomNormal = hitNormalGeom;
+            primary.shadingNormal = hitNormal;
+            primary.albedo = albedo;
+            primary.metallic = surfaceMetallic;
+            const uint primaryMaterialId = g_GeometryLookup[payload.instanceId].materialId;
+#if PT_DIAGNOSTIC_PERMUTATION
+            primaryMaterialIdForDebug = primaryMaterialId;
+#endif
+            float resolvedPrimaryDepth = payload.primaryDepth;
+            float2 resolvedPrimaryMotion = PayloadPrimaryMotion(payload);
+            const float primaryPreviousLinearDepth = PayloadPrevLinearDepth(payload);
             const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
             float3 diffuseGuide;
@@ -1990,8 +2009,9 @@ void PathTracerRayGen()
 
                 if (txGuide.valid)
                 {
-                    primaryDepth = txGuide.depth;
-                    primaryMotion = lerp(PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
+                    resolvedPrimaryDepth = txGuide.depth;
+                    resolvedPrimaryMotion = lerp(
+                        PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
 
                     float3 bgDiffuse;
                     float3 bgSpec;
@@ -2031,18 +2051,14 @@ void PathTracerRayGen()
                 }
                 else
                 {
-                    primaryDepth = 1.0;
-                    primaryMotion = lerp(PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
+                    resolvedPrimaryDepth = 1.0;
+                    resolvedPrimaryMotion = lerp(
+                        PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
                     const float3 skyGuide = float3(0.5, 0.5, 0.5);
                     diffuseGuide = lerp(diffuseGuide, skyGuide, transmitWeight);
                     specGuide = lerp(specGuide, skyGuide, transmitWeight);
                 }
             }
-            else
-            {
-                primaryDepth = payload.primaryDepth;
-            }
-
             g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
             g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
             g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
@@ -2081,6 +2097,26 @@ void PathTracerRayGen()
                     specHitDistGuide = g_MaxTraceDistance;
                 }
             }
+
+            // PF2: retire bounce-zero output state before secondary traces. Only `primary`, which
+            // ReSTIR GI reconnects after the path terminates, remains live through the loop.
+            const float restirLinearViewDepth = abs(mul(g_WorldToView, float4(primary.worldPos, 1.0)).z);
+            const uint surfaceFlags = 1u
+                | (primary.dielectricWeight > 0.01 ? 2u : 0u)
+                | (primary.roughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
+            g_RestirSurfacePositionDepth[pixel] = float4(primary.worldPos, restirLinearViewDepth);
+            g_RestirSurfaceMaterial[pixel] = uint4(
+                RestirPackOctNormal(primary.geomNormal),
+                RestirPackOctNormal(primary.shadingNormal),
+                ((payload.instanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
+                (primaryMaterialId & 0xffffu) | (f32tof16(primary.roughness) << 16u));
+            g_RestirSurfaceAlbedoMetallic[pixel] = float4(primary.albedo, primary.metallic);
+            g_DepthOutput[pixel] = resolvedPrimaryDepth;
+            const float previousDepthDelta = primaryPreviousLinearDepth > 0.0
+                ? primaryPreviousLinearDepth - restirLinearViewDepth
+                : 0.0;
+            g_MotionOutput[pixel] = float4(resolvedPrimaryMotion, previousDepthDelta, 1.0);
+            g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);
         }
 
         if (terminalEmissiveHit)
@@ -2158,8 +2194,8 @@ void PathTracerRayGen()
             throughputAfterFirstScatter = throughput;
             throughput = 1.0.xxx;
             inTail = true;
-            if (primaryDielectricWeight > 0.01
-                || primaryRoughness <= kPtDeltaSpecularRoughness
+            if (primary.dielectricWeight > 0.01
+                || primary.roughness <= kPtDeltaSpecularRoughness
                 || scatterPdf >= kDeltaScatterPdf * 0.5)
             {
                 sampleFlags |= kRestirSampleNoReuse;
@@ -2226,12 +2262,12 @@ void PathTracerRayGen()
     // geometry and the traced primary-to-secondary segment proves visibility. Reused samples in P6
     // must retrace visibility and apply the reconnection Jacobian.
     const bool giEligible = kPtRestirGiInitialEnabled
-        && primaryHit
+        && primary.hit
         && haveInitialSample
-        && primaryDielectricWeight <= 0.01
+        && primary.dielectricWeight <= 0.01
         // Low-but-non-delta lobes remain in-domain. Final shading applies the RTXDI input/output
         // MIS fallback instead of drawing a binary estimator boundary at roughness 0.2.
-        && primaryRoughness > kPtDeltaSpecularRoughness
+        && primary.roughness > kPtDeltaSpecularRoughness
         && (sampleFlags & kRestirSampleNoReuse) == 0u
         && samplePdf > 0.0
         && samplePdf < kRestirGiMaxProposalPdf;
@@ -2248,21 +2284,21 @@ void PathTracerRayGen()
         sampleFlags,
         sampleInstanceId,
         samplePrimitiveIndex);
-    const float3 toSecondary = sampleXs - primaryWorldPos;
+    const float3 toSecondary = sampleXs - primary.worldPos;
     const float secondaryDistance = length(toSecondary);
     const float3 secondaryDirection = secondaryDistance > 1e-5
         ? toSecondary / secondaryDistance
-        : primaryShadingNormal;
-    const float3 primaryF0 = lerp(0.04.xxx, primaryAlbedo, primaryMetallic);
+        : primary.shadingNormal;
+    const float3 primaryF0 = lerp(0.04.xxx, primary.albedo, primary.metallic);
     const float3 currentPrimaryBsdfCos = giEligible
         ? EvaluateOpaqueBsdf(
-            primaryShadingNormal,
-            normalize(g_CameraPos - primaryWorldPos),
+            primary.shadingNormal,
+            normalize(g_CameraPos - primary.worldPos),
             secondaryDirection,
             primaryF0,
-            primaryAlbedo,
-            primaryRoughness,
-            primaryMetallic)
+            primary.albedo,
+            primary.roughness,
+            primary.metallic)
         : 0.0.xxx;
     const float3 restirGiIndirectRaw = currentPrimaryBsdfCos * loTail * giReservoir.weightSum;
     const float3 restirGiIndirect = currentPrimaryBsdfCos * giReservoir.radiance * giReservoir.weightSum;
@@ -2288,7 +2324,7 @@ void PathTracerRayGen()
 #if PT_DIAGNOSTIC_PERMUTATION
     float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
-        primaryHit,
+        primary.hit,
         radiance,
         radiancePreClamp,
         termDirectSun,
@@ -2300,25 +2336,25 @@ void PathTracerRayGen()
         primarySunVis,
         specHitDistGuide);
 
-    if (primaryHit && g_PtDebugIsolateMode == 10u)
+    if (primary.hit && g_PtDebugIsolateMode == 10u)
     {
-        const float linearDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
+        const float linearDepth = abs(mul(g_WorldToView, float4(primary.worldPos, 1.0)).z);
         const float v = saturate(linearDepth / max(g_MaxTraceDistance, 1e-4));
         displayRadiance = float3(v, v, v);
     }
-    else if (primaryHit && g_PtDebugIsolateMode == 11u)
+    else if (primary.hit && g_PtDebugIsolateMode == 11u)
     {
-        displayRadiance = primaryGeomNormal * 0.5 + 0.5;
+        displayRadiance = primary.geomNormal * 0.5 + 0.5;
     }
-    else if (primaryHit && g_PtDebugIsolateMode == 12u)
+    else if (primary.hit && g_PtDebugIsolateMode == 12u)
     {
-        displayRadiance = frac(float3(0.1031, 0.11369, 0.13787) * float(primaryMaterialId + 1u));
+        displayRadiance = frac(float3(0.1031, 0.11369, 0.13787) * float(primaryMaterialIdForDebug + 1u));
     }
-    else if (primaryHit && g_PtDebugIsolateMode == 13u)
+    else if (primary.hit && g_PtDebugIsolateMode == 13u)
     {
         displayRadiance = float3(
-            primaryDielectricWeight > 0.01 ? 1.0 : 0.0,
-            primaryRoughness <= kPtDeltaSpecularRoughness ? 1.0 : 0.0,
+            primary.dielectricWeight > 0.01 ? 1.0 : 0.0,
+            primary.roughness <= kPtDeltaSpecularRoughness ? 1.0 : 0.0,
             0.15);
     }
 #else
@@ -2336,37 +2372,7 @@ void PathTracerRayGen()
         restirBaseRadiance = ClampRadiance(restirBaseRadiance);
     }
     g_DirectOutput[pixel] = float4(restirBaseRadiance, 0.0);
-    float restirLinearViewDepth = 0.0;
-    if (primaryHit)
-    {
-        const uint surfaceFlags = 1u
-            | (primaryDielectricWeight > 0.01 ? 2u : 0u)
-            | (primaryRoughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
-        restirLinearViewDepth = abs(mul(g_WorldToView, float4(primaryWorldPos, 1.0)).z);
-        g_RestirSurfacePositionDepth[pixel] = float4(primaryWorldPos, restirLinearViewDepth);
-        g_RestirSurfaceMaterial[pixel] = uint4(
-            RestirPackOctNormal(primaryGeomNormal),
-            RestirPackOctNormal(primaryShadingNormal),
-            ((primaryInstanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
-            (primaryMaterialId & 0xffffu) | (f32tof16(primaryRoughness) << 16u));
-        g_RestirSurfaceAlbedoMetallic[pixel] = float4(primaryAlbedo, primaryMetallic);
-    }
-    else
-    {
-        g_RestirSurfacePositionDepth[pixel] = 0.0.xxxx;
-        g_RestirSurfaceMaterial[pixel] = 0u.xxxx;
-        g_RestirSurfaceAlbedoMetallic[pixel] = 0.0.xxxx;
-    }
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
-    g_DepthOutput[pixel] = primaryDepth;
-    // ReSTIR consumes Z as expected previous linear-depth delta. RR consumes XY only.
-    const float previousDepthDelta = primaryHit && primaryPreviousLinearDepth > 0.0
-        ? primaryPreviousLinearDepth - restirLinearViewDepth
-        : 0.0;
-    g_MotionOutput[pixel] = float4(primaryMotion, previousDepthDelta, 1.0);
-    g_Metadata[pixel] = primaryHit
-        ? uint2(primaryInstanceId + 1u, primaryPrimitiveIndex)
-        : uint2(0, 0);
 }
 
 [shader("miss")]
