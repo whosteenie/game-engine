@@ -29,6 +29,7 @@ namespace
 {
     constexpr float PickRepeatThresholdPixels = 8.0f;
     constexpr float MarqueeDragThresholdPixels = 5.0f;
+    constexpr float RotationSnapDegrees = 15.0f;
 
     // Depth cycling always walks the full hit list at the click pixel (see PickSceneObjectCycling).
     // Without Ctrl the cycled object replaces the selection; with Ctrl it is toggled in/out.
@@ -340,7 +341,13 @@ namespace
         const glm::mat4 displayedMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetUnjitteredProjectionMatrix();
-        const bool altHeld = ImGui::GetIO().KeyAlt;
+        const ImGuiIO& io = ImGui::GetIO();
+        const bool altHeld = io.KeyAlt;
+        const bool rotationSnapActive = tool == TransformTool::Rotate && io.KeyCtrl;
+        const float rotationSnap[3] = {
+            RotationSnapDegrees,
+            RotationSnapDegrees,
+            RotationSnapDegrees};
 
         const bool wasUsing = gizmoWasUsing;
         ObjectTransformMap frameStartTransforms;
@@ -364,7 +371,9 @@ namespace
             glm::value_ptr(projectionMatrix),
             ToImGuizmoOperation(tool),
             ToImGuizmoMode(space),
-            glm::value_ptr(manipulateMatrix));
+            glm::value_ptr(manipulateMatrix),
+            nullptr,
+            rotationSnapActive ? rotationSnap : nullptr);
 
         const bool isUsing = ImGuizmo::IsUsing();
         const bool freeMove =
