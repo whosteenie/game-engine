@@ -20,6 +20,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -171,7 +172,18 @@ namespace
         return true;
     }
 
-    glm::vec3 ComputeBoundsSurfaceRestTranslation(
+    glm::vec3 AabbSupportPoint(
+        const glm::vec3& boundsMin,
+        const glm::vec3& boundsMax,
+        const glm::vec3& direction)
+    {
+        const glm::vec3 center = (boundsMin + boundsMax) * 0.5f;
+        const glm::vec3 extents = (boundsMax - boundsMin) * 0.5f;
+        return center + extents * glm::sign(direction);
+    }
+
+    // Full 3D place: put the AABB support (contact) point exactly on the hit.
+    glm::vec3 ComputeBoundsSurfacePlaceTranslation(
         const glm::vec3& boundsMin,
         const glm::vec3& boundsMax,
         const glm::vec3& hitPoint,
@@ -184,25 +196,52 @@ namespace
         }
 
         const glm::vec3 normal = hitNormal / normalLength;
-        const glm::vec3 corners[8] = {
-            {boundsMin.x, boundsMin.y, boundsMin.z},
-            {boundsMax.x, boundsMin.y, boundsMin.z},
-            {boundsMin.x, boundsMax.y, boundsMin.z},
-            {boundsMax.x, boundsMax.y, boundsMin.z},
-            {boundsMin.x, boundsMin.y, boundsMax.z},
-            {boundsMax.x, boundsMin.y, boundsMax.z},
-            {boundsMin.x, boundsMax.y, boundsMax.z},
-            {boundsMax.x, boundsMax.y, boundsMax.z},
-        };
+        const glm::vec3 support = AabbSupportPoint(boundsMin, boundsMax, -normal);
+        return hitPoint - support;
+    }
 
-        float minProjection = std::numeric_limits<float>::max();
-        for (const glm::vec3& corner : corners)
+    bool IntersectRayPlane(
+        const Ray& ray,
+        const glm::vec3& planePoint,
+        const glm::vec3& planeNormal,
+        glm::vec3& outPoint)
+    {
+        const float normalLength = glm::length(planeNormal);
+        if (normalLength < 1e-8f)
         {
-            minProjection = std::min(minProjection, glm::dot(corner - hitPoint, normal));
+            return false;
         }
 
-        // Push the AABB along the outward normal so its support plane sits on the hit.
-        return -minProjection * normal;
+        const glm::vec3 normal = planeNormal / normalLength;
+        const float denominator = glm::dot(normal, ray.direction);
+        if (std::fabs(denominator) < 1e-8f)
+        {
+            return false;
+        }
+
+        const float distance = glm::dot(planePoint - ray.origin, normal) / denominator;
+        if (distance < 0.0f)
+        {
+            return false;
+        }
+
+        outPoint = ray.origin + ray.direction * distance;
+        return true;
+    }
+
+    bool IsFrontFacingSurfaceHit(const SurfaceHit& hit, const Ray& ray)
+    {
+        return glm::dot(hit.normal, -ray.direction) > 0.05f;
+    }
+
+    void ClearSurfaceSnapLastHit(
+        bool& hasLastHit,
+        glm::vec3& lastPoint,
+        glm::vec3& lastNormal)
+    {
+        hasLastHit = false;
+        lastPoint = glm::vec3(0.0f);
+        lastNormal = glm::vec3(0.0f, 1.0f, 0.0f);
     }
 
     void UpdateTransformGizmo(
@@ -214,12 +253,19 @@ namespace
         bool& gizmoWasUsing,
         ObjectTransformMap& gizmoTransformBefore,
         glm::mat4& gizmoUnsnappedMatrix,
+        bool& surfaceSnapHasLastHit,
+        glm::vec3& surfaceSnapLastPoint,
+        glm::vec3& surfaceSnapLastNormal,
         const EditorViewportRect* viewport)
     {
         if (viewport == nullptr || !viewport->valid)
         {
             gizmoWasUsing = false;
             gizmoTransformBefore.clear();
+            ClearSurfaceSnapLastHit(
+                surfaceSnapHasLastHit,
+                surfaceSnapLastPoint,
+                surfaceSnapLastNormal);
             return;
         }
 
@@ -227,6 +273,10 @@ namespace
         {
             gizmoWasUsing = false;
             gizmoTransformBefore.clear();
+            ClearSurfaceSnapLastHit(
+                surfaceSnapHasLastHit,
+                surfaceSnapLastPoint,
+                surfaceSnapLastNormal);
             return;
         }
 
@@ -249,6 +299,10 @@ namespace
         if (!wasUsing)
         {
             gizmoUnsnappedMatrix = displayedMatrix;
+            ClearSurfaceSnapLastHit(
+                surfaceSnapHasLastHit,
+                surfaceSnapLastPoint,
+                surfaceSnapLastNormal);
             if (undoStack != nullptr)
             {
                 frameStartTransforms =
@@ -276,8 +330,19 @@ namespace
         }
 
         glm::mat4 desiredMatrix = manipulateMatrix;
-        if (freeMove && altHeld)
+        const bool surfaceSnapActive = freeMove && altHeld;
+        if (!surfaceSnapActive)
         {
+            ClearSurfaceSnapLastHit(
+                surfaceSnapHasLastHit,
+                surfaceSnapLastPoint,
+                surfaceSnapLastNormal);
+        }
+
+        if (surfaceSnapActive)
+        {
+            // Keep ImGuizmo's unsapped pose for Alt-up restore, but placement itself is
+            // driven by the mouse ray on the surface (not screen-plane translation).
             glm::mat4 currentMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
             scene.ApplySelectionGizmoWorldMatrix(currentMatrix, manipulateMatrix);
 
@@ -292,22 +357,58 @@ namespace
                 viewMatrix,
                 projectionMatrix);
 
+            glm::vec3 placePoint(0.0f);
+            glm::vec3 placeNormal(0.0f, 1.0f, 0.0f);
+            bool havePlaceTarget = false;
+
             SurfaceHit hit;
             if (RaycastClosestSurface(
                     scene.GetObjects(),
                     ray,
                     scene.GetSelection().indices,
-                    hit))
+                    hit)
+                && IsFrontFacingSurfaceHit(hit, ray))
+            {
+                surfaceSnapHasLastHit = true;
+                surfaceSnapLastPoint = hit.point;
+                surfaceSnapLastNormal = hit.normal;
+                placePoint = hit.point;
+                placeNormal = hit.normal;
+                havePlaceTarget = true;
+            }
+            else if (surfaceSnapHasLastHit)
+            {
+                // Cursor left geometry (e.g. sky): scrub along the last hit's plane.
+                glm::vec3 planePoint(0.0f);
+                if (IntersectRayPlane(
+                        ray,
+                        surfaceSnapLastPoint,
+                        surfaceSnapLastNormal,
+                        planePoint))
+                {
+                    placePoint = planePoint;
+                    placeNormal = surfaceSnapLastNormal;
+                    havePlaceTarget = true;
+                }
+                else
+                {
+                    placePoint = surfaceSnapLastPoint;
+                    placeNormal = surfaceSnapLastNormal;
+                    havePlaceTarget = true;
+                }
+            }
+
+            if (havePlaceTarget)
             {
                 glm::vec3 boundsMin;
                 glm::vec3 boundsMax;
                 if (TryGetSelectionWorldAabb(scene, boundsMin, boundsMax))
                 {
-                    const glm::vec3 translation = ComputeBoundsSurfaceRestTranslation(
+                    const glm::vec3 translation = ComputeBoundsSurfacePlaceTranslation(
                         boundsMin,
                         boundsMax,
-                        hit.point,
-                        hit.normal);
+                        placePoint,
+                        placeNormal);
                     desiredMatrix = manipulateMatrix;
                     desiredMatrix[3] += glm::vec4(translation, 0.0f);
                 }
@@ -335,6 +436,14 @@ namespace
                 std::move(after),
                 GetGizmoCommandName(tool));
             gizmoTransformBefore.clear();
+        }
+
+        if (!isUsing)
+        {
+            ClearSurfaceSnapLastHit(
+                surfaceSnapHasLastHit,
+                surfaceSnapLastPoint,
+                surfaceSnapLastNormal);
         }
 
         gizmoWasUsing = isUsing;
@@ -477,6 +586,9 @@ void SceneEditor::Update(
         m_gizmoWasUsing,
         m_gizmoTransformBefore,
         m_gizmoUnsnappedMatrix,
+        m_surfaceSnapHasLastHit,
+        m_surfaceSnapLastPoint,
+        m_surfaceSnapLastNormal,
         viewport);
 
     const bool gizmoCapturingMouse =
@@ -571,6 +683,9 @@ void SceneEditor::ResetInteractionState()
     m_gizmoWasUsing = false;
     m_gizmoTransformBefore.clear();
     m_gizmoUnsnappedMatrix = glm::mat4(1.0f);
+    m_surfaceSnapHasLastHit = false;
+    m_surfaceSnapLastPoint = glm::vec3(0.0f);
+    m_surfaceSnapLastNormal = glm::vec3(0.0f, 1.0f, 0.0f);
     m_hasLastPickScreenPosition = false;
 }
 

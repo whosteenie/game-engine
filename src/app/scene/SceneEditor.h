@@ -74,4 +74,7 @@ private:
     // Unsnapped gizmo matrix during a translate drag so Alt surface-snap can preview
     // without permanently rewriting ImGuizmo's drag base (Alt-up restores this pose).
     mutable glm::mat4 m_gizmoUnsnappedMatrix{1.0f};
+    mutable bool m_surfaceSnapHasLastHit = false;
+    mutable glm::vec3 m_surfaceSnapLastPoint{0.0f};
+    mutable glm::vec3 m_surfaceSnapLastNormal{0.0f, 1.0f, 0.0f};
 };
