@@ -70,21 +70,15 @@ namespace
                 continue;
             }
 
-            for (const glm::vec3& localPosition : draw.mesh->GetPositions())
-            {
-                const glm::vec3 worldPosition =
-                    glm::vec3(draw.worldMatrix * glm::vec4(localPosition, 1.0f));
-                if (!hasBounds)
-                {
-                    boundsMin = worldPosition;
-                    boundsMax = worldPosition;
-                    hasBounds = true;
-                }
-                else
-                {
-                    ExpandBounds(boundsMin, boundsMax, worldPosition);
-                }
-            }
+            // The transformed local AABB produces the same world-space AABB as scanning every
+            // vertex, without making an idle gizmo update proportional to mesh vertex count.
+            ExpandBoundsWithOrientedBox(
+                boundsMin,
+                boundsMax,
+                draw.worldMatrix,
+                draw.localBoundsMin,
+                draw.localBoundsMax,
+                hasBounds);
         }
     }
 
@@ -363,7 +357,11 @@ void CollectRenderableSelectionMeshes(
     const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
     if (object.IsRenderable() && object.HasMesh())
     {
-        outMeshes.push_back(SelectionMeshDraw{object.GetMesh(), GetObjectWorldMatrix(objects, objectIndex)});
+        outMeshes.push_back(SelectionMeshDraw{
+            object.GetMesh(),
+            GetObjectWorldMatrix(objects, objectIndex),
+            object.GetLocalBoundsMin(),
+            object.GetLocalBoundsMax()});
     }
 
     for (int childIndex : GetObjectChildren(objects, objectIndex))

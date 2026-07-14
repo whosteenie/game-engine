@@ -180,6 +180,13 @@ public:
     // Monotonic counter incremented once per BeginFrame (not the swapchain ring index).
     std::uint64_t GetSubmissionFrameNumber() const { return m_submissionFrameNumber; }
 
+    struct FramePacingDiagnostics
+    {
+        double previousFrameFenceWaitMs = 0.0;
+        double presentCallMs = 0.0;
+    };
+    const FramePacingDiagnostics& GetFramePacingDiagnostics() const { return m_framePacingDiagnostics; }
+
     // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
     bool IsRaytracingSupported() const;
     int GetRaytracingTier() const { return m_raytracingTier; }
@@ -253,9 +260,11 @@ private:
     std::uint64_t m_fenceValues[FrameCount] = {};
     // Monotonic fence for immediate uploads; never aliased into swapchain frame fences.
     std::uint64_t m_submissionFenceValue = 0;
+    FramePacingDiagnostics m_framePacingDiagnostics{};
     const Framebuffer* m_boundOutputFramebuffer = nullptr;
     bool m_frameRecording = false;
     bool m_frameCommandsSubmitted = false;
+    int m_frameGpuScopeId = -1;
     int m_pendingResizeWidth = 0;
     int m_pendingResizeHeight = 0;
     TextureFilterMode m_materialTextureFilterMode = TextureFilterMode::Trilinear;

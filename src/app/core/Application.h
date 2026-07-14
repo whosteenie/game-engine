@@ -3,6 +3,7 @@
 #include "app/project/ProjectEditorState.h"
 #include "app/core/PlayModeController.h"
 #include "app/undo/UndoStack.h"
+#include "app/panels/PerformancePanel.h"
 
 #include "app/editor/EditorClipboard.h"
 
@@ -14,7 +15,6 @@ class EditorDockSpace;
 class EditorTopToolbar;
 class EditorSettings;
 class LightingPanel;
-class PerformancePanel;
 class MainMenuBar;
 class ProjectChooser;
 class ProjectFilesPanel;
@@ -41,7 +41,7 @@ public:
 private:
     void InitGLFW();
 
-    void Update(double deltaTime);
+    void Update(double deltaTime, ApplicationFrameDiagnostics& frameDiagnostics);
     void Render();
     void OnFramebufferResize(int width, int height);
     void RequestClose();

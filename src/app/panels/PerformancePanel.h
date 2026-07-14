@@ -9,10 +9,30 @@
 class Scene;
 class SceneRenderer;
 
+struct ApplicationFrameDiagnostics
+{
+    double updateCpuMs = 0.0;
+    double renderCpuMs = 0.0;
+    double frameCpuMs = 0.0;
+    double imguiBeginCpuMs = 0.0;
+    double projectChooserUiCpuMs = 0.0;
+    double viewportUiCpuMs = 0.0;
+    double hierarchyUiCpuMs = 0.0;
+    double inspectorUiCpuMs = 0.0;
+    double projectFilesUiCpuMs = 0.0;
+    double lightingUiCpuMs = 0.0;
+    double performanceUiCpuMs = 0.0;
+    double sceneEditorCpuMs = 0.0;
+};
+
 class PerformancePanel
 {
 public:
     void OnFrame(double deltaTimeSeconds);
+    void SetApplicationFrameDiagnostics(const ApplicationFrameDiagnostics& diagnostics)
+    {
+        m_applicationFrameDiagnostics = diagnostics;
+    }
 
     void Draw(
         const Scene& scene,
@@ -68,6 +88,7 @@ private:
     mutable bool m_cpuPassSmoothingEnabled = false;
     mutable std::unordered_map<std::string, float> m_smoothedGpuPassMs;
     mutable std::unordered_map<std::string, float> m_smoothedCpuPassMs;
+    ApplicationFrameDiagnostics m_applicationFrameDiagnostics{};
     mutable SmoothedSystemResourceDisplay m_smoothedSystemResources;
     SystemResourcesMonitor m_systemResources;
 };

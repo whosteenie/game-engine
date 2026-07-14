@@ -60,6 +60,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <stdexcept>
 
 #include <cfloat>
@@ -491,16 +492,27 @@ void Application::Run()
         double currentTime = glfwGetTime();
         double deltaTime = currentTime - lastFrameTime;
         lastFrameTime = currentTime;
+        const auto frameWorkStart = std::chrono::steady_clock::now();
+        ApplicationFrameDiagnostics frameDiagnostics{};
 
         try
         {
-            RunApplicationPhase("Update", [&]() { Update(deltaTime); });
+            const auto updateStart = std::chrono::steady_clock::now();
+            RunApplicationPhase("Update", [&]() { Update(deltaTime, frameDiagnostics); });
+            frameDiagnostics.updateCpuMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - updateStart).count();
             if (ConsumeConsoleCloseRequest())
             {
                 RequestForcedClose();
                 break;
             }
+            const auto renderStart = std::chrono::steady_clock::now();
             RunApplicationPhase("Render", [&]() { Render(); });
+            frameDiagnostics.renderCpuMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - renderStart).count();
+            frameDiagnostics.frameCpuMs =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - frameWorkStart).count();
+            m_performancePanel->SetApplicationFrameDiagnostics(frameDiagnostics);
             suppressedRepeatedFrameErrors = 0;
         }
         catch (const std::exception& exception)
@@ -727,7 +739,7 @@ void Application::ProcessQueuedProjectOpenIfReady()
     }
 }
 
-void Application::Update(double deltaTime)
+void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDiagnostics)
 {
     m_performancePanel->OnFrame(deltaTime);
 
@@ -767,10 +779,14 @@ void Application::Update(double deltaTime)
         }
     }
 
+    const auto imguiBeginStart = std::chrono::steady_clock::now();
     m_imguiLayer->BeginFrame();
+    frameDiagnostics.imguiBeginCpuMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - imguiBeginStart).count();
     m_imguiFrameActive = true;
     InputDiagnostics::LogFrame(m_window, "after-imgui-newframe");
 
+    const auto projectChooserUiStart = std::chrono::steady_clock::now();
     m_projectChooser->Draw(
         *m_projectSession,
         *m_scene,
@@ -781,6 +797,8 @@ void Application::Update(double deltaTime)
         [this]() { ResetEditorLayoutLoadState(); },
         m_undoStack,
         m_editorClipboard);
+    frameDiagnostics.projectChooserUiCpuMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - projectChooserUiStart).count();
 
     ProcessQueuedProjectOpenIfReady();
 
@@ -930,17 +948,38 @@ void Application::Update(double deltaTime)
 
         EditorPanelConstraints::SyncViewportDockVisibleWindow("Scene View", "Game View");
 
+        const auto viewportUiStart = std::chrono::steady_clock::now();
         m_gameViewportPanel->Draw(hasGameSceneCamera, gameViewWillRender);
         m_sceneViewportPanel->Draw(*m_camera, *editorScene, sceneViewWillRender);
+        frameDiagnostics.viewportUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - viewportUiStart).count();
+
+        const auto hierarchyUiStart = std::chrono::steady_clock::now();
         m_sceneHierarchyPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack, m_editorClipboard);
+        frameDiagnostics.hierarchyUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - hierarchyUiStart).count();
+
+        const auto inspectorUiStart = std::chrono::steady_clock::now();
         m_sceneInspectorPanel->Draw(*editorScene, editorUndoStack);
+        frameDiagnostics.inspectorUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - inspectorUiStart).count();
+
+        const auto projectFilesUiStart = std::chrono::steady_clock::now();
         m_projectFilesPanel->Draw(*editorScene, *m_projectSession, *editorUndoStack);
+        frameDiagnostics.projectFilesUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - projectFilesUiStart).count();
+
+        const auto lightingUiStart = std::chrono::steady_clock::now();
         m_lightingPanel->Draw(
             *editorScene,
             *m_camera,
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
             editorUndoStack);
+        frameDiagnostics.lightingUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - lightingUiStart).count();
+
+        const auto performanceUiStart = std::chrono::steady_clock::now();
         m_performancePanel->Draw(
             *editorScene,
             editorScene->GetRenderer(),
@@ -949,6 +988,8 @@ void Application::Update(double deltaTime)
             windowWidth,
             windowHeight,
             m_playModeController.IsActive());
+        frameDiagnostics.performanceUiCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - performanceUiStart).count();
         const bool validateRestoredLayout = m_pendingEditorLayoutValidation;
         m_editorDockSpace->AfterEditorPanels(validateRestoredLayout);
         if (validateRestoredLayout)
@@ -1083,7 +1124,10 @@ void Application::Update(double deltaTime)
             m_projectSession->GetProjectRootDirectory(),
             viewportPtr};
 
+        const auto sceneEditorStart = std::chrono::steady_clock::now();
         m_sceneEditingController->Update(*GetEditorTargetScene(), editorUpdateContext);
+        frameDiagnostics.sceneEditorCpuMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - sceneEditorStart).count();
     }
 
     m_input->EndFrame();

@@ -843,7 +843,10 @@ void GfxContext::BeginFrame()
     FrameDiagnostics::LogPhase("BeginFrame-wait");
     const std::uint64_t frameWaitFence =
         std::max({frame.FenceValue, m_submissionFenceValue, m_fenceValues[m_frameIndex]});
+    const auto fenceWaitStart = std::chrono::steady_clock::now();
     WaitForFenceValue(frameWaitFence);
+    m_framePacingDiagnostics.previousFrameFenceWaitMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - fenceWaitStart).count();
 
     // Drain deferred destroys whose covering fence has completed (CRASH-01/CRASH-03).
     ProcessDeferredDestroys(false);
@@ -879,6 +882,7 @@ void GfxContext::BeginFrame()
     }
 
     m_frameRecording = true;
+    m_frameGpuScopeId = GpuScopeBegin("Frame GPU span");
     m_impl->TransientUploadArenas[m_frameIndex].Offset = 0;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
     EngineDiagnostics::ClearLastGpuAllocationError();
@@ -944,6 +948,7 @@ void GfxContext::CancelFrame()
 
     m_frameRecording = false;
     m_frameCommandsSubmitted = false;
+    m_frameGpuScopeId = -1;
     m_boundOutputFramebuffer = nullptr;
     m_impl->DrawSrvTableNextIndex = DrawTextureDescriptorStart;
 }
@@ -992,6 +997,8 @@ void GfxContext::SubmitCommandList()
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     commandList->ResourceBarrier(1, &barrier);
 
+    GpuScopeEnd(m_frameGpuScopeId);
+    m_frameGpuScopeId = -1;
     m_gpuProfiler.Resolve(commandList, m_frameIndex);
 
     ThrowIfFailed(m_impl->CommandList->Close(), "CommandList close failed");
@@ -1037,6 +1044,8 @@ void GfxContext::EndFrame()
     barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
     commandList->ResourceBarrier(1, &barrier);
 
+    GpuScopeEnd(m_frameGpuScopeId);
+    m_frameGpuScopeId = -1;
     m_gpuProfiler.Resolve(commandList, m_frameIndex);
 
     ThrowIfFailed(m_impl->CommandList->Close(), "CommandList close failed");
@@ -1047,7 +1056,10 @@ void GfxContext::EndFrame()
 
     PumpWindowEvents(m_window);
 
+    const auto presentStart = std::chrono::steady_clock::now();
     const HRESULT presentResult = m_impl->SwapChain->Present(1, 0);
+    m_framePacingDiagnostics.presentCallMs =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentStart).count();
 
     // Signal AFTER Present so this frame's fence covers the present's GPU work, not just the
     // command list. Present() enqueues its flip work on the command queue *after* the command
