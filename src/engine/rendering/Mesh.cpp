@@ -293,10 +293,12 @@ void Mesh::Draw() const
 bool Mesh::IntersectRay(
     const glm::vec3& localOrigin,
     const glm::vec3& localDirection,
-    float& hitDistance) const
+    float& hitDistance,
+    glm::vec3* outLocalNormal) const
 {
     hitDistance = std::numeric_limits<float>::max();
     bool hit = false;
+    glm::vec3 bestLocalNormal(0.0f, 1.0f, 0.0f);
 
     for (std::size_t triangleIndex = 0; triangleIndex + 2 < m_indices.size(); triangleIndex += 3)
     {
@@ -341,7 +343,26 @@ bool Mesh::IntersectRay(
         {
             hitDistance = distance;
             hit = true;
+            if (outLocalNormal != nullptr)
+            {
+                glm::vec3 faceNormal = glm::cross(edge1, edge2);
+                const float normalLength = glm::length(faceNormal);
+                if (normalLength > 1e-8f)
+                {
+                    faceNormal /= normalLength;
+                    if (glm::dot(faceNormal, localDirection) > 0.0f)
+                    {
+                        faceNormal = -faceNormal;
+                    }
+                    bestLocalNormal = faceNormal;
+                }
+            }
         }
+    }
+
+    if (hit && outLocalNormal != nullptr)
+    {
+        *outLocalNormal = bestLocalNormal;
     }
 
     return hit;

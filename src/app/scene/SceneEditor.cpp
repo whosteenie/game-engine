@@ -19,6 +19,8 @@
 
 #include <glm/gtc/type_ptr.hpp>
 
+#include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace
@@ -144,6 +146,65 @@ namespace
 
     const char* GetGizmoCommandName(TransformTool tool);
 
+    bool TryGetSelectionWorldAabb(
+        const Scene& scene,
+        glm::vec3& boundsMin,
+        glm::vec3& boundsMax)
+    {
+        const std::vector<int>& selectedIndices = scene.GetSelection().indices;
+        if (selectedIndices.empty())
+        {
+            return false;
+        }
+
+        boundsMin = glm::vec3(std::numeric_limits<float>::max());
+        boundsMax = glm::vec3(std::numeric_limits<float>::lowest());
+        for (int objectIndex : selectedIndices)
+        {
+            glm::vec3 objectMin;
+            glm::vec3 objectMax;
+            scene.GetWorldBounds(objectIndex, objectMin, objectMax);
+            boundsMin = glm::min(boundsMin, objectMin);
+            boundsMax = glm::max(boundsMax, objectMax);
+        }
+
+        return true;
+    }
+
+    glm::vec3 ComputeBoundsSurfaceRestTranslation(
+        const glm::vec3& boundsMin,
+        const glm::vec3& boundsMax,
+        const glm::vec3& hitPoint,
+        const glm::vec3& hitNormal)
+    {
+        const float normalLength = glm::length(hitNormal);
+        if (normalLength < 1e-8f)
+        {
+            return glm::vec3(0.0f);
+        }
+
+        const glm::vec3 normal = hitNormal / normalLength;
+        const glm::vec3 corners[8] = {
+            {boundsMin.x, boundsMin.y, boundsMin.z},
+            {boundsMax.x, boundsMin.y, boundsMin.z},
+            {boundsMin.x, boundsMax.y, boundsMin.z},
+            {boundsMax.x, boundsMax.y, boundsMin.z},
+            {boundsMin.x, boundsMin.y, boundsMax.z},
+            {boundsMax.x, boundsMin.y, boundsMax.z},
+            {boundsMin.x, boundsMax.y, boundsMax.z},
+            {boundsMax.x, boundsMax.y, boundsMax.z},
+        };
+
+        float minProjection = std::numeric_limits<float>::max();
+        for (const glm::vec3& corner : corners)
+        {
+            minProjection = std::min(minProjection, glm::dot(corner - hitPoint, normal));
+        }
+
+        // Push the AABB along the outward normal so its support plane sits on the hit.
+        return -minProjection * normal;
+    }
+
     void UpdateTransformGizmo(
         Scene& scene,
         const Camera& camera,
@@ -152,6 +213,7 @@ namespace
         UndoStack* undoStack,
         bool& gizmoWasUsing,
         ObjectTransformMap& gizmoTransformBefore,
+        glm::mat4& gizmoUnsnappedMatrix,
         const EditorViewportRect* viewport)
     {
         if (viewport == nullptr || !viewport->valid)
@@ -177,30 +239,87 @@ namespace
             viewport->screenHeight);
 
         const bool worldSpace = space == TransformSpace::World;
-        glm::mat4 gizmoWorldMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
-        const glm::mat4 gizmoWorldMatrixBefore = gizmoWorldMatrix;
+        const glm::mat4 displayedMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
         const glm::mat4 viewMatrix = camera.GetViewMatrix();
         const glm::mat4 projectionMatrix = camera.GetUnjitteredProjectionMatrix();
+        const bool altHeld = ImGui::GetIO().KeyAlt;
 
         const bool wasUsing = gizmoWasUsing;
         ObjectTransformMap frameStartTransforms;
-        if (!wasUsing && undoStack != nullptr)
+        if (!wasUsing)
         {
-            frameStartTransforms =
-                CaptureLocalTransforms(scene, scene.GetSelection().indices);
+            gizmoUnsnappedMatrix = displayedMatrix;
+            if (undoStack != nullptr)
+            {
+                frameStartTransforms =
+                    CaptureLocalTransforms(scene, scene.GetSelection().indices);
+            }
         }
 
-        if (ImGuizmo::Manipulate(
-                glm::value_ptr(viewMatrix),
-                glm::value_ptr(projectionMatrix),
-                ToImGuizmoOperation(tool),
-                ToImGuizmoMode(space),
-                glm::value_ptr(gizmoWorldMatrix)))
-        {
-            scene.ApplySelectionGizmoWorldMatrix(gizmoWorldMatrixBefore, gizmoWorldMatrix);
-        }
+        glm::mat4 manipulateMatrix = wasUsing ? gizmoUnsnappedMatrix : displayedMatrix;
+        ImGuizmo::Manipulate(
+            glm::value_ptr(viewMatrix),
+            glm::value_ptr(projectionMatrix),
+            ToImGuizmoOperation(tool),
+            ToImGuizmoMode(space),
+            glm::value_ptr(manipulateMatrix));
 
         const bool isUsing = ImGuizmo::IsUsing();
+        const bool freeMove =
+            tool == TransformTool::Translate
+            && isUsing
+            && ImGuizmo::GetActiveHandleType() == ImGuizmo::MT_MOVE_SCREEN;
+
+        if (isUsing)
+        {
+            gizmoUnsnappedMatrix = manipulateMatrix;
+        }
+
+        glm::mat4 desiredMatrix = manipulateMatrix;
+        if (freeMove && altHeld)
+        {
+            glm::mat4 currentMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
+            scene.ApplySelectionGizmoWorldMatrix(currentMatrix, manipulateMatrix);
+
+            const glm::vec2 localMouseScreen = GetViewportLocalMouseScreen(*viewport);
+            const glm::vec2 localMouse = ScreenLocalToPickPixels(localMouseScreen, *viewport);
+            const glm::vec2 viewportSize(
+                static_cast<float>(viewport->width),
+                static_cast<float>(viewport->height));
+            const Ray ray = ScreenPointToRay(
+                localMouse,
+                viewportSize,
+                viewMatrix,
+                projectionMatrix);
+
+            SurfaceHit hit;
+            if (RaycastClosestSurface(
+                    scene.GetObjects(),
+                    ray,
+                    scene.GetSelection().indices,
+                    hit))
+            {
+                glm::vec3 boundsMin;
+                glm::vec3 boundsMax;
+                if (TryGetSelectionWorldAabb(scene, boundsMin, boundsMax))
+                {
+                    const glm::vec3 translation = ComputeBoundsSurfaceRestTranslation(
+                        boundsMin,
+                        boundsMax,
+                        hit.point,
+                        hit.normal);
+                    desiredMatrix = manipulateMatrix;
+                    desiredMatrix[3] += glm::vec4(translation, 0.0f);
+                }
+            }
+        }
+
+        if (isUsing)
+        {
+            const glm::mat4 currentMatrix = scene.GetSelectionGizmoWorldMatrix(worldSpace);
+            scene.ApplySelectionGizmoWorldMatrix(currentMatrix, desiredMatrix);
+        }
+
         if (isUsing && !wasUsing && undoStack != nullptr)
         {
             gizmoTransformBefore = std::move(frameStartTransforms);
@@ -357,6 +476,7 @@ void SceneEditor::Update(
         undoStack,
         m_gizmoWasUsing,
         m_gizmoTransformBefore,
+        m_gizmoUnsnappedMatrix,
         viewport);
 
     const bool gizmoCapturingMouse =
@@ -450,6 +570,7 @@ void SceneEditor::ResetInteractionState()
     CancelMarqueeDrag();
     m_gizmoWasUsing = false;
     m_gizmoTransformBefore.clear();
+    m_gizmoUnsnappedMatrix = glm::mat4(1.0f);
     m_hasLastPickScreenPosition = false;
 }
 

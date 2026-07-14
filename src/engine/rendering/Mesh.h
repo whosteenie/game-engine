@@ -57,7 +57,8 @@ public:
     bool IntersectRay(
         const glm::vec3& localOrigin,
         const glm::vec3& localDirection,
-        float& hitDistance) const;
+        float& hitDistance,
+        glm::vec3* outLocalNormal = nullptr) const;
 
     const std::vector<glm::vec3>& GetPositions() const;
     const std::vector<unsigned int>& GetIndices() const;

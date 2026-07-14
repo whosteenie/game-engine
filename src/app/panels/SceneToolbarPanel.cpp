@@ -119,7 +119,7 @@ void SceneToolbarPanel::Draw(
 
     ImGui::Separator();
     ImGui::TextUnformatted("LMB: select/deselect or drag gizmo.");
-    ImGui::SameLine();
+    ImGui::TextUnformatted("Move gizmo center + Alt: surface snap.");
     ImGui::TextUnformatted("RMB + WASD/Q/E: fly camera. Shift: move faster.");
 
     ImGui::End();

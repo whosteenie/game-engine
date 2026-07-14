@@ -71,4 +71,7 @@ private:
     glm::vec2 m_dragCurrentFramebuffer = glm::vec2(0.0f);
     bool m_gizmoWasUsing = false;
     ObjectTransformMap m_gizmoTransformBefore;
+    // Unsnapped gizmo matrix during a translate drag so Alt surface-snap can preview
+    // without permanently rewriting ImGuizmo's drag base (Alt-up restores this pose).
+    mutable glm::mat4 m_gizmoUnsnappedMatrix{1.0f};
 };

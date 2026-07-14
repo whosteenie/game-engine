@@ -141,7 +141,9 @@ namespace
         const SceneObject& object,
         const glm::mat4& worldMatrix,
         const Ray& ray,
-        float& hitDistance)
+        float& hitDistance,
+        glm::vec3* outWorldHitPoint = nullptr,
+        glm::vec3* outWorldNormal = nullptr)
     {
         Mesh* mesh = object.GetMesh();
         if (mesh == nullptr)
@@ -159,7 +161,10 @@ namespace
         }
 
         localDirection /= directionLength;
-        if (!mesh->IntersectRay(localOrigin, localDirection, hitDistance))
+
+        glm::vec3 localNormal(0.0f, 1.0f, 0.0f);
+        glm::vec3* localNormalPtr = outWorldNormal != nullptr ? &localNormal : nullptr;
+        if (!mesh->IntersectRay(localOrigin, localDirection, hitDistance, localNormalPtr))
         {
             return false;
         }
@@ -167,7 +172,56 @@ namespace
         const glm::vec3 localHit = localOrigin + localDirection * hitDistance;
         const glm::vec3 worldHit = glm::vec3(worldMatrix * glm::vec4(localHit, 1.0f));
         hitDistance = glm::length(worldHit - ray.origin);
+
+        if (outWorldHitPoint != nullptr)
+        {
+            *outWorldHitPoint = worldHit;
+        }
+
+        if (outWorldNormal != nullptr)
+        {
+            const glm::mat3 normalMatrix =
+                glm::transpose(glm::inverse(glm::mat3(worldMatrix)));
+            glm::vec3 worldNormal = normalMatrix * localNormal;
+            const float normalLength = glm::length(worldNormal);
+            if (normalLength > 1e-8f)
+            {
+                worldNormal /= normalLength;
+            }
+            else
+            {
+                worldNormal = glm::vec3(0.0f, 1.0f, 0.0f);
+            }
+
+            if (glm::dot(worldNormal, ray.direction) > 0.0f)
+            {
+                worldNormal = -worldNormal;
+            }
+
+            *outWorldNormal = worldNormal;
+        }
+
         return true;
+    }
+
+    bool IsObjectExcludedBySelection(
+        const std::vector<SceneObject>& objects,
+        int objectIndex,
+        const std::unordered_set<int>& excludeObjectIndices)
+    {
+        int currentIndex = objectIndex;
+        while (currentIndex >= 0
+            && static_cast<std::size_t>(currentIndex) < objects.size())
+        {
+            if (excludeObjectIndices.find(currentIndex) != excludeObjectIndices.end())
+            {
+                return true;
+            }
+
+            currentIndex = objects[static_cast<std::size_t>(currentIndex)].GetParentIndex();
+        }
+
+        return false;
     }
 
     bool IsPointInScreenRect(
@@ -881,4 +935,75 @@ std::vector<int> PickObjectsInScreenRect(
     std::vector<int> pickedIndices(matchedTargets.begin(), matchedTargets.end());
     std::sort(pickedIndices.begin(), pickedIndices.end());
     return pickedIndices;
+}
+
+bool RaycastClosestSurface(
+    const std::vector<SceneObject>& objects,
+    const Ray& ray,
+    const std::vector<int>& excludeObjectIndices,
+    SurfaceHit& outHit)
+{
+    std::unordered_set<int> excludeSet(
+        excludeObjectIndices.begin(),
+        excludeObjectIndices.end());
+
+    bool found = false;
+    SurfaceHit bestHit;
+
+    for (int objectIndex = 0; objectIndex < static_cast<int>(objects.size()); ++objectIndex)
+    {
+        if (IsObjectExcludedBySelection(objects, objectIndex, excludeSet))
+        {
+            continue;
+        }
+
+        const SceneObject& object = objects[static_cast<std::size_t>(objectIndex)];
+        if (!object.IsRenderable() || object.GetMesh() == nullptr)
+        {
+            continue;
+        }
+
+        const glm::mat4 worldMatrix = GetObjectWorldMatrix(objects, objectIndex);
+
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        object.GetWorldBounds(worldMatrix, boundsMin, boundsMax);
+
+        float boundsDistance = 0.0f;
+        if (!IntersectRayAabb(ray, boundsMin, boundsMax, boundsDistance))
+        {
+            continue;
+        }
+
+        float meshDistance = 0.0f;
+        glm::vec3 worldHitPoint(0.0f);
+        glm::vec3 worldNormal(0.0f, 1.0f, 0.0f);
+        if (!IntersectSceneObjectMesh(
+                object,
+                worldMatrix,
+                ray,
+                meshDistance,
+                &worldHitPoint,
+                &worldNormal))
+        {
+            continue;
+        }
+
+        if (!found || meshDistance < bestHit.distance)
+        {
+            found = true;
+            bestHit.objectIndex = objectIndex;
+            bestHit.distance = meshDistance;
+            bestHit.point = worldHitPoint;
+            bestHit.normal = worldNormal;
+        }
+    }
+
+    if (!found)
+    {
+        return false;
+    }
+
+    outHit = bestHit;
+    return true;
 }

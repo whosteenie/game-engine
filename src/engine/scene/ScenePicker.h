@@ -18,6 +18,14 @@ struct PickHit
     float boundsVolume = 0.0f;
 };
 
+struct SurfaceHit
+{
+    int objectIndex = -1;
+    float distance = 0.0f;
+    glm::vec3 point{0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+};
+
 Ray ScreenPointToRay(
     const glm::vec2& screenPoint,
     const glm::vec2& viewportSize,
@@ -51,3 +59,11 @@ std::vector<int> PickObjectsInScreenRect(
     const glm::vec2& viewportSize,
     const glm::mat4& viewMatrix,
     const glm::mat4& projectionMatrix);
+
+// Closest mesh hit under the ray. Skips objects whose own index or any ancestor is
+// listed in excludeObjectIndices (used so a dragged selection does not snap to itself).
+bool RaycastClosestSurface(
+    const std::vector<SceneObject>& objects,
+    const Ray& ray,
+    const std::vector<int>& excludeObjectIndices,
+    SurfaceHit& outHit);
