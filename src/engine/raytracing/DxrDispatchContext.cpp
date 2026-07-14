@@ -2626,7 +2626,16 @@ bool DxrDispatchContext::DispatchPathTracer(
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
+    // Nsight's automatic CSV export does not otherwise identify this megakernel among the
+    // command-list work. Keep the marker narrowly around DispatchRays so fixed-view captures can
+    // compare this event without conflating its surrounding transitions and UAV barriers.
+    static constexpr wchar_t kPathTracerDispatchMarker[] = L"PT.DispatchRays.PathTracer";
+    commandList->BeginEvent(
+        0,
+        kPathTracerDispatchMarker,
+        static_cast<UINT>(sizeof(kPathTracerDispatchMarker)));
     recorder.DispatchRays(shaderBindingTable, width, height);
+    commandList->EndEvent();
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);
