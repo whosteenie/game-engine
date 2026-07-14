@@ -946,6 +946,54 @@ float OpaqueBsdfPdf(
     return pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
 }
 
+// Computes the same opaque BSDF and mixture pdf as the two public helpers above, but shares only
+// per-direction intermediates. This is intentionally local to an environment-DI candidate: no
+// surface context survives across the 16-candidate loop and therefore cannot extend raygen live
+// state.
+void EvaluateOpaqueBsdfAndPdf(
+    float3 hitNormal,
+    float3 viewDir,
+    float3 wi,
+    float3 f0,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    out float3 bsdf,
+    out float pdf)
+{
+    const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
+    const float alpha = max(ggxRoughness * ggxRoughness, 1e-3);
+    const float noV = saturate(dot(hitNormal, viewDir));
+    const float noL = saturate(dot(hitNormal, wi));
+    if (noL <= 0.0)
+    {
+        bsdf = 0.0.xxx;
+        pdf = 0.0;
+        return;
+    }
+
+    const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
+    const float3 fresnelNoV = FresnelSchlick(noV, f0);
+    const float specLum = Luminance(fresnelNoV);
+    const float diffLum = Luminance(baseDiffuse);
+    float pSpec = specLum / max(specLum + diffLum, 1e-4);
+    pSpec = lerp(pSpec, 1.0, saturate(metallic));
+    pSpec = clamp(pSpec, 0.1, 0.9);
+
+    const float3 h = normalize(viewDir + wi);
+    const float noH = saturate(dot(hitNormal, h));
+    const float voH = saturate(dot(viewDir, h));
+    const float d = GgxD(noH, alpha);
+    const float3 fresnel = FresnelSchlick(voH, f0);
+    const float3 specCos = d * SmithG2HeightCorrelated(noV, noL, alpha) * fresnel / max(4.0 * noV, 1e-4);
+    const float3 diffCos = baseDiffuse * (1.0.xxx - fresnelNoV) * (noL / kPi);
+    bsdf = specCos + diffCos;
+
+    const float pdfSpec = SmithG1(noV, alpha) * d / max(4.0 * noV, 1e-4);
+    const float pdfDiff = noL / kPi;
+    pdf = pSpec * pdfSpec + (1.0 - pSpec) * pdfDiff;
+}
+
 // Sun NEE — full opaque BSDF toward the sun. Delta light: no MIS partner, weight 1.
 // Gate on the SHADING normal (like env/emissive NEE): with normal maps, bump walls stay lit beyond
 // the geometric terminator, and a geometric-normal gate chops them with a hard edge exactly at the
@@ -1279,8 +1327,10 @@ float3 RestirDiEnvironmentDirect(
         float pdfEnv;
         if (SampleEnvLightDirection(xi, wi, pdfEnv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
         {
-            const float pdfBsdf = OpaqueBsdfPdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
-            const float3 bsdf = EvaluateOpaqueBsdf(hitNormal, viewDir, wi, f0, albedo, roughness, metallic);
+            float3 bsdf;
+            float pdfBsdf;
+            EvaluateOpaqueBsdfAndPdf(
+                hitNormal, viewDir, wi, f0, albedo, roughness, metallic, bsdf, pdfBsdf);
             const float misWeight = BalanceHeuristic(pdfEnv, pdfBsdf);
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
             contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
