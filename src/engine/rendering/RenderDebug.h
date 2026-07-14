@@ -102,6 +102,8 @@ enum class RenderDebugMode
     PtEnvDiProbeSampling,
     PtEnvDiProbeBsdfMis,
     PtEnvDiProbeCandidate,
+    PtEnvDiProbeRadiance,
+    PtEnvDiProbeMetadata,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
 };
@@ -126,6 +128,6 @@ bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 30;
+inline constexpr int kPtDebugIsolateModeMax = 32;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

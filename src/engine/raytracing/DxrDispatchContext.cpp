@@ -1288,7 +1288,15 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
     }
 
+    // Keep the spatial reuse dispatch independently visible in Nsight. The UI timer surrounds this
+    // call too, but the narrow marker is needed for shader profiling and live-state inspection.
+    static constexpr wchar_t kRestirSpatialDispatchMarker[] = L"PT.DispatchRays.RestirSpatial";
+    commandList->BeginEvent(
+        0,
+        kRestirSpatialDispatchMarker,
+        static_cast<UINT>(sizeof(kRestirSpatialDispatchMarker)));
     recorder.DispatchRays(shaderBindingTable, width, height);
+    commandList->EndEvent();
 
     RecordDxrUavBarrier(commandList, m_primaryOutputResource);
     RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);

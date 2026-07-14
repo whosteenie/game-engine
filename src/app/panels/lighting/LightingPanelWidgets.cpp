@@ -163,6 +163,8 @@ namespace
         RenderDebugMode::PtEnvDiProbeSampling,
         RenderDebugMode::PtEnvDiProbeBsdfMis,
         RenderDebugMode::PtEnvDiProbeCandidate,
+        RenderDebugMode::PtEnvDiProbeRadiance,
+        RenderDebugMode::PtEnvDiProbeMetadata,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {

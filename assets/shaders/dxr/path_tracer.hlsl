@@ -111,7 +111,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 30.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 32.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -1319,7 +1319,10 @@ float3 RestirDiEnvironmentDirect(
     const bool envDiProbeSampling = g_PtDebugIsolateMode == 28u;
     const bool envDiProbeBsdfMis = g_PtDebugIsolateMode == 29u;
     const bool envDiProbeCandidate = g_PtDebugIsolateMode == 30u;
-    const bool envDiProbeNoReservoir = envDiProbeSampling || envDiProbeBsdfMis || envDiProbeCandidate;
+    const bool envDiProbeRadiance = g_PtDebugIsolateMode == 31u;
+    const bool envDiProbeMetadata = g_PtDebugIsolateMode == 32u;
+    const bool envDiProbeNoReservoir = envDiProbeSampling || envDiProbeBsdfMis || envDiProbeCandidate
+        || envDiProbeRadiance || envDiProbeMetadata;
 #endif
     [loop]
     for (uint c = 0u; c < candidateCount; ++c)
@@ -1347,10 +1350,22 @@ float3 RestirDiEnvironmentDirect(
             {
 #endif
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
-            contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
+#if PT_DIAGNOSTIC_PERMUTATION
+            const float3 envRadiance = envDiProbeMetadata ? 0.0.xxx : EnvNeeRadiance(wi);
+#else
+            const float3 envRadiance = EnvNeeRadiance(wi);
+#endif
+            contribution = bsdf * envRadiance * misWeight;
             proposalPdf = pdfEnv;
+#if PT_DIAGNOSTIC_PERMUTATION
+            if (!envDiProbeRadiance)
+            {
+#endif
             lightSample.sampleType = kRestirDiSampleEnvironment;
             lightSample.uv = DirectionToEquirectUv(wi);
+#if PT_DIAGNOSTIC_PERMUTATION
+            }
+#endif
 #if PT_DIAGNOSTIC_PERMUTATION
             }
             }

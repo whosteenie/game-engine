@@ -1,0 +1,16 @@
+{
+  "sessionName": "pt-floor-env-di-radiance-metadata-screen-20260714",
+  "engineExe": "build/Release/game-engine.exe",
+  "workingDirectory": "build/Release",
+  "captureTimestampBaseline": true,
+  "baselineWarmupSeconds": 5,
+  "baselineWarmupFrames": 60,
+  "baselineSampleFrames": 90,
+  "captureFrame": false,
+  "views": [
+    { "name": "sampling_bsdf_mis", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 29 },
+    { "name": "radiance", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 31 },
+    { "name": "metadata", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 32 },
+    { "name": "candidate_no_reservoir", "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject", "ptProbe": 30 }
+  ]
+}

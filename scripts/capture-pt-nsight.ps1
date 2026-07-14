@@ -12,7 +12,10 @@ param(
     [string]$Config,
     [string]$NsightRoot = "",
     [string]$OutputDir = "artifacts/pt-nsight",
-    [switch]$SkipFrameCapture
+    [switch]$SkipFrameCapture,
+    [switch]$TimestampOnly,
+    [string]$SessionName = "",
+    [switch]$AllowExistingSession
 )
 
 Set-StrictMode -Version Latest
@@ -255,6 +258,9 @@ $baselineSampleFrames = if ($null -ne $baselineSampleFramesValue) { [int]$baseli
 if ($baselineWarmupSeconds -lt 0 -or $baselineWarmupFrames -lt 1 -or $baselineSampleFrames -lt 1) {
     throw "baselineWarmupSeconds must be non-negative; baselineWarmupFrames and baselineSampleFrames must be positive."
 }
+if ($TimestampOnly -and -not $captureTimestampBaseline) {
+    throw "-TimestampOnly requires captureTimestampBaseline=true in the config."
+}
 $architectureValue = Get-OptionalConfigValue $settings "architecture"
 $metricSetIdValue = Get-OptionalConfigValue $settings "metricSetId"
 $perArchConfigValue = Get-OptionalConfigValue $settings "perArchConfig"
@@ -272,18 +278,27 @@ if ($perArchConfig -and -not (Test-Path -LiteralPath $perArchConfig)) {
     throw "perArchConfig not found: $perArchConfig"
 }
 
-$ngfx = Find-NsightExecutable -FileName "ngfx.exe" -InstallRoot $NsightRoot
-$ngfxCapture = if ($captureFrame) {
-    Find-NsightExecutable -FileName "ngfx-capture.exe" -InstallRoot $NsightRoot
+$ngfx = ""
+$ngfxCapture = ""
+if (-not $TimestampOnly) {
+    $ngfx = Find-NsightExecutable -FileName "ngfx.exe" -InstallRoot $NsightRoot
+    if ($captureFrame) {
+        $ngfxCapture = Find-NsightExecutable -FileName "ngfx-capture.exe" -InstallRoot $NsightRoot
+    }
 }
 
 $sessionNameValue = Get-OptionalConfigValue $settings "sessionName"
-$sessionName = if ($null -ne $sessionNameValue -and -not [string]::IsNullOrWhiteSpace([string]$sessionNameValue)) {
+$sessionName = if (-not [string]::IsNullOrWhiteSpace($SessionName)) {
+    $SessionName
+} elseif ($null -ne $sessionNameValue -and -not [string]::IsNullOrWhiteSpace([string]$sessionNameValue)) {
     [string]$sessionNameValue
 } else {
     "pt-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 }
 $sessionDirectory = Join-Path (Resolve-ConfigPath $OutputDir) $sessionName
+if ((Test-Path -LiteralPath $sessionDirectory) -and -not $AllowExistingSession) {
+    throw "Capture session already exists: $sessionDirectory. Use -SessionName with a new label, or -AllowExistingSession to append deliberately."
+}
 New-Item -ItemType Directory -Path $sessionDirectory -Force | Out-Null
 
 $manifestViews = @()
@@ -321,28 +336,31 @@ foreach ($view in $settings.views) {
             -PtProbe $ptProbe
     }
 
-    Write-Host ("Capturing GPU Trace: {0}" -f $viewName) -ForegroundColor Cyan
-    $gpuTraceArgs = @(
-        '--activity=GPU Trace Profiler',
-        '--platform=Windows (x86_64)',
-        "--exe=$engineExe",
-        "--dir=$workingDirectory",
-        "--output-dir=$viewDirectory",
-        "--start-after-ms=$($warmupSeconds * 1000)",
-        "--limit-to-frames=$traceFrames",
-        '--auto-export'
-    )
-    if ($architecture) { $gpuTraceArgs += "--architecture=$architecture" }
-    if ($metricSetId) { $gpuTraceArgs += "--metric-set-id=$metricSetId" }
-    if ($perArchConfig) { $gpuTraceArgs += "--per-arch-config-path=$perArchConfig" }
-    if ($multiPassMetrics) { $gpuTraceArgs += '--multi-pass-metrics' }
-    if ($realTimeShaderProfiler) { $gpuTraceArgs += '--real-time-shader-profiler' }
-    if ($perLineActiveThreadsPerWarp) { $gpuTraceArgs += '--per-line-active-threads-per-warp=true' }
-    $gpuTraceLog = Join-Path $viewDirectory "gpu-trace.log"
-    Invoke-NativeCapture -Executable $ngfx -Arguments $gpuTraceArgs -LogPath $gpuTraceLog
+    $gpuTraceLog = ""
+    if (-not $TimestampOnly) {
+        Write-Host ("Capturing GPU Trace: {0}" -f $viewName) -ForegroundColor Cyan
+        $gpuTraceArgs = @(
+            '--activity=GPU Trace Profiler',
+            '--platform=Windows (x86_64)',
+            "--exe=$engineExe",
+            "--dir=$workingDirectory",
+            "--output-dir=$viewDirectory",
+            "--start-after-ms=$($warmupSeconds * 1000)",
+            "--limit-to-frames=$traceFrames",
+            '--auto-export'
+        )
+        if ($architecture) { $gpuTraceArgs += "--architecture=$architecture" }
+        if ($metricSetId) { $gpuTraceArgs += "--metric-set-id=$metricSetId" }
+        if ($perArchConfig) { $gpuTraceArgs += "--per-arch-config-path=$perArchConfig" }
+        if ($multiPassMetrics) { $gpuTraceArgs += '--multi-pass-metrics' }
+        if ($realTimeShaderProfiler) { $gpuTraceArgs += '--real-time-shader-profiler' }
+        if ($perLineActiveThreadsPerWarp) { $gpuTraceArgs += '--per-line-active-threads-per-warp=true' }
+        $gpuTraceLog = Join-Path $viewDirectory "gpu-trace.log"
+        Invoke-NativeCapture -Executable $ngfx -Arguments $gpuTraceArgs -LogPath $gpuTraceLog
+    }
 
     $frameCaptureLog = ""
-    if ($captureFrame) {
+    if ($captureFrame -and -not $TimestampOnly) {
         Write-Host ("Capturing replayable frame: {0}" -f $viewName) -ForegroundColor Cyan
         $frameCaptureArgs = @(
             "--exe=$engineExe",
@@ -372,7 +390,9 @@ foreach ($view in $settings.views) {
                 log = $timestampBaseline.log.Substring($sessionDirectory.Length).TrimStart('\', '/')
             }
         } else { $null }
-        gpuTraceLog = $gpuTraceLog.Substring($sessionDirectory.Length).TrimStart('\', '/')
+        gpuTraceLog = if ($gpuTraceLog) {
+            $gpuTraceLog.Substring($sessionDirectory.Length).TrimStart('\', '/')
+        } else { $null }
         frameCaptureLog = if ($frameCaptureLog) { $frameCaptureLog.Substring($sessionDirectory.Length).TrimStart('\', '/') } else { $null }
         csvJson = $jsonExport.Substring($sessionDirectory.Length).TrimStart('\', '/')
         files = $files
@@ -398,6 +418,7 @@ $manifestPath = Join-Path $sessionDirectory "manifest.json"
     }
     warmupSeconds = $warmupSeconds
     traceFrames = $traceFrames
+    timestampOnly = [bool]$TimestampOnly
     timestampBaseline = [pscustomobject]@{
         enabled = $captureTimestampBaseline
         warmupSeconds = $baselineWarmupSeconds
