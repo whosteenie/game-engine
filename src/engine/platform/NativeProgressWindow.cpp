@@ -346,6 +346,7 @@ namespace
             CenterWindow(window);
             LayoutControls(controls);
             ShowWindow(window, SW_SHOW);
+            UpdateWindow(window);
             SetForegroundWindow(window);
             return 0;
         case WM_PROGRESS_HIDE:
@@ -380,10 +381,13 @@ namespace
         void Begin(const std::string& title, const std::string& message)
         {
             EnsureThreadRunning();
-            PostStringMessage(WM_PROGRESS_SET_TITLE, title);
-            PostStringMessage(WM_PROGRESS_SET_MESSAGE, message);
-            PostModeMessage(false, 0);
-            PostToWindow(WM_PROGRESS_SHOW, 0, 0);
+            // The caller starts CPU-heavy project work immediately after Begin. Send the initial
+            // 0% state synchronously so the user sees it before subsequent queued updates can
+            // advance the bar into GPU initialization or pipeline warm-up.
+            SendStringMessage(WM_PROGRESS_SET_TITLE, title);
+            SendStringMessage(WM_PROGRESS_SET_MESSAGE, message);
+            SendModeMessage(false, 0);
+            SendToWindow(WM_PROGRESS_SHOW, 0, 0);
         }
 
         void SetMessage(const std::string& message)
@@ -466,14 +470,32 @@ namespace
             }
         }
 
+        void SendToWindow(UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            if (m_window != nullptr)
+            {
+                SendMessage(m_window, message, wParam, lParam);
+            }
+        }
+
         void PostStringMessage(UINT message, const std::string& value)
         {
             PostToWindow(message, 0, reinterpret_cast<LPARAM>(DuplicateWideString(Utf8ToWide(value))));
         }
 
+        void SendStringMessage(UINT message, const std::string& value)
+        {
+            SendToWindow(message, 0, reinterpret_cast<LPARAM>(DuplicateWideString(Utf8ToWide(value))));
+        }
+
         void PostModeMessage(bool indeterminate, int position)
         {
             PostToWindow(WM_PROGRESS_SET_MODE, indeterminate ? 0 : 1, position);
+        }
+
+        void SendModeMessage(bool indeterminate, int position)
+        {
+            SendToWindow(WM_PROGRESS_SET_MODE, indeterminate ? 0 : 1, position);
         }
 
         void ThreadMain()

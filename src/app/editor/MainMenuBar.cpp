@@ -592,6 +592,10 @@ void MainMenuBar::Draw(
         {
             for (const std::string& projectPath : recentProjects)
             {
+                if (projectPath == project.GetProjectFilePath())
+                {
+                    continue;
+                }
                 std::error_code existsError;
                 const bool exists = std::filesystem::is_regular_file(projectPath, existsError);
                 const std::string label = std::filesystem::path(projectPath).stem().string();

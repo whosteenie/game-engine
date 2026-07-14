@@ -49,7 +49,10 @@ void ProjectChooser::OpenNewProjectForm(EditorSettings& settings)
 
 bool ProjectChooser::IsBlockingEditor() const
 {
-    return m_showNewProjectForm || m_startupMode;
+    // A project open can be queued from the editor menu near the end of Update. Do not render the
+    // old scene during that remainder of the frame: its resource-prewarm progress reports would
+    // otherwise overwrite the newly displayed 0% state before the queued project begins loading.
+    return m_showNewProjectForm || m_startupMode || !m_pendingProjectPath.empty();
 }
 
 void ProjectChooser::ClearProjectLoadPresentation()
@@ -317,7 +320,9 @@ bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
     {
         NativeProgressWindow::Instance().SetMessage("Waiting to start...");
     }
-    NativeProgressWindow::Instance().SetProgress(-1.0f);
+    // Begin() has synchronously displayed 0%; preserve that visible starting state until the
+    // next frame begins the actual load rather than immediately replacing it with a marquee.
+    NativeProgressWindow::Instance().SetProgress(0.0f);
 
     m_pendingProjectPath = projectFilePath;
     m_errorMessage.clear();

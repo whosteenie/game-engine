@@ -25,11 +25,15 @@ void EditorDockLayout::BuildDefaultLayout(ImGuiID dockspaceId)
         ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, kBottomRowFraction, nullptr, &dockMain);
 
     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-    ImGui::DockBuilderDockWindow("Inspector", dockRight);
     ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);
+    ImGui::DockBuilderDockWindow("Performance", dockRight);
+    // Docking a tab last selects it. Keep Inspector focused on startup while retaining the
+    // renderer and performance panels as adjacent tabs.
+    ImGui::DockBuilderDockWindow("Inspector", dockRight);
     ImGui::DockBuilderDockWindow("Project", dockBottom);
-    ImGui::DockBuilderDockWindow("Scene View", dockMain);
     ImGui::DockBuilderDockWindow("Game View", dockMain);
+    // Scene View is the editor's default working surface; Game View stays one tab away.
+    ImGui::DockBuilderDockWindow("Scene View", dockMain);
 
     ImGui::DockBuilderFinish(dockspaceId);
 }
