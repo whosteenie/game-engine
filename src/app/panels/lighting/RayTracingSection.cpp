@@ -280,6 +280,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("pt_max_bounces");
 
             bool ptRussianRoulette = dxrSettings.IsPtRussianRouletteEnabled();
             UndoableRendererCheckbox(
@@ -379,7 +380,6 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
                     target.MarkDirty();
                 });
-            RendererSettingUi::MarkRendered("pt_max_bounces");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
