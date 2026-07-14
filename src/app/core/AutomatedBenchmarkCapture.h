@@ -4,6 +4,7 @@
 #include "engine/rhi/GpuProfiler.h"
 
 #include <fstream>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,13 +24,19 @@ public:
         const ApplicationFrameDiagnostics& applicationTimings);
 
 private:
-    AutomatedBenchmarkCapture(std::string outputPath, int warmupFrames, int sampleFrames);
+    AutomatedBenchmarkCapture(
+        std::string outputPath,
+        int warmupSeconds,
+        int warmupFrames,
+        int sampleFrames);
 
     std::string m_outputPath;
+    int m_warmupSeconds = 0;
     int m_warmupFrames = 0;
     int m_sampleFrames = 0;
     int m_capturedFrames = 0;
     bool m_started = false;
     bool m_complete = false;
+    std::chrono::steady_clock::time_point m_readyTime{};
     std::unique_ptr<std::ofstream> m_output;
 };

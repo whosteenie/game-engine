@@ -5,6 +5,7 @@
   "warmupSeconds": 30,
   "traceFrames": 5,
   "captureTimestampBaseline": true,
+  "baselineWarmupSeconds": 10,
   "baselineWarmupFrames": 120,
   "baselineSampleFrames": 300,
   "captureFrame": true,

@@ -36,6 +36,29 @@ namespace
         }
     }
 
+    int ReadNonNegativeEnvironmentInt(const char* name, const int defaultValue)
+    {
+        const char* raw = std::getenv(name);
+        if (raw == nullptr || raw[0] == '\0')
+        {
+            return defaultValue;
+        }
+
+        try
+        {
+            const int value = std::stoi(raw);
+            if (value < 0)
+            {
+                throw std::runtime_error("must be non-negative");
+            }
+            return value;
+        }
+        catch (const std::exception&)
+        {
+            throw std::runtime_error(std::string(name) + " must be a non-negative integer.");
+        }
+    }
+
     float FindGpuTiming(const std::vector<GpuProfiler::Entry>& timings, const char* name)
     {
         const auto found = std::find_if(
@@ -48,9 +71,11 @@ namespace
 
 AutomatedBenchmarkCapture::AutomatedBenchmarkCapture(
     std::string outputPath,
+    const int warmupSeconds,
     const int warmupFrames,
     const int sampleFrames)
     : m_outputPath(std::move(outputPath))
+    , m_warmupSeconds(warmupSeconds)
     , m_warmupFrames(warmupFrames)
     , m_sampleFrames(sampleFrames)
 {
@@ -64,10 +89,11 @@ std::unique_ptr<AutomatedBenchmarkCapture> AutomatedBenchmarkCapture::CreateFrom
         return nullptr;
     }
 
+    const int warmupSeconds = ReadNonNegativeEnvironmentInt("GAME_ENGINE_BENCHMARK_WARMUP_SECONDS", 10);
     const int warmupFrames = ReadPositiveEnvironmentInt("GAME_ENGINE_BENCHMARK_WARMUP_FRAMES", 120);
     const int sampleFrames = ReadPositiveEnvironmentInt("GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES", 300);
     return std::unique_ptr<AutomatedBenchmarkCapture>(
-        new AutomatedBenchmarkCapture(rawOutput, warmupFrames, sampleFrames));
+        new AutomatedBenchmarkCapture(rawOutput, warmupSeconds, warmupFrames, sampleFrames));
 }
 
 bool AutomatedBenchmarkCapture::ObserveFrame(
@@ -112,15 +138,21 @@ bool AutomatedBenchmarkCapture::ObserveFrame(
         m_output->setf(std::ios::fixed);
         *m_output << std::setprecision(6);
         m_started = true;
+        m_readyTime = std::chrono::steady_clock::now();
         EngineLog::Info(
             "benchmark",
-            "Timestamp capture armed: warmup=" + std::to_string(m_warmupFrames)
+            "Timestamp capture armed: warmup=" + std::to_string(m_warmupSeconds)
+                + "s + " + std::to_string(m_warmupFrames) + " frames"
                 + ", samples=" + std::to_string(m_sampleFrames));
     }
 
     if (m_warmupFrames > 0)
     {
         --m_warmupFrames;
+        return false;
+    }
+    if (std::chrono::steady_clock::now() - m_readyTime < std::chrono::seconds(m_warmupSeconds))
+    {
         return false;
     }
 

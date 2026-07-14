@@ -147,6 +147,7 @@ function Invoke-TimestampBaseline {
         [Parameter(Mandatory)][string]$EngineWorkingDirectory,
         [Parameter(Mandatory)][string]$ProjectPath,
         [Parameter(Mandatory)][string]$CaptureDirectory,
+        [Parameter(Mandatory)][int]$WarmupSeconds,
         [Parameter(Mandatory)][int]$WarmupFrames,
         [Parameter(Mandatory)][int]$SampleFrames
     )
@@ -157,6 +158,7 @@ function Invoke-TimestampBaseline {
         "GAME_ENGINE_AUTO_OPEN",
         "GAME_ENGINE_AUTO_OPEN_DEFERRED",
         "GAME_ENGINE_BENCHMARK_OUTPUT",
+        "GAME_ENGINE_BENCHMARK_WARMUP_SECONDS",
         "GAME_ENGINE_BENCHMARK_WARMUP_FRAMES",
         "GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES"
     )
@@ -167,6 +169,7 @@ function Invoke-TimestampBaseline {
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_AUTO_OPEN", $ProjectPath, "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_AUTO_OPEN_DEFERRED", "1", "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_OUTPUT", $csvPath, "Process")
+        [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_WARMUP_SECONDS", "$WarmupSeconds", "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_WARMUP_FRAMES", "$WarmupFrames", "Process")
         [Environment]::SetEnvironmentVariable("GAME_ENGINE_BENCHMARK_SAMPLE_FRAMES", "$SampleFrames", "Process")
         Push-Location $EngineWorkingDirectory
@@ -223,10 +226,11 @@ $captureFrame = -not $SkipFrameCapture
 if ($null -ne $settings.captureFrame) { $captureFrame = [bool]$settings.captureFrame -and -not $SkipFrameCapture }
 $captureTimestampBaseline = $true
 if ($null -ne $settings.captureTimestampBaseline) { $captureTimestampBaseline = [bool]$settings.captureTimestampBaseline }
+$baselineWarmupSeconds = if ($null -ne $settings.baselineWarmupSeconds) { [int]$settings.baselineWarmupSeconds } else { 10 }
 $baselineWarmupFrames = if ($null -ne $settings.baselineWarmupFrames) { [int]$settings.baselineWarmupFrames } else { 120 }
 $baselineSampleFrames = if ($null -ne $settings.baselineSampleFrames) { [int]$settings.baselineSampleFrames } else { 300 }
-if ($baselineWarmupFrames -lt 1 -or $baselineSampleFrames -lt 1) {
-    throw "baselineWarmupFrames and baselineSampleFrames must both be positive."
+if ($baselineWarmupSeconds -lt 0 -or $baselineWarmupFrames -lt 1 -or $baselineSampleFrames -lt 1) {
+    throw "baselineWarmupSeconds must be non-negative; baselineWarmupFrames and baselineSampleFrames must be positive."
 }
 $architecture = if ($null -ne $settings.architecture) { [string]$settings.architecture } else { "" }
 $metricSetId = if ($null -ne $settings.metricSetId) { [string]$settings.metricSetId } else { "" }
@@ -272,6 +276,7 @@ foreach ($view in $settings.views) {
             -EngineWorkingDirectory $workingDirectory `
             -ProjectPath $project `
             -CaptureDirectory $viewDirectory `
+            -WarmupSeconds $baselineWarmupSeconds `
             -WarmupFrames $baselineWarmupFrames `
             -SampleFrames $baselineSampleFrames
     }
@@ -351,6 +356,7 @@ $manifestPath = Join-Path $sessionDirectory "manifest.json"
     traceFrames = $traceFrames
     timestampBaseline = [pscustomobject]@{
         enabled = $captureTimestampBaseline
+        warmupSeconds = $baselineWarmupSeconds
         warmupFrames = $baselineWarmupFrames
         sampleFrames = $baselineSampleFrames
     }
