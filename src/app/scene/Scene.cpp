@@ -527,7 +527,7 @@ bool Scene::PlaceObjectAtRootBeginning(int objectIndex)
 
 void Scene::MarkDirty()
 {
-    if (m_dirtyCallback)
+    if (!m_dirtyNotificationsSuppressed && m_dirtyCallback)
     {
         m_dirtyCallback();
     }
@@ -536,6 +536,11 @@ void Scene::MarkDirty()
 void Scene::SetDirtyCallback(std::function<void()> callback)
 {
     m_dirtyCallback = std::move(callback);
+}
+
+void Scene::SetDirtyNotificationsSuppressed(const bool suppressed)
+{
+    m_dirtyNotificationsSuppressed = suppressed;
 }
 
 void Scene::ResetToDefault()

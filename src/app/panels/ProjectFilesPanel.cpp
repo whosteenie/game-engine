@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorIcons.h"
 #include "app/editor/EditorPanelConstraints.h"
+#include "app/editor/ModelDragDrop.h"
 #include "app/project/ProjectSession.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneImportService.h"
@@ -915,6 +916,18 @@ void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string&
                     && entry.isDirectory)
                 {
                     m_browsedDirectory = entry.path;
+                }
+
+                if (!entry.isDirectory && IsImportableModelFile(entry.path)
+                    && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                {
+                    ImGui::SetDragDropPayload(
+                        ModelDragDrop::kModelFilePayload,
+                        entry.path.c_str(),
+                        entry.path.size() + 1);
+                    ImGui::TextUnformatted("Import model into scene");
+                    ImGui::TextDisabled("%s", entry.name.c_str());
+                    ImGui::EndDragDropSource();
                 }
 
                 DrawEntryContextMenu(project, entry.path, entry.name, entry.isDirectory);

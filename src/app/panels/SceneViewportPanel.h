@@ -2,17 +2,27 @@
 
 #include "app/editor/EditorViewportRect.h"
 #include "app/editor/OffscreenViewportPanel.h"
+#include "engine/scene/SceneObjectId.h"
 
 #include <glm/glm.hpp>
 #include <imgui.h>
 
+#include <vector>
+
 class Camera;
+class ProjectSession;
 class Scene;
+class UndoStack;
 
 class SceneViewportPanel
 {
 public:
-    void Draw(Camera& camera, const Scene& scene, bool willRenderThisFrame);
+    void Draw(
+        Camera& camera,
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack,
+        bool willRenderThisFrame);
 
     void CompositeRenderedFrame();
 
@@ -39,9 +49,22 @@ private:
         const Scene& scene,
         const ImVec2& imageMin,
         const ImVec2& imageMax);
+    void DrawModelDropTarget(
+        Camera& camera,
+        Scene& scene,
+        ProjectSession& project,
+        UndoStack& undoStack);
+    void CancelModelDropPreview(Scene& scene);
+    void UpdateModelDropPreview(
+        Camera& camera,
+        Scene& scene,
+        const std::vector<int>& previewRoots);
 
     OffscreenViewportPanel::State m_viewport{};
     bool m_wasUsingViewManipulate = false;
     glm::vec3 m_viewManipulateFocus{0.0f};
     float m_viewManipulateDistance = 8.0f;
+    SceneObjectId m_modelDropPreviewRootId = kInvalidSceneObjectId;
+    std::vector<SceneObjectId> m_modelDropPreviewSelectionBeforeIds;
+    SceneObjectId m_modelDropPreviewSelectionBeforePrimary = kInvalidSceneObjectId;
 };

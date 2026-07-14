@@ -118,6 +118,7 @@ public:
 
     void MarkDirty();
     void SetDirtyCallback(std::function<void()> callback);
+    void SetDirtyNotificationsSuppressed(bool suppressed);
 
     bool RemoveObject(std::size_t index);
     bool RemoveSelectedObjects();
@@ -181,5 +182,6 @@ private:
     std::unique_ptr<SceneSelectionController> m_selectionController;
     bool m_showLightGizmos = true;
     bool m_showGrid = true;
+    bool m_dirtyNotificationsSuppressed = false;
     std::function<void()> m_dirtyCallback;
 };

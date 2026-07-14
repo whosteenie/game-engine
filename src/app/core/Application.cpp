@@ -988,7 +988,12 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
 
         const auto viewportUiStart = std::chrono::steady_clock::now();
         m_gameViewportPanel->Draw(hasGameSceneCamera, gameViewWillRender);
-        m_sceneViewportPanel->Draw(*m_camera, *editorScene, sceneViewWillRender);
+        m_sceneViewportPanel->Draw(
+            *m_camera,
+            *editorScene,
+            *m_projectSession,
+            *editorUndoStack,
+            sceneViewWillRender);
         frameDiagnostics.viewportUiCpuMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - viewportUiStart).count();
 
