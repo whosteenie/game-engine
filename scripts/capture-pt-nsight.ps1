@@ -255,9 +255,16 @@ if ($baselineWarmupSeconds -lt 0 -or $baselineWarmupFrames -lt 1 -or $baselineSa
 $architectureValue = Get-OptionalConfigValue $settings "architecture"
 $metricSetIdValue = Get-OptionalConfigValue $settings "metricSetId"
 $perArchConfigValue = Get-OptionalConfigValue $settings "perArchConfig"
+$multiPassMetricsValue = Get-OptionalConfigValue $settings "multiPassMetrics"
+$realTimeShaderProfilerValue = Get-OptionalConfigValue $settings "realTimeShaderProfiler"
+$perLineActiveThreadsPerWarpValue = Get-OptionalConfigValue $settings "perLineActiveThreadsPerWarp"
 $architecture = if ($null -ne $architectureValue) { [string]$architectureValue } else { "" }
 $metricSetId = if ($null -ne $metricSetIdValue) { [string]$metricSetIdValue } else { "" }
 $perArchConfig = if ($null -ne $perArchConfigValue) { Resolve-ConfigPath ([string]$perArchConfigValue) } else { "" }
+$multiPassMetrics = $null -ne $multiPassMetricsValue -and [bool]$multiPassMetricsValue
+$realTimeShaderProfiler = $null -ne $realTimeShaderProfilerValue -and [bool]$realTimeShaderProfilerValue
+$perLineActiveThreadsPerWarp =
+    $null -ne $perLineActiveThreadsPerWarpValue -and [bool]$perLineActiveThreadsPerWarpValue
 if ($perArchConfig -and -not (Test-Path -LiteralPath $perArchConfig)) {
     throw "perArchConfig not found: $perArchConfig"
 }
@@ -322,6 +329,9 @@ foreach ($view in $settings.views) {
     if ($architecture) { $gpuTraceArgs += "--architecture=$architecture" }
     if ($metricSetId) { $gpuTraceArgs += "--metric-set-id=$metricSetId" }
     if ($perArchConfig) { $gpuTraceArgs += "--per-arch-config-path=$perArchConfig" }
+    if ($multiPassMetrics) { $gpuTraceArgs += '--multi-pass-metrics' }
+    if ($realTimeShaderProfiler) { $gpuTraceArgs += '--real-time-shader-profiler' }
+    if ($perLineActiveThreadsPerWarp) { $gpuTraceArgs += '--per-line-active-threads-per-warp=true' }
     $gpuTraceLog = Join-Path $viewDirectory "gpu-trace.log"
     Invoke-NativeCapture -Executable $ngfx -Arguments $gpuTraceArgs -LogPath $gpuTraceLog
 
@@ -376,6 +386,9 @@ $manifestPath = Join-Path $sessionDirectory "manifest.json"
         architecture = $architecture
         metricSetId = $metricSetId
         perArchConfig = $perArchConfig
+        multiPassMetrics = $multiPassMetrics
+        realTimeShaderProfiler = $realTimeShaderProfiler
+        perLineActiveThreadsPerWarp = $perLineActiveThreadsPerWarp
     }
     warmupSeconds = $warmupSeconds
     traceFrames = $traceFrames
