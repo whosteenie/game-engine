@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -80,6 +81,7 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrEnabled(ssrEnabled);
                 target.MarkDirty();
             });
+        RendererSettingUi::MarkRendered("ssr_enabled");
 
         float ssrMaxDistance = screenSpaceEffects.GetSsrMaxTraceDistance();
         UndoableRendererSliderFloat(
@@ -93,6 +95,7 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrMaxTraceDistance(ssrMaxDistance);
                 target.MarkDirty();
             });
+        RendererSettingUi::MarkRendered("ssr_max_distance");
 
         int ssrStepCount = screenSpaceEffects.GetSsrStepCount();
         UndoableRendererSliderInt(
@@ -163,6 +166,8 @@ void DrawSsrSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetSsrStrength(ssrStrength);
                 target.MarkDirty();
             });
+
+        RendererSettingUi::MarkRendered("ssr_strength");
 
         bool ssrDenoiseEnabled = screenSpaceEffects.IsSsrDenoiseEnabled();
         UndoableRendererCheckbox(

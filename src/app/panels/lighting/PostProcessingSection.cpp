@@ -1,6 +1,7 @@
 #include "app/panels/lighting/LightingPanelSections.h"
 
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/scene/Scene.h"
@@ -22,7 +23,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
         bool enabled = screenSpaceEffects.IsEnabled();
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_processing_enabled",
                 editContext,
                 scene,
                 "HDR post-processing",
@@ -31,6 +33,7 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_processing_enabled");
 
         if (!enabled)
         {
@@ -52,12 +55,14 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetExposure(exposureValue);
                 target.MarkDirty();
             });
+        RendererSettingUi::MarkRendered("post_exposure");
 
         int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
         const char* tonemapModes[] = {"Gamma", "Reinhard", "ACES"};
         if (ImGui::Combo("Tonemap", &tonemapMode, tonemapModes, IM_ARRAYSIZE(tonemapModes)))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_tonemap",
                 editContext,
                 scene,
                 "Tonemap",
@@ -66,11 +71,13 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_tonemap");
 
         bool bloomEnabled = screenSpaceEffects.IsBloomEnabled();
         if (ImGui::Checkbox("Bloom", &bloomEnabled))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_bloom",
                 editContext,
                 scene,
                 "Bloom",
@@ -79,6 +86,7 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_bloom");
 
         if (bloomEnabled)
         {

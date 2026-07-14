@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -139,7 +140,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 const bool selected = currentAaMode == mode;
                 if (ImGui::Selectable(AntiAliasingModeLabel(mode), selected) && !selected && !disabled)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "aa_mode",
                         editContext,
                         scene,
                         "Anti-aliasing",
@@ -177,6 +179,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             ImGui::EndCombo();
         }
 
+        RendererSettingUi::MarkRendered("aa_mode");
+
         // DLSS SR quality preset (drives the internal render resolution). Enabled only in DLSS SR.
         if (currentAaMode == AntiAliasingMode::DLSS)
         {
@@ -194,7 +198,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     const bool selected = currentPreset == preset;
                     if (ImGui::Selectable(DlssPresetLabel(preset), selected) && !selected)
                     {
-                        ApplyRendererChange(
+                        RendererSettingUi::ApplyChange(
+                            "dlss_preset",
                             editContext,
                             scene,
                             "DLSS preset",
@@ -211,6 +216,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 }
                 ImGui::EndCombo();
             }
+            RendererSettingUi::MarkRendered("dlss_preset");
 
             const int renderWidth = screenSpaceEffects.GetRenderWidth();
             const int renderHeight = screenSpaceEffects.GetRenderHeight();
@@ -271,6 +277,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetRayReconstruction(enabled);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ray_reconstruction");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
@@ -317,7 +324,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                         IM_ARRAYSIZE(rrPresetLabels)))
                 {
                     const auto preset = static_cast<DlssRrPreset>(rrPresetIndex);
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "rr_model_preset",
                         editContext,
                         scene,
                         "RR model preset",
@@ -338,6 +346,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     ImGui::EndDisabled();
                 }
             }
+            RendererSettingUi::MarkRendered("rr_model_preset");
 
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
             UndoableRendererSliderFloat(
@@ -451,6 +460,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
             ImGui::EndCombo();
         }
+        RendererSettingUi::MarkRendered("geometry_msaa");
 
         const bool reloadRequested = renderer.IsGeometryMsaaReloadRequested();
         if (screenSpaceEffects.IsMsaaPendingReload())

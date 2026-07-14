@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/scene/RenderDiagnostics.h"
@@ -53,7 +54,8 @@ void DrawTextureFilteringSection(const LightingPanelContext& ctx)
         const char* filterLabels[] = {"Trilinear", "Bilinear", "Nearest"};
         if (ImGui::Combo("Material sampling", &textureFilterMode, filterLabels, IM_ARRAYSIZE(filterLabels)))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "texture_filter_mode",
                 editContext,
                 scene,
                 "Texture filter",
@@ -68,11 +70,13 @@ void DrawTextureFilteringSection(const LightingPanelContext& ctx)
             ImGui::SetTooltip(
                 "Updates GfxContext for new shaders. Existing PBR shaders keep their baked samplers until restart.");
         }
+        RendererSettingUi::MarkRendered("texture_filter_mode");
 
         int anisotropy = static_cast<int>(renderer.GetTextureAnisotropy());
         if (ImGui::SliderInt("Anisotropic filtering", &anisotropy, 1, 16))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "texture_anisotropy",
                 editContext,
                 scene,
                 "Texture anisotropy",
@@ -82,11 +86,13 @@ void DrawTextureFilteringSection(const LightingPanelContext& ctx)
                 });
         }
         HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::MarkRendered("texture_anisotropy");
 
         float mipBias = renderer.GetTextureMipBias();
         if (ImGui::SliderFloat("Mip bias", &mipBias, -2.0f, 2.0f))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "texture_mip_bias",
                 editContext,
                 scene,
                 "Texture mip bias",
@@ -96,5 +102,6 @@ void DrawTextureFilteringSection(const LightingPanelContext& ctx)
                 });
         }
         HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::MarkRendered("texture_mip_bias");
     }
 }
