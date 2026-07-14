@@ -123,6 +123,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().InvalidateSsrHistory();
                 target.MarkDirty();
             });
+        RendererSettingUi::MarkRendered("raytracing_enabled");
 
         // Phase P0 — rendering mode (devdoc/dxr/path-tracing.md). Hybrid (raster + hybrid RT, the
         // default) vs the unified path tracer. Path tracing needs master RT on; greyed otherwise.
@@ -140,7 +141,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 IM_ARRAYSIZE(renderingModeLabels)))
         {
             const auto mode = static_cast<RenderingMode>(renderingModeIndex);
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "path_tracing",
                 editContext,
                 scene,
                 "Rendering mode",
@@ -212,7 +214,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 }
                 else
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "pt_convergence",
                         editContext,
                         scene,
                         "PT convergence mode",
@@ -235,6 +238,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Resets on camera move, resize, light/scene edits, or setting changes.\n"
                     "Real-time: 1 spp path trace denoised via DLSS Ray Reconstruction.");
             }
+
+            RendererSettingUi::MarkRendered("pt_convergence");
 
             // Diagnostic switchboard (devdoc/dxr/pt/gi-shimmer.md): which RR inputs come from the
             // PT vs raster. Direct set, no undo — this is a debug control, not scene state.
@@ -362,6 +367,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "shadow ray each: less emissive/env noise at equal cost, same converged image.");
             }
 
+            RendererSettingUi::MarkRendered("pt_restir_di_candidates");
+
             bool restirDiTemporal = dxrSettings.IsRestirDiTemporalEnabled();
             UndoableRendererCheckbox(
                 "PT ReSTIR DI temporal",
@@ -372,12 +379,15 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("pt_max_bounces");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
                     "P3 temporal reuse for typed emissive/environment reservoirs. Real-time opaque\n"
                     "surfaces only; reference, transmission, delta lobes, and rejected history use fresh DI.");
             }
+
+            RendererSettingUi::MarkRendered("pt_restir_di_temporal");
 
             bool restirGiInitial = dxrSettings.IsRestirGiInitialEnabled();
             UndoableRendererCheckbox(
@@ -512,12 +522,15 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.MarkDirty();
             });
 
+        RendererSettingUi::MarkRendered("rt_reflections_enabled");
+
         int qualityIndex = static_cast<int>(dxrSettings.GetReflectionsQuality());
         const char* qualityLabels[] = {"Low", "Medium", "High"};
         if (ImGui::Combo("Reflections quality", &qualityIndex, qualityLabels, IM_ARRAYSIZE(qualityLabels)))
         {
             const auto quality = static_cast<DxrReflectionsQuality>(qualityIndex);
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "rt_reflections_quality",
                 editContext,
                 scene,
                 "RT reflections quality",
@@ -526,6 +539,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+
+        RendererSettingUi::MarkRendered("rt_reflections_quality");
 
         int samplesPerPixel = dxrSettings.GetReflectionsSamplesPerPixel();
         UndoableRendererSliderInt(
@@ -652,6 +667,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.MarkDirty();
             });
 
+        RendererSettingUi::MarkRendered("rt_shadows_enabled");
+
         float sunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
         UndoableRendererSliderFloat(
             "Sun angular radius",
@@ -724,6 +741,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 ImGui::SetTooltip("Mutually exclusive with SSGI inject.");
             }
         }
+
+        RendererSettingUi::MarkRendered("rt_gi_enabled");
 
         float giStrength = dxrSettings.GetGiStrength();
         UndoableRendererSliderFloat(
