@@ -520,6 +520,16 @@ void MainMenuBar::Draw(
         ImGui::EndMenu();
     }
 
+    // Help contains a fixed-width search field. Pin its popup to the corresponding content width
+    // every frame it is open; a one-frame seed lets ImGui auto-shrink on frame two, which visibly
+    // moves the adjacent results window.
+    bool showSearchResults = false;
+    bool helpMenuAppearing = false;
+    ImVec2 helpMenuPos{};
+    ImVec2 helpMenuSize{};
+    std::vector<const SettingRegistry::Descriptor*> searchMatches;
+    const float helpMenuWidth = 260.0f + ImGui::GetStyle().WindowPadding.x * 2.0f;
+    ImGui::SetNextWindowSize(ImVec2(helpMenuWidth, 0.0f), ImGuiCond_Always);
     if (ImGui::BeginMenu("Help"))
     {
         static char search[128] = {};
@@ -529,44 +539,8 @@ void MainMenuBar::Draw(
         const std::string query(search);
         if (!query.empty())
         {
-            const std::vector<const SettingRegistry::Descriptor*> matches =
-                SettingRegistry::FindSearchMatches(query);
-            const ImVec2 menuPos = ImGui::GetWindowPos();
-            const ImVec2 menuSize = ImGui::GetWindowSize();
-            const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
-            const float resultHeight = std::clamp(
-                12.0f + rowHeight * static_cast<float>(std::max<std::size_t>(matches.size(), 1u)),
-                rowHeight + 12.0f,
-                420.0f);
-            ImGui::SetNextWindowPos(ImVec2(menuPos.x + menuSize.x + 4.0f, menuPos.y), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(320.0f, resultHeight), ImGuiCond_Always);
-            if (ImGui::Begin(
-                    "##RendererTuningSearchResults",
-                    nullptr,
-                    ImGuiWindowFlags_NoDecoration
-                        | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
-            {
-                bool anyMatch = false;
-                for (const SettingRegistry::Descriptor* entry : matches)
-                {
-                    anyMatch = true;
-                    // Labels are intentionally human-facing and may repeat across sections
-                    // (for example, two different temporal-blend controls). Scope each row by
-                    // the registry's stable identifier rather than changing the visible label.
-                    ImGui::PushID(entry->id.data());
-                    if (ImGui::Selectable(entry->label.data()))
-                    {
-                        if (panels.lighting != nullptr) *panels.lighting = true;
-                        TuningSectionState::RequestSearchNavigation(entry->section.data(), entry->id.data());
-                        ImGui::SetWindowFocus("Renderer Tuning");
-                    }
-                    ImGui::SameLine();
-                    ImGui::TextDisabled("%s", entry->section.data());
-                    ImGui::PopID();
-                }
-                if (!anyMatch) ImGui::TextDisabled("No matching Renderer Tuning settings.");
-            }
-            ImGui::End();
+            searchMatches = SettingRegistry::FindSearchMatches(query);
+            showSearchResults = true;
         }
         ImGui::Separator();
         if (ImGui::MenuItem("About"))
@@ -574,7 +548,49 @@ void MainMenuBar::Draw(
             ImGui::OpenPopup("About");
         }
 
+        // Capture after Help's complete content has participated in its auto-layout. The results
+        // popup is deliberately drawn after EndMenu so it never observes an intermediate anchor.
+        helpMenuPos = ImGui::GetWindowPos();
+        helpMenuSize = ImGui::GetWindowSize();
+        helpMenuAppearing = ImGui::IsWindowAppearing();
         ImGui::EndMenu();
+    }
+
+    // Let Help establish its popup on the opening frame. With a retained query, rendering the
+    // results window immediately can make the side panel appear one frame before its parent.
+    if (showSearchResults && !helpMenuAppearing)
+    {
+        const float rowHeight = ImGui::GetTextLineHeightWithSpacing();
+        const float resultHeight = std::clamp(
+            12.0f + rowHeight * static_cast<float>(std::max<std::size_t>(searchMatches.size(), 1u)),
+            rowHeight + 12.0f,
+            420.0f);
+        ImGui::SetNextWindowPos(
+            ImVec2(helpMenuPos.x + helpMenuSize.x + 4.0f, helpMenuPos.y),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(320.0f, resultHeight), ImGuiCond_Always);
+        if (ImGui::Begin(
+                "##RendererTuningSearchResults",
+                nullptr,
+                ImGuiWindowFlags_NoDecoration
+                    | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing))
+        {
+            for (const SettingRegistry::Descriptor* entry : searchMatches)
+            {
+                ImGui::PushID(entry->id.data());
+                if (ImGui::Selectable(entry->label.data()))
+                {
+                    if (panels.lighting != nullptr) *panels.lighting = true;
+                    TuningSectionState::RequestSearchNavigation(entry->section.data(), entry->id.data());
+                    ImGui::SetWindowFocus("Renderer Tuning");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("%s", entry->section.data());
+                ImGui::PopID();
+            }
+            if (searchMatches.empty()) ImGui::TextDisabled("No matching Renderer Tuning settings.");
+        }
+        ImGui::End();
     }
 
     const char* dirtySuffix = project.IsDirty() ? "*" : "";
