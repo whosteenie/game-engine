@@ -559,7 +559,6 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         RefreshSmoothedGpuTimings(timings, m_smoothedGpuPassMs, kPerfSmoothAlpha);
         RefreshSmoothedSystemResources(m_systemResources.GetSnapshot(), kPerfSmoothAlpha);
-        m_cpuTimingSamplePending = true;
     }
 }
 
@@ -798,17 +797,10 @@ void PerformancePanel::Draw(
 
     const std::vector<GpuProfiler::Entry> cpuTimings =
         BuildCpuTimings(renderer.GetRenderFrameDiagnostics());
-    if (m_cpuTimingSamplePending)
-    {
-        RefreshSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs, kPerfSmoothAlpha);
-        m_cpuTimingSamplePending = false;
-    }
 
     if (ImGui::CollapsingHeader("CPU passes", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        const std::vector<GpuProfiler::Entry> displayTimings =
-            BuildSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs);
-        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
+        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(cpuTimings);
         const float cpuTotalMs = ComputeGpuRootTotalMs(passTree);
         const float maxPassMs = MaxGpuRootMilliseconds(passTree);
 
@@ -832,8 +824,8 @@ void PerformancePanel::Draw(
 
         ImGui::Text("CPU total (instrumented passes): %.3f ms", cpuTotalMs);
         EditorWidgets::TextWrappedDisabled(
-            "Command-recording and scene-preparation time on the main thread. Sampled and smoothed "
-            "at the same cadence as GPU passes; it does not include editor UI or present/wait time.");
+            "Live command-recording and scene-preparation time on the main thread. It does not include "
+            "editor UI or present/wait time.");
     }
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
