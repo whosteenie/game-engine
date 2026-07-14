@@ -468,88 +468,134 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
 
     try
     {
-        if (m_dxrSmokeDispatch == nullptr)
-        {
-            m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
-        }
+        const RenderDebugMode debugMode = m_screenSpaceEffects != nullptr
+            ? m_screenSpaceEffects->GetDebugMode()
+            : RenderDebugMode::None;
+        const bool pathTracingActive = m_dxrSettings.IsPathTracingActive();
+        const bool restirDiTemporalEnabled = pathTracingActive
+            && !m_dxrSettings.IsPtReferenceConvergence()
+            && m_dxrSettings.IsRestirDiTemporalEnabled()
+            && m_dxrSettings.GetRestirDiCandidateCount() > 0;
+        const bool restirGiTemporalEnabled = pathTracingActive
+            && !m_dxrSettings.IsPtReferenceConvergence()
+            && m_dxrSettings.IsRestirGiInitialEnabled()
+            && m_dxrSettings.IsRestirGiTemporalEnabled();
 
-        if (m_dxrPrimaryDebugDispatch == nullptr)
-        {
-            m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
-        }
+        // Keep startup proportional to the project's active render path. Debug views remain
+        // eligible so a saved debug mode is ready for the first frame.
+        const bool warmSmoke = debugMode == RenderDebugMode::RtDispatchSmoke;
+        const bool warmPrimary = m_dxrSettings.IsDebugTraceEnabled() || IsRtPrimaryDebugMode(debugMode);
+        const bool warmReflections = !pathTracingActive
+            && (m_dxrSettings.IsReflectionsEnabled() || IsRtReflectionDebugMode(debugMode));
+        const bool warmShadows = !pathTracingActive
+            && (m_dxrSettings.IsShadowsEnabled() || IsRtShadowDebugMode(debugMode));
+        const bool warmGi = !pathTracingActive
+            && (m_dxrSettings.IsGiEnabled() || IsRtGiDebugMode(debugMode));
+        const bool warmPathTracer = pathTracingActive;
+        const bool warmRestir = restirDiTemporalEnabled || restirGiTemporalEnabled;
 
-        if (m_dxrReflectionsDispatch == nullptr)
-        {
-            m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
-        }
-
-        if (m_dxrShadowsDispatch == nullptr)
-        {
-            m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
-        }
-
-        if (m_dxrGiDispatch == nullptr)
-        {
-            m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
-        }
-
-        if (m_dxrPathTracerDispatch == nullptr)
-        {
-            m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
-        }
-        if (m_dxrRestirDispatch == nullptr)
-        {
-            m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
-        }
-
-        const bool smokeReady = m_dxrSmokeDispatch->IsPipelineReady();
-        const bool primaryReady = m_dxrPrimaryDebugDispatch->IsPipelineReady();
-        const bool reflectionsReady = m_dxrReflectionsDispatch->IsPipelineReady();
-        const bool shadowsReady = m_dxrShadowsDispatch->IsPipelineReady();
-        const bool giReady = m_dxrGiDispatch->IsPipelineReady();
-        const bool pathTracerReady = m_dxrPathTracerDispatch->IsPipelineReady();
-        const bool restirReady = m_dxrRestirDispatch->IsPipelineReady();
-        if (smokeReady && primaryReady && reflectionsReady && shadowsReady && giReady
-            && pathTracerReady && restirReady)
+        const int pendingPipelineCount =
+            (warmSmoke && (m_dxrSmokeDispatch == nullptr || !m_dxrSmokeDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmPrimary && (m_dxrPrimaryDebugDispatch == nullptr || !m_dxrPrimaryDebugDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmReflections && (m_dxrReflectionsDispatch == nullptr || !m_dxrReflectionsDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmShadows && (m_dxrShadowsDispatch == nullptr || !m_dxrShadowsDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmGi && (m_dxrGiDispatch == nullptr || !m_dxrGiDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmPathTracer && (m_dxrPathTracerDispatch == nullptr || !m_dxrPathTracerDispatch->IsPipelineReady()) ? 1 : 0)
+            + (warmRestir && (m_dxrRestirDispatch == nullptr || !m_dxrRestirDispatch->IsPipelineReady()) ? 1 : 0);
+        if (pendingPipelineCount == 0)
         {
             return;
         }
 
+        int warmedPipelineCount = 0;
+        const auto reportPipelineBegin = [&](const char* message) {
+            constexpr float progressStart = 0.935f;
+            constexpr float progressEnd = 0.968f;
+            const float progress = progressStart
+                + (progressEnd - progressStart)
+                    * (static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
+            NativeProgressWindow::Instance().Report(message, progress);
+        };
+        const auto markPipelineComplete = [&]() {
+            ++warmedPipelineCount;
+            constexpr float progressStart = 0.935f;
+            constexpr float progressEnd = 0.968f;
+            const float progress = progressStart
+                + (progressEnd - progressStart)
+                    * (static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
+            NativeProgressWindow::Instance().SetProgress(progress);
+        };
+
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
-        if (!smokeReady)
+        if (warmSmoke && (m_dxrSmokeDispatch == nullptr || !m_dxrSmokeDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling DXR smoke pipeline...", 0.938f);
+            reportPipelineBegin("Compiling DXR smoke pipeline...");
+            if (m_dxrSmokeDispatch == nullptr)
+            {
+                m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
+            }
             m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!primaryReady)
+        if (warmPrimary && (m_dxrPrimaryDebugDispatch == nullptr || !m_dxrPrimaryDebugDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling DXR primary-debug pipeline...", 0.942f);
+            reportPipelineBegin("Compiling DXR primary-debug pipeline...");
+            if (m_dxrPrimaryDebugDispatch == nullptr)
+            {
+                m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
+            }
             m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!reflectionsReady)
+        if (warmReflections && (m_dxrReflectionsDispatch == nullptr || !m_dxrReflectionsDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling DXR reflections pipeline...", 0.946f);
+            reportPipelineBegin("Compiling DXR reflections pipeline...");
+            if (m_dxrReflectionsDispatch == nullptr)
+            {
+                m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
+            }
             m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!shadowsReady)
+        if (warmShadows && (m_dxrShadowsDispatch == nullptr || !m_dxrShadowsDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling DXR shadows pipeline...", 0.950f);
+            reportPipelineBegin("Compiling DXR shadows pipeline...");
+            if (m_dxrShadowsDispatch == nullptr)
+            {
+                m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
+            }
             m_dxrShadowsDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!giReady)
+        if (warmGi && (m_dxrGiDispatch == nullptr || !m_dxrGiDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling DXR GI pipeline...", 0.954f);
+            reportPipelineBegin("Compiling DXR GI pipeline...");
+            if (m_dxrGiDispatch == nullptr)
+            {
+                m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
+            }
             m_dxrGiDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!pathTracerReady)
+        if (warmPathTracer && (m_dxrPathTracerDispatch == nullptr || !m_dxrPathTracerDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling path tracer pipeline...", 0.960f);
+            reportPipelineBegin("Compiling path tracer pipeline...");
+            if (m_dxrPathTracerDispatch == nullptr)
+            {
+                m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
+            }
             m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
-        if (!restirReady)
+        if (warmRestir && (m_dxrRestirDispatch == nullptr || !m_dxrRestirDispatch->IsPipelineReady()))
         {
-            NativeProgressWindow::Instance().Report("Compiling ReSTIR pipeline...", 0.966f);
+            reportPipelineBegin("Compiling ReSTIR pipeline...");
+            if (m_dxrRestirDispatch == nullptr)
+            {
+                m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
+            }
             m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
+            markPipelineComplete();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
     }
