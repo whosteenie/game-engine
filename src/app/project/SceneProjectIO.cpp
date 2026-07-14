@@ -5,6 +5,7 @@
 #include "engine/platform/NativeProgressWindow.h"
 
 #include "app/scene/Scene.h"
+#include "app/scene/SceneImportService.h"
 #include "app/scene/SceneMeshLibrary.h"
 #include "app/scene/SceneObjectStore.h"
 #include "app/scene/SceneRenderer.h"
@@ -1191,6 +1192,19 @@ namespace SceneProjectIODetail
             {
                 mainCameraIndex = static_cast<int>(index);
             }
+        }
+
+        for (auto& [importPath, cacheEntry] : importCache)
+        {
+            if (!cacheEntry.loaded || !cacheEntry.errorMessage.empty())
+            {
+                continue;
+            }
+
+            scene.GetImportService().CacheLoadedProjectModel(
+                scene,
+                importPath,
+                std::move(cacheEntry.model));
         }
 
         ProjectLoadTrace::Step("deserialize scene objects ok");

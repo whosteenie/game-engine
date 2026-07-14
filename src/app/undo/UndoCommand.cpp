@@ -377,6 +377,25 @@ InsertSubtreeCommand::InsertSubtreeCommand(SceneSubtreeArchive archive, std::str
 
 void InsertSubtreeCommand::Undo(UndoContext& context)
 {
+    std::vector<int> rootIndices;
+    rootIndices.reserve(m_archive.removedRootIds.size());
+    for (SceneObjectId rootId : m_archive.removedRootIds)
+    {
+        const int rootIndex = context.scene.FindObjectIndex(rootId);
+        if (rootIndex >= 0)
+        {
+            rootIndices.push_back(rootIndex);
+        }
+    }
+
+    // RestoreDeleteArchive moves component ownership into the live objects. Capture
+    // them again before removing the inserted subtree so repeated undo/redo cycles
+    // retain material and optional object components.
+    if (rootIndices.empty() || !context.scene.CreateDeleteArchive(rootIndices, m_archive))
+    {
+        return;
+    }
+
     if (!context.scene.DeleteUsingArchive(m_archive))
     {
         return;

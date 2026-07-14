@@ -160,6 +160,13 @@ std::unique_ptr<Mesh> SceneMeshLibrary::ExtractImportedMesh(Mesh* mesh)
         return nullptr;
     }
 
+    // Cached import templates retain raw Mesh pointers. Delete/undo archives may transfer
+    // unreferenced meshes, but never a cache-pinned mesh or those template pointers dangle.
+    if (m_pinnedImportedMeshes.find(mesh) != m_pinnedImportedMeshes.end())
+    {
+        return nullptr;
+    }
+
     for (std::unique_ptr<Mesh>& ownedMesh : m_importedMeshes)
     {
         if (ownedMesh.get() != mesh)

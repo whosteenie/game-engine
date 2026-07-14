@@ -136,6 +136,99 @@ SceneImportService::CachedImportedModel SceneImportService::BuildCachedModel(
     return cachedModel;
 }
 
+SceneImportService::CachedImportedModel SceneImportService::BuildCachedModelFromLoadedGeometry(
+    Scene& scene,
+    const std::string& importPath,
+    ImportedModel&& geometryModel)
+{
+    std::unordered_map<int, const SceneObject*> objectsByNodeIndex;
+    for (const SceneObject& object : scene.GetObjects())
+    {
+        if (object.GetImportNodeIndex() < 0)
+        {
+            continue;
+        }
+
+        std::error_code canonicalError;
+        const std::filesystem::path canonicalObjectPath =
+            std::filesystem::weakly_canonical(object.GetImportAssetPath(), canonicalError);
+        const std::string objectImportPath =
+            (canonicalError ? std::filesystem::path(object.GetImportAssetPath()) : canonicalObjectPath).string();
+        if (objectImportPath != importPath)
+        {
+            continue;
+        }
+
+        objectsByNodeIndex.try_emplace(object.GetImportNodeIndex(), &object);
+    }
+
+    CachedImportedModel cachedModel;
+    cachedModel.rootNodeIndex = geometryModel.rootNodeIndex;
+    cachedModel.warningMessage = geometryModel.warningMessage;
+    cachedModel.nodes.reserve(geometryModel.nodes.size());
+
+    for (std::size_t nodeIndex = 0; nodeIndex < geometryModel.nodes.size(); ++nodeIndex)
+    {
+        const ImportedSceneNode& node = geometryModel.nodes[nodeIndex];
+        const auto objectIterator = objectsByNodeIndex.find(static_cast<int>(nodeIndex));
+        const SceneObject* sourceObject =
+            objectIterator != objectsByNodeIndex.end() ? objectIterator->second : nullptr;
+
+        if (node.hasMesh && (sourceObject == nullptr || !sourceObject->HasMesh()))
+        {
+            return {};
+        }
+
+        CachedImportedNode cachedNode;
+        cachedNode.name = node.name;
+        cachedNode.parentIndex = node.parentIndex;
+        cachedNode.transform = node.transform;
+        cachedNode.mesh = node.hasMesh ? sourceObject->GetMesh() : nullptr;
+        cachedNode.material = sourceObject != nullptr && sourceObject->HasMaterial()
+            ? sourceObject->GetMaterial().Clone()
+            : nullptr;
+        cachedNode.boundsMin = sourceObject != nullptr
+            ? sourceObject->GetLocalBoundsMin()
+            : node.boundsMin;
+        cachedNode.boundsMax = sourceObject != nullptr
+            ? sourceObject->GetLocalBoundsMax()
+            : node.boundsMax;
+        cachedNode.hasMesh = node.hasMesh;
+        cachedModel.nodes.push_back(std::move(cachedNode));
+    }
+
+    for (const CachedImportedNode& node : cachedModel.nodes)
+    {
+        if (node.mesh != nullptr)
+        {
+            scene.GetMeshLibrary().PinImportedMesh(node.mesh);
+        }
+    }
+
+    return cachedModel;
+}
+
+void SceneImportService::CacheLoadedProjectModel(
+    Scene& scene,
+    const std::string& importPath,
+    ImportedModel&& geometryModel)
+{
+    if (importPath.empty() || geometryModel.nodes.empty() || geometryModel.rootNodeIndex < 0)
+    {
+        return;
+    }
+
+    std::error_code error;
+    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(importPath, error);
+    const std::string cachePath = (error ? std::filesystem::path(importPath) : canonicalPath).string();
+    CachedImportedModel cachedModel =
+        BuildCachedModelFromLoadedGeometry(scene, cachePath, std::move(geometryModel));
+    if (IsCachedModelUsable(scene, cachedModel))
+    {
+        m_cachedModels.insert_or_assign(cachePath, std::move(cachedModel));
+    }
+}
+
 std::vector<int> SceneImportService::InstantiateCachedModel(
     Scene& scene,
     const std::string& importPath,
@@ -249,13 +342,17 @@ std::vector<int> SceneImportService::ImportModel(
     if (!canonicalError)
     {
         const std::string earlyImportPath = canonicalPath.string();
-        const auto cachedIterator = m_cachedModels.find(earlyImportPath);
+        const auto aliasIterator = m_sourceAssetAliases.find(earlyImportPath);
+        const std::string& cachePath = aliasIterator != m_sourceAssetAliases.end()
+            ? aliasIterator->second
+            : earlyImportPath;
+        const auto cachedIterator = m_cachedModels.find(cachePath);
         if (cachedIterator != m_cachedModels.end())
         {
             if (IsCachedModelUsable(scene, cachedIterator->second))
             {
                 m_lastImportWarning = cachedIterator->second.warningMessage;
-                return InstantiateCachedModel(scene, earlyImportPath, cachedIterator->second, parentIndex);
+                return InstantiateCachedModel(scene, cachePath, cachedIterator->second, parentIndex);
             }
 
             m_cachedModels.erase(cachedIterator);
@@ -278,6 +375,14 @@ std::vector<int> SceneImportService::ImportModel(
         }
 
         importPath = assetResult.absolutePath;
+    }
+
+    std::error_code importPathError;
+    const std::filesystem::path canonicalImportPath =
+        std::filesystem::weakly_canonical(importPath, importPathError);
+    if (!importPathError)
+    {
+        importPath = canonicalImportPath.string();
     }
 
     const auto cachedIterator = m_cachedModels.find(importPath);
@@ -328,6 +433,10 @@ std::vector<int> SceneImportService::ImportModel(
 
     CachedImportedModel cachedModel = BuildCachedModel(scene, importedModel);
     auto [cacheIterator, inserted] = m_cachedModels.insert_or_assign(importPath, std::move(cachedModel));
+    if (!canonicalError && canonicalPath.string() != importPath)
+    {
+        m_sourceAssetAliases.insert_or_assign(canonicalPath.string(), importPath);
+    }
     const std::vector<int> importedIndices =
         InstantiateCachedModel(scene, importPath, cacheIterator->second, parentIndex);
 
@@ -423,6 +532,7 @@ int SceneImportService::PrewarmProjectModels(
         const auto cachedIterator = m_cachedModels.find(importPath);
         if (cachedIterator != m_cachedModels.end() && IsCachedModelUsable(scene, cachedIterator->second))
         {
+            ++warmedCount;
             const float progress = progressStart
                 + progressSpan * (static_cast<float>(modelIndex + 1) / static_cast<float>(modelPaths.size()));
             NativeProgressWindow::Instance().Report({}, progress);
@@ -490,4 +600,5 @@ void SceneImportService::ClearMessages()
 void SceneImportService::ClearCache()
 {
     m_cachedModels.clear();
+    m_sourceAssetAliases.clear();
 }

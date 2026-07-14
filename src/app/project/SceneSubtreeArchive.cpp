@@ -256,6 +256,7 @@ bool Scene::CreateDeleteArchive(
     archive.removedObjects.reserve(removalIndices.size());
     archive.removedRootIds.clear();
     archive.removedRootIds.reserve(rootIndices.size());
+    archive.importedMeshes.clear();
     for (int rootIndex : rootIndices)
     {
         if (rootIndex < 0 || rootIndex >= static_cast<int>(GetObjects().size()))

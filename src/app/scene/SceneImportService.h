@@ -30,6 +30,10 @@ public:
         const std::string& projectRoot,
         float progressStart = 0.0f,
         float progressEnd = 1.0f);
+    void CacheLoadedProjectModel(
+        Scene& scene,
+        const std::string& importPath,
+        ImportedModel&& geometryModel);
     void ClearMessages();
     void ClearCache();
 
@@ -61,9 +65,14 @@ private:
         const CachedImportedModel& cachedModel,
         int parentIndex);
     CachedImportedModel BuildCachedModel(Scene& scene, ImportedModel& importedModel);
+    CachedImportedModel BuildCachedModelFromLoadedGeometry(
+        Scene& scene,
+        const std::string& importPath,
+        ImportedModel&& geometryModel);
     bool IsCachedModelUsable(const Scene& scene, const CachedImportedModel& cachedModel) const;
 
     std::string m_lastImportError;
     std::string m_lastImportWarning;
     std::unordered_map<std::string, CachedImportedModel> m_cachedModels;
+    std::unordered_map<std::string, std::string> m_sourceAssetAliases;
 };
