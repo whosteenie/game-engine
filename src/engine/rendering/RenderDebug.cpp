@@ -182,6 +182,9 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiContribution: return "PT ReSTIR GI: contribution";
     case RenderDebugMode::PtRestirGiReuseMinusFresh: return "PT ReSTIR GI: reuse - fresh (bias)";
     case RenderDebugMode::PtRestirGiReusedRadiance: return "PT ReSTIR GI: reused radiance";
+    case RenderDebugMode::PtEnvDiProbeSampling: return "PT perf probe: env DI sampling";
+    case RenderDebugMode::PtEnvDiProbeBsdfMis: return "PT perf probe: env DI sampling + BSDF/MIS";
+    case RenderDebugMode::PtEnvDiProbeCandidate: return "PT perf probe: env DI candidate (no reservoir)";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -392,6 +395,9 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiContribution:
     case RenderDebugMode::PtRestirGiReuseMinusFresh:
     case RenderDebugMode::PtRestirGiReusedRadiance:
+    case RenderDebugMode::PtEnvDiProbeSampling:
+    case RenderDebugMode::PtEnvDiProbeBsdfMis:
+    case RenderDebugMode::PtEnvDiProbeCandidate:
         return true;
     default:
         return false;
@@ -441,6 +447,9 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiContribution: return 25;
     case RenderDebugMode::PtRestirGiReuseMinusFresh: return 26;
     case RenderDebugMode::PtRestirGiReusedRadiance: return 27;
+    case RenderDebugMode::PtEnvDiProbeSampling: return 28;
+    case RenderDebugMode::PtEnvDiProbeBsdfMis: return 29;
+    case RenderDebugMode::PtEnvDiProbeCandidate: return 30;
     default: return 0;
     }
 }

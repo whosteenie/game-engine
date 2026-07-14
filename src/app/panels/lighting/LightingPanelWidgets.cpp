@@ -160,6 +160,9 @@ namespace
         RenderDebugMode::PtRestirGiContribution,
         RenderDebugMode::PtRestirGiReuseMinusFresh,
         RenderDebugMode::PtRestirGiReusedRadiance,
+        RenderDebugMode::PtEnvDiProbeSampling,
+        RenderDebugMode::PtEnvDiProbeBsdfMis,
+        RenderDebugMode::PtEnvDiProbeCandidate,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {

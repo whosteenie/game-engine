@@ -111,7 +111,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 23.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 30.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -1315,6 +1315,12 @@ float3 RestirDiEnvironmentDirect(
     }
 
     RestirDiReservoir res = RestirDiInit();
+#if PT_DIAGNOSTIC_PERMUTATION
+    const bool envDiProbeSampling = g_PtDebugIsolateMode == 28u;
+    const bool envDiProbeBsdfMis = g_PtDebugIsolateMode == 29u;
+    const bool envDiProbeCandidate = g_PtDebugIsolateMode == 30u;
+    const bool envDiProbeNoReservoir = envDiProbeSampling || envDiProbeBsdfMis || envDiProbeCandidate;
+#endif
     [loop]
     for (uint c = 0u; c < candidateCount; ++c)
     {
@@ -1327,22 +1333,41 @@ float3 RestirDiEnvironmentDirect(
         float pdfEnv;
         if (SampleEnvLightDirection(xi, wi, pdfEnv) && dot(hitNormal, wi) > 0.0 && pdfEnv > 0.0)
         {
+#if PT_DIAGNOSTIC_PERMUTATION
+            if (!envDiProbeSampling)
+            {
+#endif
             float3 bsdf;
             float pdfBsdf;
             EvaluateOpaqueBsdfAndPdf(
                 hitNormal, viewDir, wi, f0, albedo, roughness, metallic, bsdf, pdfBsdf);
             const float misWeight = BalanceHeuristic(pdfEnv, pdfBsdf);
+#if PT_DIAGNOSTIC_PERMUTATION
+            if (!envDiProbeBsdfMis)
+            {
+#endif
             // f = BSDF·radiance·MIS; with proposalPdf = pdfEnv, M=1 gives EvaluateDirectEnvironment.
             contribution = bsdf * EnvNeeRadiance(wi) * misWeight;
             proposalPdf = pdfEnv;
             lightSample.sampleType = kRestirDiSampleEnvironment;
             lightSample.uv = DirectionToEquirectUv(wi);
+#if PT_DIAGNOSTIC_PERMUTATION
+            }
+            }
+#endif
         }
         float selectXi = 0.0;
         if (candidateCount > 1u) selectXi = PathRngNext(rng);
+#if PT_DIAGNOSTIC_PERMUTATION
+        if (!envDiProbeNoReservoir)
+        {
+#endif
         RestirDiUpdate(res, contribution, wi, g_MaxTraceDistance, proposalPdf, selectXi);
         RestirDiTemporalUpdate(
             temporalReservoir, lightSample, RestirDiTargetLuminance(contribution), proposalPdf, selectXi);
+#if PT_DIAGNOSTIC_PERMUTATION
+        }
+#endif
     }
 
     RestirDiFinalize(res);
