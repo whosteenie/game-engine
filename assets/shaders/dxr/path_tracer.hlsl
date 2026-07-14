@@ -61,6 +61,17 @@ struct EmissiveTriangleEntry
 };
 StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t18);
 
+// PF3 alias tables preserve the original source weights while selecting in O(1). Triangle aliases
+// are stored in each light's existing contiguous triangle range; aliasIndex is absolute.
+struct EmissiveAliasEntry
+{
+    float probability;
+    uint aliasIndex;
+};
+StructuredBuffer<EmissiveAliasEntry> g_EmissiveLightAlias : register(t19);
+StructuredBuffer<EmissiveAliasEntry> g_EmissiveTriangleAlias : register(t20);
+StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
+
 #include "pt_env_light.hlsli"
 #include "restir_di.hlsli"
 
@@ -684,6 +695,30 @@ float BalanceHeuristic(float pdfA, float pdfB)
     return denom > 1e-6 ? pdfA / denom : 1.0;
 }
 
+uint SampleEmissiveAlias(
+    StructuredBuffer<EmissiveAliasEntry> aliases,
+    uint offset,
+    uint count,
+    float xi)
+{
+    const float scaled = saturate(xi) * float(count);
+    const uint bucket = min(uint(scaled), count - 1u);
+    const EmissiveAliasEntry entry = aliases[offset + bucket];
+    return frac(scaled) < entry.probability ? offset + bucket : entry.aliasIndex;
+}
+
+uint EmissiveLightIndexFromInstance(uint instanceId)
+{
+    uint instanceCount;
+    uint instanceStride;
+    g_EmissiveLightByInstance.GetDimensions(instanceCount, instanceStride);
+    if (instanceId >= instanceCount)
+    {
+        return 0xffffffffu;
+    }
+    return g_EmissiveLightByInstance[instanceId];
+}
+
 float EmissiveLightPickPdf(uint instanceId)
 {
     if (g_EmissiveLightCount == 0u || g_EmissiveLightPickWeightSum <= 0.0)
@@ -691,15 +726,10 @@ float EmissiveLightPickPdf(uint instanceId)
         return 0.0;
     }
 
-    [loop]
-    for (uint lightIndex = 0u; lightIndex < g_EmissiveLightCount; ++lightIndex)
-    {
-        if (g_EmissiveLights[lightIndex].instanceId == instanceId)
-        {
-            return g_EmissiveLights[lightIndex].pickWeight / g_EmissiveLightPickWeightSum;
-        }
-    }
-    return 0.0;
+    const uint lightIndex = EmissiveLightIndexFromInstance(instanceId);
+    return lightIndex != 0xffffffffu
+        ? g_EmissiveLights[lightIndex].pickWeight / g_EmissiveLightPickWeightSum
+        : 0.0;
 }
 
 // Look up an emitter's NEE selection pdf AND its total mesh surface area by instance id, so a
@@ -713,15 +743,12 @@ void EmissiveLightLookup(uint instanceId, out float pickPdf, out float surfaceAr
         return;
     }
 
-    [loop]
-    for (uint lightIndex = 0u; lightIndex < g_EmissiveLightCount; ++lightIndex)
+    const uint lightIndex = EmissiveLightIndexFromInstance(instanceId);
+    if (lightIndex != 0xffffffffu)
     {
-        if (g_EmissiveLights[lightIndex].instanceId == instanceId)
-        {
-            pickPdf = g_EmissiveLights[lightIndex].pickWeight / g_EmissiveLightPickWeightSum;
-            surfaceArea = g_EmissiveLights[lightIndex].surfaceArea;
-            return;
-        }
+        const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
+        pickPdf = light.pickWeight / g_EmissiveLightPickWeightSum;
+        surfaceArea = light.surfaceArea;
     }
 }
 
@@ -917,18 +944,8 @@ float3 EvaluateDirectEmissive(
     const float4 xiPick = PathRngNext4(rng);
     const float4 xiSurface = PathRngNext4(rng);
 
-    float pick = xiPick.x * g_EmissiveLightPickWeightSum;
-    uint lightIndex = g_EmissiveLightCount - 1u;
-    [loop]
-    for (uint i = 0u; i < g_EmissiveLightCount; ++i)
-    {
-        pick -= g_EmissiveLights[i].pickWeight;
-        if (pick <= 0.0)
-        {
-            lightIndex = i;
-            break;
-        }
-    }
+    const uint lightIndex = SampleEmissiveAlias(
+        g_EmissiveLightAlias, 0u, g_EmissiveLightCount, xiPick.x);
 
     const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
     if (light.triangleCount == 0u)
@@ -936,19 +953,8 @@ float3 EvaluateDirectEmissive(
         return 0.0.xxx;
     }
 
-    float triPick = xiPick.y * light.pickWeight;
-    uint triangleIndex = light.triangleOffset + light.triangleCount - 1u;
-    [loop]
-    for (uint triLocal = 0u; triLocal < light.triangleCount; ++triLocal)
-    {
-        const EmissiveTriangleEntry tri = g_EmissiveTriangles[light.triangleOffset + triLocal];
-        triPick -= tri.pickWeight;
-        if (triPick <= 0.0)
-        {
-            triangleIndex = light.triangleOffset + triLocal;
-            break;
-        }
-    }
+    const uint triangleIndex = SampleEmissiveAlias(
+        g_EmissiveTriangleAlias, light.triangleOffset, light.triangleCount, xiPick.y);
 
     const EmissiveTriangleEntry emitterTri = g_EmissiveTriangles[triangleIndex];
 
@@ -1084,18 +1090,8 @@ void SampleEmissiveDiCandidate(
     const float4 xiPick = PathRngNext4(rng);
     const float4 xiSurface = PathRngNext4(rng);
 
-    float pick = xiPick.x * g_EmissiveLightPickWeightSum;
-    uint lightIndex = g_EmissiveLightCount - 1u;
-    [loop]
-    for (uint i = 0u; i < g_EmissiveLightCount; ++i)
-    {
-        pick -= g_EmissiveLights[i].pickWeight;
-        if (pick <= 0.0)
-        {
-            lightIndex = i;
-            break;
-        }
-    }
+    const uint lightIndex = SampleEmissiveAlias(
+        g_EmissiveLightAlias, 0u, g_EmissiveLightCount, xiPick.x);
 
     const EmissiveLightEntry light = g_EmissiveLights[lightIndex];
     if (light.triangleCount == 0u)
@@ -1103,19 +1099,8 @@ void SampleEmissiveDiCandidate(
         return;
     }
 
-    float triPick = xiPick.y * light.pickWeight;
-    uint triangleIndex = light.triangleOffset + light.triangleCount - 1u;
-    [loop]
-    for (uint triLocal = 0u; triLocal < light.triangleCount; ++triLocal)
-    {
-        const EmissiveTriangleEntry tri = g_EmissiveTriangles[light.triangleOffset + triLocal];
-        triPick -= tri.pickWeight;
-        if (triPick <= 0.0)
-        {
-            triangleIndex = light.triangleOffset + triLocal;
-            break;
-        }
-    }
+    const uint triangleIndex = SampleEmissiveAlias(
+        g_EmissiveTriangleAlias, light.triangleOffset, light.triangleCount, xiPick.y);
 
     const EmissiveTriangleEntry emitterTri = g_EmissiveTriangles[triangleIndex];
     lightSample.sampleType = kRestirDiSampleEmissive;

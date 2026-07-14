@@ -307,6 +307,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.prevInstanceTransformsSrvIndex = prevTransformsSrvIndex;
     dispatchInputs.emissiveLightsSrvIndex = accelerationStructures.GetEmissiveLightsSrvIndex();
     dispatchInputs.emissiveTrianglesSrvIndex = accelerationStructures.GetEmissiveTrianglesSrvIndex();
+    dispatchInputs.emissiveLightAliasSrvIndex = accelerationStructures.GetEmissiveLightAliasSrvIndex();
+    dispatchInputs.emissiveTriangleAliasSrvIndex = accelerationStructures.GetEmissiveTriangleAliasSrvIndex();
+    dispatchInputs.emissiveLightByInstanceSrvIndex = accelerationStructures.GetEmissiveLightByInstanceSrvIndex();
     dispatchInputs.envImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
     dispatchInputs.envEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
 

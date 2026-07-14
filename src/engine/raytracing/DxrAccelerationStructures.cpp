@@ -77,6 +77,61 @@ namespace
         return instances;
     }
 
+    void BuildEmissiveAliasTable(
+        const std::vector<float>& weights,
+        const std::uint32_t globalOffset,
+        std::vector<DxrEmissiveAliasEntry>& outEntries)
+    {
+        const std::size_t count = weights.size();
+        const std::size_t outputStart = outEntries.size();
+        outEntries.resize(outputStart + count);
+        if (count == 0)
+        {
+            return;
+        }
+
+        float weightSum = 0.0f;
+        for (const float weight : weights)
+        {
+            weightSum += std::max(weight, 0.0f);
+        }
+        if (weightSum <= 0.0f)
+        {
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                outEntries[outputStart + i] = {1.0f, globalOffset + static_cast<std::uint32_t>(i)};
+            }
+            return;
+        }
+
+        std::vector<float> scaled(count);
+        std::vector<std::uint32_t> smallBuckets;
+        std::vector<std::uint32_t> largeBuckets;
+        smallBuckets.reserve(count);
+        largeBuckets.reserve(count);
+        for (std::uint32_t i = 0; i < count; ++i)
+        {
+            scaled[i] = std::max(weights[i], 0.0f) * static_cast<float>(count) / weightSum;
+            (scaled[i] < 1.0f ? smallBuckets : largeBuckets).push_back(i);
+        }
+        while (!smallBuckets.empty() && !largeBuckets.empty())
+        {
+            const std::uint32_t low = smallBuckets.back(); smallBuckets.pop_back();
+            const std::uint32_t high = largeBuckets.back(); largeBuckets.pop_back();
+            outEntries[outputStart + low] = {scaled[low], globalOffset + high};
+            scaled[high] = scaled[high] + scaled[low] - 1.0f;
+            (scaled[high] < 1.0f ? smallBuckets : largeBuckets).push_back(high);
+        }
+        for (const std::uint32_t index : smallBuckets)
+        {
+            outEntries[outputStart + index] = {1.0f, globalOffset + index};
+        }
+        for (const std::uint32_t index : largeBuckets)
+        {
+            outEntries[outputStart + index] = {1.0f, globalOffset + index};
+        }
+    }
+
     std::uint32_t UvOffsetFloatsForTexCoordSet(const int texCoordSet)
     {
         return texCoordSet == 1 ? kUv1OffsetFloats : kUv0OffsetFloats;
@@ -259,6 +314,18 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
             GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
         }
     }
+    for (const std::uint32_t srvIndex : m_emissiveLightAliasSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX) { GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex); }
+    }
+    for (const std::uint32_t srvIndex : m_emissiveTriangleAliasSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX) { GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex); }
+    }
+    for (const std::uint32_t srvIndex : m_emissiveLightByInstanceSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX) { GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex); }
+    }
 
     m_geometryLookupSrvIndices.fill(UINT32_MAX);
     m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
@@ -267,6 +334,9 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_prevTransformsSrvIndices.fill(UINT32_MAX);
     m_emissiveLightsSrvIndices.fill(UINT32_MAX);
     m_emissiveTrianglesSrvIndices.fill(UINT32_MAX);
+    m_emissiveLightAliasSrvIndices.fill(UINT32_MAX);
+    m_emissiveTriangleAliasSrvIndices.fill(UINT32_MAX);
+    m_emissiveLightByInstanceSrvIndices.fill(UINT32_MAX);
 
     m_geometryLookupStaging.Release();
     m_materialStaging.Release();
@@ -275,6 +345,9 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_prevTransformsStaging.Release();
     m_emissiveLightsStaging.Release();
     m_emissiveTrianglesStaging.Release();
+    m_emissiveLightAliasStaging.Release();
+    m_emissiveTriangleAliasStaging.Release();
+    m_emissiveLightByInstanceStaging.Release();
     m_geometryLookupGpu.Release();
     m_materialGpu.Release();
     m_sceneVertexFloatsGpu.Release();
@@ -282,13 +355,22 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_prevTransformsGpu.Release();
     m_emissiveLightsGpu.Release();
     m_emissiveTrianglesGpu.Release();
+    m_emissiveLightAliasGpu.Release();
+    m_emissiveTriangleAliasGpu.Release();
+    m_emissiveLightByInstanceGpu.Release();
     m_uploadedGeometryFingerprint.fill(0);
     m_prevTransformsUploadFrame.fill(0);
     m_emissiveLightsUploadFrame.fill(0);
     m_emissiveTrianglesUploadFrame.fill(0);
+    m_emissiveLightAliasUploadFrame.fill(0);
+    m_emissiveTriangleAliasUploadFrame.fill(0);
+    m_emissiveLightByInstanceUploadFrame.fill(0);
     m_prevTransformsCapacityCount = 0;
     m_emissiveLightsCapacityCount = 0;
     m_emissiveTrianglesCapacityCount = 0;
+    m_emissiveLightAliasCapacityCount = 0;
+    m_emissiveTriangleAliasCapacityCount = 0;
+    m_emissiveLightByInstanceCapacityCount = 0;
     m_emissiveLightCount = 0;
     m_emissiveLightPickWeightSum = 0.0f;
     m_sceneHasTransmission = false;
@@ -1029,8 +1111,46 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
     m_diagnostics.emissiveTriangleCount = static_cast<std::uint32_t>(triangles.size());
     m_diagnostics.emissiveLightPickWeightSum = pickWeightSum;
 
+    std::vector<DxrEmissiveAliasEntry> lightAliases;
+    std::vector<float> lightWeights;
+    lightWeights.reserve(entries.size());
+    for (const DxrEmissiveLightEntry& entry : entries)
+    {
+        lightWeights.push_back(entry.pickWeight);
+    }
+    BuildEmissiveAliasTable(lightWeights, 0u, lightAliases);
+
+    std::vector<DxrEmissiveAliasEntry> triangleAliases;
+    triangleAliases.reserve(triangles.size());
+    for (const DxrEmissiveLightEntry& entry : entries)
+    {
+        std::vector<float> triangleWeights;
+        triangleWeights.reserve(entry.triangleCount);
+        for (std::uint32_t triangleIndex = 0; triangleIndex < entry.triangleCount; ++triangleIndex)
+        {
+            triangleWeights.push_back(triangles[entry.triangleOffset + triangleIndex].pickWeight);
+        }
+        BuildEmissiveAliasTable(triangleWeights, entry.triangleOffset, triangleAliases);
+    }
+
+    std::uint32_t maxInstanceId = 0;
+    for (const DxrRenderableInstance& renderInstance : renderInstances)
+    {
+        maxInstanceId = std::max(maxInstanceId, renderInstance.instanceId);
+    }
+    std::vector<std::uint32_t> lightByInstance(
+        renderInstances.empty() ? 0u : static_cast<std::size_t>(maxInstanceId) + 1u,
+        UINT32_MAX);
+    for (std::uint32_t lightIndex = 0; lightIndex < entries.size(); ++lightIndex)
+    {
+        lightByInstance[entries[lightIndex].instanceId] = lightIndex;
+    }
+
     const std::uint64_t lightsByteSize = entries.size() * sizeof(DxrEmissiveLightEntry);
     const std::uint64_t trianglesByteSize = triangles.size() * sizeof(DxrEmissiveTriangleEntry);
+    const std::uint64_t lightAliasByteSize = lightAliases.size() * sizeof(DxrEmissiveAliasEntry);
+    const std::uint64_t triangleAliasByteSize = triangleAliases.size() * sizeof(DxrEmissiveAliasEntry);
+    const std::uint64_t lightByInstanceByteSize = lightByInstance.size() * sizeof(std::uint32_t);
     const bool lightsOk = UploadStructuredBufferRing(
         d3dCommandList,
         entries.empty() ? nullptr : entries.data(),
@@ -1053,7 +1173,22 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
         m_emissiveTrianglesSrvIndices,
         m_emissiveTrianglesUploadFrame,
         m_emissiveTrianglesCapacityCount);
-    if (!lightsOk || !trianglesOk)
+    const bool lightAliasesOk = UploadStructuredBufferRing(
+        d3dCommandList, lightAliases.empty() ? nullptr : lightAliases.data(), lightAliasByteSize,
+        sizeof(DxrEmissiveAliasEntry), static_cast<std::uint32_t>(lightAliases.size()),
+        m_emissiveLightAliasStaging, m_emissiveLightAliasGpu, m_emissiveLightAliasSrvIndices,
+        m_emissiveLightAliasUploadFrame, m_emissiveLightAliasCapacityCount);
+    const bool triangleAliasesOk = UploadStructuredBufferRing(
+        d3dCommandList, triangleAliases.empty() ? nullptr : triangleAliases.data(), triangleAliasByteSize,
+        sizeof(DxrEmissiveAliasEntry), static_cast<std::uint32_t>(triangleAliases.size()),
+        m_emissiveTriangleAliasStaging, m_emissiveTriangleAliasGpu, m_emissiveTriangleAliasSrvIndices,
+        m_emissiveTriangleAliasUploadFrame, m_emissiveTriangleAliasCapacityCount);
+    const bool lightByInstanceOk = UploadStructuredBufferRing(
+        d3dCommandList, lightByInstance.empty() ? nullptr : lightByInstance.data(), lightByInstanceByteSize,
+        sizeof(std::uint32_t), static_cast<std::uint32_t>(lightByInstance.size()),
+        m_emissiveLightByInstanceStaging, m_emissiveLightByInstanceGpu, m_emissiveLightByInstanceSrvIndices,
+        m_emissiveLightByInstanceUploadFrame, m_emissiveLightByInstanceCapacityCount);
+    if (!lightsOk || !trianglesOk || !lightAliasesOk || !triangleAliasesOk || !lightByInstanceOk)
     {
         m_emissiveLightCount = 0;
         m_emissiveLightPickWeightSum = 0.0f;

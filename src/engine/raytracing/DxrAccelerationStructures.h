@@ -93,6 +93,13 @@ struct DxrEmissiveTriangleEntry
 };
 static_assert(sizeof(DxrEmissiveTriangleEntry) == 64);
 
+struct DxrEmissiveAliasEntry
+{
+    float probability = 1.0f;
+    std::uint32_t aliasIndex = 0;
+};
+static_assert(sizeof(DxrEmissiveAliasEntry) == 8);
+
 class DxrAccelerationStructures
 {
 public:
@@ -188,9 +195,31 @@ public:
             : UINT32_MAX;
     }
 
+    std::uint32_t GetEmissiveLightAliasSrvIndex() const
+    {
+        return GetFrameUploadedSrvIndex(m_emissiveLightAliasSrvIndices, m_emissiveLightAliasUploadFrame);
+    }
+    std::uint32_t GetEmissiveTriangleAliasSrvIndex() const
+    {
+        return GetFrameUploadedSrvIndex(m_emissiveTriangleAliasSrvIndices, m_emissiveTriangleAliasUploadFrame);
+    }
+    std::uint32_t GetEmissiveLightByInstanceSrvIndex() const
+    {
+        return GetFrameUploadedSrvIndex(m_emissiveLightByInstanceSrvIndices, m_emissiveLightByInstanceUploadFrame);
+    }
+
     void Release();
 
 private:
+    std::uint32_t GetFrameUploadedSrvIndex(
+        const std::array<std::uint32_t, GfxContext::FrameCount>& indices,
+        const std::array<std::uint64_t, GfxContext::FrameCount>& uploadFrames) const
+    {
+        const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+        return uploadFrames[frameIndex] == GfxContext::Get().GetSubmissionFrameNumber()
+            ? indices[frameIndex]
+            : UINT32_MAX;
+    }
     bool EnsureScratchBuffer(std::uint64_t requiredBytes, std::string& outError);
     bool EnsureGeometryBuffers(
         const Scene& scene,
@@ -250,6 +279,21 @@ private:
         UINT32_MAX};
     std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveTrianglesUploadFrame{};
     std::size_t m_emissiveTrianglesCapacityCount = 0;
+    DxrUploadRing m_emissiveLightAliasStaging{};
+    DxrSrvBufferRing m_emissiveLightAliasGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_emissiveLightAliasSrvIndices{UINT32_MAX, UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveLightAliasUploadFrame{};
+    std::size_t m_emissiveLightAliasCapacityCount = 0;
+    DxrUploadRing m_emissiveTriangleAliasStaging{};
+    DxrSrvBufferRing m_emissiveTriangleAliasGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_emissiveTriangleAliasSrvIndices{UINT32_MAX, UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveTriangleAliasUploadFrame{};
+    std::size_t m_emissiveTriangleAliasCapacityCount = 0;
+    DxrUploadRing m_emissiveLightByInstanceStaging{};
+    DxrSrvBufferRing m_emissiveLightByInstanceGpu{};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_emissiveLightByInstanceSrvIndices{UINT32_MAX, UINT32_MAX};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_emissiveLightByInstanceUploadFrame{};
+    std::size_t m_emissiveLightByInstanceCapacityCount = 0;
     std::uint32_t m_emissiveLightCount = 0;
     float m_emissiveLightPickWeightSum = 0.0f;
     // Any renderable with dielectricWeight > 0 — selects opaque vs transmissive NEE shadows.

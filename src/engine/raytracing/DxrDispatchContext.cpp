@@ -2506,8 +2506,8 @@ bool DxrDispatchContext::DispatchPathTracer(
     const DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    // Path-tracer root signature: t0-t18 (reflection set + prev transforms + emissive NEE + env IS).
-    constexpr std::uint32_t kPathTracerSrvCount = 19;
+    // Path-tracer root signature: t0-t21 (emissive geometry, alias tables, and dense lookup).
+    constexpr std::uint32_t kPathTracerSrvCount = 22;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
         ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
         : srvIndicesFromHandles[5];
@@ -2524,6 +2524,18 @@ bool DxrDispatchContext::DispatchPathTracer(
     const std::uint32_t emissiveTrianglesSrvIndex =
         inputs.emissiveTrianglesSrvIndex != UINT32_MAX
             ? inputs.emissiveTrianglesSrvIndex
+            : inputs.geometryLookupSrvIndex;
+    const std::uint32_t emissiveLightAliasSrvIndex =
+        inputs.emissiveLightAliasSrvIndex != UINT32_MAX
+            ? inputs.emissiveLightAliasSrvIndex
+            : inputs.geometryLookupSrvIndex;
+    const std::uint32_t emissiveTriangleAliasSrvIndex =
+        inputs.emissiveTriangleAliasSrvIndex != UINT32_MAX
+            ? inputs.emissiveTriangleAliasSrvIndex
+            : inputs.geometryLookupSrvIndex;
+    const std::uint32_t emissiveLightByInstanceSrvIndex =
+        inputs.emissiveLightByInstanceSrvIndex != UINT32_MAX
+            ? inputs.emissiveLightByInstanceSrvIndex
             : inputs.geometryLookupSrvIndex;
     const std::uint32_t envImportanceCdfSrvIndex =
         inputs.envImportanceCdfSrvIndex != UINT32_MAX
@@ -2552,7 +2564,10 @@ bool DxrDispatchContext::DispatchPathTracer(
         emissiveLightsSrvIndex,
         envImportanceCdfSrvIndex,
         envEquirectSrvIndex,
-        emissiveTrianglesSrvIndex};
+        emissiveTrianglesSrvIndex,
+        emissiveLightAliasSrvIndex,
+        emissiveTriangleAliasSrvIndex,
+        emissiveLightByInstanceSrvIndex};
 
     if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
     {
