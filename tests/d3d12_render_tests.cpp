@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 #include "d3d12_test_harness.h"
 #include "test_expect.h"
 #include "d3d12_test_runner.h"

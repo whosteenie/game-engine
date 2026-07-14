@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 #include "d3d12_test_harness.h"
 
 #include "engine/assets/TextureCache.h"
@@ -13,11 +18,6 @@
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_glfw.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#endif
 
 #include <cmath>
 #include <filesystem>

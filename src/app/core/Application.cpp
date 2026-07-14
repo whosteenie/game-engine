@@ -1,3 +1,9 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#undef GetObject
+#endif
+
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
@@ -71,11 +77,6 @@
 #include <typeinfo>
 #include <cstring>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#undef GetObject
-#endif
 #include <glm/gtc/matrix_inverse.hpp>
 #include <unordered_map>
 
