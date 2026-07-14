@@ -15,6 +15,7 @@
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/EnvironmentPresets.h"
 #include "engine/lighting/IBL.h"
+#include "engine/components/LightComponent.h"
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/rendering/Constants.h"
@@ -34,6 +35,7 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <filesystem>
 #include <cmath>
@@ -131,8 +133,31 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         float skyboxRotation = environmentMap.GetRotationDegrees();
         if (ImGui::SliderFloat("Rotation Y (deg)", &skyboxRotation, 0.0f, 360.0f))
         {
+            const float previousRotation = environmentMap.GetRotationDegrees();
             environmentMap.SetRotationDegrees(skyboxRotation);
+            const float deltaRadians = glm::radians(skyboxRotation - previousRotation);
+            if (std::abs(deltaRadians) > 1e-6f)
+            {
+                const glm::mat4 yaw = glm::rotate(
+                    glm::mat4(1.0f), deltaRadians, glm::vec3(0.0f, 1.0f, 0.0f));
+                for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
+                {
+                    const SceneObject& object = scene.GetObjects()[objectIndex];
+                    if (!object.HasLight()
+                        || object.GetLight().type != LightType::Directional
+                        || !object.GetLight().autoAlignWithHdrSkybox)
+                    {
+                        continue;
+                    }
+                    scene.SetObjectWorldMatrix(
+                        static_cast<int>(objectIndex), yaw * scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+                }
+            }
             scene.MarkDirty();
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            environmentMap.CommitRotation();
         }
         HandleRendererFieldEditEvents(editContext);
 

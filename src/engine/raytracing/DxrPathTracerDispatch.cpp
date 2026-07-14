@@ -343,6 +343,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.envDirectLightingLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
     constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
     constants.restirGiInitialEnabled = frameInputs.restirGiInitialEnabled ? 1.0f : 0.0f;
+    constants._restirDiPad1 = frameInputs.environmentRotationYRadians;
 
     m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
     m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
@@ -350,6 +351,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     m_lastEnvCdfWidth = frameInputs.envImportanceCdfWidth;
     m_lastEnvCdfHeight = frameInputs.envImportanceCdfHeight;
     m_lastEnvironmentIntensity = frameInputs.environmentIntensity;
+    m_lastEnvironmentRotationYRadians = frameInputs.environmentRotationYRadians;
     m_lastEnvDirectLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
     m_lastSunIntensity = frameInputs.sunIntensity;
     m_lastSunDirection = frameInputs.sunDirection;
@@ -468,6 +470,7 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     constants.envCdfWidth = m_lastEnvCdfWidth;
     constants.envCdfHeight = m_lastEnvCdfHeight;
     constants.environmentIntensity = m_lastEnvironmentIntensity;
+    constants.environmentRotationYRadians = m_lastEnvironmentRotationYRadians;
     constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
     constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
     constants.sunDirection[0] = m_lastSunDirection.x;
@@ -564,6 +567,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.envCdfWidth = m_lastEnvCdfWidth;
         constants.envCdfHeight = m_lastEnvCdfHeight;
         constants.environmentIntensity = m_lastEnvironmentIntensity;
+        constants.environmentRotationYRadians = m_lastEnvironmentRotationYRadians;
         constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
         constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
         constants.sunDirection[0] = m_lastSunDirection.x;

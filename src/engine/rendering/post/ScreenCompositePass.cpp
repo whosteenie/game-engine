@@ -41,7 +41,7 @@ namespace
             "uBackgroundMode",
             environmentMap.UsesSkyboxBackground() ? 0 : 1);
         shader.SetFloat("uSkyboxExposure", environmentMap.GetExposure());
-        shader.SetFloat("uEnvironmentRotationY", environmentMap.GetIBL().GetRotationYRadians());
+        shader.SetFloat("uEnvironmentRotationY", environmentMap.GetRotationYRadians());
         shader.SetVec3("uSolidBackgroundColor", SolidBackgroundLinear(environmentMap));
 
         if (environmentMap.UsesSkyboxBackground())

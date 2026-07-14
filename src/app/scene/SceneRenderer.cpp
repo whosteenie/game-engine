@@ -822,6 +822,7 @@ void SceneRenderer::RecordDxrPass(
         ptInputs.velocitySrvCpuHandle = m_screenSpaceEffects->GetSceneColorSrvCpuHandle(GBufferSlot::MotionVelocity);
         ptInputs.materialSrvIndex = m_dxrAccelerationStructures->GetMaterialSrvIndex();
         ptInputs.environmentIntensity = ptIbl.GetEnvironmentIntensity();
+        ptInputs.environmentRotationYRadians = m_environmentMap->GetRotationYRadians();
         ptInputs.envEquirectSrvCpuHandle = ptIbl.GetHdrEquirectSrvCpuHandle();
         if (ptIbl.HasEnvImportanceSampling())
         {

@@ -72,6 +72,9 @@ StructuredBuffer<EmissiveAliasEntry> g_EmissiveLightAlias : register(t19);
 StructuredBuffer<EmissiveAliasEntry> g_EmissiveTriangleAlias : register(t20);
 StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 
+// Kept in the PT-only ReSTIR parameter block; this declaration must precede the environment
+// helper include because the helper applies it to every HDR lookup.
+#define g_EnvironmentRotationY g_PtRestirDiParams.z
 #include "pt_env_light.hlsli"
 #include "restir_di.hlsli"
 

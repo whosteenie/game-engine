@@ -39,6 +39,7 @@ public:
         std::uintptr_t velocitySrvCpuHandle = 0;
         std::uint32_t materialSrvIndex = UINT32_MAX;
         float environmentIntensity = 1.0f;
+        float environmentRotationYRadians = 0.0f;
         float maxReflectionLod = 4.0f;
         glm::vec3 sunDirection = glm::vec3(0.0f, -1.0f, 0.0f);
         glm::vec3 sunColor = glm::vec3(1.0f);
@@ -186,6 +187,7 @@ private:
     std::uint32_t m_lastEnvCdfWidth = 0;
     std::uint32_t m_lastEnvCdfHeight = 0;
     float m_lastEnvironmentIntensity = 1.0f;
+    float m_lastEnvironmentRotationYRadians = 0.0f;
     float m_lastEnvDirectLuminanceClamp = 0.0f;
     float m_lastSunIntensity = 0.0f;
     glm::vec3 m_lastSunDirection{0.0f, 1.0f, 0.0f};

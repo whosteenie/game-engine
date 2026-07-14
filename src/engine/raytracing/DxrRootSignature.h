@@ -121,7 +121,7 @@ struct RestirTemporalConstants
     std::uint32_t debugMode = 0;
     std::uint32_t enableDiTemporal = 0;
     std::uint32_t enableGiTemporal = 0;
-    std::uint32_t _padDebug = 0;
+    float environmentRotationYRadians = 0.0f;
 };
 static_assert(sizeof(RestirTemporalConstants) == 192, "ReSTIR DI temporal cbuffer layout mismatch");
 

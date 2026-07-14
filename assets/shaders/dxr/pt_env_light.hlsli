@@ -67,7 +67,8 @@ float EnvNeeCellPdf(uint cellIndex)
 
 float3 SampleEnvEquirectRadiance(float3 direction)
 {
-    const float2 uv = DirectionToEquirectUv(normalize(direction));
+    const float2 uv = DirectionToEquirectUv(
+        RotateEnvironmentY(normalize(direction), g_EnvironmentRotationY));
     return g_EnvEquirectMap.SampleLevel(g_LinearClampSampler, uv, 0.0).rgb * g_EnvironmentIntensity;
 }
 
@@ -127,7 +128,8 @@ float EnvNeePdfForDirection(float3 dir)
     {
         return 0.0;
     }
-    const float2 uv = DirectionToEquirectUv(normalize(dir));
+    const float2 uv = DirectionToEquirectUv(
+        RotateEnvironmentY(normalize(dir), g_EnvironmentRotationY));
     const uint ix = min(uint(saturate(uv.x) * float(g_EnvIsCdfWidth)), g_EnvIsCdfWidth - 1u);
     const uint iy = min(uint(saturate(uv.y) * float(g_EnvIsCdfHeight)), g_EnvIsCdfHeight - 1u);
     return EnvNeeCellPdf(iy * g_EnvIsCdfWidth + ix);
@@ -151,7 +153,8 @@ bool SampleEnvLightDirection(float4 xi, out float3 wi, out float pdfSolidAngle)
 
     const float u = (float(ix) + xi.y) / float(cdfW);
     const float v = (float(iy) + xi.z) / float(cdfH);
-    wi = EquirectUvToDirection(float2(u, v));
+    // The CDF is stored in unrotated HDR texture space; return its sample in world space.
+    wi = RotateEnvironmentY(EquirectUvToDirection(float2(u, v)), -g_EnvironmentRotationY);
 
     // Density of the cell the sampler actually drew (from the CDF), not a re-derived luminance.
     pdfSolidAngle = EnvNeeCellPdf(cellIndex);

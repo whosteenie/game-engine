@@ -417,20 +417,18 @@ void IBL::DestroyGpuTexture(GpuTexture& texture)
 
     if (texture.srvDescriptorIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(texture.srvDescriptorIndex);
+        // IBL regeneration happens between frames, but the previous frame can still be executing.
+        // Its command list may retain both this descriptor and the underlying resource, so recycle
+        // neither synchronously.  Reusing the slot early redirects an in-flight draw to unrelated
+        // data; releasing the resource early can trigger a device removal.
+        GfxContext::Get().DeferredFreeOffscreenSrv(texture.srvDescriptorIndex);
     }
 
     // Both the ID3D12Resource and its D3D12MA allocation are created with an owning ref
-    // (CreateResource with IID_PPV_ARGS), so both must be released. Releasing only the allocation
-    // leaked the resource object every reload — release the resource first, then the allocation.
-    if (texture.resource != nullptr)
+    // (CreateResource with IID_PPV_ARGS), so transfer both to the deferred-release queue.
+    if (texture.resource != nullptr || texture.allocation != nullptr)
     {
-        static_cast<ID3D12Resource*>(texture.resource)->Release();
-    }
-
-    if (texture.allocation != nullptr)
-    {
-        static_cast<D3D12MA::Allocation*>(texture.allocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(texture.allocation, texture.resource);
     }
 
     texture = {};
@@ -451,20 +449,18 @@ void IBL::DestroyEnvImportanceCdf()
 {
     if (GfxContext::Get().IsInitialized() && m_envImportanceCdfSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_envImportanceCdfSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_envImportanceCdfSrvIndex);
     }
 
-    if (m_envImportanceCdfResource != nullptr)
+    if (m_envImportanceCdfResource != nullptr || m_envImportanceCdfAllocation != nullptr)
     {
-        static_cast<ID3D12Resource*>(m_envImportanceCdfResource)->Release();
-        m_envImportanceCdfResource = nullptr;
+        GfxContext::Get().DeferredReleaseResource(
+            m_envImportanceCdfAllocation,
+            m_envImportanceCdfResource);
     }
 
-    if (m_envImportanceCdfAllocation != nullptr)
-    {
-        static_cast<D3D12MA::Allocation*>(m_envImportanceCdfAllocation)->Release();
-        m_envImportanceCdfAllocation = nullptr;
-    }
+    m_envImportanceCdfResource = nullptr;
+    m_envImportanceCdfAllocation = nullptr;
 
     m_envImportanceCdfSrvIndex = UINT32_MAX;
     m_envImportanceSampleCount = 0;

@@ -20,6 +20,9 @@ struct LightComponent
     float innerCutoffDegrees = 12.5f;
     float outerCutoffDegrees = 17.5f;
     bool castsShadow = false;
+    // Keep this directional light rotated with the HDR skybox.  The scene light remains the
+    // authoritative direct-light source; this only preserves an artist-established alignment.
+    bool autoAlignWithHdrSkybox = false;
 };
 
 bool operator==(const LightComponent& left, const LightComponent& right);

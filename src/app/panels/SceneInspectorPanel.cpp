@@ -761,6 +761,20 @@ namespace
 
         if (light.type == LightType::Directional)
         {
+            bool autoAlignWithHdrSkybox = light.autoAlignWithHdrSkybox;
+            if (ImGui::Checkbox("Auto-align with HDR skybox", &autoAlignWithHdrSkybox))
+            {
+                light.autoAlignWithHdrSkybox = autoAlignWithHdrSkybox;
+                scene.MarkDirty();
+            }
+            HandleLightFieldEditEvents(editContext);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Keeps this light's direction synchronized when the HDR skybox is rotated. "
+                    "It does not override manual scene-light edits.");
+            }
+
             bool castsShadow = light.castsShadow;
             if (ImGui::Checkbox("Cast shadows", &castsShadow))
             {

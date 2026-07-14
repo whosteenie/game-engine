@@ -31,7 +31,7 @@ cbuffer RestirTemporalConstants : register(b0)
     uint g_DebugMode;
     uint g_EnableDiTemporal;
     uint g_EnableGiTemporal;
-    uint _PadDebug;
+    float g_EnvironmentRotationY;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
@@ -234,6 +234,12 @@ float3 EquirectUvToDirection(float2 uv)
     float h = sqrt(max(1.0 - y * y, 0.0));
     return normalize(float3(cos(phi) * h, y, sin(phi) * h));
 }
+
+float3 RotateEnvironmentY(float3 direction, float angle)
+{
+    float c = cos(angle); float s = sin(angle);
+    return float3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+}
 float EnvPdf(float2 uv)
 {
     if (g_EnvImportanceCount == 0u) return 0.0;
@@ -252,7 +258,7 @@ float3 EnvRadiance(float2 uv)
     {
         float cosBoundary = rsqrt(1.0 + max(g_SunAngularTanRadius, 1e-6)
             * max(g_SunAngularTanRadius, 1e-6));
-        if (dot(EquirectUvToDirection(uv), normalize(g_SunDirection)) >= cosBoundary)
+        if (dot(RotateEnvironmentY(EquirectUvToDirection(uv), -g_EnvironmentRotationY), normalize(g_SunDirection)) >= cosBoundary)
             return 0.0.xxx;
     }
     float3 r = g_EnvMap.SampleLevel(g_LinearClampSampler, uv, 0.0).rgb * g_EnvironmentIntensity;
@@ -293,7 +299,7 @@ bool EvaluateSample(
     }
     else if (sample.sampleType == kRestirDiSampleEnvironment)
     {
-        wi = EquirectUvToDirection(sample.uv); distance = g_MaxTraceDistance;
+        wi = RotateEnvironmentY(EquirectUvToDirection(sample.uv), -g_EnvironmentRotationY); distance = g_MaxTraceDistance;
         if (dot(n, wi) <= 0.0) return false;
         proposal = EnvPdf(sample.uv);
         float3 bsdf = EvaluateBsdfCos(n, v, wi, albedo, metallic, roughness);
