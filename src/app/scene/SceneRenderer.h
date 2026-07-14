@@ -75,6 +75,11 @@ struct RenderFrameDiagnostics
     std::uint32_t shadowCascadeCount = 0;
     std::uint32_t shadowMeshShaderDispatchCount = 0;
     std::uint32_t meshShaderDispatchCount = 0;
+    double gpuSceneBuildCpuMs = 0.0;
+    double gpuSceneUploadCpuMs = 0.0;
+    double rasterRecordCpuMs = 0.0;
+    double dxrScenePrepCpuMs = 0.0;
+    double pathTracerFrameDataCpuMs = 0.0;
     bool instanceEditorIdMapValid = true;
     bool gpuSceneUploadValid = false;
     bool meshShadersSupported = false;

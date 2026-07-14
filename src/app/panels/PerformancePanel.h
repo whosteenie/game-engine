@@ -62,6 +62,8 @@ private:
     mutable std::uint64_t m_frameCounter = 0;
     mutable int m_gpuTimingSampleCounter = 0;
     mutable std::unordered_map<std::string, float> m_smoothedGpuPassMs;
+    mutable std::unordered_map<std::string, float> m_smoothedCpuPassMs;
+    mutable bool m_cpuTimingSamplePending = true;
     mutable SmoothedSystemResourceDisplay m_smoothedSystemResources;
     SystemResourcesMonitor m_systemResources;
 };

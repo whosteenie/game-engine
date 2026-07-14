@@ -41,6 +41,7 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 
@@ -683,11 +684,16 @@ void SceneRenderer::RecordDxrPass(
         m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
     }
 
+    const auto dxrScenePrepStart = std::chrono::steady_clock::now();
     m_dxrAccelerationStructures->EnsureScene(
         scene,
         m_gpuScene,
         true,
         GfxContext::Get().GetCommandList());
+    m_renderFrameDiagnostics.dxrScenePrepCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - dxrScenePrepStart)
+            .count();
     DxrBreadcrumb("render: EnsureScene end");
     NativeProgressWindow::Instance().Report("Dispatching ray tracing passes...", 0.985f);
 
@@ -1403,6 +1409,7 @@ void SceneRenderer::RenderGeometryPass(
     }
 
     {
+        const auto rasterRecordStart = std::chrono::steady_clock::now();
         SceneRenderTrace::Scope drawScope("draw scene objects");
         const GfxContext::GpuTimerScope gpuScopeRaster("Scene raster");
         for (std::size_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex)
@@ -1434,6 +1441,10 @@ void SceneRenderer::RenderGeometryPass(
         }
 
         drawScope.Success();
+        m_renderFrameDiagnostics.rasterRecordCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - rasterRecordStart)
+                .count();
     }
 
     if (!usePostProcess && target != nullptr)
@@ -1474,6 +1485,7 @@ void SceneRenderer::RenderPostProcessPass(
     // any-hit fast path. These calls were lost during the render-pass refactor.
     if (pathTracingActive && m_dxrAccelerationStructures != nullptr)
     {
+        const auto pathTracerFrameDataStart = std::chrono::steady_clock::now();
         if (!m_gpuScene.GetInstances().empty())
         {
             std::vector<glm::mat4> previousWorldMatrices;
@@ -1490,6 +1502,10 @@ void SceneRenderer::RenderPostProcessPass(
             scene,
             m_gpuScene,
             GfxContext::Get().GetCommandList());
+        m_renderFrameDiagnostics.pathTracerFrameDataCpuMs =
+            std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - pathTracerFrameDataStart)
+                .count();
     }
 
     RecordDxrPass(
@@ -1700,8 +1716,25 @@ void SceneRenderer::Render(
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
     m_activeScreenSpaceEffects = m_screenSpaceEffects.get();
+    m_renderFrameDiagnostics.gpuSceneBuildCpuMs = 0.0;
+    m_renderFrameDiagnostics.gpuSceneUploadCpuMs = 0.0;
+    m_renderFrameDiagnostics.rasterRecordCpuMs = 0.0;
+    m_renderFrameDiagnostics.dxrScenePrepCpuMs = 0.0;
+    m_renderFrameDiagnostics.pathTracerFrameDataCpuMs = 0.0;
+
+    const auto gpuSceneBuildStart = std::chrono::steady_clock::now();
     m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
+    m_renderFrameDiagnostics.gpuSceneBuildCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - gpuSceneBuildStart)
+            .count();
+
+    const auto gpuSceneUploadStart = std::chrono::steady_clock::now();
     m_gpuScene.UploadGpuTables(GfxContext::Get().GetCommandList());
+    m_renderFrameDiagnostics.gpuSceneUploadCpuMs =
+        std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - gpuSceneUploadStart)
+            .count();
 
     GfxContext::Get().ResetDrawSrvTable();
 

@@ -258,6 +258,17 @@ namespace
         return smoothed;
     }
 
+    std::vector<GpuProfiler::Entry> BuildCpuTimings(const RenderFrameDiagnostics& diagnostics)
+    {
+        return {
+            {"Scene tables/Build", static_cast<float>(diagnostics.gpuSceneBuildCpuMs)},
+            {"Scene tables/Upload", static_cast<float>(diagnostics.gpuSceneUploadCpuMs)},
+            {"Raster/Command recording", static_cast<float>(diagnostics.rasterRecordCpuMs)},
+            {"DXR/Scene preparation", static_cast<float>(diagnostics.dxrScenePrepCpuMs)},
+            {"DXR/PT frame data", static_cast<float>(diagnostics.pathTracerFrameDataCpuMs)},
+        };
+    }
+
     std::vector<GpuPassNode> BuildGpuPassTree(const std::vector<GpuProfiler::Entry>& timings)
     {
         std::vector<GpuPassNode> roots;
@@ -527,6 +538,7 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         RefreshSmoothedGpuTimings(timings, m_smoothedGpuPassMs, kPerfSmoothAlpha);
         RefreshSmoothedSystemResources(m_systemResources.GetSnapshot(), kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = true;
     }
 }
 
@@ -761,6 +773,46 @@ void PerformancePanel::Draw(
                 "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
                 "double-counted. Pass order is fixed; timings are smoothed (~8 Hz).");
         }
+    }
+
+    const std::vector<GpuProfiler::Entry> cpuTimings =
+        BuildCpuTimings(renderer.GetRenderFrameDiagnostics());
+    if (m_cpuTimingSamplePending)
+    {
+        RefreshSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs, kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = false;
+    }
+
+    if (ImGui::CollapsingHeader("CPU passes", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        const std::vector<GpuProfiler::Entry> displayTimings =
+            BuildSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs);
+        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
+        const float cpuTotalMs = ComputeGpuRootTotalMs(passTree);
+        const float maxPassMs = MaxGpuRootMilliseconds(passTree);
+
+        if (ImGui::BeginTable(
+                "perf_cpu_passes",
+                3,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+        {
+            ImGui::TableSetupColumn("Pass");
+            ImGui::TableSetupColumn("ms");
+            ImGui::TableSetupColumn("Share");
+            ImGui::TableHeadersRow();
+
+            for (const GpuPassNode& root : passTree)
+            {
+                DrawGpuPassRow(root, maxPassMs, cpuTotalMs, 0);
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Text("CPU total (instrumented passes): %.3f ms", cpuTotalMs);
+        EditorWidgets::TextWrappedDisabled(
+            "Command-recording and scene-preparation time on the main thread. Sampled and smoothed "
+            "at the same cadence as GPU passes; it does not include editor UI or present/wait time.");
     }
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
