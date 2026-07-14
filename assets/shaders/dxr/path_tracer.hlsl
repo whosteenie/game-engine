@@ -97,6 +97,11 @@ static const uint kPtSoftSunSampleCount = 4u;
 // G7/P5: deep-bounce sun NEE keeps 1 cone sample — RR absorbs the extra variance.
 static const uint kPtSoftSunSampleCountDeep = 1u;
 
+// TLAS InstanceMask bits (match DxrAccelerationStructures). TraceRay inclusion = mask & InstanceMask.
+static const uint kDxrInstanceMaskOpaque = 0x01u;
+static const uint kDxrInstanceMaskDielectric = 0x02u;
+static const uint kDxrInstanceMaskAll = 0xFFu;
+
 static const uint kPrimaryRayFlags = RAY_FLAG_FORCE_OPAQUE;
 static const uint kPayloadFlagVisibility = 2u;
 // G7/P2: request bits OR'd into payload.hit before TraceRay (cleared/replaced on miss/hit).
@@ -327,7 +332,7 @@ float3 SampleGgxVndfHalfVector(float3 normal, float3 viewWorld, float roughness,
 
 #include "pt_dielectric.hlsli"
 
-float TraceVisibility(float3 origin, float3 direction, float tMax)
+float TraceVisibilityMasked(float3 origin, float3 direction, float tMax, uint instanceMask)
 {
     RayDesc ray;
     ray.Origin = origin;
@@ -341,17 +346,37 @@ float TraceVisibility(float3 origin, float3 direction, float tMax)
 
     const uint occlusionFlags = RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH
         | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER | RAY_FLAG_FORCE_OPAQUE;
-    TraceRay(g_SceneTlas, occlusionFlags, 0xFF, 0, 0, 0, ray, probe);
+    TraceRay(g_SceneTlas, occlusionFlags, instanceMask, 0, 0, 0, ray, probe);
     return probe.hit == 0 ? 1.0 : 0.0;
 }
 
-// Sun NEE visibility: opaque scenes use cheap any-hit; scenes with dielectrics keep
-// TraceTransmissiveVisibility so sunlight still transmits through windows onto floors.
+float TraceVisibility(float3 origin, float3 direction, float tMax)
+{
+    return TraceVisibilityMasked(origin, direction, tMax, kDxrInstanceMaskAll);
+}
+
+// Sun NEE with dielectric instance masks (see DxrAccelerationStructures InstanceMask):
+//   1) Opaque-only any-hit → hard block (normal shadows stay cheap with glass in the scene)
+//   2) Dielectric-only any-hit miss → fully lit (open sun at opaque cost)
+//   3) Else TraceTransmissiveVisibility for colored / Fresnel glass shadows
 float TraceSunNeeVisibility(float3 origin, float3 direction, float tMax)
 {
-    return (g_SceneHasTransmission > 0.5)
-        ? TraceTransmissiveVisibility(origin, direction, tMax)
-        : TraceVisibility(origin, direction, tMax);
+    if (g_SceneHasTransmission <= 0.5)
+    {
+        return TraceVisibilityMasked(origin, direction, tMax, kDxrInstanceMaskOpaque);
+    }
+
+    if (TraceVisibilityMasked(origin, direction, tMax, kDxrInstanceMaskOpaque) < 0.5)
+    {
+        return 0.0;
+    }
+
+    if (TraceVisibilityMasked(origin, direction, tMax, kDxrInstanceMaskDielectric) > 0.5)
+    {
+        return 1.0;
+    }
+
+    return TraceTransmissiveVisibility(origin, direction, tMax);
 }
 
 // Soft sun visibility: cone-jittered shadow rays matching shadows.hlsl / reflections.hlsl.
@@ -2375,6 +2400,8 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const float hitT = RayTCurrent();
 
     const bool hitBackFace = HitKind() == kHitKindTriangleBackFace;
+    // Glass-shadow probes need smooth shading normals (not face geom): spheres/lenses get
+    // blotchy Fresnel + refraction if each triangle uses a flat geometric normal.
     float3 hitNormal = ComputeWorldShadingNormal(geo, primitiveIndex, attribs.barycentrics);
     if (hitBackFace)
     {

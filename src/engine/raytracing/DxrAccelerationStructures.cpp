@@ -1214,7 +1214,23 @@ void DxrAccelerationStructures::EnsureScene(
             worldMatrix,
             reinterpret_cast<float*>(instanceDesc.Transform));
         instanceDesc.InstanceID = static_cast<UINT>(renderInstance.instanceId);
-        instanceDesc.InstanceMask = 0xFF;
+        // Split opaque vs dielectric so sun NEE can any-hit each class without paying
+        // TraceTransmissiveVisibility when glass is not on the sun ray (see path_tracer.hlsl).
+        // TraceRay inclusion = InstanceInclusionMask & InstanceMask != 0; primary rays still use 0xFF.
+        UINT instanceMask = 0x1u;
+        if (renderInstance.materialId < gpuScene.GetMaterials().size())
+        {
+            const GpuSceneMaterialRecord& material =
+                gpuScene.GetMaterials()[renderInstance.materialId];
+            const float dielectricWeight =
+                std::clamp(material.transmission, 0.0f, 1.0f)
+                * (1.0f - std::clamp(material.metallic, 0.0f, 1.0f));
+            if (dielectricWeight > 0.0f)
+            {
+                instanceMask = 0x2u;
+            }
+        }
+        instanceDesc.InstanceMask = instanceMask;
         instanceDesc.InstanceContributionToHitGroupIndex = 0;
         bool flipWinding = glm::determinant(glm::mat3(worldMatrix)) < 0.0f;
         const bool doubleSided =
