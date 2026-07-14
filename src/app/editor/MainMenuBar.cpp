@@ -147,35 +147,13 @@ namespace
         }
     }
 
-    void SaveProjectAs(
-        Scene& scene,
-        ProjectSession& project,
-        EditorSettings& settings,
-        ProjectEditorState& editorState,
-        const CaptureEditorStateFn& captureEditorState)
-    {
-        std::string projectPath;
-        if (FileDialog::SaveProjectFile(projectPath, project.GetProjectFilePath()))
-        {
-            if (captureEditorState)
-            {
-                captureEditorState(editorState);
-            }
-
-            if (project.SaveAs(scene, projectPath, editorState))
-            {
-                RecordRecentProject(settings, project.GetProjectFilePath());
-            }
-        }
-    }
-
     bool AllowFileMenuShortcuts()
     {
         const ImGuiIO& io = ImGui::GetIO();
         return !io.WantTextInput && !ImGui::IsAnyItemActive();
     }
 
-    void HandleFileMenuShortcuts(
+    bool HandleFileMenuShortcuts(
         Scene& scene,
         ProjectSession& project,
         EditorSettings& settings,
@@ -187,7 +165,7 @@ namespace
     {
         if (!AllowFileMenuShortcuts())
         {
-            return;
+            return false;
         }
 
         const ImGuiIO& io = ImGui::GetIO();
@@ -203,8 +181,10 @@ namespace
 
         if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_S, false))
         {
-            SaveProjectAs(scene, project, settings, editorState, captureEditorState);
+            return true;
         }
+
+        return false;
     }
 
     void PasteClipboardDefault(
@@ -337,7 +317,7 @@ void MainMenuBar::Draw(
     EditorClipboard& clipboard,
     bool allowUndoRedo)
 {
-    HandleFileMenuShortcuts(
+    const bool saveAsShortcut = HandleFileMenuShortcuts(
         scene,
         project,
         settings,
@@ -353,6 +333,39 @@ void MainMenuBar::Draw(
     if (!ImGui::BeginMainMenuBar())
     {
         return;
+    }
+
+    auto queueSaveAsModal = [&]() {
+        if (m_showSaveAsModal)
+        {
+            return;
+        }
+
+        const std::string suggestedName = ProjectSession::SanitizeProjectName(project.GetDisplayName());
+        std::snprintf(m_saveAsProjectName, sizeof(m_saveAsProjectName), "%s", suggestedName.c_str());
+
+        std::filesystem::path parentDirectory;
+        if (!project.GetProjectRootDirectory().empty())
+        {
+            parentDirectory = std::filesystem::path(project.GetProjectRootDirectory()).parent_path();
+        }
+        if (parentDirectory.empty())
+        {
+            parentDirectory = settings.GetLastNewProjectParentDirectory();
+        }
+        std::snprintf(
+            m_saveAsParentDirectory,
+            sizeof(m_saveAsParentDirectory),
+            "%s",
+            parentDirectory.string().c_str());
+        m_saveAsError.clear();
+        m_focusSaveAsName = true;
+        m_showSaveAsModal = true;
+    };
+
+    if (saveAsShortcut)
+    {
+        queueSaveAsModal();
     }
 
     if (ImGui::BeginMenu("File"))
@@ -390,7 +403,7 @@ void MainMenuBar::Draw(
 
         if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S"))
         {
-            SaveProjectAs(scene, project, settings, editorState, captureEditorState);
+            queueSaveAsModal();
         }
 
         ImGui::Separator();
@@ -549,6 +562,90 @@ void MainMenuBar::Draw(
     }
 
     ImGui::EndMainMenuBar();
+
+    if (m_showSaveAsModal)
+    {
+        ImGui::OpenPopup("Save New Project###SaveAsProject");
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(500.0f, 0.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(
+        ImGui::GetMainViewport()->GetCenter(),
+        ImGuiCond_Appearing,
+        ImVec2(0.5f, 0.5f));
+    if (ImGui::BeginPopupModal(
+            "Save New Project###SaveAsProject",
+            nullptr,
+            ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))
+    {
+        ImGui::TextUnformatted("Save a new independent project copy");
+        ImGui::TextWrapped(
+            "A new folder is created for this project. Its Assets folder is copied first, so the original "
+            "project and the new copy do not share project-relative files.");
+        ImGui::Spacing();
+
+        ImGui::TextUnformatted("Project name");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        if (m_focusSaveAsName)
+        {
+            ImGui::SetKeyboardFocusHere();
+            m_focusSaveAsName = false;
+        }
+        ImGui::InputText("##SaveAsProjectName", m_saveAsProjectName, sizeof(m_saveAsProjectName));
+
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Parent folder");
+        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::InputText(
+            "##SaveAsParentDirectory",
+            m_saveAsParentDirectory,
+            sizeof(m_saveAsParentDirectory));
+        ImGui::TextDisabled("New project: <parent folder>/<project name>/<project name>.gameproject");
+
+        if (!m_saveAsError.empty())
+        {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", m_saveAsError.c_str());
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        const bool submit = ImGui::Button("Save New Project", ImVec2(150.0f, 0.0f))
+            || (ImGui::IsKeyPressed(ImGuiKey_Enter) && !ImGui::IsAnyItemActive());
+        if (submit)
+        {
+            if (captureEditorState)
+            {
+                captureEditorState(editorState);
+            }
+            if (project.DuplicateAsNewProject(
+                    scene,
+                    m_saveAsParentDirectory,
+                    m_saveAsProjectName,
+                    editorState))
+            {
+                RecordRecentProject(settings, project.GetProjectFilePath());
+                m_showSaveAsModal = false;
+                m_saveAsError.clear();
+                ImGui::CloseCurrentPopup();
+            }
+            else
+            {
+                m_saveAsError = project.GetStatusMessage();
+            }
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120.0f, 0.0f)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+        {
+            m_showSaveAsModal = false;
+            m_saveAsError.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
 
     DrawAboutPopup();
 }

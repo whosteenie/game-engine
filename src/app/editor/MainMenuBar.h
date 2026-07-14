@@ -4,6 +4,7 @@
 #include "app/undo/UndoStack.h"
 
 #include <functional>
+#include <string>
 
 struct GLFWwindow;
 
@@ -48,4 +49,11 @@ public:
         UndoStack& undoStack,
         EditorClipboard& clipboard,
         bool allowUndoRedo = true);
+
+private:
+    bool m_showSaveAsModal = false;
+    bool m_focusSaveAsName = false;
+    char m_saveAsProjectName[64] = {};
+    char m_saveAsParentDirectory[512] = {};
+    std::string m_saveAsError;
 };

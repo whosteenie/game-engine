@@ -17,6 +17,50 @@
 
 namespace fs = std::filesystem;
 
+namespace
+{
+    bool IsPathInsideOrEqual(const fs::path& candidate, const fs::path& root)
+    {
+        auto candidateIt = candidate.begin();
+        for (const fs::path& rootPart : root)
+        {
+            if (candidateIt == candidate.end() || *candidateIt != rootPart)
+            {
+                return false;
+            }
+            ++candidateIt;
+        }
+        return true;
+    }
+
+    bool CopyProjectAssets(const fs::path& sourceRoot, const fs::path& destinationRoot, std::string& outError)
+    {
+        const fs::path sourceAssets = sourceRoot / "Assets";
+        std::error_code error;
+        if (!fs::exists(sourceAssets, error))
+        {
+            return true;
+        }
+        if (error || !fs::is_directory(sourceAssets, error))
+        {
+            outError = "The source project Assets path is not a directory.";
+            return false;
+        }
+
+        fs::copy(
+            sourceAssets,
+            destinationRoot / "Assets",
+            fs::copy_options::recursive,
+            error);
+        if (error)
+        {
+            outError = "Failed to copy the source project Assets folder.";
+            return false;
+        }
+        return true;
+    }
+}
+
 void ProjectSession::MarkDirty()
 {
     m_dirty = true;
@@ -226,6 +270,107 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
     m_statusMessage = warmedModelCount > 0
         ? "Opened " + m_displayName + " (" + std::to_string(warmedModelCount) + " models ready)"
         : "Opened " + m_displayName;
+    return true;
+}
+
+bool ProjectSession::DuplicateAsNewProject(
+    Scene& scene,
+    const std::string& parentDirectory,
+    const std::string& projectName,
+    const ProjectEditorState& editorState)
+{
+    if (parentDirectory.empty())
+    {
+        m_statusMessage = "Choose a parent folder for the new project.";
+        return false;
+    }
+
+    const std::string sanitizedName = SanitizeProjectName(projectName);
+    std::error_code error;
+    const fs::path parentPath = fs::absolute(fs::path(parentDirectory), error).lexically_normal();
+    if (error || !fs::exists(parentPath, error) || !fs::is_directory(parentPath, error))
+    {
+        m_statusMessage = "The new project's parent folder does not exist.";
+        return false;
+    }
+
+    const fs::path destinationRoot = parentPath / sanitizedName;
+    if (fs::exists(destinationRoot, error))
+    {
+        m_statusMessage = "A folder with that project name already exists in the selected location.";
+        return false;
+    }
+    if (error)
+    {
+        m_statusMessage = "Could not inspect the new project location.";
+        return false;
+    }
+
+    fs::path sourceRoot;
+    if (!m_projectRootDirectory.empty())
+    {
+        sourceRoot = fs::weakly_canonical(fs::path(m_projectRootDirectory), error);
+        if (error)
+        {
+            m_statusMessage = "Could not resolve the source project folder.";
+            return false;
+        }
+        if (IsPathInsideOrEqual(destinationRoot, sourceRoot))
+        {
+            m_statusMessage = "Save As cannot create a project inside the source project folder.";
+            return false;
+        }
+    }
+
+    fs::create_directories(destinationRoot, error);
+    if (error)
+    {
+        m_statusMessage = "Failed to create the new project folder.";
+        return false;
+    }
+
+    std::string copyError;
+    if (!sourceRoot.empty() && !CopyProjectAssets(sourceRoot, destinationRoot, copyError))
+    {
+        fs::remove_all(destinationRoot, error);
+        m_statusMessage = copyError;
+        return false;
+    }
+    fs::create_directories(destinationRoot / "Assets", error);
+    if (error)
+    {
+        fs::remove_all(destinationRoot, error);
+        m_statusMessage = "Failed to create the new project Assets folder.";
+        return false;
+    }
+
+    const std::string oldProjectFilePath = m_projectFilePath;
+    const std::string oldProjectRootDirectory = m_projectRootDirectory;
+    const std::string oldDisplayName = m_displayName;
+    const bool oldHasActiveProject = m_hasActiveProject;
+    const bool oldDirty = m_dirty;
+
+    SetProjectRootDirectory(destinationRoot.string());
+    SetProjectFilePath((destinationRoot / (sanitizedName + ProjectFileExtension)).string());
+    SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
+
+    std::string saveError;
+    if (!SceneProjectIO::Save(scene, editorState, m_projectRootDirectory, m_projectFilePath, saveError))
+    {
+        m_projectFilePath = oldProjectFilePath;
+        m_projectRootDirectory = oldProjectRootDirectory;
+        m_displayName = oldDisplayName;
+        m_hasActiveProject = oldHasActiveProject;
+        m_dirty = oldDirty;
+        SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
+        fs::remove_all(destinationRoot, error);
+        m_statusMessage = saveError.empty() ? "Failed to save the new project." : saveError;
+        return false;
+    }
+
+    m_hasActiveProject = true;
+    MarkClean();
+    m_statusMessage = "Saved new project " + m_displayName;
     return true;
 }
 
