@@ -536,7 +536,10 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
             }
         }
     }
-    else if (m_dxrPathTracerOutputSrv != 0)
+    // Temporal-stat targets exist solely for their two dedicated debug views. Keeping this
+    // behind the view selection avoids three full-resolution FP32 targets and their per-frame
+    // passes/readback during ordinary path-traced editing.
+    else if (m_dxrPathTracerOutputSrv != 0 && IsPtTemporalStatsDebugMode(m_debugMode))
     {
         const GfxContext::GpuTimerScope gpuScopePtStats("Post-process/PT temporal diagnostics");
         UpdatePathTracerTemporalDiagnostics(*state.camera);

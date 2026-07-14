@@ -2970,8 +2970,10 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 
     const bool isolateChanged =
         PtDebugIsolateModeFromRenderDebug(m_debugMode) != PtDebugIsolateModeFromRenderDebug(mode);
+    const bool temporalStatsDebugChanged =
+        IsPtTemporalStatsDebugMode(m_debugMode) != IsPtTemporalStatsDebugMode(mode);
     m_debugMode = mode;
-    if (isolateChanged)
+    if (isolateChanged || temporalStatsDebugChanged)
     {
         ResetPathTracerTemporalDiagnostics();
     }
