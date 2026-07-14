@@ -35,3 +35,34 @@ build/
 devdoc/
 test_proj/
 artifacts/
+
+# Local build trees and CMake user configuration
+cmake-build-*/
+out/
+CMakeUserPresets.json
+compile_commands.json
+
+# IDE and editor workspace state
+.idea/
+.vs/
+.vscode/
+
+# Generated diagnostics, captures, and local UI state
+diagnostics/
+imgui.ini
+*.ngfx-capture
+*.ngfx-gputrace
+
+# Ad-hoc local test and startup logs
+err.txt
+out.txt
+*_err.txt
+*_out.txt
+run_*.txt
+startup_log.txt
+
+# MSVC build by-products that can escape a build directory
+*.pdb
+*.ilk
+*.idb
+*.ipch
