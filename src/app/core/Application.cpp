@@ -348,6 +348,7 @@ Application::Application(int width, int height, const char* title)
         m_renderer = std::make_unique<Renderer>();
         m_editorSettings = std::make_unique<EditorSettings>();
         m_editorSettings->Load();
+        GfxContext::Get().SetVsyncEnabled(m_editorSettings->IsVsyncEnabled());
         m_projectSession = std::make_unique<ProjectSession>();
         m_projectChooser = std::make_unique<ProjectChooser>();
         m_scene = std::make_unique<Scene>();
@@ -1018,7 +1019,8 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
             *m_camera,
             m_sceneViewportPanel->GetRenderWidth(),
             m_sceneViewportPanel->GetRenderHeight(),
-            editorUndoStack);
+            editorUndoStack,
+            m_editorSettings.get());
         frameDiagnostics.lightingUiCpuMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - lightingUiStart).count();
 

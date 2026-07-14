@@ -4,6 +4,9 @@
 #include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/EditorSettings.h"
+#include "app/editor/SettingRegistry.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -50,8 +53,13 @@ void DrawSceneSection(const LightingPanelContext& ctx)
         if (ImGui::Checkbox("Vertical sync", &vsyncEnabled))
         {
             GfxContext::Get().SetVsyncEnabled(vsyncEnabled);
+            if (ctx.editorSettings != nullptr)
+            {
+                ctx.editorSettings->SetVsyncEnabled(vsyncEnabled);
+                ctx.editorSettings->Save();
+            }
         }
-        TuningSectionState::MarkSearchTarget("vsync");
+        RendererSettingUi::MarkRendered("vsync");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(

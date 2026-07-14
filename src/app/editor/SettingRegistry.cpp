@@ -24,6 +24,13 @@ namespace
 
 const std::vector<SettingRegistry::Descriptor>& SettingRegistry::GetAll() { return kDescriptors; }
 
+const SettingRegistry::Descriptor* SettingRegistry::FindById(const std::string_view id)
+{
+    const auto it = std::find_if(kDescriptors.begin(), kDescriptors.end(),
+        [id](const Descriptor& descriptor) { return descriptor.id == id; });
+    return it != kDescriptors.end() ? &*it : nullptr;
+}
+
 std::vector<const SettingRegistry::Descriptor*> SettingRegistry::FindSearchMatches(const std::string_view query)
 {
     const std::string needle = Lower(query);

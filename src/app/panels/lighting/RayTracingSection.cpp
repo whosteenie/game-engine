@@ -4,6 +4,7 @@
 #include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -158,7 +159,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 "Path traced: the unified path tracer owns the image (P0 shows primary-hit normals).\n"
                 "Hybrid keeps the raster + RT pipeline. Additive - both are selectable for comparison.");
         }
-        TuningSectionState::MarkSearchTarget("path_tracing");
+        RendererSettingUi::MarkRendered("path_tracing");
         if (!renderingModeSelectable)
         {
             ImGui::EndDisabled();

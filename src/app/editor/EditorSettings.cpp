@@ -250,6 +250,7 @@ void EditorSettings::Load()
 {
     m_recentProjects.clear();
     m_lastNewProjectParentDirectory.clear();
+    m_vsyncEnabled = true;
 
     const std::string settingsPath = GetSettingsFilePath();
     std::ifstream input(settingsPath);
@@ -292,6 +293,7 @@ void EditorSettings::Load()
     {
         m_lastNewProjectParentDirectory = root.at("lastNewProjectParentDirectory").get<std::string>();
     }
+    m_vsyncEnabled = root.value("vsyncEnabled", m_vsyncEnabled);
 
     ValidateLastNewProjectParentDirectory();
 
@@ -323,6 +325,7 @@ void EditorSettings::Save() const
     const json root = json{
         {"recentProjects", recentProjects},
         {"lastNewProjectParentDirectory", m_lastNewProjectParentDirectory},
+        {"vsyncEnabled", m_vsyncEnabled},
     };
 
     std::ofstream output(settingsPath);

@@ -5,6 +5,7 @@
 class Camera;
 class Scene;
 class UndoStack;
+class EditorSettings;
 
 class LightingPanel
 {
@@ -14,7 +15,8 @@ public:
         const Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        UndoStack* undoStack = nullptr) const;
+        UndoStack* undoStack = nullptr,
+        EditorSettings* editorSettings = nullptr) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 

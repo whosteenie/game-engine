@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorWidgets.h"
+#include "app/editor/EditorSettings.h"
 #include "app/panels/lighting/LightingPanelContext.h"
 #include "app/panels/lighting/LightingPanelSections.h"
 #include "app/scene/Scene.h"
@@ -21,7 +22,8 @@ void LightingPanel::Draw(
     const Camera& camera,
     const int viewportWidth,
     const int viewportHeight,
-    UndoStack* undoStack) const
+    UndoStack* undoStack,
+    EditorSettings* editorSettings) const
 {
     EditorPanelConstraints::ApplySideColumnPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Renderer Tuning", m_showPanel))
@@ -73,6 +75,7 @@ void LightingPanel::Draw(
         ibl,
         environmentMap,
         screenSpaceEffects,
+        editorSettings,
     };
 
     DrawSceneSection(panelContext);

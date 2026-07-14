@@ -20,6 +20,8 @@ public:
     void SetLastNewProjectParentDirectory(const std::string& directory);
     void SetLastNewProjectParentDirectoryFromProjectFile(const std::string& projectFilePath);
     void ValidateLastNewProjectParentDirectory();
+    bool IsVsyncEnabled() const { return m_vsyncEnabled; }
+    void SetVsyncEnabled(bool enabled) { m_vsyncEnabled = enabled; }
 
     static std::string GetSettingsFilePath();
     static std::string GetGlobalImGuiIniPath();
@@ -38,4 +40,5 @@ public:
 private:
     std::vector<std::string> m_recentProjects;
     std::string m_lastNewProjectParentDirectory;
+    bool m_vsyncEnabled = true;
 };

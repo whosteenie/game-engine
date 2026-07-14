@@ -4,6 +4,7 @@
 #include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -166,8 +167,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         {
             environmentMap.CommitRotation();
         }
-        HandleRendererFieldEditEvents(editContext);
-        TuningSectionState::MarkSearchTarget("skybox_rotation");
+        RendererSettingUi::HandleFieldEdit("skybox_rotation", editContext);
+        RendererSettingUi::MarkRendered("skybox_rotation");
 
         if (ImGui::Button("Align linked lights to detected HDR sun"))
         {
@@ -200,8 +201,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             environmentMap.SetExposure(skyboxExposure);
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
-        TuningSectionState::MarkSearchTarget("skybox_exposure");
+        RendererSettingUi::HandleFieldEdit("skybox_exposure", editContext);
+        RendererSettingUi::MarkRendered("skybox_exposure");
 
         int iblCubemapResolutionIndex =
             IblCubemapResolutionToComboIndex(environmentMap.GetIblCubemapResolution());
@@ -266,8 +267,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             ibl.SetEnvironmentIntensity(environmentIntensity);
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
-        TuningSectionState::MarkSearchTarget("environment_intensity");
+        RendererSettingUi::HandleFieldEdit("environment_intensity", editContext);
+        RendererSettingUi::MarkRendered("environment_intensity");
         LightingPanelUi::DrawWrappedNote(
             "Scales diffuse and specular IBL in the deferred composite. Lower this if RT GI or SSGI washes the scene out.");
     }
