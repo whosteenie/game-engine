@@ -300,6 +300,13 @@ public:
         m_freezeTemporalJitterDiagnostic = enabled;
         m_dlssHistoryValid = false;
     }
+    // Session-only A/B: use the renderer's real submission-frame identity for Streamline tokens.
+    bool GetUseDlssSubmissionFrameIndexDiagnostic() const { return m_useDlssSubmissionFrameIndexDiagnostic; }
+    void SetUseDlssSubmissionFrameIndexDiagnostic(bool enabled)
+    {
+        m_useDlssSubmissionFrameIndexDiagnostic = enabled;
+        m_dlssHistoryValid = false;
+    }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
     bool IsRtPrimaryDebugBlitReady() const;
@@ -856,6 +863,7 @@ private:
     bool m_useDilatedDlssMotionVectors = false;
     bool m_reconstructDlssCameraMotion = false;
     bool m_freezeTemporalJitterDiagnostic = false;
+    bool m_useDlssSubmissionFrameIndexDiagnostic = false;
     mutable bool m_dlssBloomHistoryValid = false;
     mutable int m_dlssBloomTemporalWarmupFrames = 0;
     mutable bool m_bloomHistoryValid = false;

@@ -1,5 +1,7 @@
 #include "engine/rhi/DlssContext.h"
 
+#include "engine/rhi/GfxContext.h"
+
 #include "engine/platform/EngineLog.h"
 
 #ifdef GAME_ENGINE_ENABLE_DLSS
@@ -418,7 +420,10 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     auto* cmdList = static_cast<sl::CommandBuffer*>(inputs.commandList);
     const sl::ViewportHandle viewport(kDlssViewport);
 
-    const uint32_t frameIndex = m_evaluateFrameIndex++;
+    const uint32_t evaluationFrameIndex = m_evaluateFrameIndex++;
+    const uint32_t frameIndex = inputs.useSubmissionFrameIndex
+        ? static_cast<uint32_t>(GfxContext::Get().GetSubmissionFrameNumber())
+        : evaluationFrameIndex;
     sl::FrameToken* frameToken = nullptr;
     if (g_slGetNewFrameToken(frameToken, &frameIndex) != sl::Result::eOk || frameToken == nullptr)
     {

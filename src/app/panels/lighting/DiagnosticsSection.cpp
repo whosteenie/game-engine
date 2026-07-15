@@ -88,6 +88,18 @@ void DrawDiagnosticsSection(const LightingPanelContext& ctx)
                 "This is session-only and isolates the DLSS/RR jitter convention from camera motion.");
         }
 
+        bool useSubmissionFrameIndex = screenSpaceEffects.GetUseDlssSubmissionFrameIndexDiagnostic();
+        if (ImGui::Checkbox("Use submission-frame Streamline tokens (DLSS/RR A/B)", &useSubmissionFrameIndex))
+        {
+            screenSpaceEffects.SetUseDlssSubmissionFrameIndexDiagnostic(useSubmissionFrameIndex);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Uses the renderer's monotonic presented-frame identity instead of an internal count of "
+                "DLSS evaluations. Resets DLSS/RR history when changed; compare the strafe trail after it settles.");
+        }
+
         const RenderDebugMode activeMode = screenSpaceEffects.GetDebugMode();
         if (const char* helpText = LightingPanelWidgets::RenderDebugModeHelpText(activeMode))
         {

@@ -62,6 +62,10 @@ struct DlssFrameInputs
     bool colorIsHdr = false;
     bool depthInverted = false;
     bool reset = false; // break temporal history (camera cut, resize, mode/preset change, load)
+    // Diagnostic A/B: tie Streamline's frame token to the renderer submission frame rather than
+    // the number of DLSS evaluations. The latter diverges when a viewport is skipped or multiple
+    // viewports render in one submitted frame.
+    bool useSubmissionFrameIndex = false;
 
     float mvecScaleX = -0.5f; // NDC normalization; SL multiplies by render width internally
     float mvecScaleY = 0.5f;  // Y-flip for texture space; SL multiplies by render height internally

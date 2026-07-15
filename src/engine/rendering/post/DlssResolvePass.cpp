@@ -332,6 +332,7 @@ void DlssResolvePass::Execute(
         in.quality = inputs.quality;
         in.colorIsHdr = true;
         in.depthInverted = false;
+        in.useSubmissionFrameIndex = inputs.useSubmissionFrameIndex;
 
         const glm::mat4 view = inputs.camera->GetViewMatrix();
         const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
