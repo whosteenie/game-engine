@@ -137,7 +137,7 @@ namespace ProjectLoadBenchmark
         g_state.active = true;
         g_state.outputPath = rawOutput;
         g_state.startTime = std::chrono::steady_clock::now();
-        Mark("application.run.begin");
+        Mark("benchmark.capture.begin");
     }
 
     bool IsActive()

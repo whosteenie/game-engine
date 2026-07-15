@@ -119,6 +119,7 @@ bool ProjectChooser::OpenProjectAtPath(
     std::string& outError)
 {
     outError.clear();
+    ProjectLoadBenchmark::Mark("project.open.begin");
     ProjectLoadBenchmark::ScopedPhase projectOpenPhase("project.open.total");
     m_lastOpenFailedDueToDeviceRemoved = false;
     ProjectLoadTrace::Reset();
@@ -245,6 +246,7 @@ bool ProjectChooser::OpenProjectAtPath(
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
         keepProgressOpenForFirstFrame = true;
+        ProjectLoadBenchmark::Mark("project.open.complete_awaiting_first_frame");
         ProjectLoadTrace::Step("=== project load complete (awaiting first frame) ===");
         SceneRenderTrace::Reset();
         ResetDxrBreadcrumbOnceFlags();

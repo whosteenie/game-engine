@@ -8,6 +8,7 @@
 #include "app/editor/EditorClipboard.h"
 
 #include <memory>
+#include <string>
 
 struct GLFWwindow;
 class Camera;
@@ -73,6 +74,9 @@ private:
     bool m_pendingNewProject = false;
     bool m_fatalGpuLossHandled = false;
     bool m_projectLoadBenchmarkAwaitingGpuCompletion = false;
+    bool m_projectLoadBenchmarkAwaitingEditorUiFrame = false;
+    bool m_benchmarkAutoOpenAfterStartupPresent = false;
+    std::string m_benchmarkAutoOpenPath;
 
     int m_width;
     int m_height;

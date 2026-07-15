@@ -51,6 +51,20 @@ function Get-Stats {
     }
 }
 
+function Get-MilestoneTime {
+    param(
+        [object]$Result,
+        [string]$Name
+    )
+
+    $match = @($Result.milestones | Where-Object { $_.name -eq $Name } | Select-Object -Last 1)
+    if ($match.Count -eq 0) {
+        return $null
+    }
+
+    return [double]$match[0].time_ms
+}
+
 $scriptDirectory = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = (Resolve-Path (Join-Path $scriptDirectory "..")).Path
 $projectPath = (Resolve-Path -LiteralPath $Project).Path
@@ -105,8 +119,17 @@ try {
                 -WorkingDirectory $exeDirectory `
                 -RedirectStandardOutput $stdoutPath `
                 -RedirectStandardError $stderrPath `
-                -Wait `
                 -PassThru
+            # The engine writes its JSON result immediately after the first fully usable editor
+            # frame is GPU-complete, then intentionally closes. Observe that file before waiting
+            # for teardown so this measures the same user-visible readiness boundary while also
+            # including Windows loader/DLL work that occurs before main().
+            while (-not (Test-Path -LiteralPath $resultPath) -and -not $process.HasExited) {
+                Start-Sleep -Milliseconds 5
+            }
+            $processReadyMs = [math]::Round($stopwatch.Elapsed.TotalMilliseconds, 3)
+            $process.WaitForExit()
+            $process.Refresh()
             $exitCode = $process.ExitCode
         }
         finally {
@@ -121,6 +144,7 @@ try {
         $sample = [ordered]@{
             run = $run
             process_exit_code = $exitCode
+            process_ready_ms = $processReadyMs
             process_total_ms = [math]::Round($stopwatch.Elapsed.TotalMilliseconds, 3)
             result = $result
         }
@@ -128,9 +152,13 @@ try {
 
         $status = [string]$result.status
         Write-Host (
-            "  {0}: engine {1:N1} ms, process {2:N1} ms" -f
-            $status, [double]$result.total_ms, $stopwatch.Elapsed.TotalMilliseconds)
-        if ($exitCode -ne 0 -or $status -ne "complete") {
+            "  {0}: engine {1:N1} ms, usable {2:N1} ms, process {3:N1} ms" -f
+            $status, [double]$result.total_ms, $processReadyMs, $stopwatch.Elapsed.TotalMilliseconds)
+        # Start-Process can leave ExitCode unavailable after an asynchronous GUI-process wait on
+        # some PowerShell versions. The benchmark JSON is written by the engine only on complete
+        # or failed capture, so use it as the authoritative result and treat a known non-zero exit
+        # code as an additional failure signal.
+        if (($null -ne $exitCode -and $exitCode -ne 0) -or $status -ne "complete") {
             throw "Run $run failed (status '$status', exit code $exitCode). See $stdoutPath and $stderrPath."
         }
     }
@@ -167,12 +195,38 @@ foreach ($phaseName in $phaseNames) {
     $phaseSummary[$phaseName] = Get-Stats -Values $values
 }
 
+$startupToChooserMs = New-Object System.Collections.Generic.List[double]
+$selectionToUsableEditorMs = New-Object System.Collections.Generic.List[double]
+$projectOpenToUsableEditorMs = New-Object System.Collections.Generic.List[double]
+foreach ($sample in $samples) {
+    $chooserReady = Get-MilestoneTime -Result $sample.result -Name "project_chooser.first_frame_presented"
+    $selectionQueued = Get-MilestoneTime -Result $sample.result -Name "project.selection.queued"
+    $projectOpenBegin = Get-MilestoneTime -Result $sample.result -Name "project.open.begin"
+    $usableEditor = Get-MilestoneTime -Result $sample.result -Name "editor.usable_ui_frame_gpu_complete"
+
+    if ($null -ne $chooserReady) {
+        $startupToChooserMs.Add($chooserReady)
+    }
+    if ($null -ne $selectionQueued -and $null -ne $usableEditor) {
+        $selectionToUsableEditorMs.Add($usableEditor - $selectionQueued)
+    }
+    if ($null -ne $projectOpenBegin -and $null -ne $usableEditor) {
+        $projectOpenToUsableEditorMs.Add($usableEditor - $projectOpenBegin)
+    }
+}
+
 $summary = [ordered]@{
     project = $projectPath
     configuration = $Config
     runs = $samples
     total_engine_ms = Get-Stats -Values @($samples | ForEach-Object { [double]$_.result.total_ms })
+    total_process_ready_ms = Get-Stats -Values @($samples | ForEach-Object { [double]$_.process_ready_ms })
     total_process_ms = Get-Stats -Values @($samples | ForEach-Object { [double]$_.process_total_ms })
+    user_experience = [ordered]@{
+        startup_to_project_chooser_ms = Get-Stats -Values @($startupToChooserMs)
+        project_selection_to_usable_editor_ms = Get-Stats -Values @($selectionToUsableEditorMs)
+        project_open_to_usable_editor_ms = Get-Stats -Values @($projectOpenToUsableEditorMs)
+    }
     phases = $phaseSummary
 }
 
@@ -182,9 +236,16 @@ $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $summaryPath -Enco
 Write-Host ""
 Write-Host ("Project-load benchmark complete: {0}" -f $summaryPath) -ForegroundColor Green
 Write-Host (
-    "Engine load median: {0:N1} ms | Process median: {1:N1} ms" -f
+    "Engine median: {0:N1} ms | Usable-editor median: {1:N1} ms | Process-exit median: {2:N1} ms" -f
     $summary.total_engine_ms.median_ms,
+    $summary.total_process_ready_ms.median_ms,
     $summary.total_process_ms.median_ms) -ForegroundColor White
+if ($null -ne $summary.user_experience.startup_to_project_chooser_ms) {
+    Write-Host (
+        "UX median: startup -> chooser {0:N1} ms | selection -> usable editor {1:N1} ms" -f
+        $summary.user_experience.startup_to_project_chooser_ms.median_ms,
+        $summary.user_experience.project_selection_to_usable_editor_ms.median_ms) -ForegroundColor White
+}
 Write-Host "Largest timed phases (median):" -ForegroundColor White
 $phaseSummary.GetEnumerator() |
     Sort-Object { $_.Value.median_ms } -Descending |
