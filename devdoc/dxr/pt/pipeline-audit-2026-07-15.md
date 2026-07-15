@@ -1808,6 +1808,8 @@ selection.
 **Handoff to next pass:** Record schema version, two normalized logs, source revision, build/test
 commands, and unresolved runtime/toolchain conflicts.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-28 and PT-29 observability only; measurement prerequisite for all findings. Prerequisites: Accepted audit at the stated snapshot; existing application logging operational.
@@ -1873,6 +1875,8 @@ viewport ID is unstable, or threading diagnostic context would alter Streamline 
 
 **Handoff to next pass:** Structured trace for all four viewport cases, instrumentation overhead,
 and the exact frame/token ownership diagram observed.
+
+**Suggested model:** `Terra Medium`.
 
 **Paste-ready implementation prompt:**
 
@@ -1941,6 +1945,8 @@ implicitly without an observable point, or instrumentation would require changin
 **Handoff to next pass:** Transition log, reason dictionary, reset-owner inventory, and gaps requiring
 an explicit S1 design choice.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-01, PT-11, and PT-31 observability only. Prerequisites: S0-P2.
@@ -2005,6 +2011,8 @@ model, marker insertion changes synchronization, or source ownership contradicts
 
 **Handoff to next pass:** Annotated event tree, marker dictionary, enabled/disabled overhead, revision,
 and exact capture configuration.
+
+**Suggested model:** `Terra Medium`.
 
 **Paste-ready implementation prompt:**
 
@@ -2074,6 +2082,8 @@ cannot reject a silent fallback, or deterministic capture changes the production
 
 **Handoff to next pass:** Versioned manifest, hashes, two artifact sets, repeatability statistics,
 capability/reset/token logs, marker capture, and exact commands.
+
+**Suggested model:** `Terra High`.
 
 **Paste-ready implementation prompt:**
 
@@ -2151,6 +2161,8 @@ layouts.
 **Handoff to next pass:** Packet layout/conventions, assertions, packing dump, revision, changed
 files, and exact build/test results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-01, implementation contract. Prerequisites: S0-P5.
@@ -2220,6 +2232,8 @@ payload/RTPSO growth, materially perturbs shader liveness, or contradicts S1-P1 
 **Handoff to next pass:** Numeric results, AOV images, manifest/hash, diagnostics-off comparison, and
 the exact tier-5 result including any teardown issue.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-01, verification portion. Prerequisites: S1-P1.
@@ -2288,6 +2302,8 @@ token acquisition requires unavailable submission identity, or ownership affects
 **Handoff to next pass:** Before/after cadence logs, SDK validation, viewport captures, revision, and
 commands/results.
 
+**Suggested model:** `Sol Medium`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-10. Prerequisites: S1-P2 and the S0-P2 cadence traces.
@@ -2355,6 +2371,8 @@ authorities, a local reset affects another viewport, or correctness requires an 
 
 **Handoff to next pass:** Key schema/tests, transition/reset logs, owner map, captures, and exact
 commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -2426,6 +2444,8 @@ system, the SDK cannot express safe rejection, or unrelated modes/viewports woul
 **Handoff to next pass:** Supported-scope statement, validity traces, four-case outputs, reuse/reset
 statistics, and exact test evidence.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-31, rejection policy only. Prerequisites: S1-P1 and S1-P4.
@@ -2491,6 +2511,8 @@ contradictory camera/token evidence, or a regression requiring work outside S1.
 
 **Handoff to next pass:** Full commands/results, logs, manifests, Cornell four-output set, regression
 matrix, and any rollback recommendation.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -2561,6 +2583,8 @@ bloom's working space is undefined, or correction requires a wider color-pipelin
 **Handoff to next pass:** Exposure diagram, numeric results, settled screenshots, SDK logs, revision,
 changed files, and commands/results.
 
+**Suggested model:** `Sol Medium`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-09. Prerequisites: S1-P6.
@@ -2625,6 +2649,8 @@ support an exposed mode, or planned and active extent ownership cannot be separa
 **Handoff to next pass:** Recommendation matrix, cache tests, fallback logs, API contract, revision,
 and commands/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-30, query/data-model portion. Prerequisites: S2-P1.
@@ -2688,6 +2714,8 @@ cadence.
 without changing the camera contract, or phase ownership conflicts with S1.
 
 **Handoff to next pass:** Period matrix, phase traces, transition output, revision, and exact tests.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -2755,6 +2783,8 @@ consumer, state/lifetime hazard, or a need to remove PT-24 resources prematurely
 **Handoff to next pass:** Extent/tag matrix, SDK logs, resize traces, format evidence, D3D validation,
 revision, and exact commands/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-30 completion; PT-24 format/state prerequisite only. Prerequisites: S2-P1 through S2-P3 and S1-P4.
@@ -2815,6 +2845,8 @@ mode regression, or incompatible extent/format requirement.
 
 **Handoff to next pass:** Complete matrix, manifests, screenshots, SDK/D3D logs, revision, commands,
 results, and timing classification.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -2889,6 +2921,8 @@ exceeds declarations, or a geometric-normal consumer cannot be classified.
 **Handoff to next pass:** Consumer map, conventions, AOVs, payload/RTPSO sizes, revision, and exact
 commands/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-03. Prerequisites: S2-P5.
@@ -2953,6 +2987,8 @@ conflicts, or helper conversion changes an unrelated renderer contract.
 
 **Handoff to next pass:** Helper contract, consumer search, angular errors, parity AOVs, revision, and
 commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3020,6 +3056,8 @@ unresolved, or event storage violates payload/RTPSO limits.
 **Handoff to next pass:** Event layout, equality results/AOVs, supported scope, revision, and exact
 test output.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-04. Prerequisites: S3-P1 and S3-P2.
@@ -3083,6 +3121,8 @@ consumer of the mirror trace.
 
 **Handoff to next pass:** A/B guides/images/metrics/timing, SDK log, consumer search, revision, and
 commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3150,6 +3190,8 @@ UV data, or payload growth that invalidates RTPSO declarations.
 
 **Handoff to next pass:** Representation, AOV sweep, ABI sizes, shader/test logs, revision, and files.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-06, initial footprint portion. Prerequisites: S3-P4.
@@ -3215,6 +3257,8 @@ the approximation, or only symptom-tuned bias satisfies images.
 
 **Handoff to next pass:** Equations, unit output, AOV/temporal comparisons, shader metrics, revision,
 and exact commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3285,6 +3329,8 @@ hybrid regression, or a required fix outside S3. Do not promote the seam observa
 **Handoff to next pass:** Full matrix, manifests, AOVs, Cornell four-output set, timing, ABI/D3D logs,
 revision, and unresolved evidence.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-03, PT-04, PT-05, PT-06, and PT-08 verification. Prerequisites: S3-P1 through S3-P6.
@@ -3352,6 +3398,8 @@ ownership, or unexpected change to finite values.
 
 **Handoff to next pass:** Injection matrix, counter example, revision, files, commands/results, and
 diagnostics-off comparison.
+
+**Suggested model:** `Terra High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3422,6 +3470,8 @@ the final sample, requires unsafe ownership, or exposes an emitter-specific path
 **Handoff to next pass:** Trace schema, config hash, baseline trace, disabled equivalence, revision,
 commands/results, and emitter-specific handoff if present.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-02, PT-07, PT-14, and PT-15 partially; section-9 persistent over-bright-pixel observation. Prerequisites: S4A-P1 and S0-P5.
@@ -3486,6 +3536,8 @@ requires compensated weights, or Monte Carlo tests contradict the derivation.
 **Handoff to next pass:** Formula, deterministic/statistical results, endpoint traces, revision, and
 confirmation that real-time output was untouched.
 
+**Suggested model:** `Sol Medium`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-02. Prerequisites: S4A-P2.
@@ -3549,6 +3601,8 @@ frame rules, furnace/PDF tests fail, or S3's interface policy must change.
 **Handoff to next pass:** Reviewed equations, test vectors/tolerances, design decisions, revision, and
 exact commands/results.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-07 partially. Prerequisites: S3-P3 and S4A-P3.
@@ -3609,6 +3663,8 @@ remain unchanged or explicitly validated.
 consumers use incompatible directions, or output changes before activation.
 
 **Handoff to next pass:** API/layout diff, vector output, compile logs, ABI sizes, revision, and files.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3671,6 +3727,8 @@ undocumented consumers, or production MIS must change to test the sampler.
 **Handoff to next pass:** Histogram report, RNG note, invalid counts, compiled artifacts, revision,
 and exact commands/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-07 partially. Prerequisites: S4A-P5.
@@ -3730,6 +3788,8 @@ differs from P4.
 
 **Handoff to next pass:** Agreement tables, integration output, bounded fallbacks, revision, and
 commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -3792,6 +3852,8 @@ or payload/RTPSO invalidation.
 **Handoff to next pass:** Consumer inventory/search, tests, initial images, shader metrics readiness,
 revision, and exact results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-07 partially. Prerequisites: S4A-P7.
@@ -3851,6 +3913,8 @@ a product choice, or guides cannot represent the same event.
 
 **Handoff to next pass:** Threshold sweep, event AOVs, confidence intervals, revision, and declaration.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-07 partially. Prerequisites: S4A-P8.
@@ -3909,6 +3973,8 @@ unavailable required live evidence; do not patch thresholds.
 
 **Handoff to next pass:** Complete PT-07 bundle or diagnosed failure/rollback recommendation.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-07. Prerequisites: S4A-P9.
@@ -3966,6 +4032,8 @@ radiance is unavailable in one path, or an undocumented partition appears.
 
 **Handoff to next pass:** Contribution inventory, invariance statistics, traces, product confirmation,
 revision, and commands/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4027,6 +4095,8 @@ exist; samples are mechanistically classified or transferred to S5; performance 
 guess, or need to enter S4B/S5.
 
 **Handoff to next pass:** Signed S4A bundle and explicit S5 sample inputs; core visual evaluation may begin.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -4092,6 +4162,8 @@ architecture decomposition.
 
 **Handoff to next pass:** Signed scope matrix, ABI assessment, fixtures, and chosen branches.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-17 and PT-18 partially. Prerequisites: S4A-P12.
@@ -4151,6 +4223,8 @@ camera attenuation requires unscheduled medium work.
 
 **Handoff to next pass:** Analytic table, call-site inventory, images, revision, and tests/timing note.
 
+**Suggested model:** `Sol Medium`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-16. Prerequisites: S4B-P1.
@@ -4208,6 +4282,8 @@ unsupported paths diagnose explicitly.
 identified safely, or ordinary shadow behavior must change.
 
 **Handoff to next pass:** Implemented policy, fixture results/images, reasons, revision, and commands.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4269,6 +4345,8 @@ policy, or need for a larger volume architecture.
 **Handoff to next pass:** State diagram, layout sizes, transition results, recovery rules, revision,
 and commands/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-18 partially. Prerequisites: S4B-P3 and the S4B-P1 PT-18 decision.
@@ -4327,6 +4405,8 @@ regression, or unsafe ABI change.
 
 **Handoff to next pass:** Consumer search/inventory, fixture captures, diagnostics, payload/timing
 note, revision, and exact results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4389,6 +4469,8 @@ matching requires unrelated raster changes.
 
 **Handoff to next pass:** Model, inventory/search, tests, comparison grid, revision. Execute S5-P1 next.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-19. Prerequisites: S4B-P5 and the S4A BSDF/MIS foundation.
@@ -4450,6 +4532,8 @@ would have to change.
 
 **Handoff to next pass:** Formula, integration/histograms, regressions, revision, and exact results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-20. Prerequisites: S4B-P6 and S5-P1.
@@ -4507,6 +4591,8 @@ S4A is unchanged; image/performance trades are accepted.
 unselected algorithm.
 
 **Handoff to next pass:** Signed S4B bundle; resume at S5-P2 because S5-P1 is already complete.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -4573,6 +4659,8 @@ requirement to solve PT-20 in the same diff.
 **Handoff to next pass:** Representation diagram, rotation table, layout/reset evidence, revision;
 execute S4B-P7 then S4B-P8 before S5-P2.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-12. Prerequisites: S1-P6, S3-P7, S4A-P12, and S4B-P6.
@@ -4633,6 +4721,8 @@ convention are unambiguous; fixtures reproduce the old mismatch.
 GPU cannot evaluate the same approximation.
 
 **Handoff to next pass:** Signed contract, fixtures/expected values, chosen branch, revision, and results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4695,6 +4785,8 @@ fold PT-26 optimization into correctness.
 **Handoff to next pass:** Inventory/search, fixtures, emission traces, generation/reset evidence,
 revision, and exact results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-13. Prerequisites: S5-P2.
@@ -4756,6 +4848,8 @@ remains active; P5/P6 mean energy stays within tolerance.
 a target-domain coupling.
 
 **Handoff to next pass:** Diagnostics, ray inventory, P5/P6/P7 images/means, revision, and results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4820,6 +4914,8 @@ cannot be explained without threshold tuning.
 
 **Handoff to next pass:** Ratio/normalization reports, tests, P6 images/mean, revision, and commands.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-21 H2. Prerequisites: S5-P4 and S1-P6.
@@ -4877,6 +4973,8 @@ candidate never terminates search; mean energy is stable.
 unrelated validation.
 
 **Handoff to next pass:** Counts, two-depth tests, comparative images/means, revision, and exact results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -4936,6 +5034,8 @@ reject/clamp rates and quality deltas are recorded.
 bounds introduce an unreviewed bias policy.
 
 **Handoff to next pass:** Formula/placement diagram, tests, counters, B0 deltas, revision, and results.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -4997,6 +5097,8 @@ leaks, recorded rays/timing, and a passing unbiased fallback.
 separated from target, or a threshold workaround is proposed.
 
 **Handoff to next pass:** Policy matrix, selected/fallback contract, energy/leaks, ray timing, revision.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -5060,6 +5162,8 @@ and P5/P6/P7 toggles.
 timing, or temptation to tune before diagnosis.
 
 **Handoff to next pass:** Signed S5 bundle and explicit deferred tuning candidates.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -5126,6 +5230,8 @@ or instrumentation that changes submission order.
 **Handoff to next pass:** Ownership table, unresolved items, baseline timeline/hash, revision, files,
 and exact commands/results.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-22 partially. Prerequisites: S0-P4 and S0-P5; S5-P9.
@@ -5186,6 +5292,8 @@ need for scheduler redesign.
 
 **Handoff to next pass:** Layout, fence tests, validation log, updated table, revision, and results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-22 partially. Prerequisites: S6-P1.
@@ -5242,6 +5350,8 @@ audited range carries a retirement fence.
 or safe growth requires an unplanned allocator architecture.
 
 **Handoff to next pass:** Unit/stress output, allocation trace, updated ownership list, revision.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -5301,6 +5411,8 @@ generations, or root-layout requirement.
 
 **Handoff to next pass:** Generation trace, peak/live counts, tests, residual inventory, revision.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-22 partially. Prerequisites: S6-P3 and S6-P1's descriptor inventory.
@@ -5358,6 +5470,8 @@ items close or escalate; validation is clean.
 or barrier assumptions invalid under generations.
 
 **Handoff to next pass:** AS timeline/trace, validation, signed ownership checklist, revision/results.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -5417,6 +5531,8 @@ behavior, or output change.
 
 **Handoff to next pass:** Timelines, wait distributions, hashes, validation, assertions, revision/results.
 
+**Suggested model:** `Sol Ultra`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-22 substantially. Prerequisites: S6-P1 through S6-P5 with no unresolved drain-protected resource.
@@ -5472,6 +5588,8 @@ p95/pacing/throughput improvement justifies complexity.
 or neutral/negative result outside noise.
 
 **Handoff to next pass:** Long manifests/logs, captures/stats, resource peaks, and accept/rollback decision.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -5535,6 +5653,8 @@ contract contradiction.
 
 **Handoff to next pass:** Required/optional table, search/reflection, mode images/hashes, RTPSO logs.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-23 partially. Prerequisites: S6-P7, S1-P6, and S2-P5.
@@ -5595,6 +5715,8 @@ or negative whole-frame result outside noise.
 
 **Handoff to next pass:** Matrix, marker captures, timings, hashes/images, fallback list, revision.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-23 substantially. Prerequisites: S6-P8.
@@ -5650,6 +5772,8 @@ unbounded resources, or unsupported performance claims.
 implicit coupling, output differs, or pacing regresses.
 
 **Handoff to next pass:** Signed matrix, captures, revision/results, resource peaks, limitations.
+
+**Suggested model:** `Sol Ultra`.
 
 **Paste-ready implementation prompt:**
 
@@ -5712,6 +5836,8 @@ lifetime is unsafe, or equivalence fails.
 
 **Handoff to next pass:** Tag table, capture/AOVs, timing, removed resource list, revision/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-24. Prerequisites: S6-P10, S2-P5, and S3-P7.
@@ -5767,6 +5893,8 @@ The audited 42.19 MiB/84.38 MiB calculations remain calculations, not measured s
 **Stop and escalate conditions:** Stop if any runtime/debug/readback consumer appears or ReSTIR must change.
 
 **Handoff to next pass:** Search/capture, memory/copy evidence, mode tests, revision/results.
+
+**Suggested model:** `Terra High`.
 
 **Paste-ready implementation prompt:**
 
@@ -5829,6 +5957,8 @@ propagation needs a drain, or output changes.
 
 **Handoff to next pass:** Schema, invalidation matrix, slot trace, equivalence/timing, revision/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-26. Prerequisites: S7-P2, S5-P3, and S6-P10.
@@ -5887,6 +6017,8 @@ cost exceeds benefit without simplifying ownership.
 
 **Handoff to next pass:** Layout/dirty policy, AOVs, shader metrics/timing, mode tests, revision.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-27. Prerequisites: S7-P3 and S3-P6.
@@ -5943,6 +6075,8 @@ tested fallback.
 prewarm/function regresses.
 
 **Handoff to next pass:** Matrix, capability logs, PSO/fallback outcomes, revision/results.
+
+**Suggested model:** `Terra High`.
 
 **Paste-ready implementation prompt:**
 
@@ -6002,6 +6136,8 @@ or live dispatch contradicts status.
 
 **Handoff to next pass:** Schema, screenshots/logs, manifest, forced-state results, revision.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-29 partially. Prerequisites: S8-P1 and S0-P1.
@@ -6059,6 +6195,8 @@ changing production configuration.
 cannot reproduce, or timestamps cannot separate.
 
 **Handoff to next pass:** Runner command, dry schedule, schema, reference hash, revision/results.
+
+**Suggested model:** `Terra High`.
 
 **Paste-ready implementation prompt:**
 
@@ -6119,6 +6257,8 @@ or invalid thermal/order protocol.
 
 **Handoff to next pass:** Raw windows/summaries, images, manifests, logs, positive/neutral/negative classification.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-29 primary measurement. Prerequisites: S8-P3 and S4A-P12.
@@ -6174,6 +6314,8 @@ excluded from policy.
 or evidence contradicts.
 
 **Handoff to next pass:** Captures/manifests and concise causal/inconclusive diagnosis.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -6232,6 +6374,8 @@ unproven base operation.
 
 **Handoff to next pass:** Variant revisions, manifests, images, timing/metrics, recommendation.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-29 conditional optimization. Prerequisites: S8-P4; S8-P5 when diagnosis applies.
@@ -6287,6 +6431,8 @@ documentation reports narrow and whole frame.
 supported mode changes.
 
 **Handoff to next pass:** Final matrix/hint, confirmation, revision and evidence links.
+
+**Suggested model:** `Sol High`.
 
 **Paste-ready implementation prompt:**
 
@@ -6346,6 +6492,8 @@ incompatible, or validation sees premature reuse.
 
 **Handoff to next pass:** Retirement trace/counts, validation, docs, revision/results.
 
+**Suggested model:** `Sol High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-32. Prerequisites: S8-P7 and S6-P10.
@@ -6400,6 +6548,8 @@ ownership hazard appears.
 
 **Handoff to next pass:** Manifest, graph, peak/baseline, validation, revision/results.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: PT-32 completion validation. Prerequisites: S9-P1.
@@ -6453,6 +6603,8 @@ verify nesting/ownership.
 **Stop and escalate conditions:** Stop if scoping requires command ownership change or S0 conflicts.
 
 **Handoff to next pass:** Marker capture/checklist and residual cleanup ledger.
+
+**Suggested model:** `Terra Medium`.
 
 **Paste-ready implementation prompt:**
 
@@ -6512,6 +6664,8 @@ becoming cross-system/unreviewable.
 
 **Handoff to next pass:** Removed/retained ledger, searches, build/mode results, revision.
 
+**Suggested model:** `Terra High`.
+
 **Paste-ready implementation prompt:**
 
 > Treat `devdoc/dxr/pt/pipeline-audit-2026-07-15.md` at source snapshot `9b65f29127b818abaa142fbc851c157b409df02c` as authoritative. Findings: Cleanup follow-through for PT-23, PT-24, PT-25, PT-28, PT-29, PT-32, PT-33 and only additional items explicitly listed by earlier handoffs. Prerequisites: S9-P3 and completed S1-S8 stale-item ledgers.
@@ -6567,6 +6721,8 @@ passes are explicit; final matrix/limitations are complete.
 **Stop and escalate conditions:** Stop on missing/contradictory evidence or need to infer an unrun gate.
 
 **Handoff to next pass:** None; signed catalog/status/artifact index.
+
+**Suggested model:** `Terra Medium`.
 
 **Paste-ready implementation prompt:**
 
