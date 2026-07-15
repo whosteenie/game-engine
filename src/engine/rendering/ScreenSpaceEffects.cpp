@@ -468,7 +468,11 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
       m_ptTemporalStatsShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtTemporalStatsFragmentShader,
-          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true})),
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2) | (1u << 4), true})),
+      m_ptTemporalQualityShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtTemporalQualityFragmentShader,
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4), true})),
       m_ptTemporalStatsDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtTemporalStatsDebugFragmentShader,
@@ -485,7 +489,7 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
       m_ptBoilMetricShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtBoilMetricFragmentShader,
-          ShaderSamplerOverrides{(1u << 0), true})),
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
       m_dxrShadowDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DxrShadowDebugFragmentShader)),
@@ -729,6 +733,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ptAccumScratchTarget);
     DestroyInternalTarget(m_ptTemporalStatsTarget);
     DestroyInternalTarget(m_ptTemporalStatsScratchTarget);
+    DestroyInternalTarget(m_ptTemporalQualityTarget);
     DestroyInternalTarget(m_ptTemporalPrevRadianceTarget);
     DestroyInternalTarget(m_ptTemporalPrevDepthTarget);
     DestroyInternalTarget(m_ptBoilMetricTarget);
@@ -2061,6 +2066,8 @@ void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
         m_ptGiStaticDeltaSum = 0.0;
         m_ptGiStaticRelativeDeltaSum = 0.0;
         m_ptGiStaticMeanLuminanceSum = 0.0;
+        m_ptGiStaticQualityMetrics = {};
+        m_ptGiStaticQualityMetricSums.fill(0.0);
     }
     else if (m_debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta)
     {
@@ -2091,6 +2098,8 @@ void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
         m_ptGiMotionLowerP99RelativeDeltaSum = 0.0;
         m_ptGiMotionUpperHotFractionSum = 0.0;
         m_ptGiMotionLowerHotFractionSum = 0.0;
+        m_ptGiMotionQualityMetrics = {};
+        m_ptGiMotionQualityMetricSums.fill(0.0);
     }
     m_ptTemporalStatsPrevViewProjection = glm::mat4(1.0f);
     for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
@@ -2145,6 +2154,10 @@ void ScreenSpaceEffects::SetPathTracerGiDiagnosticRoi(const glm::vec4& roi)
     m_ptGiMotionLowerP99RelativeDeltaSum = 0.0;
     m_ptGiMotionUpperHotFractionSum = 0.0;
     m_ptGiMotionLowerHotFractionSum = 0.0;
+    m_ptGiStaticQualityMetrics = {};
+    m_ptGiMotionQualityMetrics = {};
+    m_ptGiStaticQualityMetricSums.fill(0.0);
+    m_ptGiMotionQualityMetricSums.fill(0.0);
     ResetPathTracerTemporalDiagnostics();
 }
 
@@ -2235,7 +2248,7 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
             continue;
         }
 
-        D3D12_RANGE readRange{0, sizeof(std::uint16_t) * 16};
+        D3D12_RANGE readRange{0, sizeof(std::uint16_t) * 32};
         void* mapped = nullptr;
         if (SUCCEEDED(readbackResource->Map(0, &readRange, &mapped)) && mapped != nullptr)
         {
@@ -2259,6 +2272,34 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
                 std::clamp(HalfToFloat(halfChannels[14]), 0.0f, 1.0f);
             const float lowerHotFraction =
                 std::clamp(HalfToFloat(halfChannels[15]), 0.0f, 1.0f);
+            const std::array<float, 8> qualityValues = {
+                std::max(HalfToFloat(halfChannels[16]), 0.0f),
+                std::max(HalfToFloat(halfChannels[17]), 0.0f),
+                std::clamp(HalfToFloat(halfChannels[18]), 0.0f, 1.0f),
+                std::clamp(HalfToFloat(halfChannels[19]), 0.0f, 1.0f),
+                std::max(HalfToFloat(halfChannels[20]), 0.0f),
+                std::max(HalfToFloat(halfChannels[21]), 0.0f),
+                std::max(HalfToFloat(halfChannels[22]), 0.0f),
+                std::max(HalfToFloat(halfChannels[23]), 0.0f),
+            };
+            const auto updateQualityMetrics = [](PathTracerGiQualityMetrics& metrics,
+                                                  std::array<double, 8>& sums,
+                                                  const std::array<float, 8>& values,
+                                                  const double divisor)
+            {
+                for (std::size_t index = 0; index < sums.size(); ++index)
+                {
+                    sums[index] += values[index];
+                }
+                metrics.meanChromaDelta = static_cast<float>(sums[0] / divisor);
+                metrics.p95ChromaDelta = static_cast<float>(sums[1] / divisor);
+                metrics.chromaHotFraction = static_cast<float>(sums[2] / divisor);
+                metrics.temporalValidFraction = static_cast<float>(sums[3] / divisor);
+                metrics.meanLocalLumaResidual = static_cast<float>(sums[4] / divisor);
+                metrics.p95LocalLumaResidual = static_cast<float>(sums[5] / divisor);
+                metrics.meanLocalChromaResidual = static_cast<float>(sums[6] / divisor);
+                metrics.p95LocalChromaResidual = static_cast<float>(sums[7] / divisor);
+            };
             if (slot.kind == PtTemporalMetricKind::GiStatic)
             {
                 ++m_ptGiStaticReadbackCount;
@@ -2272,6 +2313,11 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
                 m_ptGiStaticRelativeSigma = auxiliaryMetric;
                 m_ptGiStaticMeanLuminance =
                     static_cast<float>(m_ptGiStaticMeanLuminanceSum / sampleDivisor);
+                updateQualityMetrics(
+                    m_ptGiStaticQualityMetrics,
+                    m_ptGiStaticQualityMetricSums,
+                    qualityValues,
+                    sampleDivisor);
                 m_ptGiStaticSampleCount = slot.sampleCount;
                 m_ptGiStaticMetricValid = true;
             }
@@ -2319,6 +2365,11 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
                     static_cast<float>(m_ptGiMotionUpperHotFractionSum / sampleDivisor);
                 m_ptGiMotionLowerHotFraction =
                     static_cast<float>(m_ptGiMotionLowerHotFractionSum / sampleDivisor);
+                updateQualityMetrics(
+                    m_ptGiMotionQualityMetrics,
+                    m_ptGiMotionQualityMetricSums,
+                    qualityValues,
+                    sampleDivisor);
                 m_ptGiMotionSampleCount = slot.sampleCount;
                 m_ptGiMotionMetricValid = true;
             }
@@ -2384,7 +2435,7 @@ void ScreenSpaceEffects::RecordPtBoilMetricReadback() const
     destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     destination.PlacedFootprint.Offset = 0;
     destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    destination.PlacedFootprint.Footprint.Width = 4;
+    destination.PlacedFootprint.Footprint.Width = 8;
     destination.PlacedFootprint.Footprint.Height = 1;
     destination.PlacedFootprint.Footprint.Depth = 1;
     destination.PlacedFootprint.Footprint.RowPitch = kReadbackPitch;
@@ -2432,7 +2483,8 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsTarget, m_width, m_height, statsFormat);
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsScratchTarget, m_width, m_height, statsFormat);
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalPrevRadianceTarget, m_width, m_height, statsFormat);
-    mutableThis->ResizeInternalTarget(mutableThis->m_ptBoilMetricTarget, 4, 1, metricFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalQualityTarget, m_width, m_height, statsFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptBoilMetricTarget, 8, 1, metricFormat);
 
     const bool giSignal = IsPtRestirGiSpatialStatsDebugMode(m_debugMode);
     const bool motionReproject = m_debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta;
@@ -2441,6 +2493,16 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
         const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
         return;
     }
+    if (giSignal && (m_dxrPathTracerMetadataSrv == 0 || m_pathTracerNormalRoughnessSrv == 0))
+    {
+        const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
+        return;
+    }
+
+    const std::uint32_t selectedInstanceIdPlusOne =
+        giSignal && m_ptGiDiagnosticSelectedInstanceId != UINT32_MAX
+        ? m_ptGiDiagnosticSelectedInstanceId + 1u
+        : 0u;
 
     const glm::mat4 viewProjection = camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
     const bool cameraChanged =
@@ -2465,6 +2527,9 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     m_ptTemporalStatsShader->SetInt("uPrevFrameValid", m_ptTemporalPrevRadianceValid ? 1 : 0);
     m_ptTemporalStatsShader->SetInt("uMotionReproject", motionReproject ? 1 : 0);
     m_ptTemporalStatsShader->SetInt("uGiSignal", giSignal ? 1 : 0);
+    m_ptTemporalStatsShader->SetInt(
+        "uSelectedInstanceIdPlusOne",
+        static_cast<int>(selectedInstanceIdPlusOne));
     m_ptTemporalStatsShader->SetVec2("uMotionScale", glm::vec2(-0.5f, 0.5f));
     m_ptTemporalStatsShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
     m_ptTemporalStatsShader->BindTextureSlot(
@@ -2476,6 +2541,9 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     m_ptTemporalStatsShader->BindTextureSlot(
         3,
         m_pathTracerMotionSrv != 0 ? m_pathTracerMotionSrv : m_dxrPathTracerOutputSrv);
+    m_ptTemporalStatsShader->BindTextureSlot(
+        4,
+        m_dxrPathTracerMetadataSrv != 0 ? m_dxrPathTracerMetadataSrv : m_dxrPathTracerOutputSrv);
     DrawFullscreenToTarget(
         *m_ptTemporalStatsShader,
         const_cast<InternalTarget&>(m_ptTemporalStatsScratchTarget),
@@ -2484,6 +2552,43 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
         clearStats);
 
     std::swap(mutableThis->m_ptTemporalStatsTarget, mutableThis->m_ptTemporalStatsScratchTarget);
+
+    const float clearQuality[] = {-1.0f, -1.0f, -1.0f, 0.0f};
+    m_ptTemporalQualityShader->Use(false, false);
+    m_ptTemporalQualityShader->SetInt("uCurrentRadiance", 0);
+    m_ptTemporalQualityShader->SetInt("uPrevRadiance", 1);
+    m_ptTemporalQualityShader->SetInt("uMotion", 2);
+    m_ptTemporalQualityShader->SetInt("uMetadata", 3);
+    m_ptTemporalQualityShader->SetInt("uNormalRoughness", 4);
+    m_ptTemporalQualityShader->SetInt("uPrevFrameValid", m_ptTemporalPrevRadianceValid ? 1 : 0);
+    m_ptTemporalQualityShader->SetInt("uMotionReproject", motionReproject ? 1 : 0);
+    m_ptTemporalQualityShader->SetInt(
+        "uSelectedInstanceIdPlusOne",
+        static_cast<int>(selectedInstanceIdPlusOne));
+    m_ptTemporalQualityShader->SetVec2("uMotionScale", glm::vec2(-0.5f, 0.5f));
+    m_ptTemporalQualityShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
+    m_ptTemporalQualityShader->BindTextureSlot(
+        1,
+        m_ptTemporalPrevRadianceValid
+            ? m_ptTemporalPrevRadianceTarget.srvCpuHandle
+            : m_dxrPathTracerOutputSrv);
+    m_ptTemporalQualityShader->BindTextureSlot(
+        2,
+        m_pathTracerMotionSrv != 0 ? m_pathTracerMotionSrv : m_dxrPathTracerOutputSrv);
+    m_ptTemporalQualityShader->BindTextureSlot(
+        3,
+        m_dxrPathTracerMetadataSrv != 0 ? m_dxrPathTracerMetadataSrv : m_dxrPathTracerOutputSrv);
+    m_ptTemporalQualityShader->BindTextureSlot(
+        4,
+        m_pathTracerNormalRoughnessSrv != 0
+            ? m_pathTracerNormalRoughnessSrv
+            : m_dxrPathTracerOutputSrv);
+    DrawFullscreenToTarget(
+        *m_ptTemporalQualityShader,
+        const_cast<InternalTarget&>(m_ptTemporalQualityTarget),
+        m_width,
+        m_height,
+        clearQuality);
 
     const float clearRadiance[] = {0.0f, 0.0f, 0.0f, 1.0f};
     m_downsampleShader->Use(false, false);
@@ -2498,6 +2603,7 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     const float clearMetric[] = {0.0f, 0.0f, 0.0f, 1.0f};
     m_ptBoilMetricShader->Use(false, false);
     m_ptBoilMetricShader->SetInt("uStatsMap", 0);
+    m_ptBoilMetricShader->SetInt("uQualityMap", 1);
     m_ptBoilMetricShader->SetInt(
         "uStaticVarianceMetric",
         m_debugMode == RenderDebugMode::PtRestirGiSpatialStaticVariance ? 1 : 0);
@@ -2507,10 +2613,11 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     m_ptBoilMetricShader->SetVec2("uRoiMin", glm::vec2(metricRoi));
     m_ptBoilMetricShader->SetVec2("uRoiMax", glm::vec2(metricRoi.z, metricRoi.w));
     m_ptBoilMetricShader->BindTextureSlot(0, m_ptTemporalStatsTarget.srvCpuHandle);
+    m_ptBoilMetricShader->BindTextureSlot(1, m_ptTemporalQualityTarget.srvCpuHandle);
     DrawFullscreenToTarget(
         *m_ptBoilMetricShader,
         const_cast<InternalTarget&>(m_ptBoilMetricTarget),
-        4,
+        8,
         1,
         clearMetric);
 

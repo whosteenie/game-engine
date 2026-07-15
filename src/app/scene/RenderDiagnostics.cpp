@@ -360,6 +360,37 @@ namespace RenderDiagnostics
                 << (dxrSettings.IsRestirGiTemporalEnabled() ? "on" : "off") << "\n";
             out << "ReSTIR GI spatial (P7): "
                 << (dxrSettings.IsRestirGiSpatialEnabled() ? "on" : "off") << "\n";
+            const char* spatialDiagnosticVariant = "production";
+            switch (dxrSettings.GetRestirGiSpatialDiagnosticMode())
+            {
+            case RestirGiSpatialDiagnosticMode::Baseline:
+                spatialDiagnosticVariant = "baseline (no filter, no spatial reuse)";
+                break;
+            case RestirGiSpatialDiagnosticMode::FilterOnly:
+                spatialDiagnosticVariant = "boiling filter only";
+                break;
+            case RestirGiSpatialDiagnosticMode::SpatialOnly:
+                spatialDiagnosticVariant = "spatial reuse only";
+                break;
+            case RestirGiSpatialDiagnosticMode::Full:
+                spatialDiagnosticVariant = "full P7";
+                break;
+            case RestirGiSpatialDiagnosticMode::Production:
+            default:
+                break;
+            }
+            out << "P7 diagnostic variant: " << spatialDiagnosticVariant << "\n";
+            const std::uint32_t selectedDiagnosticInstance =
+                effects.GetPathTracerGiDiagnosticSelectedInstance();
+            if (selectedDiagnosticInstance == UINT32_MAX)
+            {
+                out << "Selected-instance mask: disabled (all ROI geometry)\n";
+            }
+            else
+            {
+                out << "Selected-instance mask: compact instance "
+                    << selectedDiagnosticInstance << "\n";
+            }
             out << std::fixed << std::setprecision(6);
             out << "ROI normalized min/max: (" << giRoi.x << ", " << giRoi.y << ") to ("
                 << giRoi.z << ", " << giRoi.w << ")\n";
@@ -375,6 +406,19 @@ namespace RenderDiagnostics
                 out << "  mean relative delta: " << effects.GetPathTracerGiStaticRelativeDelta() << "\n";
                 out << "  current running sigma/mean: " << effects.GetPathTracerGiStaticRelativeSigma() << "\n";
                 out << "  mean GI luminance: " << effects.GetPathTracerGiStaticMeanLuminance() << "\n";
+                const PathTracerGiQualityMetrics& quality =
+                    effects.GetPathTracerGiStaticQualityMetrics();
+                out << "  selected temporal chroma delta mean / p95 / hot fraction: "
+                    << quality.meanChromaDelta << " / " << quality.p95ChromaDelta << " / "
+                    << quality.chromaHotFraction << "\n";
+                out << "  selected temporal chroma valid fraction: "
+                    << quality.temporalValidFraction << "\n";
+                out << "  selected local luma residual mean / p95: "
+                    << quality.meanLocalLumaResidual << " / "
+                    << quality.p95LocalLumaResidual << "\n";
+                out << "  selected local chroma residual mean / p95: "
+                    << quality.meanLocalChromaResidual << " / "
+                    << quality.p95LocalChromaResidual << "\n";
                 out << "  accumulated frames: " << effects.GetPathTracerGiStaticSampleCount() << "\n";
             }
             else
@@ -409,14 +453,29 @@ namespace RenderDiagnostics
                     << effects.GetPathTracerGiMotionLowerP99RelativeDelta() << " / "
                     << effects.GetPathTracerGiMotionLowerHotFraction() << "\n";
                 out << "  ROI halves are screen-space splits, not capsule/floor object masks.\n";
+                const PathTracerGiQualityMetrics& quality =
+                    effects.GetPathTracerGiMotionQualityMetrics();
+                out << "  selected temporal chroma delta mean / p95 / hot fraction: "
+                    << quality.meanChromaDelta << " / " << quality.p95ChromaDelta << " / "
+                    << quality.chromaHotFraction << "\n";
+                out << "  selected temporal chroma valid fraction: "
+                    << quality.temporalValidFraction << "\n";
+                out << "  selected local luma residual mean / p95: "
+                    << quality.meanLocalLumaResidual << " / "
+                    << quality.p95LocalLumaResidual << "\n";
+                out << "  selected local chroma residual mean / p95: "
+                    << quality.meanLocalChromaResidual << " / "
+                    << quality.p95LocalChromaResidual << "\n";
                 out << "  accumulated frames: " << effects.GetPathTracerGiMotionSampleCount() << "\n";
             }
             else
             {
                 out << "Motion-reprojected measurement: not captured\n";
             }
-            out << "Interpretation: compare P7 on/off with the same ROI and camera path. "
-                << "A stable smear can remain even when both temporal deltas are low.\n\n";
+            out << "Interpretation: compare all four causal variants with the same object mask, ROI, "
+                << "and camera path. Lower temporal chroma means less color crawl; lower local residuals "
+                << "mean a smoother selected surface after rejecting geometry boundaries. A stable broad "
+                << "smear can remain even when temporal deltas are low.\n\n";
 
             std::uint32_t srvUsed = 0;
             std::uint32_t srvCapacity = 0;

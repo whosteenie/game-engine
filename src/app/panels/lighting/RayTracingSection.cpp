@@ -6,6 +6,7 @@
 #include "app/editor/TuningSectionState.h"
 #include "app/editor/RendererSettingUi.h"
 #include "app/scene/RenderDiagnostics.h"
+#include "app/scene/GpuScene.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
@@ -53,10 +54,33 @@ namespace
     constexpr std::uint32_t kP7DiagnosticBatchStaticFrames = 600u;
     constexpr std::uint32_t kP7DiagnosticBatchOrbitFrames = 600u;
 
+    struct P7DiagnosticVariant
+    {
+        RestirGiSpatialDiagnosticMode mode;
+        const char* label;
+        const char* reportPath;
+        bool productionP7Enabled;
+    };
+
+    constexpr std::array<P7DiagnosticVariant, 4> kP7DiagnosticVariants = {{
+        {RestirGiSpatialDiagnosticMode::Baseline,
+         "baseline (P5+P6)", "diagnostics/pt_restir_gi_p7_off.txt", false},
+        {RestirGiSpatialDiagnosticMode::FilterOnly,
+         "boiling filter only", "diagnostics/pt_restir_gi_filter_only.txt", true},
+        {RestirGiSpatialDiagnosticMode::SpatialOnly,
+         "spatial reuse only", "diagnostics/pt_restir_gi_spatial_only.txt", true},
+        {RestirGiSpatialDiagnosticMode::Full,
+         "full P7", "diagnostics/pt_restir_gi_p7_on.txt", true},
+    }};
+
     struct P7DiagnosticOrbitState
     {
         bool active = false;
         bool p7Enabled = false;
+        RestirGiSpatialDiagnosticMode diagnosticMode =
+            RestirGiSpatialDiagnosticMode::Production;
+        const char* variantLabel = "production";
+        const char* reportPath = "diagnostics/pt_restir_gi_p7_off.txt";
         float elapsedSeconds = 0.0f;
         float durationSeconds = kP7DiagnosticOrbitDurationSeconds;
         int revolutions = 3;
@@ -78,27 +102,27 @@ namespace
     enum class P7DiagnosticBatchStage
     {
         Idle,
-        P7OnWarmup,
-        P7OnStatic,
-        P7OnOrbit,
-        P7OffWarmup,
-        P7OffStatic,
-        P7OffOrbit,
+        Warmup,
+        Static,
+        Orbit,
     };
 
     struct P7DiagnosticBatchState
     {
         bool active = false;
         P7DiagnosticBatchStage stage = P7DiagnosticBatchStage::Idle;
+        std::size_t variantIndex = 0;
         float stageMeasurementWallSeconds = 0.0f;
-        float p7OnStaticWallSeconds = 0.0f;
-        float p7OffStaticWallSeconds = 0.0f;
+        std::array<float, kP7DiagnosticVariants.size()> staticWallSeconds{};
         bool stagePreFinalReadbackDrain = false;
         bool stageFinalReadbackDrain = false;
         int revolutions = 3;
         bool originalP5Enabled = false;
         bool originalP6Enabled = false;
         bool originalP7Enabled = false;
+        RestirGiSpatialDiagnosticMode originalDiagnosticMode =
+            RestirGiSpatialDiagnosticMode::Production;
+        std::uint32_t originalSelectedInstanceId = UINT32_MAX;
         RenderDebugMode originalDebugMode = RenderDebugMode::None;
         glm::vec3 originalCameraPosition{0.0f};
         float originalCameraYaw = 0.0f;
@@ -169,6 +193,7 @@ namespace
         const glm::vec3& target,
         const int revolutions,
         const std::uint32_t fixedFrameCount,
+        const P7DiagnosticVariant& variant,
         P7DiagnosticOrbitState& orbit,
         std::string& outStatus)
     {
@@ -183,6 +208,9 @@ namespace
 
         orbit.active = true;
         orbit.p7Enabled = renderer.GetDxrSettings().IsRestirGiSpatialEnabled();
+        orbit.diagnosticMode = variant.mode;
+        orbit.variantLabel = variant.label;
+        orbit.reportPath = variant.reportPath;
         orbit.elapsedSeconds = 0.0f;
         orbit.durationSeconds = kP7DiagnosticOrbitDurationSeconds;
         orbit.revolutions = std::clamp(revolutions, 1, 20);
@@ -202,9 +230,9 @@ namespace
         renderer.SetRenderDebugMode(RenderDebugMode::PtRestirGiSpatialMotionDelta);
         renderer.GetScreenSpaceEffects().ResetPathTracerTemporalDiagnostics();
         outStatus = std::string(orbit.fixedFrameStep
-                ? "Recording deterministic P7 "
-                : "Recording repeatable P7 ")
-            + (orbit.p7Enabled ? "ON" : "OFF")
+                ? "Recording deterministic "
+                : "Recording repeatable ")
+            + orbit.variantLabel
             + " orbit (" + std::to_string(orbit.revolutions) + " revolutions / "
             + (orbit.fixedFrameStep
                 ? std::to_string(orbit.targetFrames) + " rendered frames)..."
@@ -217,12 +245,13 @@ namespace
         SceneRenderer& renderer,
         Camera& camera,
         P7DiagnosticBatchState& batch,
-        const bool p7Enabled)
+        const P7DiagnosticVariant& variant)
     {
         DxrSettings& settings = renderer.GetDxrSettings();
         settings.SetRestirGiInitialEnabled(true);
         settings.SetRestirGiTemporalEnabled(true);
-        settings.SetRestirGiSpatialEnabled(p7Enabled);
+        settings.SetRestirGiSpatialEnabled(variant.productionP7Enabled);
+        settings.SetRestirGiSpatialDiagnosticMode(variant.mode);
         SetCameraPose(
             camera,
             batch.captureCameraPosition,
@@ -244,6 +273,9 @@ namespace
         settings.SetRestirGiInitialEnabled(batch.originalP5Enabled);
         settings.SetRestirGiTemporalEnabled(batch.originalP6Enabled);
         settings.SetRestirGiSpatialEnabled(batch.originalP7Enabled);
+        settings.SetRestirGiSpatialDiagnosticMode(batch.originalDiagnosticMode);
+        renderer.GetScreenSpaceEffects().SetPathTracerGiDiagnosticSelectedInstance(
+            batch.originalSelectedInstanceId);
         renderer.GetScreenSpaceEffects().SetPathTracerTemporalDiagnosticsPaused(false);
         renderer.SetRenderDebugMode(batch.originalDebugMode);
         SetCameraPose(
@@ -268,13 +300,16 @@ namespace
             return;
         }
 
-        if (renderer.GetDxrSettings().IsRestirGiSpatialEnabled() != orbit.p7Enabled)
+        const DxrSettings& settings = renderer.GetDxrSettings();
+        if (settings.GetRestirGiSpatialDiagnosticMode() != orbit.diagnosticMode
+            || (orbit.diagnosticMode == RestirGiSpatialDiagnosticMode::Production
+                && settings.IsRestirGiSpatialEnabled() != orbit.p7Enabled))
         {
             RestoreP7DiagnosticOrbitStart(camera, orbit);
             orbit.active = false;
             screenSpaceEffects.SetPathTracerTemporalDiagnosticsPaused(false);
             screenSpaceEffects.ResetPathTracerTemporalDiagnostics();
-            orbit.status = "Orbit cancelled because the P7 state changed during capture.";
+            orbit.status = "Orbit cancelled because the P7 diagnostic state changed during capture.";
             return;
         }
 
@@ -283,9 +318,6 @@ namespace
             RestoreP7DiagnosticOrbitStart(camera, orbit);
             orbit.active = false;
             screenSpaceEffects.SetPathTracerTemporalDiagnosticsPaused(false);
-            const char* diagnosticPath = orbit.p7Enabled
-                ? "diagnostics/pt_restir_gi_p7_on.txt"
-                : "diagnostics/pt_restir_gi_p7_off.txt";
             std::string reportStatus;
             std::string captureDescription;
             if (orbit.fixedFrameStep)
@@ -315,9 +347,9 @@ namespace
                 captureDescription = fixedCapture;
                 if (g_p7DiagnosticBatch.active)
                 {
-                    const float staticWallSeconds = orbit.p7Enabled
-                        ? g_p7DiagnosticBatch.p7OnStaticWallSeconds
-                        : g_p7DiagnosticBatch.p7OffStaticWallSeconds;
+                    const float staticWallSeconds =
+                        g_p7DiagnosticBatch.staticWallSeconds[
+                            g_p7DiagnosticBatch.variantIndex];
                     const float staticFps = staticWallSeconds > 0.0f
                         ? static_cast<float>(kP7DiagnosticBatchStaticFrames) / staticWallSeconds
                         : 0.0f;
@@ -325,10 +357,11 @@ namespace
                     std::snprintf(
                         batchCapture,
                         sizeof(batchCapture),
-                        " Full automatic P7 A/B sequence: %u-frame history warm-up and %u-frame "
+                        " Full automatic P7 causal sequence (%s): %u-frame history warm-up and %u-frame "
                         "static measurement (%.3f seconds, %.3f effective FPS) before this orbit; "
                         "final static metric readback %u/%u frames; GPU metric readbacks drained "
                         "before report.",
+                        orbit.variantLabel,
                         kP7DiagnosticBatchWarmupFrames,
                         kP7DiagnosticBatchStaticFrames,
                         staticWallSeconds,
@@ -352,7 +385,7 @@ namespace
                 camera,
                 viewportWidth,
                 viewportHeight,
-                diagnosticPath,
+                orbit.reportPath,
                 reportStatus,
                 captureDescription.c_str());
             orbit.status = std::string(orbit.fixedFrameStep ? "Deterministic " : "Realtime ")
@@ -458,18 +491,18 @@ namespace
         ScreenSpaceEffects& screenSpaceEffects = renderer.GetScreenSpaceEffects();
         const float deltaSeconds = std::clamp(ImGui::GetIO().DeltaTime, 0.0f, 0.25f);
         if (!screenSpaceEffects.ArePathTracerTemporalDiagnosticsPaused()
-            && (batch.stage == P7DiagnosticBatchStage::P7OnWarmup
-                || batch.stage == P7DiagnosticBatchStage::P7OffWarmup
-                || batch.stage == P7DiagnosticBatchStage::P7OnStatic
-                || batch.stage == P7DiagnosticBatchStage::P7OffStatic))
+            && (batch.stage == P7DiagnosticBatchStage::Warmup
+                || batch.stage == P7DiagnosticBatchStage::Static))
         {
             batch.stageMeasurementWallSeconds += deltaSeconds;
         }
 
+        const P7DiagnosticVariant& variant =
+            kP7DiagnosticVariants[batch.variantIndex];
+
         switch (batch.stage)
         {
-        case P7DiagnosticBatchStage::P7OnWarmup:
-        case P7DiagnosticBatchStage::P7OffWarmup:
+        case P7DiagnosticBatchStage::Warmup:
         {
             SetCameraPose(
                 camera,
@@ -484,13 +517,10 @@ namespace
                 }
                 batch.stageFinalReadbackDrain = false;
                 screenSpaceEffects.ResetPathTracerTemporalDiagnostics();
-                batch.stage = batch.stage == P7DiagnosticBatchStage::P7OnWarmup
-                    ? P7DiagnosticBatchStage::P7OnStatic
-                    : P7DiagnosticBatchStage::P7OffStatic;
+                batch.stage = P7DiagnosticBatchStage::Static;
                 batch.stageMeasurementWallSeconds = 0.0f;
-                batch.status = batch.stage == P7DiagnosticBatchStage::P7OnStatic
-                    ? "A/B capture: measuring 600 P7 ON static frames..."
-                    : "A/B capture: measuring 600 P7 OFF static frames...";
+                batch.status = std::string("Causal capture: measuring 600 ")
+                    + variant.label + " static frames...";
                 break;
             }
             if (screenSpaceEffects.GetPathTracerTemporalStatsSampleCount()
@@ -502,8 +532,7 @@ namespace
             }
             break;
         }
-        case P7DiagnosticBatchStage::P7OnStatic:
-        case P7DiagnosticBatchStage::P7OffStatic:
+        case P7DiagnosticBatchStage::Static:
         {
             SetCameraPose(
                 camera,
@@ -528,21 +557,15 @@ namespace
                     break;
                 }
                 batch.stageFinalReadbackDrain = false;
-                const bool p7Enabled = batch.stage == P7DiagnosticBatchStage::P7OnStatic;
-                if (p7Enabled)
-                {
-                    batch.p7OnStaticWallSeconds = batch.stageMeasurementWallSeconds;
-                }
-                else
-                {
-                    batch.p7OffStaticWallSeconds = batch.stageMeasurementWallSeconds;
-                }
+                batch.staticWallSeconds[batch.variantIndex] =
+                    batch.stageMeasurementWallSeconds;
                 if (!BeginP7DiagnosticOrbit(
                         renderer,
                         camera,
                         batch.target,
                         batch.revolutions,
                         kP7DiagnosticBatchOrbitFrames,
+                        variant,
                         orbit,
                         batch.status))
                 {
@@ -551,9 +574,7 @@ namespace
                     batch.stage = P7DiagnosticBatchStage::Idle;
                     break;
                 }
-                batch.stage = p7Enabled
-                    ? P7DiagnosticBatchStage::P7OnOrbit
-                    : P7DiagnosticBatchStage::P7OffOrbit;
+                batch.stage = P7DiagnosticBatchStage::Orbit;
                 batch.stageMeasurementWallSeconds = 0.0f;
                 break;
             }
@@ -575,22 +596,27 @@ namespace
             }
             break;
         }
-        case P7DiagnosticBatchStage::P7OnOrbit:
+        case P7DiagnosticBatchStage::Orbit:
             if (!orbit.active)
             {
-                ConfigureP7DiagnosticStaticStage(renderer, camera, batch, false);
-                batch.stage = P7DiagnosticBatchStage::P7OffWarmup;
-                batch.status = "A/B capture: warming P7 OFF history for 60 rendered frames...";
-            }
-            break;
-        case P7DiagnosticBatchStage::P7OffOrbit:
-            if (!orbit.active)
-            {
-                RestoreP7DiagnosticBatch(renderer, camera, batch);
-                batch.active = false;
-                batch.stage = P7DiagnosticBatchStage::Idle;
-                batch.status = "Automatic P7 A/B capture complete. Both reports were written; "
-                    "camera and ReSTIR settings restored.";
+                ++batch.variantIndex;
+                if (batch.variantIndex < kP7DiagnosticVariants.size())
+                {
+                    const P7DiagnosticVariant& nextVariant =
+                        kP7DiagnosticVariants[batch.variantIndex];
+                    ConfigureP7DiagnosticStaticStage(renderer, camera, batch, nextVariant);
+                    batch.stage = P7DiagnosticBatchStage::Warmup;
+                    batch.status = std::string("Causal capture: warming ")
+                        + nextVariant.label + " history for 60 rendered frames...";
+                }
+                else
+                {
+                    RestoreP7DiagnosticBatch(renderer, camera, batch);
+                    batch.active = false;
+                    batch.stage = P7DiagnosticBatchStage::Idle;
+                    batch.status = "Automatic P7 causal capture complete. Four reports were "
+                        "written; camera and ReSTIR settings restored.";
+                }
             }
             break;
         case P7DiagnosticBatchStage::Idle:
@@ -605,26 +631,20 @@ namespace
         const P7DiagnosticBatchState& batch)
     {
         const std::uint32_t statsFrames = screenSpaceEffects.GetPathTracerTemporalStatsSampleCount();
-        const std::uint32_t onWarmupBase = 0u;
-        const std::uint32_t onStaticBase = onWarmupBase + kP7DiagnosticBatchWarmupFrames;
-        const std::uint32_t onOrbitBase = onStaticBase + kP7DiagnosticBatchStaticFrames;
-        const std::uint32_t offWarmupBase = onOrbitBase + kP7DiagnosticBatchOrbitFrames;
-        const std::uint32_t offStaticBase = offWarmupBase + kP7DiagnosticBatchWarmupFrames;
-        const std::uint32_t offOrbitBase = offStaticBase + kP7DiagnosticBatchStaticFrames;
+        constexpr std::uint32_t framesPerVariant = kP7DiagnosticBatchWarmupFrames
+            + kP7DiagnosticBatchStaticFrames + kP7DiagnosticBatchOrbitFrames;
+        const std::uint32_t variantBase =
+            static_cast<std::uint32_t>(batch.variantIndex) * framesPerVariant;
+        const std::uint32_t staticBase = variantBase + kP7DiagnosticBatchWarmupFrames;
+        const std::uint32_t orbitBase = staticBase + kP7DiagnosticBatchStaticFrames;
         switch (batch.stage)
         {
-        case P7DiagnosticBatchStage::P7OnWarmup:
-            return onWarmupBase + std::min(statsFrames, kP7DiagnosticBatchWarmupFrames);
-        case P7DiagnosticBatchStage::P7OnStatic:
-            return onStaticBase + std::min(statsFrames, kP7DiagnosticBatchStaticFrames);
-        case P7DiagnosticBatchStage::P7OnOrbit:
-            return onOrbitBase + std::min(orbit.completedFrames, kP7DiagnosticBatchOrbitFrames);
-        case P7DiagnosticBatchStage::P7OffWarmup:
-            return offWarmupBase + std::min(statsFrames, kP7DiagnosticBatchWarmupFrames);
-        case P7DiagnosticBatchStage::P7OffStatic:
-            return offStaticBase + std::min(statsFrames, kP7DiagnosticBatchStaticFrames);
-        case P7DiagnosticBatchStage::P7OffOrbit:
-            return offOrbitBase + std::min(orbit.completedFrames, kP7DiagnosticBatchOrbitFrames);
+        case P7DiagnosticBatchStage::Warmup:
+            return variantBase + std::min(statsFrames, kP7DiagnosticBatchWarmupFrames);
+        case P7DiagnosticBatchStage::Static:
+            return staticBase + std::min(statsFrames, kP7DiagnosticBatchStaticFrames);
+        case P7DiagnosticBatchStage::Orbit:
+            return orbitBase + std::min(orbit.completedFrames, kP7DiagnosticBatchOrbitFrames);
         case P7DiagnosticBatchStage::Idle:
         default:
             return 0u;
@@ -1223,13 +1243,13 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::SetTooltip(
-                            "Automatic A/B: this many revolutions across exactly 600 rendered frames.\n"
+                            "Automatic causal capture: this many revolutions across exactly 600 rendered frames.\n"
                             "Manual realtime orbit: this many revolutions over 10 wall-clock seconds.");
                     }
 
                     const bool batchWasActive = diagnosticBatch.active;
                     if (!batchWasActive
-                        && ImGui::Button("Run complete P7 ON/OFF capture##pt-restir-gi-batch"))
+                        && ImGui::Button("Run complete P7 causal capture##pt-restir-gi-batch"))
                     {
                         if (!ComputePrimarySelectionFocus(scene, selectedTarget, selectedRadius))
                         {
@@ -1246,38 +1266,56 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             }
                             else
                             {
-                                diagnosticBatch = {};
-                                diagnosticBatch.active = true;
-                                diagnosticBatch.stage = P7DiagnosticBatchStage::P7OnWarmup;
-                                diagnosticBatch.revolutions = requestedOrbitRevolutions;
-                                diagnosticBatch.originalP5Enabled =
-                                    dxrSettings.IsRestirGiInitialEnabled();
-                                diagnosticBatch.originalP6Enabled =
-                                    dxrSettings.IsRestirGiTemporalEnabled();
-                                diagnosticBatch.originalP7Enabled =
-                                    dxrSettings.IsRestirGiSpatialEnabled();
-                                diagnosticBatch.originalDebugMode = renderer.GetRenderDebugMode();
-                                diagnosticBatch.originalCameraPosition = camera.GetPosition();
-                                diagnosticBatch.originalCameraYaw = camera.GetYaw();
-                                diagnosticBatch.originalCameraPitch = camera.GetPitch();
-                                diagnosticBatch.target = selectedTarget;
-                                PointCameraYawAtTarget(camera, selectedTarget);
-                                diagnosticBatch.captureCameraPosition = camera.GetPosition();
-                                diagnosticBatch.captureCameraYaw = camera.GetYaw();
-                                diagnosticBatch.captureCameraPitch = camera.GetPitch();
-                                ConfigureP7DiagnosticStaticStage(
-                                    renderer,
-                                    camera,
-                                    diagnosticBatch,
-                                    true);
-                                diagnosticBatch.status =
-                                    "A/B capture: warming P7 ON history for 60 rendered frames...";
+                                const GpuSceneInstanceRecord* selectedInstance =
+                                    renderer.GetGpuScene().FindPrimarySelectionInstance(scene);
+                                if (selectedInstance == nullptr)
+                                {
+                                    diagnosticBatch.status =
+                                        "The selected object has no path-tracer instance. Select a renderable object.";
+                                }
+                                else
+                                {
+                                    diagnosticBatch = {};
+                                    diagnosticBatch.active = true;
+                                    diagnosticBatch.stage = P7DiagnosticBatchStage::Warmup;
+                                    diagnosticBatch.variantIndex = 0;
+                                    diagnosticBatch.revolutions = requestedOrbitRevolutions;
+                                    diagnosticBatch.originalP5Enabled =
+                                        dxrSettings.IsRestirGiInitialEnabled();
+                                    diagnosticBatch.originalP6Enabled =
+                                        dxrSettings.IsRestirGiTemporalEnabled();
+                                    diagnosticBatch.originalP7Enabled =
+                                        dxrSettings.IsRestirGiSpatialEnabled();
+                                    diagnosticBatch.originalDiagnosticMode =
+                                        dxrSettings.GetRestirGiSpatialDiagnosticMode();
+                                    diagnosticBatch.originalSelectedInstanceId =
+                                        screenSpaceEffects.GetPathTracerGiDiagnosticSelectedInstance();
+                                    diagnosticBatch.originalDebugMode = renderer.GetRenderDebugMode();
+                                    diagnosticBatch.originalCameraPosition = camera.GetPosition();
+                                    diagnosticBatch.originalCameraYaw = camera.GetYaw();
+                                    diagnosticBatch.originalCameraPitch = camera.GetPitch();
+                                    diagnosticBatch.target = selectedTarget;
+                                    PointCameraYawAtTarget(camera, selectedTarget);
+                                    diagnosticBatch.captureCameraPosition = camera.GetPosition();
+                                    diagnosticBatch.captureCameraYaw = camera.GetYaw();
+                                    diagnosticBatch.captureCameraPitch = camera.GetPitch();
+                                    screenSpaceEffects.SetPathTracerGiDiagnosticSelectedInstance(
+                                        selectedInstance->instanceId);
+                                    ConfigureP7DiagnosticStaticStage(
+                                        renderer,
+                                        camera,
+                                        diagnosticBatch,
+                                        kP7DiagnosticVariants.front());
+                                    diagnosticBatch.status =
+                                        "Causal capture: warming baseline (P5+P6) history for 60 rendered frames...";
+                                }
                             }
                         }
                     }
                     if (diagnosticBatch.active)
                     {
-                        constexpr std::uint32_t totalCaptureFrames = 2u * (
+                        constexpr std::uint32_t totalCaptureFrames =
+                            static_cast<std::uint32_t>(kP7DiagnosticVariants.size()) * (
                             kP7DiagnosticBatchWarmupFrames
                             + kP7DiagnosticBatchStaticFrames
                             + kP7DiagnosticBatchOrbitFrames);
@@ -1310,7 +1348,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             diagnosticBatch.active = false;
                             diagnosticBatch.stage = P7DiagnosticBatchStage::Idle;
                             diagnosticBatch.status =
-                                "Automatic P7 A/B capture cancelled; camera and settings restored.";
+                                "Automatic P7 causal capture cancelled; camera and settings restored.";
                         }
                     }
                     if (!diagnosticBatch.status.empty())
@@ -1379,6 +1417,13 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             {
                                 diagnosticOrbit.active = true;
                                 diagnosticOrbit.p7Enabled = dxrSettings.IsRestirGiSpatialEnabled();
+                                diagnosticOrbit.diagnosticMode =
+                                    dxrSettings.GetRestirGiSpatialDiagnosticMode();
+                                diagnosticOrbit.variantLabel = diagnosticOrbit.p7Enabled
+                                    ? "production P7 ON" : "production P7 OFF";
+                                diagnosticOrbit.reportPath = diagnosticOrbit.p7Enabled
+                                    ? "diagnostics/pt_restir_gi_p7_on.txt"
+                                    : "diagnostics/pt_restir_gi_p7_off.txt";
                                 diagnosticOrbit.elapsedSeconds = 0.0f;
                                 diagnosticOrbit.durationSeconds = kP7DiagnosticOrbitDurationSeconds;
                                 diagnosticOrbit.revolutions = requestedOrbitRevolutions;
@@ -1525,6 +1570,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     }
                     if (screenSpaceEffects.IsPathTracerGiStaticMetricValid())
                     {
+                        const PathTracerGiQualityMetrics& quality =
+                            screenSpaceEffects.GetPathTracerGiStaticQualityMetrics();
                         ImGui::TextDisabled(
                             "Static GI: delta %.5f (rel %.4f), sigma/mean %.4f, mean %.4f (%u frames)",
                             screenSpaceEffects.GetPathTracerGiStaticDelta(),
@@ -1532,6 +1579,11 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             screenSpaceEffects.GetPathTracerGiStaticRelativeSigma(),
                             screenSpaceEffects.GetPathTracerGiStaticMeanLuminance(),
                             screenSpaceEffects.GetPathTracerGiStaticSampleCount());
+                        ImGui::TextDisabled(
+                            "    selected surface: chroma delta mean/p95 %.4f / %.4f; local luma p95 %.3f",
+                            quality.meanChromaDelta,
+                            quality.p95ChromaDelta,
+                            quality.p95LocalLumaResidual);
                     }
                     else
                     {
@@ -1539,6 +1591,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     }
                     if (screenSpaceEffects.IsPathTracerGiMotionMetricValid())
                     {
+                        const PathTracerGiQualityMetrics& quality =
+                            screenSpaceEffects.GetPathTracerGiMotionQualityMetrics();
                         ImGui::TextDisabled(
                             "Motion GI: abs %.5f, relative %.4f, valid %.1f%% (%u frames)",
                             screenSpaceEffects.GetPathTracerGiMotionDelta(),
@@ -1562,21 +1616,33 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             100.0f * screenSpaceEffects.GetPathTracerGiMotionUpperHotFraction(),
                             screenSpaceEffects.GetPathTracerGiMotionLowerP99RelativeDelta(),
                             100.0f * screenSpaceEffects.GetPathTracerGiMotionLowerHotFraction());
+                        ImGui::TextDisabled(
+                            "    selected chroma: mean/p95 %.4f / %.4f, hot %.1f%%, valid %.1f%%",
+                            quality.meanChromaDelta,
+                            quality.p95ChromaDelta,
+                            100.0f * quality.chromaHotFraction,
+                            100.0f * quality.temporalValidFraction);
+                        ImGui::TextDisabled(
+                            "    selected local residual p95: luma %.3f, chroma %.3f",
+                            quality.p95LocalLumaResidual,
+                            quality.p95LocalChromaResidual);
                     }
                     else
                     {
                         ImGui::TextDisabled("Motion GI: select 'motion-reprojected delta' debug view");
                     }
                     LightingPanelUi::DrawWrappedHelp(
-                        "Complete A/B uses matched 60-frame warm-up, 600-frame static, and 600-frame "
-                        "orbit captures for P7 ON then OFF. Manual repeatable orbit remains a "
+                        "Complete causal capture uses matched 60-frame warm-up, 600-frame static, and "
+                        "600-frame orbit captures for baseline, filter-only, spatial-only, and full P7. "
+                        "Manual repeatable orbit remains a "
                         "10-second realtime stress test. Both return to the exact starting pose and "
-                        "write the matching P7 ON/OFF report automatically.");
+                        "write variant reports automatically.");
                     LightingPanelUi::DrawWrappedHelp(
                         "Tail values expose rare bright changes. Hot means relative delta >= 1. "
                         "Neighbor correlation and low-frequency variance retention rise when fine "
                         "grain organizes into broad moving patches. Upper/lower are screen-space ROI "
-                        "halves, not object masks.");
+                        "halves, not object masks. Selected-surface metrics are instance-masked and "
+                        "reject local samples across depth and normal discontinuities.");
                     LightingPanelUi::DrawWrappedHelp(
                         "The ROI is stored with the project's renderer settings when the project is saved.");
                     static std::string p7DiagnosticStatus;

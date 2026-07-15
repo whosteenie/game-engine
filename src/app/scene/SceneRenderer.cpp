@@ -1210,9 +1210,35 @@ void SceneRenderer::RecordDxrPass(
             const bool giTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
                 && m_dxrSettings.IsRestirGiInitialEnabled()
                 && m_dxrSettings.IsRestirGiTemporalEnabled();
-            const bool giSpatialEnabled = !m_dxrSettings.IsPtReferenceConvergence()
-                && m_dxrSettings.IsRestirGiInitialEnabled()
-                && m_dxrSettings.IsRestirGiSpatialEnabled();
+            bool giBoilingFilterEnabled = m_dxrSettings.IsRestirGiSpatialEnabled();
+            bool giSpatialReuseEnabled = m_dxrSettings.IsRestirGiSpatialEnabled();
+            switch (m_dxrSettings.GetRestirGiSpatialDiagnosticMode())
+            {
+            case RestirGiSpatialDiagnosticMode::Baseline:
+                giBoilingFilterEnabled = false;
+                giSpatialReuseEnabled = false;
+                break;
+            case RestirGiSpatialDiagnosticMode::FilterOnly:
+                giBoilingFilterEnabled = true;
+                giSpatialReuseEnabled = false;
+                break;
+            case RestirGiSpatialDiagnosticMode::SpatialOnly:
+                giBoilingFilterEnabled = false;
+                giSpatialReuseEnabled = true;
+                break;
+            case RestirGiSpatialDiagnosticMode::Full:
+                giBoilingFilterEnabled = true;
+                giSpatialReuseEnabled = true;
+                break;
+            case RestirGiSpatialDiagnosticMode::Production:
+            default:
+                break;
+            }
+            giBoilingFilterEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled() && giBoilingFilterEnabled;
+            giSpatialReuseEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled() && giSpatialReuseEnabled;
+            const bool giSpatialEnabled = giBoilingFilterEnabled || giSpatialReuseEnabled;
             const bool giSpatialMeasurement = !m_dxrSettings.IsPtReferenceConvergence()
                 && m_dxrSettings.IsRestirGiInitialEnabled()
                 && IsPtRestirGiSpatialStatsDebugMode(debugMode);
@@ -1249,7 +1275,8 @@ void SceneRenderer::RecordDxrPass(
                         m_dxrSettings.GetMaxTraceDistance(),
                         true,
                         diTemporalEnabled,
-                        giSpatialEnabled,
+                        giBoilingFilterEnabled,
+                        giSpatialReuseEnabled,
                         shadeRestirOutput))
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();

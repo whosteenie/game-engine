@@ -155,7 +155,8 @@ public:
         float maxTraceDistance,
         bool realTimeMode,
         bool enableDiSpatial,
-        bool enableGiSpatial,
+        bool enableGiBoilingFilter,
+        bool enableGiSpatialReuse,
         bool shadeOutput = true);
 
     void FinalizePathTracerSurfaceHistory(void* commandList);

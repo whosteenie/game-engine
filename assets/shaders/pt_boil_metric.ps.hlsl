@@ -1,7 +1,8 @@
-// Fixed-grid path-tracer instability reductions. The 4x1 output stores aggregate, tail,
-// spatial-coherence, and upper/lower ROI measurements for asynchronous CPU readback.
+// Fixed-grid path-tracer instability reductions. The 8x1 output additionally stores
+// object-masked temporal chroma and geometry-aware local surface residual measurements.
 
 Texture2D<float4> uStatsMap : register(t0);
+Texture2D<float4> uQualityMap : register(t1);
 SamplerState uStatsSampler : register(s0);
 
 cbuffer PerPixel : register(b0)
@@ -25,6 +26,127 @@ float4 main(PSInput input) : SV_Target
     static const float kHistogramMax = 8.0;
     static const float kHotRelativeDelta = 1.0;
     const uint outputIndex = (uint)input.position.x;
+
+    if (outputIndex == 4u)
+    {
+        static const float kChromaHistogramMax = 1.5;
+        static const float kChromaHotThreshold = 0.1;
+        uint histogram[kHistogramBins];
+        [unroll]
+        for (int bin = 0; bin < kHistogramBins; ++bin) histogram[bin] = 0u;
+        float sum = 0.0;
+        uint eligibleCount = 0u;
+        uint validCount = 0u;
+        uint hotCount = 0u;
+        [loop]
+        for (int y = 0; y < kSampleSide; ++y)
+        {
+            [loop]
+            for (int x = 0; x < kSampleSide; ++x)
+            {
+                const float2 uv = (float2(x, y) + 0.5) / float(kSampleSide);
+                if (any(uv < uRoiMin) || any(uv > uRoiMax)) continue;
+                const float4 quality = uQualityMap.SampleLevel(uStatsSampler, uv, 0.0);
+                if (quality.a <= 0.0) continue;
+                eligibleCount++;
+                if (quality.r < 0.0) continue;
+                const float value = quality.r;
+                sum += value;
+                validCount++;
+                hotCount += value >= kChromaHotThreshold ? 1u : 0u;
+                histogram[min(
+                    (uint)(saturate(value / kChromaHistogramMax) * float(kHistogramBins)),
+                    (uint)(kHistogramBins - 1))]++;
+            }
+        }
+        float p95 = 0.0;
+        if (validCount > 0u)
+        {
+            const uint target = max((uint)ceil(float(validCount) * 0.95), 1u);
+            uint cumulative = 0u;
+            [loop]
+            for (int percentileBin = 0; percentileBin < kHistogramBins; ++percentileBin)
+            {
+                cumulative += histogram[percentileBin];
+                if (cumulative >= target)
+                {
+                    p95 = float(percentileBin + 1) * kChromaHistogramMax
+                        / float(kHistogramBins);
+                    break;
+                }
+            }
+        }
+        return float4(
+            validCount > 0u ? sum / float(validCount) : 0.0,
+            p95,
+            validCount > 0u ? float(hotCount) / float(validCount) : 0.0,
+            eligibleCount > 0u ? float(validCount) / float(eligibleCount) : 0.0);
+    }
+
+    if (outputIndex == 5u)
+    {
+        static const float kLocalLumaHistogramMax = 4.0;
+        static const float kLocalChromaHistogramMax = 1.5;
+        uint lumaHistogram[kHistogramBins];
+        uint chromaHistogram[kHistogramBins];
+        [unroll]
+        for (int bin = 0; bin < kHistogramBins; ++bin)
+        {
+            lumaHistogram[bin] = 0u;
+            chromaHistogram[bin] = 0u;
+        }
+        float lumaSum = 0.0;
+        float chromaSum = 0.0;
+        uint validCount = 0u;
+        [loop]
+        for (int y = 0; y < kSampleSide; ++y)
+        {
+            [loop]
+            for (int x = 0; x < kSampleSide; ++x)
+            {
+                const float2 uv = (float2(x, y) + 0.5) / float(kSampleSide);
+                if (any(uv < uRoiMin) || any(uv > uRoiMax)) continue;
+                const float4 quality = uQualityMap.SampleLevel(uStatsSampler, uv, 0.0);
+                if (quality.a <= 0.0 || quality.g < 0.0 || quality.b < 0.0) continue;
+                lumaSum += quality.g;
+                chromaSum += quality.b;
+                validCount++;
+                lumaHistogram[min(
+                    (uint)(saturate(quality.g / kLocalLumaHistogramMax) * float(kHistogramBins)),
+                    (uint)(kHistogramBins - 1))]++;
+                chromaHistogram[min(
+                    (uint)(saturate(quality.b / kLocalChromaHistogramMax) * float(kHistogramBins)),
+                    (uint)(kHistogramBins - 1))]++;
+            }
+        }
+        float lumaP95 = 0.0;
+        float chromaP95 = 0.0;
+        if (validCount > 0u)
+        {
+            const uint target = max((uint)ceil(float(validCount) * 0.95), 1u);
+            uint lumaCumulative = 0u;
+            uint chromaCumulative = 0u;
+            [loop]
+            for (int percentileBin = 0; percentileBin < kHistogramBins; ++percentileBin)
+            {
+                lumaCumulative += lumaHistogram[percentileBin];
+                chromaCumulative += chromaHistogram[percentileBin];
+                if (lumaP95 == 0.0 && lumaCumulative >= target)
+                    lumaP95 = float(percentileBin + 1) * kLocalLumaHistogramMax
+                        / float(kHistogramBins);
+                if (chromaP95 == 0.0 && chromaCumulative >= target)
+                    chromaP95 = float(percentileBin + 1) * kLocalChromaHistogramMax
+                        / float(kHistogramBins);
+            }
+        }
+        return float4(
+            validCount > 0u ? lumaSum / float(validCount) : 0.0,
+            lumaP95,
+            validCount > 0u ? chromaSum / float(validCount) : 0.0,
+            chromaP95);
+    }
+
+    if (outputIndex >= 6u) return 0.0.xxxx;
 
     if (outputIndex == 1u)
     {

@@ -29,6 +29,17 @@ enum class PtConvergenceMode
     Reference,
 };
 
+// Session-only P7 diagnostic override. Production obeys the persisted P7 toggle; the remaining
+// modes split the pre-spatial boiling filter from reservoir reuse for matched automated captures.
+enum class RestirGiSpatialDiagnosticMode
+{
+    Production,
+    Baseline,
+    FilterOnly,
+    SpatialOnly,
+    Full,
+};
+
 class DxrSettings
 {
 public:
@@ -95,6 +106,14 @@ public:
     void SetRestirGiTemporalEnabled(bool enabled) { m_restirGiTemporalEnabled = enabled; }
     bool IsRestirGiSpatialEnabled() const { return m_restirGiSpatialEnabled; }
     void SetRestirGiSpatialEnabled(bool enabled) { m_restirGiSpatialEnabled = enabled; }
+    RestirGiSpatialDiagnosticMode GetRestirGiSpatialDiagnosticMode() const
+    {
+        return m_restirGiSpatialDiagnosticMode;
+    }
+    void SetRestirGiSpatialDiagnosticMode(const RestirGiSpatialDiagnosticMode mode)
+    {
+        m_restirGiSpatialDiagnosticMode = mode;
+    }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -187,6 +206,8 @@ private:
     bool m_restirGiInitialEnabled = false;
     bool m_restirGiTemporalEnabled = false;
     bool m_restirGiSpatialEnabled = false;
+    RestirGiSpatialDiagnosticMode m_restirGiSpatialDiagnosticMode =
+        RestirGiSpatialDiagnosticMode::Production;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

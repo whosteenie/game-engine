@@ -69,6 +69,18 @@ enum class AmbientOcclusionMode
     GTAO = 2,
 };
 
+struct PathTracerGiQualityMetrics
+{
+    float meanChromaDelta = 0.0f;
+    float p95ChromaDelta = 0.0f;
+    float chromaHotFraction = 0.0f;
+    float temporalValidFraction = 0.0f;
+    float meanLocalLumaResidual = 0.0f;
+    float p95LocalLumaResidual = 0.0f;
+    float meanLocalChromaResidual = 0.0f;
+    float p95LocalChromaResidual = 0.0f;
+};
+
 class ScreenSpaceEffects
 {
 public:
@@ -169,8 +181,29 @@ public:
     float GetPathTracerGiMotionLowerHotFraction() const { return m_ptGiMotionLowerHotFraction; }
     std::uint32_t GetPathTracerGiStaticSampleCount() const { return m_ptGiStaticSampleCount; }
     std::uint32_t GetPathTracerGiMotionSampleCount() const { return m_ptGiMotionSampleCount; }
+    const PathTracerGiQualityMetrics& GetPathTracerGiStaticQualityMetrics() const
+    {
+        return m_ptGiStaticQualityMetrics;
+    }
+    const PathTracerGiQualityMetrics& GetPathTracerGiMotionQualityMetrics() const
+    {
+        return m_ptGiMotionQualityMetrics;
+    }
     glm::vec4 GetPathTracerGiDiagnosticRoi() const { return m_ptGiDiagnosticRoi; }
     void SetPathTracerGiDiagnosticRoi(const glm::vec4& roi);
+    void SetPathTracerGiDiagnosticSelectedInstance(std::uint32_t instanceId)
+    {
+        if (m_ptGiDiagnosticSelectedInstanceId == instanceId)
+        {
+            return;
+        }
+        m_ptGiDiagnosticSelectedInstanceId = instanceId;
+        ResetPathTracerTemporalDiagnostics();
+    }
+    std::uint32_t GetPathTracerGiDiagnosticSelectedInstance() const
+    {
+        return m_ptGiDiagnosticSelectedInstanceId;
+    }
     void SetPathTracerTemporalDiagnosticsPaused(bool paused)
     {
         m_ptTemporalDiagnosticsPaused = paused;
@@ -676,6 +709,7 @@ private:
     InternalTarget m_ptAccumScratchTarget;
     InternalTarget m_ptTemporalStatsTarget;
     InternalTarget m_ptTemporalStatsScratchTarget;
+    InternalTarget m_ptTemporalQualityTarget;
     InternalTarget m_ptTemporalPrevRadianceTarget;
     InternalTarget m_ptTemporalPrevDepthTarget;
     InternalTarget m_ptBoilMetricTarget;
@@ -716,6 +750,7 @@ private:
     std::unique_ptr<Shader> m_ptAccumulateShader;
     std::unique_ptr<Shader> m_ptMeanShader;
     std::unique_ptr<Shader> m_ptTemporalStatsShader;
+    std::unique_ptr<Shader> m_ptTemporalQualityShader;
     std::unique_ptr<Shader> m_ptTemporalStatsDebugShader;
     std::unique_ptr<Shader> m_ptMotionReprojectionDebugShader;
     std::unique_ptr<Shader> m_ptMotionDepthCopyShader;
@@ -876,6 +911,10 @@ private:
     mutable float m_ptGiMotionLowerHotFraction = 0.0f;
     mutable std::uint32_t m_ptGiStaticSampleCount = 0;
     mutable std::uint32_t m_ptGiMotionSampleCount = 0;
+    mutable PathTracerGiQualityMetrics m_ptGiStaticQualityMetrics{};
+    mutable PathTracerGiQualityMetrics m_ptGiMotionQualityMetrics{};
+    mutable std::array<double, 8> m_ptGiStaticQualityMetricSums{};
+    mutable std::array<double, 8> m_ptGiMotionQualityMetricSums{};
     mutable std::uint32_t m_ptGiStaticReadbackCount = 0;
     mutable std::uint32_t m_ptGiMotionReadbackCount = 0;
     mutable double m_ptGiStaticDeltaSum = 0.0;
@@ -895,6 +934,7 @@ private:
     mutable double m_ptGiMotionUpperHotFractionSum = 0.0;
     mutable double m_ptGiMotionLowerHotFractionSum = 0.0;
     glm::vec4 m_ptGiDiagnosticRoi{0.0f, 0.0f, 1.0f, 1.0f};
+    std::uint32_t m_ptGiDiagnosticSelectedInstanceId = UINT32_MAX;
     mutable glm::mat4 m_ptTemporalStatsPrevViewProjection{1.0f};
     mutable std::array<PtBoilMetricReadbackSlot, 3> m_ptBoilMetricReadbackSlots{};
     mutable std::uint32_t m_ptBoilMetricReadbackWriteIndex = 0;

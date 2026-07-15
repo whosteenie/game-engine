@@ -4,6 +4,7 @@ Texture2D<float4> uCurrentRadiance : register(t0);
 Texture2D<float4> uPrevRadiance : register(t1);
 Texture2D<float4> uPrevStats : register(t2);
 Texture2D<float4> uMotion : register(t3);
+Texture2D<uint2> uMetadata : register(t4);
 
 cbuffer PerPixel : register(b0)
 {
@@ -12,7 +13,8 @@ cbuffer PerPixel : register(b0)
     int uMotionReproject;
     int uGiSignal;
     float2 uMotionScale;
-    float2 _Padding0;
+    uint uSelectedInstanceIdPlusOne;
+    float _Padding0;
 };
 
 struct PSInput
@@ -32,7 +34,9 @@ float4 main(PSInput input) : SV_Target
     uint width, height;
     uCurrentRadiance.GetDimensions(width, height);
     const float4 currentSignal = uCurrentRadiance.Load(int3(pixel, 0));
-    if (uGiSignal != 0 && currentSignal.a <= 0.0)
+    if (uGiSignal != 0 && (currentSignal.a <= 0.0
+        || (uSelectedInstanceIdPlusOne != 0u
+            && uMetadata.Load(int3(pixel, 0)).x != uSelectedInstanceIdPlusOne)))
     {
         return float4(0.0, 0.0, -1.0, 0.0);
     }

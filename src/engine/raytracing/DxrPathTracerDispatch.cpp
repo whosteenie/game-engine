@@ -520,7 +520,8 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     const float maxTraceDistance,
     const bool realTimeMode,
     const bool enableDiSpatial,
-    const bool enableGiSpatial,
+    const bool enableGiBoilingFilter,
+    const bool enableGiSpatialReuse,
     const bool shadeOutput)
 {
     if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsSpatialPipelineReady())
@@ -578,11 +579,11 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.debugMode = m_lastDebugMode;
         // The shared cbuffer fields select the corresponding resampling domain in either pass.
         constants.enableDiTemporal = enableDiSpatial ? 1u : 0u;
-        constants.enableGiTemporal = enableGiSpatial ? 1u : 0u;
+        constants.enableGiTemporal = enableGiSpatialReuse ? 1u : 0u;
         return constants;
     };
 
-    if (enableGiSpatial)
+    if (enableGiBoilingFilter)
     {
         const DxrRootSignature::RestirTemporalConstants filterConstants =
             makeSpatialConstants(0u, false);

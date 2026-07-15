@@ -96,6 +96,8 @@ namespace EngineConstants
     inline constexpr const char* PtMeanFragmentShader = "assets/shaders/pt_mean.ps.hlsl";
     inline constexpr const char* PtTemporalStatsFragmentShader =
         "assets/shaders/pt_temporal_stats.ps.hlsl";
+    inline constexpr const char* PtTemporalQualityFragmentShader =
+        "assets/shaders/pt_temporal_quality.ps.hlsl";
     inline constexpr const char* PtTemporalStatsDebugFragmentShader =
         "assets/shaders/pt_temporal_stats_debug.ps.hlsl";
     inline constexpr const char* PtMotionReprojectionDebugFragmentShader =
