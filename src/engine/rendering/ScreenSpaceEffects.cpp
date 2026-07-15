@@ -471,6 +471,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtTemporalStatsDebugFragmentShader,
           ShaderSamplerOverrides{(1u << 0), true})),
+      m_ptMotionReprojectionDebugShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtMotionReprojectionDebugFragmentShader,
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true})),
       m_ptBoilMetricShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtBoilMetricFragmentShader,
@@ -497,6 +501,10 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_giDepthHistoryShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GiDepthHistoryFragmentShader)),
+      m_dlssMotionDilateShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DlssMotionDilateFragmentShader,
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
       m_giTemporalDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GiTemporalDebugFragmentShader)),
@@ -658,6 +666,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
     DestroyInternalDepthTarget(m_ptDlssDepthTarget);
     DestroyInternalTarget(m_ptDlssMotionTarget);
+    DestroyInternalTarget(m_dlssDilatedMotionTarget);
     for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
     {
         if (slot.resource != nullptr || slot.allocation != nullptr)
@@ -1182,6 +1191,7 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     // R32 depth each frame). D24 (not the R32 UAV) is what Streamline expects, avoiding shimmer.
     CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
     ResizeInternalTarget(m_ptDlssMotionTarget, width, height, format);
+    ResizeInternalTarget(m_dlssDilatedMotionTarget, width, height, format);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -2362,6 +2372,76 @@ void ScreenSpaceEffects::BlitRtGiDebug(
         BuildPostProcessContext(), inputs, outputTarget, viewportWidth, viewportHeight);
 }
 
+bool ScreenSpaceEffects::PreparePathTracerMotionReprojectionAudit() const
+{
+    if (!m_pathTracerActive || m_dxrPathTracerOutputSrv == 0 || m_width <= 0 || m_height <= 0)
+    {
+        const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
+        return false;
+    }
+
+    auto* mutableThis = const_cast<ScreenSpaceEffects*>(this);
+    const bool resized = m_ptTemporalPrevRadianceTarget.width != m_width
+        || m_ptTemporalPrevRadianceTarget.height != m_height
+        || m_ptTemporalPrevRadianceTarget.resource == nullptr;
+    constexpr int radianceFormat = static_cast<int>(DXGI_FORMAT_R32G32B32A32_FLOAT);
+    mutableThis->ResizeInternalTarget(
+        mutableThis->m_ptTemporalPrevRadianceTarget, m_width, m_height, radianceFormat);
+    if (resized)
+    {
+        mutableThis->m_ptTemporalPrevRadianceValid = false;
+    }
+    return m_ptTemporalPrevRadianceTarget.srvCpuHandle != 0;
+}
+
+void ScreenSpaceEffects::CommitPathTracerMotionReprojectionAudit() const
+{
+    if (!PreparePathTracerMotionReprojectionAudit() || m_downsampleShader == nullptr)
+    {
+        return;
+    }
+
+    const float clearRadiance[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_downsampleShader->Use(false, false);
+    m_downsampleShader->BindTextureSlot(0, m_dxrPathTracerOutputSrv);
+    DrawFullscreenToTarget(
+        *m_downsampleShader,
+        const_cast<InternalTarget&>(m_ptTemporalPrevRadianceTarget),
+        m_width,
+        m_height,
+        clearRadiance);
+    const_cast<ScreenSpaceEffects*>(this)->m_ptTemporalPrevRadianceValid = true;
+}
+
+bool ScreenSpaceEffects::GenerateDilatedDlssMotion(
+    const std::uintptr_t depthSrv,
+    const std::uintptr_t motionSrv) const
+{
+    if (depthSrv == 0 || motionSrv == 0 || m_width <= 0 || m_height <= 0
+        || m_dlssDilatedMotionTarget.resource == nullptr || m_dlssMotionDilateShader == nullptr)
+    {
+        return false;
+    }
+
+    SceneRenderTrace::Scope dilateScope("dlss motion dilation");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+    m_dlssMotionDilateShader->Use(false);
+    m_dlssMotionDilateShader->SetInt("uDepth", 0);
+    m_dlssMotionDilateShader->SetInt("uMotion", 1);
+    m_dlssMotionDilateShader->SetFloat("uTexelSizeX", 1.0f / static_cast<float>(m_width));
+    m_dlssMotionDilateShader->SetFloat("uTexelSizeY", 1.0f / static_cast<float>(m_height));
+    m_dlssMotionDilateShader->BindTextureSlot(0, depthSrv);
+    m_dlssMotionDilateShader->BindTextureSlot(1, motionSrv);
+    DrawFullscreenToTarget(
+        *m_dlssMotionDilateShader,
+        const_cast<InternalTarget&>(m_dlssDilatedMotionTarget),
+        m_width,
+        m_height,
+        clear);
+    dilateScope.Success();
+    return true;
+}
+
 void ScreenSpaceEffects::GenerateRrGuides() const
 {
     if (m_sceneFramebuffer == nullptr || !m_sceneFramebuffer->IsValid()
@@ -2981,10 +3061,11 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 
     const bool isolateChanged =
         PtDebugIsolateModeFromRenderDebug(m_debugMode) != PtDebugIsolateModeFromRenderDebug(mode);
-    const bool temporalStatsDebugChanged =
-        IsPtTemporalStatsDebugMode(m_debugMode) != IsPtTemporalStatsDebugMode(mode);
+    const bool temporalDiagnosticsChanged =
+        (IsPtTemporalStatsDebugMode(m_debugMode) || IsPtMotionReprojectionDebugMode(m_debugMode))
+        != (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode));
     m_debugMode = mode;
-    if (isolateChanged || temporalStatsDebugChanged)
+    if (isolateChanged || temporalDiagnosticsChanged)
     {
         ResetPathTracerTemporalDiagnostics();
     }

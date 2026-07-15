@@ -69,6 +69,11 @@ struct PostProcessDebugPassInputs
     PostProcessTarget* rtIndirectTarget = nullptr;
     PostProcessTarget* ptTemporalStatsTarget = nullptr;
 
+    std::uintptr_t ptCurrentRadianceSrv = 0;
+    std::uintptr_t ptPreviousRadianceSrv = 0;
+    std::uintptr_t ptMotionSrv = 0;
+    bool ptPreviousRadianceValid = false;
+
     Shader* debugChannelShader = nullptr;
     Shader* velocityDebugShader = nullptr;
     Shader* gbufferDebugShader = nullptr;
@@ -79,6 +84,7 @@ struct PostProcessDebugPassInputs
     Shader* ssgiDenoiseDebugShader = nullptr;
     Shader* giTemporalDebugShader = nullptr;
     Shader* ptTemporalStatsDebugShader = nullptr;
+    Shader* ptMotionReprojectionDebugShader = nullptr;
 
     CaptureSsaoDiagnosticsFn captureSsaoDiagnostics;
     bool logSsaoApplySnapshot = false;

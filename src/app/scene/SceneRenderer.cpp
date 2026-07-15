@@ -1644,15 +1644,22 @@ void SceneRenderer::RenderPostProcessPass(
         m_screenSpaceEffects->BlitRtShadowDebug(target, viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitRtGiDebug(target, viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitRrGuideDebug(target, viewportWidth, viewportHeight);
-        m_screenSpaceEffects->BlitPathTracer(
-            target,
-            viewportWidth,
-            viewportHeight,
-            m_dxrSettings.GetMaxTraceDistance());
+        // Apply's PT diagnostic views draw directly to the viewport. Do not immediately replace
+        // them with the legacy direct PT blit (which made every diagnostic appear as the final
+        // noisy PT image regardless of the selected mode).
+        if (!m_screenSpaceEffects->PostProcessDebugRenderedThisFrame())
+        {
+            m_screenSpaceEffects->BlitPathTracer(
+                target,
+                viewportWidth,
+                viewportHeight,
+                m_dxrSettings.GetMaxTraceDistance());
+        }
 
         if (drawGrid && m_dxrSettings.IsPathTracingActive()
             && !m_screenSpaceEffects->PathTracerPostIntegratedThisFrame()
-            && !m_screenSpaceEffects->PathTracerResolvedViaDlssThisFrame())
+            && !m_screenSpaceEffects->PathTracerResolvedViaDlssThisFrame()
+            && !m_screenSpaceEffects->PostProcessDebugRenderedThisFrame())
         {
             SceneRenderTrace::Scope gridOverlayScope("grid pt overlay (ldr fallback)");
             bool depthReadOnly = false;

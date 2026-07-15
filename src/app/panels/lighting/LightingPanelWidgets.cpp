@@ -171,6 +171,7 @@ namespace
         RenderDebugMode::None,
         RenderDebugMode::PtTemporalRelativeSigma,
         RenderDebugMode::PtTemporalFrameDelta,
+        RenderDebugMode::PtMotionReprojectionResidual,
     };
 
     const DebugViewCategory kDebugViewCategories[] = {
@@ -392,7 +393,7 @@ namespace LightingPanelWidgets
             return pathTracingActive && postEnabled;
         }
 
-        if (IsPtTemporalStatsDebugMode(mode))
+        if (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode))
         {
             return pathTracingActive && postEnabled;
         }
@@ -462,7 +463,7 @@ namespace LightingPanelWidgets
             }
         }
 
-        if (IsPtTemporalStatsDebugMode(mode))
+        if (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode))
         {
             if (!postEnabled)
             {

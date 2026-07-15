@@ -505,7 +505,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.cameraMotionIncluded = sl::Boolean::eTrue;
     consts.orthographicProjection = sl::Boolean::eFalse;
     consts.motionVectors3D = sl::Boolean::eFalse;
-    consts.motionVectorsDilated = sl::Boolean::eFalse;
+    consts.motionVectorsDilated = inputs.motionVectorsDilated ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.motionVectorsJittered = sl::Boolean::eFalse;
     consts.reset = inputs.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     if (g_slSetConstants(consts, *frameToken, viewport) != sl::Result::eOk)

@@ -51,6 +51,18 @@ void DrawDiagnosticsSection(const LightingPanelContext& ctx)
                 "noise or instability; if the ghost persists, it is already present before DLSS/RR.");
         }
 
+        bool useDilatedMotion = screenSpaceEffects.GetUseDilatedDlssMotionVectors();
+        if (ImGui::Checkbox("Use dilated DLSS/RR motion vectors (A/B)", &useDilatedMotion))
+        {
+            screenSpaceEffects.SetUseDilatedDlssMotionVectors(useDilatedMotion);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Supplies a foreground-depth-dilated motion buffer and tells Streamline it is dilated. "
+                "This is session-only; compare strafe ghosts with raw vectors.");
+        }
+
         const RenderDebugMode activeMode = screenSpaceEffects.GetDebugMode();
         if (const char* helpText = LightingPanelWidgets::RenderDebugModeHelpText(activeMode))
         {

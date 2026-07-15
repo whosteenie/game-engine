@@ -46,6 +46,7 @@ struct DlssResolvePassInputs
     // Session-only diagnostic: forces Streamline's actual reset flag every evaluation. This is a
     // decisive history-boundary test, unlike optional responsiveness/bias hints.
     bool forceDlssResetEveryFrame = false;
+    bool useDilatedDlssMotionVectors = false;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;
@@ -61,6 +62,7 @@ struct DlssResolvePassInputs
 
     PostProcessTarget* dlssOutputTarget = nullptr;
     PostProcessTarget* ptDlssMotionTarget = nullptr;
+    PostProcessTarget* dlssDilatedMotionTarget = nullptr;
     PostProcessTarget* rrDiffuseAlbedoTarget = nullptr;
     PostProcessTarget* rrSpecularAlbedoTarget = nullptr;
     PostProcessTarget* rrNormalRoughnessTarget = nullptr;
@@ -76,11 +78,13 @@ struct DlssResolvePassInputs
     Shader* bloomBlurShader = nullptr;
     Shader* bloomTemporalShader = nullptr;
     Shader* tonemapShader = nullptr;
+    Shader* dlssMotionDilateShader = nullptr;
 
     TonemapPassInputs fallbackTonemapInputs{};
 
     std::function<bool()> patchPathTracerSkyMotion;
     std::function<void()> generateRrGuides;
+    std::function<bool(std::uintptr_t depthSrv, std::uintptr_t motionSrv)> generateDilatedDlssMotion;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
 
     // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT
@@ -98,6 +102,22 @@ struct DlssResolvePassInputs
     std::uintptr_t pathTracerMotionSrv = 0;
 };
 
+// The depth/motion resources selected for a Streamline evaluation. Kept as a small public value
+// type so the PT motion-reprojection audit can sample precisely the same motion input (including
+// the optional dilation A/B), rather than recreating a second, potentially divergent selection.
+struct DlssTemporalGuideInputs
+{
+    void* depth = nullptr;
+    std::uint32_t depthState = 0;
+    std::uintptr_t depthSrv = 0;
+    void* motion = nullptr;
+    std::uint32_t motionState = 0;
+    std::uintptr_t motionSrv = 0;
+    bool motionVectorsDilated = false;
+    bool usesPathTracerDepth = false;
+    bool usesPathTracerMotion = false;
+};
+
 struct DlssResolvePassOutputs
 {
     bool dlssRan = false;
@@ -113,6 +133,10 @@ struct DlssResolvePassOutputs
 class DlssResolvePass
 {
 public:
+    // May prepare the selected PT bundle / sky patch because those are part of the exact guide
+    // path that Evaluate uses. Callers must have the scene framebuffer in SRV state.
+    static DlssTemporalGuideInputs ResolveTemporalGuideInputs(const DlssResolvePassInputs& inputs);
+
     static void Execute(
         const PostProcessContext& context,
         const DlssResolvePassInputs& inputs,

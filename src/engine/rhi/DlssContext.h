@@ -48,6 +48,7 @@ struct DlssFrameInputs
     unsigned int depthState = 0;
     void* motionVectors = nullptr; // render res
     unsigned int motionVectorsState = 0;
+    bool motionVectorsDilated = false;
 
     unsigned int renderWidth = 0;
     unsigned int renderHeight = 0;

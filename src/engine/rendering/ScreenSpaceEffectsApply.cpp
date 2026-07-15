@@ -106,6 +106,7 @@ void ScreenSpaceEffects::InitApplyFrame(
 
     const_cast<ScreenSpaceEffects*>(this)->m_pathTracerDlssResolvedThisFrame = false;
     const_cast<ScreenSpaceEffects*>(this)->m_pathTracerPostIntegrated = false;
+    const_cast<ScreenSpaceEffects*>(this)->m_postProcessDebugRenderedThisFrame = false;
 }
 
 void ScreenSpaceEffects::FillAmbientOcclusionInputs(ApplyFrameState& state) const
@@ -310,6 +311,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.tonemapMode = static_cast<int>(m_tonemapMode);
     dlssInputs.dlssHistoryValid = m_dlssHistoryValid;
     dlssInputs.forceDlssResetEveryFrame = m_forceDlssResetEveryFrame;
+    dlssInputs.useDilatedDlssMotionVectors = m_useDilatedDlssMotionVectors;
     dlssInputs.bloomEnabled = m_bloomEnabled;
     dlssInputs.bloomThreshold = m_bloomThreshold;
     dlssInputs.bloomSoftKnee = m_bloomSoftKnee;
@@ -323,6 +325,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.rayReconstructionActive = IsRayReconstructionActive();
     dlssInputs.dlssOutputTarget = const_cast<InternalTarget*>(&m_dlssOutputTarget);
     dlssInputs.ptDlssMotionTarget = const_cast<InternalTarget*>(&m_ptDlssMotionTarget);
+    dlssInputs.dlssDilatedMotionTarget = const_cast<InternalTarget*>(&m_dlssDilatedMotionTarget);
     dlssInputs.rrDiffuseAlbedoTarget = const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget);
     dlssInputs.rrSpecularAlbedoTarget = const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget);
     dlssInputs.rrNormalRoughnessTarget = const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget);
@@ -337,6 +340,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.bloomBlurShader = m_bloomBlurShader.get();
     dlssInputs.bloomTemporalShader = m_bloomTemporalShader.get();
     dlssInputs.tonemapShader = m_tonemapShader.get();
+    dlssInputs.dlssMotionDilateShader = m_dlssMotionDilateShader.get();
     dlssInputs.fallbackTonemapInputs.hdrColorSrv = state.hdrColorSrv;
     dlssInputs.fallbackTonemapInputs.bloomSrv = state.bloomSrv;
     dlssInputs.fallbackTonemapInputs.texelSize = state.texelSize;
@@ -347,6 +351,11 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.fallbackTonemapInputs.tonemapShader = m_tonemapShader.get();
     dlssInputs.patchPathTracerSkyMotion = [this]() { return PatchPathTracerSkyMotion(); };
     dlssInputs.generateRrGuides = [this]() { GenerateRrGuides(); };
+    dlssInputs.generateDilatedDlssMotion =
+        [this](const std::uintptr_t depthSrv, const std::uintptr_t motionSrv)
+        {
+            return GenerateDilatedDlssMotion(depthSrv, motionSrv);
+        };
     // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to
     // per the bundle mode (devdoc/dxr/pt/full-rr-guides.md; gi-shimmer.md switchboard).
     dlssInputs.preparePathTracerRrBundle = [this]() { return PreparePathTracerRrBundle(); };
@@ -537,13 +546,16 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
             }
         }
     }
-    // Temporal-stat targets exist solely for their two dedicated debug views. Keeping this
-    // behind the view selection avoids three full-resolution FP32 targets and their per-frame
-    // passes/readback during ordinary path-traced editing.
+    // Temporal diagnostic targets exist only for their dedicated debug views. Keeping this
+    // behind the view selection avoids full-resolution FP32 history storage during ordinary PT.
     else if (m_dxrPathTracerOutputSrv != 0 && IsPtTemporalStatsDebugMode(m_debugMode))
     {
         const GfxContext::GpuTimerScope gpuScopePtStats("Post-process/PT temporal diagnostics");
         UpdatePathTracerTemporalDiagnostics(*state.camera);
+    }
+    else if (m_dxrPathTracerOutputSrv != 0 && IsPtMotionReprojectionDebugMode(m_debugMode))
+    {
+        PreparePathTracerMotionReprojectionAudit();
     }
 
     if (m_pathTracerActive && m_dxrPathTracerOutputSrv != 0 && !state.effectiveWantDlss
@@ -680,6 +692,23 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssrIndirectTarget = const_cast<InternalTarget*>(&m_ssrIndirectTarget);
     debugInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
     debugInputs.ptTemporalStatsTarget = const_cast<InternalTarget*>(&m_ptTemporalStatsTarget);
+    if (IsPtMotionReprojectionDebugMode(state.debugMode))
+    {
+        // Select exactly the same PT/raster/sky/dilated source the subsequent DLSS evaluation
+        // would use. This debug view early-outs before Evaluate, so it is safe to prepare it here.
+        m_sceneFramebuffer->EnsureShaderResourceState();
+        FillDlssResolveInputs(state);
+        const DlssTemporalGuideInputs guides = DlssResolvePass::ResolveTemporalGuideInputs(
+            state.dlssInputs);
+        debugInputs.ptCurrentRadianceSrv = m_dxrPathTracerOutputSrv;
+        debugInputs.ptPreviousRadianceSrv = m_ptTemporalPrevRadianceTarget.srvCpuHandle;
+        debugInputs.ptMotionSrv = guides.motionSrv;
+        debugInputs.ptPreviousRadianceValid = m_ptTemporalPrevRadianceValid;
+        // Bundle preparation / the sky patch are internal fullscreen passes and leave their own
+        // target bound. The audit itself must render to the editor viewport, not that scratch
+        // target; ordinary PT diagnostics do not have this extra preparation step.
+        BindOutputTarget(state.outputTarget, state.viewportWidth, state.viewportHeight);
+    }
     debugInputs.debugChannelShader = m_debugChannelShader.get();
     debugInputs.velocityDebugShader = m_velocityDebugShader.get();
     debugInputs.gbufferDebugShader = m_gbufferDebugShader.get();
@@ -690,6 +719,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssgiDenoiseDebugShader = m_ssgiDenoiseDebugShader.get();
     debugInputs.giTemporalDebugShader = m_giTemporalDebugShader.get();
     debugInputs.ptTemporalStatsDebugShader = m_ptTemporalStatsDebugShader.get();
+    debugInputs.ptMotionReprojectionDebugShader = m_ptMotionReprojectionDebugShader.get();
     debugInputs.logSsaoApplySnapshot = m_logSsaoApplySnapshot;
     debugInputs.captureSsaoDiagnostics =
         [this](
@@ -719,6 +749,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     const GfxContext::GpuTimerScope gpuScopeDebug("Post-process/Debug view");
     const bool earlyOut = PostProcessDebugPass::TryExecute(
         postContext, debugInputs, debugOutputs);
+    const_cast<ScreenSpaceEffects*>(this)->m_postProcessDebugRenderedThisFrame = earlyOut;
     if (debugOutputs.ssaoDebugViewSource != nullptr)
     {
         state.ssaoDebugViewSource = debugOutputs.ssaoDebugViewSource;
@@ -726,6 +757,12 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     if (debugOutputs.requestGpuReadback)
     {
         const_cast<ScreenSpaceEffects*>(this)->m_pendingSsaoGpuReadback = true;
+    }
+    if (IsPtMotionReprojectionDebugMode(state.debugMode) && earlyOut)
+    {
+        // Commit after the viewport draw: this frame remains the "current" comparison input;
+        // the next frame samples it as history.
+        CommitPathTracerMotionReprojectionAudit();
     }
     return earlyOut;
 }

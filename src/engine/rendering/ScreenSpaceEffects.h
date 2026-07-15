@@ -123,6 +123,9 @@ public:
     void SetPtRrBundleMode(int mode);
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
+    // A post-process debug pass has already written the viewport and must not be covered by the
+    // legacy PT direct-blit fallback in SceneRenderer.
+    bool PostProcessDebugRenderedThisFrame() const { return m_postProcessDebugRenderedThisFrame; }
     std::uint32_t GetPathTracerOutputResourceState() const { return m_pathTracerOutputResourceState; }
     // Editor grid drawn into HDR before bloom when path tracing is active (not into the PT trace).
     using PathTracerGridOverlayFn = std::function<void(const Camera&, bool useDepthTest)>;
@@ -280,6 +283,9 @@ public:
     // Session-only diagnostic: clear Streamline's temporal state on every evaluate.
     bool GetForceDlssResetEveryFrame() const { return m_forceDlssResetEveryFrame; }
     void SetForceDlssResetEveryFrame(bool enabled) { m_forceDlssResetEveryFrame = enabled; }
+    // Session-only A/B for the standard DLSS foreground-motion dilation integration.
+    bool GetUseDilatedDlssMotionVectors() const { return m_useDilatedDlssMotionVectors; }
+    void SetUseDilatedDlssMotionVectors(bool enabled) { m_useDilatedDlssMotionVectors = enabled; }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
     bool IsRtPrimaryDebugBlitReady() const;
@@ -450,6 +456,9 @@ private:
     // from the G-buffer at render res. Cheap 3-pass; called only when RR (or an RR-guide debug
     // view) is active, so the RR-off path is unchanged.
     void GenerateRrGuides() const;
+    bool GenerateDilatedDlssMotion(std::uintptr_t depthSrv, std::uintptr_t motionSrv) const;
+    bool PreparePathTracerMotionReprojectionAudit() const;
+    void CommitPathTracerMotionReprojectionAudit() const;
 
     void CreateFullscreenQuad();
     void CreateNoiseTexture();
@@ -603,6 +612,7 @@ private:
     // the PT R32 depth UAV). Streamline expects a D24 depth resource; feeding the R32 UAV shimmers.
     InternalDepthTarget m_ptDlssDepthTarget;
     InternalTarget m_ptDlssMotionTarget;
+    InternalTarget m_dlssDilatedMotionTarget;
     InternalTarget m_dlssBloomExtractTarget;
     InternalTarget m_dlssBloomBlurTarget;
     InternalTarget m_dlssBloomBlur2Target;
@@ -633,6 +643,7 @@ private:
     std::unique_ptr<Shader> m_ptMeanShader;
     std::unique_ptr<Shader> m_ptTemporalStatsShader;
     std::unique_ptr<Shader> m_ptTemporalStatsDebugShader;
+    std::unique_ptr<Shader> m_ptMotionReprojectionDebugShader;
     std::unique_ptr<Shader> m_ptBoilMetricShader;
     std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
@@ -641,6 +652,7 @@ private:
     std::unique_ptr<Shader> m_radianceDebugShader;
     std::unique_ptr<Shader> m_temporalReprojectShader;
     std::unique_ptr<Shader> m_giDepthHistoryShader;
+    std::unique_ptr<Shader> m_dlssMotionDilateShader;
     std::unique_ptr<Shader> m_giTemporalDebugShader;
     std::unique_ptr<Shader> m_ssgiNoiseInjectShader;
     std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
@@ -753,6 +765,7 @@ private:
     int m_ptRrBundleMode = 0;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
     mutable bool m_pathTracerPostIntegrated = false;
+    mutable bool m_postProcessDebugRenderedThisFrame = false;
     PathTracerGridOverlayFn m_pathTracerGridOverlayDraw;
     mutable std::uint32_t m_ptAccumSampleCount = 0;
     mutable PathTracerHistoryKey m_ptAccumHistoryKey{};
@@ -822,6 +835,7 @@ private:
     // and temporal-history invalidation.
     mutable bool m_dlssHistoryValid = false;
     bool m_forceDlssResetEveryFrame = false;
+    bool m_useDilatedDlssMotionVectors = false;
     mutable bool m_dlssBloomHistoryValid = false;
     mutable int m_dlssBloomTemporalWarmupFrames = 0;
     mutable bool m_bloomHistoryValid = false;

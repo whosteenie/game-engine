@@ -8,6 +8,8 @@ namespace EngineConstants
     inline constexpr const char* RadianceDebugFragmentShader = "assets/shaders/radiance_debug.ps.hlsl";
     inline constexpr const char* TemporalReprojectFragmentShader = "assets/shaders/temporal_reproject.ps.hlsl";
     inline constexpr const char* GiDepthHistoryFragmentShader = "assets/shaders/gi_depth_history.ps.hlsl";
+    inline constexpr const char* DlssMotionDilateFragmentShader =
+        "assets/shaders/dlss_motion_dilate.ps.hlsl";
     inline constexpr const char* GiTemporalDebugFragmentShader = "assets/shaders/gi_temporal_debug.ps.hlsl";
     inline constexpr const char* SsgiNoiseInjectFragmentShader = "assets/shaders/ssgi_noise_inject.ps.hlsl";
     inline constexpr const char* SsgiDenoiseSpatialFragmentShader = "assets/shaders/ssgi_denoise_spatial.ps.hlsl";
@@ -94,6 +96,8 @@ namespace EngineConstants
         "assets/shaders/pt_temporal_stats.ps.hlsl";
     inline constexpr const char* PtTemporalStatsDebugFragmentShader =
         "assets/shaders/pt_temporal_stats_debug.ps.hlsl";
+    inline constexpr const char* PtMotionReprojectionDebugFragmentShader =
+        "assets/shaders/pt_motion_reprojection_debug.ps.hlsl";
     inline constexpr const char* PtBoilMetricFragmentShader =
         "assets/shaders/pt_boil_metric.ps.hlsl";
     inline constexpr const char* DxrReflectionsLibraryShader = "assets/shaders/dxr/reflections.hlsl";

@@ -106,6 +106,7 @@ enum class RenderDebugMode
     PtEnvDiProbeMetadata,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
+    PtMotionReprojectionResidual,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -126,6 +127,7 @@ bool IsRtGiDebugMode(RenderDebugMode mode);
 bool IsRrGuideDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
+bool IsPtMotionReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
 inline constexpr int kPtDebugIsolateModeMax = 32;
