@@ -43,7 +43,6 @@ PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings = nullptr;
 PFun_slDLSSDSetOptions* g_slDLSSDSetOptions = nullptr;
 
 // Single viewport — the editor drives one scene view through DLSS at a time.
-constexpr uint32_t kDlssViewport = 0;
 
 // NVIDIA's public sample/development application id. It lets NGX/DLSS load in a dev context; a
 // title shipping DLSS must swap this for an NVIDIA-issued application id (or engine id + project
@@ -418,7 +417,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     }
 
     auto* cmdList = static_cast<sl::CommandBuffer*>(inputs.commandList);
-    const sl::ViewportHandle viewport(kDlssViewport);
+    const sl::ViewportHandle viewport(inputs.viewportId);
 
     const uint32_t evaluationFrameIndex = m_evaluateFrameIndex++;
     const uint32_t frameIndex = inputs.useSubmissionFrameIndex

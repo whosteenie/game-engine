@@ -57,6 +57,8 @@ struct DlssFrameInputs
     unsigned int renderHeight = 0;
     unsigned int displayWidth = 0;
     unsigned int displayHeight = 0;
+    // Stable Streamline viewport identity. Concurrent editor viewports must never share it.
+    std::uint32_t viewportId = 0;
 
     DlssQuality quality = DlssQuality::DLAA;
     bool colorIsHdr = false;

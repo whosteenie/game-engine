@@ -392,8 +392,9 @@ namespace
     }
 }
 
-ScreenSpaceEffects::ScreenSpaceEffects()
-    : m_sceneFramebuffer(std::make_unique<Framebuffer>()),
+ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
+    : m_dlssViewportId(dlssViewportId),
+      m_sceneFramebuffer(std::make_unique<Framebuffer>()),
       // SSR-07 rollout: depth/normal/velocity registers point-sampled in every screen-space
       // pass (bilinear depth at silhouettes produced streaks/halos). Address modes preserved
       // where a pass relies on them (SSAO noise tiling keeps its defaults).
@@ -3479,6 +3480,11 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_rayReconstruction = source.m_rayReconstruction;
     m_dlssSharpness = source.m_dlssSharpness;
     m_rrPreset = source.m_rrPreset;
+    m_forceDlssResetEveryFrame = source.m_forceDlssResetEveryFrame;
+    m_useDilatedDlssMotionVectors = source.m_useDilatedDlssMotionVectors;
+    m_reconstructDlssCameraMotion = source.m_reconstructDlssCameraMotion;
+    m_freezeTemporalJitterDiagnostic = source.m_freezeTemporalJitterDiagnostic;
+    m_useDlssSubmissionFrameIndexDiagnostic = source.m_useDlssSubmissionFrameIndexDiagnostic;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
     m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;

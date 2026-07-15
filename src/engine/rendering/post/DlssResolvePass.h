@@ -22,6 +22,7 @@ struct DlssResolvePassInputs
 
     int viewportWidth = 0;
     int viewportHeight = 0;
+    std::uint32_t dlssViewportId = 0;
 
     std::uintptr_t hdrColorSrv = 0;
     PostProcessTarget* hdrCompositeTarget = nullptr;

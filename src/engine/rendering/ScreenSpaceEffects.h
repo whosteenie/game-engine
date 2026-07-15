@@ -74,7 +74,9 @@ class ScreenSpaceEffects
 public:
     static constexpr int KernelSampleCount = 32;
 
-    ScreenSpaceEffects();
+    // Streamline identifies temporal state by viewport. Each concurrently rendered editor
+    // viewport therefore needs a stable, distinct id as well as its own render targets.
+    explicit ScreenSpaceEffects(std::uint32_t dlssViewportId = 0);
     ~ScreenSpaceEffects();
 
     ScreenSpaceEffects(const ScreenSpaceEffects&) = delete;
@@ -577,6 +579,7 @@ private:
     void FillScreenSpaceGiInputs(ApplyFrameState& state) const;
     void FillDlssResolveInputs(ApplyFrameState& state) const;
 
+    const std::uint32_t m_dlssViewportId;
     GpuBuffer m_quadVb;
     mutable PostProcessDraw m_draw;
     InternalTarget m_noiseTexture;

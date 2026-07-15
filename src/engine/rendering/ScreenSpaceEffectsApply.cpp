@@ -291,6 +291,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.motionVectorState = m_motionVectorFrameState;
     dlssInputs.viewportWidth = state.viewportWidth;
     dlssInputs.viewportHeight = state.viewportHeight;
+    dlssInputs.dlssViewportId = m_dlssViewportId;
     dlssInputs.hdrColorSrv = state.hdrColorSrv;
     dlssInputs.hdrCompositeTarget = const_cast<InternalTarget*>(&m_hdrCompositeTarget);
     dlssInputs.pathTracerActive = m_pathTracerActive;

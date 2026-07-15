@@ -329,6 +329,7 @@ void DlssResolvePass::Execute(
         in.renderHeight = static_cast<unsigned int>(context.renderHeight);
         in.displayWidth = static_cast<unsigned int>(inputs.dlssOutputTarget->width);
         in.displayHeight = static_cast<unsigned int>(inputs.dlssOutputTarget->height);
+        in.viewportId = inputs.dlssViewportId;
         in.quality = inputs.quality;
         in.colorIsHdr = true;
         in.depthInverted = false;

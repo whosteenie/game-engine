@@ -44,6 +44,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 SceneRenderer::SceneRenderer() = default;
 
@@ -53,7 +54,9 @@ void SceneRenderer::EnsureGameViewScreenSpaceEffects()
 {
     if (m_gameViewScreenSpaceEffects == nullptr)
     {
-        m_gameViewScreenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
+        // Keep the game camera's temporal/post state entirely separate from the editor camera.
+        // The Streamline viewport id must match that separation as well.
+        m_gameViewScreenSpaceEffects = std::make_unique<ScreenSpaceEffects>(1);
         if (m_screenSpaceEffects != nullptr)
         {
             m_gameViewScreenSpaceEffects->CopySettingsFrom(*m_screenSpaceEffects);
@@ -172,6 +175,40 @@ void SceneRenderer::ThrowGpuResourcesUnavailable() const
 
 namespace
 {
+    class ScopedGameViewEffects final
+    {
+    public:
+        ScopedGameViewEffects(
+            std::unique_ptr<ScreenSpaceEffects>& sceneViewEffects,
+            std::unique_ptr<ScreenSpaceEffects>& gameViewEffects,
+            const bool activateGameView)
+            : m_sceneViewEffects(sceneViewEffects),
+              m_gameViewEffects(gameViewEffects),
+              m_active(activateGameView)
+        {
+            if (m_active)
+            {
+                std::swap(m_sceneViewEffects, m_gameViewEffects);
+            }
+        }
+
+        ~ScopedGameViewEffects()
+        {
+            if (m_active)
+            {
+                std::swap(m_sceneViewEffects, m_gameViewEffects);
+            }
+        }
+
+        ScopedGameViewEffects(const ScopedGameViewEffects&) = delete;
+        ScopedGameViewEffects& operator=(const ScopedGameViewEffects&) = delete;
+
+    private:
+        std::unique_ptr<ScreenSpaceEffects>& m_sceneViewEffects;
+        std::unique_ptr<ScreenSpaceEffects>& m_gameViewEffects;
+        bool m_active = false;
+    };
+
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, float progress, Fn&& fn)
     {
@@ -206,6 +243,7 @@ void SceneRenderer::ResetPartialGpuResources() const
     self->m_shadowMap.reset();
     self->m_environmentMap.reset();
     self->m_screenSpaceEffects.reset();
+    self->m_gameViewScreenSpaceEffects.reset();
     self->m_dxrAccelerationStructures.reset();
     self->m_dxrSmokeDispatch.reset();
     self->m_dxrPrimaryDebugDispatch.reset();
@@ -1812,10 +1850,25 @@ void SceneRenderer::Render(
         return;
     }
 
+    const bool isGameView = renderViewport == RenderViewport::GameView;
+    if (isGameView)
+    {
+        EnsureGameViewScreenSpaceEffects();
+        SyncGameViewScreenSpaceSettings();
+    }
+
     ApplyPendingSceneContentInvalidation();
 
+    // Most renderer code intentionally addresses m_screenSpaceEffects directly. Swap the
+    // active owner only for this sequential render call so all existing passes (including
+    // resize, history, and post processing) operate on the correct viewport's resources.
+    ScopedGameViewEffects activeEffects(
+        m_screenSpaceEffects,
+        m_gameViewScreenSpaceEffects,
+        isGameView);
+
     NativeProgressWindow::Instance().Report("Uploading scene GPU tables...", 0.955f);
-    m_activePreviousWorldByObjectId = renderViewport == RenderViewport::GameView
+    m_activePreviousWorldByObjectId = isGameView
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
     m_activeScreenSpaceEffects = m_screenSpaceEffects.get();
