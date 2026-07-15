@@ -47,6 +47,7 @@ struct DlssResolvePassInputs
     // decisive history-boundary test, unlike optional responsiveness/bias hints.
     bool forceDlssResetEveryFrame = false;
     bool useDilatedDlssMotionVectors = false;
+    bool reconstructDlssCameraMotion = false;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;
@@ -79,6 +80,7 @@ struct DlssResolvePassInputs
     Shader* bloomTemporalShader = nullptr;
     Shader* tonemapShader = nullptr;
     Shader* dlssMotionDilateShader = nullptr;
+    std::function<bool()> generateZeroDlssMotion;
 
     TonemapPassInputs fallbackTonemapInputs{};
 
@@ -114,6 +116,7 @@ struct DlssTemporalGuideInputs
     std::uint32_t motionState = 0;
     std::uintptr_t motionSrv = 0;
     bool motionVectorsDilated = false;
+    bool cameraMotionReconstructed = false;
     bool usesPathTracerDepth = false;
     bool usesPathTracerMotion = false;
 };

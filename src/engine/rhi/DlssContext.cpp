@@ -502,7 +502,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.cameraFOV = inputs.cameraFovVertical;
     consts.cameraAspectRatio = inputs.cameraAspect;
     consts.depthInverted = inputs.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    consts.cameraMotionIncluded = sl::Boolean::eTrue;
+    consts.cameraMotionIncluded = inputs.cameraMotionIncluded ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.orthographicProjection = sl::Boolean::eFalse;
     consts.motionVectors3D = sl::Boolean::eFalse;
     consts.motionVectorsDilated = inputs.motionVectorsDilated ? sl::Boolean::eTrue : sl::Boolean::eFalse;

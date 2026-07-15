@@ -167,7 +167,20 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
         result.motionSrv = inputs.ptDlssMotionTarget->srvCpuHandle;
     }
 
-    if (inputs.useDilatedDlssMotionVectors && inputs.generateDilatedDlssMotion
+    // For a static-scene diagnostic, feed zero object motion and let Streamline reconstruct the
+    // camera component from this exact depth resource and clip-to-previous transform. This path is
+    // deliberately exclusive with foreground dilation.
+    if (inputs.reconstructDlssCameraMotion && inputs.generateZeroDlssMotion
+        && inputs.dlssDilatedMotionTarget != nullptr
+        && inputs.dlssDilatedMotionTarget->resource != nullptr
+        && inputs.generateZeroDlssMotion())
+    {
+        result.motion = inputs.dlssDilatedMotionTarget->resource;
+        result.motionState = inputs.dlssDilatedMotionTarget->resourceState;
+        result.motionSrv = inputs.dlssDilatedMotionTarget->srvCpuHandle;
+        result.cameraMotionReconstructed = true;
+    }
+    else if (inputs.useDilatedDlssMotionVectors && inputs.generateDilatedDlssMotion
         && inputs.dlssDilatedMotionTarget != nullptr
         && inputs.dlssDilatedMotionTarget->resource != nullptr
         && inputs.generateDilatedDlssMotion(result.depthSrv, result.motionSrv))
@@ -299,6 +312,7 @@ void DlssResolvePass::Execute(
         in.motionVectors = guides.motion;
         in.motionVectorsState = guides.motionState;
         in.motionVectorsDilated = guides.motionVectorsDilated;
+        in.cameraMotionIncluded = !guides.cameraMotionReconstructed;
 
         if (pathTracerDlssActive && inputs.ptRrBundleMode == 0 && !guides.usesPathTracerDepth)
         {

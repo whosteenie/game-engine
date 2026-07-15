@@ -286,6 +286,20 @@ public:
     // Session-only A/B for the standard DLSS foreground-motion dilation integration.
     bool GetUseDilatedDlssMotionVectors() const { return m_useDilatedDlssMotionVectors; }
     void SetUseDilatedDlssMotionVectors(bool enabled) { m_useDilatedDlssMotionVectors = enabled; }
+    // Session-only static-scene A/B: Streamline reconstructs camera motion from depth/matrices.
+    bool GetReconstructDlssCameraMotion() const { return m_reconstructDlssCameraMotion; }
+    void SetReconstructDlssCameraMotion(bool enabled)
+    {
+        m_reconstructDlssCameraMotion = enabled;
+        m_dlssHistoryValid = false;
+    }
+    // Session-only A/B: removes projection jitter from both rendering and Streamline.
+    bool GetFreezeTemporalJitterDiagnostic() const { return m_freezeTemporalJitterDiagnostic; }
+    void SetFreezeTemporalJitterDiagnostic(bool enabled)
+    {
+        m_freezeTemporalJitterDiagnostic = enabled;
+        m_dlssHistoryValid = false;
+    }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
     bool IsRtPrimaryDebugBlitReady() const;
@@ -457,6 +471,7 @@ private:
     // view) is active, so the RR-off path is unchanged.
     void GenerateRrGuides() const;
     bool GenerateDilatedDlssMotion(std::uintptr_t depthSrv, std::uintptr_t motionSrv) const;
+    bool GenerateZeroDlssMotion() const;
     bool PreparePathTracerMotionReprojectionAudit() const;
     void CommitPathTracerMotionReprojectionAudit(std::uintptr_t depthSrv) const;
 
@@ -655,6 +670,7 @@ private:
     std::unique_ptr<Shader> m_temporalReprojectShader;
     std::unique_ptr<Shader> m_giDepthHistoryShader;
     std::unique_ptr<Shader> m_dlssMotionDilateShader;
+    std::unique_ptr<Shader> m_dlssZeroMotionShader;
     std::unique_ptr<Shader> m_giTemporalDebugShader;
     std::unique_ptr<Shader> m_ssgiNoiseInjectShader;
     std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
@@ -838,6 +854,8 @@ private:
     mutable bool m_dlssHistoryValid = false;
     bool m_forceDlssResetEveryFrame = false;
     bool m_useDilatedDlssMotionVectors = false;
+    bool m_reconstructDlssCameraMotion = false;
+    bool m_freezeTemporalJitterDiagnostic = false;
     mutable bool m_dlssBloomHistoryValid = false;
     mutable int m_dlssBloomTemporalWarmupFrames = 0;
     mutable bool m_bloomHistoryValid = false;

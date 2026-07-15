@@ -312,6 +312,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.dlssHistoryValid = m_dlssHistoryValid;
     dlssInputs.forceDlssResetEveryFrame = m_forceDlssResetEveryFrame;
     dlssInputs.useDilatedDlssMotionVectors = m_useDilatedDlssMotionVectors;
+    dlssInputs.reconstructDlssCameraMotion = m_reconstructDlssCameraMotion;
     dlssInputs.bloomEnabled = m_bloomEnabled;
     dlssInputs.bloomThreshold = m_bloomThreshold;
     dlssInputs.bloomSoftKnee = m_bloomSoftKnee;
@@ -356,6 +357,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
         {
             return GenerateDilatedDlssMotion(depthSrv, motionSrv);
         };
+    dlssInputs.generateZeroDlssMotion = [this]() { return GenerateZeroDlssMotion(); };
     // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to
     // per the bundle mode (devdoc/dxr/pt/full-rr-guides.md; gi-shimmer.md switchboard).
     dlssInputs.preparePathTracerRrBundle = [this]() { return PreparePathTracerRrBundle(); };

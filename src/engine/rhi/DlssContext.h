@@ -49,6 +49,9 @@ struct DlssFrameInputs
     void* motionVectors = nullptr; // render res
     unsigned int motionVectorsState = 0;
     bool motionVectorsDilated = false;
+    // False asks Streamline to reconstruct camera motion from depth + clipToPrevClip. The supplied
+    // motion texture must then contain object-only motion (the diagnostic path supplies zeroes).
+    bool cameraMotionIncluded = true;
 
     unsigned int renderWidth = 0;
     unsigned int renderHeight = 0;

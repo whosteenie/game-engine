@@ -510,6 +510,9 @@ ScreenSpaceEffects::ScreenSpaceEffects()
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DlssMotionDilateFragmentShader,
           ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
+      m_dlssZeroMotionShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DlssZeroMotionFragmentShader)),
       m_giTemporalDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GiTemporalDebugFragmentShader)),
@@ -2461,6 +2464,27 @@ bool ScreenSpaceEffects::GenerateDilatedDlssMotion(
         m_height,
         clear);
     dilateScope.Success();
+    return true;
+}
+
+bool ScreenSpaceEffects::GenerateZeroDlssMotion() const
+{
+    if (m_width <= 0 || m_height <= 0 || m_dlssDilatedMotionTarget.resource == nullptr
+        || m_dlssZeroMotionShader == nullptr)
+    {
+        return false;
+    }
+
+    SceneRenderTrace::Scope reconstructionScope("dlss camera motion reconstruction input");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_dlssZeroMotionShader->Use(false);
+    DrawFullscreenToTarget(
+        *m_dlssZeroMotionShader,
+        const_cast<InternalTarget&>(m_dlssDilatedMotionTarget),
+        m_width,
+        m_height,
+        clear);
+    reconstructionScope.Success();
     return true;
 }
 

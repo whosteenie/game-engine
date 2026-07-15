@@ -1843,8 +1843,8 @@ void SceneRenderer::Render(
     }
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
-    const bool freezeTemporalJitter =
-        ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate();
+    const bool freezeTemporalJitter = ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate()
+        || m_screenSpaceEffects->GetFreezeTemporalJitterDiagnostic();
 
     SceneRenderTrace::Step(
         std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")

@@ -63,6 +63,31 @@ void DrawDiagnosticsSection(const LightingPanelContext& ctx)
                 "This is session-only; compare strafe ghosts with raw vectors.");
         }
 
+        bool reconstructCameraMotion = screenSpaceEffects.GetReconstructDlssCameraMotion();
+        if (ImGui::Checkbox("Streamline camera-motion reconstruction (static-scene A/B)", &reconstructCameraMotion))
+        {
+            screenSpaceEffects.SetReconstructDlssCameraMotion(reconstructCameraMotion);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Supplies zero object motion and has Streamline reconstruct the camera component from its "
+                "D24 depth input and clip-to-previous matrix. Test only while scene objects are stationary; "
+                "this isolates the engine's camera-motion-vector handoff.");
+        }
+
+        bool freezeTemporalJitter = screenSpaceEffects.GetFreezeTemporalJitterDiagnostic();
+        if (ImGui::Checkbox("Freeze temporal jitter (DLSS/RR A/B)", &freezeTemporalJitter))
+        {
+            screenSpaceEffects.SetFreezeTemporalJitterDiagnostic(freezeTemporalJitter);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Removes projection jitter from rendering and sends zero jitter to Streamline. "
+                "This is session-only and isolates the DLSS/RR jitter convention from camera motion.");
+        }
+
         const RenderDebugMode activeMode = screenSpaceEffects.GetDebugMode();
         if (const char* helpText = LightingPanelWidgets::RenderDebugModeHelpText(activeMode))
         {
