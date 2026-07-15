@@ -153,6 +153,20 @@ RenderDebugMode SceneRenderer::GetRenderDebugMode() const
         : RenderDebugMode::None;
 }
 
+void SceneRenderer::ResetPathTracerRestirDiagnosticState()
+{
+    if (m_screenSpaceEffects != nullptr)
+    {
+        m_screenSpaceEffects->ResetPathTracerAccumulation();
+        m_screenSpaceEffects->ResetPathTracerTemporalDiagnostics();
+    }
+    if (m_dxrPathTracerDispatch != nullptr)
+    {
+        m_dxrPathTracerDispatch->ResetAccumulation();
+        m_dxrPathTracerDispatch->InvalidateRestirHistory();
+    }
+}
+
 void SceneRenderer::MergePendingRendererSettings(const nlohmann::json& delta)
 {
     SceneProjectIODetail::MergeRendererSettings(m_pendingRendererSettings, delta);

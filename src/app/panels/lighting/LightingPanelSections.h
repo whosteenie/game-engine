@@ -10,6 +10,11 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx);
 void DrawSsgiSection(const LightingPanelContext& ctx);
 void DrawSsrSection(const LightingPanelContext& ctx);
 void DrawRayTracingSection(const LightingPanelContext& ctx);
+void UpdateRayTracingDiagnosticCapture(
+    Scene& scene,
+    Camera& camera,
+    int viewportWidth,
+    int viewportHeight);
 void DrawAntiAliasingSection(const LightingPanelContext& ctx);
 void DrawTextureFilteringSection(const LightingPanelContext& ctx);
 void DrawDiagnosticsSection(const LightingPanelContext& ctx);

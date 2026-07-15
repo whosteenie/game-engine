@@ -25,6 +25,7 @@ void LightingPanel::Draw(
     UndoStack* undoStack,
     EditorSettings* editorSettings) const
 {
+    UpdateRayTracingDiagnosticCapture(scene, camera, viewportWidth, viewportHeight);
     EditorPanelConstraints::ApplySideColumnPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Renderer Tuning", m_showPanel))
     {

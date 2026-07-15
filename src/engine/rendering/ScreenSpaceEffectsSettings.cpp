@@ -202,6 +202,7 @@ namespace
 
 nlohmann::json ToJson(const ScreenSpaceEffects& effects)
 {
+    const glm::vec4 ptGiDiagnosticRoi = effects.GetPathTracerGiDiagnosticRoi();
     return nlohmann::json{
         {"enabled", effects.IsEnabled()},
         {"ssaoEnabled", effects.IsSsaoEnabled()},
@@ -260,11 +261,27 @@ nlohmann::json ToJson(const ScreenSpaceEffects& effects)
         {"smaaThreshold", effects.GetSmaaThreshold()},
         {"smaaSearchSteps", effects.GetSmaaSearchSteps()},
         {"ssaoBlurDepthThreshold", effects.GetSsaoBlurDepthThreshold()},
+        {"ptGiDiagnosticRoi", nlohmann::json::array({
+            ptGiDiagnosticRoi.x,
+            ptGiDiagnosticRoi.y,
+            ptGiDiagnosticRoi.z,
+            ptGiDiagnosticRoi.w})},
     };
 }
 
 void ApplyFromJson(ScreenSpaceEffects& effects, const nlohmann::json& effectsValue)
 {
+    if (effectsValue.contains("ptGiDiagnosticRoi")
+        && effectsValue.at("ptGiDiagnosticRoi").is_array()
+        && effectsValue.at("ptGiDiagnosticRoi").size() == 4)
+    {
+        const nlohmann::json& roi = effectsValue.at("ptGiDiagnosticRoi");
+        effects.SetPathTracerGiDiagnosticRoi(glm::vec4(
+            roi[0].get<float>(),
+            roi[1].get<float>(),
+            roi[2].get<float>(),
+            roi[3].get<float>()));
+    }
     if (effectsValue.contains("enabled"))
     {
         effects.SetEnabled(effectsValue.at("enabled").get<bool>());

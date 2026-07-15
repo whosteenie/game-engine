@@ -133,6 +133,7 @@ public:
 
     void SetRenderDebugMode(RenderDebugMode mode);
     RenderDebugMode GetRenderDebugMode() const;
+    void ResetPathTracerRestirDiagnosticState();
 
     DxrSettings& GetDxrSettings();
     const DxrSettings& GetDxrSettings() const;
