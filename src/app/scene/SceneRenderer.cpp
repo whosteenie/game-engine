@@ -49,6 +49,7 @@
 #include <cmath>
 #include <future>
 #include <limits>
+#include <thread>
 #include <utility>
 
 SceneRenderer::SceneRenderer() = default;
@@ -753,25 +754,57 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         }
 
         ProjectLoadBenchmark::ScopedPhase shaderPrewarmPhase("renderer.dxr_shader_library_prewarm");
-        ProjectLoadProgress::Report("Compiling ray tracing shader libraries...", ProjectLoadProgress::kDxrWarmupStart);
-        for (std::future<void>& job : shaderPrewarmJobs)
+        const int shaderLibraryJobCount = static_cast<int>(shaderPrewarmJobs.size());
+        int completedShaderLibraryJobCount = 0;
+        ProjectLoadProgress::Report(
+            "Compiling ray tracing shader libraries (0/" + std::to_string(shaderLibraryJobCount) + ")...",
+            ProjectLoadProgress::kDxrWarmupStart);
+        while (completedShaderLibraryJobCount < shaderLibraryJobCount)
         {
-            job.get();
+            bool completedAnyJob = false;
+            for (std::future<void>& job : shaderPrewarmJobs)
+            {
+                if (!job.valid() || job.wait_for(std::chrono::milliseconds::zero()) != std::future_status::ready)
+                {
+                    continue;
+                }
+
+                job.get();
+                ++completedShaderLibraryJobCount;
+                completedAnyJob = true;
+                ProjectLoadProgress::Report(
+                    "Compiling ray tracing shader libraries ("
+                        + std::to_string(completedShaderLibraryJobCount)
+                        + "/" + std::to_string(shaderLibraryJobCount) + ")...",
+                    ProjectLoadProgress::DxrShaderLibraryWarmup(
+                        static_cast<float>(completedShaderLibraryJobCount)
+                        / static_cast<float>(shaderLibraryJobCount)));
+            }
+
+            // Compilation runs on worker threads. Yield briefly rather than spin while still
+            // allowing the independently-owned native progress window to present completions.
+            if (!completedAnyJob)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(4));
+            }
         }
         if (pbrPrewarmJob.valid())
         {
+            ProjectLoadProgress::Report(
+                "Preparing the first scene shader...",
+                ProjectLoadProgress::kDxrShaderLibraryWarmupEnd);
             m_preWarmedPbrShader = pbrPrewarmJob.get();
         }
 
         int warmedPipelineCount = 0;
         const auto reportPipelineBegin = [&](const char* message) {
-            const float progress = ProjectLoadProgress::DxrWarmup(
+            const float progress = ProjectLoadProgress::DxrPipelineWarmup(
                 static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
             ProjectLoadProgress::Report(message, progress);
         };
         const auto markPipelineComplete = [&]() {
             ++warmedPipelineCount;
-            const float progress = ProjectLoadProgress::DxrWarmup(
+            const float progress = ProjectLoadProgress::DxrPipelineWarmup(
                 static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
             ProjectLoadProgress::SetProgress(progress);
         };
@@ -2060,7 +2093,9 @@ void SceneRenderer::Render(
     ScopedDxrDisable scopedDxrDisable(m_dxrSettings, suppressDxrForSceneView);
     ScopedRenderDebugOverride scopedDebugMode(m_screenSpaceEffects.get(), effectiveDebugMode);
 
-    ProjectLoadProgress::Report("Uploading scene GPU tables...", ProjectLoadProgress::kSceneUpload);
+    ProjectLoadProgress::Report(
+        "Building scene GPU tables...",
+        ProjectLoadProgress::kSceneGpuTableBuildStart);
     m_activePreviousWorldByObjectId = isGameView
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
@@ -2076,6 +2111,7 @@ void SceneRenderer::Render(
             std::chrono::steady_clock::now() - gpuSceneBuildStart)
             .count();
 
+    ProjectLoadProgress::Report("Uploading scene GPU tables...", ProjectLoadProgress::kSceneUpload);
     const auto gpuSceneUploadStart = std::chrono::steady_clock::now();
     {
         ProjectLoadBenchmark::ScopedPhase gpuSceneUploadPhase("renderer.first_scene.gpu_scene_upload");

@@ -33,10 +33,16 @@ namespace ProjectLoadProgress
     constexpr float kIblBrdfLut = 0.345f;
 
     constexpr float kDxrWarmupStart = 0.35f;
+    // CPU shader-library compilation and device RTPSO creation are distinct, measured pieces of
+    // the DXR warm-up. Keep their presentation ranges separate so the native progress window can
+    // advance when parallel compile jobs actually complete instead of holding at one value.
+    constexpr float kDxrShaderLibraryWarmupEnd = 0.62f;
+    constexpr float kDxrPipelineWarmupStart = kDxrShaderLibraryWarmupEnd;
     constexpr float kDxrWarmupEnd = 0.70f;
 
     constexpr float kFirstSceneFrameStart = 0.71f;
-    constexpr float kSceneUpload = 0.88f;
+    constexpr float kSceneGpuTableBuildStart = 0.72f;
+    constexpr float kSceneUpload = 0.86f;
     constexpr float kSceneLighting = 0.885f;
     constexpr float kSceneShadows = 0.89f;
     constexpr float kSceneRaster = 0.90f;
@@ -65,6 +71,16 @@ namespace ProjectLoadProgress
     inline float DxrWarmup(const float fraction)
     {
         return Lerp(kDxrWarmupStart, kDxrWarmupEnd, fraction);
+    }
+
+    inline float DxrShaderLibraryWarmup(const float fraction)
+    {
+        return Lerp(kDxrWarmupStart, kDxrShaderLibraryWarmupEnd, fraction);
+    }
+
+    inline float DxrPipelineWarmup(const float fraction)
+    {
+        return Lerp(kDxrPipelineWarmupStart, kDxrWarmupEnd, fraction);
     }
 
     inline void Report(const std::string& message, const float progress)
