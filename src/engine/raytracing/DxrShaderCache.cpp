@@ -15,7 +15,10 @@
 namespace
 {
     std::mutex g_dxrShaderCacheMutex;
-    std::unordered_map<std::string, std::weak_ptr<DxrCompiledLibrary>> g_dxrShaderCache;
+    // Pipelines retain the state object, not the source DXIL blob. A weak cache therefore expires
+    // immediately after state-object creation and cannot service a later warm-up request. Keep
+    // the small set of compiled libraries alive until RenderingPipelineCache::Clear().
+    std::unordered_map<std::string, std::shared_ptr<DxrCompiledLibrary>> g_dxrShaderCache;
 
     void AppendUniqueDefine(std::vector<std::string>& defines, const char* define)
     {
@@ -121,17 +124,18 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
     }
     const std::string cacheKey = MakeCacheKey(libraryPath, sourceHash, options);
 
-    std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
-
-    const auto existing = g_dxrShaderCache.find(cacheKey);
-    if (existing != g_dxrShaderCache.end())
     {
-        if (std::shared_ptr<DxrCompiledLibrary> library = existing->second.lock())
+        std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
+        const auto existing = g_dxrShaderCache.find(cacheKey);
+        if (existing != g_dxrShaderCache.end())
         {
-            return library;
+            return existing->second;
         }
     }
 
+    // Do not hold the cache lock while DXC works. Distinct libraries/permutations can compile in
+    // parallel during project warm-up; if two callers race for the same key, the first completed
+    // result wins and the other temporary blob is released.
     DxrBreadcrumb(std::string("shader compile begin: ") + libraryPath);
     HlslLibraryCompileOptions compileOptions{};
     compileOptions.targetProfile = options.targetProfile.c_str();
@@ -161,7 +165,16 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
             + std::to_string(preparedBytecode.containerByteCount) + " dxilBytes="
             + std::to_string(library->dxilBytecode->GetBufferSize()) + " extracted="
             + (library->extractedFromDxbcContainer ? "yes" : "no"));
-    g_dxrShaderCache[cacheKey] = library;
+    {
+        std::lock_guard<std::mutex> lock(g_dxrShaderCacheMutex);
+        const auto existing = g_dxrShaderCache.find(cacheKey);
+        if (existing != g_dxrShaderCache.end())
+        {
+            return existing->second;
+        }
+
+        g_dxrShaderCache.emplace(cacheKey, library);
+    }
     return library;
 }
 

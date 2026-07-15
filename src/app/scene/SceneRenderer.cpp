@@ -40,11 +40,13 @@
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rendering/RenderingPipelineCache.h"
+#include "engine/raytracing/DxrShaderCache.h"
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <future>
 #include <limits>
 #include <utility>
 
@@ -672,6 +674,74 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             return;
         }
 
+        // Shader-library compilation is CPU work and does not touch the D3D12 device. Compile
+        // every exact library permutation needed by this project concurrently, then create the
+        // dependent RTPSOs in their normal (device-safe) order below. This preserves the full
+        // no-hitch warm-up contract for production, diagnostics, and SER paths.
+        std::vector<std::future<void>> shaderPrewarmJobs;
+        const auto queueShaderPrewarm = [&](const char* libraryPath, DxrShaderLibraryCompileOptions options) {
+            shaderPrewarmJobs.emplace_back(std::async(std::launch::async, [libraryPath, options = std::move(options)]() {
+                (void)DxrShaderCache::Load(libraryPath, options);
+            }));
+        };
+        const auto queueDefaultShaderPrewarm = [&](const char* libraryPath) {
+            queueShaderPrewarm(libraryPath, DxrShaderCache::MakeActiveDeviceCompileOptions());
+        };
+
+        if (warmSmoke)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrSmokeLibraryShader);
+        }
+        if (warmPrimary)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrPrimaryDebugLibraryShader);
+        }
+        if (warmReflections)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrReflectionsLibraryShader);
+        }
+        if (warmShadows)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrShadowsLibraryShader);
+        }
+        if (warmGi)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrGiLibraryShader);
+        }
+        if (warmPathTracer)
+        {
+            queueShaderPrewarm(
+                EngineConstants::DxrPathTracerLibraryShader,
+                DxrShaderCache::MakeActiveDeviceCompileOptions(false));
+            queueShaderPrewarm(
+                EngineConstants::DxrPathTracerLibraryShader,
+                DxrShaderCache::MakeActiveDeviceCompileOptions(true));
+            if (GfxContext::Get().IsShaderExecutionReorderingSupported())
+            {
+                DxrShaderLibraryCompileOptions serOptions =
+                    DxrShaderCache::MakeActiveDeviceCompileOptions(false);
+                serOptions.serPermutation = true;
+                serOptions.targetProfile = "lib_6_9";
+                queueShaderPrewarm(EngineConstants::DxrPathTracerLibraryShader, serOptions);
+
+                serOptions = DxrShaderCache::MakeActiveDeviceCompileOptions(true);
+                serOptions.serPermutation = true;
+                serOptions.targetProfile = "lib_6_9";
+                queueShaderPrewarm(EngineConstants::DxrPathTracerLibraryShader, serOptions);
+            }
+        }
+        if (warmRestir)
+        {
+            queueDefaultShaderPrewarm(EngineConstants::DxrRestirLibraryShader);
+        }
+
+        ProjectLoadBenchmark::ScopedPhase shaderPrewarmPhase("renderer.dxr_shader_library_prewarm");
+        ProjectLoadProgress::Report("Compiling ray tracing shader libraries...", ProjectLoadProgress::kDxrWarmupStart);
+        for (std::future<void>& job : shaderPrewarmJobs)
+        {
+            job.get();
+        }
+
         int warmedPipelineCount = 0;
         const auto reportPipelineBegin = [&](const char* message) {
             const float progress = ProjectLoadProgress::DxrWarmup(
@@ -684,6 +754,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
                 static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
             ProjectLoadProgress::SetProgress(progress);
         };
+        const auto warmPipeline = [](const char* benchmarkPhase, auto&& callback) {
+            ProjectLoadBenchmark::ScopedPhase phase(benchmarkPhase);
+            callback();
+        };
 
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
         if (warmSmoke && (m_dxrSmokeDispatch == nullptr || !m_dxrSmokeDispatch->IsPipelineReady()))
@@ -693,7 +767,7 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrSmokeDispatch = std::make_unique<DxrSmokeDispatch>();
             }
-            m_dxrSmokeDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline("renderer.dxr_warmup.smoke", [&]() { m_dxrSmokeDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmPrimary && (m_dxrPrimaryDebugDispatch == nullptr || !m_dxrPrimaryDebugDispatch->IsPipelineReady()))
@@ -703,7 +777,9 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrPrimaryDebugDispatch = std::make_unique<DxrPrimaryDebugDispatch>();
             }
-            m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline(
+                "renderer.dxr_warmup.primary_debug",
+                [&]() { m_dxrPrimaryDebugDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmReflections && (m_dxrReflectionsDispatch == nullptr || !m_dxrReflectionsDispatch->IsPipelineReady()))
@@ -713,7 +789,9 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrReflectionsDispatch = std::make_unique<DxrReflectionsDispatch>();
             }
-            m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline(
+                "renderer.dxr_warmup.reflections",
+                [&]() { m_dxrReflectionsDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmShadows && (m_dxrShadowsDispatch == nullptr || !m_dxrShadowsDispatch->IsPipelineReady()))
@@ -723,7 +801,9 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrShadowsDispatch = std::make_unique<DxrShadowsDispatch>();
             }
-            m_dxrShadowsDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline(
+                "renderer.dxr_warmup.shadows",
+                [&]() { m_dxrShadowsDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmGi && (m_dxrGiDispatch == nullptr || !m_dxrGiDispatch->IsPipelineReady()))
@@ -733,7 +813,7 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrGiDispatch = std::make_unique<DxrGiDispatch>();
             }
-            m_dxrGiDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline("renderer.dxr_warmup.gi", [&]() { m_dxrGiDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmPathTracer && (m_dxrPathTracerDispatch == nullptr || !m_dxrPathTracerDispatch->IsPipelineReady()))
@@ -743,7 +823,9 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
             }
-            m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline(
+                "renderer.dxr_warmup.path_tracer",
+                [&]() { m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         if (warmRestir && (m_dxrRestirDispatch == nullptr || !m_dxrRestirDispatch->IsPipelineReady()))
@@ -753,7 +835,7 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             {
                 m_dxrRestirDispatch = std::make_unique<DxrRestirDispatch>();
             }
-            m_dxrRestirDispatch->WarmUpPipelineIfNeeded();
+            warmPipeline("renderer.dxr_warmup.restir", [&]() { m_dxrRestirDispatch->WarmUpPipelineIfNeeded(); });
             markPipelineComplete();
         }
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded end");
