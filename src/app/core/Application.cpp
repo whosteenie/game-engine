@@ -57,6 +57,7 @@
 #include <ImGuizmo.h>
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
+#include "engine/platform/ProjectLoadProgress.h"
 #include "engine/platform/Input.h"
 #include "engine/platform/InputDiagnostics.h"
 #include "engine/platform/FrameDiagnostics.h"
@@ -1566,9 +1567,9 @@ void Application::Render()
                     presentingProjectLoad ? "renderer.first_gpu_prepare" : nullptr);
                 if (presentingProjectLoad)
                 {
-                    NativeProgressWindow::Instance().Report(
+                    ProjectLoadProgress::Report(
                         "Preparing GPU resources for first frame...",
-                        0.76f);
+                        ProjectLoadProgress::kGpuInitializationStart);
                 }
                 editorScene->GetRenderer().PrepareFrameGpuResources();
             });
@@ -1623,9 +1624,9 @@ void Application::Render()
             {
                 if (presentingProjectLoad)
                 {
-                    NativeProgressWindow::Instance().Report(
+                    ProjectLoadProgress::Report(
                         "Rendering Scene View first frame...",
-                        0.950f);
+                        ProjectLoadProgress::kFirstSceneFrameStart);
                 }
                 SceneRenderTrace::FirstFrameGuard firstFrameGuard;
                 m_camera->SetAspectFromFramebuffer(
@@ -1646,9 +1647,9 @@ void Application::Render()
                 }
                 if (presentingProjectLoad)
                 {
-                    NativeProgressWindow::Instance().Report(
+                    ProjectLoadProgress::Report(
                         "Compositing Scene View...",
-                        0.980f);
+                        ProjectLoadProgress::kSceneComposite);
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
@@ -1699,9 +1700,9 @@ void Application::Render()
                     {
                         if (presentingProjectLoad)
                         {
-                            NativeProgressWindow::Instance().Report(
+                            ProjectLoadProgress::Report(
                                 "Rendering Game View first frame...",
-                                0.950f);
+                                ProjectLoadProgress::kGameViewFirstFrame);
                         }
                         const Camera renderCamera = sceneCamera->ToRenderCamera();
                         const SceneRenderOptions gameViewOptions{
@@ -1721,9 +1722,9 @@ void Application::Render()
                             RenderViewport::GameView);
                         if (presentingProjectLoad)
                         {
-                            NativeProgressWindow::Instance().Report(
+                            ProjectLoadProgress::Report(
                                 "Compositing Game View...",
-                                0.980f);
+                                ProjectLoadProgress::kGameViewComposite);
                         }
                         m_gameViewportPanel->CompositeRenderedFrame();
                         if (presentingProjectLoad)

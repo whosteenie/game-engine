@@ -4,6 +4,7 @@
 
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
+#include "engine/platform/ProjectLoadProgress.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
@@ -1149,7 +1150,7 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
     try
     {
         SceneRenderTrace::Step("ibl: reload begin");
-        NativeProgressWindow::Instance().Report("Building IBL capture targets...", 0.905f);
+        ProjectLoadProgress::Report("Building IBL capture targets...", ProjectLoadProgress::kIblCaptureTargets);
         if (m_captureDepthResource == nullptr)
         {
             SceneRenderTrace::Step("ibl: create capture resources");
@@ -1158,22 +1159,22 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
 
         {
             const std::string hdrName = std::filesystem::path(m_hdrPath).filename().string();
-            NativeProgressWindow::Instance().Report(
+            ProjectLoadProgress::Report(
                 hdrName.empty() ? "Loading HDR environment..." : ("Loading HDR: " + hdrName),
-                0.910f);
+                ProjectLoadProgress::kIblHdrLoad);
         }
         SceneRenderTrace::Step("ibl: load hdr equirect");
         {
             ProjectLoadBenchmark::ScopedPhase loadHdrPhase("ibl.load_hdr_and_importance");
             LoadHdrEquirectangular(m_hdrPath.c_str());
         }
-        NativeProgressWindow::Instance().Report("Generating environment cubemap...", 0.918f);
+        ProjectLoadProgress::Report("Generating environment cubemap...", ProjectLoadProgress::kIblCubemap);
         SceneRenderTrace::Step("ibl: create environment cubemap");
         {
             ProjectLoadBenchmark::ScopedPhase cubemapPhase("ibl.create_environment_cubemap");
             CreateEnvironmentCubemap();
         }
-        NativeProgressWindow::Instance().Report("Prefiltering specular IBL...", 0.926f);
+        ProjectLoadProgress::Report("Prefiltering specular IBL...", ProjectLoadProgress::kIblPrefilter);
         SceneRenderTrace::Step("ibl: create prefilter map");
         {
             ProjectLoadBenchmark::ScopedPhase prefilterPhase("ibl.create_prefilter_map");
@@ -1181,7 +1182,7 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
         }
         if (m_brdfLutGpu.resource == nullptr)
         {
-            NativeProgressWindow::Instance().Report("Generating BRDF lookup table...", 0.932f);
+            ProjectLoadProgress::Report("Generating BRDF lookup table...", ProjectLoadProgress::kIblBrdfLut);
             SceneRenderTrace::Step("ibl: create brdf lut");
             ProjectLoadBenchmark::ScopedPhase brdfLutPhase("ibl.create_brdf_lut");
             CreateBrdfLut();

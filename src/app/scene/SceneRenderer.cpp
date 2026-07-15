@@ -15,6 +15,7 @@
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
+#include "engine/platform/ProjectLoadProgress.h"
 #include "engine/platform/SceneRenderTrace.h"
 
 #include "app/scene/SceneEditor.h"
@@ -269,7 +270,7 @@ namespace
     template<typename Fn>
     void RunGpuInitStep(const char* stepName, float progress, Fn&& fn)
     {
-        NativeProgressWindow::Instance().Report(
+        ProjectLoadProgress::Report(
             std::string("Initializing GPU: ") + stepName + "...",
             progress);
         SceneRenderTrace::Scope initScope(stepName);
@@ -419,13 +420,13 @@ void SceneRenderer::EnsureGpuResources() const
     SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
-        RunGpuInitStep("camera gizmos", 0.78f, [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
-        RunGpuInitStep("grid", 0.79f, [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
-        RunGpuInitStep("collider gizmos", 0.80f, [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
-        RunGpuInitStep("light gizmos", 0.81f, [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
-        RunGpuInitStep("shadow map", 0.82f, [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
-        RunGpuInitStep("environment map", 0.83f, [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
-        RunGpuInitStep("screen-space effects", 0.84f, [&]() {
+        RunGpuInitStep("camera gizmos", ProjectLoadProgress::GpuInitialization(0.0f / 8.0f), [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
+        RunGpuInitStep("grid", ProjectLoadProgress::GpuInitialization(1.0f / 8.0f), [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
+        RunGpuInitStep("collider gizmos", ProjectLoadProgress::GpuInitialization(2.0f / 8.0f), [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
+        RunGpuInitStep("light gizmos", ProjectLoadProgress::GpuInitialization(3.0f / 8.0f), [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
+        RunGpuInitStep("shadow map", ProjectLoadProgress::GpuInitialization(4.0f / 8.0f), [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
+        RunGpuInitStep("environment map", ProjectLoadProgress::GpuInitialization(5.0f / 8.0f), [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
+        RunGpuInitStep("screen-space effects", ProjectLoadProgress::GpuInitialization(6.0f / 8.0f), [&]() {
             self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
             const int geometryMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
             if (geometryMsaaSampleCount > 1)
@@ -433,7 +434,7 @@ void SceneRenderer::EnsureGpuResources() const
                 self->m_screenSpaceEffects->SetMsaaSampleCount(geometryMsaaSampleCount);
             }
         });
-        RunGpuInitStep("shadow depth shader", 0.85f, [&]() {
+        RunGpuInitStep("shadow depth shader", ProjectLoadProgress::GpuInitialization(7.0f / 8.0f), [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
                 EngineConstants::ShadowDepthVertexShader,
                 EngineConstants::ShadowDepthFragmentShader);
@@ -673,21 +674,15 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
 
         int warmedPipelineCount = 0;
         const auto reportPipelineBegin = [&](const char* message) {
-            constexpr float progressStart = 0.86f;
-            constexpr float progressEnd = 0.90f;
-            const float progress = progressStart
-                + (progressEnd - progressStart)
-                    * (static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
-            NativeProgressWindow::Instance().Report(message, progress);
+            const float progress = ProjectLoadProgress::DxrWarmup(
+                static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
+            ProjectLoadProgress::Report(message, progress);
         };
         const auto markPipelineComplete = [&]() {
             ++warmedPipelineCount;
-            constexpr float progressStart = 0.86f;
-            constexpr float progressEnd = 0.90f;
-            const float progress = progressStart
-                + (progressEnd - progressStart)
-                    * (static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
-            NativeProgressWindow::Instance().SetProgress(progress);
+            const float progress = ProjectLoadProgress::DxrWarmup(
+                static_cast<float>(warmedPipelineCount) / static_cast<float>(pendingPipelineCount));
+            ProjectLoadProgress::SetProgress(progress);
         };
 
         DxrBreadcrumb("render: WarmUpDxrPipelineIfNeeded begin");
@@ -782,7 +777,9 @@ void SceneRenderer::PrepareFrameGpuResources()
 
     if (m_environmentMap != nullptr)
     {
-        NativeProgressWindow::Instance().Report("Loading / syncing HDR environment...", 0.85f);
+        ProjectLoadProgress::Report(
+            "Loading / syncing HDR environment...",
+            ProjectLoadProgress::kEnvironmentSync);
         SceneRenderTrace::Scope envScope("SyncGpuResources");
         try
         {
@@ -800,16 +797,22 @@ void SceneRenderer::PrepareFrameGpuResources()
 
     if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
     {
-        NativeProgressWindow::Instance().Report("Warming ray tracing pipelines...", 0.86f);
+        ProjectLoadProgress::Report(
+            "Warming ray tracing pipelines...",
+            ProjectLoadProgress::kDxrWarmupStart);
         {
             ProjectLoadBenchmark::ScopedPhase dxrWarmupPhase("renderer.dxr_pipeline_warmup");
             WarmUpDxrPipelineIfNeeded();
         }
-        NativeProgressWindow::Instance().Report("Ray tracing pipelines ready.", 0.90f);
+        ProjectLoadProgress::Report(
+            "Ray tracing pipelines ready.",
+            ProjectLoadProgress::kDxrWarmupEnd);
     }
     else
     {
-        NativeProgressWindow::Instance().Report("Preparing first scene frame...", 0.90f);
+        ProjectLoadProgress::Report(
+            "Preparing first scene frame...",
+            ProjectLoadProgress::kFirstSceneFrameStart);
     }
 }
 
@@ -843,9 +846,9 @@ void SceneRenderer::RecordDxrPass(
     }
 
     DxrBreadcrumb("render: EnsureScene begin");
-    NativeProgressWindow::Instance().Report(
+    ProjectLoadProgress::Report(
         "Building ray tracing acceleration structures...",
-        0.92f);
+        ProjectLoadProgress::kDxrAccelerationStructures);
     if (m_dxrAccelerationStructures == nullptr)
     {
         m_dxrAccelerationStructures = std::make_unique<DxrAccelerationStructures>();
@@ -865,7 +868,9 @@ void SceneRenderer::RecordDxrPass(
             std::chrono::steady_clock::now() - dxrScenePrepStart)
             .count();
     DxrBreadcrumb("render: EnsureScene end");
-    NativeProgressWindow::Instance().Report("Dispatching ray tracing passes...", 0.94f);
+    ProjectLoadProgress::Report(
+        "Dispatching ray tracing passes...",
+        ProjectLoadProgress::kDxrDispatch);
 
     const RenderDebugMode debugMode =
         usePostProcess && m_screenSpaceEffects != nullptr ? m_screenSpaceEffects->GetDebugMode()
@@ -1898,7 +1903,9 @@ void SceneRenderer::Render(
     m_renderFrameDiagnostics.dxrScenePrepCpuMs = 0.0;
     m_renderFrameDiagnostics.pathTracerFrameDataCpuMs = 0.0;
 
-    NativeProgressWindow::Instance().Report("Recording first scene frame...", 0.95f);
+    ProjectLoadProgress::Report(
+        "Recording first scene frame...",
+        ProjectLoadProgress::kFirstSceneFrameStart);
     EnsureGpuResources();
     if (!IsGpuResourcesReady())
     {
@@ -1948,7 +1955,7 @@ void SceneRenderer::Render(
     ScopedDxrDisable scopedDxrDisable(m_dxrSettings, suppressDxrForSceneView);
     ScopedRenderDebugOverride scopedDebugMode(m_screenSpaceEffects.get(), effectiveDebugMode);
 
-    NativeProgressWindow::Instance().Report("Uploading scene GPU tables...", 0.955f);
+    ProjectLoadProgress::Report("Uploading scene GPU tables...", ProjectLoadProgress::kSceneUpload);
     m_activePreviousWorldByObjectId = isGameView
         ? &m_gameViewPreviousWorldByObjectId
         : &m_previousWorldByObjectId;
@@ -1993,7 +2000,7 @@ void SceneRenderer::Render(
 
     {
         SceneRenderTrace::Scope lightingScope("SyncLighting");
-        NativeProgressWindow::Instance().Report("Syncing scene lighting...", 0.960f);
+        ProjectLoadProgress::Report("Syncing scene lighting...", ProjectLoadProgress::kSceneLighting);
         const auto lightingSyncStart = std::chrono::steady_clock::now();
         SyncLighting(scene);
         m_renderFrameDiagnostics.lightingSyncCpuMs =
@@ -2006,7 +2013,7 @@ void SceneRenderer::Render(
     if (options.enableShadowPass)
     {
         SceneRenderTrace::Scope shadowScope("RenderShadowPass");
-        NativeProgressWindow::Instance().Report("Rendering shadow maps...", 0.965f);
+        ProjectLoadProgress::Report("Rendering shadow maps...", ProjectLoadProgress::kSceneShadows);
         const auto shadowRecordStart = std::chrono::steady_clock::now();
         const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
         RenderShadowPass(scene, camera);
@@ -2026,7 +2033,7 @@ void SceneRenderer::Render(
     }
 
     bool splitLightingMrt = false;
-    NativeProgressWindow::Instance().Report("Rasterizing scene...", 0.970f);
+    ProjectLoadProgress::Report("Rasterizing scene...", ProjectLoadProgress::kSceneRaster);
     const auto rasterTargetSetupStart = std::chrono::steady_clock::now();
     PrepareSceneRasterTarget(
         scene,
@@ -2053,7 +2060,9 @@ void SceneRenderer::Render(
 
     if (usePostProcess)
     {
-        NativeProgressWindow::Instance().Report("Running post-process and ray tracing...", 0.975f);
+        ProjectLoadProgress::Report(
+            "Running post-process and ray tracing...",
+            ProjectLoadProgress::kScenePostProcess);
         const auto postProcessStart = std::chrono::steady_clock::now();
         RenderPostProcessPass(
             scene,

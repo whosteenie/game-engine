@@ -13,6 +13,7 @@
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
+#include "engine/platform/ProjectLoadProgress.h"
 #include "engine/platform/ProjectLoadTrace.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrTrace.h"
@@ -145,7 +146,7 @@ bool ProjectChooser::OpenProjectAtPath(
     {
         NativeProgressWindow::Instance().SetMessage("Opening project...");
     }
-    NativeProgressWindow::Instance().SetProgress(0.02f);
+    ProjectLoadProgress::SetProgress(ProjectLoadProgress::kOpeningProject);
     bool keepProgressOpenForFirstFrame = false;
 
     try
@@ -154,7 +155,7 @@ bool ProjectChooser::OpenProjectAtPath(
         {
             ProjectLoadTrace::Step("wait for GPU before open");
             NativeProgressWindow::Instance().SetMessage("Finishing previous GPU work...");
-            NativeProgressWindow::Instance().SetProgress(0.05f);
+            ProjectLoadProgress::SetProgress(ProjectLoadProgress::kFinishingPreviousGpuWork);
             // Do not pump GLFW events here: OpenProjectAtPath runs during Update before
             // the current frame's ImGui NewFrame and resize callbacks can corrupt GPU state.
             {
@@ -180,7 +181,7 @@ bool ProjectChooser::OpenProjectAtPath(
         }
 
         NativeProgressWindow::Instance().SetMessage("Loading project file...");
-        NativeProgressWindow::Instance().SetProgress(0.08f);
+        ProjectLoadProgress::SetProgress(ProjectLoadProgress::kReadingProjectFile);
         ProjectLoadTrace::Scope openProjectScope("ProjectSession::OpenProject");
         bool projectOpened = false;
         {
@@ -197,12 +198,12 @@ bool ProjectChooser::OpenProjectAtPath(
         }
         openProjectScope.Success();
         ProjectLoadTrace::Step("scene and project file loaded");
-        NativeProgressWindow::Instance().Report("Scene loaded.", 0.72f);
+        ProjectLoadProgress::Report("Scene loaded.", ProjectLoadProgress::kProjectOpened);
 
         undoStack.Clear();
         clipboard.Clear();
         ProjectLoadTrace::Step("undo and clipboard cleared");
-        NativeProgressWindow::Instance().Report("Saving recent project settings...", 0.73f);
+        ProjectLoadProgress::Report("Saving recent project settings...", ProjectLoadProgress::kProjectOpened);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
@@ -210,7 +211,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
-            NativeProgressWindow::Instance().Report("Applying editor preferences...", 0.74f);
+            ProjectLoadProgress::Report("Applying editor preferences...", ProjectLoadProgress::kProjectOpened);
             ProjectLoadTrace::Scope editorStateScope("apply editor state");
             try
             {
@@ -229,7 +230,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().Report("Preparing editor layout...", 0.75f);
+            ProjectLoadProgress::Report("Preparing editor layout...", ProjectLoadProgress::kEditorReady);
             ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
@@ -237,8 +238,9 @@ bool ProjectChooser::OpenProjectAtPath(
 
         m_showNewProjectForm = false;
         m_errorMessage.clear();
-        // First-frame GPU work fills 0.86 -> 1.0 (see SceneRenderer / IBL progress reports).
-        NativeProgressWindow::Instance().Report("Preparing GPU resources for first frame...", 0.76f);
+        ProjectLoadProgress::Report(
+            "Preparing GPU resources for first frame...",
+            ProjectLoadProgress::kEditorReady);
         m_startupMode = false;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
