@@ -72,6 +72,7 @@ private:
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
     bool m_fatalGpuLossHandled = false;
+    bool m_projectLoadBenchmarkAwaitingGpuCompletion = false;
 
     int m_width;
     int m_height;

@@ -34,7 +34,7 @@ function Get-Stats {
     }
 
     $sorted = @($Values | Sort-Object)
-    $middle = [int]($sorted.Count / 2)
+    $middle = [int][math]::Floor($sorted.Count / 2)
     $median = if (($sorted.Count % 2) -eq 0) {
         ($sorted[$middle - 1] + $sorted[$middle]) / 2.0
     }
@@ -86,7 +86,8 @@ $samples = New-Object System.Collections.Generic.List[object]
 try {
     for ($run = 1; $run -le $Runs; ++$run) {
         $resultPath = Join-Path $OutputDirectory ("run-{0:D2}.json" -f $run)
-        $logPath = Join-Path $OutputDirectory ("run-{0:D2}.log" -f $run)
+        $stdoutPath = Join-Path $OutputDirectory ("run-{0:D2}.stdout.log" -f $run)
+        $stderrPath = Join-Path $OutputDirectory ("run-{0:D2}.stderr.log" -f $run)
 
         $env:GAME_ENGINE_AUTO_OPEN = $projectPath
         Remove-Item Env:GAME_ENGINE_AUTO_OPEN_DEFERRED -ErrorAction SilentlyContinue
@@ -95,18 +96,25 @@ try {
 
         Write-Host ("[{0}/{1}] Opening {2}" -f $run, $Runs, [IO.Path]::GetFileName($projectPath)) -ForegroundColor Cyan
         $stopwatch = [Diagnostics.Stopwatch]::StartNew()
-        Push-Location $exeDirectory
         try {
-            & $enginePath *> $logPath
-            $exitCode = $LASTEXITCODE
+            # The engine intentionally writes breadcrumbs and warnings to stderr. Start-Process
+            # keeps those diagnostics in a file instead of allowing PowerShell's strict native
+            # command handling to treat a normal benchmark run as a terminating error.
+            $process = Start-Process `
+                -FilePath $enginePath `
+                -WorkingDirectory $exeDirectory `
+                -RedirectStandardOutput $stdoutPath `
+                -RedirectStandardError $stderrPath `
+                -Wait `
+                -PassThru
+            $exitCode = $process.ExitCode
         }
         finally {
-            Pop-Location
             $stopwatch.Stop()
         }
 
         if (-not (Test-Path -LiteralPath $resultPath)) {
-            throw "Run $run did not produce $resultPath (exit code $exitCode). See $logPath."
+            throw "Run $run did not produce $resultPath (exit code $exitCode). See $stdoutPath and $stderrPath."
         }
 
         $result = Get-Content -Raw -LiteralPath $resultPath | ConvertFrom-Json
@@ -123,7 +131,7 @@ try {
             "  {0}: engine {1:N1} ms, process {2:N1} ms" -f
             $status, [double]$result.total_ms, $stopwatch.Elapsed.TotalMilliseconds)
         if ($exitCode -ne 0 -or $status -ne "complete") {
-            throw "Run $run failed (status '$status', exit code $exitCode). See $logPath."
+            throw "Run $run failed (status '$status', exit code $exitCode). See $stdoutPath and $stderrPath."
         }
     }
 }

@@ -801,7 +801,10 @@ void SceneRenderer::PrepareFrameGpuResources()
     if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
     {
         NativeProgressWindow::Instance().Report("Warming ray tracing pipelines...", 0.86f);
-        WarmUpDxrPipelineIfNeeded();
+        {
+            ProjectLoadBenchmark::ScopedPhase dxrWarmupPhase("renderer.dxr_pipeline_warmup");
+            WarmUpDxrPipelineIfNeeded();
+        }
         NativeProgressWindow::Instance().Report("Ray tracing pipelines ready.", 0.90f);
     }
     else

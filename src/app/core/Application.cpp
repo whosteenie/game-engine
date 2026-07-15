@@ -1633,13 +1633,17 @@ void Application::Render()
                     m_sceneViewportPanel->GetRenderHeight());
                 SceneRenderOptions sceneViewOptions{};
                 sceneViewOptions.shadingMode = m_sceneToolbarPanel->GetShadingMode();
-                sceneViewScene->Render(
-                    *m_camera,
-                    m_sceneViewportPanel->GetRenderWidth(),
-                    m_sceneViewportPanel->GetRenderHeight(),
-                    m_sceneViewportPanel->GetFramebuffer(),
-                    sceneViewOptions,
-                    RenderViewport::SceneView);
+                {
+                    ProjectLoadBenchmark::ScopedPhase firstSceneRenderPhase(
+                        projectLoadBenchmarkActive ? "renderer.first_scene_render_record" : nullptr);
+                    sceneViewScene->Render(
+                        *m_camera,
+                        m_sceneViewportPanel->GetRenderWidth(),
+                        m_sceneViewportPanel->GetRenderHeight(),
+                        m_sceneViewportPanel->GetFramebuffer(),
+                        sceneViewOptions,
+                        RenderViewport::SceneView);
+                }
                 if (presentingProjectLoad)
                 {
                     NativeProgressWindow::Instance().Report(
@@ -1651,8 +1655,7 @@ void Application::Render()
                 if (projectLoadBenchmarkActive)
                 {
                     ProjectLoadBenchmark::Mark("scene_view.first_composite_recorded");
-                    ProjectLoadBenchmark::Complete();
-                    RequestForcedClose();
+                    m_projectLoadBenchmarkAwaitingGpuCompletion = true;
                 }
                 if (presentingProjectLoad)
                 {
@@ -1754,6 +1757,17 @@ void Application::Render()
         FrameDiagnostics::LogPhase("present");
         m_renderer->EndFrame(m_window);
     });
+    if (m_projectLoadBenchmarkAwaitingGpuCompletion && ProjectLoadBenchmark::IsActive())
+    {
+        {
+            ProjectLoadBenchmark::ScopedPhase waitForFirstFramePhase("renderer.first_frame_gpu_complete");
+            GfxContext::Get().WaitForSwapchainFrames(false);
+        }
+        ProjectLoadBenchmark::Mark("scene_view.first_frame_gpu_complete");
+        ProjectLoadBenchmark::Complete();
+        m_projectLoadBenchmarkAwaitingGpuCompletion = false;
+        RequestForcedClose();
+    }
     m_projectChooser->FinishScheduledPresentation();
     m_imguiFrameActive = false;
     m_gfxFrameActive = false;

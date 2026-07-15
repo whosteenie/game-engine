@@ -8,6 +8,7 @@
 #include "app/project/SceneProjectIO.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/ProjectLoadTrace.h"
 #include "engine/rendering/Material.h"
 
@@ -261,8 +262,12 @@ bool ProjectSession::OpenProject(Scene& scene, const std::string& projectFilePat
     loadScope.Success();
 
     ProjectLoadTrace::Scope prewarmScope("Prewarm imported model assets");
-    const int warmedModelCount =
-        scene.GetImportService().PrewarmProjectModels(scene, m_projectRootDirectory, 0.70f, 0.84f);
+    int warmedModelCount = 0;
+    {
+        ProjectLoadBenchmark::ScopedPhase prewarmImportedAssetsPhase("project.prewarm_imported_models");
+        warmedModelCount =
+            scene.GetImportService().PrewarmProjectModels(scene, m_projectRootDirectory, 0.70f, 0.84f);
+    }
     prewarmScope.Success();
 
     MarkClean();
