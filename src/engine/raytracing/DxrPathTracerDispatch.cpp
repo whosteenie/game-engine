@@ -519,6 +519,8 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     void* commandList,
     const float maxTraceDistance,
     const bool realTimeMode,
+    const bool enableDiSpatial,
+    const bool enableGiSpatial,
     const bool shadeOutput)
 {
     if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsSpatialPipelineReady())
@@ -575,6 +577,9 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.sunDirection[2] = m_lastSunDirection.z;
         constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
         constants.debugMode = m_lastDebugMode;
+        // The shared cbuffer fields select the corresponding resampling domain in either pass.
+        constants.enableDiTemporal = enableDiSpatial ? 1u : 0u;
+        constants.enableGiTemporal = enableGiSpatial ? 1u : 0u;
 
         std::string error;
         const GfxContext::GpuTimerScope gpuScope(

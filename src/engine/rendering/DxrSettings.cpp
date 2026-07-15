@@ -147,6 +147,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_restirDiTemporalEnabled = source.m_restirDiTemporalEnabled;
     m_restirGiInitialEnabled = source.m_restirGiInitialEnabled;
     m_restirGiTemporalEnabled = source.m_restirGiTemporalEnabled;
+    m_restirGiSpatialEnabled = source.m_restirGiSpatialEnabled;
     m_reflectionsEnabled = source.m_reflectionsEnabled;
     m_reflectionsQuality = source.m_reflectionsQuality;
     m_reflectionsSamplesPerPixel = source.m_reflectionsSamplesPerPixel;
@@ -205,6 +206,7 @@ nlohmann::json DxrSettings::ToJson() const
         {"restirDiTemporalEnabled", m_restirDiTemporalEnabled},
         {"restirGiInitialEnabled", m_restirGiInitialEnabled},
         {"restirGiTemporalEnabled", m_restirGiTemporalEnabled},
+        {"restirGiSpatialEnabled", m_restirGiSpatialEnabled},
         {"reflectionsEnabled", m_reflectionsEnabled},
         {"reflectionsQuality", ReflectionsQualityToString(m_reflectionsQuality)},
         {"reflectionsSamplesPerPixel", m_reflectionsSamplesPerPixel},
@@ -275,6 +277,10 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     if (value.contains("restirGiTemporalEnabled"))
     {
         SetRestirGiTemporalEnabled(value.at("restirGiTemporalEnabled").get<bool>());
+    }
+    if (value.contains("restirGiSpatialEnabled"))
+    {
+        SetRestirGiSpatialEnabled(value.at("restirGiSpatialEnabled").get<bool>());
     }
     if (value.contains("reflectionsEnabled"))
     {

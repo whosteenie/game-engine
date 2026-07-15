@@ -154,6 +154,8 @@ public:
         void* commandList,
         float maxTraceDistance,
         bool realTimeMode,
+        bool enableDiSpatial,
+        bool enableGiSpatial,
         bool shadeOutput = true);
 
     void FinalizePathTracerSurfaceHistory(void* commandList);

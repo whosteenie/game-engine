@@ -104,6 +104,8 @@ enum class RenderDebugMode
     PtEnvDiProbeCandidate,
     PtEnvDiProbeRadiance,
     PtEnvDiProbeMetadata,
+    PtRestirGiSpatialSource,
+    PtRestirGiSpatialRejection,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
     PtMotionReprojectionResidual,

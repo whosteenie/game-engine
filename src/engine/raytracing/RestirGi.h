@@ -119,4 +119,32 @@ inline float FinalizeTemporalBasic(
         ? streamedWeightSum * pi / denominator
         : 0.0f;
 }
+
+// Spatial GI maps a source reservoir into the center receiver's solid-angle domain before WRS.
+// Source confidence remains multiplicity, not one synthetic candidate.
+inline float SpatialStreamWeight(
+    const float targetAtCenter,
+    const float jacobian,
+    const float sourceUcw,
+    const float sourceM)
+{
+    const float weight = targetAtCenter * jacobian * sourceUcw * sourceM;
+    return weight > 0.0f && std::isfinite(weight) ? weight : 0.0f;
+}
+
+// RTXDI BASIC multi-source normalization after a spatial winner has been selected. The Jacobian
+// participates in streaming, while source-domain target densities and their original M values form
+// the MIS-like normalization.
+inline float FinalizeSpatialBasic(
+    const float streamedWeightSum,
+    const float selectedTargetAtCenter,
+    const float selectedTargetAtSelectedSource,
+    const float selectedTargetTimesSourceMSum)
+{
+    const float denominator = selectedTargetAtCenter * selectedTargetTimesSourceMSum;
+    return denominator > 0.0f && std::isfinite(denominator)
+        && std::isfinite(selectedTargetAtSelectedSource)
+        ? streamedWeightSum * selectedTargetAtSelectedSource / denominator
+        : 0.0f;
+}
 } // namespace restir::gi

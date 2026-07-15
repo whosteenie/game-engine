@@ -26,6 +26,7 @@ void RunDxrSettingsTests(int& failures)
     settings.SetRestirDiTemporalEnabled(true);
     settings.SetRestirGiInitialEnabled(true);
     settings.SetRestirGiTemporalEnabled(true);
+    settings.SetRestirGiSpatialEnabled(true);
     settings.ClampToHardwareCapabilities(true);
     expectTrue(settings.IsEnabled(), "enabled preserved when RT supported");
     expectTrue(settings.GetReflectionsSamplesPerPixel() == 16, "samples clamped to 16");
@@ -48,4 +49,5 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(roundTrip.IsRestirDiTemporalEnabled(), "json round-trip ReSTIR DI temporal toggle");
     expectTrue(roundTrip.IsRestirGiInitialEnabled(), "json round-trip ReSTIR GI initial toggle");
     expectTrue(roundTrip.IsRestirGiTemporalEnabled(), "json round-trip ReSTIR GI temporal toggle");
+    expectTrue(roundTrip.IsRestirGiSpatialEnabled(), "json round-trip ReSTIR GI spatial toggle");
 }

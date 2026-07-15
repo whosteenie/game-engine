@@ -187,6 +187,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeCandidate: return "PT perf probe: env DI candidate (no reservoir)";
     case RenderDebugMode::PtEnvDiProbeRadiance: return "PT perf probe: env DI radiance (no metadata/reservoir)";
     case RenderDebugMode::PtEnvDiProbeMetadata: return "PT perf probe: env DI metadata (no radiance/reservoir)";
+    case RenderDebugMode::PtRestirGiSpatialSource: return "PT ReSTIR GI: spatial source";
+    case RenderDebugMode::PtRestirGiSpatialRejection: return "PT ReSTIR GI: spatial rejection";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -408,6 +410,8 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeCandidate:
     case RenderDebugMode::PtEnvDiProbeRadiance:
     case RenderDebugMode::PtEnvDiProbeMetadata:
+    case RenderDebugMode::PtRestirGiSpatialSource:
+    case RenderDebugMode::PtRestirGiSpatialRejection:
         return true;
     default:
         return false;
@@ -477,6 +481,8 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeCandidate: return 30;
     case RenderDebugMode::PtEnvDiProbeRadiance: return 31;
     case RenderDebugMode::PtEnvDiProbeMetadata: return 32;
+    case RenderDebugMode::PtRestirGiSpatialSource: return 33;
+    case RenderDebugMode::PtRestirGiSpatialRejection: return 34;
     default: return 0;
     }
 }

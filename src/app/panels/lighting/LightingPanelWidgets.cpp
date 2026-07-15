@@ -160,6 +160,8 @@ namespace
         RenderDebugMode::PtRestirGiContribution,
         RenderDebugMode::PtRestirGiReuseMinusFresh,
         RenderDebugMode::PtRestirGiReusedRadiance,
+        RenderDebugMode::PtRestirGiSpatialSource,
+        RenderDebugMode::PtRestirGiSpatialRejection,
         RenderDebugMode::PtEnvDiProbeSampling,
         RenderDebugMode::PtEnvDiProbeBsdfMis,
         RenderDebugMode::PtEnvDiProbeCandidate,
@@ -650,6 +652,9 @@ namespace LightingPanelWidgets
             return "ReSTIR GI reuse-minus-fresh bias map. 0.5 gray = no bias; brighter = temporal reuse over-brightens vs the fresh P5 estimate; darker = reuse darkens. In reference/path-traced convergence this averages to the exact mean P6 bias, localized per pixel.";
         case RenderDebugMode::PtRestirGiReusedRadiance:
             return "ReSTIR GI reused reservoir's stored secondary radiance (tonemapped). Compare across the line to see whether the held secondary's radiance (vs the weight) carries the bias.";
+        case RenderDebugMode::PtRestirGiSpatialSource:
+        case RenderDebugMode::PtRestirGiSpatialRejection:
+            return "ReSTIR GI P7 spatial diagnostics. Source: green=center, blue=neighbor. Rejection: green=compatible neighbor accepted, yellow=boiling-filter discard, orange=Jacobian rejection, red=no compatible candidate, magenta=ineligible or invalid GI input.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

@@ -161,6 +161,11 @@ bool SpatialSurfaceCompatible(float4 centerPos, uint4 centerMat, float4 neighbor
     {
         return false;
     }
+    if (dot(RestirUnpackOctNormal(centerMat.x), RestirUnpackOctNormal(neighborMat.x))
+        < kRestirDiSpatialNormalThreshold)
+    {
+        return false;
+    }
     if ((centerMat.w & 0xffffu) != (neighborMat.w & 0xffffu))
     {
         return false;
@@ -944,12 +949,18 @@ void RestirSpatialRayGen()
     RestirDiReservoirSet center = g_ReservoirPrev[index];
     RestirDiReservoirSet outputSet = center;
     const RestirGiReservoir temporalGi = g_GiReservoirPrev[index];
-    // P7 owns GI spatial reuse. P6 history must nevertheless follow the DI spatial ping-pong.
-    g_GiReservoirCurrent[index] = temporalGi;
+    RestirGiReservoir outputGi = temporalGi;
 
     if (!eligible)
     {
         g_ReservoirCurrent[index] = outputSet;
+        g_GiReservoirCurrent[index] = outputGi;
+        if (g_DebugMode == 18u || g_DebugMode == 19u
+            || g_DebugMode == 33u || g_DebugMode == 34u)
+        {
+            const float4 old = g_Output[pixel];
+            g_Output[pixel] = float4(1.0, 0.0, 1.0, old.a);
+        }
         return;
     }
 
@@ -960,19 +971,8 @@ void RestirSpatialRayGen()
         * max(length(centerPos.xyz - g_CameraPos) * 0.001, 0.002);
     const float centerRoughness = f16tof32(centerMat.w >> 16u);
     const float4 centerAm = g_CurrAlbedoMetallic[pixel];
-    if (centerAm.a > 0.5 && centerRoughness < kRestirDiSpatialMetalRoughnessCutoff)
-    {
-        // Production rough/specular fallback: keep the valid temporal estimate on smooth metals.
-        g_ReservoirCurrent[index] = outputSet;
-        if (g_DebugMode == 18u || g_DebugMode == 19u)
-        {
-            const float3 debug = g_DebugMode == 18u
-                ? float3(0.1, 1.0, 0.2) : float3(0.65, 0.15, 0.85);
-            const float4 old = g_Output[pixel];
-            g_Output[pixel] = float4(debug, old.a);
-        }
-        return;
-    }
+    const bool diSmoothMetalFallback = centerAm.a > 0.5
+        && centerRoughness < kRestirDiSpatialMetalRoughnessCutoff;
 
     const uint sourceLimit = min(g_SpatialSampleCount + 1u, 6u);
     int2 sourcePixels[6];
@@ -1006,32 +1006,154 @@ void RestirSpatialRayGen()
     bool anyNeighborAccepted = false;
     bool anyNeighborSelected = false;
     bool anyFilterHit = false;
-    [unroll]
-    for (uint domain = 0u; domain < 2u; ++domain)
-    {
-        RestirDiTemporalReservoir combined = RestirDiTemporalInit();
-        float sourceM[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-        uint selectedSource = 0u;
+    bool giAnyNeighborAccepted = false;
+    bool giAnyNeighborSelected = false;
+    bool giAnyFilterHit = false;
+    bool giAnyJacobianRejected = false;
 
-        float nonzeroWeightSum = 0.0;
-        uint nonzeroWeightCount = 0u;
+    if (g_EnableGiTemporal != 0u && GiReservoirValid(temporalGi))
+    {
+        RestirGiReservoir combinedGi = (RestirGiReservoir)0;
+        // The original current-frame input is not a resampling candidate. Preserve it verbatim for
+        // final-shading input/output MIS, regardless of which spatial source wins.
+        combinedGi.initialPosition = temporalGi.initialPosition;
+        combinedGi.initialNormalOct = temporalGi.initialNormalOct;
+        combinedGi.initialRadiance = temporalGi.initialRadiance;
+        combinedGi.initialWeightSum = temporalGi.initialWeightSum;
+
+        float giSourceM[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+        uint giSelectedSource = 0u;
+        float giSelectedTargetAtCenter = 0.0;
+
+        float giNonzeroWeightSum = 0.0;
+        uint giNonzeroWeightCount = 0u;
         [loop]
         for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
         {
             const int2 q = sourcePixels[sourceIndex];
-            const RestirDiReservoirSet sourceSet =
-                g_ReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
-            RestirDiTemporalReservoir source = sourceSet.emissive;
-            if (domain != 0u) source = sourceSet.environment;
-            if (source.W > 0.0 && isfinite(source.W))
+            const RestirGiReservoir sourceGi =
+                g_GiReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
+            if (GiReservoirValid(sourceGi))
             {
-                nonzeroWeightSum += source.W;
-                nonzeroWeightCount++;
+                giNonzeroWeightSum += sourceGi.weightSum;
+                giNonzeroWeightCount++;
             }
         }
-        const float averageNonzeroWeight = nonzeroWeightCount > 0u
-            ? nonzeroWeightSum / float(nonzeroWeightCount) : 0.0;
-        const float boilingMultiplier = 10.0 / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
+        const float giAverageNonzeroWeight = giNonzeroWeightCount > 0u
+            ? giNonzeroWeightSum / float(giNonzeroWeightCount) : 0.0;
+        const float boilingMultiplier = 10.0
+            / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
+
+        [loop]
+        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            const int2 q = sourcePixels[sourceIndex];
+            RestirGiReservoir sourceGi =
+                g_GiReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
+            if (!GiReservoirValid(sourceGi)) continue;
+            // Always retain the center estimate as the failure-safe fallback. Neighbor outliers use
+            // the same RTXDI multiplier convention as the production DI boiling filter.
+            if (sourceIndex > 0u && g_SpatialFilterStrength > 0.0
+                && giAverageNonzeroWeight > 0.0
+                && sourceGi.weightSum > giAverageNonzeroWeight * boilingMultiplier)
+            {
+                giAnyFilterHit = true;
+                continue;
+            }
+
+            const float4 sourcePos = g_CurrSurfacePositionDepth[q];
+            const float jacobian = sourceIndex == 0u ? 1.0
+                : GiTemporalJacobian(sourceGi, sourcePos.xyz, centerPos.xyz);
+            if (jacobian <= 0.0)
+            {
+                if (sourceIndex > 0u) giAnyJacobianRejected = true;
+                continue;
+            }
+
+            const float targetAtCenter = GiTarget(
+                sourceGi, centerPos.xyz, centerReceiver, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness);
+            const uint mBefore = combinedGi.M;
+            const bool selected = GiCombine(
+                combinedGi, sourceGi, targetAtCenter * jacobian,
+                Hash(pixel, 500u + sourceIndex * 13u + g_SpatialIteration * 101u));
+            giSourceM[sourceIndex] = float(combinedGi.M - mBefore);
+            if (sourceIndex > 0u && giSourceM[sourceIndex] > 0.0)
+                giAnyNeighborAccepted = true;
+            if (selected)
+            {
+                giSelectedSource = sourceIndex;
+                giSelectedTargetAtCenter = targetAtCenter;
+                if (sourceIndex > 0u) giAnyNeighborSelected = true;
+            }
+        }
+
+        // RTXDI BASIC multi-source correction. Jacobians affect candidate streaming above; the
+        // selected sample's target is then reevaluated in every accepted source receiver domain.
+        float giPiSum = 0.0;
+        float giSelectedSourceTarget = 0.0;
+        [loop]
+        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+        {
+            if (giSourceM[sourceIndex] <= 0.0) continue;
+            const int2 q = sourcePixels[sourceIndex];
+            const float4 sourcePos = g_CurrSurfacePositionDepth[q];
+            const uint4 sourceMat = g_CurrSurfaceMaterial[q];
+            const float3 sourceGeomN = RestirUnpackOctNormal(sourceMat.x);
+            const float3 sourceN = RestirUnpackOctNormal(sourceMat.y);
+            const float3 sourceV = normalize(g_CameraPos - sourcePos.xyz);
+            const float3 sourceReceiver = sourcePos.xyz + sourceGeomN
+                * max(length(sourcePos.xyz - g_CameraPos) * 0.001, 0.002);
+            const float sourceRoughness = f16tof32(sourceMat.w >> 16u);
+            const float4 sourceAm = g_CurrAlbedoMetallic[q];
+            const float sourceTarget = GiTarget(
+                combinedGi, sourcePos.xyz, sourceReceiver, sourceN, sourceV,
+                sourceAm.rgb, sourceAm.a, sourceRoughness);
+            giPiSum += sourceTarget * giSourceM[sourceIndex];
+            if (sourceIndex == giSelectedSource) giSelectedSourceTarget = sourceTarget;
+        }
+        const float giDenominator = giSelectedTargetAtCenter * giPiSum;
+        combinedGi.weightSum = giDenominator > 0.0 && isfinite(giDenominator)
+            && isfinite(giSelectedSourceTarget)
+            ? combinedGi.weightSum * giSelectedSourceTarget / giDenominator
+            : 0.0;
+        if (GiReservoirValid(combinedGi))
+        {
+            combinedGi.flags &= ~kRestirGiSampleSpatialReuse;
+            if (giAnyNeighborSelected) combinedGi.flags |= kRestirGiSampleSpatialReuse;
+            outputGi = combinedGi;
+        }
+    }
+
+    if (g_EnableDiTemporal != 0u && !diSmoothMetalFallback)
+    {
+        [unroll]
+        for (uint domain = 0u; domain < 2u; ++domain)
+        {
+            RestirDiTemporalReservoir combined = RestirDiTemporalInit();
+            float sourceM[6] = {0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+            uint selectedSource = 0u;
+
+            float nonzeroWeightSum = 0.0;
+            uint nonzeroWeightCount = 0u;
+            [loop]
+            for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
+            {
+                const int2 q = sourcePixels[sourceIndex];
+                const RestirDiReservoirSet sourceSet =
+                    g_ReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
+                RestirDiTemporalReservoir source = sourceSet.emissive;
+                if (domain != 0u) source = sourceSet.environment;
+                if (source.W > 0.0 && isfinite(source.W))
+                {
+                    nonzeroWeightSum += source.W;
+                    nonzeroWeightCount++;
+                }
+            }
+            const float averageNonzeroWeight = nonzeroWeightCount > 0u
+                ? nonzeroWeightSum / float(nonzeroWeightCount) : 0.0;
+            const float boilingMultiplier = 10.0
+                / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
 
         [loop]
         for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
@@ -1113,11 +1235,13 @@ void RestirSpatialRayGen()
             ? combined.wSum * selectedSourceTarget / denominator
             : 0.0;
 
-        if (domain == 0u) outputSet.emissive = combined;
-        else outputSet.environment = combined;
+            if (domain == 0u) outputSet.emissive = combined;
+            else outputSet.environment = combined;
+        }
     }
 
     g_ReservoirCurrent[index] = outputSet;
+    g_GiReservoirCurrent[index] = outputGi;
     if (g_ShadeOutput != 0u)
     {
         float3 radiance = g_BaseRadiance[pixel].rgb
@@ -1126,7 +1250,7 @@ void RestirSpatialRayGen()
             + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
             + ShadeGiWithInputMis(
-                temporalGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
+                outputGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
@@ -1136,11 +1260,24 @@ void RestirSpatialRayGen()
 
     if (g_DebugMode == 18u || g_DebugMode == 19u)
     {
-        const float3 debug = !eligible ? float3(1.0, 0.0, 1.0)
+        const float3 debug = diSmoothMetalFallback ? float3(0.65, 0.15, 0.85)
+            : (!eligible ? float3(1.0, 0.0, 1.0)
             : (g_DebugMode == 18u
                 ? (anyNeighborSelected ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2))
                 : (anyFilterHit ? float3(1.0, 0.75, 0.05)
-                    : (anyNeighborAccepted ? float3(0.1, 1.0, 0.2) : float3(1.0, 0.1, 0.05))));
+                    : (anyNeighborAccepted ? float3(0.1, 1.0, 0.2) : float3(1.0, 0.1, 0.05)))));
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(debug, old.a);
+    }
+    else if (g_DebugMode == 33u || g_DebugMode == 34u)
+    {
+        const float3 debug = !GiReservoirValid(temporalGi) ? float3(1.0, 0.0, 1.0)
+            : (g_DebugMode == 33u
+                ? (giAnyNeighborSelected ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2))
+                : (giAnyFilterHit ? float3(1.0, 0.75, 0.05)
+                    : (giAnyJacobianRejected ? float3(1.0, 0.35, 0.05)
+                    : (giAnyNeighborAccepted ? float3(0.1, 1.0, 0.2)
+                    : float3(1.0, 0.1, 0.05)))));
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
     }

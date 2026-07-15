@@ -151,4 +151,45 @@ void RunRestirGiTests(int& failures)
             Near(eCode, eRef, 1e-4f),
             "GI BASIC temporal normalization must stay unbiased across differing reconnection domains");
     }
+
+    // P7 spatial streaming transforms each neighbor into the center domain with its reconnection
+    // Jacobian and preserves the complete source M as proposal multiplicity.
+    {
+        constexpr float centerTarget = 4.0f;
+        constexpr float centerJacobian = 1.0f;
+        constexpr float centerUcw = 2.0f;
+        constexpr float centerM = 3.0f;
+        constexpr float neighborTarget = 2.0f;
+        constexpr float neighborJacobian = 0.5f;
+        constexpr float neighborUcw = 5.0f;
+        constexpr float neighborM = 7.0f;
+        const float centerWeight = SpatialStreamWeight(
+            centerTarget, centerJacobian, centerUcw, centerM);
+        const float neighborWeight = SpatialStreamWeight(
+            neighborTarget, neighborJacobian, neighborUcw, neighborM);
+        expect(Near(centerWeight, 24.0f), "GI spatial center stream must preserve source M");
+        expect(Near(neighborWeight, 35.0f),
+            "GI spatial neighbor stream must apply Jacobian and preserve source M");
+
+        // Assume the neighbor wins. Its selected target is reevaluated at both source receivers;
+        // these asymmetric domains distinguish BASIC correction from a same-domain 1/M finalize.
+        constexpr float selectedAtCenterSource = 1.5f;
+        constexpr float selectedAtNeighborSource = 3.0f;
+        const float piSum = selectedAtCenterSource * centerM
+            + selectedAtNeighborSource * neighborM;
+        expect(
+            Near(FinalizeSpatialBasic(
+                centerWeight + neighborWeight,
+                neighborTarget,
+                selectedAtNeighborSource,
+                piSum),
+                (59.0f * 3.0f) / 51.0f),
+            "GI BASIC spatial normalization must use every source domain and source M");
+        expect(
+            FinalizeSpatialBasic(centerWeight + neighborWeight, 0.0f, 1.0f, piSum) == 0.0f,
+            "GI spatial zero center support must fall back instead of emitting a poison weight");
+        expect(
+            SpatialStreamWeight(neighborTarget, 0.0f, neighborUcw, neighborM) == 0.0f,
+            "GI spatial invalid Jacobian must reject the neighbor");
+    }
 }

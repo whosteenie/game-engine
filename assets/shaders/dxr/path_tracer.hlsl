@@ -114,7 +114,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 32.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 34.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).

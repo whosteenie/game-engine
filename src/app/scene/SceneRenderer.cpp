@@ -653,6 +653,10 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             && !m_dxrSettings.IsPtReferenceConvergence()
             && m_dxrSettings.IsRestirGiInitialEnabled()
             && m_dxrSettings.IsRestirGiTemporalEnabled();
+        const bool restirGiSpatialEnabled = pathTracingActive
+            && !m_dxrSettings.IsPtReferenceConvergence()
+            && m_dxrSettings.IsRestirGiInitialEnabled()
+            && m_dxrSettings.IsRestirGiSpatialEnabled();
 
         // Keep startup proportional to the project's active render path. Debug views remain
         // eligible so a saved debug mode is ready for the first frame.
@@ -665,7 +669,8 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         const bool warmGi = !pathTracingActive
             && (m_dxrSettings.IsGiEnabled() || IsRtGiDebugMode(debugMode));
         const bool warmPathTracer = pathTracingActive;
-        const bool warmRestir = restirDiTemporalEnabled || restirGiTemporalEnabled;
+        const bool warmRestir = restirDiTemporalEnabled || restirGiTemporalEnabled
+            || restirGiSpatialEnabled;
 
         const int pendingPipelineCount =
             (warmSmoke && (m_dxrSmokeDispatch == nullptr || !m_dxrSmokeDispatch->IsPipelineReady()) ? 1 : 0)
@@ -1191,7 +1196,12 @@ void SceneRenderer::RecordDxrPass(
             const bool giTemporalEnabled = !m_dxrSettings.IsPtReferenceConvergence()
                 && m_dxrSettings.IsRestirGiInitialEnabled()
                 && m_dxrSettings.IsRestirGiTemporalEnabled();
-            const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled)
+            const bool giSpatialEnabled = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled()
+                && m_dxrSettings.IsRestirGiSpatialEnabled();
+            // The temporal pass is also the fresh-reservoir copy into the spatial read slot, so P7
+            // can operate independently when P6 is disabled.
+            const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled || giSpatialEnabled)
                 && m_dxrRestirDispatch != nullptr;
             if (temporalEnabled)
             {
@@ -1212,14 +1222,17 @@ void SceneRenderer::RecordDxrPass(
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();
                 }
-                else if (diTemporalEnabled && !m_dxrPathTracerDispatch->DispatchRestirSpatial(
-                    *m_dxrRestirDispatch,
-                    *m_dxrAccelerationStructures,
-                    camera,
-                    GfxContext::Get().GetCommandList(),
-                    m_dxrSettings.GetMaxTraceDistance(),
-                    true,
-                    shadeRestirOutput))
+                else if ((diTemporalEnabled || giSpatialEnabled)
+                    && !m_dxrPathTracerDispatch->DispatchRestirSpatial(
+                        *m_dxrRestirDispatch,
+                        *m_dxrAccelerationStructures,
+                        camera,
+                        GfxContext::Get().GetCommandList(),
+                        m_dxrSettings.GetMaxTraceDistance(),
+                        true,
+                        diTemporalEnabled,
+                        giSpatialEnabled,
+                        shadeRestirOutput))
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();
                 }

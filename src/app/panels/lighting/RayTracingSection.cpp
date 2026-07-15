@@ -404,8 +404,9 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 ImGui::SetTooltip(
                     "P5 M=1 production GI payload and receiver-side reconstruction. Eligible diffuse/\n"
                     "moderately rough opaque primaries should match baseline PT. Glass, delta, and\n"
-                    "smooth primaries remain on the original estimator. Temporal/spatial GI are not active.");
+                    "smooth primaries remain on the original estimator. P6/P7 reuse require this input.");
             }
+            RendererSettingUi::MarkRendered("pt_restir_gi_initial");
 
             bool restirGiTemporal = dxrSettings.IsRestirGiTemporalEnabled();
             UndoableRendererCheckbox(
@@ -424,6 +425,26 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Uses receiver reevaluation, reconnection Jacobian, BASIC bias correction, and\n"
                     "a current-receiver visibility ray. Every rejection falls back to the fresh sample.");
             }
+            RendererSettingUi::MarkRendered("pt_restir_gi_temporal");
+
+            bool restirGiSpatial = dxrSettings.IsRestirGiSpatialEnabled();
+            UndoableRendererCheckbox(
+                "PT ReSTIR GI spatial (P7)",
+                &restirGiSpatial,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetRestirGiSpatialEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "P7 spatial reuse of P5/P6 secondary-surface GI reservoirs. Requires P5 initial.\n"
+                    "Uses material/normal/depth gates, reconnection Jacobians, BASIC multi-domain\n"
+                    "normalization, conservative visibility, boiling control, and input/output MIS.");
+            }
+            RendererSettingUi::MarkRendered("pt_restir_gi_spatial");
 
             float ptSunAngularRadius = dxrSettings.GetSunAngularRadiusDegrees();
             UndoableRendererSliderFloat(
