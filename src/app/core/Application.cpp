@@ -316,10 +316,7 @@ namespace
 Application::Application(int width, int height, const char* title)
     : m_width(width), m_height(height), m_title(title)
 {
-    {
-        ProjectLoadBenchmark::ScopedPhase glfwStartupPhase("startup.glfw_window");
-        InitGLFW();
-    }
+    InitGLFW();
 
 #ifdef _WIN32
     SetConsoleCtrlHandler(ConsoleControlHandler, TRUE);
@@ -339,85 +336,58 @@ Application::Application(int width, int height, const char* title)
         framebufferWidth = std::max(framebufferWidth, 1);
         framebufferHeight = std::max(framebufferHeight, 1);
 
-        {
-            ProjectLoadBenchmark::ScopedPhase startupFilesPhase("startup.settings_and_progress_window");
-            EditorSettings::EnsureAppDataDirectoryExists();
-            EngineLog::EnsureLogDirectoryExists();
-            NativeProgressWindow::Instance().WarmUp();
-        }
-        {
-            ProjectLoadBenchmark::ScopedPhase imguiCreatePhase("startup.imgui_create");
-            m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
-        }
-        {
-            ProjectLoadBenchmark::ScopedPhase graphicsInitializePhase("startup.graphics_context_initialize");
-            GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
-        }
-        {
-            ProjectLoadBenchmark::ScopedPhase imguiBackendPhase("startup.imgui_platform_backend");
-            m_imguiLayer->InitPlatformBackend();
-        }
+        EditorSettings::EnsureAppDataDirectoryExists();
+        EngineLog::EnsureLogDirectoryExists();
+        NativeProgressWindow::Instance().WarmUp();
+        m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
+        GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
+        m_imguiLayer->InitPlatformBackend();
 
         // Persist renderer-tuning section open/close state in the editor imgui.ini. Must be
         // registered before the layout ini is loaded so saved section states are parsed.
         TuningSectionState::RegisterImGuiSettingsHandler();
 
-        {
-            ProjectLoadBenchmark::ScopedPhase coreEditorStatePhase("startup.core_editor_state");
-            m_renderer = std::make_unique<Renderer>();
-            m_editorSettings = std::make_unique<EditorSettings>();
-            m_editorSettings->Load();
-            GfxContext::Get().SetVsyncEnabled(m_editorSettings->IsVsyncEnabled());
-            m_projectSession = std::make_unique<ProjectSession>();
-            m_projectChooser = std::make_unique<ProjectChooser>();
-            m_scene = std::make_unique<Scene>();
-        }
+        m_renderer = std::make_unique<Renderer>();
+        m_editorSettings = std::make_unique<EditorSettings>();
+        m_editorSettings->Load();
+        GfxContext::Get().SetVsyncEnabled(m_editorSettings->IsVsyncEnabled());
+        m_projectSession = std::make_unique<ProjectSession>();
+        m_projectChooser = std::make_unique<ProjectChooser>();
+        m_scene = std::make_unique<Scene>();
         glfwSetWindowCloseCallback(m_window, WindowCloseCallback);
-        {
-            ProjectLoadBenchmark::ScopedPhase dlssBootstrapPhase("startup.dlss_bootstrap");
-            PumpStartupFramesUntilDlssReady();
-        }
+        PumpStartupFramesUntilDlssReady();
 
         UpdatePendingProjectStartupProgress("Preparing editor...");
-        {
-            ProjectLoadBenchmark::ScopedPhase editorChromePhase("startup.editor_chrome");
-            m_mainMenuBar = std::make_unique<MainMenuBar>();
-            glfwPollEvents();
-            m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
-        }
+        m_mainMenuBar = std::make_unique<MainMenuBar>();
+        glfwPollEvents();
+        m_editorTopToolbar = std::make_unique<EditorTopToolbar>();
         UpdatePendingProjectStartupProgress("Preparing editor panels...");
-        {
-            ProjectLoadBenchmark::ScopedPhase panelsPhase("startup.editor_panels");
-            m_lightingPanel = std::make_unique<LightingPanel>();
-            glfwPollEvents();
-            m_performancePanel = std::make_unique<PerformancePanel>();
-            m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
-            m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
-            m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
-            m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
-            m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
-            m_gameViewportPanel = std::make_unique<GameViewportPanel>();
-            m_editorDockSpace = std::make_unique<EditorDockSpace>();
-        }
+        m_lightingPanel = std::make_unique<LightingPanel>();
+        glfwPollEvents();
+        m_performancePanel = std::make_unique<PerformancePanel>();
+        m_sceneToolbarPanel = std::make_unique<SceneToolbarPanel>();
+        m_sceneHierarchyPanel = std::make_unique<SceneHierarchyPanel>();
+        m_sceneInspectorPanel = std::make_unique<SceneInspectorPanel>();
+        m_projectFilesPanel = std::make_unique<ProjectFilesPanel>();
+        m_sceneViewportPanel = std::make_unique<SceneViewportPanel>();
+        m_gameViewportPanel = std::make_unique<GameViewportPanel>();
+        m_editorDockSpace = std::make_unique<EditorDockSpace>();
         glfwPollEvents();
         UpdatePendingProjectStartupProgress("Preparing editor viewports...");
-        {
-            ProjectLoadBenchmark::ScopedPhase editorFinalizePhase("startup.editor_finalize");
-            m_camera = std::make_unique<Camera>(
-                glm::vec3(6.0f, 5.0f, 6.0f),
-                -135.0f,
-                -35.0f);
+        m_camera = std::make_unique<Camera>(
+            glm::vec3(6.0f, 5.0f, 6.0f),
+            -135.0f,
+            -35.0f);
 
-            OnFramebufferResize(framebufferWidth, framebufferHeight);
+        OnFramebufferResize(framebufferWidth, framebufferHeight);
 
-            m_input = std::make_unique<Input>(m_window);
-            m_sceneEditingController = std::make_unique<SceneEditingController>();
-            m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
-            m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
-            m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
+        m_input = std::make_unique<Input>(m_window);
+        m_sceneEditingController = std::make_unique<SceneEditingController>();
+        m_scene->BindSceneEditor(m_sceneEditingController->GetEditor());
+        m_playModeController.SetSceneEditor(m_sceneEditingController->GetEditor());
+        m_scene->SetDirtyCallback([this]() { m_projectSession->MarkDirty(); });
 
-            ProcessQueuedProjectOpenIfReady();
-        }
+        ProcessQueuedProjectOpenIfReady();
     }
     catch (...)
     {
@@ -491,20 +461,12 @@ void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
     ProjectLoadBenchmark::StartFromEnvironment();
-    ProjectLoadBenchmark::Mark("application.run.begin");
 
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
     {
         std::string error;
-        if (ProjectLoadBenchmark::IsActive())
-        {
-            // A person first sees the startup chooser, then selects a project. Queue the same
-            // transition only after the chooser's first frame has presented so the benchmark
-            // accounts for both startup UX and project-open UX separately.
-            m_benchmarkAutoOpenPath = autoOpenPath;
-            m_benchmarkAutoOpenAfterStartupPresent = true;
-        }
-        else if (std::getenv("GAME_ENGINE_AUTO_OPEN_DEFERRED") != nullptr)
+        ProjectLoadBenchmark::Mark("project.auto_open.begin");
+        if (std::getenv("GAME_ENGINE_AUTO_OPEN_DEFERRED") != nullptr)
         {
             m_projectChooser->QueueProjectOpen(autoOpenPath);
         }
@@ -1691,7 +1653,7 @@ void Application::Render()
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
-                if (projectLoadBenchmarkActive && presentingProjectLoad)
+                if (projectLoadBenchmarkActive)
                 {
                     ProjectLoadBenchmark::Mark("scene_view.first_composite_recorded");
                     m_projectLoadBenchmarkAwaitingGpuCompletion = true;
@@ -1796,26 +1758,6 @@ void Application::Render()
         FrameDiagnostics::LogPhase("present");
         m_renderer->EndFrame(m_window);
     });
-    // End the loading presentation only after the first project frame has been presented. The
-    // following frame is the first one that actually contains the usable editor UI.
-    m_projectChooser->FinishScheduledPresentation();
-
-    if (m_benchmarkAutoOpenAfterStartupPresent && ProjectLoadBenchmark::IsActive())
-    {
-        ProjectLoadBenchmark::Mark("project_chooser.first_frame_presented");
-        if (!m_projectChooser->QueueProjectOpen(m_benchmarkAutoOpenPath))
-        {
-            ProjectLoadBenchmark::Fail("Could not queue benchmark project open.");
-            RequestForcedClose();
-        }
-        else
-        {
-            ProjectLoadBenchmark::Mark("project.selection.queued");
-        }
-        m_benchmarkAutoOpenPath.clear();
-        m_benchmarkAutoOpenAfterStartupPresent = false;
-    }
-
     if (m_projectLoadBenchmarkAwaitingGpuCompletion && ProjectLoadBenchmark::IsActive())
     {
         {
@@ -1823,20 +1765,11 @@ void Application::Render()
             GfxContext::Get().WaitForSwapchainFrames(false);
         }
         ProjectLoadBenchmark::Mark("scene_view.first_frame_gpu_complete");
-        m_projectLoadBenchmarkAwaitingGpuCompletion = false;
-        m_projectLoadBenchmarkAwaitingEditorUiFrame = true;
-    }
-    else if (m_projectLoadBenchmarkAwaitingEditorUiFrame && ProjectLoadBenchmark::IsActive())
-    {
-        {
-            ProjectLoadBenchmark::ScopedPhase usableEditorFramePhase("renderer.usable_editor_ui_gpu_complete");
-            GfxContext::Get().WaitForSwapchainFrames(false);
-        }
-        ProjectLoadBenchmark::Mark("editor.usable_ui_frame_gpu_complete");
         ProjectLoadBenchmark::Complete();
-        m_projectLoadBenchmarkAwaitingEditorUiFrame = false;
+        m_projectLoadBenchmarkAwaitingGpuCompletion = false;
         RequestForcedClose();
     }
+    m_projectChooser->FinishScheduledPresentation();
     m_imguiFrameActive = false;
     m_gfxFrameActive = false;
 }
