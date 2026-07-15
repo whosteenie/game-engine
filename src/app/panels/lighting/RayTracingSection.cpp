@@ -53,6 +53,7 @@ namespace
     constexpr std::uint32_t kP7DiagnosticBatchWarmupFrames = 60u;
     constexpr std::uint32_t kP7DiagnosticBatchStaticFrames = 600u;
     constexpr std::uint32_t kP7DiagnosticBatchOrbitFrames = 600u;
+    const glm::vec3 kP7DiagnosticCapturePosition{-5.5f, 0.3f, -1.3f};
 
     struct P7DiagnosticVariant
     {
@@ -1257,7 +1258,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                         }
                         else
                         {
-                            const glm::vec3 offset = camera.GetPosition() - selectedTarget;
+                            const glm::vec3 offset =
+                                kP7DiagnosticCapturePosition - selectedTarget;
                             if (glm::length(glm::vec2(offset.x, offset.z))
                                 < std::max(0.1f, selectedRadius * 0.1f))
                             {
@@ -1295,6 +1297,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                                     diagnosticBatch.originalCameraYaw = camera.GetYaw();
                                     diagnosticBatch.originalCameraPitch = camera.GetPitch();
                                     diagnosticBatch.target = selectedTarget;
+                                    camera.SetPosition(kP7DiagnosticCapturePosition);
                                     PointCameraYawAtTarget(camera, selectedTarget);
                                     diagnosticBatch.captureCameraPosition = camera.GetPosition();
                                     diagnosticBatch.captureCameraYaw = camera.GetYaw();
@@ -1634,6 +1637,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     LightingPanelUi::DrawWrappedHelp(
                         "Complete causal capture uses matched 60-frame warm-up, 600-frame static, and "
                         "600-frame orbit captures for baseline, filter-only, spatial-only, and full P7. "
+                        "The automatic capture always starts at (-5.5, 0.3, -1.3), aims yaw at the "
+                        "selection, and preserves the current pitch. "
                         "Manual repeatable orbit remains a "
                         "10-second realtime stress test. Both return to the exact starting pose and "
                         "write variant reports automatically.");
