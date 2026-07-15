@@ -3,11 +3,15 @@
 Texture2D<float4> uCurrentRadiance : register(t0);
 Texture2D<float4> uPrevRadiance : register(t1);
 Texture2D<float4> uPrevStats : register(t2);
+Texture2D<float4> uMotion : register(t3);
 
 cbuffer PerPixel : register(b0)
 {
     int uResetStats;
     int uPrevFrameValid;
+    int uMotionReproject;
+    int uGiSignal;
+    float2 uMotionScale;
     float2 _Padding0;
 };
 
@@ -25,16 +29,47 @@ float Luminance(float3 color)
 float4 main(PSInput input) : SV_Target
 {
     const uint2 pixel = uint2(input.position.xy);
-    const float currentLuma = Luminance(uCurrentRadiance.Load(int3(pixel, 0)).rgb);
-    const float prevLuma = Luminance(uPrevRadiance.Load(int3(pixel, 0)).rgb);
-    const float frameDelta = uPrevFrameValid != 0 ? abs(currentLuma - prevLuma) : 0.0;
+    uint width, height;
+    uCurrentRadiance.GetDimensions(width, height);
+    const float4 currentSignal = uCurrentRadiance.Load(int3(pixel, 0));
+    if (uGiSignal != 0 && currentSignal.a <= 0.0)
+    {
+        return float4(0.0, 0.0, -1.0, 0.0);
+    }
 
-    if (uResetStats != 0)
+    int2 previousPixel = int2(pixel);
+    bool previousValid = uPrevFrameValid != 0;
+    if (previousValid && uMotionReproject != 0)
+    {
+        const float2 currentUv = (float2(pixel) + 0.5) / float2(width, height);
+        const float4 motion = uMotion.Load(int3(pixel, 0));
+        const float2 previousUv = currentUv + motion.xy * uMotionScale;
+        previousValid = all(previousUv >= 0.0.xx) && all(previousUv <= 1.0.xx);
+        previousPixel = clamp(
+            int2(previousUv * float2(width, height)),
+            int2(0, 0),
+            int2(width, height) - 1);
+        if (previousValid && uGiSignal != 0)
+        {
+            const float4 previousSignal = uPrevRadiance.Load(int3(previousPixel, 0));
+            const float expectedPreviousDepth = currentSignal.a + motion.z;
+            previousValid = previousSignal.a > 0.0 && expectedPreviousDepth > 0.0
+                && abs(previousSignal.a - expectedPreviousDepth)
+                    <= 0.02 * max(expectedPreviousDepth, 1.0e-3);
+        }
+    }
+
+    const float currentLuma = Luminance(currentSignal.rgb);
+    const float prevLuma = previousValid
+        ? Luminance(uPrevRadiance.Load(int3(previousPixel, 0)).rgb) : currentLuma;
+    const float frameDelta = previousValid ? abs(currentLuma - prevLuma) : -1.0;
+
+    if (uResetStats != 0 || !previousValid)
     {
         return float4(currentLuma, 0.0, frameDelta, 1.0);
     }
 
-    const float4 previous = uPrevStats.Load(int3(pixel, 0));
+    const float4 previous = uPrevStats.Load(int3(previousPixel, 0));
     const float previousMean = previous.r;
     const float previousM2 = previous.g;
     const float previousCount = max(previous.a, 0.0);

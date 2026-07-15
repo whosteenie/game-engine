@@ -88,6 +88,15 @@ float Hash(uint2 pixel, uint salt)
     return float(n & 0x00ffffffu) / float(0x01000000u);
 }
 
+float3 SignedLogRatioColor(float ratio)
+{
+    const float signedMagnitude = clamp(log2(max(ratio, 1.0e-6)) / 4.0, -1.0, 1.0);
+    const float3 neutral = 0.5.xxx;
+    return signedMagnitude >= 0.0
+        ? lerp(neutral, float3(1.0, 0.18, 0.04), signedMagnitude)
+        : lerp(neutral, float3(0.04, 0.25, 1.0), -signedMagnitude);
+}
+
 float2 PixelToNdc(uint2 p)
 {
     float2 uv = (float2(p) + 0.5) / float2(g_OutputSize);
@@ -956,10 +965,11 @@ void RestirSpatialRayGen()
         g_ReservoirCurrent[index] = outputSet;
         g_GiReservoirCurrent[index] = outputGi;
         if (g_DebugMode == 18u || g_DebugMode == 19u
-            || g_DebugMode == 33u || g_DebugMode == 34u)
+            || (g_DebugMode >= 33u && g_DebugMode <= 45u))
         {
             const float4 old = g_Output[pixel];
-            g_Output[pixel] = float4(1.0, 0.0, 1.0, old.a);
+            g_Output[pixel] = (g_DebugMode == 44u || g_DebugMode == 45u)
+                ? 0.0.xxxx : float4(1.0, 0.0, 1.0, old.a);
         }
         return;
     }
@@ -1010,6 +1020,16 @@ void RestirSpatialRayGen()
     bool giAnyNeighborSelected = false;
     bool giAnyFilterHit = false;
     bool giAnyJacobianRejected = false;
+    bool giAnyZeroTarget = false;
+    bool giNormalizationFailed = false;
+    uint giCompatibleNeighborCount = sourceCount - 1u;
+    uint giUsefulSourceCount = 0u;
+    uint giSelectedSourceDebug = 0u;
+    int2 giSelectedPixel = int2(pixel);
+    float giSelectedJacobian = 1.0;
+    float giNormalizationFactor = 1.0;
+    float giMaxFilterRatio = 0.0;
+    float giBoilingMultiplier = 0.0;
 
     if (g_EnableGiTemporal != 0u && GiReservoirValid(temporalGi))
     {
@@ -1026,6 +1046,7 @@ void RestirSpatialRayGen()
         float giSelectedTargetAtCenter = 0.0;
 
         float giNonzeroWeightSum = 0.0;
+        float giNonzeroEffectiveWeightSum = 0.0;
         uint giNonzeroWeightCount = 0u;
         [loop]
         for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
@@ -1036,6 +1057,8 @@ void RestirSpatialRayGen()
             if (GiReservoirValid(sourceGi))
             {
                 giNonzeroWeightSum += sourceGi.weightSum;
+                giNonzeroEffectiveWeightSum += RestirDiTargetLuminance(max(sourceGi.radiance, 0.0.xxx))
+                    * sourceGi.weightSum;
                 giNonzeroWeightCount++;
             }
         }
@@ -1043,6 +1066,9 @@ void RestirSpatialRayGen()
             ? giNonzeroWeightSum / float(giNonzeroWeightCount) : 0.0;
         const float boilingMultiplier = 10.0
             / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
+        giBoilingMultiplier = boilingMultiplier;
+        const float giAverageNonzeroEffectiveWeight = giNonzeroWeightCount > 0u
+            ? giNonzeroEffectiveWeightSum / float(giNonzeroWeightCount) : 0.0;
 
         [loop]
         for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
@@ -1051,6 +1077,14 @@ void RestirSpatialRayGen()
             RestirGiReservoir sourceGi =
                 g_GiReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
             if (!GiReservoirValid(sourceGi)) continue;
+            const float sourceEffectiveWeight =
+                RestirDiTargetLuminance(max(sourceGi.radiance, 0.0.xxx)) * sourceGi.weightSum;
+            if (sourceIndex > 0u && giAverageNonzeroEffectiveWeight > 0.0)
+            {
+                giMaxFilterRatio = max(
+                    giMaxFilterRatio,
+                    sourceEffectiveWeight / giAverageNonzeroEffectiveWeight);
+            }
             // Always retain the center estimate as the failure-safe fallback. Neighbor outliers use
             // the same RTXDI multiplier convention as the production DI boiling filter.
             if (sourceIndex > 0u && g_SpatialFilterStrength > 0.0
@@ -1073,6 +1107,14 @@ void RestirSpatialRayGen()
             const float targetAtCenter = GiTarget(
                 sourceGi, centerPos.xyz, centerReceiver, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness);
+            if (targetAtCenter > 0.0)
+            {
+                giUsefulSourceCount++;
+            }
+            else if (sourceIndex > 0u)
+            {
+                giAnyZeroTarget = true;
+            }
             const uint mBefore = combinedGi.M;
             const bool selected = GiCombine(
                 combinedGi, sourceGi, targetAtCenter * jacobian,
@@ -1083,6 +1125,9 @@ void RestirSpatialRayGen()
             if (selected)
             {
                 giSelectedSource = sourceIndex;
+                giSelectedSourceDebug = sourceIndex;
+                giSelectedPixel = q;
+                giSelectedJacobian = jacobian;
                 giSelectedTargetAtCenter = targetAtCenter;
                 if (sourceIndex > 0u) giAnyNeighborSelected = true;
             }
@@ -1113,10 +1158,14 @@ void RestirSpatialRayGen()
             if (sourceIndex == giSelectedSource) giSelectedSourceTarget = sourceTarget;
         }
         const float giDenominator = giSelectedTargetAtCenter * giPiSum;
+        giNormalizationFactor = giDenominator > 0.0 && isfinite(giDenominator)
+            && isfinite(giSelectedSourceTarget)
+            ? giSelectedSourceTarget / giDenominator : 0.0;
         combinedGi.weightSum = giDenominator > 0.0 && isfinite(giDenominator)
             && isfinite(giSelectedSourceTarget)
             ? combinedGi.weightSum * giSelectedSourceTarget / giDenominator
             : 0.0;
+        giNormalizationFailed = !GiReservoirValid(combinedGi);
         if (GiReservoirValid(combinedGi))
         {
             combinedGi.flags &= ~kRestirGiSampleSpatialReuse;
@@ -1242,6 +1291,16 @@ void RestirSpatialRayGen()
 
     g_ReservoirCurrent[index] = outputSet;
     g_GiReservoirCurrent[index] = outputGi;
+    const bool needsPostSpatialGi = g_ShadeOutput != 0u
+        || g_DebugMode == 36u || g_DebugMode == 37u
+        || g_DebugMode == 44u || g_DebugMode == 45u;
+    float3 postSpatialGi = 0.0.xxx;
+    if (needsPostSpatialGi)
+    {
+        postSpatialGi = ShadeGiWithInputMis(
+            outputGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
+            centerAm.rgb, centerAm.a, centerRoughness);
+    }
     if (g_ShadeOutput != 0u)
     {
         float3 radiance = g_BaseRadiance[pixel].rgb
@@ -1249,9 +1308,7 @@ void RestirSpatialRayGen()
                 centerAm.rgb, centerAm.a, centerRoughness)
             + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
-            + ShadeGiWithInputMis(
-                outputGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
-                centerAm.rgb, centerAm.a, centerRoughness);
+            + postSpatialGi;
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
         const float4 old = g_Output[pixel];
@@ -1269,15 +1326,101 @@ void RestirSpatialRayGen()
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
     }
-    else if (g_DebugMode == 33u || g_DebugMode == 34u)
+    else if (g_DebugMode >= 33u && g_DebugMode <= 45u)
     {
-        const float3 debug = !GiReservoirValid(temporalGi) ? float3(1.0, 0.0, 1.0)
-            : (g_DebugMode == 33u
-                ? (giAnyNeighborSelected ? float3(0.1, 0.25, 1.0) : float3(0.1, 1.0, 0.2))
-                : (giAnyFilterHit ? float3(1.0, 0.75, 0.05)
-                    : (giAnyJacobianRejected ? float3(1.0, 0.35, 0.05)
-                    : (giAnyNeighborAccepted ? float3(0.1, 1.0, 0.2)
-                    : float3(1.0, 0.1, 0.05)))));
+        float3 debug = 0.0.xxx;
+        if (!GiReservoirValid(temporalGi))
+        {
+            debug = float3(1.0, 0.0, 1.0);
+        }
+        else if (g_DebugMode == 33u)
+        {
+            if (giSelectedSourceDebug == 0u)
+            {
+                debug = float3(0.1, 1.0, 0.2);
+            }
+            else
+            {
+                const float2 normalizedOffset = clamp(
+                    float2(giSelectedPixel - int2(pixel)) / max(g_SpatialRadius, 1.0),
+                    -1.0.xx,
+                    1.0.xx);
+                debug = float3(normalizedOffset * 0.5 + 0.5, float(giSelectedSourceDebug) / 5.0);
+            }
+        }
+        else if (g_DebugMode == 34u)
+        {
+            debug = giAnyFilterHit ? float3(1.0, 0.75, 0.05)
+                : (giAnyJacobianRejected ? float3(1.0, 0.35, 0.05)
+                : (giNormalizationFailed ? float3(0.65, 0.15, 0.85)
+                : (giAnyZeroTarget ? float3(0.05, 0.8, 1.0)
+                : (giUsefulSourceCount > 1u ? float3(0.1, 1.0, 0.2)
+                : float3(1.0, 0.1, 0.05)))));
+        }
+        else if (g_DebugMode == 35u)
+        {
+            debug = saturate(outputGi.weightSum / (outputGi.weightSum + 4.0)).xxx;
+        }
+        else if (g_DebugMode == 36u)
+        {
+            debug = max(postSpatialGi, 0.0.xxx) / (max(postSpatialGi, 0.0.xxx) + 1.0.xxx);
+        }
+        else if (g_DebugMode == 37u)
+        {
+            const float3 temporalContribution = ShadeGiWithInputMis(
+                temporalGi, centerPos.xyz, centerReceiver, centerGeomN, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness);
+            const float delta = RestirDiTargetLuminance(postSpatialGi)
+                - RestirDiTargetLuminance(temporalContribution);
+            debug = saturate(0.5 + 0.5 * (delta / (abs(delta) + 0.05))).xxx;
+        }
+        else if (g_DebugMode == 38u)
+        {
+            const float effectiveWeight =
+                RestirDiTargetLuminance(max(outputGi.radiance, 0.0.xxx)) * outputGi.weightSum;
+            debug = saturate(effectiveWeight / (effectiveWeight + 4.0)).xxx;
+        }
+        else if (g_DebugMode == 39u)
+        {
+            debug = SignedLogRatioColor(giSelectedJacobian);
+        }
+        else if (g_DebugMode == 40u)
+        {
+            debug = giNormalizationFactor > 0.0
+                ? SignedLogRatioColor(giNormalizationFactor) : float3(0.65, 0.15, 0.85);
+        }
+        else if (g_DebugMode == 41u)
+        {
+            const float finalInputWeight = GiInitialMisWeight(
+                outputGi.position, centerPos.xyz, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness);
+            const float initialInputWeight = GiInitialMisWeight(
+                outputGi.initialPosition, centerPos.xyz, centerN, centerV,
+                centerAm.rgb, centerAm.a, centerRoughness);
+            debug = float3(initialInputWeight, 1.0 - finalInputWeight, finalInputWeight);
+        }
+        else if (g_DebugMode == 42u)
+        {
+            debug = float3(
+                float(giCompatibleNeighborCount) / 5.0,
+                float(giUsefulSourceCount) / max(float(sourceCount), 1.0),
+                float(giSelectedSourceDebug) / 5.0);
+        }
+        else if (g_DebugMode == 43u)
+        {
+            debug = float3(
+                saturate(log2(max(giMaxFilterRatio, 1.0)) / 8.0),
+                saturate(log2(max(giBoilingMultiplier, 1.0)) / 8.0),
+                giAnyFilterHit ? 1.0 : 0.0);
+        }
+        else
+        {
+            // The post-process statistics pass consumes raw GI and current linear depth. Keeping
+            // this un-tonemapped makes the numeric static/motion metrics physically meaningful.
+            const float4 old = g_Output[pixel];
+            g_Output[pixel] = float4(max(postSpatialGi, 0.0.xxx), centerPos.w);
+            return;
+        }
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
     }

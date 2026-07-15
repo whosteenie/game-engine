@@ -189,6 +189,17 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeMetadata: return "PT perf probe: env DI metadata (no radiance/reservoir)";
     case RenderDebugMode::PtRestirGiSpatialSource: return "PT ReSTIR GI: spatial source";
     case RenderDebugMode::PtRestirGiSpatialRejection: return "PT ReSTIR GI: spatial rejection";
+    case RenderDebugMode::PtRestirGiSpatialUcw: return "PT ReSTIR GI: post-spatial UCW";
+    case RenderDebugMode::PtRestirGiSpatialContribution: return "PT ReSTIR GI: post-spatial contribution";
+    case RenderDebugMode::PtRestirGiSpatialDelta: return "PT ReSTIR GI: spatial - temporal";
+    case RenderDebugMode::PtRestirGiSpatialEffectiveWeight: return "PT ReSTIR GI: effective reservoir weight";
+    case RenderDebugMode::PtRestirGiSpatialJacobian: return "PT ReSTIR GI: selected Jacobian";
+    case RenderDebugMode::PtRestirGiSpatialNormalization: return "PT ReSTIR GI: BASIC normalization";
+    case RenderDebugMode::PtRestirGiSpatialMisWeights: return "PT ReSTIR GI: final MIS weights";
+    case RenderDebugMode::PtRestirGiSpatialSupport: return "PT ReSTIR GI: spatial support";
+    case RenderDebugMode::PtRestirGiSpatialFilterScore: return "PT ReSTIR GI: boiling-filter score";
+    case RenderDebugMode::PtRestirGiSpatialStaticVariance: return "PT ReSTIR GI: static variance";
+    case RenderDebugMode::PtRestirGiSpatialMotionDelta: return "PT ReSTIR GI: motion-reprojected delta";
     case RenderDebugMode::PtTemporalRelativeSigma:
         return "PT temporal: relative sigma";
     case RenderDebugMode::PtTemporalFrameDelta:
@@ -412,6 +423,17 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeMetadata:
     case RenderDebugMode::PtRestirGiSpatialSource:
     case RenderDebugMode::PtRestirGiSpatialRejection:
+    case RenderDebugMode::PtRestirGiSpatialUcw:
+    case RenderDebugMode::PtRestirGiSpatialContribution:
+    case RenderDebugMode::PtRestirGiSpatialDelta:
+    case RenderDebugMode::PtRestirGiSpatialEffectiveWeight:
+    case RenderDebugMode::PtRestirGiSpatialJacobian:
+    case RenderDebugMode::PtRestirGiSpatialNormalization:
+    case RenderDebugMode::PtRestirGiSpatialMisWeights:
+    case RenderDebugMode::PtRestirGiSpatialSupport:
+    case RenderDebugMode::PtRestirGiSpatialFilterScore:
+    case RenderDebugMode::PtRestirGiSpatialStaticVariance:
+    case RenderDebugMode::PtRestirGiSpatialMotionDelta:
         return true;
     default:
         return false;
@@ -424,10 +446,41 @@ bool IsPtTemporalStatsDebugMode(const RenderDebugMode mode)
     {
     case RenderDebugMode::PtTemporalRelativeSigma:
     case RenderDebugMode::PtTemporalFrameDelta:
+    case RenderDebugMode::PtRestirGiSpatialStaticVariance:
+    case RenderDebugMode::PtRestirGiSpatialMotionDelta:
         return true;
     default:
         return false;
     }
+}
+
+bool IsPtRestirGiSpatialDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::PtRestirGiSpatialSource:
+    case RenderDebugMode::PtRestirGiSpatialRejection:
+    case RenderDebugMode::PtRestirGiSpatialUcw:
+    case RenderDebugMode::PtRestirGiSpatialContribution:
+    case RenderDebugMode::PtRestirGiSpatialDelta:
+    case RenderDebugMode::PtRestirGiSpatialEffectiveWeight:
+    case RenderDebugMode::PtRestirGiSpatialJacobian:
+    case RenderDebugMode::PtRestirGiSpatialNormalization:
+    case RenderDebugMode::PtRestirGiSpatialMisWeights:
+    case RenderDebugMode::PtRestirGiSpatialSupport:
+    case RenderDebugMode::PtRestirGiSpatialFilterScore:
+    case RenderDebugMode::PtRestirGiSpatialStaticVariance:
+    case RenderDebugMode::PtRestirGiSpatialMotionDelta:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsPtRestirGiSpatialStatsDebugMode(const RenderDebugMode mode)
+{
+    return mode == RenderDebugMode::PtRestirGiSpatialStaticVariance
+        || mode == RenderDebugMode::PtRestirGiSpatialMotionDelta;
 }
 
 bool IsPtMotionReprojectionDebugMode(const RenderDebugMode mode)
@@ -483,6 +536,17 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtEnvDiProbeMetadata: return 32;
     case RenderDebugMode::PtRestirGiSpatialSource: return 33;
     case RenderDebugMode::PtRestirGiSpatialRejection: return 34;
+    case RenderDebugMode::PtRestirGiSpatialUcw: return 35;
+    case RenderDebugMode::PtRestirGiSpatialContribution: return 36;
+    case RenderDebugMode::PtRestirGiSpatialDelta: return 37;
+    case RenderDebugMode::PtRestirGiSpatialEffectiveWeight: return 38;
+    case RenderDebugMode::PtRestirGiSpatialJacobian: return 39;
+    case RenderDebugMode::PtRestirGiSpatialNormalization: return 40;
+    case RenderDebugMode::PtRestirGiSpatialMisWeights: return 41;
+    case RenderDebugMode::PtRestirGiSpatialSupport: return 42;
+    case RenderDebugMode::PtRestirGiSpatialFilterScore: return 43;
+    case RenderDebugMode::PtRestirGiSpatialStaticVariance: return 44;
+    case RenderDebugMode::PtRestirGiSpatialMotionDelta: return 45;
     default: return 0;
     }
 }

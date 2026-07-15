@@ -1199,9 +1199,13 @@ void SceneRenderer::RecordDxrPass(
             const bool giSpatialEnabled = !m_dxrSettings.IsPtReferenceConvergence()
                 && m_dxrSettings.IsRestirGiInitialEnabled()
                 && m_dxrSettings.IsRestirGiSpatialEnabled();
+            const bool giSpatialMeasurement = !m_dxrSettings.IsPtReferenceConvergence()
+                && m_dxrSettings.IsRestirGiInitialEnabled()
+                && IsPtRestirGiSpatialStatsDebugMode(debugMode);
             // The temporal pass is also the fresh-reservoir copy into the spatial read slot, so P7
             // can operate independently when P6 is disabled.
-            const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled || giSpatialEnabled)
+            const bool temporalEnabled = (diTemporalEnabled || giTemporalEnabled || giSpatialEnabled
+                    || giSpatialMeasurement)
                 && m_dxrRestirDispatch != nullptr;
             if (temporalEnabled)
             {
@@ -1222,7 +1226,7 @@ void SceneRenderer::RecordDxrPass(
                 {
                     m_dxrPathTracerDispatch->InvalidateRestirHistory();
                 }
-                else if ((diTemporalEnabled || giSpatialEnabled)
+                else if ((diTemporalEnabled || giSpatialEnabled || giSpatialMeasurement)
                     && !m_dxrPathTracerDispatch->DispatchRestirSpatial(
                         *m_dxrRestirDispatch,
                         *m_dxrAccelerationStructures,

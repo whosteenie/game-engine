@@ -162,6 +162,17 @@ namespace
         RenderDebugMode::PtRestirGiReusedRadiance,
         RenderDebugMode::PtRestirGiSpatialSource,
         RenderDebugMode::PtRestirGiSpatialRejection,
+        RenderDebugMode::PtRestirGiSpatialUcw,
+        RenderDebugMode::PtRestirGiSpatialContribution,
+        RenderDebugMode::PtRestirGiSpatialDelta,
+        RenderDebugMode::PtRestirGiSpatialEffectiveWeight,
+        RenderDebugMode::PtRestirGiSpatialJacobian,
+        RenderDebugMode::PtRestirGiSpatialNormalization,
+        RenderDebugMode::PtRestirGiSpatialMisWeights,
+        RenderDebugMode::PtRestirGiSpatialSupport,
+        RenderDebugMode::PtRestirGiSpatialFilterScore,
+        RenderDebugMode::PtRestirGiSpatialStaticVariance,
+        RenderDebugMode::PtRestirGiSpatialMotionDelta,
         RenderDebugMode::PtEnvDiProbeSampling,
         RenderDebugMode::PtEnvDiProbeBsdfMis,
         RenderDebugMode::PtEnvDiProbeCandidate,
@@ -392,6 +403,14 @@ namespace LightingPanelWidgets
                 || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled);
         }
 
+        if (IsPtRestirGiSpatialDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled
+                && dxrSettings.IsRestirGiInitialEnabled()
+                && (IsPtRestirGiSpatialStatsDebugMode(mode)
+                    || dxrSettings.IsRestirGiSpatialEnabled());
+        }
+
         if (IsPtIsolateDebugMode(mode))
         {
             return pathTracingActive && postEnabled;
@@ -455,6 +474,27 @@ namespace LightingPanelWidgets
         if (IsRrGuideDebugMode(mode))
         {
             return "Requires DLSS Ray Reconstruction to be enabled.";
+        }
+
+        if (IsPtRestirGiSpatialDebugMode(mode))
+        {
+            if (!postEnabled)
+            {
+                return "Enable post-processing first.";
+            }
+            if (!pathTracingActive)
+            {
+                return "Enable path tracing first.";
+            }
+            if (!dxrSettings.IsRestirGiInitialEnabled())
+            {
+                return "Enable PT ReSTIR GI initial sampling (P5) first.";
+            }
+            if (!IsPtRestirGiSpatialStatsDebugMode(mode)
+                && !dxrSettings.IsRestirGiSpatialEnabled())
+            {
+                return "Enable PT ReSTIR GI spatial reuse (P7) first.";
+            }
         }
 
         if (IsPtIsolateDebugMode(mode))
@@ -654,7 +694,29 @@ namespace LightingPanelWidgets
             return "ReSTIR GI reused reservoir's stored secondary radiance (tonemapped). Compare across the line to see whether the held secondary's radiance (vs the weight) carries the bias.";
         case RenderDebugMode::PtRestirGiSpatialSource:
         case RenderDebugMode::PtRestirGiSpatialRejection:
-            return "ReSTIR GI P7 spatial diagnostics. Source: green=center, blue=neighbor. Rejection: green=compatible neighbor accepted, yellow=boiling-filter discard, orange=Jacobian rejection, red=no compatible candidate, magenta=ineligible or invalid GI input.";
+            return "ReSTIR GI P7 spatial diagnostics. Source: green=center; a neighbor encodes normalized screen offset in RG and source index in B. Rejection: green=useful support, cyan=zero receiver target/visibility, yellow=filter, orange=Jacobian, purple=normalization fallback, red=no compatible candidate, magenta=ineligible/invalid input.";
+        case RenderDebugMode::PtRestirGiSpatialUcw:
+            return "Post-P7 unbiased contribution weight (UCW), Reinhard-normalized. This is the final spatial reservoir, not the P6 input.";
+        case RenderDebugMode::PtRestirGiSpatialContribution:
+            return "Post-P7 GI contribution only, RGB tonemapped before direct/base lighting and RR. Bright blobs here originate in the P7 GI estimator.";
+        case RenderDebugMode::PtRestirGiSpatialDelta:
+            return "Signed P7-minus-P6 luminance. Gray=no change, warm=P7 brighter, blue=P7 darker. Use reference accumulation to distinguish variance from mean bias.";
+        case RenderDebugMode::PtRestirGiSpatialEffectiveWeight:
+            return "Effective reservoir strength luminance(stored radiance) * UCW. Compare this candidate signal with the filter-score view; the current P7 filter still thresholds UCW alone.";
+        case RenderDebugMode::PtRestirGiSpatialJacobian:
+            return "Selected spatial Jacobian on a signed log2 scale. Gray=1, warm=>1, blue=<1; saturation indicates the validation window boundary.";
+        case RenderDebugMode::PtRestirGiSpatialNormalization:
+            return "BASIC correction multiplier selectedSourceTarget / (centerTarget * piSum), signed log2. Gray=1; spikes correlated with splotches identify normalization variance.";
+        case RenderDebugMode::PtRestirGiSpatialMisWeights:
+            return "Final-shading MIS weights: R=fresh P5 input, G=reused P7 output, B=selected sample's input complement. Roughness >=0.3 normally appears near (0.125, 0.875, 0.125).";
+        case RenderDebugMode::PtRestirGiSpatialSupport:
+            return "Spatial support: R=compatible-neighbor fraction, G=nonzero-target source fraction, B=selected source index. Low/unstable green at the capsule contact indicates visibility/support churn.";
+        case RenderDebugMode::PtRestirGiSpatialFilterScore:
+            return "Boiling diagnostic: R=log2(max effective-weight / neighborhood mean), G=log2(configured threshold), B=current UCW-only filter hit. R exceeding G without B identifies radiance-driven outliers the current detector misses.";
+        case RenderDebugMode::PtRestirGiSpatialStaticVariance:
+            return "GI-only output running relative sigma for a stable camera. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. The configured ROI is outlined and reported numerically.";
+        case RenderDebugMode::PtRestirGiSpatialMotionDelta:
+            return "GI-only output motion-reprojected frame delta. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. Motion and expected previous linear depth reject disocclusions.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

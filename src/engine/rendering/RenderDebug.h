@@ -106,6 +106,17 @@ enum class RenderDebugMode
     PtEnvDiProbeMetadata,
     PtRestirGiSpatialSource,
     PtRestirGiSpatialRejection,
+    PtRestirGiSpatialUcw,
+    PtRestirGiSpatialContribution,
+    PtRestirGiSpatialDelta,
+    PtRestirGiSpatialEffectiveWeight,
+    PtRestirGiSpatialJacobian,
+    PtRestirGiSpatialNormalization,
+    PtRestirGiSpatialMisWeights,
+    PtRestirGiSpatialSupport,
+    PtRestirGiSpatialFilterScore,
+    PtRestirGiSpatialStaticVariance,
+    PtRestirGiSpatialMotionDelta,
     PtTemporalRelativeSigma,
     PtTemporalFrameDelta,
     PtMotionReprojectionResidual,
@@ -131,11 +142,13 @@ bool IsRtGiDebugMode(RenderDebugMode mode);
 bool IsRrGuideDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
+bool IsPtRestirGiSpatialDebugMode(RenderDebugMode mode);
+bool IsPtRestirGiSpatialStatsDebugMode(RenderDebugMode mode);
 bool IsPtMotionReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 32;
+inline constexpr int kPtDebugIsolateModeMax = 45;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

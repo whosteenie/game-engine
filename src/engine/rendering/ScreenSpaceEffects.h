@@ -147,6 +147,19 @@ public:
     float GetPathTracerBoilMetric() const { return m_ptBoilMetric; }
     bool IsPathTracerBoilMetricValid() const { return m_ptBoilMetricValid; }
     float GetPathTracerMeanLuminance() const { return m_ptMeanLuminance; }
+    bool IsPathTracerGiStaticMetricValid() const { return m_ptGiStaticMetricValid; }
+    bool IsPathTracerGiMotionMetricValid() const { return m_ptGiMotionMetricValid; }
+    float GetPathTracerGiStaticDelta() const { return m_ptGiStaticDelta; }
+    float GetPathTracerGiStaticRelativeDelta() const { return m_ptGiStaticRelativeDelta; }
+    float GetPathTracerGiStaticRelativeSigma() const { return m_ptGiStaticRelativeSigma; }
+    float GetPathTracerGiStaticMeanLuminance() const { return m_ptGiStaticMeanLuminance; }
+    float GetPathTracerGiMotionDelta() const { return m_ptGiMotionDelta; }
+    float GetPathTracerGiMotionRelativeDelta() const { return m_ptGiMotionRelativeDelta; }
+    float GetPathTracerGiMotionValidFraction() const { return m_ptGiMotionValidFraction; }
+    std::uint32_t GetPathTracerGiStaticSampleCount() const { return m_ptGiStaticSampleCount; }
+    std::uint32_t GetPathTracerGiMotionSampleCount() const { return m_ptGiMotionSampleCount; }
+    glm::vec4 GetPathTracerGiDiagnosticRoi() const { return m_ptGiDiagnosticRoi; }
+    void SetPathTracerGiDiagnosticRoi(const glm::vec4& roi);
     void ResetPathTracerTemporalDiagnostics();
     void InvalidateAllTemporalState() const;
     // Motion/object discontinuity without resetting DLSS/TAA jitter history (play stop).
@@ -560,12 +573,20 @@ private:
     PathTracerHdrCopyInputs BuildPathTracerHdrCopyInputs() const;
 
     struct ApplyFrameState;
+    enum class PtTemporalMetricKind : std::uint8_t
+    {
+        FullPathTracer,
+        GiStatic,
+        GiMotion,
+    };
     struct PtBoilMetricReadbackSlot
     {
         void* resource = nullptr;
         void* allocation = nullptr;
         std::uint64_t fenceValue = 0;
         bool pending = false;
+        PtTemporalMetricKind kind = PtTemporalMetricKind::FullPathTracer;
+        std::uint32_t sampleCount = 0;
     };
     void InitApplyFrame(
         ApplyFrameState& state,
@@ -809,6 +830,18 @@ private:
     mutable bool m_ptBoilMetricValid = false;
     mutable float m_ptBoilMetric = 0.0f;
     mutable float m_ptMeanLuminance = 0.0f;
+    mutable bool m_ptGiStaticMetricValid = false;
+    mutable bool m_ptGiMotionMetricValid = false;
+    mutable float m_ptGiStaticDelta = 0.0f;
+    mutable float m_ptGiStaticRelativeDelta = 0.0f;
+    mutable float m_ptGiStaticRelativeSigma = 0.0f;
+    mutable float m_ptGiStaticMeanLuminance = 0.0f;
+    mutable float m_ptGiMotionDelta = 0.0f;
+    mutable float m_ptGiMotionRelativeDelta = 0.0f;
+    mutable float m_ptGiMotionValidFraction = 0.0f;
+    mutable std::uint32_t m_ptGiStaticSampleCount = 0;
+    mutable std::uint32_t m_ptGiMotionSampleCount = 0;
+    glm::vec4 m_ptGiDiagnosticRoi{0.0f, 0.0f, 1.0f, 1.0f};
     mutable glm::mat4 m_ptTemporalStatsPrevViewProjection{1.0f};
     mutable std::array<PtBoilMetricReadbackSlot, 3> m_ptBoilMetricReadbackSlots{};
     mutable std::uint32_t m_ptBoilMetricReadbackWriteIndex = 0;

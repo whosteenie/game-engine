@@ -397,6 +397,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 [](Scene& target, bool enabled) {
                     target.GetRenderer().GetDxrSettings().SetRestirGiInitialEnabled(enabled);
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerTemporalDiagnostics();
                     target.MarkDirty();
                 });
             if (ImGui::IsItemHovered())
@@ -416,6 +417,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 [](Scene& target, bool enabled) {
                     target.GetRenderer().GetDxrSettings().SetRestirGiTemporalEnabled(enabled);
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerTemporalDiagnostics();
                     target.MarkDirty();
                 });
             if (ImGui::IsItemHovered())
@@ -435,6 +437,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 [](Scene& target, bool enabled) {
                     target.GetRenderer().GetDxrSettings().SetRestirGiSpatialEnabled(enabled);
                     target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerTemporalDiagnostics();
                     target.MarkDirty();
                 });
             if (ImGui::IsItemHovered())
@@ -509,6 +512,76 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 else if (statsSamples > 0u)
                 {
                     ImGui::TextDisabled("    PT boil metric: pending (%u samples)", statsSamples);
+                }
+
+                if (dxrSettings.IsRestirGiInitialEnabled())
+                {
+                    ImGui::Indent();
+                    ImGui::TextDisabled("P6/P7 GI diagnostics (screen-space ROI)");
+                    const glm::vec4 roi = screenSpaceEffects.GetPathTracerGiDiagnosticRoi();
+                    glm::vec2 roiCenter = 0.5f * (glm::vec2(roi) + glm::vec2(roi.z, roi.w));
+                    glm::vec2 roiHalfExtent = 0.5f * (glm::vec2(roi.z, roi.w) - glm::vec2(roi));
+                    bool roiChanged = ImGui::DragFloat2(
+                        "ROI center##pt-restir-gi",
+                        glm::value_ptr(roiCenter),
+                        0.005f,
+                        0.0f,
+                        1.0f,
+                        "%.3f");
+                    roiChanged |= ImGui::DragFloat2(
+                        "ROI half extent##pt-restir-gi",
+                        glm::value_ptr(roiHalfExtent),
+                        0.005f,
+                        0.01f,
+                        0.5f,
+                        "%.3f");
+                    if (roiChanged)
+                    {
+                        roiHalfExtent = glm::clamp(
+                            roiHalfExtent,
+                            glm::vec2(0.01f),
+                            glm::vec2(0.5f));
+                        roiCenter = glm::clamp(
+                            roiCenter,
+                            roiHalfExtent,
+                            glm::vec2(1.0f) - roiHalfExtent);
+                        screenSpaceEffects.SetPathTracerGiDiagnosticRoi(glm::vec4(
+                            roiCenter - roiHalfExtent,
+                            roiCenter + roiHalfExtent));
+                    }
+                    if (ImGui::SmallButton("Full frame##pt-restir-gi-roi"))
+                    {
+                        screenSpaceEffects.SetPathTracerGiDiagnosticRoi(
+                            glm::vec4(0.0f, 0.0f, 1.0f, 1.0f));
+                    }
+                    if (screenSpaceEffects.IsPathTracerGiStaticMetricValid())
+                    {
+                        ImGui::TextDisabled(
+                            "Static GI: delta %.5f (rel %.4f), sigma/mean %.4f, mean %.4f (%u frames)",
+                            screenSpaceEffects.GetPathTracerGiStaticDelta(),
+                            screenSpaceEffects.GetPathTracerGiStaticRelativeDelta(),
+                            screenSpaceEffects.GetPathTracerGiStaticRelativeSigma(),
+                            screenSpaceEffects.GetPathTracerGiStaticMeanLuminance(),
+                            screenSpaceEffects.GetPathTracerGiStaticSampleCount());
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Static GI: select 'static variance' debug view");
+                    }
+                    if (screenSpaceEffects.IsPathTracerGiMotionMetricValid())
+                    {
+                        ImGui::TextDisabled(
+                            "Motion GI: abs %.5f, relative %.4f, valid %.1f%% (%u frames)",
+                            screenSpaceEffects.GetPathTracerGiMotionDelta(),
+                            screenSpaceEffects.GetPathTracerGiMotionRelativeDelta(),
+                            100.0f * screenSpaceEffects.GetPathTracerGiMotionValidFraction(),
+                            screenSpaceEffects.GetPathTracerGiMotionSampleCount());
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("Motion GI: select 'motion-reprojected delta' debug view");
+                    }
+                    ImGui::Unindent();
                 }
             }
         }

@@ -73,7 +73,8 @@ namespace
 
     int PtTemporalStatsDebugModeIndex(const RenderDebugMode mode)
     {
-        return mode == RenderDebugMode::PtTemporalFrameDelta ? 1 : 0;
+        return mode == RenderDebugMode::PtTemporalFrameDelta
+            || mode == RenderDebugMode::PtRestirGiSpatialMotionDelta ? 1 : 0;
     }
 
     int GBufferDebugModeIndex(const RenderDebugMode mode)
@@ -497,15 +498,23 @@ bool PostProcessDebugPass::TryExecute(
             PtTemporalStatsDebugModeIndex(inputs.debugMode));
         inputs.ptTemporalStatsDebugShader->SetFloat("uDeltaGain", 25.0f);
         inputs.ptTemporalStatsDebugShader->SetFloat("uRelativeSigmaGain", 1.0f);
+        inputs.ptTemporalStatsDebugShader->SetVec2(
+            "uRoiMin", glm::vec2(inputs.ptGiDiagnosticRoi));
+        inputs.ptTemporalStatsDebugShader->SetVec2(
+            "uRoiMax", glm::vec2(inputs.ptGiDiagnosticRoi.z, inputs.ptGiDiagnosticRoi.w));
         inputs.ptTemporalStatsDebugShader->BindTextureSlot(0, inputs.ptTemporalStatsTarget->srvCpuHandle);
         inputs.ptTemporalStatsDebugShader->FlushUniforms();
         context.draw.DrawFullscreenQuad();
         FinishDebugView(
             inputs,
             outputs,
-            inputs.debugMode == RenderDebugMode::PtTemporalFrameDelta
-                ? "pt_temporal_frame_delta"
-                : "pt_temporal_relative_sigma");
+            inputs.debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta
+                ? "pt_restir_gi_spatial_motion_delta"
+                : (inputs.debugMode == RenderDebugMode::PtRestirGiSpatialStaticVariance
+                    ? "pt_restir_gi_spatial_static_variance"
+                    : (inputs.debugMode == RenderDebugMode::PtTemporalFrameDelta
+                        ? "pt_temporal_frame_delta"
+                        : "pt_temporal_relative_sigma")));
         return true;
     }
     else if (

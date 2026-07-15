@@ -699,6 +699,9 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssrIndirectTarget = const_cast<InternalTarget*>(&m_ssrIndirectTarget);
     debugInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
     debugInputs.ptTemporalStatsTarget = const_cast<InternalTarget*>(&m_ptTemporalStatsTarget);
+    debugInputs.ptGiDiagnosticRoi = IsPtRestirGiSpatialStatsDebugMode(state.debugMode)
+        ? m_ptGiDiagnosticRoi
+        : glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
     const bool ptReprojectionAudit = IsPtMotionReprojectionDebugMode(state.debugMode)
         || IsPtDepthReprojectionDebugMode(state.debugMode)
         || IsPtMatrixDepthReprojectionDebugMode(state.debugMode);

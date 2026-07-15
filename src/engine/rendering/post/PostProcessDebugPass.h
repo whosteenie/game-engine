@@ -70,6 +70,7 @@ struct PostProcessDebugPassInputs
     PostProcessTarget* ssrIndirectTarget = nullptr;
     PostProcessTarget* rtIndirectTarget = nullptr;
     PostProcessTarget* ptTemporalStatsTarget = nullptr;
+    glm::vec4 ptGiDiagnosticRoi{0.0f, 0.0f, 1.0f, 1.0f};
 
     std::uintptr_t ptCurrentRadianceSrv = 0;
     std::uintptr_t ptPreviousRadianceSrv = 0;
