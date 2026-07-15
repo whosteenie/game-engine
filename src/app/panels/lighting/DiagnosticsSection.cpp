@@ -32,6 +32,25 @@ void DrawDiagnosticsSection(const LightingPanelContext& ctx)
 
         LightingPanelWidgets::DrawDebugViewPicker(screenSpaceEffects, renderer);
 
+        ImGui::Spacing();
+        bool forceDlssReset = screenSpaceEffects.GetForceDlssResetEveryFrame();
+        if (ImGui::Checkbox("Force DLSS/RR reset every frame (diagnostic)", &forceDlssReset))
+        {
+            screenSpaceEffects.SetForceDlssResetEveryFrame(forceDlssReset);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "Sets Streamline's actual temporal reset flag on every evaluation. This is session-only "
+                "and tests whether an artifact is retained inside DLSS/RR history.");
+        }
+        if (forceDlssReset)
+        {
+            LightingPanelUi::DrawWrappedNote(
+                "Diagnostic active: Streamline history is reset every frame. Expect substantially more "
+                "noise or instability; if the ghost persists, it is already present before DLSS/RR.");
+        }
+
         const RenderDebugMode activeMode = screenSpaceEffects.GetDebugMode();
         if (const char* helpText = LightingPanelWidgets::RenderDebugModeHelpText(activeMode))
         {

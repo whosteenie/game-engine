@@ -43,6 +43,9 @@ struct DlssResolvePassInputs
     int tonemapMode = 0;
 
     bool dlssHistoryValid = false;
+    // Session-only diagnostic: forces Streamline's actual reset flag every evaluation. This is a
+    // decisive history-boundary test, unlike optional responsiveness/bias hints.
+    bool forceDlssResetEveryFrame = false;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;

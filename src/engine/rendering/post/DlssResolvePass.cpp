@@ -275,7 +275,8 @@ void DlssResolvePass::Execute(
 
         const glm::mat4 view = inputs.camera->GetViewMatrix();
         const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
-        in.reset = !inputs.dlssHistoryValid || !inputs.motionVectorState.historyValid || cameraCut;
+        in.reset = inputs.forceDlssResetEveryFrame || !inputs.dlssHistoryValid
+            || !inputs.motionVectorState.historyValid || cameraCut;
         if (cameraCut)
         {
             outputs.dlssHistoryValid = false;

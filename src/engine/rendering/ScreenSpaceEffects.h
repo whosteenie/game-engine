@@ -277,6 +277,9 @@ public:
 
     RenderDebugMode GetDebugMode() const;
     void SetDebugMode(RenderDebugMode mode);
+    // Session-only diagnostic: clear Streamline's temporal state on every evaluate.
+    bool GetForceDlssResetEveryFrame() const { return m_forceDlssResetEveryFrame; }
+    void SetForceDlssResetEveryFrame(bool enabled) { m_forceDlssResetEveryFrame = enabled; }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
     bool IsRtPrimaryDebugBlitReady() const;
@@ -818,6 +821,7 @@ private:
     // false the next DLSS evaluate sets the SL reset flag. Cleared on mode/preset change, resize,
     // and temporal-history invalidation.
     mutable bool m_dlssHistoryValid = false;
+    bool m_forceDlssResetEveryFrame = false;
     mutable bool m_dlssBloomHistoryValid = false;
     mutable int m_dlssBloomTemporalWarmupFrames = 0;
     mutable bool m_bloomHistoryValid = false;
