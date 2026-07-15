@@ -68,6 +68,20 @@ void RunRestirGiTests(int& failures)
     expect(IsInitialEligible(true, true, 0.0f, 0.1f, proposalPdf),
         "GI glossy input must use final-shading MIS instead of a hard eligibility cutoff");
     expect(IsInitialEligible(true, true, 0.0f, 0.5f, proposalPdf), "GI rough opaque sample must be eligible");
+
+    // RTXDI's GI boiling filter operates on radiance times UCW over a 16x16 reservoir tile. At the
+    // production default strength 0.2 the threshold is 41x: ordinary samples survive, while a
+    // genuinely bright reused reservoir is removed before it can spread through P7.
+    expect(
+        Near(BoilingFilterMultiplier(0.2f), 41.0f),
+        "GI boiling-filter default strength must retain RTXDI's 41x multiplier");
+    expect(
+        Near(EffectiveReservoirWeight(Float3{10.0f, 10.0f, 10.0f}, 2.0f), 20.0f),
+        "GI boiling filter must include stored radiance as well as UCW");
+    expect(
+        !ShouldBoilingFilter(40.0f, 1.0f, 0.2f)
+            && ShouldBoilingFilter(42.0f, 1.0f, 0.2f),
+        "GI boiling filter must reject only effective-weight outliers above the tile threshold");
     // Expected previous depth carries the camera translation explicitly. A dolly can therefore
     // match the same point without comparing two camera-relative depths for equality.
     expect(

@@ -1326,6 +1326,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     const std::uint32_t envCdfSrvIndex,
     const std::uintptr_t envMapSrvCpuHandle,
     const DxrRootSignature::RestirTemporalConstants& constants,
+    const bool dispatchGiBoilingFilterTiles,
     std::string& outError)
 {
     outError.clear();
@@ -1451,7 +1452,14 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
     }
 
-    recorder.DispatchRays(shaderBindingTable, width, height);
+    constexpr int kGiBoilingFilterTileSize = 16;
+    const int dispatchWidth = dispatchGiBoilingFilterTiles
+        ? (width + kGiBoilingFilterTileSize - 1) / kGiBoilingFilterTileSize
+        : width;
+    const int dispatchHeight = dispatchGiBoilingFilterTiles
+        ? (height + kGiBoilingFilterTileSize - 1) / kGiBoilingFilterTileSize
+        : height;
+    recorder.DispatchRays(shaderBindingTable, dispatchWidth, dispatchHeight);
 
     RecordDxrUavBarrier(commandList, m_primaryOutputResource);
     RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);

@@ -702,7 +702,7 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtRestirGiSpatialDelta:
             return "Signed P7-minus-P6 luminance. Gray=no change, warm=P7 brighter, blue=P7 darker. Use reference accumulation to distinguish variance from mean bias.";
         case RenderDebugMode::PtRestirGiSpatialEffectiveWeight:
-            return "Effective reservoir strength luminance(stored radiance) * UCW. Compare this candidate signal with the filter-score view; the current P7 filter still thresholds UCW alone.";
+            return "Effective reservoir strength luminance(stored radiance) * UCW. This is the signal consumed by the pre-spatial 16x16 GI boiling filter.";
         case RenderDebugMode::PtRestirGiSpatialJacobian:
             return "Selected spatial Jacobian on a signed log2 scale. Gray=1, warm=>1, blue=<1; saturation indicates the validation window boundary.";
         case RenderDebugMode::PtRestirGiSpatialNormalization:
@@ -712,7 +712,7 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtRestirGiSpatialSupport:
             return "Spatial support: R=compatible-neighbor fraction, G=nonzero-target source fraction, B=selected source index. Low/unstable green at the capsule contact indicates visibility/support churn.";
         case RenderDebugMode::PtRestirGiSpatialFilterScore:
-            return "Boiling diagnostic: R=log2(max effective-weight / neighborhood mean), G=log2(configured threshold), B=current UCW-only filter hit. R exceeding G without B identifies radiance-driven outliers the current detector misses.";
+            return "GI outlier-filter score relative to its configured cutoff. Navy=low, green=moderate, yellow=near cutoff, red=actually filtered, magenta=ineligible. At the default 0.2 strength the cutoff is 41x the 16x16 tile mean.";
         case RenderDebugMode::PtRestirGiSpatialStaticVariance:
             return "GI-only output running relative sigma for a stable camera. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. The configured ROI is outlined and reported numerically.";
         case RenderDebugMode::PtRestirGiSpatialMotionDelta:

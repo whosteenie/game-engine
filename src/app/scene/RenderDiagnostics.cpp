@@ -5,6 +5,7 @@
 #include "engine/camera/Camera.h"
 #include "engine/lighting/Light.h"
 #include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/DxrSettings.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
@@ -84,6 +85,7 @@ namespace
         out << "  Receives shadow: " << (object.ReceivesShadow() ? "yes" : "no") << "\n";
         out << "  Albedo: " << FormatVec3(object.GetMaterial().GetAlbedo()) << "\n";
         out << "  Roughness: " << object.GetMaterial().GetRoughness() << "\n";
+        out << "  Metallic: " << object.GetMaterial().GetMetallic() << "\n";
         out << "  Has AO map: " << (object.GetMaterial().HasAoMap() ? "yes" : "no") << "\n";
         out << "  Has normal map: " << (object.GetMaterial().HasNormalMap() ? "yes" : "no") << "\n";
 
@@ -146,7 +148,8 @@ namespace RenderDiagnostics
         const int viewportWidth,
         const int viewportHeight,
         const std::string& outputPath,
-        std::string& statusMessage)
+        std::string& statusMessage,
+        const char* captureDescription)
     {
         namespace fs = std::filesystem;
 
@@ -173,6 +176,11 @@ namespace RenderDiagnostics
             out << "[Viewport]\n";
             out << "Size: " << viewportWidth << " x " << viewportHeight << "\n";
             out << "Camera position: " << FormatVec3(camera.GetPosition()) << "\n\n";
+            if (captureDescription != nullptr && captureDescription[0] != '\0')
+            {
+                out << "[Capture procedure]\n";
+                out << captureDescription << "\n\n";
+            }
 
             scene.GetRenderer().PrepareGpuResources();
             if (!scene.GetRenderer().IsGpuResourcesReady())
@@ -338,6 +346,77 @@ namespace RenderDiagnostics
             out << "SSAO bias: " << effects.GetSsaoBias() << "\n";
             out << "AO strength: " << effects.GetAoStrength() << "\n";
             out << "Debug view: " << RenderDebugModeLabel(effects.GetDebugMode()) << "\n\n";
+
+            const DxrSettings& dxrSettings = scene.GetRenderer().GetDxrSettings();
+            const glm::vec4 giRoi = effects.GetPathTracerGiDiagnosticRoi();
+            out << "[P6/P7 GI instability diagnostics]\n";
+            out << "Terminology:\n";
+            out << "  static temporal instability = GI changes while camera and scene are fixed\n";
+            out << "  motion/view-dependent instability = motion-reprojected GI changes while navigating\n";
+            out << "  spatial bias/smear = stable wrong or over-smoothed structure (not temporal boiling)\n";
+            out << "ReSTIR GI initial (P5): "
+                << (dxrSettings.IsRestirGiInitialEnabled() ? "on" : "off") << "\n";
+            out << "ReSTIR GI temporal (P6): "
+                << (dxrSettings.IsRestirGiTemporalEnabled() ? "on" : "off") << "\n";
+            out << "ReSTIR GI spatial (P7): "
+                << (dxrSettings.IsRestirGiSpatialEnabled() ? "on" : "off") << "\n";
+            out << std::fixed << std::setprecision(6);
+            out << "ROI normalized min/max: (" << giRoi.x << ", " << giRoi.y << ") to ("
+                << giRoi.z << ", " << giRoi.w << ")\n";
+            out << "ROI pixels min/max: ("
+                << static_cast<int>(giRoi.x * static_cast<float>(viewportWidth)) << ", "
+                << static_cast<int>(giRoi.y * static_cast<float>(viewportHeight)) << ") to ("
+                << static_cast<int>(giRoi.z * static_cast<float>(viewportWidth)) << ", "
+                << static_cast<int>(giRoi.w * static_cast<float>(viewportHeight)) << ")\n";
+            if (effects.IsPathTracerGiStaticMetricValid())
+            {
+                out << "Static temporal measurement (readback average):\n";
+                out << "  mean absolute delta: " << effects.GetPathTracerGiStaticDelta() << "\n";
+                out << "  mean relative delta: " << effects.GetPathTracerGiStaticRelativeDelta() << "\n";
+                out << "  current running sigma/mean: " << effects.GetPathTracerGiStaticRelativeSigma() << "\n";
+                out << "  mean GI luminance: " << effects.GetPathTracerGiStaticMeanLuminance() << "\n";
+                out << "  accumulated frames: " << effects.GetPathTracerGiStaticSampleCount() << "\n";
+            }
+            else
+            {
+                out << "Static temporal measurement: not captured\n";
+            }
+            if (effects.IsPathTracerGiMotionMetricValid())
+            {
+                out << "Motion-reprojected measurement (readback average):\n";
+                out << "  mean absolute delta: " << effects.GetPathTracerGiMotionDelta() << "\n";
+                out << "  mean relative delta: " << effects.GetPathTracerGiMotionRelativeDelta() << "\n";
+                out << "  mean valid reprojection fraction: "
+                    << effects.GetPathTracerGiMotionValidFraction() << "\n";
+                out << "  p95 relative delta (mean per frame): "
+                    << effects.GetPathTracerGiMotionP95RelativeDelta() << "\n";
+                out << "  p99 relative delta (mean per frame): "
+                    << effects.GetPathTracerGiMotionP99RelativeDelta() << "\n";
+                out << "  session peak relative delta: "
+                    << effects.GetPathTracerGiMotionPeakRelativeDelta() << "\n";
+                out << "  hot fraction (relative delta >= 1): "
+                    << effects.GetPathTracerGiMotionHotFraction() << "\n";
+                out << "  4-pixel neighbor correlation: "
+                    << effects.GetPathTracerGiMotionNeighborCorrelation() << "\n";
+                out << "  3x3 low-frequency variance ratio: "
+                    << effects.GetPathTracerGiMotionLowFrequencyRatio() << "\n";
+                out << "  3x3 blurred hot fraction: "
+                    << effects.GetPathTracerGiMotionBlurredHotFraction() << "\n";
+                out << "  upper ROI-half p99 / hot fraction: "
+                    << effects.GetPathTracerGiMotionUpperP99RelativeDelta() << " / "
+                    << effects.GetPathTracerGiMotionUpperHotFraction() << "\n";
+                out << "  lower ROI-half p99 / hot fraction: "
+                    << effects.GetPathTracerGiMotionLowerP99RelativeDelta() << " / "
+                    << effects.GetPathTracerGiMotionLowerHotFraction() << "\n";
+                out << "  ROI halves are screen-space splits, not capsule/floor object masks.\n";
+                out << "  accumulated frames: " << effects.GetPathTracerGiMotionSampleCount() << "\n";
+            }
+            else
+            {
+                out << "Motion-reprojected measurement: not captured\n";
+            }
+            out << "Interpretation: compare P7 on/off with the same ROI and camera path. "
+                << "A stable smear can remain even when both temporal deltas are low.\n\n";
 
             std::uint32_t srvUsed = 0;
             std::uint32_t srvCapacity = 0;

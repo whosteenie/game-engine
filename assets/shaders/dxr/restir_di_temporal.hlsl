@@ -684,18 +684,9 @@ float3 ShadeGiWithInputMis(
     float metallic,
     float roughness)
 {
-    if (!GiReservoirValid(r)) return 0.0.xxx;
-
-    const float finalInputWeight = GiInitialMisWeight(
-        r.position, primaryPosition, shadingNormal, viewDirection,
-        albedo, metallic, roughness);
     const float initialInputWeight = GiInitialMisWeight(
         r.initialPosition, primaryPosition, shadingNormal, viewDirection,
         albedo, metallic, roughness);
-
-    const float3 finalRadiance = ShadeGi(
-        r, primaryPosition, receiver, geomNormal, shadingNormal, viewDirection,
-        albedo, metallic, roughness) * (1.0 - finalInputWeight);
 
     RestirGiReservoir initial = (RestirGiReservoir)0;
     initial.position = r.initialPosition;
@@ -703,9 +694,21 @@ float3 ShadeGiWithInputMis(
     initial.radiance = r.initialRadiance;
     initial.weightSum = r.initialWeightSum;
     initial.M = r.initialWeightSum > 0.0 ? 1u : 0u;
-    const float3 initialRadiance = ShadeGi(
+    const float3 initialContribution = ShadeGi(
         initial, primaryPosition, receiver, geomNormal, shadingNormal, viewDirection,
-        albedo, metallic, roughness) * initialInputWeight;
+        albedo, metallic, roughness);
+    // The pre-spatial boiling filter empties extreme reused reservoirs, matching RTXDI. Our P5
+    // input is carried inside the same record instead of a separate path-tracer input texture, so
+    // an empty output must fall back to that fresh input at full weight.
+    if (!GiReservoirValid(r)) return initialContribution;
+
+    const float finalInputWeight = GiInitialMisWeight(
+        r.position, primaryPosition, shadingNormal, viewDirection,
+        albedo, metallic, roughness);
+    const float3 finalRadiance = ShadeGi(
+        r, primaryPosition, receiver, geomNormal, shadingNormal, viewDirection,
+        albedo, metallic, roughness) * (1.0 - finalInputWeight);
+    const float3 initialRadiance = initialContribution * initialInputWeight;
     return finalRadiance + initialRadiance;
 }
 
@@ -947,6 +950,74 @@ void RestirTemporalRayGen()
 }
 
 [shader("raygeneration")]
+void RestirGiBoilingFilterRayGen()
+{
+    static const uint kTileSize = 16u;
+    const uint2 tileBase = DispatchRaysIndex().xy * kTileSize;
+
+    float weightSum = 0.0;
+    uint weightCount = 0u;
+    [loop]
+    for (uint y = 0u; y < kTileSize; ++y)
+    {
+        [loop]
+        for (uint x = 0u; x < kTileSize; ++x)
+        {
+            const uint2 pixel = tileBase + uint2(x, y);
+            if (any(pixel >= g_OutputSize)) continue;
+            const uint index = pixel.y * g_OutputSize.x + pixel.x;
+            const RestirGiReservoir reservoir = g_GiReservoirPrev[index];
+            if (!GiReservoirValid(reservoir)) continue;
+            const float effectiveWeight =
+                RestirDiTargetLuminance(max(reservoir.radiance, 0.0.xxx))
+                * reservoir.weightSum;
+            if (effectiveWeight > 0.0 && isfinite(effectiveWeight))
+            {
+                weightSum += effectiveWeight;
+                weightCount++;
+            }
+        }
+    }
+
+    const float averageNonzeroWeight = weightCount > 0u
+        ? weightSum / float(weightCount) : 0.0;
+    const float boilingMultiplier = 10.0
+        / clamp(g_SpatialFilterStrength, 1.0e-6, 1.0) - 9.0;
+
+    [loop]
+    for (uint writeY = 0u; writeY < kTileSize; ++writeY)
+    {
+        [loop]
+        for (uint writeX = 0u; writeX < kTileSize; ++writeX)
+        {
+            const uint2 pixel = tileBase + uint2(writeX, writeY);
+            if (any(pixel >= g_OutputSize)) continue;
+            const uint index = pixel.y * g_OutputSize.x + pixel.x;
+            g_ReservoirCurrent[index] = g_ReservoirPrev[index];
+
+            RestirGiReservoir reservoir = g_GiReservoirPrev[index];
+            reservoir.flags &= ~kRestirGiSampleBoilingFiltered;
+            const float effectiveWeight = GiReservoirValid(reservoir)
+                ? RestirDiTargetLuminance(max(reservoir.radiance, 0.0.xxx))
+                    * reservoir.weightSum
+                : 0.0;
+            const float ratio = averageNonzeroWeight > 0.0
+                ? effectiveWeight / averageNonzeroWeight : 0.0;
+            reservoir.padding0 = asuint(ratio);
+            if (g_SpatialFilterStrength > 0.0
+                && effectiveWeight > averageNonzeroWeight * boilingMultiplier)
+            {
+                // Preserve the attached P5 fields so final shading can take the fresh fallback.
+                reservoir.weightSum = 0.0;
+                reservoir.M = 0u;
+                reservoir.flags |= kRestirGiSampleBoilingFiltered;
+            }
+            g_GiReservoirCurrent[index] = reservoir;
+        }
+    }
+}
+
+[shader("raygeneration")]
 void RestirSpatialRayGen()
 {
     const uint2 pixel = DispatchRaysIndex().xy;
@@ -1018,7 +1089,7 @@ void RestirSpatialRayGen()
     bool anyFilterHit = false;
     bool giAnyNeighborAccepted = false;
     bool giAnyNeighborSelected = false;
-    bool giAnyFilterHit = false;
+    bool giAnyFilterHit = (temporalGi.flags & kRestirGiSampleBoilingFiltered) != 0u;
     bool giAnyJacobianRejected = false;
     bool giAnyZeroTarget = false;
     bool giNormalizationFailed = false;
@@ -1028,8 +1099,9 @@ void RestirSpatialRayGen()
     int2 giSelectedPixel = int2(pixel);
     float giSelectedJacobian = 1.0;
     float giNormalizationFactor = 1.0;
-    float giMaxFilterRatio = 0.0;
-    float giBoilingMultiplier = 0.0;
+    float giMaxFilterRatio = asfloat(temporalGi.padding0);
+    float giBoilingMultiplier = 10.0
+        / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
 
     if (g_EnableGiTemporal != 0u && GiReservoirValid(temporalGi))
     {
@@ -1045,55 +1117,18 @@ void RestirSpatialRayGen()
         uint giSelectedSource = 0u;
         float giSelectedTargetAtCenter = 0.0;
 
-        float giNonzeroWeightSum = 0.0;
-        float giNonzeroEffectiveWeightSum = 0.0;
-        uint giNonzeroWeightCount = 0u;
-        [loop]
-        for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
-        {
-            const int2 q = sourcePixels[sourceIndex];
-            const RestirGiReservoir sourceGi =
-                g_GiReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
-            if (GiReservoirValid(sourceGi))
-            {
-                giNonzeroWeightSum += sourceGi.weightSum;
-                giNonzeroEffectiveWeightSum += RestirDiTargetLuminance(max(sourceGi.radiance, 0.0.xxx))
-                    * sourceGi.weightSum;
-                giNonzeroWeightCount++;
-            }
-        }
-        const float giAverageNonzeroWeight = giNonzeroWeightCount > 0u
-            ? giNonzeroWeightSum / float(giNonzeroWeightCount) : 0.0;
-        const float boilingMultiplier = 10.0
-            / clamp(g_SpatialFilterStrength, 1e-6, 1.0) - 9.0;
-        giBoilingMultiplier = boilingMultiplier;
-        const float giAverageNonzeroEffectiveWeight = giNonzeroWeightCount > 0u
-            ? giNonzeroEffectiveWeightSum / float(giNonzeroWeightCount) : 0.0;
-
         [loop]
         for (uint sourceIndex = 0u; sourceIndex < sourceCount; ++sourceIndex)
         {
             const int2 q = sourcePixels[sourceIndex];
             RestirGiReservoir sourceGi =
                 g_GiReservoirPrev[uint(q.y) * g_OutputSize.x + uint(q.x)];
-            if (!GiReservoirValid(sourceGi)) continue;
-            const float sourceEffectiveWeight =
-                RestirDiTargetLuminance(max(sourceGi.radiance, 0.0.xxx)) * sourceGi.weightSum;
-            if (sourceIndex > 0u && giAverageNonzeroEffectiveWeight > 0.0)
-            {
-                giMaxFilterRatio = max(
-                    giMaxFilterRatio,
-                    sourceEffectiveWeight / giAverageNonzeroEffectiveWeight);
-            }
-            // Always retain the center estimate as the failure-safe fallback. Neighbor outliers use
-            // the same RTXDI multiplier convention as the production DI boiling filter.
-            if (sourceIndex > 0u && g_SpatialFilterStrength > 0.0
-                && giAverageNonzeroWeight > 0.0
-                && sourceGi.weightSum > giAverageNonzeroWeight * boilingMultiplier)
+            giMaxFilterRatio = max(giMaxFilterRatio, asfloat(sourceGi.padding0));
+            if ((sourceGi.flags & kRestirGiSampleBoilingFiltered) != 0u)
             {
                 giAnyFilterHit = true;
-                continue;
             }
+            if (!GiReservoirValid(sourceGi)) continue;
 
             const float4 sourcePos = g_CurrSurfacePositionDepth[q];
             const float jacobian = sourceIndex == 0u ? 1.0
@@ -1329,7 +1364,41 @@ void RestirSpatialRayGen()
     else if (g_DebugMode >= 33u && g_DebugMode <= 45u)
     {
         float3 debug = 0.0.xxx;
-        if (!GiReservoirValid(temporalGi))
+        if (g_DebugMode == 44u || g_DebugMode == 45u)
+        {
+            // The post-process statistics pass consumes raw GI and current linear depth. Keeping
+            // this un-tonemapped makes the numeric static/motion metrics physically meaningful.
+            g_Output[pixel] = float4(max(postSpatialGi, 0.0.xxx), centerPos.w);
+            return;
+        }
+        else if (g_DebugMode == 43u)
+        {
+            if (!eligible)
+            {
+                debug = float3(1.0, 0.0, 1.0);
+            }
+            else if (giAnyFilterHit)
+            {
+                // A filter hit is deliberately unmistakable. The previous packed-RGB view
+                // made the fixed threshold look green and the ratio look yellow, which was
+                // easy to misread as a rejection map.
+                debug = float3(1.0, 0.03, 0.01);
+            }
+            else
+            {
+                const float thresholdFraction = giBoilingMultiplier > 0.0
+                    ? saturate(giMaxFilterRatio / giBoilingMultiplier)
+                    : 0.0;
+                const float3 lowScore = float3(0.02, 0.08, 0.18);
+                const float3 midScore = float3(0.05, 0.65, 0.18);
+                const float3 nearThreshold = float3(1.0, 0.85, 0.05);
+                debug = thresholdFraction < 0.5
+                    ? lerp(lowScore, midScore, thresholdFraction * 2.0)
+                    : lerp(midScore, nearThreshold, (thresholdFraction - 0.5) * 2.0);
+            }
+        }
+        else if (!GiReservoirValid(temporalGi)
+            && (temporalGi.flags & kRestirGiSampleBoilingFiltered) == 0u)
         {
             debug = float3(1.0, 0.0, 1.0);
         }
@@ -1405,21 +1474,6 @@ void RestirSpatialRayGen()
                 float(giCompatibleNeighborCount) / 5.0,
                 float(giUsefulSourceCount) / max(float(sourceCount), 1.0),
                 float(giSelectedSourceDebug) / 5.0);
-        }
-        else if (g_DebugMode == 43u)
-        {
-            debug = float3(
-                saturate(log2(max(giMaxFilterRatio, 1.0)) / 8.0),
-                saturate(log2(max(giBoilingMultiplier, 1.0)) / 8.0),
-                giAnyFilterHit ? 1.0 : 0.0);
-        }
-        else
-        {
-            // The post-process statistics pass consumes raw GI and current linear depth. Keeping
-            // this un-tonemapped makes the numeric static/motion metrics physically meaningful.
-            const float4 old = g_Output[pixel];
-            g_Output[pixel] = float4(max(postSpatialGi, 0.0.xxx), centerPos.w);
-            return;
         }
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);

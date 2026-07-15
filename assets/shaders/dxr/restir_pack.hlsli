@@ -8,6 +8,7 @@
 static const uint kRestirSampleNoReuse = 1u;
 static const uint kRestirGiSampleTemporalReuse = 2u;
 static const uint kRestirGiSampleSpatialReuse = 4u;
+static const uint kRestirGiSampleBoilingFiltered = 8u;
 static const float kRestirGiMaxProposalPdf = 1.0e9;
 static const uint kRestirMCap = 20u;
 static const uint kRestirAgeCap = 30u;

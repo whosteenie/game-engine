@@ -156,6 +156,17 @@ public:
     float GetPathTracerGiMotionDelta() const { return m_ptGiMotionDelta; }
     float GetPathTracerGiMotionRelativeDelta() const { return m_ptGiMotionRelativeDelta; }
     float GetPathTracerGiMotionValidFraction() const { return m_ptGiMotionValidFraction; }
+    float GetPathTracerGiMotionP95RelativeDelta() const { return m_ptGiMotionP95RelativeDelta; }
+    float GetPathTracerGiMotionP99RelativeDelta() const { return m_ptGiMotionP99RelativeDelta; }
+    float GetPathTracerGiMotionPeakRelativeDelta() const { return m_ptGiMotionPeakRelativeDelta; }
+    float GetPathTracerGiMotionHotFraction() const { return m_ptGiMotionHotFraction; }
+    float GetPathTracerGiMotionNeighborCorrelation() const { return m_ptGiMotionNeighborCorrelation; }
+    float GetPathTracerGiMotionLowFrequencyRatio() const { return m_ptGiMotionLowFrequencyRatio; }
+    float GetPathTracerGiMotionBlurredHotFraction() const { return m_ptGiMotionBlurredHotFraction; }
+    float GetPathTracerGiMotionUpperP99RelativeDelta() const { return m_ptGiMotionUpperP99RelativeDelta; }
+    float GetPathTracerGiMotionLowerP99RelativeDelta() const { return m_ptGiMotionLowerP99RelativeDelta; }
+    float GetPathTracerGiMotionUpperHotFraction() const { return m_ptGiMotionUpperHotFraction; }
+    float GetPathTracerGiMotionLowerHotFraction() const { return m_ptGiMotionLowerHotFraction; }
     std::uint32_t GetPathTracerGiStaticSampleCount() const { return m_ptGiStaticSampleCount; }
     std::uint32_t GetPathTracerGiMotionSampleCount() const { return m_ptGiMotionSampleCount; }
     glm::vec4 GetPathTracerGiDiagnosticRoi() const { return m_ptGiDiagnosticRoi; }
@@ -839,8 +850,37 @@ private:
     mutable float m_ptGiMotionDelta = 0.0f;
     mutable float m_ptGiMotionRelativeDelta = 0.0f;
     mutable float m_ptGiMotionValidFraction = 0.0f;
+    mutable float m_ptGiMotionP95RelativeDelta = 0.0f;
+    mutable float m_ptGiMotionP99RelativeDelta = 0.0f;
+    mutable float m_ptGiMotionPeakRelativeDelta = 0.0f;
+    mutable float m_ptGiMotionHotFraction = 0.0f;
+    mutable float m_ptGiMotionNeighborCorrelation = 0.0f;
+    mutable float m_ptGiMotionLowFrequencyRatio = 0.0f;
+    mutable float m_ptGiMotionBlurredHotFraction = 0.0f;
+    mutable float m_ptGiMotionUpperP99RelativeDelta = 0.0f;
+    mutable float m_ptGiMotionLowerP99RelativeDelta = 0.0f;
+    mutable float m_ptGiMotionUpperHotFraction = 0.0f;
+    mutable float m_ptGiMotionLowerHotFraction = 0.0f;
     mutable std::uint32_t m_ptGiStaticSampleCount = 0;
     mutable std::uint32_t m_ptGiMotionSampleCount = 0;
+    mutable std::uint32_t m_ptGiStaticReadbackCount = 0;
+    mutable std::uint32_t m_ptGiMotionReadbackCount = 0;
+    mutable double m_ptGiStaticDeltaSum = 0.0;
+    mutable double m_ptGiStaticRelativeDeltaSum = 0.0;
+    mutable double m_ptGiStaticMeanLuminanceSum = 0.0;
+    mutable double m_ptGiMotionDeltaSum = 0.0;
+    mutable double m_ptGiMotionRelativeDeltaSum = 0.0;
+    mutable double m_ptGiMotionValidFractionSum = 0.0;
+    mutable double m_ptGiMotionP95RelativeDeltaSum = 0.0;
+    mutable double m_ptGiMotionP99RelativeDeltaSum = 0.0;
+    mutable double m_ptGiMotionHotFractionSum = 0.0;
+    mutable double m_ptGiMotionNeighborCorrelationSum = 0.0;
+    mutable double m_ptGiMotionLowFrequencyRatioSum = 0.0;
+    mutable double m_ptGiMotionBlurredHotFractionSum = 0.0;
+    mutable double m_ptGiMotionUpperP99RelativeDeltaSum = 0.0;
+    mutable double m_ptGiMotionLowerP99RelativeDeltaSum = 0.0;
+    mutable double m_ptGiMotionUpperHotFractionSum = 0.0;
+    mutable double m_ptGiMotionLowerHotFractionSum = 0.0;
     glm::vec4 m_ptGiDiagnosticRoi{0.0f, 0.0f, 1.0f, 1.0f};
     mutable glm::mat4 m_ptTemporalStatsPrevViewProjection{1.0f};
     mutable std::array<PtBoilMetricReadbackSlot, 3> m_ptBoilMetricReadbackSlots{};

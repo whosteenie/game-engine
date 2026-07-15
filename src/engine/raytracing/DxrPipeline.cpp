@@ -1623,11 +1623,13 @@ bool DxrPipeline::CreateRestirPipeline(std::string& outError)
 
     subobjects.exportNames = {
         L"RestirTemporalRayGen",
+        L"RestirGiBoilingFilterRayGen",
         L"RestirSpatialRayGen",
         L"RestirMiss",
         L"RestirClosestHit"};
     subobjects.allRtpsoExportNames = {
         L"RestirTemporalRayGen",
+        L"RestirGiBoilingFilterRayGen",
         L"RestirSpatialRayGen",
         L"RestirMiss",
         L"RestirClosestHit",

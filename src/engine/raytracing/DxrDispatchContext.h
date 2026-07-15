@@ -326,6 +326,7 @@ public:
         std::uint32_t envCdfSrvIndex,
         std::uintptr_t envMapSrvCpuHandle,
         const DxrRootSignature::RestirTemporalConstants& constants,
+        bool dispatchGiBoilingFilterTiles,
         std::string& outError);
 
     // G4: copy current depth/N+R → prev (call AFTER R2 temporal).

@@ -19,7 +19,7 @@
 
 void LightingPanel::Draw(
     Scene& scene,
-    const Camera& camera,
+    Camera& camera,
     const int viewportWidth,
     const int viewportHeight,
     UndoStack* undoStack,

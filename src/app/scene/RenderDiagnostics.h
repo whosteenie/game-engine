@@ -13,5 +13,6 @@ namespace RenderDiagnostics
         int viewportWidth,
         int viewportHeight,
         const std::string& outputPath,
-        std::string& statusMessage);
+        std::string& statusMessage,
+        const char* captureDescription = nullptr);
 }

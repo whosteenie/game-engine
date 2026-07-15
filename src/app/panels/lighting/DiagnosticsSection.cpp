@@ -16,6 +16,46 @@
 
 #include <string>
 
+namespace
+{
+    void DrawDiagnosticLegendEntry(const char* label, const ImVec4& color)
+    {
+        ImGui::PushID(label);
+        ImGui::ColorButton(
+            "##swatch",
+            color,
+            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop,
+            ImVec2(12.0f, 12.0f));
+        ImGui::SameLine();
+        ImGui::TextUnformatted(label);
+        ImGui::PopID();
+    }
+
+    void DrawP7DiagnosticLegend(const RenderDebugMode mode)
+    {
+        if (mode == RenderDebugMode::PtRestirGiSpatialFilterScore)
+        {
+            ImGui::TextDisabled("Legend (score is fraction of the active cutoff):");
+            DrawDiagnosticLegendEntry("navy: low outlier score", ImVec4(0.02f, 0.08f, 0.18f, 1.0f));
+            DrawDiagnosticLegendEntry("green: moderate score", ImVec4(0.05f, 0.65f, 0.18f, 1.0f));
+            DrawDiagnosticLegendEntry("yellow: near cutoff", ImVec4(1.0f, 0.85f, 0.05f, 1.0f));
+            DrawDiagnosticLegendEntry("red: actually filtered", ImVec4(1.0f, 0.03f, 0.01f, 1.0f));
+            DrawDiagnosticLegendEntry("magenta: ineligible", ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+        }
+        else if (mode == RenderDebugMode::PtRestirGiSpatialRejection)
+        {
+            ImGui::TextDisabled("Legend (categorical, not a heat map):");
+            DrawDiagnosticLegendEntry("green: useful compatible support", ImVec4(0.1f, 1.0f, 0.2f, 1.0f));
+            DrawDiagnosticLegendEntry("cyan: zero target or visibility", ImVec4(0.05f, 0.8f, 1.0f, 1.0f));
+            DrawDiagnosticLegendEntry("yellow: outlier-filter rejection", ImVec4(1.0f, 0.75f, 0.05f, 1.0f));
+            DrawDiagnosticLegendEntry("orange: Jacobian rejection", ImVec4(1.0f, 0.35f, 0.05f, 1.0f));
+            DrawDiagnosticLegendEntry("purple: normalization fallback", ImVec4(0.65f, 0.15f, 0.85f, 1.0f));
+            DrawDiagnosticLegendEntry("red: no useful source", ImVec4(1.0f, 0.1f, 0.05f, 1.0f));
+            DrawDiagnosticLegendEntry("magenta: ineligible or invalid", ImVec4(1.0f, 0.0f, 1.0f, 1.0f));
+        }
+    }
+}
+
 void DrawDiagnosticsSection(const LightingPanelContext& ctx)
 {
     Scene& scene = ctx.scene;
@@ -105,6 +145,7 @@ void DrawDiagnosticsSection(const LightingPanelContext& ctx)
         {
             ImGui::Spacing();
             LightingPanelUi::DrawWrappedHelp(helpText);
+            DrawP7DiagnosticLegend(activeMode);
             if (activeMode == RenderDebugMode::LightSpaceDepth)
             {
                 LightingPanelUi::DrawWrappedNote(

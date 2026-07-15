@@ -10,7 +10,9 @@ DxrRestirDispatch::~DxrRestirDispatch()
 void DxrRestirDispatch::Release()
 {
     m_spatialShaderBindingTable.Release();
+    m_giBoilingFilterShaderBindingTable.Release();
     m_spatialPipelineReady = false;
+    m_giBoilingFilterPipelineReady = false;
     ReleaseCore();
 }
 
@@ -23,12 +25,12 @@ bool DxrRestirDispatch::WarmUpPipelineIfNeeded()
 bool DxrRestirDispatch::EnsurePipelines(std::string& outError)
 {
     outError.clear();
-    if (m_pipelineReady && m_spatialPipelineReady)
+    if (m_pipelineReady && m_spatialPipelineReady && m_giBoilingFilterPipelineReady)
     {
         return true;
     }
 
-    // One RTPSO exports both raygens; temporal SBT uses the base table, spatial uses a second.
+    // One RTPSO exports temporal, GI boiling-filter, and spatial raygens, each with its own SBT.
     if (!EnsurePipelineWith(
             "restir-temporal",
             [](DxrPipeline& pipeline, std::string& pipelineError) {
@@ -57,6 +59,25 @@ bool DxrRestirDispatch::EnsurePipelines(std::string& outError)
         }
         m_spatialPipelineReady = true;
         DxrBreadcrumb("restir-spatial EnsurePipeline ok");
+    }
+
+    if (!m_giBoilingFilterPipelineReady)
+    {
+        DxrBreadcrumb("restir-gi-boiling-filter EnsurePipeline begin");
+        if (!m_giBoilingFilterShaderBindingTable.BuildRestirGiBoilingFilterTable(
+                m_pipeline.GetProperties(), outError))
+        {
+            DxrBreadcrumb("restir-gi-boiling-filter EnsurePipeline failed: build SBT");
+            m_giBoilingFilterShaderBindingTable.Release();
+            m_spatialShaderBindingTable.Release();
+            m_shaderBindingTable.Release();
+            m_pipeline.Release();
+            m_pipelineReady = false;
+            m_spatialPipelineReady = false;
+            return false;
+        }
+        m_giBoilingFilterPipelineReady = true;
+        DxrBreadcrumb("restir-gi-boiling-filter EnsurePipeline ok");
     }
 
     return true;

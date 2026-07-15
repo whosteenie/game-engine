@@ -22,16 +22,25 @@ public:
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }
-    bool IsSpatialPipelineReady() const { return m_spatialPipelineReady; }
+    bool IsSpatialPipelineReady() const
+    {
+        return m_spatialPipelineReady && m_giBoilingFilterPipelineReady;
+    }
 
     ID3D12StateObject* GetStateObject() const { return m_pipeline.GetStateObject(); }
     ID3D12RootSignature* GetGlobalRootSignature() const { return m_pipeline.GetGlobalRootSignature(); }
     const ShaderBindingTable& GetTemporalShaderBindingTable() const { return m_shaderBindingTable; }
+    const ShaderBindingTable& GetGiBoilingFilterShaderBindingTable() const
+    {
+        return m_giBoilingFilterShaderBindingTable;
+    }
     const ShaderBindingTable& GetSpatialShaderBindingTable() const { return m_spatialShaderBindingTable; }
 
 private:
     bool EnsurePipelines(std::string& outError);
 
     ShaderBindingTable m_spatialShaderBindingTable;
+    ShaderBindingTable m_giBoilingFilterShaderBindingTable;
     bool m_spatialPipelineReady = false;
+    bool m_giBoilingFilterPipelineReady = false;
 };

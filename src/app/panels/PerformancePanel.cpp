@@ -970,11 +970,11 @@ void PerformancePanel::Draw(
         const ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
         if (effects.IsPathTracerBoilMetricValid())
         {
-            ImGui::Text("PT boil metric: %.5f", effects.GetPathTracerBoilMetric());
+            ImGui::Text("PT frame-instability metric: %.5f", effects.GetPathTracerBoilMetric());
         }
         else
         {
-            ImGui::TextDisabled("PT boil metric: pending");
+            ImGui::TextDisabled("PT frame-instability metric: pending");
         }
         ImGui::Text("PT temporal stats samples: %u", effects.GetPathTracerTemporalStatsSampleCount());
         ImGui::Separator();

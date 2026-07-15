@@ -12,7 +12,7 @@ class LightingPanel
 public:
     void Draw(
         Scene& scene,
-        const Camera& camera,
+        Camera& camera,
         int viewportWidth,
         int viewportHeight,
         UndoStack* undoStack = nullptr,

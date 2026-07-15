@@ -12,7 +12,7 @@ struct RendererEditContext;
 struct LightingPanelContext
 {
     Scene& scene;
-    const Camera& camera;
+    Camera& camera;
     int viewportWidth;
     int viewportHeight;
     RendererEditContext& editContext;

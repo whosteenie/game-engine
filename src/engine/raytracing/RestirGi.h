@@ -53,6 +53,29 @@ inline Float3 ShadeFresh(
     return bsdfTimesCos * incomingRadiance * (std::max(ucw, 0.0f) * std::clamp(visibility, 0.0f, 1.0f));
 }
 
+inline float EffectiveReservoirWeight(const Float3 radiance, const float ucw)
+{
+    const float luminance = 0.2126f * std::max(radiance.x, 0.0f)
+        + 0.7152f * std::max(radiance.y, 0.0f)
+        + 0.0722f * std::max(radiance.z, 0.0f);
+    const float weight = luminance * std::max(ucw, 0.0f);
+    return std::isfinite(weight) ? weight : 0.0f;
+}
+
+inline float BoilingFilterMultiplier(const float strength)
+{
+    return 10.0f / std::clamp(strength, 1e-6f, 1.0f) - 9.0f;
+}
+
+inline bool ShouldBoilingFilter(
+    const float effectiveWeight,
+    const float averageNonzeroWeight,
+    const float strength)
+{
+    return strength > 0.0f && averageNonzeroWeight > 0.0f
+        && effectiveWeight > averageNonzeroWeight * BoilingFilterMultiplier(strength);
+}
+
 inline bool IsInitialEligible(
     const bool enabled,
     const bool hasSecondary,

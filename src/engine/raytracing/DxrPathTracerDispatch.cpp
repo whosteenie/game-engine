@@ -544,8 +544,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     constexpr std::uint32_t kSpatialIterations = 1u;
     constexpr float kSpatialRadii[kSpatialIterations] = {10.0f};
 
-    for (std::uint32_t iteration = 0; iteration < kSpatialIterations; ++iteration)
-    {
+    const auto makeSpatialConstants = [&](const std::uint32_t iteration, const bool shadeThisPass) {
         DxrRootSignature::RestirTemporalConstants constants{};
         constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
         constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
@@ -559,7 +558,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.prevCameraPos[1] = m_lastPrevCameraPos.y;
         constants.prevCameraPos[2] = m_lastPrevCameraPos.z;
         constants.maxTraceDistance = maxTraceDistance;
-        constants.shadeOutput = shadeOutput && iteration + 1u == kSpatialIterations ? 1u : 0u;
+        constants.shadeOutput = shadeThisPass ? 1u : 0u;
         constants.spatialSampleCount = 5u;
         constants.spatialRadius = kSpatialRadii[iteration];
         constants.spatialIteration = iteration;
@@ -580,6 +579,48 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         // The shared cbuffer fields select the corresponding resampling domain in either pass.
         constants.enableDiTemporal = enableDiSpatial ? 1u : 0u;
         constants.enableGiTemporal = enableGiSpatial ? 1u : 0u;
+        return constants;
+    };
+
+    if (enableGiSpatial)
+    {
+        const DxrRootSignature::RestirTemporalConstants filterConstants =
+            makeSpatialConstants(0u, false);
+        std::string filterError;
+        const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR GI boiling filter");
+        if (!m_dispatchContext.DispatchRestirSpatial(
+                commandList4,
+                restirDispatch.GetStateObject(),
+                restirDispatch.GetGlobalRootSignature(),
+                restirDispatch.GetGiBoilingFilterShaderBindingTable(),
+                accelerationStructures.GetTlasResource(),
+                accelerationStructures.GetTlasGpuVirtualAddress(),
+                accelerationStructures.GetEmissiveLightsSrvIndex() != UINT32_MAX
+                    ? accelerationStructures.GetEmissiveLightsSrvIndex()
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
+                    ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                    ? m_lastEnvImportanceCdfSrvIndex
+                    : accelerationStructures.GetGeometryLookupSrvIndex(),
+                m_lastEnvEquirectSrvCpuHandle,
+                filterConstants,
+                true,
+                filterError))
+        {
+            DxrLogErrorOnce(
+                "dispatch-restir-gi-boiling-filter-failure",
+                std::string("ReSTIR GI boiling filter failed: ") + filterError);
+            return false;
+        }
+    }
+
+    for (std::uint32_t iteration = 0; iteration < kSpatialIterations; ++iteration)
+    {
+        const DxrRootSignature::RestirTemporalConstants constants = makeSpatialConstants(
+            iteration,
+            shadeOutput && iteration + 1u == kSpatialIterations);
 
         std::string error;
         const GfxContext::GpuTimerScope gpuScope(
@@ -602,6 +643,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
                     : accelerationStructures.GetGeometryLookupSrvIndex(),
                 m_lastEnvEquirectSrvCpuHandle,
                 constants,
+                false,
                 error))
         {
             DxrLogErrorOnce(

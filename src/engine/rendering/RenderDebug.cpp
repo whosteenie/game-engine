@@ -197,7 +197,7 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiSpatialNormalization: return "PT ReSTIR GI: BASIC normalization";
     case RenderDebugMode::PtRestirGiSpatialMisWeights: return "PT ReSTIR GI: final MIS weights";
     case RenderDebugMode::PtRestirGiSpatialSupport: return "PT ReSTIR GI: spatial support";
-    case RenderDebugMode::PtRestirGiSpatialFilterScore: return "PT ReSTIR GI: boiling-filter score";
+    case RenderDebugMode::PtRestirGiSpatialFilterScore: return "PT ReSTIR GI: outlier-filter score";
     case RenderDebugMode::PtRestirGiSpatialStaticVariance: return "PT ReSTIR GI: static variance";
     case RenderDebugMode::PtRestirGiSpatialMotionDelta: return "PT ReSTIR GI: motion-reprojected delta";
     case RenderDebugMode::PtTemporalRelativeSigma:

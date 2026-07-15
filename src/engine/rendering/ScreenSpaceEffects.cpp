@@ -2056,11 +2056,40 @@ void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
     {
         m_ptGiStaticMetricValid = false;
         m_ptGiStaticSampleCount = 0;
+        m_ptGiStaticReadbackCount = 0;
+        m_ptGiStaticDeltaSum = 0.0;
+        m_ptGiStaticRelativeDeltaSum = 0.0;
+        m_ptGiStaticMeanLuminanceSum = 0.0;
     }
     else if (m_debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta)
     {
         m_ptGiMotionMetricValid = false;
         m_ptGiMotionSampleCount = 0;
+        m_ptGiMotionReadbackCount = 0;
+        m_ptGiMotionDeltaSum = 0.0;
+        m_ptGiMotionRelativeDeltaSum = 0.0;
+        m_ptGiMotionValidFractionSum = 0.0;
+        m_ptGiMotionP95RelativeDelta = 0.0f;
+        m_ptGiMotionP99RelativeDelta = 0.0f;
+        m_ptGiMotionPeakRelativeDelta = 0.0f;
+        m_ptGiMotionHotFraction = 0.0f;
+        m_ptGiMotionNeighborCorrelation = 0.0f;
+        m_ptGiMotionLowFrequencyRatio = 0.0f;
+        m_ptGiMotionBlurredHotFraction = 0.0f;
+        m_ptGiMotionUpperP99RelativeDelta = 0.0f;
+        m_ptGiMotionLowerP99RelativeDelta = 0.0f;
+        m_ptGiMotionUpperHotFraction = 0.0f;
+        m_ptGiMotionLowerHotFraction = 0.0f;
+        m_ptGiMotionP95RelativeDeltaSum = 0.0;
+        m_ptGiMotionP99RelativeDeltaSum = 0.0;
+        m_ptGiMotionHotFractionSum = 0.0;
+        m_ptGiMotionNeighborCorrelationSum = 0.0;
+        m_ptGiMotionLowFrequencyRatioSum = 0.0;
+        m_ptGiMotionBlurredHotFractionSum = 0.0;
+        m_ptGiMotionUpperP99RelativeDeltaSum = 0.0;
+        m_ptGiMotionLowerP99RelativeDeltaSum = 0.0;
+        m_ptGiMotionUpperHotFractionSum = 0.0;
+        m_ptGiMotionLowerHotFractionSum = 0.0;
     }
     m_ptTemporalStatsPrevViewProjection = glm::mat4(1.0f);
     for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
@@ -2086,6 +2115,35 @@ void ScreenSpaceEffects::SetPathTracerGiDiagnosticRoi(const glm::vec4& roi)
     m_ptGiMotionMetricValid = false;
     m_ptGiStaticSampleCount = 0;
     m_ptGiMotionSampleCount = 0;
+    m_ptGiStaticReadbackCount = 0;
+    m_ptGiMotionReadbackCount = 0;
+    m_ptGiStaticDeltaSum = 0.0;
+    m_ptGiStaticRelativeDeltaSum = 0.0;
+    m_ptGiStaticMeanLuminanceSum = 0.0;
+    m_ptGiMotionDeltaSum = 0.0;
+    m_ptGiMotionRelativeDeltaSum = 0.0;
+    m_ptGiMotionValidFractionSum = 0.0;
+    m_ptGiMotionP95RelativeDelta = 0.0f;
+    m_ptGiMotionP99RelativeDelta = 0.0f;
+    m_ptGiMotionPeakRelativeDelta = 0.0f;
+    m_ptGiMotionHotFraction = 0.0f;
+    m_ptGiMotionNeighborCorrelation = 0.0f;
+    m_ptGiMotionLowFrequencyRatio = 0.0f;
+    m_ptGiMotionBlurredHotFraction = 0.0f;
+    m_ptGiMotionUpperP99RelativeDelta = 0.0f;
+    m_ptGiMotionLowerP99RelativeDelta = 0.0f;
+    m_ptGiMotionUpperHotFraction = 0.0f;
+    m_ptGiMotionLowerHotFraction = 0.0f;
+    m_ptGiMotionP95RelativeDeltaSum = 0.0;
+    m_ptGiMotionP99RelativeDeltaSum = 0.0;
+    m_ptGiMotionHotFractionSum = 0.0;
+    m_ptGiMotionNeighborCorrelationSum = 0.0;
+    m_ptGiMotionLowFrequencyRatioSum = 0.0;
+    m_ptGiMotionBlurredHotFractionSum = 0.0;
+    m_ptGiMotionUpperP99RelativeDeltaSum = 0.0;
+    m_ptGiMotionLowerP99RelativeDeltaSum = 0.0;
+    m_ptGiMotionUpperHotFractionSum = 0.0;
+    m_ptGiMotionLowerHotFractionSum = 0.0;
     ResetPathTracerTemporalDiagnostics();
 }
 
@@ -2176,7 +2234,7 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
             continue;
         }
 
-        D3D12_RANGE readRange{0, sizeof(std::uint16_t) * 4};
+        D3D12_RANGE readRange{0, sizeof(std::uint16_t) * 16};
         void* mapped = nullptr;
         if (SUCCEEDED(readbackResource->Map(0, &readRange, &mapped)) && mapped != nullptr)
         {
@@ -2185,20 +2243,81 @@ void ScreenSpaceEffects::FinalizePendingPtBoilMetricReadback() const
             const float meanLuminance = std::max(HalfToFloat(halfChannels[1]), 0.0f);
             const float relativeDelta = std::max(HalfToFloat(halfChannels[2]), 0.0f);
             const float auxiliaryMetric = std::max(HalfToFloat(halfChannels[3]), 0.0f);
+            const float p95RelativeDelta = std::max(HalfToFloat(halfChannels[4]), 0.0f);
+            const float p99RelativeDelta = std::max(HalfToFloat(halfChannels[5]), 0.0f);
+            const float peakRelativeDelta = std::max(HalfToFloat(halfChannels[6]), 0.0f);
+            const float hotFraction = std::clamp(HalfToFloat(halfChannels[7]), 0.0f, 1.0f);
+            const float neighborCorrelation =
+                std::clamp(HalfToFloat(halfChannels[8]), -1.0f, 1.0f);
+            const float lowFrequencyRatio = std::max(HalfToFloat(halfChannels[9]), 0.0f);
+            const float blurredHotFraction =
+                std::clamp(HalfToFloat(halfChannels[10]), 0.0f, 1.0f);
+            const float upperP99RelativeDelta = std::max(HalfToFloat(halfChannels[12]), 0.0f);
+            const float lowerP99RelativeDelta = std::max(HalfToFloat(halfChannels[13]), 0.0f);
+            const float upperHotFraction =
+                std::clamp(HalfToFloat(halfChannels[14]), 0.0f, 1.0f);
+            const float lowerHotFraction =
+                std::clamp(HalfToFloat(halfChannels[15]), 0.0f, 1.0f);
             if (slot.kind == PtTemporalMetricKind::GiStatic)
             {
-                m_ptGiStaticDelta = delta;
-                m_ptGiStaticRelativeDelta = relativeDelta;
+                ++m_ptGiStaticReadbackCount;
+                m_ptGiStaticDeltaSum += delta;
+                m_ptGiStaticRelativeDeltaSum += relativeDelta;
+                m_ptGiStaticMeanLuminanceSum += meanLuminance;
+                const double sampleDivisor = static_cast<double>(m_ptGiStaticReadbackCount);
+                m_ptGiStaticDelta = static_cast<float>(m_ptGiStaticDeltaSum / sampleDivisor);
+                m_ptGiStaticRelativeDelta =
+                    static_cast<float>(m_ptGiStaticRelativeDeltaSum / sampleDivisor);
                 m_ptGiStaticRelativeSigma = auxiliaryMetric;
-                m_ptGiStaticMeanLuminance = meanLuminance;
+                m_ptGiStaticMeanLuminance =
+                    static_cast<float>(m_ptGiStaticMeanLuminanceSum / sampleDivisor);
                 m_ptGiStaticSampleCount = slot.sampleCount;
                 m_ptGiStaticMetricValid = true;
             }
             else if (slot.kind == PtTemporalMetricKind::GiMotion)
             {
-                m_ptGiMotionDelta = delta;
-                m_ptGiMotionRelativeDelta = relativeDelta;
-                m_ptGiMotionValidFraction = std::min(auxiliaryMetric, 1.0f);
+                ++m_ptGiMotionReadbackCount;
+                m_ptGiMotionDeltaSum += delta;
+                m_ptGiMotionRelativeDeltaSum += relativeDelta;
+                m_ptGiMotionValidFractionSum += std::min(auxiliaryMetric, 1.0f);
+                m_ptGiMotionP95RelativeDeltaSum += p95RelativeDelta;
+                m_ptGiMotionP99RelativeDeltaSum += p99RelativeDelta;
+                m_ptGiMotionPeakRelativeDelta =
+                    std::max(m_ptGiMotionPeakRelativeDelta, peakRelativeDelta);
+                m_ptGiMotionHotFractionSum += hotFraction;
+                m_ptGiMotionNeighborCorrelationSum += neighborCorrelation;
+                m_ptGiMotionLowFrequencyRatioSum += lowFrequencyRatio;
+                m_ptGiMotionBlurredHotFractionSum += blurredHotFraction;
+                m_ptGiMotionUpperP99RelativeDeltaSum += upperP99RelativeDelta;
+                m_ptGiMotionLowerP99RelativeDeltaSum += lowerP99RelativeDelta;
+                m_ptGiMotionUpperHotFractionSum += upperHotFraction;
+                m_ptGiMotionLowerHotFractionSum += lowerHotFraction;
+                const double sampleDivisor = static_cast<double>(m_ptGiMotionReadbackCount);
+                m_ptGiMotionDelta = static_cast<float>(m_ptGiMotionDeltaSum / sampleDivisor);
+                m_ptGiMotionRelativeDelta =
+                    static_cast<float>(m_ptGiMotionRelativeDeltaSum / sampleDivisor);
+                m_ptGiMotionValidFraction =
+                    static_cast<float>(m_ptGiMotionValidFractionSum / sampleDivisor);
+                m_ptGiMotionP95RelativeDelta =
+                    static_cast<float>(m_ptGiMotionP95RelativeDeltaSum / sampleDivisor);
+                m_ptGiMotionP99RelativeDelta =
+                    static_cast<float>(m_ptGiMotionP99RelativeDeltaSum / sampleDivisor);
+                m_ptGiMotionHotFraction =
+                    static_cast<float>(m_ptGiMotionHotFractionSum / sampleDivisor);
+                m_ptGiMotionNeighborCorrelation =
+                    static_cast<float>(m_ptGiMotionNeighborCorrelationSum / sampleDivisor);
+                m_ptGiMotionLowFrequencyRatio =
+                    static_cast<float>(m_ptGiMotionLowFrequencyRatioSum / sampleDivisor);
+                m_ptGiMotionBlurredHotFraction =
+                    static_cast<float>(m_ptGiMotionBlurredHotFractionSum / sampleDivisor);
+                m_ptGiMotionUpperP99RelativeDelta =
+                    static_cast<float>(m_ptGiMotionUpperP99RelativeDeltaSum / sampleDivisor);
+                m_ptGiMotionLowerP99RelativeDelta =
+                    static_cast<float>(m_ptGiMotionLowerP99RelativeDeltaSum / sampleDivisor);
+                m_ptGiMotionUpperHotFraction =
+                    static_cast<float>(m_ptGiMotionUpperHotFractionSum / sampleDivisor);
+                m_ptGiMotionLowerHotFraction =
+                    static_cast<float>(m_ptGiMotionLowerHotFractionSum / sampleDivisor);
                 m_ptGiMotionSampleCount = slot.sampleCount;
                 m_ptGiMotionMetricValid = true;
             }
@@ -2264,7 +2383,7 @@ void ScreenSpaceEffects::RecordPtBoilMetricReadback() const
     destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
     destination.PlacedFootprint.Offset = 0;
     destination.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-    destination.PlacedFootprint.Footprint.Width = 1;
+    destination.PlacedFootprint.Footprint.Width = 4;
     destination.PlacedFootprint.Footprint.Height = 1;
     destination.PlacedFootprint.Footprint.Depth = 1;
     destination.PlacedFootprint.Footprint.RowPitch = kReadbackPitch;
@@ -2307,7 +2426,7 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsTarget, m_width, m_height, statsFormat);
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalStatsScratchTarget, m_width, m_height, statsFormat);
     mutableThis->ResizeInternalTarget(mutableThis->m_ptTemporalPrevRadianceTarget, m_width, m_height, statsFormat);
-    mutableThis->ResizeInternalTarget(mutableThis->m_ptBoilMetricTarget, 1, 1, metricFormat);
+    mutableThis->ResizeInternalTarget(mutableThis->m_ptBoilMetricTarget, 4, 1, metricFormat);
 
     const bool giSignal = IsPtRestirGiSpatialStatsDebugMode(m_debugMode);
     const bool motionReproject = m_debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta;
@@ -2321,6 +2440,13 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     const bool cameraChanged =
         m_ptTemporalStatsSampleCount > 0
         && !MatricesNearEqual(viewProjection, m_ptTemporalStatsPrevViewProjection);
+    if (!motionReproject && cameraChanged)
+    {
+        // A static-camera measurement has a precise contract: any camera movement starts a new
+        // sample session. Clear both GPU history and CPU readback averages so navigation cannot
+        // silently contaminate the number shown after the camera settles.
+        mutableThis->ResetPathTracerTemporalDiagnostics();
+    }
     const bool resetStats = m_ptTemporalStatsSampleCount == 0 || (!motionReproject && cameraChanged);
 
     const float clearStats[] = {0.0f, 0.0f, 0.0f, 0.0f};
@@ -2378,7 +2504,7 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     DrawFullscreenToTarget(
         *m_ptBoilMetricShader,
         const_cast<InternalTarget&>(m_ptBoilMetricTarget),
-        1,
+        4,
         1,
         clearMetric);
 
@@ -3261,8 +3387,12 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
         != (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode)
             || IsPtDepthReprojectionDebugMode(mode)
             || IsPtMatrixDepthReprojectionDebugMode(mode));
+    const bool giTemporalDiagnosticKindChanged =
+        IsPtRestirGiSpatialStatsDebugMode(m_debugMode)
+        && IsPtRestirGiSpatialStatsDebugMode(mode)
+        && m_debugMode != mode;
     m_debugMode = mode;
-    if (isolateChanged || temporalDiagnosticsChanged)
+    if (isolateChanged || temporalDiagnosticsChanged || giTemporalDiagnosticKindChanged)
     {
         ResetPathTracerTemporalDiagnostics();
     }
