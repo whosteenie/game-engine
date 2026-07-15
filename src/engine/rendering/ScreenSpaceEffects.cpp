@@ -2046,6 +2046,7 @@ void ScreenSpaceEffects::ResetPathTracerAccumulation()
 
 void ScreenSpaceEffects::ResetPathTracerTemporalDiagnostics()
 {
+    m_ptTemporalDiagnosticsPaused = false;
     m_ptTemporalStatsSampleCount = 0;
     m_ptTemporalPrevRadianceValid = false;
     m_pendingPtBoilMetricReadback = false;
@@ -2417,6 +2418,11 @@ void ScreenSpaceEffects::UpdatePathTracerTemporalDiagnostics(const Camera& camer
     if (!m_pathTracerActive || m_dxrPathTracerOutputSrv == 0 || m_width <= 0 || m_height <= 0)
     {
         const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
+        return;
+    }
+
+    if (m_ptTemporalDiagnosticsPaused)
+    {
         return;
     }
 

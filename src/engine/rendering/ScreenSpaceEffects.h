@@ -171,6 +171,18 @@ public:
     std::uint32_t GetPathTracerGiMotionSampleCount() const { return m_ptGiMotionSampleCount; }
     glm::vec4 GetPathTracerGiDiagnosticRoi() const { return m_ptGiDiagnosticRoi; }
     void SetPathTracerGiDiagnosticRoi(const glm::vec4& roi);
+    void SetPathTracerTemporalDiagnosticsPaused(bool paused)
+    {
+        m_ptTemporalDiagnosticsPaused = paused;
+    }
+    bool ArePathTracerTemporalDiagnosticsPaused() const
+    {
+        return m_ptTemporalDiagnosticsPaused;
+    }
+    bool HasPendingPathTracerTemporalDiagnosticReadbacks() const
+    {
+        return m_pendingPtBoilMetricReadback;
+    }
     void ResetPathTracerTemporalDiagnostics();
     void InvalidateAllTemporalState() const;
     // Motion/object discontinuity without resetting DLSS/TAA jitter history (play stop).
@@ -838,6 +850,7 @@ private:
     mutable std::uint32_t m_ptTemporalStatsSampleCount = 0;
     mutable bool m_ptTemporalPrevRadianceValid = false;
     mutable bool m_pendingPtBoilMetricReadback = false;
+    bool m_ptTemporalDiagnosticsPaused = false;
     mutable bool m_ptBoilMetricValid = false;
     mutable float m_ptBoilMetric = 0.0f;
     mutable float m_ptMeanLuminance = 0.0f;
