@@ -3085,9 +3085,11 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
         PtDebugIsolateModeFromRenderDebug(m_debugMode) != PtDebugIsolateModeFromRenderDebug(mode);
     const bool temporalDiagnosticsChanged =
         (IsPtTemporalStatsDebugMode(m_debugMode) || IsPtMotionReprojectionDebugMode(m_debugMode)
-            || IsPtDepthReprojectionDebugMode(m_debugMode))
+            || IsPtDepthReprojectionDebugMode(m_debugMode)
+            || IsPtMatrixDepthReprojectionDebugMode(m_debugMode))
         != (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode)
-            || IsPtDepthReprojectionDebugMode(mode));
+            || IsPtDepthReprojectionDebugMode(mode)
+            || IsPtMatrixDepthReprojectionDebugMode(mode));
     m_debugMode = mode;
     if (isolateChanged || temporalDiagnosticsChanged)
     {

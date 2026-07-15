@@ -108,6 +108,7 @@ enum class RenderDebugMode
     PtTemporalFrameDelta,
     PtMotionReprojectionResidual,
     PtDepthReprojectionDisocclusion,
+    PtMatrixDepthReprojectionDisocclusion,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -130,6 +131,7 @@ bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 bool IsPtMotionReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
+bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
 inline constexpr int kPtDebugIsolateModeMax = 32;

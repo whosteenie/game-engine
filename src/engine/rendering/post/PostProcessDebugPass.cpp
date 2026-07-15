@@ -21,6 +21,7 @@ namespace
                IsPtTemporalStatsDebugMode(mode) ||
                IsPtMotionReprojectionDebugMode(mode) ||
                IsPtDepthReprojectionDebugMode(mode) ||
+               IsPtMatrixDepthReprojectionDebugMode(mode) ||
                IsSsgiDenoiseDebugMode(mode) ||
                IsSsrDebugMode(mode) ||
                IsDxrDebugMode(mode);
@@ -509,12 +510,13 @@ bool PostProcessDebugPass::TryExecute(
     }
     else if (
         (IsPtMotionReprojectionDebugMode(inputs.debugMode)
-            || IsPtDepthReprojectionDebugMode(inputs.debugMode)) &&
+            || IsPtDepthReprojectionDebugMode(inputs.debugMode)
+            || IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)) &&
         inputs.ptCurrentRadianceSrv != 0 &&
         inputs.ptPreviousRadianceSrv != 0 &&
         inputs.ptCurrentDepthSrv != 0 &&
         inputs.ptPreviousDepthSrv != 0 &&
-        inputs.ptMotionSrv != 0 &&
+        (IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode) || inputs.ptMotionSrv != 0) &&
         inputs.ptMotionReprojectionDebugShader != nullptr)
     {
         inputs.ptMotionReprojectionDebugShader->Use(false, true);
@@ -524,7 +526,12 @@ bool PostProcessDebugPass::TryExecute(
         inputs.ptMotionReprojectionDebugShader->SetInt("uCurrentDepth", 3);
         inputs.ptMotionReprojectionDebugShader->SetInt("uPreviousDepth", 4);
         inputs.ptMotionReprojectionDebugShader->SetInt(
-            "uDebugMode", IsPtDepthReprojectionDebugMode(inputs.debugMode) ? 1 : 0);
+            "uDebugMode",
+            IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)
+                ? 2
+                : (IsPtDepthReprojectionDebugMode(inputs.debugMode) ? 1 : 0));
+        inputs.ptMotionReprojectionDebugShader->SetMat4(
+            "uClipToPrevClip", inputs.ptClipToPrevClip);
         inputs.ptMotionReprojectionDebugShader->SetInt(
             "uPreviousFrameValid", inputs.ptPreviousRadianceValid ? 1 : 0);
         // These are the exact NDC-to-UV conversion scales passed to Streamline for this source.
@@ -546,9 +553,11 @@ bool PostProcessDebugPass::TryExecute(
         FinishDebugView(
             inputs,
             outputs,
-            IsPtDepthReprojectionDebugMode(inputs.debugMode)
-                ? "pt_depth_reprojection_disocclusion"
-                : "pt_motion_reprojection_residual");
+            IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)
+                ? "pt_matrix_depth_reprojection_disocclusion"
+                : (IsPtDepthReprojectionDebugMode(inputs.debugMode)
+                      ? "pt_depth_reprojection_disocclusion"
+                      : "pt_motion_reprojection_residual"));
         return true;
     }
 

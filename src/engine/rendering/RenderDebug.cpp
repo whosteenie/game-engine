@@ -195,6 +195,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT/DLSS motion: reprojection residual";
     case RenderDebugMode::PtDepthReprojectionDisocclusion:
         return "PT/DLSS depth: reprojection disocclusion";
+    case RenderDebugMode::PtMatrixDepthReprojectionDisocclusion:
+        return "PT/DLSS matrix: depth reprojection disocclusion";
     default:
         return "Unknown";
     }
@@ -432,6 +434,11 @@ bool IsPtMotionReprojectionDebugMode(const RenderDebugMode mode)
 bool IsPtDepthReprojectionDebugMode(const RenderDebugMode mode)
 {
     return mode == RenderDebugMode::PtDepthReprojectionDisocclusion;
+}
+
+bool IsPtMatrixDepthReprojectionDebugMode(const RenderDebugMode mode)
+{
+    return mode == RenderDebugMode::PtMatrixDepthReprojectionDisocclusion;
 }
 
 int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)

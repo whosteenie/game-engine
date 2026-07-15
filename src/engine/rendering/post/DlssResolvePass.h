@@ -136,6 +136,8 @@ public:
     // May prepare the selected PT bundle / sky patch because those are part of the exact guide
     // path that Evaluate uses. Callers must have the scene framebuffer in SRV state.
     static DlssTemporalGuideInputs ResolveTemporalGuideInputs(const DlssResolvePassInputs& inputs);
+    // Exact unjittered clip-space transform copied into Streamline's Constants this frame.
+    static glm::mat4 BuildClipToPrevClip(const DlssResolvePassInputs& inputs);
 
     static void Execute(
         const PostProcessContext& context,

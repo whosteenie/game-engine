@@ -555,7 +555,8 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
     }
     else if (m_dxrPathTracerOutputSrv != 0
         && (IsPtMotionReprojectionDebugMode(m_debugMode)
-            || IsPtDepthReprojectionDebugMode(m_debugMode)))
+            || IsPtDepthReprojectionDebugMode(m_debugMode)
+            || IsPtMatrixDepthReprojectionDebugMode(m_debugMode)))
     {
         PreparePathTracerMotionReprojectionAudit();
     }
@@ -695,7 +696,8 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
     debugInputs.ptTemporalStatsTarget = const_cast<InternalTarget*>(&m_ptTemporalStatsTarget);
     const bool ptReprojectionAudit = IsPtMotionReprojectionDebugMode(state.debugMode)
-        || IsPtDepthReprojectionDebugMode(state.debugMode);
+        || IsPtDepthReprojectionDebugMode(state.debugMode)
+        || IsPtMatrixDepthReprojectionDebugMode(state.debugMode);
     std::uintptr_t ptAuditDepthSrv = 0;
     if (ptReprojectionAudit)
     {
@@ -711,6 +713,7 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
         debugInputs.ptPreviousDepthSrv = m_ptTemporalPrevDepthTarget.srvCpuHandle;
         debugInputs.ptMotionSrv = guides.motionSrv;
         debugInputs.ptPreviousRadianceValid = m_ptTemporalPrevRadianceValid;
+        debugInputs.ptClipToPrevClip = DlssResolvePass::BuildClipToPrevClip(state.dlssInputs);
         ptAuditDepthSrv = guides.depthSrv;
         // Bundle preparation / the sky patch are internal fullscreen passes and leave their own
         // target bound. The audit itself must render to the editor viewport, not that scratch

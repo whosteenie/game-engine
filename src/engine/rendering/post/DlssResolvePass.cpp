@@ -181,6 +181,18 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
     return result;
 }
 
+glm::mat4 DlssResolvePass::BuildClipToPrevClip(const DlssResolvePassInputs& inputs)
+{
+    if (inputs.camera == nullptr || !inputs.motionVectorState.historyValid)
+    {
+        return glm::mat4(1.0f);
+    }
+
+    const glm::mat4 currentViewProjection =
+        inputs.camera->GetUnjitteredProjectionMatrix() * inputs.camera->GetViewMatrix();
+    return inputs.motionVectorState.prevViewProjection * glm::inverse(currentViewProjection);
+}
+
 void DlssResolvePass::Execute(
     const PostProcessContext& context,
     const DlssResolvePassInputs& inputs,
@@ -339,10 +351,7 @@ void DlssResolvePass::Execute(
         in.rrPreset = inputs.rrPreset;
 
         const glm::mat4 unjitteredProj = inputs.camera->GetUnjitteredProjectionMatrix();
-        const glm::mat4 currViewProj = unjitteredProj * view;
-        const glm::mat4 clipToPrevClip = inputs.motionVectorState.historyValid
-            ? inputs.motionVectorState.prevViewProjection * glm::inverse(currViewProj)
-            : glm::mat4(1.0f);
+        const glm::mat4 clipToPrevClip = BuildClipToPrevClip(inputs);
         std::memcpy(in.cameraViewToClip, glm::value_ptr(unjitteredProj), sizeof(float) * 16);
         const glm::mat4 clipToView = glm::inverse(unjitteredProj);
         std::memcpy(in.clipToCameraView, glm::value_ptr(clipToView), sizeof(float) * 16);

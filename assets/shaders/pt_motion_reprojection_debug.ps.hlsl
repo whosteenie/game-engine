@@ -16,6 +16,7 @@ SamplerState uPreviousDepthSampler : register(s4);
 
 cbuffer PerPixel : register(b0)
 {
+    float4x4 uClipToPrevClip;
     int uPreviousFrameValid;
     int uDebugMode;
     float uMotionScaleX;
@@ -52,16 +53,33 @@ float4 main(PSInput input) : SV_Target
     }
 
     const float2 currentUv = input.texCoord;
-    const float2 motion = uMotion.Sample(uMotionSampler, currentUv);
-    // Streamline's mvec scale maps our current-minus-previous NDC vector to the prior UV.
-    const float2 previousUv = currentUv + motion * float2(uMotionScaleX, uMotionScaleY);
+    float2 previousUv = 0.0.xx;
+    if (uDebugMode == 2)
+    {
+        const float currentDepth = uCurrentDepth.Sample(uCurrentDepthSampler, currentUv);
+        const float2 currentNdc = float2(currentUv.x * 2.0 - 1.0, 1.0 - currentUv.y * 2.0);
+        // This is the same current-clip -> previous-clip transform supplied to Streamline.
+        const float4 previousClip = mul(uClipToPrevClip, float4(currentNdc, currentDepth, 1.0));
+        if (abs(previousClip.w) < 1e-6)
+        {
+            return float4(0.03, 0.18, 0.95, 1.0);
+        }
+        const float2 previousNdc = previousClip.xy / previousClip.w;
+        previousUv = float2(previousNdc.x * 0.5 + 0.5, (1.0 - previousNdc.y) * 0.5);
+    }
+    else
+    {
+        const float2 motion = uMotion.Sample(uMotionSampler, currentUv);
+        // Streamline's mvec scale maps our current-minus-previous NDC vector to the prior UV.
+        previousUv = currentUv + motion * float2(uMotionScaleX, uMotionScaleY);
+    }
     if (any(previousUv < 0.0.xx) || any(previousUv > 1.0.xx))
     {
         // Blue is ordinary off-screen disocclusion, not a guide mismatch.
         return float4(0.03, 0.18, 0.95, 1.0);
     }
 
-    if (uDebugMode == 1)
+    if (uDebugMode == 1 || uDebugMode == 2)
     {
         const float currentDepth = uCurrentDepth.Sample(uCurrentDepthSampler, currentUv);
         const float previousDepth = uPreviousDepth.Sample(uPreviousDepthSampler, previousUv).r;
