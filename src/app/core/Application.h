@@ -109,6 +109,7 @@ private:
     bool m_globalEditorLayoutLoaded = false;
     bool m_editorLayoutRestoredFromDisk = false;
     bool m_pendingEditorLayoutValidation = false;
+    bool m_automationDualViewportLayout = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

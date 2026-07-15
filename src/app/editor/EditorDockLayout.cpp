@@ -38,6 +38,32 @@ void EditorDockLayout::BuildDefaultLayout(ImGuiID dockspaceId)
     ImGui::DockBuilderFinish(dockspaceId);
 }
 
+void EditorDockLayout::BuildDualViewportLayout(ImGuiID dockspaceId)
+{
+    ImGui::DockBuilderRemoveNode(dockspaceId);
+    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID dockMain = dockspaceId;
+    const ImGuiID dockLeft =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, kLeftColumnFraction, nullptr, &dockMain);
+    const ImGuiID dockRight =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, kRightColumnFraction, nullptr, &dockMain);
+    const ImGuiID dockBottom =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, kBottomRowFraction, nullptr, &dockMain);
+    const ImGuiID dockGame =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.5f, nullptr, &dockMain);
+
+    ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+    ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);
+    ImGui::DockBuilderDockWindow("Performance", dockRight);
+    ImGui::DockBuilderDockWindow("Inspector", dockRight);
+    ImGui::DockBuilderDockWindow("Project", dockBottom);
+    ImGui::DockBuilderDockWindow("Scene View", dockMain);
+    ImGui::DockBuilderDockWindow("Game View", dockGame);
+    ImGui::DockBuilderFinish(dockspaceId);
+}
+
 void EditorDockLayout::AllowViewportUndocking(const ImGuiID dockspaceId)
 {
     if (ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockspaceId))

@@ -1,5 +1,7 @@
 #include "engine/rhi/DlssContext.h"
 
+#include "engine/platform/FrameDiagnostics.h"
+
 #include "engine/rhi/GfxContext.h"
 
 #include "engine/platform/EngineLog.h"
@@ -379,17 +381,42 @@ sl::Resource MakeTex(void* native, unsigned int state, unsigned int width, unsig
     resource.height = height;
     return resource;
 }
+
+const char* ToTraceQuality(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::DLAA: return "dlaa";
+    case DlssQuality::Quality: return "quality";
+    case DlssQuality::Balanced: return "balanced";
+    case DlssQuality::Performance: return "performance";
+    case DlssQuality::UltraPerformance: return "ultra-performance";
+    }
+    return "unknown";
+}
+
+const char* ToTraceFeature(const DlssFrameInputs& inputs)
+{
+    return inputs.useRayReconstruction ? "rr" : "dlss";
+}
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
 
 bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
 {
 #ifndef GAME_ENGINE_ENABLE_DLSS
-    (void)inputs;
+    FrameDiagnostics::LogDlssEvent(inputs.viewportId, "dlss", "unknown", "skipped", "compiled-out", false, 0, false, 0);
     return false;
 #else
+    const auto logSkip = [&](const char* reason)
+    {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "skipped", reason,
+            false, 0, false, 0);
+    };
     if (!IsReady() || !IsRuntimeInitialized())
     {
+        logSkip("runtime-unavailable");
         return false;
     }
     if (inputs.useRayReconstruction)
@@ -397,22 +424,26 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         if (!IsRrSupported() || g_slDLSSDSetOptions == nullptr || inputs.diffuseAlbedo == nullptr
             || inputs.specularAlbedo == nullptr || inputs.normalRoughness == nullptr)
         {
+            logSkip("rr-unavailable-or-guides-missing");
             return false;
         }
     }
     else if (!IsDlssSupported() || g_slDLSSSetOptions == nullptr)
     {
+        logSkip("dlss-unavailable");
         return false;
     }
     if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr
         || g_slSetTagForFrame == nullptr || g_slEvaluateFeature == nullptr)
     {
+        logSkip("streamline-entrypoint-missing");
         return false;
     }
     if (inputs.commandList == nullptr || inputs.colorInput == nullptr
         || inputs.colorOutput == nullptr || inputs.depth == nullptr
         || inputs.motionVectors == nullptr)
     {
+        logSkip("required-input-missing");
         return false;
     }
 
@@ -426,6 +457,9 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     sl::FrameToken* frameToken = nullptr;
     if (g_slGetNewFrameToken(frameToken, &frameIndex) != sl::Result::eOk || frameToken == nullptr)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "frame-token-acquisition-failed", inputs.useSubmissionFrameIndex, frameIndex, false, 0);
         return false;
     }
 
@@ -484,6 +518,9 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     if (g_slSetTagForFrame(*frameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "tagging-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
         return false;
     }
 
@@ -514,6 +551,9 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.reset = inputs.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     if (g_slSetConstants(consts, *frameToken, viewport) != sl::Result::eOk)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "constants-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
         return false;
     }
 
@@ -545,6 +585,9 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         CopyMatrix(rrOptions.cameraViewToWorld, inputs.cameraViewToWorld);
         if (g_slDLSSDSetOptions(viewport, rrOptions) != sl::Result::eOk)
         {
+            FrameDiagnostics::LogDlssEvent(
+                inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+                "rr-options-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
             return false;
         }
         feature = sl::kFeatureDLSS_RR;
@@ -561,6 +604,9 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
         if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
         {
+            FrameDiagnostics::LogDlssEvent(
+                inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+                "dlss-options-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
             return false;
         }
     }
@@ -579,8 +625,14 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
                 "dlss",
                 std::string("slEvaluateFeature failed (") + ResultToString(evalResult) + ")");
         }
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "evaluate-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
         return false;
     }
+    FrameDiagnostics::LogDlssEvent(
+        inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "evaluated", "none",
+        inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
     return true;
 #endif
 }

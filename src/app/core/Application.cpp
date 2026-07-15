@@ -461,6 +461,11 @@ void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
     ProjectLoadBenchmark::StartFromEnvironment();
+    m_automationDualViewportLayout = std::getenv("GAME_ENGINE_AUTOMATION_DUAL_VIEW") != nullptr;
+    if (m_automationDualViewportLayout)
+    {
+        m_editorDockSpace->SetAutomationDualViewportLayout(true);
+    }
 
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
     {
@@ -1306,6 +1311,11 @@ void Application::ApplyProjectEditorState(const ProjectEditorState& editorState)
     m_projectFilesPanel->ShowPanel() = editorState.showProjectFiles;
     m_sceneViewportPanel->ShowPanel() = editorState.showSceneView;
     m_gameViewportPanel->ShowPanel() = editorState.showGameView;
+    if (m_automationDualViewportLayout)
+    {
+        m_sceneViewportPanel->ShowPanel() = true;
+        m_gameViewportPanel->ShowPanel() = true;
+    }
 
     std::unordered_map<SceneObjectId, bool> hierarchyOpenStates;
     const int objectCount = static_cast<int>(m_scene->GetObjects().size());
@@ -1605,14 +1615,16 @@ void Application::Render()
 
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {
+        FrameDiagnostics::BeginApplicationFrame();
         FrameDiagnostics::LogPhase("render-begin");
         m_renderer->BeginFrame();
     });
 
     bool sceneFramePresented = false;
-    if (editorActive
+    const bool sceneViewWillRender = editorActive
         && (projectLoadBenchmarkActive || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
-        && m_sceneViewportPanel->HasValidRenderTarget())
+        && m_sceneViewportPanel->HasValidRenderTarget();
+    if (sceneViewWillRender)
     {
         RunApplicationPhase("scene-view-render", [&]() {
             FrameDiagnostics::LogPhase("scene-view-render");
@@ -1666,10 +1678,17 @@ void Application::Render()
             sceneViewScope.Success();
         });
     }
+    else
+    {
+        FrameDiagnostics::LogDlssEvent(
+            0, "not-evaluated", "not-evaluated", "skipped", "scene-view-not-rendered",
+            false, 0, false, 0);
+    }
 
-    if (editorActive
+    const bool gameViewWillRender = editorActive
         && EditorPanelConstraints::IsViewportTabSelected("Game View")
-        && m_gameViewportPanel->HasValidRenderTarget())
+        && m_gameViewportPanel->HasValidRenderTarget();
+    if (gameViewWillRender)
     {
         RunApplicationPhase("game-view-render", [&]() {
             Scene* gameScene = m_scene.get();
@@ -1736,6 +1755,12 @@ void Application::Render()
             }
         });
     }
+    else
+    {
+        FrameDiagnostics::LogDlssEvent(
+            1, "not-evaluated", "not-evaluated", "skipped", "game-view-not-rendered",
+            false, 0, false, 0);
+    }
 
     if (presentingProjectLoad)
     {
@@ -1757,6 +1782,7 @@ void Application::Render()
     RunApplicationPhase("present", [&]() {
         FrameDiagnostics::LogPhase("present");
         m_renderer->EndFrame(m_window);
+        FrameDiagnostics::EndApplicationFrame();
     });
     if (m_projectLoadBenchmarkAwaitingGpuCompletion && ProjectLoadBenchmark::IsActive())
     {

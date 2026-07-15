@@ -1,5 +1,7 @@
 #include "engine/rendering/post/DlssResolvePass.h"
 
+#include "engine/platform/FrameDiagnostics.h"
+
 #include "engine/camera/Camera.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/SceneRenderTrace.h"
@@ -50,6 +52,19 @@ namespace
     glm::vec2 DlssMvecScale()
     {
         return glm::vec2(-0.5f, 0.5f);
+    }
+
+    const char* DlssTraceQuality(const DlssQuality quality)
+    {
+        switch (quality)
+        {
+        case DlssQuality::DLAA: return "dlaa";
+        case DlssQuality::Quality: return "quality";
+        case DlssQuality::Balanced: return "balanced";
+        case DlssQuality::Performance: return "performance";
+        case DlssQuality::UltraPerformance: return "ultra-performance";
+        }
+        return "unknown";
     }
 
     float DlssExposureScaleFromEv(const float exposureEv)
@@ -225,6 +240,16 @@ void DlssResolvePass::Execute(
         || inputs.dlssOutputTarget->resource == nullptr
         || context.renderWidth <= 0 || inputs.viewportWidth <= 0)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.dlssViewportId,
+            inputs.rayReconstructionActive ? "rr" : "dlss",
+            DlssTraceQuality(inputs.quality),
+            "skipped",
+            "invalid-resolve-input",
+            false,
+            0,
+            false,
+            0);
         return;
     }
 
@@ -463,6 +488,19 @@ void DlssResolvePass::Execute(
             }
         }
         evalScope.Success();
+    }
+    else
+    {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.dlssViewportId,
+            inputs.rayReconstructionActive ? "rr" : "dlss",
+            DlssTraceQuality(inputs.quality),
+            "skipped",
+            dlssUsable ? "missing-hdr-input" : "streamline-unavailable",
+            false,
+            0,
+            false,
+            0);
     }
 
     if (outputs.dlssRan)
