@@ -39,10 +39,14 @@ void LightingPanel::Draw(
     glm::vec3 cameraPosition = camera.GetPosition();
     EditorWidgets::SanitizeSignedZero(cameraPosition);
     ImGui::Text(
-        "Camera: (%.1f, %.1f, %.1f)",
+        "Camera position: (%.4f, %.4f, %.4f)",
         cameraPosition.x,
         cameraPosition.y,
         cameraPosition.z);
+    ImGui::Text(
+        "Camera rotation (deg): yaw %.4f, pitch %.4f",
+        camera.GetYaw(),
+        camera.GetPitch());
 
     SceneRenderer& renderer = scene.GetRenderer();
     if (renderer.HasPendingRendererSettings())
