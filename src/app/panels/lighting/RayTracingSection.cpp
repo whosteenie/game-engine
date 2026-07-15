@@ -776,6 +776,18 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 ? (renderer.IsPathTracerSerActive() ? "active for PT path rays" : "available (automatic)")
                 : "unavailable");
         ImGui::Text("DXR library profile: %s", gfx.GetPreferredDxrLibraryProfile());
+        const DxrRuntimeSnapshot& runtimeSnapshot = gfx.GetDxrRuntimeSnapshot();
+        ImGui::Text(
+            "S0-P1 snapshot v%u | Options22: %s | actual reorder: %s",
+            DxrRuntimeSnapshot::SchemaVersion,
+            runtimeSnapshot.options22Query.c_str(),
+            runtimeSnapshot.options22ActuallyReorders ? "yes" : "no");
+        ImGui::Text(
+            "PT SER policy: %s | selected: %s | dispatched: %s",
+            runtimeSnapshot.requestedSerPolicy.c_str(),
+            runtimeSnapshot.selectedPermutation.c_str(),
+            runtimeSnapshot.dispatchedPermutation.c_str());
+        ImGui::Text("PT fallback reason: %s", runtimeSnapshot.fallbackReason.c_str());
 
         if (!raytracingSupported)
         {

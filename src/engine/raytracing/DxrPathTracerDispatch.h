@@ -103,7 +103,7 @@ public:
     bool IsPipelineReady() const;
     bool DispatchedThisFrame() const { return m_dispatchedThisFrame; }
     SerOverride GetSerOverride() const { return m_serOverride; }
-    void SetSerOverride(SerOverride value) { m_serOverride = value; }
+    void SetSerOverride(SerOverride value);
     bool IsSerActive() const { return m_activeSerPermutation; }
     static bool ShouldUseSerPermutation(const bool supported, const SerOverride override)
     {

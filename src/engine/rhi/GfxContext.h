@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/rendering/TextureSamplerSettings.h"
+#include "engine/rendering/DxrRuntimeSnapshot.h"
 #include "engine/rhi/GpuProfiler.h"
 
 #include <cstdint>
@@ -204,6 +205,19 @@ public:
     bool IsMeshShaderSupported() const { return m_meshShaderTier > 0; }
     int GetMeshShaderTier() const { return m_meshShaderTier; }
     const std::string& GetAdapterDescription() const { return m_adapterDescription; }
+    const DxrRuntimeSnapshot& GetDxrRuntimeSnapshot() const { return m_dxrRuntimeSnapshot; }
+    void SetDxrRuntimeSerPolicy(const char* policy);
+    void ReportDxrPathTracerPipelineResult(
+        bool diagnosticPermutation,
+        bool serPermutation,
+        const char* compilerLibraryResult,
+        const char* rtpsoResult,
+        const char* fallbackReason);
+    void ReportDxrPathTracerSelection(
+        bool diagnosticPermutation,
+        bool serPermutation,
+        const char* fallbackReason);
+    void ReportDxrPathTracerDispatch(bool diagnosticPermutation, bool serPermutation);
 
     struct GpuMemoryInfo
     {
@@ -289,5 +303,6 @@ private:
     int m_meshShaderTier = 0;
     std::string m_adapterDescription;
     std::uint64_t m_adapterDedicatedVideoMemory = 0;
+    DxrRuntimeSnapshot m_dxrRuntimeSnapshot;
     GpuProfiler m_gpuProfiler;
 };

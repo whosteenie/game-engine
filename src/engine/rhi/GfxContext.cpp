@@ -20,9 +20,11 @@
 #include <GLFW/glfw3native.h>
 
 #include <D3D12MemAlloc.h>
+#include <d3d10.h>
 #include <d3d12.h>
 #include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
+#include <winternl.h>
 
 #include <wrl/client.h>
 
@@ -342,6 +344,37 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         m_impl->Adapter->GetDesc1(&adapterDesc);
         m_adapterDescription = GfxContextDetail::WideToUtf8(adapterDesc.Description);
         m_adapterDedicatedVideoMemory = adapterDesc.DedicatedVideoMemory;
+        m_dxrRuntimeSnapshot = {};
+        m_dxrRuntimeSnapshot.adapterDescription = m_adapterDescription;
+        m_dxrRuntimeSnapshot.adapterVendorId = adapterDesc.VendorId;
+        m_dxrRuntimeSnapshot.adapterDeviceId = adapterDesc.DeviceId;
+
+        LARGE_INTEGER driverVersion{};
+        if (SUCCEEDED(m_impl->Adapter->CheckInterfaceSupport(__uuidof(ID3D10Device), &driverVersion)))
+        {
+            const std::uint64_t version = static_cast<std::uint64_t>(driverVersion.QuadPart);
+            m_dxrRuntimeSnapshot.driverVersion = std::to_string((version >> 48u) & 0xffffu) + "."
+                + std::to_string((version >> 32u) & 0xffffu) + "."
+                + std::to_string((version >> 16u) & 0xffffu) + "."
+                + std::to_string(version & 0xffffu);
+        }
+
+        RTL_OSVERSIONINFOW osVersion{};
+        osVersion.dwOSVersionInfoSize = sizeof(osVersion);
+        using RtlGetVersionFn = LONG(WINAPI*)(RTL_OSVERSIONINFOW*);
+        const auto rtlGetVersion = reinterpret_cast<RtlGetVersionFn>(
+            GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlGetVersion"));
+        if (rtlGetVersion != nullptr && rtlGetVersion(&osVersion) == 0)
+        {
+            m_dxrRuntimeSnapshot.osVersion = std::to_string(osVersion.dwMajorVersion) + "."
+                + std::to_string(osVersion.dwMinorVersion) + "." + std::to_string(osVersion.dwBuildNumber);
+        }
+#if defined(GAME_ENGINE_AGILITY_SDK_PACKAGE_VERSION)
+        m_dxrRuntimeSnapshot.agilityPackageVersion = GAME_ENGINE_AGILITY_SDK_PACKAGE_VERSION;
+#endif
+#if defined(GAME_ENGINE_AGILITY_SDK_VERSION)
+        m_dxrRuntimeSnapshot.agilityLoaderVersion = std::to_string(GAME_ENGINE_AGILITY_SDK_VERSION);
+#endif
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5{};
         if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
@@ -368,6 +401,25 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         else
         {
             m_highestShaderModel = 0;
+        }
+
+        D3D12_FEATURE_DATA_D3D12_OPTIONS22 options22{};
+        if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
+                D3D12_FEATURE_D3D12_OPTIONS22,
+                &options22,
+                sizeof(options22))))
+        {
+            m_dxrRuntimeSnapshot.options22Query = "succeeded";
+            m_dxrRuntimeSnapshot.options22ActuallyReorders =
+                options22.ShaderExecutionReorderingActuallyReorders != FALSE;
+            m_dxrRuntimeSnapshot.options22ByteOffsetViewsSupported =
+                options22.CreateByteOffsetViewsSupported != FALSE;
+            m_dxrRuntimeSnapshot.options22Max1DDispatchSize = options22.Max1DDispatchSize;
+            m_dxrRuntimeSnapshot.options22Max1DDispatchMeshSize = options22.Max1DDispatchMeshSize;
+        }
+        else
+        {
+            m_dxrRuntimeSnapshot.options22Query = "unsupported_or_query_failed";
         }
 
         // Some drivers report tier 0 on ID3D12Device even when ID3D12Device5 + AS builds work.
@@ -429,6 +481,10 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
                 "gfx",
                 "Mesh shaders are not supported on this GPU or driver. Mesh-shader scene rendering will be disabled.");
         }
+
+        m_dxrRuntimeSnapshot.raytracingTier = m_raytracingTier;
+        m_dxrRuntimeSnapshot.highestShaderModel = m_highestShaderModel;
+        EngineLog::Info("dxr-runtime", SerializeDxrRuntimeSnapshotJson(m_dxrRuntimeSnapshot));
 
         // DLSS/Streamline (S0): init SL + probe DLSS support on a background thread so the
         // multi-second NGX cold-init doesn't block editor startup. SL doesn't interpose our
@@ -1876,6 +1932,55 @@ bool GfxContext::SupportsModernDxrLibrary() const
 const char* GfxContext::GetPreferredDxrLibraryProfile() const
 {
     return DxrFeatureCapabilities{m_raytracingTier, m_highestShaderModel}.GetPreferredLibraryProfile();
+}
+
+void GfxContext::SetDxrRuntimeSerPolicy(const char* const policy)
+{
+    m_dxrRuntimeSnapshot.requestedSerPolicy = policy != nullptr ? policy : "missing";
+    EngineLog::Info("dxr-runtime", SerializeDxrRuntimeSnapshotJson(m_dxrRuntimeSnapshot));
+}
+
+void GfxContext::ReportDxrPathTracerPipelineResult(
+    const bool diagnosticPermutation,
+    const bool serPermutation,
+    const char* const compilerLibraryResult,
+    const char* const rtpsoResult,
+    const char* const fallbackReason)
+{
+    const std::size_t permutationIndex = serPermutation
+        ? (diagnosticPermutation ? DxrRuntimeSerDiagnostic : DxrRuntimeSerProduction)
+        : (diagnosticPermutation ? DxrRuntimeFallbackDiagnostic : DxrRuntimeFallbackProduction);
+    DxrRuntimeSnapshot::PermutationResult& result = m_dxrRuntimeSnapshot.permutations[permutationIndex];
+    result.compilerLibrary = compilerLibraryResult != nullptr ? compilerLibraryResult : "missing";
+    result.rtpso = rtpsoResult != nullptr ? rtpsoResult : "missing";
+    if (fallbackReason != nullptr && fallbackReason[0] != '\0')
+    {
+        m_dxrRuntimeSnapshot.fallbackReason = fallbackReason;
+    }
+    EngineLog::Info("dxr-runtime", SerializeDxrRuntimeSnapshotJson(m_dxrRuntimeSnapshot));
+}
+
+void GfxContext::ReportDxrPathTracerSelection(
+    const bool diagnosticPermutation,
+    const bool serPermutation,
+    const char* const fallbackReason)
+{
+    m_dxrRuntimeSnapshot.selectedPermutation = serPermutation
+        ? (diagnosticPermutation ? "ser_diagnostic" : "ser_production")
+        : (diagnosticPermutation ? "fallback_diagnostic" : "fallback_production");
+    m_dxrRuntimeSnapshot.dispatchedPermutation = "not_dispatched";
+    m_dxrRuntimeSnapshot.fallbackReason = fallbackReason != nullptr ? fallbackReason : "missing";
+    EngineLog::Info("dxr-runtime", SerializeDxrRuntimeSnapshotJson(m_dxrRuntimeSnapshot));
+}
+
+void GfxContext::ReportDxrPathTracerDispatch(
+    const bool diagnosticPermutation,
+    const bool serPermutation)
+{
+    m_dxrRuntimeSnapshot.dispatchedPermutation = serPermutation
+        ? (diagnosticPermutation ? "ser_diagnostic" : "ser_production")
+        : (diagnosticPermutation ? "fallback_diagnostic" : "fallback_production");
+    EngineLog::Info("dxr-runtime", SerializeDxrRuntimeSnapshotJson(m_dxrRuntimeSnapshot));
 }
 
 std::uint64_t GfxContext::GetCompletedFenceValue() const

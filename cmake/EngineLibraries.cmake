@@ -166,6 +166,16 @@ endfunction()
 
 game_engine_apply_render_library_config(engine-render)
 
+# S0-P1 runtime snapshot: the device-owning static library needs the same pinned Agility identity
+# as the executable export.  This is diagnostics metadata only; it does not alter loader setup.
+if(WIN32 AND GAME_ENGINE_USE_AGILITY_SDK)
+    target_include_directories(engine-render PUBLIC
+        "${GAME_ENGINE_AGILITY_SDK_ROOT}/build/native/include")
+    target_compile_definitions(engine-render PUBLIC
+        GAME_ENGINE_AGILITY_SDK_VERSION=${GAME_ENGINE_AGILITY_SDK_LOADER_VERSION}
+        GAME_ENGINE_AGILITY_SDK_PACKAGE_VERSION="${GAME_ENGINE_AGILITY_SDK_PACKAGE_VERSION}")
+endif()
+
 target_link_libraries(engine-dxr PUBLIC engine-render NRD)
 game_engine_apply_render_library_config(engine-dxr)
 

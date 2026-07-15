@@ -15,6 +15,20 @@
 #include <algorithm>
 #include <cstring>
 
+namespace
+{
+    const char* GetSerPolicyLabel(const DxrPathTracerDispatch::SerOverride value)
+    {
+        switch (value)
+        {
+        case DxrPathTracerDispatch::SerOverride::ForceOff: return "force_off";
+        case DxrPathTracerDispatch::SerOverride::ForceOn: return "force_on";
+        case DxrPathTracerDispatch::SerOverride::Automatic: return "automatic";
+        }
+        return "missing";
+    }
+}
+
 DxrPathTracerDispatch::~DxrPathTracerDispatch()
 {
     Release();
@@ -35,6 +49,12 @@ void DxrPathTracerDispatch::Release()
     m_activeDiagnosticPermutation = false;
     m_activeSerPermutation = false;
     m_frameIndex = 0;
+}
+
+void DxrPathTracerDispatch::SetSerOverride(const SerOverride value)
+{
+    m_serOverride = value;
+    GfxContext::Get().SetDxrRuntimeSerPolicy(GetSerPolicyLabel(value));
 }
 
 bool DxrPathTracerDispatch::IsPipelineReady() const
@@ -90,15 +110,24 @@ bool DxrPathTracerDispatch::EnsurePipeline(
         DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline begin");
         if (!pipeline->CreatePathTracerPipeline(outError, diagnosticPermutation, true))
         {
+            const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
+            GfxContext::Get().ReportDxrPathTracerPipelineResult(
+                diagnosticPermutation, true, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline failed: create pipeline");
             return false;
         }
         if (!shaderBindingTable->BuildPathTracerTable(pipeline->GetProperties(), outError))
         {
+            const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
+            GfxContext::Get().ReportDxrPathTracerPipelineResult(
+                diagnosticPermutation, true, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline failed: build SBT");
             pipeline->Release();
             return false;
         }
+        const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
+        GfxContext::Get().ReportDxrPathTracerPipelineResult(
+            diagnosticPermutation, true, status.compilerLibrary, status.rtpso, "none");
         *pipelineReady = true;
         DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline ok");
         return true;
@@ -115,23 +144,32 @@ bool DxrPathTracerDispatch::EnsurePipeline(
         DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline begin");
         if (!m_diagnosticPipeline.CreatePathTracerPipeline(outError, true, false))
         {
+            const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
+            GfxContext::Get().ReportDxrPathTracerPipelineResult(
+                true, false, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: create pipeline");
             return false;
         }
         if (!m_diagnosticShaderBindingTable.BuildPathTracerTable(
                 m_diagnosticPipeline.GetProperties(), outError))
         {
+            const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
+            GfxContext::Get().ReportDxrPathTracerPipelineResult(
+                true, false, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: build SBT");
             m_diagnosticPipeline.Release();
             return false;
         }
 
+        const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
+        GfxContext::Get().ReportDxrPathTracerPipelineResult(
+            true, false, status.compilerLibrary, status.rtpso, "none");
         m_diagnosticPipelineReady = true;
         DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline ok");
         return true;
     }
 
-    return EnsurePipelineWith(
+    const bool basePipelineReady = EnsurePipelineWith(
         "path-tracer",
         [](DxrPipeline& pipeline, std::string& pipelineError) {
             return pipeline.CreatePathTracerPipeline(pipelineError, false, false);
@@ -140,6 +178,10 @@ bool DxrPathTracerDispatch::EnsurePipeline(
             return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), tableError);
         },
         outError);
+    const DxrPipeline::PathTracerPipelineStatus& status = m_pipeline.GetPathTracerPipelineStatus();
+    GfxContext::Get().ReportDxrPathTracerPipelineResult(
+        false, false, status.compilerLibrary, status.rtpso, basePipelineReady ? "none" : outError.c_str());
+    return basePipelineReady;
 }
 
 bool DxrPathTracerDispatch::DispatchIfEnabled(
@@ -201,6 +243,14 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool diagnosticPermutation = ptDebugIsolateMode != 0;
     const bool serPermutation = ShouldUseSerPermutation(
         GfxContext::Get().IsShaderExecutionReorderingSupported(), m_serOverride);
+    const char* const fallbackReason = serPermutation
+        ? "none"
+        : (m_serOverride == SerOverride::ForceOff
+            ? "requested_force_off"
+            : "capability_gate_not_supported");
+    GfxContext::Get().SetDxrRuntimeSerPolicy(GetSerPolicyLabel(m_serOverride));
+    GfxContext::Get().ReportDxrPathTracerSelection(
+        diagnosticPermutation, serPermutation, fallbackReason);
     const bool selectedPipelineReady = serPermutation
         ? (diagnosticPermutation ? m_serDiagnosticPipelineReady : m_serPipelineReady)
         : (diagnosticPermutation ? m_diagnosticPipelineReady : m_pipelineReady);
@@ -414,6 +464,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchScope.Success();
     DxrEnableTrustMode();
     m_dispatchedThisFrame = true;
+    GfxContext::Get().ReportDxrPathTracerDispatch(diagnosticPermutation, serPermutation);
     return true;
 }
 

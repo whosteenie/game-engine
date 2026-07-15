@@ -759,6 +759,7 @@ bool DxrPipeline::CreatePathTracerPipeline(
 {
     outError.clear();
     Release();
+    m_pathTracerPipelineStatus = {"not_reached", "not_reached"};
 
     DxrBreadcrumb("pipeline CreatePathTracerPipeline begin");
     ID3D12Device5* device5 = DxrContext::Get().GetDevice5();
@@ -824,6 +825,7 @@ bool DxrPipeline::CreatePathTracerPipeline(
     catch (const std::exception& exception)
     {
         outError = exception.what();
+        m_pathTracerPipelineStatus.compilerLibrary = "failed";
         DxrBreadcrumb("pipeline failed: path tracer shader load");
         return false;
     }
@@ -831,8 +833,11 @@ bool DxrPipeline::CreatePathTracerPipeline(
     if (library == nullptr || library->dxilBytecode == nullptr)
     {
         outError = "DXR path tracer library bytecode missing";
+        m_pathTracerPipelineStatus.compilerLibrary = "failed";
         return false;
     }
+    m_pathTracerPipelineStatus.compilerLibrary = "succeeded";
+    m_pathTracerPipelineStatus.rtpso = "in_progress";
 
     D3D12_SHADER_BYTECODE dxilBytecode{};
     if (library->containerBytecode != nullptr)
@@ -942,6 +947,7 @@ bool DxrPipeline::CreatePathTracerPipeline(
     ComPtr<ID3D12StateObject> stateObject;
     if (!CreateStateObjectFromSubobjects(device5, subobjects, "path-tracer-full", stateObject, outError))
     {
+        m_pathTracerPipelineStatus.rtpso = "failed";
         return false;
     }
 
@@ -949,11 +955,13 @@ bool DxrPipeline::CreatePathTracerPipeline(
     if (FAILED(stateObject->QueryInterface(IID_PPV_ARGS(&stateObjectProperties))))
     {
         outError = "QueryInterface(ID3D12StateObjectProperties) failed";
+        m_pathTracerPipelineStatus.rtpso = "failed";
         return false;
     }
 
     m_stateObject = stateObject.Detach();
     m_stateObjectProperties = stateObjectProperties;
+    m_pathTracerPipelineStatus.rtpso = "succeeded";
 
     EngineLog::Info(
         "dxr-pipeline",

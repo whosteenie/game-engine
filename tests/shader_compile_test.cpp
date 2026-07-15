@@ -2,6 +2,7 @@
 
 #ifdef _WIN32
 #include "engine/rendering/DxrCapabilities.h"
+#include "engine/rendering/DxrRuntimeSnapshot.h"
 #include "engine/raytracing/DxrPathTracerDispatch.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
@@ -188,6 +189,54 @@ void RunShaderCompileTests()
                 && !inlineCapabilities.SupportsModernDxrLibrary()
                 && std::string(inlineCapabilities.GetPreferredLibraryProfile()) == "lib_6_5",
             "SM 6.5 inline DXR capabilities should select the lib_6_5 permutation");
+
+        DxrRuntimeSnapshot missingSnapshot{};
+        const std::string missingJson = SerializeDxrRuntimeSnapshotJson(missingSnapshot);
+        test::ExpectTrue(
+            missingJson == SerializeDxrRuntimeSnapshotJson(missingSnapshot)
+                && missingJson.find("\"schema_version\":1") != std::string::npos
+                && missingJson.find("\"query\":\"not_attempted\"") != std::string::npos,
+            "DXR runtime snapshot serialization should be stable and explicit for missing queries");
+
+        DxrRuntimeSnapshot unsupportedSnapshot{};
+        unsupportedSnapshot.options22Query = "unsupported_or_query_failed";
+        unsupportedSnapshot.selectedPermutation = "fallback_production";
+        unsupportedSnapshot.fallbackReason = "capability_gate_not_supported";
+        const std::string unsupportedJson = SerializeDxrRuntimeSnapshotJson(unsupportedSnapshot);
+        test::ExpectTrue(
+            unsupportedJson.find("\"query\":\"unsupported_or_query_failed\"") != std::string::npos
+                && unsupportedJson.find("\"fallback_reason\":\"capability_gate_not_supported\"")
+                    != std::string::npos,
+            "DXR runtime snapshot should distinguish unsupported capability fallback");
+
+        DxrRuntimeSnapshot forceOffSnapshot{};
+        forceOffSnapshot.requestedSerPolicy = "force_off";
+        forceOffSnapshot.selectedPermutation = "fallback_production";
+        forceOffSnapshot.fallbackReason = "requested_force_off";
+        const std::string forceOffJson = SerializeDxrRuntimeSnapshotJson(forceOffSnapshot);
+        test::ExpectTrue(
+            forceOffJson.find("\"requested_ser_policy\":\"force_off\"") != std::string::npos
+                && forceOffJson.find("\"selected_permutation\":\"fallback_production\"")
+                    != std::string::npos,
+            "DXR runtime snapshot should distinguish requested fallback policy");
+
+        DxrRuntimeSnapshot supportedSnapshot{};
+        supportedSnapshot.options22Query = "succeeded";
+        supportedSnapshot.options22ActuallyReorders = true;
+        supportedSnapshot.permutations[DxrRuntimeSerProduction] = {"succeeded", "succeeded"};
+        supportedSnapshot.selectedPermutation = "ser_production";
+        supportedSnapshot.dispatchedPermutation = "ser_production";
+        supportedSnapshot.fallbackReason = "none";
+        const std::string supportedJson = SerializeDxrRuntimeSnapshotJson(supportedSnapshot);
+        test::ExpectTrue(
+            supportedJson.find("\"shader_execution_reordering_actually_reorders\":true")
+                    != std::string::npos
+                && supportedJson.find(
+                    "\"ser_production\":{\"compiler_library\":\"succeeded\",\"rtpso\":\"succeeded\"}")
+                    != std::string::npos
+                && supportedJson.find("\"dispatched_permutation\":\"ser_production\"")
+                    != std::string::npos,
+            "DXR runtime snapshot should report successful SER library, RTPSO, and dispatch state");
     }
     catch (const std::exception& exception)
     {
