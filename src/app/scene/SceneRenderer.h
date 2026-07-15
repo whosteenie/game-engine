@@ -262,6 +262,10 @@ private:
     std::unique_ptr<EnvironmentMap> m_environmentMap;
     std::unique_ptr<ScreenSpaceEffects> m_screenSpaceEffects;
     std::unique_ptr<ScreenSpaceEffects> m_gameViewScreenSpaceEffects;
+    // Keeps the startup PBR prewarm alive only until scene materials have adopted it on the first
+    // geometry pass. It must not outlive that hand-off, so material shader invalidation continues
+    // to rebuild with current renderer sampler settings.
+    std::shared_ptr<Shader> m_preWarmedPbrShader;
     std::unique_ptr<MeshShaderGBufferRenderer> m_meshShaderGBufferRenderer;
     std::unique_ptr<MeshShaderShadowRenderer> m_meshShaderShadowRenderer;
     ScreenSpaceEffects* m_activeScreenSpaceEffects = nullptr;

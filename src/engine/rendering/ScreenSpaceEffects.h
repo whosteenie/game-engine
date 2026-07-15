@@ -79,6 +79,10 @@ public:
     explicit ScreenSpaceEffects(std::uint32_t dlssViewportId = 0);
     ~ScreenSpaceEffects();
 
+    // Compiles every eager screen-space shader stage into the immutable DXC cache. The regular
+    // constructor still creates all of the same Shader objects, root signatures, and PSOs.
+    static void PrewarmShaderStages();
+
     ScreenSpaceEffects(const ScreenSpaceEffects&) = delete;
     ScreenSpaceEffects& operator=(const ScreenSpaceEffects&) = delete;
 

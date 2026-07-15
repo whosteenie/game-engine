@@ -1,6 +1,7 @@
 #include "engine/assets/TextureCache.h"
 
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/rendering/TextureSamplerSettings.h"
 
 #include <stdexcept>
@@ -50,6 +51,7 @@ std::shared_ptr<Texture> TextureCache::Load(
     std::shared_ptr<Texture> texture;
     try
     {
+        ProjectLoadBenchmark::ScopedPhase textureLoadPhase("renderer.texture_cache_miss_load");
         texture = std::make_shared<Texture>(path, colorSpace, samplerSettings, flipVertically);
     }
     catch (const std::exception& exception)

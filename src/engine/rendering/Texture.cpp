@@ -18,6 +18,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace
@@ -149,35 +150,69 @@ namespace
             dest.height = std::max(1, source.height / 2);
             dest.pixels.resize(static_cast<std::size_t>(dest.width) * static_cast<std::size_t>(dest.height) * 4);
 
-            for (int y = 0; y < dest.height; ++y)
-            {
-                for (int x = 0; x < dest.width; ++x)
+            const auto downsampleRows = [&source, &dest](const int beginY, const int endY) {
+                for (int y = beginY; y < endY; ++y)
                 {
-                    unsigned int sum[4] = {};
-                    for (int offsetY = 0; offsetY < 2; ++offsetY)
+                    for (int x = 0; x < dest.width; ++x)
                     {
-                        for (int offsetX = 0; offsetX < 2; ++offsetX)
+                        unsigned int sum[4] = {};
+                        for (int offsetY = 0; offsetY < 2; ++offsetY)
                         {
-                            const int sourceX = std::min(source.width - 1, x * 2 + offsetX);
-                            const int sourceY = std::min(source.height - 1, y * 2 + offsetY);
-                            const std::size_t sourceIndex =
-                                (static_cast<std::size_t>(sourceY) * static_cast<std::size_t>(source.width)
-                                + static_cast<std::size_t>(sourceX)) * 4;
-                            for (int channel = 0; channel < 4; ++channel)
+                            for (int offsetX = 0; offsetX < 2; ++offsetX)
                             {
-                                sum[channel] += source.pixels[sourceIndex + static_cast<std::size_t>(channel)];
+                                const int sourceX = std::min(source.width - 1, x * 2 + offsetX);
+                                const int sourceY = std::min(source.height - 1, y * 2 + offsetY);
+                                const std::size_t sourceIndex =
+                                    (static_cast<std::size_t>(sourceY) * static_cast<std::size_t>(source.width)
+                                    + static_cast<std::size_t>(sourceX)) * 4;
+                                for (int channel = 0; channel < 4; ++channel)
+                                {
+                                    sum[channel] += source.pixels[sourceIndex + static_cast<std::size_t>(channel)];
+                                }
                             }
                         }
-                    }
 
-                    const std::size_t destIndex =
-                        (static_cast<std::size_t>(y) * static_cast<std::size_t>(dest.width)
-                        + static_cast<std::size_t>(x)) * 4;
-                    for (int channel = 0; channel < 4; ++channel)
-                    {
-                        dest.pixels[destIndex + static_cast<std::size_t>(channel)] =
-                            static_cast<unsigned char>((sum[channel] + 2) / 4);
+                        const std::size_t destIndex =
+                            (static_cast<std::size_t>(y) * static_cast<std::size_t>(dest.width)
+                            + static_cast<std::size_t>(x)) * 4;
+                        for (int channel = 0; channel < 4; ++channel)
+                        {
+                            dest.pixels[destIndex + static_cast<std::size_t>(channel)] =
+                                static_cast<unsigned char>((sum[channel] + 2) / 4);
+                        }
                     }
+                }
+            };
+
+            // Each output scanline writes to a disjoint range. The larger top mip levels dominate
+            // texture import time, so spread only those across a bounded number of CPU workers;
+            // tiny tail levels stay serial to avoid thread-launch overhead.
+            constexpr std::size_t kParallelMipPixelThreshold = 64u * 1024u;
+            constexpr unsigned int kMaxMipWorkers = 8;
+            const std::size_t destPixelCount =
+                static_cast<std::size_t>(dest.width) * static_cast<std::size_t>(dest.height);
+            const unsigned int hardwareWorkers = std::max(1u, std::thread::hardware_concurrency());
+            const unsigned int workerCount = std::min(
+                {kMaxMipWorkers, hardwareWorkers, static_cast<unsigned int>(dest.height)});
+            if (destPixelCount < kParallelMipPixelThreshold || workerCount <= 1)
+            {
+                downsampleRows(0, dest.height);
+            }
+            else
+            {
+                std::vector<std::thread> workers;
+                workers.reserve(workerCount);
+                for (unsigned int workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+                {
+                    const int beginY = static_cast<int>(
+                        (static_cast<long long>(dest.height) * workerIndex) / workerCount);
+                    const int endY = static_cast<int>(
+                        (static_cast<long long>(dest.height) * (workerIndex + 1)) / workerCount);
+                    workers.emplace_back(downsampleRows, beginY, endY);
+                }
+                for (std::thread& worker : workers)
+                {
+                    worker.join();
                 }
             }
 

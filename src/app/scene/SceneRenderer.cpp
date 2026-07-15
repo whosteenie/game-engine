@@ -39,6 +39,7 @@
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Shader.h"
+#include "engine/rendering/ShaderCache.h"
 #include "engine/rendering/RenderingPipelineCache.h"
 #include "engine/raytracing/DxrShaderCache.h"
 #include "engine/raytracing/DxrTrace.h"
@@ -270,11 +271,12 @@ namespace
     };
 
     template<typename Fn>
-    void RunGpuInitStep(const char* stepName, float progress, Fn&& fn)
+    void RunGpuInitStep(const char* stepName, const char* benchmarkPhase, float progress, Fn&& fn)
     {
         ProjectLoadProgress::Report(
             std::string("Initializing GPU: ") + stepName + "...",
             progress);
+        ProjectLoadBenchmark::ScopedPhase benchmarkScope(benchmarkPhase);
         SceneRenderTrace::Scope initScope(stepName);
         try
         {
@@ -422,13 +424,16 @@ void SceneRenderer::EnsureGpuResources() const
     SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
-        RunGpuInitStep("camera gizmos", ProjectLoadProgress::GpuInitialization(0.0f / 8.0f), [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
-        RunGpuInitStep("grid", ProjectLoadProgress::GpuInitialization(1.0f / 8.0f), [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
-        RunGpuInitStep("collider gizmos", ProjectLoadProgress::GpuInitialization(2.0f / 8.0f), [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
-        RunGpuInitStep("light gizmos", ProjectLoadProgress::GpuInitialization(3.0f / 8.0f), [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
-        RunGpuInitStep("shadow map", ProjectLoadProgress::GpuInitialization(4.0f / 8.0f), [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
-        RunGpuInitStep("environment map", ProjectLoadProgress::GpuInitialization(5.0f / 8.0f), [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
-        RunGpuInitStep("screen-space effects", ProjectLoadProgress::GpuInitialization(6.0f / 8.0f), [&]() {
+        RunGpuInitStep("camera gizmos", "renderer.gpu_init.camera_gizmos", ProjectLoadProgress::GpuInitialization(0.0f / 8.0f), [&]() { self->m_cameraGizmos = std::make_unique<CameraGizmoRenderer>(); });
+        RunGpuInitStep("grid", "renderer.gpu_init.grid", ProjectLoadProgress::GpuInitialization(1.0f / 8.0f), [&]() { self->m_grid = std::make_unique<GridRenderer>(); });
+        RunGpuInitStep("collider gizmos", "renderer.gpu_init.collider_gizmos", ProjectLoadProgress::GpuInitialization(2.0f / 8.0f), [&]() { self->m_colliderGizmos = std::make_unique<ColliderGizmoRenderer>(); });
+        RunGpuInitStep("light gizmos", "renderer.gpu_init.light_gizmos", ProjectLoadProgress::GpuInitialization(3.0f / 8.0f), [&]() { self->m_lightGizmos = std::make_unique<LightGizmoRenderer>(); });
+        RunGpuInitStep("shadow map", "renderer.gpu_init.shadow_map", ProjectLoadProgress::GpuInitialization(4.0f / 8.0f), [&]() { self->m_shadowMap = std::make_unique<CascadedShadowMap>(); });
+        RunGpuInitStep("environment map", "renderer.gpu_init.environment_map", ProjectLoadProgress::GpuInitialization(5.0f / 8.0f), [&]() { self->m_environmentMap = std::make_unique<EnvironmentMap>(); });
+        RunGpuInitStep("screen-space effects", "renderer.gpu_init.screen_space_effects", ProjectLoadProgress::GpuInitialization(6.0f / 8.0f), [&]() {
+            ProjectLoadBenchmark::ScopedPhase screenSpaceStagePrewarm(
+                "renderer.gpu_init.screen_space_shader_stage_prewarm");
+            ScreenSpaceEffects::PrewarmShaderStages();
             self->m_screenSpaceEffects = std::make_unique<ScreenSpaceEffects>();
             const int geometryMsaaSampleCount = GfxContext::Get().GetActiveMsaaSampleCount();
             if (geometryMsaaSampleCount > 1)
@@ -436,7 +441,7 @@ void SceneRenderer::EnsureGpuResources() const
                 self->m_screenSpaceEffects->SetMsaaSampleCount(geometryMsaaSampleCount);
             }
         });
-        RunGpuInitStep("shadow depth shader", ProjectLoadProgress::GpuInitialization(7.0f / 8.0f), [&]() {
+        RunGpuInitStep("shadow depth shader", "renderer.gpu_init.shadow_depth_shader", ProjectLoadProgress::GpuInitialization(7.0f / 8.0f), [&]() {
             self->m_shadowDepthShader = std::make_unique<Shader>(
                 EngineConstants::ShadowDepthVertexShader,
                 EngineConstants::ShadowDepthFragmentShader);
@@ -735,11 +740,27 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
             queueDefaultShaderPrewarm(EngineConstants::DxrRestirLibraryShader);
         }
 
+        // PBR would otherwise compile for the first time while recording geometry after DXR is
+        // already ready. Its bytecode/PSO construction is independent of DXR shader compilation,
+        // so overlap it with that existing CPU warm-up and retain the result just long enough for
+        // Material::EnsureShader() to take the cache reference in the first geometry pass.
+        std::future<std::shared_ptr<Shader>> pbrPrewarmJob;
+        if (m_preWarmedPbrShader == nullptr)
+        {
+            pbrPrewarmJob = std::async(std::launch::async, []() {
+                return ShaderCache::Load(EngineConstants::LitVertexShader, EngineConstants::PbrFragmentShader);
+            });
+        }
+
         ProjectLoadBenchmark::ScopedPhase shaderPrewarmPhase("renderer.dxr_shader_library_prewarm");
         ProjectLoadProgress::Report("Compiling ray tracing shader libraries...", ProjectLoadProgress::kDxrWarmupStart);
         for (std::future<void>& job : shaderPrewarmJobs)
         {
             job.get();
+        }
+        if (pbrPrewarmJob.valid())
+        {
+            m_preWarmedPbrShader = pbrPrewarmJob.get();
         }
 
         int warmedPipelineCount = 0;
@@ -938,6 +959,8 @@ void SceneRenderer::RecordDxrPass(
 
     const auto dxrScenePrepStart = std::chrono::steady_clock::now();
     {
+        ProjectLoadBenchmark::ScopedPhase accelerationStructuresPhase(
+            "renderer.first_scene.dxr_acceleration_structures");
         const GfxContext::GpuTimerScope gpuScope("DXR acceleration structures");
         m_dxrAccelerationStructures->EnsureScene(
             scene,
@@ -2044,14 +2067,20 @@ void SceneRenderer::Render(
     m_activeScreenSpaceEffects = m_screenSpaceEffects.get();
 
     const auto gpuSceneBuildStart = std::chrono::steady_clock::now();
-    m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
+    {
+        ProjectLoadBenchmark::ScopedPhase gpuSceneBuildPhase("renderer.first_scene.gpu_scene_build");
+        m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
+    }
     m_renderFrameDiagnostics.gpuSceneBuildCpuMs =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - gpuSceneBuildStart)
             .count();
 
     const auto gpuSceneUploadStart = std::chrono::steady_clock::now();
-    m_gpuScene.UploadGpuTables(GfxContext::Get().GetCommandList());
+    {
+        ProjectLoadBenchmark::ScopedPhase gpuSceneUploadPhase("renderer.first_scene.gpu_scene_upload");
+        m_gpuScene.UploadGpuTables(GfxContext::Get().GetCommandList());
+    }
     m_renderFrameDiagnostics.gpuSceneUploadCpuMs =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - gpuSceneUploadStart)
@@ -2084,7 +2113,10 @@ void SceneRenderer::Render(
         SceneRenderTrace::Scope lightingScope("SyncLighting");
         ProjectLoadProgress::Report("Syncing scene lighting...", ProjectLoadProgress::kSceneLighting);
         const auto lightingSyncStart = std::chrono::steady_clock::now();
-        SyncLighting(scene);
+        {
+            ProjectLoadBenchmark::ScopedPhase lightingPhase("renderer.first_scene.lighting_sync");
+            SyncLighting(scene);
+        }
         m_renderFrameDiagnostics.lightingSyncCpuMs =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - lightingSyncStart)
@@ -2098,7 +2130,10 @@ void SceneRenderer::Render(
         ProjectLoadProgress::Report("Rendering shadow maps...", ProjectLoadProgress::kSceneShadows);
         const auto shadowRecordStart = std::chrono::steady_clock::now();
         const GfxContext::GpuTimerScope gpuScopeShadowMaps("Shadow maps");
-        RenderShadowPass(scene, camera);
+        {
+            ProjectLoadBenchmark::ScopedPhase shadowPhase("renderer.first_scene.shadow_record");
+            RenderShadowPass(scene, camera);
+        }
         m_shadowMap->EndFrame();
         m_renderFrameDiagnostics.shadowRecordCpuMs =
             std::chrono::duration<double, std::milli>(
@@ -2117,28 +2152,37 @@ void SceneRenderer::Render(
     bool splitLightingMrt = false;
     ProjectLoadProgress::Report("Rasterizing scene...", ProjectLoadProgress::kSceneRaster);
     const auto rasterTargetSetupStart = std::chrono::steady_clock::now();
-    PrepareSceneRasterTarget(
-        scene,
-        camera,
-        viewportWidth,
-        viewportHeight,
-        target,
-        usePostProcess,
-        freezeTemporalJitter,
-        splitLightingMrt);
+    {
+        ProjectLoadBenchmark::ScopedPhase rasterTargetPhase("renderer.first_scene.raster_target_setup");
+        PrepareSceneRasterTarget(
+            scene,
+            camera,
+            viewportWidth,
+            viewportHeight,
+            target,
+            usePostProcess,
+            freezeTemporalJitter,
+            splitLightingMrt);
+    }
     m_renderFrameDiagnostics.rasterTargetSetupCpuMs =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - rasterTargetSetupStart)
             .count();
 
-    RenderGeometryPass(
-        scene,
-        camera,
-        usePostProcess,
-        target,
-        splitLightingMrt,
-        materialDebugMode,
-        activeDebugMode);
+    {
+        ProjectLoadBenchmark::ScopedPhase geometryPhase("renderer.first_scene.geometry_record");
+        RenderGeometryPass(
+            scene,
+            camera,
+            usePostProcess,
+            target,
+            splitLightingMrt,
+            materialDebugMode,
+            activeDebugMode);
+    }
+    // Material instances now hold their own shared cache references. Drop the temporary startup
+    // reference so normal material invalidation retains its existing shader-rebuild semantics.
+    m_preWarmedPbrShader.reset();
 
     if (usePostProcess)
     {
@@ -2146,15 +2190,18 @@ void SceneRenderer::Render(
             "Running post-process and ray tracing...",
             ProjectLoadProgress::kScenePostProcess);
         const auto postProcessStart = std::chrono::steady_clock::now();
-        RenderPostProcessPass(
-            scene,
-            camera,
-            viewportWidth,
-            viewportHeight,
-            target,
-            options,
-            freezeTemporalJitter,
-            splitLightingMrt);
+        {
+            ProjectLoadBenchmark::ScopedPhase postProcessPhase("renderer.first_scene.post_process");
+            RenderPostProcessPass(
+                scene,
+                camera,
+                viewportWidth,
+                viewportHeight,
+                target,
+                options,
+                freezeTemporalJitter,
+                splitLightingMrt);
+        }
         m_renderFrameDiagnostics.postProcessCpuMs =
             std::chrono::duration<double, std::milli>(
                 std::chrono::steady_clock::now() - postProcessStart)
@@ -2179,7 +2226,10 @@ void SceneRenderer::Render(
     }
 
     const auto gizmoStart = std::chrono::steady_clock::now();
-    RenderGizmoPass(scene, camera, target, options, usePostProcess);
+    {
+        ProjectLoadBenchmark::ScopedPhase gizmoPhase("renderer.first_scene.gizmo_record");
+        RenderGizmoPass(scene, camera, target, options, usePostProcess);
+    }
     m_renderFrameDiagnostics.gizmoCpuMs =
         std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - gizmoStart)

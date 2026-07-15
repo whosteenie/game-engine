@@ -3,6 +3,7 @@
 
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/EngineLog.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
@@ -207,6 +208,7 @@ Shader& Shader::operator=(Shader&& other) noexcept
 
 void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fragmentPath)
 {
+    ProjectLoadBenchmark::ScopedPhase shaderBuildPhase("renderer.raster_shader_build");
     auto* device = static_cast<ID3D12Device*>(GfxContext::Get().GetDevice());
     D3D12MA::Allocator* allocator = GfxContext::Get().GetMemoryAllocator();
 

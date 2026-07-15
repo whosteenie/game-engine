@@ -23,6 +23,7 @@
 #include "engine/rendering/ScreenSpaceEffectsApply.h"
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/d3d12/HlslCompiler.h"
 
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
@@ -621,6 +622,65 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
 
     // Grid alpha-blends into the resolved scene HDR buffer before bloom; selection overlay after tonemap.
     // Stage 3+: Bloom toggle, depth blit for gizmo occlusion, play-mode parity.
+}
+
+void ScreenSpaceEffects::PrewarmShaderStages()
+{
+    static const std::array<HlslStageCompileRequest, 52> kStages = {
+        HlslStageCompileRequest{EngineConstants::FullscreenVertexShader, "main", "vs_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsaoFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::GtaoFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsaoBlurFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::ScreenCompositeFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::BloomExtractFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::BloomBlurFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::BloomTemporalFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::ShadowBlurFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::TonemapFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::FxaaFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DownsampleFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::TaaFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SmaaEdgeFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SmaaNeighborFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DebugChannelFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::RtReflectionResolveFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DxrPrimaryDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtAccumulateFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtMeanFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtTemporalStatsFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtTemporalStatsDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtMotionReprojectionDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtMotionDepthCopyFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtBoilMetricFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DxrShadowDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::VelocityDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::GBufferDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::RadianceAssemblyFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::RadianceDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::TemporalReprojectFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::GiDepthHistoryFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DlssMotionDilateFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DlssZeroMotionFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::GiTemporalDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsgiNoiseInjectFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsgiDenoiseSpatialFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsgiDenoiseDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsgiTraceFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrSceneColorFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrTraceFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrTraceDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrDenoiseDebugFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrSvgfTemporalFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrSvgfVarianceTemporalFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrSvgfAtrousFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrUpscaleFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::SsrIndirectFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DxrIndirectFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DxrGiInjectFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::RrGuidesFragmentShader, "main", "ps_6_0"},
+    };
+    PrewarmHlslStages(std::vector<HlslStageCompileRequest>(kStages.begin(), kStages.end()));
 }
 
 ScreenSpaceEffects::~ScreenSpaceEffects()

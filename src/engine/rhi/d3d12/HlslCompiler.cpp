@@ -5,11 +5,17 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <atomic>
+#include <exception>
 #include <fstream>
 #include <iterator>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <unordered_map>
 #include <vector>
 #include <cstdio>
 
@@ -17,6 +23,28 @@ using Microsoft::WRL::ComPtr;
 
 namespace
 {
+    std::mutex g_stageCompileCacheMutex;
+    std::unordered_map<std::string, HlslCompileResult> g_stageCompileCache;
+
+    std::string MakeStageCompileCacheKey(
+        const std::string& source,
+        const std::string& sourcePath,
+        const char* entry,
+        const char* targetProfile)
+    {
+        // The source path participates because it controls relative #include resolution.
+        std::string key;
+        key.reserve(sourcePath.size() + source.size() + 32);
+        key.append(sourcePath);
+        key.push_back('\0');
+        key.append(entry);
+        key.push_back('\0');
+        key.append(targetProfile);
+        key.push_back('\0');
+        key.append(source);
+        return key;
+    }
+
     std::wstring Utf8ToWide(const std::string& text)
     {
         if (text.empty())
@@ -223,6 +251,16 @@ HlslCompileResult CompileHlsl(
     const char* entry,
     const char* targetProfile)
 {
+    const std::string cacheKey = MakeStageCompileCacheKey(source, sourcePath, entry, targetProfile);
+    {
+        std::lock_guard<std::mutex> lock(g_stageCompileCacheMutex);
+        const auto cached = g_stageCompileCache.find(cacheKey);
+        if (cached != g_stageCompileCache.end())
+        {
+            return cached->second;
+        }
+    }
+
     ComPtr<IDxcUtils> utils;
     ThrowIfFailed(DxcCreateInstance(CLSID_DxcUtils, IID_PPV_ARGS(&utils)), "DxcCreateInstance(DxcUtils)");
 
@@ -325,7 +363,12 @@ HlslCompileResult CompileHlsl(
             + std::to_string(static_cast<unsigned long>(createReflectionHr)) + ")");
     }
 
-    return result;
+    {
+        std::lock_guard<std::mutex> lock(g_stageCompileCacheMutex);
+        const auto [cached, inserted] = g_stageCompileCache.emplace(cacheKey, result);
+        (void)inserted;
+        return cached->second;
+    }
 }
 
 DxilLibraryBytecode PrepareDxilLibraryBytecode(ComPtr<IDxcBlob> dxcOutput)
@@ -383,6 +426,77 @@ DxilLibraryBytecode PrepareDxilLibraryBytecode(ComPtr<IDxcBlob> dxcOutput)
             + std::to_string(result.containerByteCount) + " dxilBytes=" + std::to_string(partSize));
 
     return result;
+}
+
+void ClearHlslStageCompileCache()
+{
+    std::lock_guard<std::mutex> lock(g_stageCompileCacheMutex);
+    g_stageCompileCache.clear();
+}
+
+void PrewarmHlslStages(const std::vector<HlslStageCompileRequest>& requests)
+{
+    if (requests.empty())
+    {
+        return;
+    }
+
+    std::atomic<std::size_t> nextRequest{0};
+    std::mutex failureMutex;
+    std::exception_ptr failure;
+    const std::size_t workerCount = std::min<std::size_t>(
+        8,
+        std::max<std::size_t>(
+            1,
+            std::min<std::size_t>(requests.size(), std::thread::hardware_concurrency())));
+
+    auto worker = [&]() {
+        while (true)
+        {
+            const std::size_t requestIndex = nextRequest.fetch_add(1, std::memory_order_relaxed);
+            if (requestIndex >= requests.size())
+            {
+                return;
+            }
+
+            const HlslStageCompileRequest& request = requests[requestIndex];
+            try
+            {
+                if (request.sourcePath == nullptr || request.targetProfile == nullptr)
+                {
+                    throw std::runtime_error("Invalid HLSL stage prewarm request");
+                }
+
+                const std::string source = ReadTextFile(request.sourcePath);
+                (void)CompileHlsl(source, request.sourcePath, request.entry, request.targetProfile);
+            }
+            catch (...)
+            {
+                std::lock_guard<std::mutex> lock(failureMutex);
+                if (failure == nullptr)
+                {
+                    failure = std::current_exception();
+                }
+                return;
+            }
+        }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(workerCount);
+    for (std::size_t workerIndex = 0; workerIndex < workerCount; ++workerIndex)
+    {
+        workers.emplace_back(worker);
+    }
+    for (std::thread& workerThread : workers)
+    {
+        workerThread.join();
+    }
+
+    if (failure != nullptr)
+    {
+        std::rethrow_exception(failure);
+    }
 }
 
 HlslCompileResult CompileHlslLibrary(

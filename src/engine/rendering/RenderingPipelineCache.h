@@ -2,6 +2,7 @@
 
 #include "engine/raytracing/DxrShaderCache.h"
 #include "engine/rendering/ShaderCache.h"
+#include "engine/rhi/d3d12/HlslCompiler.h"
 
 namespace RenderingPipelineCache
 {
@@ -9,5 +10,6 @@ namespace RenderingPipelineCache
     {
         ShaderCache::Clear();
         DxrShaderCache::Clear();
+        ClearHlslStageCompileCache();
     }
 }
