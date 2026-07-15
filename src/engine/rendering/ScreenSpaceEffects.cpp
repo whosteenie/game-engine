@@ -2,6 +2,7 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/platform/EngineLog.h"
+#include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/RenderPathDiagnostics.h"
 #include "engine/platform/SceneRenderTrace.h"
@@ -1438,6 +1439,16 @@ float ScreenSpaceEffects::GetAutoMaterialMipBias() const
 
 void ScreenSpaceEffects::InvalidateTemporalHistory() const
 {
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "reconstruction", "request",
+        m_pathTracerActive ? "path-tracer" : "raster", "existing-guides",
+        m_rayReconstruction ? "rr" : "dlss", "existing-quality",
+        m_width, m_height, m_viewportWidth, m_viewportHeight, false, false, 0x10u);
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "dlss-display-bloom", "request",
+        m_pathTracerActive ? "path-tracer" : "raster", "existing-guides",
+        m_rayReconstruction ? "rr" : "dlss", "existing-quality",
+        m_width, m_height, m_viewportWidth, m_viewportHeight, false, false, 0x10u);
     m_motionVectorFrameState = {};
     m_radianceHistoryValid = false;
     m_giFrameIndex = 0;
@@ -1453,6 +1464,16 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
 
 void ScreenSpaceEffects::ResetTaaHistory() const
 {
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "render-bloom", "request",
+        m_pathTracerActive ? "path-tracer" : "raster", "existing-guides",
+        "none", "existing-quality", m_width, m_height, m_viewportWidth, m_viewportHeight,
+        false, false, 0x20u);
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "reconstruction", "request",
+        m_pathTracerActive ? "path-tracer" : "raster", "existing-guides",
+        m_rayReconstruction ? "rr" : "dlss", "existing-quality",
+        m_width, m_height, m_viewportWidth, m_viewportHeight, false, false, 0x20u);
     m_taaHistoryValid = false;
     m_taaFrameIndex = 0;
     m_bloomHistoryValid = false;
@@ -2043,6 +2064,10 @@ void ScreenSpaceEffects::DrawPathTracerGridOverlayOntoHdrTarget(
 
 void ScreenSpaceEffects::ResetPathTracerAccumulation()
 {
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "pt-reference-accumulation", "request",
+        "path-tracer", "reference-history-key-v1", "none", "reference",
+        m_width, m_height, m_viewportWidth, m_viewportHeight, false, false, 0x40u);
     m_ptAccumSampleCount = 0;
     m_ptAccumHistoryKey = {};
     m_ptAccumPingPongReadFromScratch = false;
@@ -3486,6 +3511,12 @@ RenderDebugMode ScreenSpaceEffects::GetDebugMode() const
 
 void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
 {
+    FrameDiagnostics::LogHistoryEvent(
+        m_dlssViewportId, "pt-temporal-diagnostics", "diagnostic-input",
+        m_pathTracerActive ? "path-tracer" : "raster", "debug-mode-selection",
+        m_rayReconstruction ? "rr" : "dlss", "existing-quality",
+        m_width, m_height, m_viewportWidth, m_viewportHeight,
+        false, mode != RenderDebugMode::None, static_cast<std::uint32_t>(mode));
     if (IsRtPrimaryDebugMode(mode) && !IsRtPrimaryDebugMode(m_debugMode))
     {
         m_rtPrimaryDebugSettleFrames = 0;

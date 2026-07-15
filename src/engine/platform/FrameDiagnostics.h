@@ -26,4 +26,22 @@ namespace FrameDiagnostics
         std::uint64_t submissionIndex,
         bool hasToken,
         std::uint32_t token);
+
+    // S0-P3: observational history lifecycle trace.  The implementation owns the generation
+    // counter; this API never participates in a reset decision or changes a history value.
+    void LogHistoryEvent(
+        std::uint32_t viewportId,
+        const char* owner,
+        const char* event,
+        const char* producer,
+        const char* guideVersion,
+        const char* feature,
+        const char* quality,
+        int renderWidth,
+        int renderHeight,
+        int viewportWidth,
+        int viewportHeight,
+        bool cameraCut,
+        bool diagnosticInput,
+        std::uint32_t reasonBits);
 }

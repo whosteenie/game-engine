@@ -364,6 +364,27 @@ void DlssResolvePass::Execute(
         const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
         in.reset = inputs.forceDlssResetEveryFrame || !inputs.dlssHistoryValid
             || !inputs.motionVectorState.historyValid || cameraCut;
+        const std::uint32_t resetReasonBits =
+            (inputs.forceDlssResetEveryFrame ? 1u : 0u)
+            | (!inputs.dlssHistoryValid ? 2u : 0u)
+            | (!inputs.motionVectorState.historyValid ? 4u : 0u)
+            | (cameraCut ? 8u : 0u);
+        FrameDiagnostics::LogHistoryEvent(
+            inputs.dlssViewportId,
+            "reconstruction",
+            in.reset ? "request" : "consume",
+            pathTracerDlssActive ? "path-tracer" : "raster",
+            guides.usesPathTracerDepth || guides.usesPathTracerMotion ? "pt-guide-bundle" : "raster-guides",
+            inputs.rayReconstructionActive ? "rr" : "dlss",
+            DlssTraceQuality(inputs.quality),
+            context.renderWidth,
+            context.renderHeight,
+            inputs.viewportWidth,
+            inputs.viewportHeight,
+            cameraCut,
+            inputs.forceDlssResetEveryFrame || inputs.useDilatedDlssMotionVectors
+                || inputs.reconstructDlssCameraMotion || inputs.useSubmissionFrameIndex,
+            resetReasonBits);
         if (cameraCut)
         {
             outputs.dlssHistoryValid = false;
@@ -569,6 +590,14 @@ void DlssResolvePass::Execute(
             bloomInputs.bloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
 
             DisplayResBloomOutputs bloomOutputs{};
+            FrameDiagnostics::LogHistoryEvent(
+                inputs.dlssViewportId, "dlss-display-bloom",
+                inputs.dlssBloomHistoryValid ? "consume" : "request",
+                pathTracerDlssActive ? "path-tracer" : "raster",
+                ptBloomTemporalMotion || ptBloomTemporalDepth ? "pt-guide-bundle" : "raster-guides",
+                inputs.rayReconstructionActive ? "rr" : "dlss", DlssTraceQuality(inputs.quality),
+                context.renderWidth, context.renderHeight, inputs.viewportWidth, inputs.viewportHeight,
+                false, false, inputs.dlssBloomHistoryValid ? 0u : 1u);
             {
                 const GfxContext::GpuTimerScope gpuScopeDisplayBloom("DLSS/Display bloom");
                 if (BloomTonemapPass::ExecuteDisplayResBloom(context, bloomInputs, bloomOutputs))

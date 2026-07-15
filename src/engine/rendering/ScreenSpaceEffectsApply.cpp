@@ -5,6 +5,7 @@
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 #include "engine/platform/RenderPathDiagnostics.h"
+#include "engine/platform/FrameDiagnostics.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Framebuffer.h"
@@ -608,6 +609,12 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
         && !IsPtIsolateDebugMode(m_debugMode))
     {
         const GfxContext::GpuTimerScope gpuScopeBloom("Post-process/Bloom");
+        FrameDiagnostics::LogHistoryEvent(
+            m_dlssViewportId, "render-bloom", m_bloomHistoryValid ? "consume" : "request",
+            m_pathTracerActive ? "path-tracer" : "raster",
+            m_pathTracerActive ? "pt-guides" : "raster-guides", "none", "existing-quality",
+            m_width, m_height, state.viewportWidth, state.viewportHeight,
+            false, false, m_bloomHistoryValid ? 0u : 1u);
         RenderResBloomInputs bloomInputs{};
         bloomInputs.hdrColorSrv = state.hdrColorSrv;
         bloomInputs.fullTexelSize = state.texelSize;

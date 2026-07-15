@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <unordered_map>
+#include <string>
 
 namespace
 {
@@ -13,6 +14,7 @@ namespace
     std::uint64_t g_activeApplicationFrameSerial = 0;
     std::uint32_t g_frameEventOrdinal = 0;
     std::unordered_map<std::uint32_t, std::uint32_t> g_viewportEventOrdinals;
+    std::unordered_map<std::string, std::uint64_t> g_historyGenerations;
 
     bool QueryEnabled()
     {
@@ -156,6 +158,49 @@ namespace FrameDiagnostics
             std::fputs("none", stderr);
         }
         std::fputc('\n', stderr);
+        std::fflush(stderr);
+    }
+
+    void LogHistoryEvent(
+        const std::uint32_t viewportId,
+        const char* owner,
+        const char* event,
+        const char* producer,
+        const char* guideVersion,
+        const char* feature,
+        const char* quality,
+        const int renderWidth,
+        const int renderHeight,
+        const int viewportWidth,
+        const int viewportHeight,
+        const bool cameraCut,
+        const bool diagnosticInput,
+        const std::uint32_t reasonBits)
+    {
+        if (!QueryEnabled())
+        {
+            return;
+        }
+
+        const char* const safeOwner = owner != nullptr ? owner : "unknown";
+        const char* const safeEvent = event != nullptr ? event : "unknown";
+        const std::string key = std::to_string(viewportId) + ":" + safeOwner;
+        std::uint64_t& generation = g_historyGenerations[key];
+        if (std::strcmp(safeEvent, "request") == 0)
+        {
+            ++generation;
+        }
+        std::fprintf(
+            stderr,
+            "[frame] history-trace app_serial=%llu viewport=%u owner=%s event=%s generation=%llu "
+            "producer=%s guide=%s feature=%s quality=%s render=%dx%d viewport_extent=%dx%d "
+            "camera_cut=%u diagnostic=%u reason_bits=0x%X\n",
+            static_cast<unsigned long long>(g_activeApplicationFrameSerial), viewportId, safeOwner,
+            safeEvent, static_cast<unsigned long long>(generation),
+            producer != nullptr ? producer : "unknown", guideVersion != nullptr ? guideVersion : "unknown",
+            feature != nullptr ? feature : "unknown", quality != nullptr ? quality : "unknown",
+            renderWidth, renderHeight, viewportWidth, viewportHeight,
+            cameraCut ? 1u : 0u, diagnosticInput ? 1u : 0u, reasonBits);
         std::fflush(stderr);
     }
 }

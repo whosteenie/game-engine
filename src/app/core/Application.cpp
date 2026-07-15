@@ -27,6 +27,7 @@
 #include "app/project/SceneProjectIODetail.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
+#include "engine/rendering/ScreenSpaceEffects.h"
 #include "app/scene/SceneEditingController.h"
 #include "app/scene/SceneEditorUpdateContext.h"
 #include "app/panels/SceneHierarchyPanel.h"
@@ -518,6 +519,8 @@ void Application::Run()
     double lastFrameTime = glfwGetTime();
     std::string lastLoggedFrameError;
     int suppressedRepeatedFrameErrors = 0;
+    const bool s0p3Transitions = std::getenv("GAME_ENGINE_S0P3_TRANSITIONS") != nullptr;
+    std::uint64_t s0p3TransitionFrame = 0;
 
     while (!glfwWindowShouldClose(m_window))
     {
@@ -532,6 +535,28 @@ void Application::Run()
         lastFrameTime = currentTime;
         const auto frameWorkStart = std::chrono::steady_clock::now();
         ApplicationFrameDiagnostics frameDiagnostics{};
+
+        // S0-P3 capture-only transition matrix. This calls the existing UI setters and GLFW resize
+        // path; it is inert unless explicitly enabled by the diagnostic capture script.
+        if (s0p3Transitions && m_projectSession->HasActiveProject() && m_scene != nullptr)
+        {
+            ++s0p3TransitionFrame;
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+            switch (s0p3TransitionFrame)
+            {
+            case 30: effects.SetRayReconstruction(false); break;
+            case 60: effects.SetRayReconstruction(true); break;
+            case 90: effects.SetAntiAliasingMode(AntiAliasingMode::DLSS); break;
+            case 120: effects.SetDlssPreset(DlssPreset::Performance); break;
+            case 150: glfwSetWindowSize(m_window, std::max(640, m_width - 160), std::max(480, m_height - 90)); break;
+            case 180: sceneRenderer.SetRenderDebugMode(RenderDebugMode::PtRestirGiSpatialStaticVariance); break;
+            case 210: sceneRenderer.SetRenderDebugMode(RenderDebugMode::None); break;
+            case 240: sceneRenderer.GetDxrSettings().SetRenderingMode(RenderingMode::Hybrid); break;
+            case 270: sceneRenderer.GetDxrSettings().SetRenderingMode(RenderingMode::PathTraced); break;
+            default: break;
+            }
+        }
 
         try
         {

@@ -2,6 +2,7 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/platform/SceneRenderTrace.h"
+#include "engine/platform/FrameDiagnostics.h"
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rhi/GfxContext.h"
@@ -191,6 +192,21 @@ void PathTracerDisplayPass::AccumulateReference(
     }
 
     const bool historyChanged = !(inputs.historyKey == inputs.currentHistoryKey);
+    FrameDiagnostics::LogHistoryEvent(
+        0,
+        "pt-reference-accumulation",
+        historyChanged || inputs.sampleCount == 0 ? "request" : "consume",
+        "path-tracer",
+        "reference-history-key-v1",
+        "none",
+        "reference",
+        inputs.width,
+        inputs.height,
+        inputs.width,
+        inputs.height,
+        false,
+        false,
+        (historyChanged ? 1u : 0u) | (inputs.sampleCount == 0 ? 2u : 0u));
     if (historyChanged)
     {
         outputs.historyKey = inputs.historyKey;

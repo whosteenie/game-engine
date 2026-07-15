@@ -1,4 +1,5 @@
 #include "engine/raytracing/DxrDispatchContext.h"
+#include "engine/platform/FrameDiagnostics.h"
 
 #include "engine/raytracing/DxrContext.h"
 #include "engine/raytracing/DxrGpuResource.h"
@@ -1232,6 +1233,23 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     DxrRootSignature::RestirTemporalConstants dispatchConstants = constants;
     const bool historyOk = m_ptPrevSurfaceHistoryValid && m_restirReservoirHistoryValid
         && dispatchConstants.historyValid != 0u;
+    FrameDiagnostics::LogHistoryEvent(
+        0,
+        "restir-temporal",
+        historyOk ? "consume" : "request",
+        "path-tracer",
+        "pt-surface-history-v1",
+        "none",
+        "real-time",
+        m_restirBufferWidth,
+        m_restirBufferHeight,
+        m_restirBufferWidth,
+        m_restirBufferHeight,
+        false,
+        false,
+        (!m_ptPrevSurfaceHistoryValid ? 1u : 0u)
+            | (!m_restirReservoirHistoryValid ? 2u : 0u)
+            | (dispatchConstants.historyValid == 0u ? 4u : 0u));
     dispatchConstants.historyValid = historyOk ? 1u : 0u;
 
     const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(dispatchConstants);
