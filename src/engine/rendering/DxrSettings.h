@@ -114,6 +114,15 @@ public:
     {
         m_restirGiSpatialDiagnosticMode = mode;
     }
+    int GetRestirGiDiagnosticOrbitRevolutions() const
+    {
+        return m_restirGiDiagnosticOrbitRevolutions;
+    }
+    void SetRestirGiDiagnosticOrbitRevolutions(const int revolutions)
+    {
+        m_restirGiDiagnosticOrbitRevolutions = revolutions < 1
+            ? 1 : (revolutions > 20 ? 20 : revolutions);
+    }
 
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(const bool enabled) { m_enabled = enabled; }
@@ -208,6 +217,7 @@ private:
     bool m_restirGiSpatialEnabled = false;
     RestirGiSpatialDiagnosticMode m_restirGiSpatialDiagnosticMode =
         RestirGiSpatialDiagnosticMode::Production;
+    int m_restirGiDiagnosticOrbitRevolutions = 13;
     bool m_reflectionsEnabled = false;
     DxrReflectionsQuality m_reflectionsQuality = DxrReflectionsQuality::Medium;
     int m_reflectionsSamplesPerPixel = 1;

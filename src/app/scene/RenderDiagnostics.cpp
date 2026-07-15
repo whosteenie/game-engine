@@ -175,7 +175,9 @@ namespace RenderDiagnostics
 
             out << "[Viewport]\n";
             out << "Size: " << viewportWidth << " x " << viewportHeight << "\n";
-            out << "Camera position: " << FormatVec3(camera.GetPosition()) << "\n\n";
+            out << "Camera position: " << FormatVec3(camera.GetPosition()) << "\n";
+            out << "Camera rotation (deg): yaw " << std::fixed << std::setprecision(4)
+                << camera.GetYaw() << ", pitch " << camera.GetPitch() << "\n\n";
             if (captureDescription != nullptr && captureDescription[0] != '\0')
             {
                 out << "[Capture procedure]\n";

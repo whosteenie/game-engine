@@ -54,6 +54,7 @@ namespace
     constexpr std::uint32_t kP7DiagnosticBatchStaticFrames = 600u;
     constexpr std::uint32_t kP7DiagnosticBatchOrbitFrames = 600u;
     const glm::vec3 kP7DiagnosticCapturePosition{-5.5f, 0.3f, -1.3f};
+    constexpr float kP7DiagnosticCapturePitchDegrees = 5.0f;
 
     struct P7DiagnosticVariant
     {
@@ -1232,15 +1233,21 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     ImGui::Indent();
                     ImGui::TextDisabled("P6/P7 GI diagnostics (screen-space ROI)");
                     static std::string roiStatus;
-                    static int requestedOrbitRevolutions = 3;
+                    int requestedOrbitRevolutions =
+                        dxrSettings.GetRestirGiDiagnosticOrbitRevolutions();
                     glm::vec3 selectedTarget;
                     float selectedRadius = 0.5f;
                     ImGui::SetNextItemWidth(120.0f);
-                    ImGui::SliderInt(
+                    if (ImGui::SliderInt(
                         "Orbit revolutions##pt-restir-gi-camera",
                         &requestedOrbitRevolutions,
                         1,
-                        20);
+                        20))
+                    {
+                        dxrSettings.SetRestirGiDiagnosticOrbitRevolutions(
+                            requestedOrbitRevolutions);
+                        scene.MarkDirty();
+                    }
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::SetTooltip(
@@ -1298,6 +1305,9 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                                     diagnosticBatch.originalCameraPitch = camera.GetPitch();
                                     diagnosticBatch.target = selectedTarget;
                                     camera.SetPosition(kP7DiagnosticCapturePosition);
+                                    camera.SetOrientation(
+                                        camera.GetYaw(),
+                                        kP7DiagnosticCapturePitchDegrees);
                                     PointCameraYawAtTarget(camera, selectedTarget);
                                     diagnosticBatch.captureCameraPosition = camera.GetPosition();
                                     diagnosticBatch.captureCameraYaw = camera.GetYaw();
@@ -1637,8 +1647,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     LightingPanelUi::DrawWrappedHelp(
                         "Complete causal capture uses matched 60-frame warm-up, 600-frame static, and "
                         "600-frame orbit captures for baseline, filter-only, spatial-only, and full P7. "
-                        "The automatic capture always starts at (-5.5, 0.3, -1.3), aims yaw at the "
-                        "selection, and preserves the current pitch. "
+                        "The automatic capture always starts at (-5.5, 0.3, -1.3), pitch 5 degrees, "
+                        "and aims yaw at the selection. "
                         "Manual repeatable orbit remains a "
                         "10-second realtime stress test. Both return to the exact starting pose and "
                         "write variant reports automatically.");
