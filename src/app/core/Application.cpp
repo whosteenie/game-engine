@@ -56,6 +56,7 @@
 
 #include <ImGuizmo.h>
 #include "engine/platform/NativeProgressWindow.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/Input.h"
 #include "engine/platform/InputDiagnostics.h"
 #include "engine/platform/FrameDiagnostics.h"
@@ -458,10 +459,12 @@ Application::~Application()
 void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
+    ProjectLoadBenchmark::StartFromEnvironment();
 
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
     {
         std::string error;
+        ProjectLoadBenchmark::Mark("project.auto_open.begin");
         if (std::getenv("GAME_ENGINE_AUTO_OPEN_DEFERRED") != nullptr)
         {
             m_projectChooser->QueueProjectOpen(autoOpenPath);
@@ -479,6 +482,12 @@ void Application::Run()
                      error))
         {
             m_projectChooser->SetErrorMessage(error.empty() ? "Failed to open project." : error);
+            ProjectLoadBenchmark::Fail(error.empty() ? "Failed to open project." : error);
+            RequestForcedClose();
+        }
+        else
+        {
+            ProjectLoadBenchmark::Mark("project.auto_open.complete");
         }
     }
 
@@ -1543,6 +1552,7 @@ void Application::Render()
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
     const bool presentingProjectLoad = m_projectChooser->IsPresentingProjectLoad();
+    const bool projectLoadBenchmarkActive = ProjectLoadBenchmark::IsActive();
 
     if (editorActive || presentingProjectLoad)
     {
@@ -1552,6 +1562,8 @@ void Application::Render()
                 SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
             });
             RunApplicationPhase("prepare-frame-gpu", [&]() {
+                ProjectLoadBenchmark::ScopedPhase projectLoadGpuPrepare(
+                    presentingProjectLoad ? "renderer.first_gpu_prepare" : nullptr);
                 if (presentingProjectLoad)
                 {
                     NativeProgressWindow::Instance().Report(
@@ -1583,6 +1595,13 @@ void Application::Render()
         }
     }
 
+    if (projectLoadBenchmarkActive && editorActive)
+    {
+        // Do not let a saved layout with Scene View hidden turn the benchmark into a different
+        // load path. This target is intentionally offscreen and is never drawn by ImGui.
+        m_sceneViewportPanel->EnsureBenchmarkRenderTarget(m_width, m_height);
+    }
+
     m_gfxFrameActive = true;
     RunApplicationPhase("render-begin", [&]() {
         FrameDiagnostics::LogPhase("render-begin");
@@ -1591,7 +1610,7 @@ void Application::Render()
 
     bool sceneFramePresented = false;
     if (editorActive
-        && EditorPanelConstraints::IsViewportTabSelected("Scene View")
+        && (projectLoadBenchmarkActive || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
         && m_sceneViewportPanel->HasValidRenderTarget())
     {
         RunApplicationPhase("scene-view-render", [&]() {
@@ -1629,6 +1648,12 @@ void Application::Render()
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
                 sceneFramePresented = true;
+                if (projectLoadBenchmarkActive)
+                {
+                    ProjectLoadBenchmark::Mark("scene_view.first_composite_recorded");
+                    ProjectLoadBenchmark::Complete();
+                    RequestForcedClose();
+                }
                 if (presentingProjectLoad)
                 {
                     m_projectChooser->NotifyEditorCompositeReady();
@@ -1713,6 +1738,11 @@ void Application::Render()
         const Scene* editorScene = GetEditorTargetScene();
         const bool gpuResourcesFailed =
             editorScene != nullptr && editorScene->GetRenderer().HasGpuResourcesInitFailed();
+        if (gpuResourcesFailed && projectLoadBenchmarkActive)
+        {
+            ProjectLoadBenchmark::Fail(editorScene->GetRenderer().GetGpuResourcesInitError());
+            RequestForcedClose();
+        }
         m_projectChooser->TickProjectLoadTimeout(gpuResourcesFailed);
     }
 

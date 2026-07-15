@@ -14,6 +14,7 @@
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/SceneRenderTrace.h"
 
 #include "app/scene/SceneEditor.h"
@@ -414,6 +415,7 @@ void SceneRenderer::EnsureGpuResources() const
 
     SceneRenderer* self = const_cast<SceneRenderer*>(this);
     self->m_gpuResourceState = GpuResourceState::InProgress;
+    ProjectLoadBenchmark::ScopedPhase gpuInitializationPhase("renderer.gpu_resource_initialize");
     SceneRenderTrace::Scope gpuInitScope("EnsureGpuResources");
     try
     {
@@ -784,6 +786,7 @@ void SceneRenderer::PrepareFrameGpuResources()
         SceneRenderTrace::Scope envScope("SyncGpuResources");
         try
         {
+            ProjectLoadBenchmark::ScopedPhase environmentSyncPhase("renderer.environment_sync");
             m_environmentMap->SyncGpuResources();
             envScope.Success();
         }

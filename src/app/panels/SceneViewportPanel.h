@@ -41,6 +41,9 @@ public:
     std::uintptr_t GetColorTexture() const;
 
     void EnsureFramebufferSized() const;
+    // Project-load benchmarks must not depend on the user's active dock tab. This allocates a
+    // stable offscreen target without constructing an ImGui viewport region.
+    void EnsureBenchmarkRenderTarget(int width, int height);
     void ClearRenderTarget() const;
 
 private:

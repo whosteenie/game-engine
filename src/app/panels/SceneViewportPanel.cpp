@@ -140,6 +140,14 @@ void SceneViewportPanel::EnsureFramebufferSized() const
     OffscreenViewportPanel::EnsureFramebufferSized(m_viewport);
 }
 
+void SceneViewportPanel::EnsureBenchmarkRenderTarget(const int width, const int height)
+{
+    m_viewport.showPanel = true;
+    m_viewport.renderWidth = std::max(width, 1);
+    m_viewport.renderHeight = std::max(height, 1);
+    m_viewport.framebuffer.Resize(m_viewport.renderWidth, m_viewport.renderHeight);
+}
+
 void SceneViewportPanel::ClearRenderTarget() const
 {
     OffscreenViewportPanel::ClearRenderTarget(m_viewport);

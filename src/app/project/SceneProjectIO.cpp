@@ -27,6 +27,7 @@
 #include "engine/assets/ModelImporter.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/ProjectLoadTrace.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/scene/SceneObject.h"
@@ -1003,6 +1004,7 @@ namespace SceneProjectIODetail
         ImportedMeshReusePool* meshReusePool,
         bool showProgress)
     {
+        ProjectLoadBenchmark::ScopedPhase deserializeObjectsPhase("project.deserialize.objects");
         std::unordered_map<std::string, ImportedAssetCacheEntry> importCache;
         LoadedImportedMeshMap loadedImportedMeshes;
         std::vector<SceneObject>& sceneObjects = scene.GetObjects();
@@ -1485,30 +1487,35 @@ bool SceneProjectIO::Load(
 
     try
     {
+        ProjectLoadBenchmark::ScopedPhase loadProjectFilePhase("project.file.total");
         ProjectLoadTrace::Step("set material texture resolver");
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
         progress.SetProgress(0.09f);
 
-        ProjectLoadTrace::Step("open project file");
-        std::ifstream input(projectFilePath, std::ios::binary);
-        if (!input)
-        {
-            outError = "Failed to open project file for reading.";
-            ProjectLoadTrace::Step("open project file failed");
-            return false;
-        }
-
         json root;
-        progress.SetMessage("Parsing project file...");
-        progress.SetProgress(0.10f);
-        ProjectLoadTrace::Step("parse project json");
-        input >> root;
-        ProjectLoadTrace::Step("parse project json ok");
+        {
+            ProjectLoadBenchmark::ScopedPhase parseProjectFilePhase("project.file.read_and_parse_json");
+            ProjectLoadTrace::Step("open project file");
+            std::ifstream input(projectFilePath, std::ios::binary);
+            if (!input)
+            {
+                outError = "Failed to open project file for reading.";
+                ProjectLoadTrace::Step("open project file failed");
+                return false;
+            }
+
+            progress.SetMessage("Parsing project file...");
+            progress.SetProgress(0.10f);
+            ProjectLoadTrace::Step("parse project json");
+            input >> root;
+            ProjectLoadTrace::Step("parse project json ok");
+        }
 
         progress.SetMessage("Loading scene...");
         progress.SetProgress(SceneProjectIODetail::kProjectObjectLoadProgressStart);
+        ProjectLoadBenchmark::ScopedPhase deserializeScenePhase("project.deserialize.scene");
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)

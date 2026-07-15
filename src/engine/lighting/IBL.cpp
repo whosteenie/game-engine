@@ -3,6 +3,7 @@
 #include "engine/lighting/IrradianceSh.h"
 
 #include "engine/platform/NativeProgressWindow.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
@@ -1143,6 +1144,7 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
     m_hdrPath = nextPath;
     m_rotationYRadians = rotationYRadians;
     DestroyEnvironmentTextures();
+    ProjectLoadBenchmark::ScopedPhase iblReloadPhase("ibl.reload.total");
 
     try
     {
@@ -1161,17 +1163,27 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
                 0.910f);
         }
         SceneRenderTrace::Step("ibl: load hdr equirect");
-        LoadHdrEquirectangular(m_hdrPath.c_str());
+        {
+            ProjectLoadBenchmark::ScopedPhase loadHdrPhase("ibl.load_hdr_and_importance");
+            LoadHdrEquirectangular(m_hdrPath.c_str());
+        }
         NativeProgressWindow::Instance().Report("Generating environment cubemap...", 0.918f);
         SceneRenderTrace::Step("ibl: create environment cubemap");
-        CreateEnvironmentCubemap();
+        {
+            ProjectLoadBenchmark::ScopedPhase cubemapPhase("ibl.create_environment_cubemap");
+            CreateEnvironmentCubemap();
+        }
         NativeProgressWindow::Instance().Report("Prefiltering specular IBL...", 0.926f);
         SceneRenderTrace::Step("ibl: create prefilter map");
-        CreatePrefilterMap();
+        {
+            ProjectLoadBenchmark::ScopedPhase prefilterPhase("ibl.create_prefilter_map");
+            CreatePrefilterMap();
+        }
         if (m_brdfLutGpu.resource == nullptr)
         {
             NativeProgressWindow::Instance().Report("Generating BRDF lookup table...", 0.932f);
             SceneRenderTrace::Step("ibl: create brdf lut");
+            ProjectLoadBenchmark::ScopedPhase brdfLutPhase("ibl.create_brdf_lut");
             CreateBrdfLut();
         }
         SceneRenderTrace::Step("ibl: reload ok");

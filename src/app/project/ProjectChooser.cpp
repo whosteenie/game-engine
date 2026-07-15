@@ -12,6 +12,7 @@
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
+#include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/ProjectLoadTrace.h"
 #include "engine/platform/SceneRenderTrace.h"
 #include "engine/raytracing/DxrTrace.h"
@@ -117,6 +118,7 @@ bool ProjectChooser::OpenProjectAtPath(
     std::string& outError)
 {
     outError.clear();
+    ProjectLoadBenchmark::ScopedPhase projectOpenPhase("project.open.total");
     m_lastOpenFailedDueToDeviceRemoved = false;
     ProjectLoadTrace::Reset();
     ProjectLoadTrace::Step("OpenProjectAtPath");
@@ -155,7 +157,10 @@ bool ProjectChooser::OpenProjectAtPath(
             NativeProgressWindow::Instance().SetProgress(0.05f);
             // Do not pump GLFW events here: OpenProjectAtPath runs during Update before
             // the current frame's ImGui NewFrame and resize callbacks can corrupt GPU state.
-            GfxContext::Get().WaitForSwapchainFrames(false);
+            {
+                ProjectLoadBenchmark::ScopedPhase waitForGpuPhase("project.open.wait_for_previous_gpu");
+                GfxContext::Get().WaitForSwapchainFrames(false);
+            }
 
             // A SceneRenderer survives project replacement, but its DXR BLAS cache is keyed by
             // Mesh*. Release that scene-owned cache before SceneProjectIO destroys the old meshes;
@@ -177,7 +182,12 @@ bool ProjectChooser::OpenProjectAtPath(
         NativeProgressWindow::Instance().SetMessage("Loading project file...");
         NativeProgressWindow::Instance().SetProgress(0.08f);
         ProjectLoadTrace::Scope openProjectScope("ProjectSession::OpenProject");
-        if (!project.OpenProject(scene, projectFilePath, editorState))
+        bool projectOpened = false;
+        {
+            ProjectLoadBenchmark::ScopedPhase deserializeProjectPhase("project.open.deserialize_project");
+            projectOpened = project.OpenProject(scene, projectFilePath, editorState);
+        }
+        if (!projectOpened)
         {
             outError = SanitizeLogText(project.GetStatusMessage(), "Failed to open project.");
             EngineLog::LogFailure("project", "OpenProject", outError);

@@ -7,6 +7,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/platform/ImGuiLayer.cpp
     src/engine/platform/ImGuiFonts.cpp
     src/engine/platform/NativeProgressWindow.cpp
+    src/engine/platform/ProjectLoadBenchmark.cpp
     src/engine/platform/Input.cpp
     src/engine/platform/InputDiagnostics.cpp
     src/engine/platform/EngineLog.cpp
