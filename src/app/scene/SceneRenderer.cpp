@@ -138,10 +138,6 @@ void SceneRenderer::SetRenderDebugMode(const RenderDebugMode mode)
     {
         m_screenSpaceEffects->SetDebugMode(mode);
     }
-    if (m_gameViewScreenSpaceEffects != nullptr)
-    {
-        m_gameViewScreenSpaceEffects->SetDebugMode(mode);
-    }
 }
 
 RenderDebugMode SceneRenderer::GetRenderDebugMode() const
@@ -206,6 +202,66 @@ namespace
     private:
         std::unique_ptr<ScreenSpaceEffects>& m_sceneViewEffects;
         std::unique_ptr<ScreenSpaceEffects>& m_gameViewEffects;
+        bool m_active = false;
+    };
+
+    class ScopedDxrDisable final
+    {
+    public:
+        ScopedDxrDisable(DxrSettings& settings, const bool disable)
+            : m_settings(settings), m_wasEnabled(settings.IsEnabled()), m_active(disable)
+        {
+            if (m_active)
+            {
+                m_settings.SetEnabled(false);
+            }
+        }
+
+        ~ScopedDxrDisable()
+        {
+            if (m_active)
+            {
+                m_settings.SetEnabled(m_wasEnabled);
+            }
+        }
+
+        ScopedDxrDisable(const ScopedDxrDisable&) = delete;
+        ScopedDxrDisable& operator=(const ScopedDxrDisable&) = delete;
+
+    private:
+        DxrSettings& m_settings;
+        bool m_wasEnabled = false;
+        bool m_active = false;
+    };
+
+    class ScopedRenderDebugOverride final
+    {
+    public:
+        ScopedRenderDebugOverride(ScreenSpaceEffects* effects, const RenderDebugMode overrideMode)
+            : m_effects(effects),
+              m_originalMode(effects != nullptr ? effects->GetDebugMode() : RenderDebugMode::None)
+        {
+            if (m_effects != nullptr && m_originalMode != overrideMode)
+            {
+                m_effects->SetDebugMode(overrideMode);
+                m_active = true;
+            }
+        }
+
+        ~ScopedRenderDebugOverride()
+        {
+            if (m_active)
+            {
+                m_effects->SetDebugMode(m_originalMode);
+            }
+        }
+
+        ScopedRenderDebugOverride(const ScopedRenderDebugOverride&) = delete;
+        ScopedRenderDebugOverride& operator=(const ScopedRenderDebugOverride&) = delete;
+
+    private:
+        ScreenSpaceEffects* m_effects = nullptr;
+        RenderDebugMode m_originalMode = RenderDebugMode::None;
         bool m_active = false;
     };
 
@@ -1749,8 +1805,6 @@ void SceneRenderer::RenderGizmoPass(
         return;
     }
 
-    GfxContext::Get().ResetDrawSrvTable();
-
     bool viewportDepthReadOnly = false;
     if (usePostProcess)
     {
@@ -1867,6 +1921,27 @@ void SceneRenderer::Render(
         m_gameViewScreenSpaceEffects,
         isGameView);
 
+    // Game View is always runtime presentation: renderer diagnostics belong exclusively to
+    // Scene View. A selected Scene diagnostic is explicit and therefore takes precedence over
+    // the Scene View's normal Lit/Unlit presentation choice.
+    const SceneViewShadingMode shadingMode = isGameView
+        ? SceneViewShadingMode::FullRuntime
+        : options.shadingMode;
+    const RenderDebugMode requestedDebugMode = m_screenSpaceEffects->GetDebugMode();
+    const bool sceneDiagnosticActive = !isGameView && requestedDebugMode != RenderDebugMode::None;
+    const RenderDebugMode effectiveDebugMode = isGameView
+        ? RenderDebugMode::None
+        : sceneDiagnosticActive
+            ? requestedDebugMode
+            : shadingMode == SceneViewShadingMode::Unlit
+                ? RenderDebugMode::GBufferAlbedo
+                : RenderDebugMode::None;
+    const bool suppressDxrForSceneView = !isGameView
+        && !sceneDiagnosticActive
+        && shadingMode != SceneViewShadingMode::FullRuntime;
+    ScopedDxrDisable scopedDxrDisable(m_dxrSettings, suppressDxrForSceneView);
+    ScopedRenderDebugOverride scopedDebugMode(m_screenSpaceEffects.get(), effectiveDebugMode);
+
     NativeProgressWindow::Instance().Report("Uploading scene GPU tables...", 0.955f);
     m_activePreviousWorldByObjectId = isGameView
         ? &m_gameViewPreviousWorldByObjectId
@@ -1887,8 +1962,6 @@ void SceneRenderer::Render(
             std::chrono::steady_clock::now() - gpuSceneUploadStart)
             .count();
 
-    GfxContext::Get().ResetDrawSrvTable();
-
     Framebuffer* target = nullptr;
     if (targetFramebuffer != 0)
     {
@@ -1896,8 +1969,12 @@ void SceneRenderer::Render(
     }
 
     const bool usePostProcess = m_screenSpaceEffects->IsEnabled();
+    // Lit and Unlit are inspection views, not temporal presentation modes.  They deliberately
+    // bypass the runtime's ray tracing path, so retain a stable projection rather than exposing
+    // the raster jitter that normally feeds TAA/DLSS/RR.
     const bool freezeTemporalJitter = ImGuizmo::IsUsing() || ImGuizmo::IsUsingViewManipulate()
-        || m_screenSpaceEffects->GetFreezeTemporalJitterDiagnostic();
+        || m_screenSpaceEffects->GetFreezeTemporalJitterDiagnostic()
+        || (!isGameView && !sceneDiagnosticActive && shadingMode != SceneViewShadingMode::FullRuntime);
 
     SceneRenderTrace::Step(
         std::string("render setup postProcess=") + (usePostProcess ? "1" : "0")

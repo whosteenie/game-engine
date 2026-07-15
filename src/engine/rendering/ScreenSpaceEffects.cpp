@@ -3474,7 +3474,6 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_bloomTemporalBlendFactor = source.m_bloomTemporalBlendFactor;
     m_bloomSameUvBlendFactor = source.m_bloomSameUvBlendFactor;
     m_bloomDepthThreshold = source.m_bloomDepthThreshold;
-    m_debugMode = source.m_debugMode;
     m_antiAliasingMode = source.m_antiAliasingMode;
     m_dlssPreset = source.m_dlssPreset;
     m_rayReconstruction = source.m_rayReconstruction;

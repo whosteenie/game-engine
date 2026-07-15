@@ -1612,12 +1612,14 @@ void Application::Render()
                 m_camera->SetAspectFromFramebuffer(
                     m_sceneViewportPanel->GetRenderWidth(),
                     m_sceneViewportPanel->GetRenderHeight());
+                SceneRenderOptions sceneViewOptions{};
+                sceneViewOptions.shadingMode = m_sceneToolbarPanel->GetShadingMode();
                 sceneViewScene->Render(
                     *m_camera,
                     m_sceneViewportPanel->GetRenderWidth(),
                     m_sceneViewportPanel->GetRenderHeight(),
                     m_sceneViewportPanel->GetFramebuffer(),
-                    SceneRenderOptions{},
+                    sceneViewOptions,
                     RenderViewport::SceneView);
                 if (presentingProjectLoad)
                 {

@@ -8,6 +8,27 @@
 
 namespace
 {
+    constexpr const char* kShadingModeLabels[] = {
+        "Full Runtime",
+        "Lit",
+        "Unlit",
+    };
+
+    const char* ShadingModeTooltip(const SceneViewShadingMode mode)
+    {
+        switch (mode)
+        {
+        case SceneViewShadingMode::FullRuntime:
+            return "Scene View uses the project's complete renderer tuning, including path tracing when enabled.";
+        case SceneViewShadingMode::Lit:
+            return "Scene View uses the raster lighting path while Game View remains fully representative.";
+        case SceneViewShadingMode::Unlit:
+            return "Scene View shows material base color without lighting. Game View remains fully representative.";
+        default:
+            return nullptr;
+        }
+    }
+
     bool DrawToolButton(const char* label, TransformTool tool, TransformTool activeTool, Scene& scene)
     {
         const bool isActive = tool == activeTool;
@@ -98,6 +119,21 @@ void SceneToolbarPanel::Draw(
     {
         ImGui::SameLine();
         ImGui::TextUnformatted("Scale gizmo uses local axes.");
+    }
+
+    ImGui::Separator();
+
+    int shadingMode = static_cast<int>(m_shadingMode);
+    ImGui::TextUnformatted("Shading");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::Combo("##SceneViewShading", &shadingMode, kShadingModeLabels, IM_ARRAYSIZE(kShadingModeLabels)))
+    {
+        m_shadingMode = static_cast<SceneViewShadingMode>(shadingMode);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("%s", ShadingModeTooltip(m_shadingMode));
     }
 
     ImGui::Separator();

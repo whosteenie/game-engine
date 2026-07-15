@@ -36,6 +36,15 @@ enum class HierarchyInsertMode
     AsChild
 };
 
+// Scene View-only presentation choice. This never changes the project's renderer tuning or the
+// Game View output, which remains the runtime ground truth.
+enum class SceneViewShadingMode
+{
+    FullRuntime,
+    Lit,
+    Unlit,
+};
+
 struct SceneRenderOptions
 {
     bool showGrid = true;
@@ -44,6 +53,7 @@ struct SceneRenderOptions
     bool showColliderGizmos = true;
     bool showEditorOverlay = true;
     bool enableShadowPass = true;
+    SceneViewShadingMode shadingMode = SceneViewShadingMode::FullRuntime;
 };
 
 class Scene
