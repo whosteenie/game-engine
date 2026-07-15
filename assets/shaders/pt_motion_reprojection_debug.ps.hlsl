@@ -5,14 +5,19 @@
 Texture2D<float4> uCurrentRadiance : register(t0);
 Texture2D<float4> uPreviousRadiance : register(t1);
 Texture2D<float2> uMotion : register(t2);
+Texture2D<float> uCurrentDepth : register(t3);
+Texture2D<float4> uPreviousDepth : register(t4);
 
 SamplerState uCurrentSampler : register(s0);
 SamplerState uPreviousSampler : register(s1);
 SamplerState uMotionSampler : register(s2);
+SamplerState uCurrentDepthSampler : register(s3);
+SamplerState uPreviousDepthSampler : register(s4);
 
 cbuffer PerPixel : register(b0)
 {
     int uPreviousFrameValid;
+    int uDebugMode;
     float uMotionScaleX;
     float uMotionScaleY;
     float uDifferenceGain;
@@ -54,6 +59,18 @@ float4 main(PSInput input) : SV_Target
     {
         // Blue is ordinary off-screen disocclusion, not a guide mismatch.
         return float4(0.03, 0.18, 0.95, 1.0);
+    }
+
+    if (uDebugMode == 1)
+    {
+        const float currentDepth = uCurrentDepth.Sample(uCurrentDepthSampler, currentUv);
+        const float previousDepth = uPreviousDepth.Sample(uPreviousDepthSampler, previousUv).r;
+        // Perspective depth is proportional to reciprocal view distance. Comparing the remaining
+        // range (1 - z) keeps the threshold meaningful from near geometry through the far plane.
+        const float depthResidual = abs(currentDepth - previousDepth)
+            / max(max(1.0 - currentDepth, 1.0 - previousDepth), 1e-4);
+        const float discontinuity = max(depthResidual - 0.025, 0.0);
+        return float4(Heat(discontinuity * 12.0), 1.0);
     }
 
     // A small corresponding footprint removes independent one-sample PT noise from this audit.

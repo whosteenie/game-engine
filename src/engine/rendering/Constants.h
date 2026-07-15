@@ -98,6 +98,8 @@ namespace EngineConstants
         "assets/shaders/pt_temporal_stats_debug.ps.hlsl";
     inline constexpr const char* PtMotionReprojectionDebugFragmentShader =
         "assets/shaders/pt_motion_reprojection_debug.ps.hlsl";
+    inline constexpr const char* PtMotionDepthCopyFragmentShader =
+        "assets/shaders/pt_motion_depth_copy.ps.hlsl";
     inline constexpr const char* PtBoilMetricFragmentShader =
         "assets/shaders/pt_boil_metric.ps.hlsl";
     inline constexpr const char* DxrReflectionsLibraryShader = "assets/shaders/dxr/reflections.hlsl";

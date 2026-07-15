@@ -20,6 +20,7 @@ namespace
                IsGiTemporalDebugMode(mode) ||
                IsPtTemporalStatsDebugMode(mode) ||
                IsPtMotionReprojectionDebugMode(mode) ||
+               IsPtDepthReprojectionDebugMode(mode) ||
                IsSsgiDenoiseDebugMode(mode) ||
                IsSsrDebugMode(mode) ||
                IsDxrDebugMode(mode);
@@ -507,9 +508,12 @@ bool PostProcessDebugPass::TryExecute(
         return true;
     }
     else if (
-        IsPtMotionReprojectionDebugMode(inputs.debugMode) &&
+        (IsPtMotionReprojectionDebugMode(inputs.debugMode)
+            || IsPtDepthReprojectionDebugMode(inputs.debugMode)) &&
         inputs.ptCurrentRadianceSrv != 0 &&
         inputs.ptPreviousRadianceSrv != 0 &&
+        inputs.ptCurrentDepthSrv != 0 &&
+        inputs.ptPreviousDepthSrv != 0 &&
         inputs.ptMotionSrv != 0 &&
         inputs.ptMotionReprojectionDebugShader != nullptr)
     {
@@ -517,6 +521,10 @@ bool PostProcessDebugPass::TryExecute(
         inputs.ptMotionReprojectionDebugShader->SetInt("uCurrentRadiance", 0);
         inputs.ptMotionReprojectionDebugShader->SetInt("uPreviousRadiance", 1);
         inputs.ptMotionReprojectionDebugShader->SetInt("uMotion", 2);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uCurrentDepth", 3);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uPreviousDepth", 4);
+        inputs.ptMotionReprojectionDebugShader->SetInt(
+            "uDebugMode", IsPtDepthReprojectionDebugMode(inputs.debugMode) ? 1 : 0);
         inputs.ptMotionReprojectionDebugShader->SetInt(
             "uPreviousFrameValid", inputs.ptPreviousRadianceValid ? 1 : 0);
         // These are the exact NDC-to-UV conversion scales passed to Streamline for this source.
@@ -531,9 +539,16 @@ bool PostProcessDebugPass::TryExecute(
         inputs.ptMotionReprojectionDebugShader->BindTextureSlot(0, inputs.ptCurrentRadianceSrv);
         inputs.ptMotionReprojectionDebugShader->BindTextureSlot(1, inputs.ptPreviousRadianceSrv);
         inputs.ptMotionReprojectionDebugShader->BindTextureSlot(2, inputs.ptMotionSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(3, inputs.ptCurrentDepthSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(4, inputs.ptPreviousDepthSrv);
         inputs.ptMotionReprojectionDebugShader->FlushUniforms();
         context.draw.DrawFullscreenQuad();
-        FinishDebugView(inputs, outputs, "pt_motion_reprojection_residual");
+        FinishDebugView(
+            inputs,
+            outputs,
+            IsPtDepthReprojectionDebugMode(inputs.debugMode)
+                ? "pt_depth_reprojection_disocclusion"
+                : "pt_motion_reprojection_residual");
         return true;
     }
 

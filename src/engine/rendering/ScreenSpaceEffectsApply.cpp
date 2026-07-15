@@ -553,7 +553,9 @@ void ScreenSpaceEffects::RunApplyLightingStage(ApplyFrameState& state) const
         const GfxContext::GpuTimerScope gpuScopePtStats("Post-process/PT temporal diagnostics");
         UpdatePathTracerTemporalDiagnostics(*state.camera);
     }
-    else if (m_dxrPathTracerOutputSrv != 0 && IsPtMotionReprojectionDebugMode(m_debugMode))
+    else if (m_dxrPathTracerOutputSrv != 0
+        && (IsPtMotionReprojectionDebugMode(m_debugMode)
+            || IsPtDepthReprojectionDebugMode(m_debugMode)))
     {
         PreparePathTracerMotionReprojectionAudit();
     }
@@ -692,7 +694,10 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     debugInputs.ssrIndirectTarget = const_cast<InternalTarget*>(&m_ssrIndirectTarget);
     debugInputs.rtIndirectTarget = const_cast<InternalTarget*>(&m_rtIndirectTarget);
     debugInputs.ptTemporalStatsTarget = const_cast<InternalTarget*>(&m_ptTemporalStatsTarget);
-    if (IsPtMotionReprojectionDebugMode(state.debugMode))
+    const bool ptReprojectionAudit = IsPtMotionReprojectionDebugMode(state.debugMode)
+        || IsPtDepthReprojectionDebugMode(state.debugMode);
+    std::uintptr_t ptAuditDepthSrv = 0;
+    if (ptReprojectionAudit)
     {
         // Select exactly the same PT/raster/sky/dilated source the subsequent DLSS evaluation
         // would use. This debug view early-outs before Evaluate, so it is safe to prepare it here.
@@ -702,8 +707,11 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
             state.dlssInputs);
         debugInputs.ptCurrentRadianceSrv = m_dxrPathTracerOutputSrv;
         debugInputs.ptPreviousRadianceSrv = m_ptTemporalPrevRadianceTarget.srvCpuHandle;
+        debugInputs.ptCurrentDepthSrv = guides.depthSrv;
+        debugInputs.ptPreviousDepthSrv = m_ptTemporalPrevDepthTarget.srvCpuHandle;
         debugInputs.ptMotionSrv = guides.motionSrv;
         debugInputs.ptPreviousRadianceValid = m_ptTemporalPrevRadianceValid;
+        ptAuditDepthSrv = guides.depthSrv;
         // Bundle preparation / the sky patch are internal fullscreen passes and leave their own
         // target bound. The audit itself must render to the editor viewport, not that scratch
         // target; ordinary PT diagnostics do not have this extra preparation step.
@@ -758,11 +766,11 @@ bool ScreenSpaceEffects::RunApplyDebugStage(ApplyFrameState& state) const
     {
         const_cast<ScreenSpaceEffects*>(this)->m_pendingSsaoGpuReadback = true;
     }
-    if (IsPtMotionReprojectionDebugMode(state.debugMode) && earlyOut)
+    if (ptReprojectionAudit && earlyOut)
     {
         // Commit after the viewport draw: this frame remains the "current" comparison input;
         // the next frame samples it as history.
-        CommitPathTracerMotionReprojectionAudit();
+        CommitPathTracerMotionReprojectionAudit(ptAuditDepthSrv);
     }
     return earlyOut;
 }

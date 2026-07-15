@@ -474,7 +474,12 @@ ScreenSpaceEffects::ScreenSpaceEffects()
       m_ptMotionReprojectionDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtMotionReprojectionDebugFragmentShader,
-          ShaderSamplerOverrides{(1u << 0) | (1u << 1) | (1u << 2), true})),
+          ShaderSamplerOverrides{
+              (1u << 0) | (1u << 1) | (1u << 2) | (1u << 3) | (1u << 4), true})),
+      m_ptMotionDepthCopyShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtMotionDepthCopyFragmentShader,
+          ShaderSamplerOverrides{(1u << 0), true})),
       m_ptBoilMetricShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::PtBoilMetricFragmentShader,
@@ -661,6 +666,7 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ptTemporalStatsTarget);
     DestroyInternalTarget(m_ptTemporalStatsScratchTarget);
     DestroyInternalTarget(m_ptTemporalPrevRadianceTarget);
+    DestroyInternalTarget(m_ptTemporalPrevDepthTarget);
     DestroyInternalTarget(m_ptBoilMetricTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
@@ -2383,10 +2389,15 @@ bool ScreenSpaceEffects::PreparePathTracerMotionReprojectionAudit() const
     auto* mutableThis = const_cast<ScreenSpaceEffects*>(this);
     const bool resized = m_ptTemporalPrevRadianceTarget.width != m_width
         || m_ptTemporalPrevRadianceTarget.height != m_height
-        || m_ptTemporalPrevRadianceTarget.resource == nullptr;
+        || m_ptTemporalPrevRadianceTarget.resource == nullptr
+        || m_ptTemporalPrevDepthTarget.width != m_width
+        || m_ptTemporalPrevDepthTarget.height != m_height
+        || m_ptTemporalPrevDepthTarget.resource == nullptr;
     constexpr int radianceFormat = static_cast<int>(DXGI_FORMAT_R32G32B32A32_FLOAT);
     mutableThis->ResizeInternalTarget(
         mutableThis->m_ptTemporalPrevRadianceTarget, m_width, m_height, radianceFormat);
+    mutableThis->ResizeInternalTarget(
+        mutableThis->m_ptTemporalPrevDepthTarget, m_width, m_height, radianceFormat);
     if (resized)
     {
         mutableThis->m_ptTemporalPrevRadianceValid = false;
@@ -2394,9 +2405,10 @@ bool ScreenSpaceEffects::PreparePathTracerMotionReprojectionAudit() const
     return m_ptTemporalPrevRadianceTarget.srvCpuHandle != 0;
 }
 
-void ScreenSpaceEffects::CommitPathTracerMotionReprojectionAudit() const
+void ScreenSpaceEffects::CommitPathTracerMotionReprojectionAudit(const std::uintptr_t depthSrv) const
 {
-    if (!PreparePathTracerMotionReprojectionAudit() || m_downsampleShader == nullptr)
+    if (!PreparePathTracerMotionReprojectionAudit() || m_downsampleShader == nullptr
+        || m_ptMotionDepthCopyShader == nullptr || depthSrv == 0)
     {
         return;
     }
@@ -2407,6 +2419,16 @@ void ScreenSpaceEffects::CommitPathTracerMotionReprojectionAudit() const
     DrawFullscreenToTarget(
         *m_downsampleShader,
         const_cast<InternalTarget&>(m_ptTemporalPrevRadianceTarget),
+        m_width,
+        m_height,
+        clearRadiance);
+
+    m_ptMotionDepthCopyShader->Use(false, false);
+    m_ptMotionDepthCopyShader->SetInt("uDepth", 0);
+    m_ptMotionDepthCopyShader->BindTextureSlot(0, depthSrv);
+    DrawFullscreenToTarget(
+        *m_ptMotionDepthCopyShader,
+        const_cast<InternalTarget&>(m_ptTemporalPrevDepthTarget),
         m_width,
         m_height,
         clearRadiance);
@@ -3062,8 +3084,10 @@ void ScreenSpaceEffects::SetDebugMode(const RenderDebugMode mode)
     const bool isolateChanged =
         PtDebugIsolateModeFromRenderDebug(m_debugMode) != PtDebugIsolateModeFromRenderDebug(mode);
     const bool temporalDiagnosticsChanged =
-        (IsPtTemporalStatsDebugMode(m_debugMode) || IsPtMotionReprojectionDebugMode(m_debugMode))
-        != (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode));
+        (IsPtTemporalStatsDebugMode(m_debugMode) || IsPtMotionReprojectionDebugMode(m_debugMode)
+            || IsPtDepthReprojectionDebugMode(m_debugMode))
+        != (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode)
+            || IsPtDepthReprojectionDebugMode(mode));
     m_debugMode = mode;
     if (isolateChanged || temporalDiagnosticsChanged)
     {

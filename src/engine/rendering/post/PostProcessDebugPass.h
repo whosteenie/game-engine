@@ -71,6 +71,8 @@ struct PostProcessDebugPassInputs
 
     std::uintptr_t ptCurrentRadianceSrv = 0;
     std::uintptr_t ptPreviousRadianceSrv = 0;
+    std::uintptr_t ptCurrentDepthSrv = 0;
+    std::uintptr_t ptPreviousDepthSrv = 0;
     std::uintptr_t ptMotionSrv = 0;
     bool ptPreviousRadianceValid = false;
 

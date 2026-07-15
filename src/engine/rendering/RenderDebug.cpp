@@ -193,6 +193,8 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT temporal: frame delta";
     case RenderDebugMode::PtMotionReprojectionResidual:
         return "PT/DLSS motion: reprojection residual";
+    case RenderDebugMode::PtDepthReprojectionDisocclusion:
+        return "PT/DLSS depth: reprojection disocclusion";
     default:
         return "Unknown";
     }
@@ -425,6 +427,11 @@ bool IsPtTemporalStatsDebugMode(const RenderDebugMode mode)
 bool IsPtMotionReprojectionDebugMode(const RenderDebugMode mode)
 {
     return mode == RenderDebugMode::PtMotionReprojectionResidual;
+}
+
+bool IsPtDepthReprojectionDebugMode(const RenderDebugMode mode)
+{
+    return mode == RenderDebugMode::PtDepthReprojectionDisocclusion;
 }
 
 int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)

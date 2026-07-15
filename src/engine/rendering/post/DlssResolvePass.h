@@ -103,8 +103,8 @@ struct DlssResolvePassInputs
 };
 
 // The depth/motion resources selected for a Streamline evaluation. Kept as a small public value
-// type so the PT motion-reprojection audit can sample precisely the same motion input (including
-// the optional dilation A/B), rather than recreating a second, potentially divergent selection.
+// type so the PT reprojection audits can sample the same motion input (including optional
+// dilation) and the depth source used to prepare the Streamline depth resource.
 struct DlssTemporalGuideInputs
 {
     void* depth = nullptr;

@@ -458,7 +458,7 @@ private:
     void GenerateRrGuides() const;
     bool GenerateDilatedDlssMotion(std::uintptr_t depthSrv, std::uintptr_t motionSrv) const;
     bool PreparePathTracerMotionReprojectionAudit() const;
-    void CommitPathTracerMotionReprojectionAudit() const;
+    void CommitPathTracerMotionReprojectionAudit(std::uintptr_t depthSrv) const;
 
     void CreateFullscreenQuad();
     void CreateNoiseTexture();
@@ -604,6 +604,7 @@ private:
     InternalTarget m_ptTemporalStatsTarget;
     InternalTarget m_ptTemporalStatsScratchTarget;
     InternalTarget m_ptTemporalPrevRadianceTarget;
+    InternalTarget m_ptTemporalPrevDepthTarget;
     InternalTarget m_ptBoilMetricTarget;
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
@@ -644,6 +645,7 @@ private:
     std::unique_ptr<Shader> m_ptTemporalStatsShader;
     std::unique_ptr<Shader> m_ptTemporalStatsDebugShader;
     std::unique_ptr<Shader> m_ptMotionReprojectionDebugShader;
+    std::unique_ptr<Shader> m_ptMotionDepthCopyShader;
     std::unique_ptr<Shader> m_ptBoilMetricShader;
     std::unique_ptr<Shader> m_dxrShadowDebugShader;
     std::unique_ptr<Shader> m_velocityDebugShader;
