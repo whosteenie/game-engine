@@ -9,6 +9,9 @@ public:
 
     // Create the native progress window thread early so the first Begin() does not stall the UI.
     void WarmUp();
+    // Associates the progress popup with the host application window without making it topmost
+    // across the operating system.
+    void SetOwnerWindow(void* nativeWindow);
     bool IsActive() const { return m_depth > 0; }
 
     void Begin(const std::string& title, const std::string& message);

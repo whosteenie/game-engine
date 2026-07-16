@@ -7,6 +7,11 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#endif
+
 #include "app/core/Application.h"
 #include "app/core/AutomatedBenchmarkCapture.h"
 #include "app/editor/EditorSettings.h"
@@ -340,6 +345,9 @@ Application::Application(int width, int height, const char* title)
 
         EditorSettings::EnsureAppDataDirectoryExists();
         EngineLog::EnsureLogDirectoryExists();
+#ifdef _WIN32
+        NativeProgressWindow::Instance().SetOwnerWindow(glfwGetWin32Window(m_window));
+#endif
         NativeProgressWindow::Instance().WarmUp();
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
         GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);

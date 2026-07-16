@@ -11,6 +11,7 @@ NativeProgressWindow& NativeProgressWindow::Instance()
 NativeProgressWindow::~NativeProgressWindow() = default;
 
 void NativeProgressWindow::WarmUp() {}
+void NativeProgressWindow::SetOwnerWindow(void*) {}
 bool NativeProgressWindow::IsActive() const { return m_depth > 0; }
 void NativeProgressWindow::Begin(const std::string&, const std::string&) {}
 void NativeProgressWindow::SetMessage(const std::string&) {}
@@ -187,7 +188,7 @@ namespace
 
     DWORD GetProgressWindowExStyle()
     {
-        return WS_EX_TOPMOST | WS_EX_TOOLWINDOW;
+        return WS_EX_TOOLWINDOW;
     }
 
     void GetProgressOuterSize(int& outWidth, int& outHeight)
@@ -206,13 +207,21 @@ namespace
         GetWindowRect(window, &windowRect);
         const int windowWidth = windowRect.right - windowRect.left;
         const int windowHeight = windowRect.bottom - windowRect.top;
-        const int screenWidth = GetSystemMetrics(SM_CXSCREEN);
-        const int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-        const int x = (screenWidth - windowWidth) / 2;
-        const int y = (screenHeight - windowHeight) / 2;
+        const HWND owner = GetWindow(window, GW_OWNER);
+        RECT ownerRect = {};
+        if (owner != nullptr && GetWindowRect(owner, &ownerRect))
+        {
+            const int x = ownerRect.left + (ownerRect.right - ownerRect.left - windowWidth) / 2;
+            const int y = ownerRect.top + (ownerRect.bottom - ownerRect.top - windowHeight) / 2;
+            SetWindowPos(window, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+            return;
+        }
+
+        const int x = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
+        const int y = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
         // Position only; keep the window hidden. Callers show it afterwards so it never appears
         // at its CW_USEDEFAULT spawn location first (the top-left "empty box" flash).
-        SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(window, HWND_TOP, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     LRESULT CALLBACK ProgressWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -378,6 +387,16 @@ namespace
             EnsureThreadRunning();
         }
 
+        void SetOwnerWindow(HWND ownerWindow)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_ownerWindow = ownerWindow;
+            if (m_window != nullptr)
+            {
+                SetWindowLongPtrW(m_window, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(ownerWindow));
+            }
+        }
+
         void Begin(const std::string& title, const std::string& message)
         {
             EnsureThreadRunning();
@@ -533,7 +552,7 @@ namespace
                 CW_USEDEFAULT,
                 outerWidth,
                 outerHeight,
-                nullptr,
+                m_ownerWindow,
                 nullptr,
                 instance,
                 &controls);
@@ -565,6 +584,7 @@ namespace
         std::mutex m_mutex;
         std::thread m_thread;
         HWND m_window = nullptr;
+        HWND m_ownerWindow = nullptr;
         HANDLE m_readyEvent = nullptr;
         bool m_threadRunning = false;
     };
@@ -632,6 +652,11 @@ void NativeProgressWindow::SetProgress(float progress)
     m_lastProgress = clampedProgress;
     m_hasDeterminateProgress = true;
     Win32ProgressWindow::Get().SetProgress(clampedProgress);
+}
+
+void NativeProgressWindow::SetOwnerWindow(void* nativeWindow)
+{
+    Win32ProgressWindow::Get().SetOwnerWindow(static_cast<HWND>(nativeWindow));
 }
 
 void NativeProgressWindow::Report(const std::string& message, float progress)
