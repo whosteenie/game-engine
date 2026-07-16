@@ -914,6 +914,7 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
         // ClearActiveID() the slider's grab mid-drag, invalidating it until re-grabbed. Only a
         // press that STARTS while hovering the viewport should steal/commit the active widget.
         ImGuiIO& earlyIo = ImGui::GetIO();
+        const float flySpeedScroll = earlyIo.MouseWheel;
         const bool sceneViewMousePressed =
             mouseOverSceneView
             && (m_input->WasMouseButtonPressed(GLFW_MOUSE_BUTTON_LEFT)
@@ -926,6 +927,11 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
         m_input->UpdateMouseCapture(allowFlyCameraCapture);
         if (m_input->IsCapturingMouse())
         {
+            if (flySpeedScroll != 0.0f)
+            {
+                m_camera->AdjustFlySpeed(flySpeedScroll);
+                m_sceneViewportPanel->NotifyFlySpeedChanged(m_camera->GetFlySpeed());
+            }
             SuppressImGuiMouseInput();
         }
     }

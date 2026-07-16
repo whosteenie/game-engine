@@ -18,6 +18,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <string>
 #include <vector>
@@ -25,6 +26,9 @@
 namespace
 {
     constexpr float kDropFallbackDistance = 8.0f;
+    constexpr double kFlySpeedOverlayVisibleSeconds = 1.8;
+    constexpr double kFlySpeedOverlayFadeInSeconds = 0.12;
+    constexpr double kFlySpeedOverlayFadeOutSeconds = 0.5;
 
     glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const EditorViewportRect& viewport)
     {
@@ -309,6 +313,73 @@ void SceneViewportPanel::DrawModelDropTarget(
     ImGui::EndDragDropTarget();
 }
 
+void SceneViewportPanel::NotifyFlySpeedChanged(const float speed)
+{
+    const double now = ImGui::GetTime();
+    const bool overlayAlreadyVisible =
+        now - m_flySpeedOverlayChangedAt < kFlySpeedOverlayVisibleSeconds;
+    m_flySpeedOverlayValue = speed;
+    m_flySpeedOverlayStartedAt = overlayAlreadyVisible
+        ? now - kFlySpeedOverlayFadeInSeconds
+        : now;
+    m_flySpeedOverlayChangedAt = now;
+}
+
+void SceneViewportPanel::DrawFlySpeedOverlay(
+    const ImVec2& imageMin,
+    const ImVec2& imageMax) const
+{
+    const double now = ImGui::GetTime();
+    const float timeSinceChange = static_cast<float>(now - m_flySpeedOverlayChangedAt);
+    if (timeSinceChange < 0.0f
+        || timeSinceChange >= static_cast<float>(kFlySpeedOverlayVisibleSeconds))
+    {
+        return;
+    }
+
+    const float timeSinceStart = static_cast<float>(now - m_flySpeedOverlayStartedAt);
+    const float fadeIn = std::clamp(
+        timeSinceStart / static_cast<float>(kFlySpeedOverlayFadeInSeconds),
+        0.0f,
+        1.0f);
+    const float fadeOut = std::clamp(
+        (static_cast<float>(kFlySpeedOverlayVisibleSeconds) - timeSinceChange)
+            / static_cast<float>(kFlySpeedOverlayFadeOutSeconds),
+        0.0f,
+        1.0f);
+    const float alpha = std::min(fadeIn, fadeOut);
+
+    char label[64]{};
+    std::snprintf(label, sizeof(label), "Fly speed  %.2fx", m_flySpeedOverlayValue);
+    const ImVec2 textSize = ImGui::CalcTextSize(label);
+    constexpr float kOverlayWidth = 156.0f;
+    constexpr float kVerticalPadding = 8.0f;
+    const ImVec2 boxMin(
+        (imageMin.x + imageMax.x - kOverlayWidth) * 0.5f,
+        imageMin.y + 18.0f);
+    const ImVec2 boxMax(
+        boxMin.x + kOverlayWidth,
+        boxMin.y + textSize.y + kVerticalPadding * 2.0f);
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList(ImGui::GetWindowViewport());
+    drawList->AddRectFilled(
+        boxMin,
+        boxMax,
+        IM_COL32(12, 16, 22, static_cast<int>(220.0f * alpha)),
+        6.0f);
+    drawList->AddRect(
+        boxMin,
+        boxMax,
+        IM_COL32(105, 165, 230, static_cast<int>(210.0f * alpha)),
+        6.0f);
+    drawList->AddText(
+        ImVec2(
+            boxMin.x + (kOverlayWidth - textSize.x) * 0.5f,
+            boxMin.y + kVerticalPadding),
+        IM_COL32(240, 245, 252, static_cast<int>(255.0f * alpha)),
+        label);
+}
+
 void SceneViewportPanel::UpdateModelDropPreview(
     Camera& camera,
     Scene& scene,
@@ -391,6 +462,7 @@ void SceneViewportPanel::Draw(
     }
 
     DrawViewGizmo(camera, scene, region.imageMin, region.imageMax);
+    DrawFlySpeedOverlay(region.imageMin, region.imageMax);
 
     ImGui::End();
 }

@@ -45,6 +45,7 @@ public:
     // stable offscreen target without constructing an ImGui viewport region.
     void EnsureBenchmarkRenderTarget(int width, int height);
     void ClearRenderTarget() const;
+    void NotifyFlySpeedChanged(float speed);
 
 private:
     void DrawViewGizmo(
@@ -62,6 +63,7 @@ private:
         Camera& camera,
         Scene& scene,
         const std::vector<int>& previewRoots);
+    void DrawFlySpeedOverlay(const ImVec2& imageMin, const ImVec2& imageMax) const;
 
     OffscreenViewportPanel::State m_viewport{};
     bool m_wasUsingViewManipulate = false;
@@ -70,4 +72,7 @@ private:
     SceneObjectId m_modelDropPreviewRootId = kInvalidSceneObjectId;
     std::vector<SceneObjectId> m_modelDropPreviewSelectionBeforeIds;
     SceneObjectId m_modelDropPreviewSelectionBeforePrimary = kInvalidSceneObjectId;
+    float m_flySpeedOverlayValue = 1.0f;
+    double m_flySpeedOverlayStartedAt = -100.0;
+    double m_flySpeedOverlayChangedAt = -100.0;
 };

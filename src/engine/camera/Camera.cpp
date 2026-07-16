@@ -5,6 +5,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 Camera::Camera(const glm::vec3& position, float yaw, float pitch)
@@ -31,10 +32,10 @@ void Camera::ProcessKeyboard(const Input& input, float deltaTime)
         return;
     }
 
-    float velocity = m_movementSpeed * deltaTime;
+    float velocity = kBaseMovementSpeed * m_flySpeed * deltaTime;
     if (input.IsKeyDown(GLFW_KEY_LEFT_SHIFT) || input.IsKeyDown(GLFW_KEY_RIGHT_SHIFT))
     {
-        velocity *= 3.0f;
+        velocity *= kFastMovementMultiplier;
     }
 
     if (input.IsKeyDown(GLFW_KEY_W))
@@ -74,6 +75,43 @@ void Camera::ProcessMouseMovement(float xOffset, float yOffset)
     m_pitch = std::clamp(m_pitch, -89.0f, 89.0f);
 
     UpdateCameraVectors();
+}
+
+void Camera::AdjustFlySpeed(const float scrollSteps)
+{
+    if (scrollSteps == 0.0f)
+    {
+        return;
+    }
+
+    constexpr std::array kFlySpeeds{
+        0.10f,
+        0.15f,
+        0.20f,
+        0.30f,
+        0.40f,
+        0.60f,
+        0.80f,
+        1.00f,
+        1.25f,
+        1.50f,
+        2.00f,
+        2.50f,
+        3.00f,
+        4.00f,
+        5.00f,
+        6.00f,
+        7.00f,
+        8.00f,
+        9.00f,
+        10.00f};
+    const int direction = scrollSteps > 0.0f ? 1 : -1;
+    const int stepCount = std::max(1, static_cast<int>(std::round(std::abs(scrollSteps))));
+    m_flySpeedStep = std::clamp(
+        m_flySpeedStep + direction * stepCount,
+        0,
+        static_cast<int>(kFlySpeeds.size()) - 1);
+    m_flySpeed = kFlySpeeds[static_cast<std::size_t>(m_flySpeedStep)];
 }
 
 glm::mat4 Camera::BuildViewMatrixFromState() const
@@ -214,6 +252,11 @@ float Camera::GetFov() const
 float Camera::GetAspect() const
 {
     return m_aspect;
+}
+
+float Camera::GetFlySpeed() const
+{
+    return m_flySpeed;
 }
 
 void Camera::SetProjectionJitter(const glm::vec2& jitterNdc)

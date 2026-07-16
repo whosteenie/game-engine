@@ -47,6 +47,7 @@ void LightingPanel::Draw(
         "Camera rotation (deg): yaw %.4f, pitch %.4f",
         camera.GetYaw(),
         camera.GetPitch());
+    ImGui::Text("Fly speed: %.2fx", camera.GetFlySpeed());
 
     SceneRenderer& renderer = scene.GetRenderer();
     if (renderer.HasPendingRendererSettings())
