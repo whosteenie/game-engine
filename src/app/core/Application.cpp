@@ -611,6 +611,80 @@ void Application::ApplyS1p6CaptureModeIfRequested()
     EngineLog::Info("benchmark", "S1-P6 capture mode selected: " + captureMode);
 }
 
+void Application::ApplyS2p1CaptureModeIfRequested()
+{
+    if (m_s2p1CaptureModeApplied)
+    {
+        return;
+    }
+
+    const char* rawCaptureMode = std::getenv("GAME_ENGINE_S2P1_CAPTURE_MODE");
+    const char* rawExposureEv = std::getenv("GAME_ENGINE_S2P1_EXPOSURE_EV");
+    if (rawCaptureMode == nullptr && rawExposureEv == nullptr)
+    {
+        m_s2p1CaptureModeApplied = true;
+        return;
+    }
+    if (rawCaptureMode == nullptr || rawExposureEv == nullptr)
+    {
+        throw std::runtime_error(
+            "GAME_ENGINE_S2P1_CAPTURE_MODE and GAME_ENGINE_S2P1_EXPOSURE_EV must be set together.");
+    }
+    if (!m_projectSession->HasActiveProject() || m_scene == nullptr)
+    {
+        return;
+    }
+
+    const std::string captureMode(rawCaptureMode);
+    const float exposureEv = std::stof(rawExposureEv);
+    SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+    DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+    ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+    dxr.SetEnabled(true);
+    dxr.SetRenderingMode(RenderingMode::PathTraced);
+    dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+    sceneRenderer.SetRenderDebugMode(RenderDebugMode::None);
+    effects.SetExposure(exposureEv);
+
+    const bool useRr = captureMode.rfind("rr-", 0) == 0;
+    const bool useDlss = captureMode.rfind("dlss-", 0) == 0;
+    if (captureMode == "direct")
+    {
+        effects.SetAntiAliasingMode(AntiAliasingMode::None);
+        effects.SetRayReconstruction(false);
+    }
+    else if (useDlss || useRr)
+    {
+        const std::string quality = captureMode.substr(captureMode.find('-') + 1);
+        if (quality == "dlaa")
+        {
+            effects.SetAntiAliasingMode(AntiAliasingMode::DLAA);
+        }
+        else
+        {
+            effects.SetAntiAliasingMode(AntiAliasingMode::DLSS);
+            effects.SetDlssPreset(
+                quality == "quality" ? DlssPreset::Quality
+                : quality == "balanced" ? DlssPreset::Balanced
+                : quality == "performance" ? DlssPreset::Performance
+                : quality == "ultra-performance" ? DlssPreset::UltraPerformance
+                                                  : throw std::runtime_error(
+                                                        "Invalid S2-P1 capture quality: " + quality));
+        }
+        effects.SetRayReconstruction(useRr);
+    }
+    else
+    {
+        throw std::runtime_error("Invalid GAME_ENGINE_S2P1_CAPTURE_MODE: " + captureMode);
+    }
+
+    m_s2p1CaptureModeApplied = true;
+    EngineLog::Info(
+        "benchmark",
+        "S2-P1 capture mode selected: " + captureMode
+            + ", authored display EV=" + std::to_string(exposureEv));
+}
+
 void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
@@ -1961,6 +2035,7 @@ void Application::Render()
                 SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
             });
             ApplyS1p6CaptureModeIfRequested();
+            ApplyS2p1CaptureModeIfRequested();
             RunApplicationPhase("prepare-frame-gpu", [&]() {
                 ProjectLoadBenchmark::ScopedPhase projectLoadGpuPrepare(
                     presentingProjectLoad ? "renderer.first_gpu_prepare" : nullptr);

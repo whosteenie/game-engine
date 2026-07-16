@@ -38,6 +38,7 @@ void RunFrustumCullTests();
 void RunCaptureManifestTests(int& failures);
 void RunTemporalCameraPacketTests(int& failures);
 void RunDlssFrameTokenTests(int& failures);
+void RunReconstructionExposureTests(int& failures);
 void RunHistoryCompatibilityTests(int& failures);
 void RunViewportResizeStabilizerTests(int& failures);
 void RunProjectViewportRevealGateTests(int& failures);
@@ -114,6 +115,9 @@ namespace
             "temporal_camera_packet",
             [] { RunTemporalCameraPacketTests(test::FailureCount()); });
         maybeRun("dlss_frame_token", [] { RunDlssFrameTokenTests(test::FailureCount()); });
+        maybeRun(
+            "reconstruction_exposure",
+            [] { RunReconstructionExposureTests(test::FailureCount()); });
         maybeRun(
             "history_compatibility",
             [] { RunHistoryCompatibilityTests(test::FailureCount()); });

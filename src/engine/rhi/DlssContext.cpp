@@ -662,8 +662,8 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
         rrOptions.outputWidth = inputs.displayWidth;
         rrOptions.outputHeight = inputs.displayHeight;
         rrOptions.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-        rrOptions.preExposure = inputs.preExposure;
-        rrOptions.exposureScale = inputs.exposureScale;
+        // S2-P1: the integrated RR programming contract does not define exposure guidance.
+        // Leave the SDK defaults untouched; authored display EV is applied after reconstruction.
         rrOptions.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
         rrOptions.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
         CopyMatrix(rrOptions.worldToCameraView, inputs.worldToCameraView);
@@ -684,6 +684,8 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
         options.outputWidth = inputs.displayWidth;
         options.outputHeight = inputs.displayHeight;
         options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        // Ordinary DLSS accepts reconstruction guidance. These values are deliberately distinct
+        // from authored display EV, which is applied after reconstruction by the renderer.
         options.preExposure = inputs.preExposure;
         options.exposureScale = inputs.exposureScale;
         options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);

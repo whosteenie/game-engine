@@ -1,4 +1,5 @@
 #include "engine/rendering/post/DlssResolvePass.h"
+#include "engine/rendering/post/ReconstructionExposurePolicy.h"
 
 #include "engine/platform/FrameDiagnostics.h"
 
@@ -67,31 +68,44 @@ namespace
         return "unknown";
     }
 
-    float DlssExposureScaleFromEv(const float exposureEv)
-    {
-        return std::exp2(exposureEv);
-    }
-
-    void LogRrExposureDiagnosticsOnChange(
-        const float exposureEv,
-        const float exposureScale,
+    void LogExposureDiagnosticsOnChange(
+        const bool rayReconstruction,
+        const float authoredDisplayEv,
+        const ReconstructionExposurePolicy& policy,
         const float meanInputLuminance,
         const bool meanInputLuminanceValid)
     {
-        static float lastExposureEv = std::numeric_limits<float>::quiet_NaN();
+        static bool lastRayReconstruction = false;
+        static float lastDisplayEv = std::numeric_limits<float>::quiet_NaN();
         static bool lastMeanValid = false;
-        if (exposureEv == lastExposureEv && meanInputLuminanceValid == lastMeanValid)
+        if (rayReconstruction == lastRayReconstruction
+            && authoredDisplayEv == lastDisplayEv
+            && meanInputLuminanceValid == lastMeanValid)
         {
             return;
         }
 
-        lastExposureEv = exposureEv;
+        lastRayReconstruction = rayReconstruction;
+        lastDisplayEv = authoredDisplayEv;
         lastMeanValid = meanInputLuminanceValid;
         std::ostringstream message;
-        message << std::fixed << std::setprecision(5)
-                << "tonemap exposure EV=" << exposureEv
-                << ", RR exposureScale=" << exposureScale
-                << ", mean pre-RR luminance=";
+        message << std::fixed << std::setprecision(5) << "feature="
+                << (rayReconstruction ? "rr" : "dlss")
+                << ", authored display EV=" << authoredDisplayEv
+                << ", reconstruction preExposure=";
+        if (rayReconstruction)
+        {
+            message << "omitted, reconstruction exposureScale=omitted";
+        }
+        else
+        {
+            message << policy.reconstructionPreExposure
+                    << ", reconstruction exposureScale="
+                    << policy.reconstructionExposureScale;
+        }
+        message << ", bloom EV=" << policy.bloomExposureEv
+                << ", tonemap EV=" << policy.displayExposureEv
+                << ", mean pre-reconstruction luminance=";
         if (meanInputLuminanceValid)
         {
             message << meanInputLuminance;
@@ -100,7 +114,7 @@ namespace
         {
             message << "pending";
         }
-        EngineLog::Breadcrumb("dlss-rr-exposure", message.str());
+        EngineLog::Breadcrumb("reconstruction-exposure", message.str());
     }
 
     // DLSS reset on large translation only. Rotation is NOT a cut — valid motion vectors carry
@@ -407,16 +421,16 @@ void DlssResolvePass::Execute(
         in.jitterX = jitterPixels.x;
         in.jitterY = jitterPixels.y;
 
-        in.exposureScale = DlssExposureScaleFromEv(inputs.exposure);
-        if (inputs.rayReconstructionActive)
-        {
-            LogRrExposureDiagnosticsOnChange(
-                inputs.exposure,
-                in.exposureScale,
-                inputs.meanInputLuminance,
-                inputs.meanInputLuminanceValid);
-        }
-        in.preExposure = 1.0f;
+        const ReconstructionExposurePolicy exposurePolicy =
+            ResolveReconstructionExposurePolicy(inputs.exposure);
+        in.preExposure = exposurePolicy.reconstructionPreExposure;
+        in.exposureScale = exposurePolicy.reconstructionExposureScale;
+        LogExposureDiagnosticsOnChange(
+            inputs.rayReconstructionActive,
+            inputs.exposure,
+            exposurePolicy,
+            inputs.meanInputLuminance,
+            inputs.meanInputLuminanceValid);
         in.sharpness = inputs.dlssSharpness;
         in.rrPreset = inputs.rrPreset;
 
@@ -534,8 +548,8 @@ void DlssResolvePass::Execute(
 
     if (outputs.dlssRan)
     {
-        // DLSS evaluate applies exposureScale; bloom/tonemap must not re-apply EV (F6).
-        constexpr float kPostDlssExposureEv = 0.0f;
+        const ReconstructionExposurePolicy exposurePolicy =
+            ResolveReconstructionExposurePolicy(inputs.exposure);
 
         if (pathTracerDlssActive && inputs.pathTracerGridOverlayEnabled
             && inputs.drawPathTracerGridOverlay)
@@ -551,14 +565,15 @@ void DlssResolvePass::Execute(
         if (inputs.bloomEnabled && inputs.dlssBloomExtractTarget != nullptr
             && inputs.dlssBloomExtractTarget->srvCpuHandle != 0)
         {
-            // DLSS evaluate applies exposureScale; bloom/tonemap must not re-apply EV (F6).
             DisplayResBloomInputs bloomInputs{};
             bloomInputs.hdrColorSrv = inputs.dlssOutputTarget->srvCpuHandle;
             bloomInputs.displayWidth = inputs.viewportWidth;
             bloomInputs.displayHeight = inputs.viewportHeight;
             bloomInputs.renderWidth = context.renderWidth;
             bloomInputs.renderHeight = context.renderHeight;
-            bloomInputs.exposure = kPostDlssExposureEv;
+            // Bloom extraction owns display EV for this branch. It remains in the same
+            // display-exposed linear HDR space as the base branch entering tonemapping.
+            bloomInputs.exposure = exposurePolicy.bloomExposureEv;
             bloomInputs.bloomThreshold = inputs.bloomThreshold;
             bloomInputs.bloomSoftKnee = inputs.bloomSoftKnee;
             bloomInputs.bloomBlurRadius = inputs.bloomBlurRadius;
@@ -636,7 +651,7 @@ void DlssResolvePass::Execute(
                 inputs.viewportHeight,
                 inputs.dlssOutputTarget->srvCpuHandle,
                 displayBloomSrv,
-                kPostDlssExposureEv,
+                exposurePolicy.displayExposureEv,
                 inputs.tonemapMode,
                 inputs.bloomIntensity,
                 inputs.tonemapShader);

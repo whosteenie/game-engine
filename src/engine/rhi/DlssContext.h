@@ -84,6 +84,8 @@ struct DlssFrameInputs
     float cameraUp[3] = {};
     float cameraForward[3] = {};
 
+    // Reconstruction guidance for ordinary DLSS only. DlssContext intentionally does not copy
+    // these fields into RR options. They are never authored display exposure.
     float exposureScale = 1.0f;
     float preExposure = 1.0f;
     float sharpness = 0.0f; // [0,1]; 0 disables NGX sharpening (deprecated in SL but still honored)
