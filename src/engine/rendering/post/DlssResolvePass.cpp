@@ -596,7 +596,8 @@ void DlssResolvePass::Execute(
                 && bloomInputs.hasVelocity
                 && bloomInputs.bloomTemporalShader != nullptr
                 && bloomInputs.bloomTemporalTarget != nullptr
-                && bloomInputs.bloomHistoryTarget != nullptr;
+                && bloomInputs.bloomHistoryTarget != nullptr
+                && bloomInputs.bloomTemporalTarget->srvCpuHandle != 0;
             FrameDiagnostics::LogHistoryEvent(
                 inputs.dlssViewportId, "dlss-display-bloom",
                 !displayBloomCanConsumeHistory ? "skip"
