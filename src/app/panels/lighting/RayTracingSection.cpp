@@ -1071,6 +1071,11 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             }
 
             ImGui::SeparatorText("ReSTIR direct lighting");
+            // TODO(REMOVE WHEN RESTIR IS STABLE): Remove this experimental-settings warning.
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorWidgets::ErrorTextColor());
+            ImGui::TextWrapped(
+                "Experimental: ReSTIR settings may degrade image quality and performance.");
+            ImGui::PopStyleColor();
             int restirDiCandidates = dxrSettings.GetRestirDiCandidateCount();
             UndoableRendererSliderInt(
                 "PT ReSTIR DI candidates",
