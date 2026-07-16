@@ -47,6 +47,7 @@ private:
     void RequestClose();
     void RequestForcedClose();
     void RequestNewProject();
+    void RequestOpenProject();
     void DrawUnsavedChangesDialog();
     void CaptureProjectEditorState(ProjectEditorState& editorState) const;
     void ApplyProjectEditorState(const ProjectEditorState& editorState);
@@ -71,6 +72,7 @@ private:
 
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
+    bool m_pendingOpenProject = false;
     bool m_fatalGpuLossHandled = false;
     bool m_projectLoadBenchmarkAwaitingGpuCompletion = false;
 

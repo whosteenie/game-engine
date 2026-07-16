@@ -281,6 +281,12 @@ namespace
     }
 }
 
+void MainMenuBar::ShowOpenProjectModal()
+{
+    m_openProjectError.clear();
+    m_showOpenProjectModal = true;
+}
+
 void MainMenuBar::Draw(
     Scene& scene,
     ProjectSession& project,
@@ -293,6 +299,7 @@ void MainMenuBar::Draw(
     const QueueProjectOpenFn& queueProjectOpen,
     const std::function<void()>& requestClose,
     const std::function<void()>& requestNewProject,
+    const std::function<void()>& requestOpenProject,
     const std::function<void()>& requestResetLayout,
     const std::function<void()>& alignSelectionToView,
     PlayModeController& playMode,
@@ -347,8 +354,10 @@ void MainMenuBar::Draw(
     };
 
     auto queueOpenProjectModal = [&]() {
-        m_openProjectError.clear();
-        m_showOpenProjectModal = true;
+        if (requestOpenProject)
+        {
+            requestOpenProject();
+        }
     };
 
     if (fileMenuShortcut == FileMenuShortcut::OpenProject)
@@ -620,12 +629,12 @@ void MainMenuBar::Draw(
         ImGui::OpenPopup("Open Project###OpenProject");
     }
 
-    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(560.0f, 0.0f), ImGuiCond_Always);
     ImGui::SetNextWindowPos(
         ImGui::GetMainViewport()->GetCenter(),
-        ImGuiCond_Appearing,
+        ImGuiCond_Always,
         ImVec2(0.5f, 0.5f));
-    if (ImGui::BeginPopupModal(
+    if (m_showOpenProjectModal && ImGui::BeginPopupModal(
             "Open Project###OpenProject",
             nullptr,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoSavedSettings))

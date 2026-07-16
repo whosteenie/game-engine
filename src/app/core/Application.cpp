@@ -889,7 +889,8 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
 
-    const bool blockSceneInputEarly = m_pendingClose || m_pendingNewProject;
+    const bool blockSceneInputEarly =
+        m_pendingClose || m_pendingNewProject || m_pendingOpenProject;
     if (editorActive)
     {
         const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
@@ -984,6 +985,7 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
             },
             [this]() { RequestClose(); },
             [this]() { RequestNewProject(); },
+            [this]() { RequestOpenProject(); },
             [this]() { ResetEditorLayout(); },
             [this]() {
                 Scene* editorScene = GetEditorTargetScene();
@@ -1143,9 +1145,10 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
     // io may still report text focus until widgets rebuild later this frame.
     const bool flyCameraActive = m_input->IsCapturingMouse();
     const bool blockSceneInput =
-        (!flyCameraActive && io.WantTextInput) || m_pendingClose || m_pendingNewProject;
+        (!flyCameraActive && io.WantTextInput)
+        || m_pendingClose || m_pendingNewProject || m_pendingOpenProject;
 
-    if (flyCameraActive && (m_pendingClose || m_pendingNewProject))
+    if (flyCameraActive && (m_pendingClose || m_pendingNewProject || m_pendingOpenProject))
     {
         m_input->ReleaseMouseCapture();
     }
@@ -1160,10 +1163,11 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
 
     if (allowGameKeyboard && escapePressed)
     {
-        if (m_pendingClose || m_pendingNewProject)
+        if (m_pendingClose || m_pendingNewProject || m_pendingOpenProject)
         {
             m_pendingClose = false;
             m_pendingNewProject = false;
+            m_pendingOpenProject = false;
             ImGui::CloseCurrentPopup();
         }
         else if (flyCameraActive)
@@ -1246,6 +1250,7 @@ void Application::RequestForcedClose()
     EngineLog::Breadcrumb("application", "Console close requested; skipping unsaved-project prompt.");
     m_pendingClose = false;
     m_pendingNewProject = false;
+    m_pendingOpenProject = false;
     if (m_input != nullptr)
     {
         m_input->ReleaseMouseCapture();
@@ -1272,9 +1277,20 @@ void Application::RequestNewProject()
     m_projectChooser->OpenNewProjectForm(*m_editorSettings);
 }
 
+void Application::RequestOpenProject()
+{
+    if (m_projectSession->IsDirty())
+    {
+        m_pendingOpenProject = true;
+        return;
+    }
+
+    m_mainMenuBar->ShowOpenProjectModal();
+}
+
 bool Application::IsEditorUndoRedoBlocked() const
 {
-    return m_pendingClose || m_pendingNewProject;
+    return m_pendingClose || m_pendingNewProject || m_pendingOpenProject;
 }
 
 Scene* Application::GetEditorTargetScene()
@@ -1486,19 +1502,21 @@ void Application::EnsureEditorLayoutLoaded()
 
 void Application::DrawUnsavedChangesDialog()
 {
-    if (!m_pendingClose && !m_pendingNewProject)
+    if (!m_pendingClose && !m_pendingNewProject && !m_pendingOpenProject)
     {
         return;
     }
 
+    const bool isOpenPrompt = m_pendingOpenProject;
     const bool isClosePrompt = m_pendingClose;
-    ImGui::OpenPopup("Unsaved Changes");
+    const char* popupId = isOpenPrompt ? "Unsaved Changes###OpenProject" : "Unsaved Changes";
+    ImGui::OpenPopup(popupId);
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
 
     if (!ImGui::BeginPopupModal(
-            "Unsaved Changes",
+            popupId,
             nullptr,
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings))
     {
@@ -1509,12 +1527,34 @@ void Application::DrawUnsavedChangesDialog()
     {
         ImGui::TextUnformatted("Save changes before closing?");
     }
+    else if (isOpenPrompt)
+    {
+        ImGui::TextUnformatted("Save changes before opening another project?");
+    }
     else
     {
         ImGui::TextUnformatted("Save changes before creating a new project?");
     }
 
     ImGui::Separator();
+
+    auto continueAfterDecision = [&]() {
+        if (isOpenPrompt)
+        {
+            // Keep this popup open. The picker uses the same ID and replaces only the contents
+            // next frame, while applying its own size and centered position.
+            m_pendingOpenProject = false;
+            m_mainMenuBar->ShowOpenProjectModal();
+            return;
+        }
+
+        ImGui::CloseCurrentPopup();
+        m_pendingNewProject = false;
+        m_undoStack.Clear();
+        m_editorClipboard.Clear();
+        m_projectSession->CloseProject();
+        m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+    };
 
     if (ImGui::Button("Save", ImVec2(120.0f, 0.0f)))
     {
@@ -1528,12 +1568,7 @@ void Application::DrawUnsavedChangesDialog()
             }
             else
             {
-                m_pendingNewProject = false;
-                ImGui::CloseCurrentPopup();
-                m_undoStack.Clear();
-                m_editorClipboard.Clear();
-                m_projectSession->CloseProject();
-                m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+                continueAfterDecision();
             }
         }
     }
@@ -1549,12 +1584,7 @@ void Application::DrawUnsavedChangesDialog()
         }
         else
         {
-            m_pendingNewProject = false;
-            ImGui::CloseCurrentPopup();
-            m_undoStack.Clear();
-            m_editorClipboard.Clear();
-            m_projectSession->CloseProject();
-            m_projectChooser->OpenNewProjectForm(*m_editorSettings);
+            continueAfterDecision();
         }
     }
 
@@ -1563,6 +1593,7 @@ void Application::DrawUnsavedChangesDialog()
     {
         m_pendingClose = false;
         m_pendingNewProject = false;
+        m_pendingOpenProject = false;
         ImGui::CloseCurrentPopup();
     }
 
