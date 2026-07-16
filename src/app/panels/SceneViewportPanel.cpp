@@ -350,7 +350,7 @@ void SceneViewportPanel::DrawFlySpeedOverlay(
     const float alpha = std::min(fadeIn, fadeOut);
 
     char label[64]{};
-    std::snprintf(label, sizeof(label), "Fly speed  %.2fx", m_flySpeedOverlayValue);
+    std::snprintf(label, sizeof(label), "Fly speed  %5.2fx", m_flySpeedOverlayValue);
     const ImVec2 textSize = ImGui::CalcTextSize(label);
     constexpr float kOverlayWidth = 156.0f;
     constexpr float kVerticalPadding = 8.0f;
