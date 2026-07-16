@@ -49,6 +49,15 @@ void LightingPanel::Draw(
         camera.GetPitch());
     ImGui::Text("Fly speed: %.2fx", camera.GetFlySpeed());
 
+    if (ImGui::TreeNodeEx("Scene View Controls"))
+    {
+        ImGui::TextUnformatted("LMB: select/deselect or drag gizmo.");
+        ImGui::TextUnformatted("Move gizmo center + Alt: surface snap.");
+        ImGui::TextUnformatted("Rotate gizmo + Ctrl: snap 15 degrees.");
+        ImGui::TextUnformatted("RMB + WASD/Q/E: fly camera. Wheel: speed. Shift: move faster.");
+        ImGui::TreePop();
+    }
+
     SceneRenderer& renderer = scene.GetRenderer();
     if (renderer.HasPendingRendererSettings())
     {
