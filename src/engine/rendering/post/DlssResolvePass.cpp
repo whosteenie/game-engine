@@ -358,7 +358,6 @@ void DlssResolvePass::Execute(
         in.quality = inputs.quality;
         in.colorIsHdr = true;
         in.depthInverted = false;
-        in.useSubmissionFrameIndex = inputs.useSubmissionFrameIndex;
 
         const glm::mat4 view = inputs.camera->GetViewMatrix();
         const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
@@ -383,7 +382,7 @@ void DlssResolvePass::Execute(
             inputs.viewportHeight,
             cameraCut,
             inputs.forceDlssResetEveryFrame || inputs.useDilatedDlssMotionVectors
-                || inputs.reconstructDlssCameraMotion || inputs.useSubmissionFrameIndex,
+                || inputs.reconstructDlssCameraMotion,
             resetReasonBits);
         if (cameraCut)
         {
@@ -479,7 +478,7 @@ void DlssResolvePass::Execute(
 
         {
             const GfxContext::GpuTimerScope gpuScopeEvaluate("DLSS/Evaluate");
-            outputs.dlssRan = dlss.Evaluate(in);
+            outputs.dlssRan = dlss.Evaluate(dlss.CurrentFrameToken(), in);
             GfxContext::Get().RebindFrameDescriptorHeaps();
 
             if (outputs.dlssRan && pathTracerDlssActive)

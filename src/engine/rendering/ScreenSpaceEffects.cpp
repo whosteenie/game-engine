@@ -3956,7 +3956,6 @@ void ScreenSpaceEffects::CopySettingsFrom(const ScreenSpaceEffects& source)
     m_useDilatedDlssMotionVectors = source.m_useDilatedDlssMotionVectors;
     m_reconstructDlssCameraMotion = source.m_reconstructDlssCameraMotion;
     m_freezeTemporalJitterDiagnostic = source.m_freezeTemporalJitterDiagnostic;
-    m_useDlssSubmissionFrameIndexDiagnostic = source.m_useDlssSubmissionFrameIndexDiagnostic;
     m_msaaSampleCount = source.m_msaaSampleCount;
     m_fxaaSubpixQuality = source.m_fxaaSubpixQuality;
     m_fxaaEdgeThreshold = source.m_fxaaEdgeThreshold;

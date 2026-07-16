@@ -1,6 +1,7 @@
 #include "engine/rendering/Renderer.h"
 
 #include "engine/rhi/GfxContext.h"
+#include "engine/rhi/DlssContext.h"
 
 void Renderer::SetViewport(int width, int height)
 {
@@ -9,6 +10,7 @@ void Renderer::SetViewport(int width, int height)
 
 void Renderer::BeginFrame() const
 {
+    DlssContext::Get().BeginFrame();
     GfxContext::Get().BeginFrame();
 }
 

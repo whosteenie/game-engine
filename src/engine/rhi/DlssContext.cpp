@@ -442,7 +442,52 @@ const char* ToTraceFeature(const DlssFrameInputs& inputs)
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
 
-bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
+DlssFrameToken DlssFrameTokenState::BeginFrame(
+    const AcquireFunction acquire,
+    void* const userData)
+{
+    const std::uint32_t requestedFrameIndex = m_nextFrameIndex++;
+    m_current = DlssFrameToken{nullptr, requestedFrameIndex};
+    if (acquire == nullptr)
+    {
+        return m_current;
+    }
+
+    void* nativeToken = nullptr;
+    std::uint32_t actualFrameIndex = requestedFrameIndex;
+    if (acquire(userData, requestedFrameIndex, nativeToken, actualFrameIndex)
+        && nativeToken != nullptr)
+    {
+        m_current = DlssFrameToken{nativeToken, actualFrameIndex};
+    }
+    return m_current;
+}
+
+void DlssContext::BeginFrame()
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    m_frameTokenState.BeginFrame(nullptr, nullptr);
+#else
+    const auto acquire = [](void*, const std::uint32_t requestedFrameIndex,
+                            void*& nativeToken, std::uint32_t& actualFrameIndex) -> bool
+    {
+        sl::FrameToken* token = nullptr;
+        const std::uint32_t frameIndex = requestedFrameIndex;
+        if (g_slGetNewFrameToken(token, &frameIndex) != sl::Result::eOk || token == nullptr)
+        {
+            return false;
+        }
+        nativeToken = token;
+        actualFrameIndex = static_cast<std::uint32_t>(*token);
+        return true;
+    };
+    const DlssFrameTokenState::AcquireFunction acquireFunction =
+        IsRuntimeInitialized() && g_slGetNewFrameToken != nullptr ? +acquire : nullptr;
+    m_frameTokenState.BeginFrame(acquireFunction, nullptr);
+#endif
+}
+
+bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs)
 {
 #ifndef GAME_ENGINE_ENABLE_DLSS
     FrameDiagnostics::LogDlssEvent(inputs.viewportId, "dlss", "unknown", "skipped", "compiled-out", false, 0, false, 0);
@@ -490,18 +535,15 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     auto* cmdList = static_cast<sl::CommandBuffer*>(inputs.commandList);
     const sl::ViewportHandle viewport(inputs.viewportId);
 
-    const uint32_t evaluationFrameIndex = m_evaluateFrameIndex++;
-    const uint32_t frameIndex = inputs.useSubmissionFrameIndex
-        ? static_cast<uint32_t>(GfxContext::Get().GetSubmissionFrameNumber())
-        : evaluationFrameIndex;
-    sl::FrameToken* frameToken = nullptr;
-    if (g_slGetNewFrameToken(frameToken, &frameIndex) != sl::Result::eOk || frameToken == nullptr)
+    if (!frameToken.IsValid())
     {
         FrameDiagnostics::LogDlssEvent(
             inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-            "frame-token-acquisition-failed", inputs.useSubmissionFrameIndex, frameIndex, false, 0);
+            "application-frame-token-unavailable", false, 0, false, 0);
         return false;
     }
+    auto* const nativeFrameToken = static_cast<sl::FrameToken*>(frameToken.native);
+    const std::uint32_t frameIndex = frameToken.frameIndex;
 
     // Tag the four buffers DLSS SR consumes/produces. eValidUntilPresent is the recommended default;
     // the generating GPU work (tonemap/scene passes) is already recorded on cmdList before this call.
@@ -555,12 +597,12 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
                 sl::ResourceLifecycle::eValidUntilPresent);
         }
     }
-    if (g_slSetTagForFrame(*frameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
+    if (g_slSetTagForFrame(*nativeFrameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)
     {
         FrameDiagnostics::LogDlssEvent(
             inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-            "tagging-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+            "tagging-failed", false, 0, true, frameIndex);
         return false;
     }
 
@@ -589,11 +631,11 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.motionVectorsDilated = inputs.motionVectorsDilated ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.motionVectorsJittered = sl::Boolean::eFalse;
     consts.reset = inputs.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    if (g_slSetConstants(consts, *frameToken, viewport) != sl::Result::eOk)
+    if (g_slSetConstants(consts, *nativeFrameToken, viewport) != sl::Result::eOk)
     {
         FrameDiagnostics::LogDlssEvent(
             inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-            "constants-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+            "constants-failed", false, 0, true, frameIndex);
         return false;
     }
 
@@ -627,7 +669,7 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         {
             FrameDiagnostics::LogDlssEvent(
                 inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-                "rr-options-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+                "rr-options-failed", false, 0, true, frameIndex);
             return false;
         }
         feature = sl::kFeatureDLSS_RR;
@@ -646,14 +688,14 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         {
             FrameDiagnostics::LogDlssEvent(
                 inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-                "dlss-options-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+                "dlss-options-failed", false, 0, true, frameIndex);
             return false;
         }
     }
 
     const sl::BaseStructure* evalInputs[] = {&viewport};
     const sl::Result evalResult = g_slEvaluateFeature(
-        feature, *frameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
+        feature, *nativeFrameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
         cmdList);
     if (evalResult != sl::Result::eOk)
     {
@@ -667,12 +709,12 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         }
         FrameDiagnostics::LogDlssEvent(
             inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
-            "evaluate-failed", inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+            "evaluate-failed", false, 0, true, frameIndex);
         return false;
     }
     FrameDiagnostics::LogDlssEvent(
         inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "evaluated", "none",
-        inputs.useSubmissionFrameIndex, frameIndex, true, frameIndex);
+        false, 0, true, frameIndex);
     return true;
 #endif
 }

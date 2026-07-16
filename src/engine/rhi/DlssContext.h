@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -64,11 +65,6 @@ struct DlssFrameInputs
     bool colorIsHdr = false;
     bool depthInverted = false;
     bool reset = false; // break temporal history (camera cut, resize, mode/preset change, load)
-    // Diagnostic A/B: tie Streamline's frame token to the renderer submission frame rather than
-    // the number of DLSS evaluations. The latter diverges when a viewport is skipped or multiple
-    // viewports render in one submitted frame.
-    bool useSubmissionFrameIndex = false;
-
     float mvecScaleX = -0.5f; // NDC normalization; SL multiplies by render width internally
     float mvecScaleY = 0.5f;  // Y-flip for texture space; SL multiplies by render height internally
     float jitterX = 0.0f; // pixel-space jitter applied to the projection this frame
@@ -111,6 +107,37 @@ struct DlssFrameInputs
     float cameraViewToWorld[16] = {};
 };
 
+// Application-frame identity passed explicitly to every Streamline evaluation. The native token is
+// owned by Streamline; this value only carries the borrowed handle for the current application
+// frame. Viewport identity remains a separate DlssFrameInputs field.
+struct DlssFrameToken
+{
+    void* native = nullptr;
+    std::uint32_t frameIndex = 0;
+
+    bool IsValid() const { return native != nullptr; }
+};
+
+// Small SDK-independent cadence state used by DlssContext and its CPU contract tests. BeginFrame is
+// the only operation that advances identity; reading the current token for skipped, reordered, or
+// failed evaluations cannot consume it.
+class DlssFrameTokenState
+{
+public:
+    using AcquireFunction = bool(*)(
+        void* userData,
+        std::uint32_t requestedFrameIndex,
+        void*& nativeToken,
+        std::uint32_t& actualFrameIndex);
+
+    DlssFrameToken BeginFrame(AcquireFunction acquire, void* userData);
+    DlssFrameToken Current() const { return m_current; }
+
+private:
+    std::uint32_t m_nextFrameIndex = 0;
+    DlssFrameToken m_current{};
+};
+
 // NVIDIA DLSS via Streamline (devdoc/rendering/dlss-super-resolution.md).
 //
 // Phase S0 scope: dynamically load sl.interposer.dll, initialize Streamline, bind our D3D12 device,
@@ -146,12 +173,17 @@ public:
     // Thread-safe snapshot of the human-readable status (worker updates it as it progresses).
     std::string StatusString() const;
 
+    // Acquire and cache exactly one Streamline token for this application BeginFrame. Must be
+    // called on the render thread before any Scene/Game DLSS or RR evaluation for the frame.
+    void BeginFrame();
+    DlssFrameToken CurrentFrameToken() const { return m_frameTokenState.Current(); }
+
     // Records the DLSS upscale onto inputs.commandList and returns true if it evaluated. No-op that
     // returns false unless IsReady() && IsRuntimeInitialized() && IsDlssSupported(). Streamline
     // recreates the feature internally when the render/display extent or quality changes. NOT thread
     // safe — call only from the render thread, and rebind your descriptor heaps afterward (SL runs
     // with eDisableCLStateTracking so it does not restore command-list state).
-    bool Evaluate(const DlssFrameInputs& inputs);
+    bool Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs);
 
     // Releases Streamline's lazy per-viewport allocations for both SR and Ray Reconstruction.
     // The caller must flush every command list that could contain an evaluation first.
@@ -187,5 +219,5 @@ private:
     mutable std::mutex m_statusMutex;
     std::string m_status = "DLSS: initializing…";
     void* m_interposer = nullptr; // HMODULE for sl.interposer.dll (dynamic load)
-    unsigned int m_evaluateFrameIndex = 0; // monotonic frame id fed to slGetNewFrameToken
+    DlssFrameTokenState m_frameTokenState;
 };

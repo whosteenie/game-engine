@@ -528,6 +528,7 @@ add_executable(engine-tests
     tests/frustum_cull_test.cpp
     tests/capture_manifest_test.cpp
     tests/temporal_camera_packet_test.cpp
+    tests/dlss_frame_token_test.cpp
     tests/shader_compile_test.cpp
 )
 

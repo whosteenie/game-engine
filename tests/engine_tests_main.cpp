@@ -37,6 +37,7 @@ void RunNeeMisIntegrationTests();
 void RunFrustumCullTests();
 void RunCaptureManifestTests(int& failures);
 void RunTemporalCameraPacketTests(int& failures);
+void RunDlssFrameTokenTests(int& failures);
 void RunShaderCompileTests();
 
 namespace
@@ -107,6 +108,7 @@ namespace
         maybeRun(
             "temporal_camera_packet",
             [] { RunTemporalCameraPacketTests(test::FailureCount()); });
+        maybeRun("dlss_frame_token", [] { RunDlssFrameTokenTests(test::FailureCount()); });
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

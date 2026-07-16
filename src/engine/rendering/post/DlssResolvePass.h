@@ -49,7 +49,6 @@ struct DlssResolvePassInputs
     bool forceDlssResetEveryFrame = false;
     bool useDilatedDlssMotionVectors = false;
     bool reconstructDlssCameraMotion = false;
-    bool useSubmissionFrameIndex = false;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;

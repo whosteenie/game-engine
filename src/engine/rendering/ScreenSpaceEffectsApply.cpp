@@ -315,7 +315,6 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.forceDlssResetEveryFrame = m_forceDlssResetEveryFrame;
     dlssInputs.useDilatedDlssMotionVectors = m_useDilatedDlssMotionVectors;
     dlssInputs.reconstructDlssCameraMotion = m_reconstructDlssCameraMotion;
-    dlssInputs.useSubmissionFrameIndex = m_useDlssSubmissionFrameIndexDiagnostic;
     dlssInputs.bloomEnabled = m_bloomEnabled;
     dlssInputs.bloomThreshold = m_bloomThreshold;
     dlssInputs.bloomSoftKnee = m_bloomSoftKnee;
