@@ -33,7 +33,12 @@ public:
         DxrMaterialEntry material{};
     };
 
-    bool Build(ID3D12GraphicsCommandList4* commandList, DxrGpuResource& scratch, bool includeGlassPane, std::string& outError);
+    bool Build(
+        ID3D12GraphicsCommandList4* commandList,
+        DxrGpuResource& scratch,
+        bool includeGlassPane,
+        bool checkerBackdrop,
+        std::string& outError);
     void Release();
 
     bool IsReady() const { return m_tlas.IsBuilt() && m_geometryLookupSrvIndex != UINT32_MAX; }
@@ -94,8 +99,12 @@ struct PtDispatchStack
     ShaderBindingTable shaderBindingTable;
     DxrDispatchContext dispatchContext;
 
-    bool EnsureReady(std::string& outError);
+    bool EnsureReady(std::string& outError, bool diagnosticPermutation = false);
     void Release();
+
+private:
+    bool m_ready = false;
+    bool m_diagnosticPermutation = false;
 };
 
 struct PtFrameDispatchParams
@@ -114,6 +123,12 @@ struct PtFrameDispatchParams
     glm::vec3 prevCameraPos{0.0f};
     bool motionHistoryValid = false;
     std::uint32_t frameIndex = 0;
+    // Enables the existing ReSTIR-DI candidate generation for the temporal AOV fixture.  Zero
+    // remains the default so the established transmission tests keep their original transport.
+    std::uint32_t restirDiCandidateCount = 0;
+    // Test-only selection of the existing PT diagnostic permutation. It must not change guide
+    // resources; S1-P2 compares its output with diagnostics disabled.
+    int ptDebugIsolateMode = 0;
 };
 
 bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::string& outError);
@@ -124,4 +139,6 @@ bool ReadbackPtGuideCenterPixel(
     int width,
     int height,
     DXGI_FORMAT format,
-    float outRgba[4]);
+    float outRgba[4],
+    int pixelX = -1,
+    int pixelY = -1);

@@ -759,6 +759,10 @@ void RestirTemporalRayGen()
     bool giHistoryAccepted = false;
     bool giJacobianRejected = false;
     bool giVisibilityRejected = false;
+    // S1-P2 camera-domain AOV. These are calculated only for debug mode 48 and are never fed
+    // back into reservoir selection, acceptance, weights, or shading.
+    float receiverAgreementError = 1.0;
+    float targetAgreementError = 1.0;
     if (historyAccepted)
     {
         RestirDiReservoirSet previous = g_ReservoirPrev[uint(prevPixel.y) * g_OutputSize.x + uint(prevPixel.x)];
@@ -779,6 +783,43 @@ void RestirTemporalRayGen()
             * max(length(previousPos.xyz - g_PrevCameraPos) * 0.001, 0.002);
         float previousRoughness = f16tof32(previousMat.w >> 16u);
         float4 previousAm = g_PrevAlbedoMetallic[prevPixel];
+        if (g_DebugMode == 48u)
+        {
+            receiverAgreementError = length(receiver - previousReceiver)
+                / max(max(length(receiver - g_CameraPos), length(previousReceiver - g_PrevCameraPos)), 1e-3);
+            // DI stores independent emissive and environment reservoirs.  The AOV must cover
+            // every fresh domain that has a valid sample; an emissive-only comparison would show
+            // a false failure in an environment-lit static scene.
+            bool anyComparableTarget = false;
+            float maxTargetAgreementError = 0.0;
+            float3 currentContribution; float3 currentWi; float currentDistance;
+            float3 previousContribution; float3 previousWi; float previousDistance;
+            [unroll] for (uint domain = 0u; domain < 2u; ++domain)
+            {
+                RestirDiTemporalReservoir freshDomain = fresh.emissive;
+                if (domain == 1u) freshDomain = fresh.environment;
+                const bool currentTargetValid = EvaluateSample(
+                    freshDomain.sample, receiver, n, v, am.rgb, am.a, roughness,
+                    currentContribution, currentWi, currentDistance);
+                const bool previousTargetValid = EvaluateSample(
+                    freshDomain.sample, previousReceiver, previousN, previousV,
+                    previousAm.rgb, previousAm.a, previousRoughness,
+                    previousContribution, previousWi, previousDistance);
+                if (currentTargetValid && previousTargetValid)
+                {
+                    const float currentTarget = RestirDiTargetLuminance(currentContribution);
+                    const float previousTarget = RestirDiTargetLuminance(previousContribution);
+                    maxTargetAgreementError = max(
+                        maxTargetAgreementError,
+                        abs(currentTarget - previousTarget)
+                            / max(max(currentTarget, previousTarget), 1e-4));
+                    anyComparableTarget = true;
+                }
+            }
+            // No fresh light can be compared only when both domains are invalid.  That is not a
+            // current/previous disagreement; valid domains above carry the numeric proof.
+            targetAgreementError = anyComparableTarget ? maxTargetAgreementError : 0.0;
+        }
         if (g_EnableDiTemporal != 0u)
         {
             bool usedE, usedV;
@@ -946,6 +987,17 @@ void RestirTemporalRayGen()
         }
         const float4 old = g_Output[pixel];
         g_Output[pixel] = float4(debug, old.a);
+    }
+    else if (g_DebugMode == 48u)
+    {
+        // R/G are normalized errors, B marks a compatible previous receiver. Static agreement
+        // must be (0,0,1); this has no authority outside the diagnostic view.
+        const float4 old = g_Output[pixel];
+        g_Output[pixel] = float4(
+            saturate(receiverAgreementError),
+            saturate(targetAgreementError),
+            historyAccepted ? 1.0 : 0.0,
+            old.a);
     }
 }
 

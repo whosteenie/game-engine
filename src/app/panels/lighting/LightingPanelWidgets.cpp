@@ -178,6 +178,9 @@ namespace
         RenderDebugMode::PtEnvDiProbeCandidate,
         RenderDebugMode::PtEnvDiProbeRadiance,
         RenderDebugMode::PtEnvDiProbeMetadata,
+        RenderDebugMode::PtCameraOpaqueMotion,
+        RenderDebugMode::PtTransmissionVirtualMotion,
+        RenderDebugMode::PtRestirPreviousReceiverTargetAgreement,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -717,6 +720,12 @@ namespace LightingPanelWidgets
             return "GI-only output running relative sigma for a stable camera. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. The configured ROI is outlined and reported numerically.";
         case RenderDebugMode::PtRestirGiSpatialMotionDelta:
             return "GI-only output motion-reprojected frame delta. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. Motion and expected previous linear depth reject disocclusions.";
+        case RenderDebugMode::PtCameraOpaqueMotion:
+            return "Camera-domain AOV: opaque current-minus-previous NDC motion. This diagnostic only changes the displayed PT output; the RGBA16F motion guide remains authoritative.";
+        case RenderDebugMode::PtTransmissionVirtualMotion:
+            return "Camera-domain AOV: refraction-replayed current-minus-previous NDC motion through a dielectric. This diagnostic only changes the displayed PT output; the RGBA16F motion guide remains authoritative.";
+        case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
+            return "ReSTIR camera-domain AOV: R is normalized current/previous receiver error, G is fresh-sample target error, and B means a compatible prior receiver was found. A static compatible view is (0,0,1).";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

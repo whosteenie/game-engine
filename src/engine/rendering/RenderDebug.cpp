@@ -210,6 +210,12 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT/DLSS depth: reprojection disocclusion";
     case RenderDebugMode::PtMatrixDepthReprojectionDisocclusion:
         return "PT/DLSS matrix: depth reprojection disocclusion";
+    case RenderDebugMode::PtCameraOpaqueMotion:
+        return "PT camera-domain: opaque motion";
+    case RenderDebugMode::PtTransmissionVirtualMotion:
+        return "PT camera-domain: transmission virtual motion";
+    case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
+        return "PT ReSTIR: previous receiver/target agreement";
     default:
         return "Unknown";
     }
@@ -434,6 +440,9 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiSpatialFilterScore:
     case RenderDebugMode::PtRestirGiSpatialStaticVariance:
     case RenderDebugMode::PtRestirGiSpatialMotionDelta:
+    case RenderDebugMode::PtCameraOpaqueMotion:
+    case RenderDebugMode::PtTransmissionVirtualMotion:
+    case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
         return true;
     default:
         return false;
@@ -547,6 +556,9 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtRestirGiSpatialFilterScore: return 43;
     case RenderDebugMode::PtRestirGiSpatialStaticVariance: return 44;
     case RenderDebugMode::PtRestirGiSpatialMotionDelta: return 45;
+    case RenderDebugMode::PtCameraOpaqueMotion: return 46;
+    case RenderDebugMode::PtTransmissionVirtualMotion: return 47;
+    case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement: return 48;
     default: return 0;
     }
 }

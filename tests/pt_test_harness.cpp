@@ -166,6 +166,17 @@ namespace
         return material;
     }
 
+    DxrMaterialEntry MakeCheckerMaterial(const bool bright)
+    {
+        DxrMaterialEntry material{};
+        const float value = bright ? 0.95f : 0.03f;
+        material.albedo[0] = value;
+        material.albedo[1] = bright ? 0.8f : value;
+        material.albedo[2] = bright ? 0.1f : value;
+        material.roughness = 0.35f;
+        return material;
+    }
+
     bool UploadGeometryBuffersForInstances(
         const std::vector<MinimalPtGlassScene::InstanceDesc>& instances,
         ID3D12GraphicsCommandList* commandList,
@@ -212,6 +223,11 @@ namespace
             entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
             entry.vertexStrideFloats = vertexStrideFloats;
             entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
+            // The shader resolves a hit's material through geometryLookup[InstanceID()].materialId.
+            // Keep the compact fixture's one-material-per-instance table aligned with that index;
+            // leaving the default zero silently turns every instance (including the glass pane)
+            // into the first backdrop material.
+            entry.materialId = static_cast<std::uint32_t>(objectIndex);
 
             vertexFloats.resize(vertexFloats.size() + vertexFloatCount, 0.0f);
             if (meshVertexData.size() >= vertexFloatCount)
@@ -390,6 +406,7 @@ bool MinimalPtGlassScene::Build(
     ID3D12GraphicsCommandList4* commandList,
     DxrGpuResource& scratch,
     const bool includeGlassPane,
+    const bool checkerBackdrop,
     std::string& outError)
 {
     outError.clear();
@@ -414,13 +431,33 @@ bool MinimalPtGlassScene::Build(
         return false;
     }
 
-    m_instances = {
-        InstanceDesc{
-            m_backdropMesh.get(),
-            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f))
-                * glm::scale(glm::mat4(1.0f), glm::vec3(6.0f, 6.0f, 0.2f)),
-            MakeBackdropMaterial()},
-    };
+    if (checkerBackdrop)
+    {
+        // A static two-band checker deliberately crosses the center ray under lateral camera
+        // motion. It is an albedo oracle for reprojection, not a radiance-quality fixture.
+        m_instances = {
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(-1.5f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(3.0f, 6.0f, 0.2f)),
+                MakeCheckerMaterial(false)},
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(1.5f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(3.0f, 6.0f, 0.2f)),
+                MakeCheckerMaterial(true)},
+        };
+    }
+    else
+    {
+        m_instances = {
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(6.0f, 6.0f, 0.2f)),
+                MakeBackdropMaterial()},
+        };
+    }
     if (includeGlassPane)
     {
         m_instances.push_back(InstanceDesc{
@@ -596,15 +633,25 @@ void PtDummyGbufferBindings::Release()
     m_ownedSrvIndices.clear();
 }
 
-bool PtDispatchStack::EnsureReady(std::string& outError)
+bool PtDispatchStack::EnsureReady(std::string& outError, const bool diagnosticPermutation)
 {
     outError.clear();
-    if (!pipeline.CreatePathTracerPipeline(outError))
+    if (m_ready && m_diagnosticPermutation == diagnosticPermutation)
+    {
+        return true;
+    }
+    if (!pipeline.CreatePathTracerPipeline(outError, diagnosticPermutation))
     {
         return false;
     }
 
-    return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), outError);
+    if (!shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), outError))
+    {
+        return false;
+    }
+    m_ready = true;
+    m_diagnosticPermutation = diagnosticPermutation;
+    return true;
 }
 
 void PtDispatchStack::Release()
@@ -612,6 +659,8 @@ void PtDispatchStack::Release()
     shaderBindingTable.Release();
     pipeline.Release();
     dispatchContext.Release();
+    m_ready = false;
+    m_diagnosticPermutation = false;
 }
 
 bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::string& outError)
@@ -638,7 +687,7 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
         return false;
     }
 
-    if (!params.stack->EnsureReady(outError))
+    if (!params.stack->EnsureReady(outError, params.ptDebugIsolateMode != 0))
     {
         return false;
     }
@@ -691,10 +740,12 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     constants.frameIndex = params.frameIndex;
     constants.samplesPerPixel = 1;
     constants.roughnessCutoff = 1.0f;
+    constants.restirDiCandidateCount = static_cast<float>(params.restirDiCandidateCount);
     constants.paddingUnjitteredViewProj[3] = params.motionHistoryValid ? 1.0f : 0.0f;
     constants.paddingUnjitteredViewProj[2] =
         2.0f * std::tan(glm::radians(params.camera->GetFov()) * 0.5f)
         / static_cast<float>(std::max(params.height, 1));
+    constants.ptDebugIsolateMode = static_cast<float>(params.ptDebugIsolateMode);
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = params.scene->GetTlasResource();
@@ -711,6 +762,8 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     dispatchInputs.sceneVertexFloatsSrvIndex = params.scene->GetSceneVertexFloatsSrvIndex();
     dispatchInputs.sceneIndicesSrvIndex = params.scene->GetSceneIndicesSrvIndex();
     dispatchInputs.materialSrvIndex = params.scene->GetMaterialSrvIndex();
+    dispatchInputs.envImportanceCdfSrvIndex = params.environmentIbl->GetEnvImportanceCdfSrvIndex();
+    dispatchInputs.envEquirectSrvCpuHandle = params.environmentIbl->GetHdrEquirectSrvCpuHandle();
 
     return params.stack->dispatchContext.DispatchPathTracer(
         commandList4,
@@ -730,7 +783,9 @@ bool ReadbackPtGuideCenterPixel(
     const int width,
     const int height,
     const DXGI_FORMAT format,
-    float outRgba[4])
+    float outRgba[4],
+    const int pixelX,
+    const int pixelY)
 {
     if (textureResource == nullptr || width <= 0 || height <= 0)
     {
@@ -782,8 +837,14 @@ bool ReadbackPtGuideCenterPixel(
         return false;
     }
 
-    const int centerX = width / 2;
-    const int centerY = height / 2;
+    const int centerX = pixelX >= 0 ? pixelX : width / 2;
+    const int centerY = pixelY >= 0 ? pixelY : height / 2;
+    if (centerX < 0 || centerY < 0 || centerX >= width || centerY >= height)
+    {
+        readbackAllocation->Release();
+        readbackResource->Release();
+        return false;
+    }
     const D3D12_RESOURCE_STATES stateBefore = static_cast<D3D12_RESOURCE_STATES>(resourceState);
 
     GfxContext::Get().ExecuteImmediate([&](void* commandListPtr) {

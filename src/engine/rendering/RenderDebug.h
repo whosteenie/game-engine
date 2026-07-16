@@ -122,6 +122,11 @@ enum class RenderDebugMode
     PtMotionReprojectionResidual,
     PtDepthReprojectionDisocclusion,
     PtMatrixDepthReprojectionDisocclusion,
+    // S1-P2 camera-domain verification. These are gated diagnostic permutations only; they do
+    // not alter the PT motion guide or ReSTIR reservoirs.
+    PtCameraOpaqueMotion,
+    PtTransmissionVirtualMotion,
+    PtRestirPreviousReceiverTargetAgreement,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -149,6 +154,6 @@ bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 45;
+inline constexpr int kPtDebugIsolateModeMax = 48;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

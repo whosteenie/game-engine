@@ -114,7 +114,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 45.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 48.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -651,10 +651,14 @@ float2 ComputeTransmissionVirtualMotion(
         return ComputeSkyAnchorMotion(prevGuide.refractDir);
     }
 
-    const float3 worldPrev = prevGuide.backgroundWorldPos;
-
+    // Reproject the CURRENT transmitted background point into the previous camera. Projecting
+    // worldPrev here instead merely compares two rays launched at the same pixel, which
+    // screen-locks a static front-parallel pane under a lateral camera move: Wc and Wp each
+    // project back to that pixel, so a checker behind the pane cannot reproject. The history
+    // lookup instead needs the previous screen location of Wc. The previous refracted trace
+    // above remains the validity/disocclusion check for the prior optical path.
     const float4 currClipUnj = mul(g_UnjitteredViewProj, float4(worldCurr, 1.0));
-    const float4 prevClipUnj = mul(g_PrevViewProj, float4(worldPrev, 1.0));
+    const float4 prevClipUnj = mul(g_PrevViewProj, float4(worldCurr, 1.0));
     return ComputeMotionNdc(currClipUnj, prevClipUnj);
 }
 
@@ -1731,6 +1735,9 @@ void PathTracerRayGen()
     float specHitDistGuide = g_MaxTraceDistance;
 #if PT_DIAGNOSTIC_PERMUTATION
     uint primaryMaterialIdForDebug = 0u;
+    float2 opaquePrimaryMotionForDebug = 0.0.xx;
+    float2 transmissionVirtualMotionForDebug = 0.0.xx;
+    bool hasTransmissionVirtualMotionForDebug = false;
 #endif
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
     float pathConeWidth = 0.0;
@@ -2121,6 +2128,11 @@ void PathTracerRayGen()
 #endif
             float resolvedPrimaryDepth = payload.primaryDepth;
             float2 resolvedPrimaryMotion = PayloadPrimaryMotion(payload);
+            // S1-P2 diagnostic reference. This remains the opaque primary value even if the
+            // dielectric guide below replaces the exported guide motion with virtual motion.
+#if PT_DIAGNOSTIC_PERMUTATION
+            opaquePrimaryMotionForDebug = resolvedPrimaryMotion;
+#endif
             const float primaryPreviousLinearDepth = PayloadPrevLinearDepth(payload);
             const float nDotVPrimary = saturate(dot(hitNormalGeom, viewDir));
 
@@ -2167,6 +2179,10 @@ void PathTracerRayGen()
 
                 const float2 virtualMotion = ComputeTransmissionVirtualMotion(
                     pixel, hitPos, ray.Direction, txGuide, shellBias);
+#if PT_DIAGNOSTIC_PERMUTATION
+                transmissionVirtualMotionForDebug = virtualMotion;
+                hasTransmissionVirtualMotionForDebug = true;
+#endif
 
                 if (txGuide.valid)
                 {
@@ -2517,6 +2533,18 @@ void PathTracerRayGen()
             primary.dielectricWeight > 0.01 ? 1.0 : 0.0,
             primary.roughness <= kPtDeltaSpecularRoughness ? 1.0 : 0.0,
             0.15);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 46u)
+    {
+        // Display encoding only: RG = signed opaque current-minus-previous NDC motion, with
+        // 0.5 neutral and +/- 0.5 covering +/- 0.125 NDC. Numeric validation reads the guide.
+        displayRadiance = float3(opaquePrimaryMotionForDebug * 4.0 + 0.5, 0.0);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 47u)
+    {
+        displayRadiance = hasTransmissionVirtualMotionForDebug
+            ? float3(transmissionVirtualMotionForDebug * 4.0 + 0.5, 0.0)
+            : 0.0.xxx;
     }
 #else
     const float3 displayRadiance = radiance;

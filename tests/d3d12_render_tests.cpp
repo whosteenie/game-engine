@@ -43,6 +43,7 @@
 #include "engine/raytracing/DxrGpuResource.h"
 #include "engine/raytracing/DxrInstanceTransform.h"
 #include "engine/raytracing/DxrPipeline.h"
+#include "engine/raytracing/DxrRestirDispatch.h"
 #include "engine/raytracing/DxrRootSignature.h"
 #include "engine/raytracing/ShaderBindingTable.h"
 #include "engine/raytracing/Tlas.h"
@@ -59,6 +60,7 @@
 #include <D3D12MemAlloc.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <iostream>
 #include <cmath>
@@ -2082,7 +2084,7 @@ namespace render_tests
         IBL* environmentIbl = nullptr;
         std::string lastError;
 
-        bool Setup(const bool includeGlassPane = true)
+        bool Setup(const bool includeGlassPane = true, const bool checkerBackdrop = false)
         {
             lastError.clear();
             if (!GfxContext::Get().IsRaytracingSupported())
@@ -2105,7 +2107,9 @@ namespace render_tests
                 CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch),
                 "PT glass scratch buffer alloc");
 
-            test::ExpectTrue(scene.Build(commandList4, scratch, includeGlassPane, lastError), lastError.c_str());
+            test::ExpectTrue(
+                scene.Build(commandList4, scratch, includeGlassPane, checkerBackdrop, lastError),
+                lastError.c_str());
             test::ExpectTrue(gbuffer.Create(lastError), lastError.c_str());
             test::ExpectTrue(stack.EnsureReady(lastError), lastError.c_str());
             return true;
@@ -2128,7 +2132,9 @@ namespace render_tests
         const glm::mat4& prevView,
         const glm::vec3& prevCameraPos,
         const bool motionHistoryValid,
-        const std::uint32_t frameIndex)
+        const std::uint32_t frameIndex,
+        const int ptDebugIsolateMode = 0,
+        const std::uint32_t restirDiCandidateCount = 0)
     {
         PtFrameDispatchParams params{};
         params.scene = &fixture.scene;
@@ -2143,9 +2149,79 @@ namespace render_tests
         params.prevCameraPos = prevCameraPos;
         params.motionHistoryValid = motionHistoryValid;
         params.frameIndex = frameIndex;
+        params.ptDebugIsolateMode = ptDebugIsolateMode;
+        params.restirDiCandidateCount = restirDiCandidateCount;
 
         std::string dispatchError;
         const bool dispatched = DispatchMinimalPathTracerFrame(params, dispatchError);
+        test::ExpectTrue(dispatched, dispatchError.c_str());
+        return dispatched;
+    }
+
+    bool DispatchPtRestirTemporalAov(
+        PtGlassTestFixture& fixture,
+        const Camera& camera,
+        const glm::vec3& previousCameraPos,
+        const bool historyValid,
+        const std::uint32_t frameIndex,
+        DxrRestirDispatch& restirDispatch)
+    {
+        test::ExpectTrue(
+            restirDispatch.WarmUpPipelineIfNeeded(),
+            "ReSTIR temporal pipeline should warm for S1-P2 AOV");
+        if (!restirDispatch.IsPipelineReady())
+        {
+            return false;
+        }
+
+        auto* commandList4 = DxrContext::Get().QueryCommandList4(GfxContext::Get().GetCommandList());
+        test::ExpectTrue(commandList4 != nullptr, "Command list 4 should be available for ReSTIR temporal AOV");
+        if (commandList4 == nullptr)
+        {
+            return false;
+        }
+
+        DxrRootSignature::RestirTemporalConstants constants{};
+        constants.outputWidth = kPtFramebufferSize;
+        constants.outputHeight = kPtFramebufferSize;
+        constants.historyValid = historyValid ? 1u : 0u;
+        constants.frameIndex = frameIndex;
+        const glm::mat4 inverseViewProjection = glm::inverse(
+            camera.GetProjectionMatrix() * camera.GetViewMatrix());
+        std::memcpy(constants.invViewProj, glm::value_ptr(inverseViewProjection), sizeof(constants.invViewProj));
+        const glm::vec3 cameraPos = camera.GetPosition();
+        constants.cameraPos[0] = cameraPos.x;
+        constants.cameraPos[1] = cameraPos.y;
+        constants.cameraPos[2] = cameraPos.z;
+        constants.prevCameraPos[0] = previousCameraPos.x;
+        constants.prevCameraPos[1] = previousCameraPos.y;
+        constants.prevCameraPos[2] = previousCameraPos.z;
+        constants.maxTraceDistance = 100.0f;
+        constants.shadeOutput = 1u;
+        constants.debugMode = 48u;
+        constants.enableDiTemporal = 0u;
+        constants.enableGiTemporal = 0u;
+        constants.environmentIntensity = fixture.environmentIbl->GetEnvironmentIntensity();
+        constants.environmentRotationYRadians = fixture.environmentIbl->GetRotationYRadians();
+        constants.envDirectLuminanceClamp = fixture.environmentIbl->GetEnvDirectLightingLuminanceClamp();
+        constants.envImportanceCount = fixture.environmentIbl->GetEnvImportanceSampleCount();
+        constants.envCdfWidth = static_cast<std::uint32_t>(fixture.environmentIbl->GetEnvImportanceCdfWidth());
+        constants.envCdfHeight = static_cast<std::uint32_t>(fixture.environmentIbl->GetEnvImportanceCdfHeight());
+
+        std::string dispatchError;
+        const bool dispatched = fixture.stack.dispatchContext.DispatchRestirTemporal(
+            commandList4,
+            restirDispatch.GetStateObject(),
+            restirDispatch.GetGlobalRootSignature(),
+            restirDispatch.GetTemporalShaderBindingTable(),
+            fixture.scene.GetTlasResource(),
+            fixture.scene.GetTlasGpuVirtualAddress(),
+            fixture.scene.GetGeometryLookupSrvIndex(),
+            fixture.scene.GetGeometryLookupSrvIndex(),
+            fixture.environmentIbl->GetEnvImportanceCdfSrvIndex(),
+            fixture.environmentIbl->GetHdrEquirectSrvCpuHandle(),
+            constants,
+            dispatchError);
         test::ExpectTrue(dispatched, dispatchError.c_str());
         return dispatched;
     }
@@ -2340,6 +2416,332 @@ namespace render_tests
         fixture.Teardown();
     }
 
+    void TestPtStaticOffOriginOpaqueMotion()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT static off-origin opaque motion (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup(false))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera camera(glm::vec3(1.25f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 viewProj =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        if (!DispatchPtGlassFrame(
+                fixture, camera, viewProj, camera.GetViewMatrix(), camera.GetPosition(), true, 1u))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float motion[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                fixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, motion),
+            "Static off-origin opaque motion readback should succeed");
+        test::ExpectNear(motion[0], 0.0f, 0.001f,
+            "Static off-origin opaque geometry must have zero current-minus-previous NDC X motion");
+        test::ExpectNear(motion[1], 0.0f, 0.001f,
+            "Static off-origin opaque geometry must have zero current-minus-previous NDC Y motion");
+        fixture.Teardown();
+    }
+
+    void TestPtTransmissionVirtualMotionLateralChecker()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission lateral checker (no RTX tier)\n";
+            return;
+        }
+
+        // Render the same immutable two-band backdrop in separate previous/current fixtures. The
+        // current center guide is bright and its exported NDC motion must land on the bright band
+        // of the previous image. This validates reprojection itself, without assuming a world-X
+        // to NDC-X sign for this left-handed camera.
+        PtGlassTestFixture previousFixture;
+        if (!previousFixture.Setup(true, true))
+        {
+            previousFixture.Teardown();
+            return;
+        }
+
+        Camera prevCamera(glm::vec3(-0.35f, 0.0f, 4.0f), -90.0f, 0.0f);
+        prevCamera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        Camera camera(glm::vec3(0.35f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 prevViewProj =
+            prevCamera.GetUnjitteredProjectionMatrix() * prevCamera.GetViewMatrix();
+        if (!DispatchPtGlassFrame(
+                previousFixture,
+                prevCamera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                false,
+                0u))
+        {
+            EndOffscreenPass();
+            previousFixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        PtGlassTestFixture currentFixture;
+        if (!currentFixture.Setup(true, true))
+        {
+            currentFixture.Teardown();
+            previousFixture.Teardown();
+            return;
+        }
+        if (!DispatchPtGlassFrame(
+                currentFixture, camera, prevViewProj, prevCamera.GetViewMatrix(), prevCamera.GetPosition(), true, 1u))
+        {
+            EndOffscreenPass();
+            currentFixture.Teardown();
+            previousFixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float motion[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                currentFixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, motion),
+            "Lateral transmission motion readback should succeed");
+        const int currentX = kPtFramebufferSize / 2;
+        const int currentY = kPtFramebufferSize / 2;
+        const float currentNdcX =
+            2.0f * (static_cast<float>(currentX) + 0.5f) / static_cast<float>(kPtFramebufferSize) - 1.0f;
+        const float currentNdcY =
+            1.0f - 2.0f * (static_cast<float>(currentY) + 0.5f) / static_cast<float>(kPtFramebufferSize);
+        const float previousNdcX = currentNdcX - motion[0];
+        const float previousNdcY = currentNdcY - motion[1];
+        const int previousX = static_cast<int>(std::lround(
+            ((previousNdcX + 1.0f) * 0.5f) * static_cast<float>(kPtFramebufferSize) - 0.5f));
+        const int previousY = static_cast<int>(std::lround(
+            ((1.0f - previousNdcY) * 0.5f) * static_cast<float>(kPtFramebufferSize) - 0.5f));
+        float currentAlbedo[4]{};
+        float previousAlbedo[4]{};
+        float previousCenterAlbedo[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                currentFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, currentAlbedo,
+                currentX, currentY),
+            "Current lateral-checker albedo readback should succeed");
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousAlbedo,
+                previousX, previousY),
+            "Reprojected previous lateral-checker albedo readback should succeed");
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousCenterAlbedo,
+                currentX, currentY),
+            "Unreprojected previous lateral-checker albedo readback should succeed");
+        std::cout << "S1-P2 lateral checker: motion=(" << motion[0] << ", " << motion[1]
+                  << ") previousPixel=(" << previousX << ", " << previousY
+                  << ") currentAlbedo=" << currentAlbedo[0]
+                  << " previousAlbedo=" << previousAlbedo[0]
+                  << " previousCenterAlbedo=" << previousCenterAlbedo[0] << "\n";
+        test::ExpectTrue(
+            std::abs(currentAlbedo[0] - previousAlbedo[0]) < 0.1f,
+            "Lateral checker reprojection must land on the matching previous checker band");
+        test::ExpectTrue(
+            std::abs(currentAlbedo[0] - previousCenterAlbedo[0]) > 0.5f,
+            "Lateral checker must cross a band at the unreprojected previous pixel");
+        currentFixture.Teardown();
+        previousFixture.Teardown();
+    }
+
+    void TestPtTransmissionDiagnosticsOffEquivalence()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission diagnostics equivalence (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture diagnosticsOffFixture;
+        if (!diagnosticsOffFixture.Setup())
+        {
+            diagnosticsOffFixture.Teardown();
+            return;
+        }
+        Camera prevCamera = MakePtGlassCamera(-90.0f);
+        const glm::mat4 prevViewProj =
+            prevCamera.GetUnjitteredProjectionMatrix() * prevCamera.GetViewMatrix();
+        Camera camera = MakePtGlassCamera(-75.0f);
+        float diagnosticsOff[4]{};
+        float diagnosticsOn[4]{};
+        if (DispatchPtGlassFrame(
+                diagnosticsOffFixture,
+                camera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                true,
+                1u))
+        {
+            EndOffscreenPass();
+            test::ExpectTrue(
+                ReadbackPtGuideCenterPixel(
+                    diagnosticsOffFixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                    diagnosticsOffFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                    kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, diagnosticsOff),
+                "Diagnostics-off transmission motion readback should succeed");
+        }
+        else { EndOffscreenPass(); diagnosticsOffFixture.Teardown(); return; }
+        diagnosticsOffFixture.Teardown();
+
+        PtGlassTestFixture diagnosticsOnFixture;
+        if (!diagnosticsOnFixture.Setup())
+        {
+            diagnosticsOnFixture.Teardown();
+            return;
+        }
+        if (DispatchPtGlassFrame(
+                diagnosticsOnFixture,
+                camera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                true,
+                1u,
+                47))
+        {
+            EndOffscreenPass();
+            test::ExpectTrue(
+                ReadbackPtGuideCenterPixel(
+                    diagnosticsOnFixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                    diagnosticsOnFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                    kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, diagnosticsOn),
+                "Diagnostics-on transmission motion readback should succeed");
+            test::ExpectNear(diagnosticsOn[0], diagnosticsOff[0], 0.0001f,
+                "Transmission diagnostic permutation must preserve motion-guide X");
+            test::ExpectNear(diagnosticsOn[1], diagnosticsOff[1], 0.0001f,
+                "Transmission diagnostic permutation must preserve motion-guide Y");
+        }
+        else { EndOffscreenPass(); }
+        diagnosticsOnFixture.Teardown();
+    }
+
+    void TestPtRestirStaticPreviousReceiverTargetAgreement()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT ReSTIR static previous-receiver/target agreement (no RTX tier)\n";
+            return;
+        }
+
+        // Frame zero seeds the reservoir and copies the primary surface records.  Frame one uses
+        // the exact same off-origin camera, so diagnostic mode 48 must find the prior receiver
+        // and independently recompute the same target for the current fresh sample.
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup(false))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera camera(glm::vec3(1.25f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 staticViewProjection =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        DxrRestirDispatch restirDispatch;
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                staticViewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                false,
+                0u,
+                48,
+                1u)
+            || !DispatchPtRestirTemporalAov(
+                fixture, camera, camera.GetPosition(), false, 0u, restirDispatch))
+        {
+            EndOffscreenPass();
+            restirDispatch.Release();
+            fixture.Teardown();
+            return;
+        }
+        fixture.stack.dispatchContext.FinalizePathTracerSurfaceHistory(
+            static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList()));
+        EndOffscreenPass();
+
+        Framebuffer frameOneFramebuffer;
+        test::ExpectTrue(
+            frameOneFramebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize),
+            "PT ReSTIR agreement frame-one framebuffer resize should succeed");
+        BeginOffscreenPass(frameOneFramebuffer, false);
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                staticViewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                true,
+                1u,
+                48,
+                1u)
+            || !DispatchPtRestirTemporalAov(
+                fixture, camera, camera.GetPosition(), true, 1u, restirDispatch))
+        {
+            EndOffscreenPass();
+            restirDispatch.Release();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float agreement[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPrimaryOutputResource(),
+                fixture.stack.dispatchContext.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                agreement),
+            "ReSTIR previous-receiver/target agreement AOV readback should succeed");
+        std::cout << "S1-P2 ReSTIR static agreement: receiverError=" << agreement[0]
+                  << " targetError=" << agreement[1]
+                  << " historyAccepted=" << agreement[2] << "\n";
+        test::ExpectNear(
+            agreement[0], 0.0f, 0.001f,
+            "Static ReSTIR receiver reconstruction must agree with the previous receiver");
+        test::ExpectNear(
+            agreement[1], 0.0f, 0.001f,
+            "Static ReSTIR fresh-sample target must agree at current and previous receivers");
+        test::ExpectNear(
+            agreement[2], 1.0f, 0.001f,
+            "Static ReSTIR scene must accept a compatible previous receiver");
+
+        restirDispatch.Release();
+        fixture.Teardown();
+    }
+
     void TestDxrDispatchSmoke()
     {
 
@@ -2469,5 +2871,9 @@ namespace render_tests
 
         add("PtTransmissionGuideAlbedoBands", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionGuideAlbedoBands);
         add("PtTransmissionVirtualMotionOnOrbit", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionOnOrbit);
+        add("PtStaticOffOriginOpaqueMotion", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtStaticOffOriginOpaqueMotion);
+        add("PtTransmissionVirtualMotionLateralChecker", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionLateralChecker);
+        add("PtTransmissionDiagnosticsOffEquivalence", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionDiagnosticsOffEquivalence);
+        add("PtRestirStaticPreviousReceiverTargetAgreement", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtRestirStaticPreviousReceiverTargetAgreement);
     }
 }
