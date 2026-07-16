@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/raytracing/DxrDispatchBase.h"
+#include "engine/rendering/TemporalCameraPacket.h"
 
 #include <array>
 #include <cstdint>
@@ -46,16 +47,9 @@ public:
         float sunIntensity = 0.0f;
         float sunAngularRadiusDegrees = 0.27f;
         std::array<glm::vec4, 9> irradianceSh9{}; // L2 SH diffuse sky irradiance (ambient floor)
-        glm::mat4 prevViewProjection{1.0f};
-        // Previous frame's VIEW matrix alone: the glass virtual-motion replay composes it with the
-        // CURRENT jittered projection so the replayed prev ray shares the current sub-pixel offset
-        // (jitter cancels out of the virtual MV; static glass MV stays exactly 0). Composing with
-        // the prev UNJITTERED projection after the jittered-primaries change (cab2529) made the
-        // replayed refraction path differ from the current one by a per-frame jitter delta, which
-        // refraction amplifies into frame-varying MVs on static glass -> RR boiled static glass.
-        glm::mat4 prevView{1.0f};
-        glm::vec3 prevCameraPos{0.0f};
-        bool motionHistoryValid = false;
+        // One complete current/previous packet, populated from the active viewport's
+        // ScreenSpaceEffects history. No application-global or identity/zero history fallback.
+        TemporalCameraPacket cameraPacket{};
         // Real-time (DLSS): pixel-center primary rays through the jittered projection. Reference:
         // shader-side sub-pixel jitter for accumulation.
         bool centerPrimaryRays = false;
@@ -70,6 +64,60 @@ public:
         std::uint32_t restirDiCandidateCount = 0;
         bool restirGiInitialEnabled = false;
     };
+
+    // CPU-side camera portion of the shader constants. The packet stores an unjittered projection
+    // plus explicit NDC jitter. For real-time pixel-center primaries, viewProjection and
+    // inverseViewProjection use the current jitter; unjitteredViewProjection and
+    // previousViewProjection never do. previousReplayInverseViewProjection intentionally combines
+    // the previous view with the CURRENT effective projection so static-glass jitter cancels.
+    struct CameraConstants
+    {
+        glm::mat4 view{0.0f};
+        glm::mat4 viewProjection{0.0f};
+        glm::mat4 inverseViewProjection{0.0f};
+        glm::mat4 unjitteredViewProjection{0.0f};
+        glm::mat4 previousViewProjection{0.0f};
+        glm::mat4 previousReplayInverseViewProjection{0.0f};
+        glm::vec3 worldPosition{0.0f};
+        glm::vec3 previousWorldPosition{0.0f};
+        bool historyValid = false;
+    };
+
+    // Returns false only when the current state is incomplete. An incomplete previous state
+    // produces a valid current-frame packing with historyValid=false and current-state fallback
+    // values that temporal shaders are forbidden to consume.
+    static bool TryBuildCameraConstants(
+        const TemporalCameraPacket& packet,
+        bool centerPrimaryRays,
+        CameraConstants& outConstants)
+    {
+        outConstants = {};
+        if (!TemporalCamera::IsComplete(packet.current))
+        {
+            return false;
+        }
+
+        const bool historyValid = TemporalCamera::IsComplete(packet.previous);
+        const TemporalCameraState& previous = historyValid ? packet.previous : packet.current;
+        const glm::mat4 effectiveProjection = centerPrimaryRays
+            ? TemporalCamera::ApplyJitter(packet.current.projection, packet.current.jitterNdc)
+            : packet.current.projection;
+
+        outConstants.view = packet.current.view;
+        outConstants.viewProjection = effectiveProjection * packet.current.view;
+        outConstants.inverseViewProjection = centerPrimaryRays
+            ? glm::inverse(outConstants.viewProjection)
+            : packet.current.inverseViewProjection;
+        outConstants.unjitteredViewProjection =
+            packet.current.projection * packet.current.view;
+        outConstants.previousViewProjection = previous.projection * previous.view;
+        outConstants.previousReplayInverseViewProjection =
+            glm::inverse(effectiveProjection * previous.view);
+        outConstants.worldPosition = packet.current.worldPosition;
+        outConstants.previousWorldPosition = previous.worldPosition;
+        outConstants.historyValid = historyValid;
+        return true;
+    }
 
     DxrPathTracerDispatch() = default;
     ~DxrPathTracerDispatch();
@@ -196,5 +244,6 @@ private:
     glm::vec3 m_lastSunDirection{0.0f, 1.0f, 0.0f};
     float m_lastSunAngularTanRadius = 0.0f;
     std::uint32_t m_lastDebugMode = 0;
-    glm::vec3 m_lastPrevCameraPos{0.0f};
+    TemporalCameraPacket m_lastCameraPacket{};
+    CameraConstants m_lastCameraConstants{};
 };

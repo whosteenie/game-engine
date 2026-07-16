@@ -45,6 +45,7 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <future>
@@ -1141,10 +1142,41 @@ void SceneRenderer::RecordDxrPass(
         }
         {
             const MotionVectorFrameState& motionState = m_screenSpaceEffects->GetMotionVectorFrameState();
-            ptInputs.motionHistoryValid = motionState.historyValid;
-            ptInputs.prevViewProjection = motionState.historyValid
-                ? motionState.prevViewProjection
-                : camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+            const glm::mat4 currentView = camera.GetViewMatrix();
+            const glm::mat4 currentProjection = camera.GetUnjitteredProjectionMatrix();
+            ptInputs.cameraPacket.current = TemporalCamera::MakeState(
+                currentView,
+                currentProjection,
+                glm::inverse(currentProjection * currentView),
+                camera.GetPosition(),
+                camera.GetProjectionJitter());
+            ptInputs.cameraPacket.previous = motionState.previousCamera;
+
+            // Raster motion fields remain independent consumers for now. When their history is
+            // declared valid, assert that every retained duplicate describes this packet's same
+            // previous compatible rendered frame for the active Scene/Game viewport.
+            const bool duplicateHistoryAgrees = !motionState.historyValid
+                || (TemporalCamera::IsComplete(motionState.previousCamera)
+                    && TemporalCamera::NearlyEqual(
+                        motionState.previousCamera.view,
+                        motionState.prevView)
+                    && TemporalCamera::NearlyEqual(
+                        motionState.previousCamera.projection,
+                        motionState.prevUnjitteredProjection)
+                    && TemporalCamera::NearlyEqual(
+                        TemporalCamera::ApplyJitter(
+                            motionState.previousCamera.projection,
+                            motionState.previousCamera.jitterNdc),
+                        motionState.prevProjection)
+                    && TemporalCamera::NearlyEqual(
+                        motionState.previousCamera.projection
+                            * motionState.previousCamera.view,
+                        motionState.prevViewProjection));
+            assert(duplicateHistoryAgrees && "Viewport camera-history duplicates disagree");
+            if (!motionState.historyValid || !duplicateHistoryAgrees)
+            {
+                ptInputs.cameraPacket.previous.valid = false;
+            }
         }
         ptInputs.centerPrimaryRays = !m_dxrSettings.IsPtReferenceConvergence();
         ptInputs.restirDiCandidateCount =

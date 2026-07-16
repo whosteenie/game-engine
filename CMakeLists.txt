@@ -527,6 +527,7 @@ add_executable(engine-tests
     tests/nee_mis_integration_test.cpp
     tests/frustum_cull_test.cpp
     tests/capture_manifest_test.cpp
+    tests/temporal_camera_packet_test.cpp
     tests/shader_compile_test.cpp
 )
 

@@ -36,6 +36,7 @@ void RunEnvImportanceTests();
 void RunNeeMisIntegrationTests();
 void RunFrustumCullTests();
 void RunCaptureManifestTests(int& failures);
+void RunTemporalCameraPacketTests(int& failures);
 void RunShaderCompileTests();
 
 namespace
@@ -103,6 +104,9 @@ namespace
         maybeRun("nee_mis_integration", RunNeeMisIntegrationTests);
         maybeRun("frustum_cull", RunFrustumCullTests);
         maybeRun("capture_manifest", [] { RunCaptureManifestTests(test::FailureCount()); });
+        maybeRun(
+            "temporal_camera_packet",
+            [] { RunTemporalCameraPacketTests(test::FailureCount()); });
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

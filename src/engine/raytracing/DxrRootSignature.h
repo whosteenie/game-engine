@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <d3d12.h>
 #include <wrl/client.h>
@@ -89,6 +90,21 @@ struct ReflectionDispatchConstants
     float _restirDiPad1 = 0.0f;
     float _restirDiPad2 = 0.0f;
 };
+static_assert(
+    sizeof(ReflectionDispatchConstants) == 704,
+    "PT/reflection cbuffer layout mismatch");
+static_assert(
+    offsetof(ReflectionDispatchConstants, unjitteredViewProj) == 448,
+    "PT unjittered view-projection packing mismatch");
+static_assert(
+    offsetof(ReflectionDispatchConstants, prevViewProj) == 512,
+    "PT previous view-projection packing mismatch");
+static_assert(
+    offsetof(ReflectionDispatchConstants, prevInvViewProj) == 592,
+    "PT previous inverse view-projection packing mismatch");
+static_assert(
+    offsetof(ReflectionDispatchConstants, prevCameraPos) == 656,
+    "PT previous camera-position packing mismatch");
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in
 // assets/shaders/dxr/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then

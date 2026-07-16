@@ -1691,13 +1691,25 @@ const MotionVectorFrameState& ScreenSpaceEffects::GetMotionVectorFrameState() co
 
 void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
 {
-    m_motionVectorFrameState.prevView = camera.GetViewMatrix();
-    m_motionVectorFrameState.prevProjection = camera.GetProjectionMatrix();
-    m_motionVectorFrameState.prevUnjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+    const glm::mat4 view = camera.GetViewMatrix();
+    const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
+    const glm::mat4 unjitteredViewProjection = unjitteredProjection * view;
+    m_motionVectorFrameState.previousCamera = TemporalCamera::MakeState(
+        view,
+        unjitteredProjection,
+        glm::inverse(unjitteredViewProjection),
+        camera.GetPosition(),
+        camera.GetProjectionJitter());
+    m_motionVectorFrameState.prevView = view;
+    m_motionVectorFrameState.prevProjection = TemporalCamera::ApplyJitter(
+        unjitteredProjection,
+        camera.GetProjectionJitter());
+    m_motionVectorFrameState.prevUnjitteredProjection = unjitteredProjection;
     m_motionVectorFrameState.prevViewProjection =
-        m_motionVectorFrameState.prevUnjitteredProjection * m_motionVectorFrameState.prevView;
+        unjitteredViewProjection;
     m_giPrevViewProjection = m_motionVectorFrameState.prevViewProjection;
-    m_motionVectorFrameState.historyValid = true;
+    m_motionVectorFrameState.historyValid =
+        TemporalCamera::IsComplete(m_motionVectorFrameState.previousCamera);
 }
 
 bool ScreenSpaceEffects::HasSplitLighting() const

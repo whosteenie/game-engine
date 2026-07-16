@@ -13,6 +13,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cassert>
 #include <cstring>
 
 namespace
@@ -26,6 +27,18 @@ namespace
         case DxrPathTracerDispatch::SerOverride::Automatic: return "automatic";
         }
         return "missing";
+    }
+
+    TemporalCameraState CameraStateFromCamera(const Camera& camera)
+    {
+        const glm::mat4 view = camera.GetViewMatrix();
+        const glm::mat4 projection = camera.GetUnjitteredProjectionMatrix();
+        return TemporalCamera::MakeState(
+            view,
+            projection,
+            glm::inverse(projection * view),
+            camera.GetPosition(),
+            camera.GetProjectionJitter());
     }
 }
 
@@ -49,6 +62,8 @@ void DxrPathTracerDispatch::Release()
     m_activeDiagnosticPermutation = false;
     m_activeSerPermutation = false;
     m_frameIndex = 0;
+    m_lastCameraPacket = {};
+    m_lastCameraConstants = {};
 }
 
 void DxrPathTracerDispatch::SetSerOverride(const SerOverride value)
@@ -275,26 +290,38 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     DxrBreadcrumb("path-tracer dispatch begin");
     SceneRenderTrace::Scope dispatchScope("dxr-dispatch-path-tracer");
 
-    const glm::mat4 viewMatrix = camera.GetViewMatrix();
-    const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
-    // Real-time primaries use the camera's Halton-jittered projection and pixel centers so the
-    // rendered sample matches the jitter reported to RR. Reference primaries generate their own
-    // uniform subpixel sample in PathTracerRayGen; composing camera jitter as well convolves two
-    // distributions and leaks samples outside the pixel footprint, preventing correct convergence.
-    const glm::mat4 projectionMatrix = frameInputs.centerPrimaryRays
-        ? camera.GetProjectionMatrix()
-        : unjitteredProjection;
-    const glm::mat4 viewProj = projectionMatrix * viewMatrix;
-    const glm::mat4 unjitteredViewProj = unjitteredProjection * viewMatrix;
-    // Real-time reconstructs from the jittered frustum. Reference reconstructs from the unjittered
-    // frustum and supplies exactly one shader-side subpixel sample.
-    // Motion vectors still use g_UnjitteredViewProj below (motionVectorsJittered = false).
-    const glm::mat4 invViewProj = glm::inverse(viewProj);
+    // FrameInputs owns the values below. Camera remains a retained call-site duplicate only; it
+    // must describe the same current camera and never supplies a temporal fallback.
+    const TemporalCameraState duplicateCurrent = CameraStateFromCamera(camera);
+    const bool duplicateCameraAgrees =
+        TemporalCamera::Agree(frameInputs.cameraPacket.current, duplicateCurrent);
+    assert(duplicateCameraAgrees && "DxrPathTracerDispatch current camera packet mismatch");
+    if (!duplicateCameraAgrees
+        || !TryBuildCameraConstants(
+            frameInputs.cameraPacket,
+            frameInputs.centerPrimaryRays,
+            m_lastCameraConstants))
+    {
+        m_dispatchContext.InvalidateRestirHistory();
+        DxrBreadcrumb("path-tracer skipped: current camera packet incomplete");
+        return false;
+    }
+    if (!m_lastCameraConstants.historyValid)
+    {
+        // These are complete current-camera values, never identity/zero substitutes. Both the PT
+        // motion flag and ReSTIR history flag prohibit temporal consumers from reading them.
+        m_dispatchContext.InvalidateRestirHistory();
+    }
+    m_lastCameraPacket = frameInputs.cameraPacket;
+
+    const glm::mat4& viewMatrix = m_lastCameraConstants.view;
+    const glm::mat4& viewProj = m_lastCameraConstants.viewProjection;
+    const glm::mat4& invViewProj = m_lastCameraConstants.inverseViewProjection;
+    const glm::mat4& unjitteredViewProj =
+        m_lastCameraConstants.unjitteredViewProjection;
     // g_PrevViewProj (MV output projection + sky anchor): prev UNJITTERED — jitter must never
     // appear in the emitted motion vectors (motionVectorsJittered = false).
-    const glm::mat4 prevViewProj = frameInputs.motionHistoryValid
-        ? frameInputs.prevViewProjection
-        : unjitteredViewProj;
+    const glm::mat4& prevViewProj = m_lastCameraConstants.previousViewProjection;
     // g_PrevInvViewProj (glass virtual-motion ray REPLAY only): prev VIEW composed with the
     // CURRENT jittered projection, so the replayed prev primary ray enters the pane at the same
     // sub-pixel offset as this frame's ray. Jitter then cancels out of the virtual MV: static
@@ -302,15 +329,10 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     // exactly 0; camera motion survives untouched. Deriving this from the prev UNJITTERED matrix
     // (pre-cab2529 behavior) diverged the two refraction paths by the per-frame Halton delta,
     // which refraction amplifies -> frame-varying MVs on STATIC glass -> RR boiled the glass.
-    const glm::mat4 prevInvViewProj = glm::inverse(
-        frameInputs.motionHistoryValid
-            ? projectionMatrix * frameInputs.prevView
-            : viewProj);
-    const glm::vec3 cameraPos = camera.GetPosition();
-    const glm::vec3 prevCameraPos = frameInputs.motionHistoryValid
-        ? frameInputs.prevCameraPos
-        : cameraPos;
-    m_lastPrevCameraPos = prevCameraPos;
+    const glm::mat4& prevInvViewProj =
+        m_lastCameraConstants.previousReplayInverseViewProjection;
+    const glm::vec3& cameraPos = m_lastCameraConstants.worldPosition;
+    const glm::vec3& prevCameraPos = m_lastCameraConstants.previousWorldPosition;
 
     DxrRootSignature::ReflectionDispatchConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(width);
@@ -365,11 +387,11 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         prevTransformsSrvIndex != UINT32_MAX ? 1.0f : 0.0f;
     // _PadUnjitteredViewProj.z = ray-cone pixel spread angle (radians/pixel) for albedo LOD.
     constants.paddingUnjitteredViewProj[2] =
-        2.0f * std::tan(glm::radians(camera.GetFov()) * 0.5f)
+        2.0f / std::abs(frameInputs.cameraPacket.current.projection[1][1])
         / static_cast<float>(std::max(height, 1));
     // _PadUnjitteredViewProj.w = motion history valid (lit.vs uTemporalHistoryValid parity).
     constants.paddingUnjitteredViewProj[3] =
-        frameInputs.motionHistoryValid ? 1.0f : 0.0f;
+        m_lastCameraConstants.historyValid ? 1.0f : 0.0f;
     constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptDebugIsolateMode =
@@ -494,22 +516,31 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
 
     m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion, motionVersion);
 
-    const glm::mat4 viewProj = camera.GetProjectionMatrix() * camera.GetViewMatrix();
-    const glm::mat4 invViewProj = glm::inverse(viewProj);
-    const glm::vec3 cameraPos = camera.GetPosition();
+    const bool duplicateCameraAgrees = TemporalCamera::Agree(
+        m_lastCameraPacket.current,
+        CameraStateFromCamera(camera));
+    assert(duplicateCameraAgrees && "ReSTIR temporal current camera packet mismatch");
+    if (!duplicateCameraAgrees)
+    {
+        m_dispatchContext.InvalidateRestirHistory();
+        return false;
+    }
 
     DxrRootSignature::RestirTemporalConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
     constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
-    constants.historyValid = 1u;
+    constants.historyValid = m_lastCameraConstants.historyValid ? 1u : 0u;
     constants.frameIndex = m_frameIndex;
-    std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
-    constants.cameraPos[0] = cameraPos.x;
-    constants.cameraPos[1] = cameraPos.y;
-    constants.cameraPos[2] = cameraPos.z;
-    constants.prevCameraPos[0] = m_lastPrevCameraPos.x;
-    constants.prevCameraPos[1] = m_lastPrevCameraPos.y;
-    constants.prevCameraPos[2] = m_lastPrevCameraPos.z;
+    std::memcpy(
+        constants.invViewProj,
+        glm::value_ptr(m_lastCameraConstants.inverseViewProjection),
+        sizeof(constants.invViewProj));
+    constants.cameraPos[0] = m_lastCameraConstants.worldPosition.x;
+    constants.cameraPos[1] = m_lastCameraConstants.worldPosition.y;
+    constants.cameraPos[2] = m_lastCameraConstants.worldPosition.z;
+    constants.prevCameraPos[0] = m_lastCameraConstants.previousWorldPosition.x;
+    constants.prevCameraPos[1] = m_lastCameraConstants.previousWorldPosition.y;
+    constants.prevCameraPos[2] = m_lastCameraConstants.previousWorldPosition.z;
     constants.maxTraceDistance = maxTraceDistance;
     constants.shadeOutput = shadeOutput ? 1u : 0u;
     constants.spatialSampleCount = 5u;
@@ -586,9 +617,15 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         return false;
     }
 
-    const glm::mat4 viewProj = camera.GetProjectionMatrix() * camera.GetViewMatrix();
-    const glm::mat4 invViewProj = glm::inverse(viewProj);
-    const glm::vec3 cameraPos = camera.GetPosition();
+    const bool duplicateCameraAgrees = TemporalCamera::Agree(
+        m_lastCameraPacket.current,
+        CameraStateFromCamera(camera));
+    assert(duplicateCameraAgrees && "ReSTIR spatial current camera packet mismatch");
+    if (!duplicateCameraAgrees)
+    {
+        m_dispatchContext.InvalidateRestirHistory();
+        return false;
+    }
 
     // RTXDI DI performs one spatial resampling pass over temporal reservoirs. Feeding spatially
     // resampled reservoirs through another pass recursively correlates neighborhoods and produces
@@ -600,15 +637,18 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         DxrRootSignature::RestirTemporalConstants constants{};
         constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
         constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
-        constants.historyValid = 1u;
+        constants.historyValid = m_lastCameraConstants.historyValid ? 1u : 0u;
         constants.frameIndex = m_frameIndex;
-        std::memcpy(constants.invViewProj, glm::value_ptr(invViewProj), sizeof(constants.invViewProj));
-        constants.cameraPos[0] = cameraPos.x;
-        constants.cameraPos[1] = cameraPos.y;
-        constants.cameraPos[2] = cameraPos.z;
-        constants.prevCameraPos[0] = m_lastPrevCameraPos.x;
-        constants.prevCameraPos[1] = m_lastPrevCameraPos.y;
-        constants.prevCameraPos[2] = m_lastPrevCameraPos.z;
+        std::memcpy(
+            constants.invViewProj,
+            glm::value_ptr(m_lastCameraConstants.inverseViewProjection),
+            sizeof(constants.invViewProj));
+        constants.cameraPos[0] = m_lastCameraConstants.worldPosition.x;
+        constants.cameraPos[1] = m_lastCameraConstants.worldPosition.y;
+        constants.cameraPos[2] = m_lastCameraConstants.worldPosition.z;
+        constants.prevCameraPos[0] = m_lastCameraConstants.previousWorldPosition.x;
+        constants.prevCameraPos[1] = m_lastCameraConstants.previousWorldPosition.y;
+        constants.prevCameraPos[2] = m_lastCameraConstants.previousWorldPosition.z;
         constants.maxTraceDistance = maxTraceDistance;
         constants.shadeOutput = shadeThisPass ? 1u : 0u;
         constants.spatialSampleCount = 5u;
