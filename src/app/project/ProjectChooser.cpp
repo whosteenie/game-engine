@@ -590,17 +590,28 @@ bool ProjectChooser::DrawStartupScreen(
     EditorClipboard& clipboard)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    // The editor layout is intentionally built while project loading remains visible. Cover the
+    // entire platform viewport rather than its mutable work area: the editor menu bar and toolbar
+    // claim work-area space later in the frame and must not become visible before the first
+    // selected viewport image is ready.
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
 
     ImGuiWindowFlags windowFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoDocking;
     if (m_projectLoadInProgress)
     {
         windowFlags |= ImGuiWindowFlags_NoInputs;
     }
 
-    if (!ImGui::Begin("Project Chooser", nullptr, windowFlags))
+    ImVec4 chooserBackground = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    chooserBackground.w = 1.0f;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, chooserBackground);
+    const bool chooserVisible = ImGui::Begin("Project Chooser", nullptr, windowFlags);
+    ImGui::PopStyleColor();
+    if (!chooserVisible)
     {
         ImGui::End();
         return false;
@@ -609,12 +620,13 @@ bool ProjectChooser::DrawStartupScreen(
     const float panelWidth = 520.0f;
     const float mainPanelHeight = 400.0f;
     const float errorPanelMaxHeight = 120.0f;
+    const ImVec2 surfaceSize = viewport->Size;
 
     const bool showStartupError = !m_errorMessage.empty() && !m_showNewProjectForm;
     const float groupHeight = mainPanelHeight + (showStartupError ? (ImGui::GetStyle().ItemSpacing.y + errorPanelMaxHeight) : 0.0f);
     ImGui::SetCursorPos(ImVec2(
-        (viewport->WorkSize.x - panelWidth) * 0.5f,
-        std::max((viewport->WorkSize.y - groupHeight) * 0.5f, ImGui::GetStyle().WindowPadding.y)));
+        (surfaceSize.x - panelWidth) * 0.5f,
+        std::max((surfaceSize.y - groupHeight) * 0.5f, ImGui::GetStyle().WindowPadding.y)));
 
     ImGui::BeginGroup();
 

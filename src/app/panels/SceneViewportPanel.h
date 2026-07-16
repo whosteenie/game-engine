@@ -25,6 +25,10 @@ public:
         bool willRenderThisFrame);
 
     void CompositeRenderedFrame();
+    void InvalidateCompositeFrame()
+    {
+        OffscreenViewportPanel::InvalidateCompositeFrame(m_viewport);
+    }
 
     bool& ShowPanel() { return m_viewport.showPanel; }
     const bool& ShowPanel() const { return m_viewport.showPanel; }
@@ -39,6 +43,10 @@ public:
     bool IsLiveResizePending() const
     {
         return OffscreenViewportPanel::IsLiveResizePending(m_viewport);
+    }
+    bool HasReadyCompositeFrame() const
+    {
+        return OffscreenViewportPanel::HasReadyCompositeFrame(m_viewport);
     }
 
     std::uintptr_t GetFramebuffer() const;

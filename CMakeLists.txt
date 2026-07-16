@@ -592,6 +592,7 @@ add_executable(engine-tests
     tests/dlss_frame_token_test.cpp
     tests/history_compatibility_test.cpp
     tests/viewport_resize_stabilizer_test.cpp
+    tests/project_viewport_reveal_gate_test.cpp
     tests/pt_viewport_ownership_test.cpp
     tests/shader_compile_test.cpp
 )

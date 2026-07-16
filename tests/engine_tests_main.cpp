@@ -40,6 +40,7 @@ void RunTemporalCameraPacketTests(int& failures);
 void RunDlssFrameTokenTests(int& failures);
 void RunHistoryCompatibilityTests(int& failures);
 void RunViewportResizeStabilizerTests(int& failures);
+void RunProjectViewportRevealGateTests(int& failures);
 void RunPtViewportOwnershipTests(int& failures);
 void RunShaderCompileTests();
 
@@ -118,6 +119,9 @@ namespace
         maybeRun(
             "viewport_resize_stabilizer",
             [] { RunViewportResizeStabilizerTests(test::FailureCount()); });
+        maybeRun(
+            "project_viewport_reveal_gate",
+            [] { RunProjectViewportRevealGateTests(test::FailureCount()); });
         maybeRun(
             "pt_viewport_ownership",
             [] { RunPtViewportOwnershipTests(test::FailureCount()); });

@@ -38,12 +38,14 @@ namespace OffscreenViewportPanel
 
     bool HasValidRenderTarget(const State& state);
     bool IsLiveResizePending(const State& state);
+    bool HasReadyCompositeFrame(const State& state);
     std::uintptr_t GetFramebuffer(const State& state);
     std::uintptr_t GetColorTexture(const State& state);
     void EnsureFramebufferSized(const State& state);
     void ClearRenderTarget(const State& state);
     bool CanCompositeFrame(const State& state, bool willRenderThisFrame);
     void CompositeRenderedFrame(State& state);
+    void InvalidateCompositeFrame(State& state);
 
     bool UpdateRenderSize(State& state, const ImVec2& available);
     ViewportRegion DrawViewportRegion(State& state, const ImVec2& available, bool canComposite);

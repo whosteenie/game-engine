@@ -37,6 +37,13 @@ namespace OffscreenViewportPanel
         return state.resizeStabilizer.IsPending();
     }
 
+    bool HasReadyCompositeFrame(const State& state)
+    {
+        return state.hasReadyCompositeFrame
+            && state.framebuffer.IsValid()
+            && state.framebuffer.GetColorTexture() != 0;
+    }
+
     std::uintptr_t GetFramebuffer(const State& state)
     {
         return state.framebuffer.GetFramebuffer();
@@ -90,6 +97,13 @@ namespace OffscreenViewportPanel
         const ImTextureID textureId = static_cast<ImTextureID>(state.framebuffer.GetColorTexture());
         state.compositeDrawList->AddImage(textureId, state.compositeMin, state.compositeMax);
         state.hasReadyCompositeFrame = true;
+        state.hasCompositeTarget = false;
+        state.compositeDrawList = nullptr;
+    }
+
+    void InvalidateCompositeFrame(State& state)
+    {
+        state.hasReadyCompositeFrame = false;
         state.hasCompositeTarget = false;
         state.compositeDrawList = nullptr;
     }

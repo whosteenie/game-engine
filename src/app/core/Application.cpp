@@ -27,6 +27,7 @@
 #include "app/editor/EditorReorderDragDrop.h"
 #include "app/project/ProjectChooser.h"
 #include "app/project/ProjectEditorState.h"
+#include "app/project/ProjectViewportRevealGate.h"
 #include "app/panels/ProjectFilesPanel.h"
 #include "app/project/ProjectSession.h"
 #include "app/project/SceneProjectIODetail.h"
@@ -1608,6 +1609,8 @@ void Application::ResetEditorLayoutLoadState()
     // until both passes have completed.
     m_editorLayoutStabilizationFrames = 2;
     m_editorDockSpace->InvalidateBuiltLayout();
+    m_sceneViewportPanel->InvalidateCompositeFrame();
+    m_gameViewportPanel->InvalidateCompositeFrame();
 }
 
 void Application::EnsureEditorLayoutLoaded()
@@ -1844,7 +1847,6 @@ void Application::Render()
         m_renderer->BeginFrame();
     });
 
-    bool projectFrameReady = false;
     const bool sceneViewWillRender = editorActive && projectLayoutStable
         && (projectLoadBenchmarkActive
             || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
@@ -1890,15 +1892,10 @@ void Application::Render()
                         ProjectLoadProgress::kSceneComposite);
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
-                projectFrameReady = true;
                 if (projectLoadBenchmarkActive)
                 {
                     ProjectLoadBenchmark::Mark("scene_view.first_composite_recorded");
                     m_projectLoadBenchmarkAwaitingGpuCompletion = true;
-                }
-                if (presentingProjectLoad)
-                {
-                    m_projectChooser->NotifyEditorCompositeReady();
                 }
             }
             sceneViewScope.Success();
@@ -1976,11 +1973,6 @@ void Application::Render()
                                 ProjectLoadProgress::kGameViewComposite);
                         }
                         m_gameViewportPanel->CompositeRenderedFrame();
-                        projectFrameReady = true;
-                        if (presentingProjectLoad)
-                        {
-                            m_projectChooser->NotifyEditorCompositeReady();
-                        }
                     }
                 }
             }
@@ -1998,9 +1990,21 @@ void Application::Render()
 
     if (presentingProjectLoad)
     {
-        // A layout may intentionally open on a non-viewport tab, or Game View may have no camera.
-        // In that case the stable editor placeholder is itself ready to reveal after this present.
-        if (projectLayoutStable && !projectFrameReady)
+        const bool sceneImageRequired = m_sceneViewportPanel->ShowPanel()
+            && EditorPanelConstraints::IsViewportTabSelected("Scene View");
+        const bool gameImageRequired = m_gameViewportPanel->ShowPanel()
+            && EditorPanelConstraints::IsViewportTabSelected("Game View")
+            && m_gameViewportPanel->HasSceneCamera();
+        const ProjectViewportRevealState revealState{
+            projectLayoutStable,
+            sceneImageRequired,
+            m_sceneViewportPanel->HasReadyCompositeFrame(),
+            gameImageRequired,
+            m_gameViewportPanel->HasReadyCompositeFrame(),
+        };
+        // Non-viewport tabs and Game View without a scene camera have an intentional editor
+        // placeholder. Selected image-producing viewports must submit a composite first.
+        if (CanRevealProjectEditor(revealState))
         {
             m_projectChooser->NotifyEditorCompositeReady();
         }

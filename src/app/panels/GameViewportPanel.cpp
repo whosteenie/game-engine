@@ -31,6 +31,7 @@ void GameViewportPanel::ClearRenderTarget() const
 
 void GameViewportPanel::Draw(const bool hasSceneCamera, const bool willRenderThisFrame)
 {
+    m_hasSceneCamera = hasSceneCamera;
     OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
