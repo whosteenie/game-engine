@@ -35,6 +35,7 @@ PFun_slGetNewFrameToken* g_slGetNewFrameToken = nullptr;
 PFun_slSetConstants* g_slSetConstants = nullptr;
 PFun_slSetTagForFrame* g_slSetTagForFrame = nullptr;
 PFun_slEvaluateFeature* g_slEvaluateFeature = nullptr;
+PFun_slFreeResources* g_slFreeResources = nullptr;
 PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
 PFun_slUpgradeInterface* g_slUpgradeInterface = nullptr;
 
@@ -94,6 +95,7 @@ const char* ResultToString(sl::Result r)
     case sl::Result::eErrorAdapterNotSupported: return "adapter not supported";
     case sl::Result::eErrorNoPlugins: return "SL plugins not found next to the executable";
     case sl::Result::eErrorNGXFailed: return "NGX init failed";
+    case sl::Result::eErrorInvalidParameter: return "invalid parameter";
     case sl::Result::eErrorFeatureNotSupported: return "feature not supported";
     case sl::Result::eErrorMissingOrInvalidAPI: return "missing/invalid API";
     default: return "unsupported/unknown error";
@@ -181,6 +183,7 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     SL_RESOLVE(slSetConstants)
     SL_RESOLVE(slSetTagForFrame)
     SL_RESOLVE(slEvaluateFeature)
+    SL_RESOLVE(slFreeResources)
     SL_RESOLVE(slGetFeatureFunction)
     SL_RESOLVE(slUpgradeInterface)
 #undef SL_RESOLVE
@@ -335,6 +338,7 @@ void DlssContext::Shutdown()
     g_slSetConstants = nullptr;
     g_slSetTagForFrame = nullptr;
     g_slEvaluateFeature = nullptr;
+    g_slFreeResources = nullptr;
     g_slGetFeatureFunction = nullptr;
     g_slDLSSSetOptions = nullptr;
     g_slDLSSGetOptimalSettings = nullptr;
@@ -346,6 +350,42 @@ void DlssContext::Shutdown()
         m_interposer = nullptr;
     }
     SetStatus("DLSS: shut down");
+#endif
+}
+
+void DlssContext::ReleaseViewportResources(const std::uint32_t viewportId)
+{
+#ifdef GAME_ENGINE_ENABLE_DLSS
+    if (!IsRuntimeInitialized() || g_slFreeResources == nullptr)
+    {
+        return;
+    }
+
+    const sl::ViewportHandle viewport(viewportId);
+    const auto releaseFeature = [&](const sl::Feature feature, const char* const label) {
+        const sl::Result result = g_slFreeResources(feature, viewport);
+        // Streamline uses eErrorInvalidParameter to mean this viewport never created an instance
+        // for the feature (for example SR when the project used RR). That is already the desired
+        // released state and should not surface as a teardown warning.
+        if (result != sl::Result::eOk && result != sl::Result::eErrorInvalidParameter)
+        {
+            EngineLog::Warn(
+                "dlss",
+                std::string("slFreeResources(") + label + ", viewport "
+                    + std::to_string(viewportId) + ") failed (" + ResultToString(result) + ")");
+        }
+    };
+
+    if (IsDlssSupported())
+    {
+        releaseFeature(sl::kFeatureDLSS, "DLSS");
+    }
+    if (IsRrSupported())
+    {
+        releaseFeature(sl::kFeatureDLSS_RR, "DLSS-RR");
+    }
+#else
+    (void)viewportId;
 #endif
 }
 

@@ -25,6 +25,19 @@ void DxrShadowsDispatch::Release()
     m_nrdHistoryValid = false;
 }
 
+void DxrShadowsDispatch::ResetProjectResources()
+{
+    ResetDispatchResources();
+    m_denoiser.Release();
+    m_prevViewToClip = glm::mat4(1.0f);
+    m_prevWorldToView = glm::mat4(1.0f);
+    m_prevJitterUv = glm::vec2(0.0f);
+    m_frameIndex = 0;
+    m_nrdHistoryValid = false;
+    m_dispatchedThisFrame = false;
+    m_denoisedThisFrame = false;
+}
+
 bool DxrShadowsDispatch::WarmUpPipelineIfNeeded()
 {
     std::string error;

@@ -553,6 +553,35 @@ void Scene::ResetToDefault()
     m_spawnService->ResetToDefault(*this);
 }
 
+void Scene::ResetForProjectTransition(const bool preserveRendererResources)
+{
+    m_sharedRenderer = nullptr;
+    m_sharedMeshLibrary = nullptr;
+    if (preserveRendererResources && m_renderer != nullptr)
+    {
+        m_renderer->ResetProjectState();
+        return;
+    }
+
+    // SceneRenderer can hold pointers into the mesh library, so destroy it before replacing
+    // any scene content it may reference.
+    m_renderer.reset();
+
+    m_selectionController = std::make_unique<SceneSelectionController>();
+    m_importService = std::make_unique<SceneImportService>();
+    m_spawnService = std::make_unique<SceneSpawnService>();
+    m_objectStore = std::make_unique<SceneObjectStore>();
+    m_meshLibrary = std::make_unique<SceneMeshLibrary>(FloorHalfExtent);
+    if (m_renderer == nullptr)
+    {
+        m_renderer = std::make_unique<SceneRenderer>();
+    }
+
+    m_showLightGizmos = true;
+    m_showGrid = true;
+    m_spawnService->SetupDefaultSunLight(*this);
+}
+
 void Scene::ClearImportedModelCache()
 {
     m_importService->ClearCache();

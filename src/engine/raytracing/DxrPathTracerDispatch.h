@@ -146,6 +146,7 @@ public:
         int ptDebugIsolateMode = 0);
 
     void Release();
+    void ResetProjectResources();
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const;

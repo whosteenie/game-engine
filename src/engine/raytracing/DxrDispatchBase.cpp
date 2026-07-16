@@ -13,6 +13,13 @@ void DxrDispatchBase::ReleaseCore()
     m_pipelineReady = false;
 }
 
+void DxrDispatchBase::ResetDispatchResources()
+{
+    // Output textures, descriptors, reservoirs, and temporal history are project/viewport state.
+    // The RTPSO and SBT contain no scene pointers and remain valid for the lifetime of the device.
+    m_dispatchContext.Release();
+}
+
 bool DxrDispatchBase::EnsurePipelineWith(
     const char* const traceLabel,
     CreatePipelineFn createPipeline,

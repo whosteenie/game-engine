@@ -29,6 +29,7 @@
 #include "app/scene/SceneRenderer.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "app/scene/SceneEditingController.h"
+#include "app/scene/SceneEditor.h"
 #include "app/scene/SceneEditorUpdateContext.h"
 #include "app/panels/SceneHierarchyPanel.h"
 #include "app/panels/SceneInspectorPanel.h"
@@ -521,6 +522,10 @@ void Application::Run()
     int suppressedRepeatedFrameErrors = 0;
     const bool s0p3Transitions = std::getenv("GAME_ENGINE_S0P3_TRANSITIONS") != nullptr;
     std::uint64_t s0p3TransitionFrame = 0;
+    const bool autoReopenOnce = std::getenv("GAME_ENGINE_AUTO_REOPEN_ONCE") != nullptr;
+    int autoReopenState = 0;
+    int autoReopenReadyFrames = 0;
+    std::string autoReopenPath;
 
     while (!glfwWindowShouldClose(m_window))
     {
@@ -535,6 +540,41 @@ void Application::Run()
         lastFrameTime = currentTime;
         const auto frameWorkStart = std::chrono::steady_clock::now();
         ApplicationFrameDiagnostics frameDiagnostics{};
+
+        // Opt-in lifecycle benchmark: allow a project to settle, return through the normal
+        // project teardown boundary, then reopen it in the same process. AutomatedBenchmarkCapture
+        // is gated until the reopen completes so its frame window measures the menu lifecycle.
+        if (autoReopenOnce)
+        {
+            if (autoReopenState == 0
+                && m_projectSession->HasActiveProject()
+                && !m_projectChooser->IsBlockingEditor()
+                && m_scene->GetRenderer().IsGpuResourcesReady())
+            {
+                if (++autoReopenReadyFrames >= 120)
+                {
+                    autoReopenPath = m_projectSession->GetProjectFilePath();
+                    m_undoStack.Clear();
+                    m_editorClipboard.Clear();
+                    m_projectSession->CloseProject();
+                    m_pendingProjectTeardown = true;
+                    autoReopenState = 1;
+                }
+            }
+            else if (autoReopenState == 1 && !m_pendingProjectTeardown)
+            {
+                m_projectChooser->QueueProjectOpen(autoReopenPath);
+                autoReopenState = 2;
+            }
+            else if (autoReopenState == 2
+                && m_projectSession->HasActiveProject()
+                && !m_projectChooser->IsBlockingEditor()
+                && m_scene->GetRenderer().IsGpuResourcesReady()
+                && !m_projectChooser->IsPresentingProjectLoad())
+            {
+                autoReopenState = 3;
+            }
+        }
 
         // S0-P3 capture-only transition matrix. This calls the existing UI setters and GLFW resize
         // path; it is inert unless explicitly enabled by the diagnostic capture script.
@@ -580,7 +620,9 @@ void Application::Run()
             {
                 const bool sceneReady = m_projectSession->HasActiveProject()
                     && !m_projectChooser->IsBlockingEditor()
-                    && m_scene->GetRenderer().IsGpuResourcesReady();
+                    && m_scene->GetRenderer().IsGpuResourcesReady()
+                    && !m_projectChooser->IsPresentingProjectLoad()
+                    && (!autoReopenOnce || autoReopenState == 3);
                 if (m_automatedBenchmarkCapture->ObserveFrame(
                         sceneReady,
                         GfxContext::Get().GetGpuTimings(),
@@ -821,6 +863,37 @@ void Application::ProcessQueuedProjectOpenIfReady()
     }
 }
 
+void Application::ProcessPendingProjectTeardown()
+{
+    if (!m_pendingProjectTeardown || m_scene == nullptr)
+    {
+        return;
+    }
+
+    // Project discard is requested while ImGui is building the unsaved-changes dialog. Defer the
+    // actual teardown to the next frame boundary so no in-flight scene work or UI draw data can
+    // still reference resources owned by the discarded project.
+    m_pendingProjectTeardown = false;
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().WaitForSwapchainFrames(false);
+        DlssContext::Get().ReleaseViewportResources(0);
+        DlssContext::Get().ReleaseViewportResources(1);
+    }
+
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().SetActiveMsaaSampleCount(1);
+    }
+    m_scene->ResetForProjectTransition();
+    m_scene->ResetToDefault();
+    TextureCache::Get().Clear();
+    m_sceneEditingController->GetEditor().ResetInteractionState();
+    m_playModeDiscardUndoStack.Clear();
+    m_wasPlayModeActive = false;
+    m_input->ReleaseMouseCapture();
+}
+
 void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDiagnostics)
 {
     m_performancePanel->OnFrame(deltaTime);
@@ -839,6 +912,8 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
 
         GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
     }
+
+    ProcessPendingProjectTeardown();
 
     const bool escapePressed = m_input->WasKeyPressed(GLFW_KEY_ESCAPE);
     const bool cancelReorderDragOnly =
@@ -889,8 +964,8 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
     const bool editorActive =
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
 
-    const bool blockSceneInputEarly =
-        m_pendingClose || m_pendingNewProject || m_pendingOpenProject;
+    const bool blockSceneInputEarly = m_pendingClose || m_pendingNewProject || m_pendingOpenProject
+        || m_projectChooser->IsPresentingProjectLoad();
     if (editorActive)
     {
         const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
@@ -1095,6 +1170,10 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
         {
             m_pendingEditorLayoutValidation = false;
         }
+        if (m_editorLayoutStabilizationFrames > 0)
+        {
+            --m_editorLayoutStabilizationFrames;
+        }
         m_editorDockSpace->End();
 
         if (m_playModeController.ConsumeFocusGameViewRequest())
@@ -1117,6 +1196,11 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
                 m_sceneViewportPanel->GetRenderHeight());
         }
     }
+
+    // Project loading builds the real editor layout behind the startup screen. Restore the chooser
+    // to the front after the editor windows have submitted their draw data so the background does
+    // not transition until the stable first project frame has actually completed.
+    m_projectChooser->RaiseProjectLoadPresentation();
 
     DrawUnsavedChangesDialog();
 
@@ -1279,6 +1363,11 @@ void Application::RequestNewProject()
 
 void Application::RequestOpenProject()
 {
+    if (m_playModeController.IsActive())
+    {
+        m_playModeController.TogglePlayStop(*m_scene, m_projectSession->GetProjectRootDirectory());
+    }
+
     if (m_projectSession->IsDirty())
     {
         m_pendingOpenProject = true;
@@ -1455,6 +1544,10 @@ void Application::ResetEditorLayoutLoadState()
     m_globalEditorLayoutLoaded = false;
     m_editorLayoutRestoredFromDisk = false;
     m_pendingEditorLayoutValidation = false;
+    // The first restored-layout frame applies saved absolute dock sizes; the following frame fits
+    // them to the current host viewport. Do not allocate or render a project-sized framebuffer
+    // until both passes have completed.
+    m_editorLayoutStabilizationFrames = 2;
     m_editorDockSpace->InvalidateBuiltLayout();
 }
 
@@ -1553,6 +1646,7 @@ void Application::DrawUnsavedChangesDialog()
         m_undoStack.Clear();
         m_editorClipboard.Clear();
         m_projectSession->CloseProject();
+        m_pendingProjectTeardown = true;
         m_projectChooser->OpenNewProjectForm(*m_editorSettings);
     };
 
@@ -1632,6 +1726,9 @@ void Application::Render()
         m_projectSession->HasActiveProject() && !m_projectChooser->IsBlockingEditor();
     const bool presentingProjectLoad = m_projectChooser->IsPresentingProjectLoad();
     const bool projectLoadBenchmarkActive = ProjectLoadBenchmark::IsActive();
+    const bool projectLayoutStable =
+        !presentingProjectLoad
+        || (m_editorLayoutStabilizationFrames == 0 && !m_pendingEditorLayoutValidation);
 
     if (editorActive || presentingProjectLoad)
     {
@@ -1676,8 +1773,8 @@ void Application::Render()
 
     if (projectLoadBenchmarkActive && editorActive)
     {
-        // Do not let a saved layout with Scene View hidden turn the benchmark into a different
-        // load path. This target is intentionally offscreen and is never drawn by ImGui.
+        // Automated captures explicitly require a Scene View target even when a saved layout has
+        // that tab hidden. Interactive project loading always uses the real settled panel size.
         m_sceneViewportPanel->EnsureBenchmarkRenderTarget(m_width, m_height);
     }
 
@@ -1688,9 +1785,10 @@ void Application::Render()
         m_renderer->BeginFrame();
     });
 
-    bool sceneFramePresented = false;
-    const bool sceneViewWillRender = editorActive
-        && (projectLoadBenchmarkActive || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
+    bool projectFrameReady = false;
+    const bool sceneViewWillRender = editorActive && projectLayoutStable
+        && (projectLoadBenchmarkActive
+            || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
         && m_sceneViewportPanel->HasValidRenderTarget();
     if (sceneViewWillRender)
     {
@@ -1732,7 +1830,7 @@ void Application::Render()
                         ProjectLoadProgress::kSceneComposite);
                 }
                 m_sceneViewportPanel->CompositeRenderedFrame();
-                sceneFramePresented = true;
+                projectFrameReady = true;
                 if (projectLoadBenchmarkActive)
                 {
                     ProjectLoadBenchmark::Mark("scene_view.first_composite_recorded");
@@ -1753,7 +1851,7 @@ void Application::Render()
             false, 0, false, 0);
     }
 
-    const bool gameViewWillRender = editorActive
+    const bool gameViewWillRender = editorActive && projectLayoutStable
         && EditorPanelConstraints::IsViewportTabSelected("Game View")
         && m_gameViewportPanel->HasValidRenderTarget();
     if (gameViewWillRender)
@@ -1814,6 +1912,7 @@ void Application::Render()
                                 ProjectLoadProgress::kGameViewComposite);
                         }
                         m_gameViewportPanel->CompositeRenderedFrame();
+                        projectFrameReady = true;
                         if (presentingProjectLoad)
                         {
                             m_projectChooser->NotifyEditorCompositeReady();
@@ -1832,6 +1931,12 @@ void Application::Render()
 
     if (presentingProjectLoad)
     {
+        // A layout may intentionally open on a non-viewport tab, or Game View may have no camera.
+        // In that case the stable editor placeholder is itself ready to reveal after this present.
+        if (projectLayoutStable && !projectFrameReady)
+        {
+            m_projectChooser->NotifyEditorCompositeReady();
+        }
         const Scene* editorScene = GetEditorTargetScene();
         const bool gpuResourcesFailed =
             editorScene != nullptr && editorScene->GetRenderer().HasGpuResourcesInitFailed();

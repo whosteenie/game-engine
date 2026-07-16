@@ -19,6 +19,7 @@ public:
     DxrRestirDispatch& operator=(const DxrRestirDispatch&) = delete;
 
     void Release();
+    void ResetProjectResources();
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }

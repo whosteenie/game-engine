@@ -63,6 +63,7 @@ public:
     bool HasPendingProjectOpen() const { return !m_pendingProjectPath.empty(); }
 
     bool IsPresentingProjectLoad() const { return m_projectLoadInProgress; }
+    void RaiseProjectLoadPresentation();
     void NotifyEditorCompositeReady();
     void FinishScheduledPresentation();
     void TickProjectLoadTimeout(bool gpuResourcesFailed);

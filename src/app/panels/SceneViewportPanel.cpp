@@ -444,11 +444,6 @@ void SceneViewportPanel::Draw(
     const ImVec2 available = ImGui::GetContentRegionAvail();
     OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
 
-    if (HasValidRenderTarget())
-    {
-        EnsureFramebufferSized();
-    }
-
     const bool canCompositeFrame =
         OffscreenViewportPanel::CanCompositeFrame(m_viewport, willRenderThisFrame);
     const OffscreenViewportPanel::ViewportRegion region =

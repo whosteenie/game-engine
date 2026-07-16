@@ -66,6 +66,29 @@ void DxrPathTracerDispatch::Release()
     m_lastCameraConstants = {};
 }
 
+void DxrPathTracerDispatch::ResetProjectResources()
+{
+    ResetDispatchResources();
+    m_dispatchedThisFrame = false;
+    m_activeDiagnosticPermutation = false;
+    m_activeSerPermutation = false;
+    m_frameIndex = 0;
+    m_lastEnvEquirectSrvCpuHandle = 0;
+    m_lastEnvImportanceCdfSrvIndex = UINT32_MAX;
+    m_lastEnvImportanceCount = 0;
+    m_lastEnvCdfWidth = 0;
+    m_lastEnvCdfHeight = 0;
+    m_lastEnvironmentIntensity = 1.0f;
+    m_lastEnvironmentRotationYRadians = 0.0f;
+    m_lastEnvDirectLuminanceClamp = 0.0f;
+    m_lastSunIntensity = 0.0f;
+    m_lastSunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
+    m_lastSunAngularTanRadius = 0.0f;
+    m_lastDebugMode = 0;
+    m_lastCameraPacket = {};
+    m_lastCameraConstants = {};
+}
+
 void DxrPathTracerDispatch::SetSerOverride(const SerOverride value)
 {
     m_serOverride = value;

@@ -49,6 +49,7 @@ public:
         bool denoiseEnabled);
 
     void Release();
+    void ResetProjectResources();
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }

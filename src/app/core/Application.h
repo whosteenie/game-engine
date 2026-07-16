@@ -61,6 +61,7 @@ private:
     void PumpStartupFramesUntilDlssReady();
     void UpdatePendingProjectStartupProgress(const char* message) const;
     void ProcessQueuedProjectOpenIfReady();
+    void ProcessPendingProjectTeardown();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -73,6 +74,7 @@ private:
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
     bool m_pendingOpenProject = false;
+    bool m_pendingProjectTeardown = false;
     bool m_fatalGpuLossHandled = false;
     bool m_projectLoadBenchmarkAwaitingGpuCompletion = false;
 
@@ -111,6 +113,7 @@ private:
     bool m_globalEditorLayoutLoaded = false;
     bool m_editorLayoutRestoredFromDisk = false;
     bool m_pendingEditorLayoutValidation = false;
+    int m_editorLayoutStabilizationFrames = 0;
     bool m_automationDualViewportLayout = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;

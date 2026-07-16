@@ -17,6 +17,11 @@ void DxrSmokeDispatch::Release()
     ReleaseCore();
 }
 
+void DxrSmokeDispatch::ResetProjectResources()
+{
+    ResetDispatchResources();
+}
+
 bool DxrSmokeDispatch::WarmUpPipelineIfNeeded()
 {
     std::string error;

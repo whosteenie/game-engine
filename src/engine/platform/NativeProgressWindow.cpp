@@ -409,7 +409,9 @@ namespace
 
         void End()
         {
-            PostToWindow(WM_PROGRESS_HIDE, 0, 0);
+            // Message/progress updates run on this window thread. Hide synchronously so the caller
+            // cannot reveal the editor while the native progress window is still visible.
+            SendToWindow(WM_PROGRESS_HIDE, 0, 0);
         }
 
         void Shutdown()

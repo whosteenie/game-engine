@@ -25,6 +25,7 @@ public:
         int height);
 
     void Release();
+    void ResetProjectResources();
 
     bool WarmUpPipelineIfNeeded();
     bool IsPipelineReady() const { return DxrDispatchBase::IsPipelineReady(); }

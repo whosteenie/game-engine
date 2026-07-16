@@ -153,6 +153,10 @@ public:
     // with eDisableCLStateTracking so it does not restore command-list state).
     bool Evaluate(const DlssFrameInputs& inputs);
 
+    // Releases Streamline's lazy per-viewport allocations for both SR and Ray Reconstruction.
+    // The caller must flush every command list that could contain an evaluation first.
+    void ReleaseViewportResources(std::uint32_t viewportId);
+
     // Upgrades the native swapchain to Streamline's DXGI proxy so Present/ResizeBuffers run
     // presentCommon() + GC (required for dynamic-load integrations; slHookPresent is not exported
     // from sl.interposer.dll). Call from the render thread once IsRuntimeInitialized(); returns

@@ -22,6 +22,12 @@ void DxrPrimaryDebugDispatch::Release()
     m_dispatchedThisFrame = false;
 }
 
+void DxrPrimaryDebugDispatch::ResetProjectResources()
+{
+    ResetDispatchResources();
+    m_dispatchedThisFrame = false;
+}
+
 bool DxrPrimaryDebugDispatch::WarmUpPipelineIfNeeded()
 {
     std::string error;

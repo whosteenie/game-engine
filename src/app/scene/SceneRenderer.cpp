@@ -346,37 +346,53 @@ void SceneRenderer::ResetGpuResourcesIfInitFailed() const
     self->m_gpuResourcesInitError.clear();
 }
 
-void SceneRenderer::ReleaseProjectRayTracingResources()
+void SceneRenderer::ResetProjectState()
 {
-    // DxrAccelerationStructures owns a BLAS cache keyed by Mesh*. Project deserialization destroys
-    // the old meshes but deliberately keeps this SceneRenderer alive, so retaining the cache here
-    // leaked stale BLASes across every project open in one editor session. The caller has already
-    // waited for submitted swapchain work; DxrGpuResource still uses deferred release as the final
-    // safety net for any descriptor/resource retirement.
+    // These structures contain direct Mesh* and Material* keys owned by the outgoing scene.
     m_dxrAccelerationStructures.reset();
+    // Retain scene-independent RTPSOs and shader binding tables, but discard every project-sized
+    // output, descriptor, denoiser pool, reservoir, and temporal-history resource.
+    if (m_dxrSmokeDispatch != nullptr) m_dxrSmokeDispatch->ResetProjectResources();
+    if (m_dxrPrimaryDebugDispatch != nullptr) m_dxrPrimaryDebugDispatch->ResetProjectResources();
+    if (m_dxrPathTracerDispatch != nullptr) m_dxrPathTracerDispatch->ResetProjectResources();
+    if (m_dxrReflectionsDispatch != nullptr) m_dxrReflectionsDispatch->ResetProjectResources();
+    if (m_dxrShadowsDispatch != nullptr) m_dxrShadowsDispatch->ResetProjectResources();
+    if (m_dxrGiDispatch != nullptr) m_dxrGiDispatch->ResetProjectResources();
+    if (m_dxrRestirDispatch != nullptr) m_dxrRestirDispatch->ResetProjectResources();
+    m_gpuScene.Clear();
+    // Keep table capacity and descriptors allocated. The next Build replaces every CPU record and
+    // UploadGpuTables overwrites the GPU rings before use, avoiding a needless allocation ramp.
 
-    // No object from the incoming project may inherit transform, motion, accumulation, or ReSTIR
-    // history from the replaced scene. Keep pipeline objects alive: they are scene-independent and
-    // the next project is expected to render without a shader recompilation hitch.
     m_previousWorldByObjectId.clear();
     m_gameViewPreviousWorldByObjectId.clear();
     m_activePreviousWorldByObjectId = nullptr;
+    m_activeScreenSpaceEffects = nullptr;
     m_sceneViewLastSubmissionFrame = 0;
     m_gameViewLastSubmissionFrame = 0;
 
+    // Preserve the allocated effects and their shader pipelines, but invalidate every history that
+    // can encode the outgoing project's geometry, radiance, motion, DLSS/RR, or accumulation.
     if (m_screenSpaceEffects != nullptr)
     {
-        m_screenSpaceEffects->InvalidateMotionHistory();
+        m_screenSpaceEffects->InvalidateAllTemporalState();
+        m_screenSpaceEffects->ResetPathTracerTemporalDiagnostics();
     }
     if (m_gameViewScreenSpaceEffects != nullptr)
     {
-        m_gameViewScreenSpaceEffects->InvalidateMotionHistory();
+        m_gameViewScreenSpaceEffects->InvalidateAllTemporalState();
+        m_gameViewScreenSpaceEffects->ResetPathTracerTemporalDiagnostics();
     }
-    if (m_dxrPathTracerDispatch != nullptr)
-    {
-        m_dxrPathTracerDispatch->ResetAccumulation();
-        m_dxrPathTracerDispatch->InvalidateRestirHistory();
-    }
+    m_lighting.ClearLights();
+    m_pendingRendererSettings = nlohmann::json{};
+    m_hasPendingRendererSettings = false;
+    m_geometryMsaaReloadRequested = false;
+    m_geometryMsaaReloadFailed = false;
+    m_geometryMsaaReloadError.clear();
+    m_sceneContentInvalidationPending = true;
+    m_consumedPtSceneVersion = 0;
+    m_ptEnvironmentFingerprint = 0;
+    m_ptSettingsFingerprint = 0;
+    m_renderFrameDiagnostics = {};
 }
 
 void SceneRenderer::PrepareGpuResourcesForGeometryMsaa(const int msaaSampleCount) const

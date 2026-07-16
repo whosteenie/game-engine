@@ -26,6 +26,8 @@ public:
     bool IsPipelineReady() const { return m_pipelineReady; }
 
 protected:
+    void ResetDispatchResources();
+
     using CreatePipelineFn = std::function<bool(DxrPipeline&, std::string&)>;
     using BuildShaderTableFn =
         std::function<bool(ShaderBindingTable&, const DxrPipeline&, std::string&)>;

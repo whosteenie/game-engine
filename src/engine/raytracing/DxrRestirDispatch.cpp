@@ -82,3 +82,8 @@ bool DxrRestirDispatch::EnsurePipelines(std::string& outError)
 
     return true;
 }
+
+void DxrRestirDispatch::ResetProjectResources()
+{
+    ResetDispatchResources();
+}

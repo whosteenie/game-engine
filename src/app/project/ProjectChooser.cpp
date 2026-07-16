@@ -9,6 +9,7 @@
 #include "app/scene/SceneRenderer.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
+#include "engine/assets/TextureCache.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
@@ -19,8 +20,10 @@
 #include "engine/raytracing/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/HresultFormat.h"
+#include "engine/rhi/DlssContext.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -55,7 +58,11 @@ bool ProjectChooser::IsBlockingEditor() const
     // A project open can be queued from the editor menu near the end of Update. Do not render the
     // old scene during that remainder of the frame: its resource-prewarm progress reports would
     // otherwise overwrite the newly displayed 0% state before the queued project begins loading.
-    return m_showNewProjectForm || m_startupMode || !m_pendingProjectPath.empty();
+    // Once a project has opened, build its editor layout underneath the still-visible startup
+    // screen. Rendering remains gated until that layout has settled, so the load presentation does
+    // not need a synthetic offscreen viewport.
+    return m_showNewProjectForm || (m_startupMode && !m_projectLoadInProgress)
+        || !m_pendingProjectPath.empty();
 }
 
 void ProjectChooser::ClearProjectLoadPresentation()
@@ -91,6 +98,14 @@ void ProjectChooser::ReturnToStartupWithError(
 
     try
     {
+        if (GfxContext::Get().IsInitialized())
+        {
+            GfxContext::Get().WaitForSwapchainFrames(false);
+            DlssContext::Get().ReleaseViewportResources(0);
+            DlssContext::Get().ReleaseViewportResources(1);
+        }
+        scene.ResetForProjectTransition();
+        TextureCache::Get().Clear();
         scene.ResetToDefault();
     }
     catch (const std::exception& exception)
@@ -161,12 +176,9 @@ bool ProjectChooser::OpenProjectAtPath(
             {
                 ProjectLoadBenchmark::ScopedPhase waitForGpuPhase("project.open.wait_for_previous_gpu");
                 GfxContext::Get().WaitForSwapchainFrames(false);
+                DlssContext::Get().ReleaseViewportResources(0);
+                DlssContext::Get().ReleaseViewportResources(1);
             }
-
-            // A SceneRenderer survives project replacement, but its DXR BLAS cache is keyed by
-            // Mesh*. Release that scene-owned cache before SceneProjectIO destroys the old meshes;
-            // otherwise every opened project permanently contributes stale BLASes until app exit.
-            scene.GetRenderer().ReleaseProjectRayTracingResources();
 
             std::string deviceRemovedReason;
             if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
@@ -179,6 +191,15 @@ bool ProjectChooser::OpenProjectAtPath(
                 return false;
             }
         }
+
+        if (project.HasActiveProject())
+        {
+            project.CloseProject();
+        }
+
+        // Clear every project-owned renderer reference/history while retaining warm pipelines and
+        // current CPU mesh assets. Deserialization can adopt matching meshes from the old scene.
+        scene.ResetForProjectTransition();
 
         NativeProgressWindow::Instance().SetMessage("Loading project file...");
         ProjectLoadProgress::SetProgress(ProjectLoadProgress::kReadingProjectFile);
@@ -241,7 +262,9 @@ bool ProjectChooser::OpenProjectAtPath(
         ProjectLoadProgress::Report(
             "Preparing GPU resources for first frame...",
             ProjectLoadProgress::kEditorReady);
-        m_startupMode = false;
+        // Keep the startup screen visible until the first project frame has completed in the
+        // hidden Scene View target.
+        m_startupMode = true;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
         keepProgressOpenForFirstFrame = true;
@@ -293,8 +316,20 @@ void ProjectChooser::FinishScheduledPresentation()
         return;
     }
 
-    m_finishPresentationAfterPresent = false;
     FinishProjectLoadPresentation(true);
+}
+
+void ProjectChooser::RaiseProjectLoadPresentation()
+{
+    if (!m_projectLoadInProgress)
+    {
+        return;
+    }
+
+    if (ImGuiWindow* window = ImGui::FindWindowByName("Project Chooser"))
+    {
+        ImGui::BringWindowToDisplayFront(window->RootWindow);
+    }
 }
 
 void ProjectChooser::TickProjectLoadTimeout(const bool gpuResourcesFailed)
@@ -558,8 +593,12 @@ bool ProjectChooser::DrawStartupScreen(
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
 
-    const ImGuiWindowFlags windowFlags =
+    ImGuiWindowFlags windowFlags =
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    if (m_projectLoadInProgress)
+    {
+        windowFlags |= ImGuiWindowFlags_NoInputs;
+    }
 
     if (!ImGui::Begin("Project Chooser", nullptr, windowFlags))
     {

@@ -167,6 +167,10 @@ public:
     void SetShowGrid(bool showGrid);
 
     void ResetToDefault();
+    // Prepare for a project boundary. Warm renderer pipelines and current CPU assets are retained
+    // by default so deserialization can reuse matching meshes; pass false for a completely fresh
+    // scene and renderer.
+    void ResetForProjectTransition(bool preserveRendererResources = true);
     void ClearImportedModelCache();
 
     bool CreateDeleteArchive(

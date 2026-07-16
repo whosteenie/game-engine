@@ -10,7 +10,10 @@
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
 #include "engine/platform/ProjectLoadTrace.h"
+#include "engine/assets/TextureCache.h"
 #include "engine/rendering/Material.h"
+#include "engine/rhi/GfxContext.h"
+#include "engine/rhi/DlssContext.h"
 
 #include <algorithm>
 #include <cctype>
@@ -165,18 +168,31 @@ bool ProjectSession::CreateNewProject(
         return false;
     }
 
-    SetProjectRootDirectory(projectDirectory.string());
-    SetProjectFilePath(projectPath.string());
-    SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
-
     fs::create_directories(projectDirectory / "Assets", error);
     if (error)
     {
         m_statusMessage = "Failed to create the project Assets folder.";
-        CloseProject();
         return false;
     }
 
+    if (m_hasActiveProject)
+    {
+        EditorSettings::SaveEditorLayout(m_projectRootDirectory);
+    }
+
+    SetProjectRootDirectory(projectDirectory.string());
+    SetProjectFilePath(projectPath.string());
+    SceneProjectIO::SetMaterialTexturePathResolver(m_projectRootDirectory);
+
+    if (GfxContext::Get().IsInitialized())
+    {
+        GfxContext::Get().WaitForSwapchainFrames(false);
+        DlssContext::Get().ReleaseViewportResources(0);
+        DlssContext::Get().ReleaseViewportResources(1);
+        GfxContext::Get().SetActiveMsaaSampleCount(1);
+    }
+    scene.ResetForProjectTransition();
+    TextureCache::Get().Clear();
     scene.ResetToDefault();
 
     if (!Save(scene, editorState))

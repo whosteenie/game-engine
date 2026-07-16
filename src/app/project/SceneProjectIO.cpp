@@ -1374,6 +1374,8 @@ bool SceneProjectIO::DeserializeScene(
             return false;
         }
 
+        ImportedMeshReusePool reusableMeshes;
+        scene.GetMeshLibrary().HarvestImportedMeshes(scene.GetObjects(), reusableMeshes);
         scene.GetObjectStore().Clear();
         scene.ClearImportedModelCache();
         scene.GetMeshLibrary().ClearImportedMeshes();
@@ -1385,7 +1387,7 @@ bool SceneProjectIO::DeserializeScene(
                 version,
                 projectRoot,
                 outError,
-                nullptr,
+                &reusableMeshes,
                 true))
         {
             scene.GetObjectStore().Clear();
