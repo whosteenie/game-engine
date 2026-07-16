@@ -67,4 +67,18 @@ namespace FrameDiagnostics
         std::uint32_t diagnosticSignal,
         std::uint32_t reasonBits,
         std::uint32_t ownerBits);
+
+    // S2-P3: observational per-viewport jitter ownership. This never selects or advances a phase.
+    void LogReconstructionJitter(
+        std::uint32_t viewportId,
+        const char* event,
+        const char* feature,
+        const char* quality,
+        std::uint32_t period,
+        std::uint32_t phase,
+        bool previousValid,
+        std::uint32_t previousPhase,
+        bool startsNewHistory,
+        float xNdc,
+        float yNdc);
 }

@@ -78,6 +78,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/Renderer.cpp
     src/engine/rendering/Framebuffer.cpp
     src/engine/rendering/HistoryCompatibility.cpp
+    src/engine/rendering/ReconstructionJitter.cpp
     src/engine/rendering/ScreenSpaceEffects.cpp
     src/engine/rendering/ScreenSpaceEffectsApply.cpp
     src/engine/rendering/ScreenSpaceEffectsSettings.cpp

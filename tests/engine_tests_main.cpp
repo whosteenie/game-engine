@@ -40,6 +40,7 @@ void RunTemporalCameraPacketTests(int& failures);
 void RunDlssFrameTokenTests(int& failures);
 void RunDlssExtentPlannerTests(int& failures);
 void RunReconstructionExposureTests(int& failures);
+void RunReconstructionJitterTests(int& failures);
 void RunHistoryCompatibilityTests(int& failures);
 void RunViewportResizeStabilizerTests(int& failures);
 void RunProjectViewportRevealGateTests(int& failures);
@@ -122,6 +123,9 @@ namespace
         maybeRun(
             "reconstruction_exposure",
             [] { RunReconstructionExposureTests(test::FailureCount()); });
+        maybeRun(
+            "reconstruction_jitter",
+            [] { RunReconstructionJitterTests(test::FailureCount()); });
         maybeRun(
             "history_compatibility",
             [] { RunHistoryCompatibilityTests(test::FailureCount()); });

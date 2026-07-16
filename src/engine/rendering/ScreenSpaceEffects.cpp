@@ -1487,6 +1487,58 @@ float ScreenSpaceEffects::GetAutoMaterialMipBias() const
     return std::log2(renderScale);
 }
 
+ReconstructionJitterIdentity ScreenSpaceEffects::BuildReconstructionJitterIdentity(
+    const int outputWidth,
+    const int outputHeight) const
+{
+    ReconstructionJitterIdentity identity{};
+
+    if (m_antiAliasingMode == AntiAliasingMode::TAA)
+    {
+        identity.feature = HistoryReconstructionFeature::Taa;
+        identity.quality = HistoryReconstructionQuality::Taa;
+    }
+    else if (m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        identity.feature = IsRayReconstructionActive()
+            ? HistoryReconstructionFeature::RayReconstruction
+            : HistoryReconstructionFeature::Dlss;
+        if (m_antiAliasingMode == AntiAliasingMode::DLAA)
+        {
+            identity.quality = HistoryReconstructionQuality::Dlaa;
+        }
+        else
+        {
+            switch (m_dlssPreset)
+            {
+            case DlssPreset::Quality:
+                identity.quality = HistoryReconstructionQuality::Quality;
+                break;
+            case DlssPreset::Balanced:
+                identity.quality = HistoryReconstructionQuality::Balanced;
+                break;
+            case DlssPreset::Performance:
+                identity.quality = HistoryReconstructionQuality::Performance;
+                break;
+            case DlssPreset::UltraPerformance:
+                identity.quality = HistoryReconstructionQuality::UltraPerformance;
+                break;
+            }
+        }
+        identity.qualityVersion =
+            identity.feature == HistoryReconstructionFeature::RayReconstruction
+            ? static_cast<std::uint8_t>(m_rrPreset)
+            : 0;
+    }
+
+    identity.renderWidth = m_width;
+    identity.renderHeight = m_height;
+    identity.outputWidth = outputWidth;
+    identity.outputHeight = outputHeight;
+    return identity;
+}
+
 HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
     const HistoryRenderProducer producer,
     const Camera& camera,
@@ -1497,40 +1549,11 @@ HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
 {
     HistoryCompatibilityKey key{};
     key.producer = producer;
-
-    if (m_antiAliasingMode == AntiAliasingMode::TAA)
-    {
-        key.feature = HistoryReconstructionFeature::Taa;
-        key.quality = HistoryReconstructionQuality::Taa;
-    }
-    else if (m_antiAliasingMode == AntiAliasingMode::DLAA
-        || m_antiAliasingMode == AntiAliasingMode::DLSS)
-    {
-        key.feature = IsRayReconstructionActive()
-            ? HistoryReconstructionFeature::RayReconstruction
-            : HistoryReconstructionFeature::Dlss;
-        if (m_antiAliasingMode == AntiAliasingMode::DLAA)
-        {
-            key.quality = HistoryReconstructionQuality::Dlaa;
-        }
-        else
-        {
-            switch (m_dlssPreset)
-            {
-            case DlssPreset::Quality: key.quality = HistoryReconstructionQuality::Quality; break;
-            case DlssPreset::Balanced: key.quality = HistoryReconstructionQuality::Balanced; break;
-            case DlssPreset::Performance:
-                key.quality = HistoryReconstructionQuality::Performance;
-                break;
-            case DlssPreset::UltraPerformance:
-                key.quality = HistoryReconstructionQuality::UltraPerformance;
-                break;
-            }
-        }
-        key.qualityVersion = key.feature == HistoryReconstructionFeature::RayReconstruction
-            ? static_cast<std::uint8_t>(m_rrPreset)
-            : 0;
-    }
+    const ReconstructionJitterIdentity jitterIdentity =
+        BuildReconstructionJitterIdentity(outputWidth, outputHeight);
+    key.feature = jitterIdentity.feature;
+    key.quality = jitterIdentity.quality;
+    key.qualityVersion = jitterIdentity.qualityVersion;
 
     const bool reconstructionUsesGuides =
         key.feature == HistoryReconstructionFeature::Dlss
@@ -1547,10 +1570,10 @@ HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
         }
     }
 
-    key.renderWidth = m_width;
-    key.renderHeight = m_height;
-    key.outputWidth = outputWidth;
-    key.outputHeight = outputHeight;
+    key.renderWidth = jitterIdentity.renderWidth;
+    key.renderHeight = jitterIdentity.renderHeight;
+    key.outputWidth = jitterIdentity.outputWidth;
+    key.outputHeight = jitterIdentity.outputHeight;
     const TemporalCameraState currentCamera = TemporalCamera::MakeState(
         camera.GetViewMatrix(),
         camera.GetUnjitteredProjectionMatrix(),
@@ -1589,6 +1612,7 @@ HistoryCompatibilityTransition ScreenSpaceEffects::BeginHistoryCompatibilityFram
     const std::uint32_t opticalSceneVersion,
     const std::uint32_t opticalMotionVersion) const
 {
+    m_historyCompatibilityRenderedThisFrame = false;
     const HistoryCompatibilityKey key = BuildHistoryCompatibilityKey(
         producer, camera, outputWidth, outputHeight, opticalSceneVersion, opticalMotionVersion);
     const HistoryCompatibilityTransition transition = m_historyCompatibilityState.Begin(key);
@@ -1627,8 +1651,21 @@ void ScreenSpaceEffects::ApplyHistoryCompatibilityReset(
     if (transition.Resets(Reconstruction))
     {
         m_taaHistoryValid = false;
-        m_taaFrameIndex = 0;
         m_dlssHistoryValid = false;
+    }
+    constexpr std::uint32_t kResetsJitterPhase =
+        HistoryCompatibilityReason::FirstFrame
+        | HistoryCompatibilityReason::Feature
+        | HistoryCompatibilityReason::Quality
+        | HistoryCompatibilityReason::RenderExtent
+        | HistoryCompatibilityReason::OutputExtent
+        | HistoryCompatibilityReason::CameraInvalid
+        | HistoryCompatibilityReason::CameraCut;
+    if ((transition.reasonBits & kResetsJitterPhase) != 0
+        && !m_reconstructionJitterState.ResetThroughHistoryCompatibility())
+    {
+        throw std::logic_error(
+            "S2-P3 jitter phase ownership conflicted with the S1 compatibility reset boundary.");
     }
     if (transition.Resets(RenderBloom))
     {
@@ -1662,11 +1699,11 @@ void ScreenSpaceEffects::ApplyHistoryCompatibilityReset(
     }
 }
 
-void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
+bool ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
 {
     if (!m_historyCompatibilityState.HasPendingKey())
     {
-        return;
+        return false;
     }
     const HistoryCompatibilityKey key = m_historyCompatibilityState.PendingKey();
     if (key.producer == HistoryRenderProducer::PathTracer && !m_pathTracerActive)
@@ -1694,12 +1731,13 @@ void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
             0,
             0);
         m_historyCompatibilityState.CancelPending();
-        return;
+        return false;
     }
     if (!m_historyCompatibilityState.CommitRendered())
     {
-        return;
+        return false;
     }
+    m_historyCompatibilityRenderedThisFrame = true;
     FrameDiagnostics::LogHistoryCompatibility(
         m_dlssViewportId,
         "commit",
@@ -1720,6 +1758,7 @@ void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
         key.diagnosticSignal,
         0,
         0);
+    return true;
 }
 
 void ScreenSpaceEffects::InvalidateTemporalHistory() const
@@ -1760,7 +1799,7 @@ void ScreenSpaceEffects::ResetTaaHistory() const
         m_rayReconstruction ? "rr" : "dlss", "existing-quality",
         m_width, m_height, m_viewportWidth, m_viewportHeight, false, false, 0x20u);
     m_taaHistoryValid = false;
-    m_taaFrameIndex = 0;
+    m_reconstructionJitterState.ResetImmediate();
     m_bloomHistoryValid = false;
     m_bloomTemporalWarmupFrames = 0;
     m_dlssHistoryValid = false;
@@ -1890,37 +1929,6 @@ void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, cons
 
 namespace
 {
-    float RadicalInverse(const std::uint32_t index, const std::uint32_t base)
-    {
-        float result = 0.0f;
-        float fraction = 1.0f;
-        std::uint32_t i = index;
-        while (i > 0)
-        {
-            fraction /= static_cast<float>(base);
-            result += fraction * static_cast<float>(i % base);
-            i /= base;
-        }
-        return result;
-    }
-
-    // Halton(2,3) sub-pixel jitter for TAA/DLSS. DLSS-RR Integration Guide §3.6 recommends ≥32
-    // distinct phases; 64-cycle procedural sequence (no table, no short repeat).
-    glm::vec2 HaltonJitter(const int frameIndex, const int width, const int height)
-    {
-        static constexpr int kPhaseCount = 64;
-        const std::uint32_t sampleIndex =
-            static_cast<std::uint32_t>(frameIndex % kPhaseCount);
-        const float haltonX = RadicalInverse(sampleIndex, 2);
-        const float haltonY = RadicalInverse(sampleIndex, 3);
-        const float jitterX = ((haltonX - 0.5f) * 2.0f) / static_cast<float>(width);
-        const float jitterY = ((haltonY - 0.5f) * 2.0f) / static_cast<float>(height);
-        return glm::vec2(jitterX, jitterY);
-    }
-}
-
-namespace
-{
     // TAA and both DLSS modes are temporal and require sub-pixel jitter on the projection.
     bool ModeUsesTemporalJitter(const AntiAliasingMode mode)
     {
@@ -1932,20 +1940,93 @@ namespace
 void ScreenSpaceEffects::PrepareAntiAliasingFrame(Camera& camera, const bool freezeJitter) const
 {
     camera.ClearProjectionJitter();
-    if (ModeUsesTemporalJitter(m_antiAliasingMode) && m_width > 0 && m_height > 0 && !freezeJitter)
+    if (!ModeUsesTemporalJitter(m_antiAliasingMode) || m_width <= 0 || m_height <= 0
+        || freezeJitter)
     {
-        camera.SetProjectionJitter(HaltonJitter(m_taaFrameIndex, m_width, m_height));
+        m_reconstructionJitterState.CancelPrepared();
+        return;
     }
+
+    const ReconstructionJitterIdentity identity =
+        BuildReconstructionJitterIdentity(m_viewportWidth, m_viewportHeight);
+    const TemporalCameraState currentCamera = TemporalCamera::MakeState(
+        camera.GetViewMatrix(),
+        camera.GetUnjitteredProjectionMatrix(),
+        glm::inverse(camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix()),
+        camera.GetPosition(),
+        glm::vec2(0.0f));
+    const bool cameraPacketValid = TemporalCamera::IsComplete(currentCamera)
+        && m_motionVectorFrameState.historyValid
+        && TemporalCamera::IsComplete(m_motionVectorFrameState.previousCamera);
+    const bool cameraCut = cameraPacketValid
+        && DlssResolvePass::DetectCameraCut(camera.GetViewMatrix(), m_motionVectorFrameState);
+    const bool startsNewHistory = ReconstructionJitterNeedsPhaseZero(
+        m_historyCompatibilityState, identity, cameraPacketValid, cameraCut);
+    const ReconstructionJitterSample& sample = m_reconstructionJitterState.Prepare(
+        identity, startsNewHistory);
+    camera.SetProjectionJitter(glm::vec2(sample.xNdc, sample.yNdc));
+    FrameDiagnostics::LogReconstructionJitter(
+        m_dlssViewportId,
+        "prepare",
+        HistoryReconstructionFeatureName(identity.feature),
+        HistoryReconstructionQualityName(identity.quality),
+        sample.period,
+        sample.phase,
+        sample.previousValid,
+        sample.previousPhase,
+        sample.startsNewHistory,
+        sample.xNdc,
+        sample.yNdc);
 }
 
 void ScreenSpaceEffects::FinalizeAntiAliasingFrame(const Camera& /*camera*/, const bool freezeJitter) const
 {
     if (!ModeUsesTemporalJitter(m_antiAliasingMode) || freezeJitter)
     {
+        m_reconstructionJitterState.CancelPrepared();
         return;
     }
-
-    ++m_taaFrameIndex;
+    if (!m_historyCompatibilityRenderedThisFrame)
+    {
+        if (m_reconstructionJitterState.HasPreparedSample())
+        {
+            const ReconstructionJitterSample& sample =
+                m_reconstructionJitterState.PreparedSample();
+            FrameDiagnostics::LogReconstructionJitter(
+                m_dlssViewportId,
+                "cancel-unrendered",
+                "unknown",
+                "unknown",
+                sample.period,
+                sample.phase,
+                sample.previousValid,
+                sample.previousPhase,
+                sample.startsNewHistory,
+                sample.xNdc,
+                sample.yNdc);
+        }
+        m_reconstructionJitterState.CancelPrepared();
+        return;
+    }
+    if (m_reconstructionJitterState.HasPreparedSample())
+    {
+        const ReconstructionJitterIdentity identity =
+            BuildReconstructionJitterIdentity(m_viewportWidth, m_viewportHeight);
+        const ReconstructionJitterSample sample = m_reconstructionJitterState.PreparedSample();
+        FrameDiagnostics::LogReconstructionJitter(
+            m_dlssViewportId,
+            "commit",
+            HistoryReconstructionFeatureName(identity.feature),
+            HistoryReconstructionQualityName(identity.quality),
+            sample.period,
+            sample.phase,
+            sample.previousValid,
+            sample.previousPhase,
+            sample.startsNewHistory,
+            sample.xNdc,
+            sample.yNdc);
+        m_reconstructionJitterState.CommitRendered();
+    }
 }
 
 const MotionVectorFrameState& ScreenSpaceEffects::GetMotionVectorFrameState() const
@@ -1955,6 +2036,10 @@ const MotionVectorFrameState& ScreenSpaceEffects::GetMotionVectorFrameState() co
 
 void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
 {
+    if (!m_historyCompatibilityRenderedThisFrame)
+    {
+        return;
+    }
     const glm::mat4 view = camera.GetViewMatrix();
     const glm::mat4 unjitteredProjection = camera.GetUnjitteredProjectionMatrix();
     const glm::mat4 unjitteredViewProjection = unjitteredProjection * view;
@@ -1974,6 +2059,7 @@ void ScreenSpaceEffects::AdvanceTemporalFrame(const Camera& camera) const
     m_giPrevViewProjection = m_motionVectorFrameState.prevViewProjection;
     m_motionVectorFrameState.historyValid =
         TemporalCamera::IsComplete(m_motionVectorFrameState.previousCamera);
+    m_historyCompatibilityRenderedThisFrame = false;
 }
 
 bool ScreenSpaceEffects::HasSplitLighting() const

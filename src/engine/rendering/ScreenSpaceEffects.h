@@ -6,6 +6,7 @@
 #include "engine/rendering/Framebuffer.h"
 #include "engine/rendering/HistoryCompatibility.h"
 #include "engine/rendering/MotionVectorFrameState.h"
+#include "engine/rendering/ReconstructionJitter.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessDraw.h"
@@ -592,10 +593,13 @@ private:
         int outputHeight,
         std::uint32_t opticalSceneVersion,
         std::uint32_t opticalMotionVersion) const;
+    ReconstructionJitterIdentity BuildReconstructionJitterIdentity(
+        int outputWidth,
+        int outputHeight) const;
     void ApplyHistoryCompatibilityReset(
         const HistoryCompatibilityKey& key,
         const HistoryCompatibilityTransition& transition) const;
-    void CommitRenderedHistoryCompatibility() const;
+    bool CommitRenderedHistoryCompatibility() const;
     void DrawFullscreenQuad() const;
     void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
@@ -1008,7 +1012,8 @@ private:
     float m_ssaoBlurDepthThreshold = 0.02f;
 
     mutable bool m_taaHistoryValid = false;
-    mutable int m_taaFrameIndex = 0;
+    mutable ReconstructionJitterState m_reconstructionJitterState{};
+    mutable bool m_historyCompatibilityRenderedThisFrame = false;
     // DLSS temporal history validity (mirrors m_taaHistoryValid but for the DLSS resolve path). When
     // false the next DLSS evaluate sets the SL reset flag. Cleared on mode/preset change, resize,
     // and temporal-history invalidation.

@@ -258,4 +258,51 @@ namespace FrameDiagnostics
             ownerBits);
         std::fflush(stderr);
     }
+
+    void LogReconstructionJitter(
+        const std::uint32_t viewportId,
+        const char* event,
+        const char* feature,
+        const char* quality,
+        const std::uint32_t period,
+        const std::uint32_t phase,
+        const bool previousValid,
+        const std::uint32_t previousPhase,
+        const bool startsNewHistory,
+        const float xNdc,
+        const float yNdc)
+    {
+        if (!QueryEnabled())
+        {
+            return;
+        }
+
+        std::fprintf(
+            stderr,
+            "[frame] jitter-trace app_serial=%llu viewport=%u event=%s feature=%s quality=%s "
+            "period=%u phase=%u previous_valid=%u previous_phase=",
+            static_cast<unsigned long long>(g_activeApplicationFrameSerial),
+            viewportId,
+            event != nullptr ? event : "unknown",
+            feature != nullptr ? feature : "unknown",
+            quality != nullptr ? quality : "unknown",
+            period,
+            phase,
+            previousValid ? 1u : 0u);
+        if (previousValid)
+        {
+            std::fprintf(stderr, "%u", previousPhase);
+        }
+        else
+        {
+            std::fputs("none", stderr);
+        }
+        std::fprintf(
+            stderr,
+            " reset=%u jitter_ndc=(%.9g,%.9g)\n",
+            startsNewHistory ? 1u : 0u,
+            static_cast<double>(xNdc),
+            static_cast<double>(yNdc));
+        std::fflush(stderr);
+    }
 }

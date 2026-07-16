@@ -592,6 +592,7 @@ add_executable(engine-tests
     tests/dlss_frame_token_test.cpp
     tests/dlss_extent_planner_test.cpp
     tests/reconstruction_exposure_test.cpp
+    tests/reconstruction_jitter_test.cpp
     tests/history_compatibility_test.cpp
     tests/viewport_resize_stabilizer_test.cpp
     tests/project_viewport_reveal_gate_test.cpp
