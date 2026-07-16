@@ -543,6 +543,74 @@ Application::~Application()
     glfwTerminate();
 }
 
+void Application::ApplyS1p6CaptureModeIfRequested()
+{
+    if (m_s1p6CaptureModeApplied)
+    {
+        return;
+    }
+
+    const char* rawCaptureMode = std::getenv("GAME_ENGINE_S1P6_CAPTURE_MODE");
+    if (rawCaptureMode == nullptr)
+    {
+        m_s1p6CaptureModeApplied = true;
+        return;
+    }
+    if (!m_projectSession->HasActiveProject() || m_scene == nullptr)
+    {
+        return;
+    }
+
+    // Apply only after the project's deferred renderer settings. This is inert in normal runs and
+    // selects existing states before the first rendered scene frame without project-file mutation.
+    const std::string captureMode(rawCaptureMode);
+    SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+    DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+    ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+    dxr.SetEnabled(true);
+    dxr.SetRenderingMode(RenderingMode::PathTraced);
+    sceneRenderer.SetRenderDebugMode(RenderDebugMode::None);
+
+    if (captureMode == "raw-radiance")
+    {
+        dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+        effects.SetRayReconstruction(false);
+        effects.SetAntiAliasingMode(AntiAliasingMode::None);
+    }
+    else if (captureMode == "rr-diffuse-guide"
+        || captureMode == "rr-specular-guide"
+        || captureMode == "rr-normal-roughness")
+    {
+        dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+        effects.SetAntiAliasingMode(AntiAliasingMode::DLAA);
+        effects.SetRayReconstruction(true);
+        sceneRenderer.SetRenderDebugMode(
+            captureMode == "rr-diffuse-guide" ? RenderDebugMode::RrDiffuseAlbedo
+            : captureMode == "rr-specular-guide" ? RenderDebugMode::RrSpecularAlbedo
+                                                   : RenderDebugMode::RrNormalRoughness);
+    }
+    else if (captureMode == "final-rr")
+    {
+        dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+        effects.SetAntiAliasingMode(AntiAliasingMode::DLAA);
+        effects.SetRayReconstruction(true);
+    }
+    else if (captureMode == "reference")
+    {
+        dxr.SetPtConvergenceMode(PtConvergenceMode::Reference);
+        effects.SetRayReconstruction(false);
+        effects.SetAntiAliasingMode(AntiAliasingMode::None);
+    }
+    else
+    {
+        throw std::runtime_error(
+            "GAME_ENGINE_S1P6_CAPTURE_MODE must be raw-radiance, rr-diffuse-guide, "
+            "rr-specular-guide, rr-normal-roughness, final-rr, or reference.");
+    }
+    m_s1p6CaptureModeApplied = true;
+    EngineLog::Info("benchmark", "S1-P6 capture mode selected: " + captureMode);
+}
+
 void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
@@ -1892,6 +1960,7 @@ void Application::Render()
             RunApplicationPhase("apply-deferred-renderer-settings", [&]() {
                 SceneProjectIODetail::ApplyDeferredRendererSettings(*editorScene);
             });
+            ApplyS1p6CaptureModeIfRequested();
             RunApplicationPhase("prepare-frame-gpu", [&]() {
                 ProjectLoadBenchmark::ScopedPhase projectLoadGpuPrepare(
                     presentingProjectLoad ? "renderer.first_gpu_prepare" : nullptr);

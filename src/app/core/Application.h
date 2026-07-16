@@ -62,6 +62,7 @@ private:
     void UpdatePendingProjectStartupProgress(const char* message) const;
     void ProcessQueuedProjectOpenIfReady();
     void ProcessPendingProjectTeardown();
+    void ApplyS1p6CaptureModeIfRequested();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -115,6 +116,7 @@ private:
     bool m_pendingEditorLayoutValidation = false;
     int m_editorLayoutStabilizationFrames = 0;
     bool m_automationDualViewportLayout = false;
+    bool m_s1p6CaptureModeApplied = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;
