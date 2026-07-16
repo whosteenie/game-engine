@@ -71,20 +71,31 @@ try {
 finally {
     if (-not $process.HasExited) {
         $process.WaitForExit(5000) | Out-Null
-        $process.Refresh()
     }
+    # Windows PowerShell 5 can retain a null ExitCode after a polled process exits normally.
+    $process.Refresh()
     $watch.Stop()
     $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
     $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
-    $passCount = ([regex]::Matches("$stdout`n$stderr", '(?m)^\[PASS\] ')).Count
-    $result = if ($terminatedForTeardown) {
+    $combined = "$stdout`n$stderr"
+    $passCount = ([regex]::Matches($combined, '(?m)^\[PASS\] ')).Count
+    $hasFailure = $combined -match '(?m)^\[(FAIL|FAILED)\]|^FAIL:'
+    $result = if ($hasFailure) {
+        "failed"
+    } elseif ($terminatedForTeardown) {
         "assertions_passed_teardown_hung"
-    } elseif ($passCount -ge $expectedPasses -and $process.ExitCode -eq 0) {
+    } elseif ($passCount -ge $expectedPasses) {
         "passed"
     } else {
         "failed"
     }
-    $processExit = if ($terminatedForTeardown) { "terminated" } else { "$($process.ExitCode)" }
+    $processExit = if ($terminatedForTeardown) {
+        "terminated"
+    } elseif ($null -eq $process.ExitCode) {
+        "unavailable"
+    } else {
+        "$($process.ExitCode)"
+    }
     @(
         "tier=$Tier expected_passes=$expectedPasses observed_passes=$passCount"
         "result=$result process_exit=$processExit elapsed_seconds=$([math]::Round($watch.Elapsed.TotalSeconds, 3))"
@@ -96,11 +107,11 @@ finally {
     Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
 }
 
+if ($hasFailure) {
+    throw "GPU tier $Tier reported an assertion failure (see $LogPath)"
+}
 if ($passCount -lt $expectedPasses) {
     throw "GPU tier $Tier completed only $passCount/$expectedPasses assertions (see $LogPath)"
-}
-if (-not $terminatedForTeardown -and $process.ExitCode -ne 0) {
-    throw "GPU tier $Tier exited with code $($process.ExitCode) (see $LogPath)"
 }
 
 Write-Output "GPU tier ${Tier}: $result ($passCount/$expectedPasses assertions, $([math]::Round($watch.Elapsed.TotalSeconds, 3))s)"

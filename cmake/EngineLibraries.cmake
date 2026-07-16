@@ -131,6 +131,8 @@ set(ENGINE_DXR_SOURCES
 
 add_library(engine-render STATIC ${ENGINE_RENDER_SOURCES})
 add_library(engine-dxr STATIC ${ENGINE_DXR_SOURCES})
+game_engine_enable_msvc_parallel_compile(engine-render)
+game_engine_enable_msvc_parallel_compile(engine-dxr)
 
 function(game_engine_apply_render_library_config target)
     target_include_directories(${target} PUBLIC

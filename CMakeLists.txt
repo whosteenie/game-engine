@@ -11,6 +11,44 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
     # Allow parallel CL.exe invocations (MSBuild /m) without vc143.pdb lock failures.
     add_compile_options(/FS)
+
+    # MSBuild /m schedules projects, but does not parallelize translation units within one project.
+    # Keep enough capacity free for an interactive workstation while allowing an explicit CI/user
+    # override. Zero retains MSVC's unbounded /MP behavior.
+    set(GAME_ENGINE_COMPILE_JOBS "" CACHE STRING
+        "Maximum MSVC compiler processes per project; empty selects half the logical CPUs (4-12), 0 uses unbounded /MP")
+    if(GAME_ENGINE_COMPILE_JOBS STREQUAL "")
+        cmake_host_system_information(
+            RESULT GAME_ENGINE_EFFECTIVE_COMPILE_JOBS
+            QUERY NUMBER_OF_LOGICAL_CORES)
+        math(EXPR GAME_ENGINE_EFFECTIVE_COMPILE_JOBS
+            "${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS} / 2")
+        if(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS LESS 4)
+            set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS 4)
+        elseif(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS GREATER 12)
+            set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS 12)
+        endif()
+    elseif(GAME_ENGINE_COMPILE_JOBS MATCHES "^[0-9]+$")
+        set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS "${GAME_ENGINE_COMPILE_JOBS}")
+    else()
+        message(FATAL_ERROR
+            "GAME_ENGINE_COMPILE_JOBS must be empty or a non-negative integer, got: "
+            "${GAME_ENGINE_COMPILE_JOBS}")
+    endif()
+    message(STATUS "MSVC compiler processes per project: ${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS}")
+
+    # Apply the bounded /MP option explicitly to repository-owned targets; fetched dependency
+    # targets remain untouched.
+    function(game_engine_enable_msvc_parallel_compile target)
+        if(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS EQUAL 0)
+            target_compile_options(${target} PRIVATE /MP)
+        else()
+            target_compile_options(${target} PRIVATE "/MP${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS}")
+        endif()
+    endfunction()
+else()
+    function(game_engine_enable_msvc_parallel_compile target)
+    endfunction()
 endif()
 
 option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr/shader-infrastructure.md)" OFF)
@@ -220,6 +258,12 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(JoltPhysics)
+if(MSVC)
+    # Jolt 5.3.0 hard-codes unbounded /MP in its top-level CMAKE_CXX_FLAGS. A fresh build reached
+    # 27 cl.exe processes even after project-owned targets were capped, so apply the same explicit
+    # per-project limit to this one measured dependency without changing its fetched sources.
+    game_engine_enable_msvc_parallel_compile(Jolt)
+endif()
 
 FetchContent_Declare(
     D3D12MemoryAllocator
@@ -392,6 +436,7 @@ set(GAME_ENGINE_APP_SOURCES
 )
 
 add_executable(game-engine ${GAME_ENGINE_APP_SOURCES})
+game_engine_enable_msvc_parallel_compile(game-engine)
 
 target_include_directories(game-engine PRIVATE
     vendor/stb
@@ -548,6 +593,7 @@ add_executable(engine-tests
     tests/pt_viewport_ownership_test.cpp
     tests/shader_compile_test.cpp
 )
+game_engine_enable_msvc_parallel_compile(engine-tests)
 
 target_include_directories(engine-tests PRIVATE src tests)
 target_link_libraries(engine-tests PRIVATE engine-render)
@@ -571,6 +617,7 @@ add_executable(descriptor-heap-tests
     tests/descriptor_heap_test.cpp
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
 )
+game_engine_enable_msvc_parallel_compile(descriptor-heap-tests)
 
 target_include_directories(descriptor-heap-tests PRIVATE src tests)
 add_test(NAME descriptor-heap-tests COMMAND descriptor-heap-tests)
@@ -592,6 +639,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         tests/d3d12_test_runner.cpp
         tests/pt_test_harness.cpp
     )
+    game_engine_enable_msvc_parallel_compile(d3d12-render-tests)
 
     target_include_directories(d3d12-render-tests PRIVATE tests ${json_SOURCE_DIR}/include)
     target_link_libraries(d3d12-render-tests PRIVATE
