@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
@@ -80,10 +82,10 @@ namespace CaptureManifest
             "semantic");
         RequireNonEmptyString(semantic.at("revision"), "semantic.revision");
 
-        RequireExactObjectKeys(semantic.at("scene"), {"project_path", "project_sha256", "asset_manifest_sha256"}, "semantic.scene");
+        RequireExactObjectKeys(semantic.at("scene"), {"project_path", "project_content_hash", "asset_manifest_content_hash"}, "semantic.scene");
         RequireNonEmptyString(semantic.at("scene").at("project_path"), "semantic.scene.project_path");
-        RequireNonEmptyString(semantic.at("scene").at("project_sha256"), "semantic.scene.project_sha256");
-        RequireNonEmptyString(semantic.at("scene").at("asset_manifest_sha256"), "semantic.scene.asset_manifest_sha256");
+        RequireNonEmptyString(semantic.at("scene").at("project_content_hash"), "semantic.scene.project_content_hash");
+        RequireNonEmptyString(semantic.at("scene").at("asset_manifest_content_hash"), "semantic.scene.asset_manifest_content_hash");
 
         RequireExactObjectKeys(semantic.at("camera"), {"owner", "pose_or_path"}, "semantic.camera");
         RequireNonEmptyString(semantic.at("camera").at("owner"), "semantic.camera.owner");
@@ -97,7 +99,7 @@ namespace CaptureManifest
         RequireExactObjectKeys(semantic.at("restir"), {"di_candidates", "di_temporal", "gi_initial", "gi_temporal", "gi_spatial", "diagnostic_mode"}, "semantic.restir");
         RequireExactObjectKeys(semantic.at("reconstruction"), {"feature", "quality", "rr_bundle_mode"}, "semantic.reconstruction");
         RequireExactObjectKeys(semantic.at("ser"), {"requested_policy", "selected_permutation", "dispatched_permutation", "fallback_reason"}, "semantic.ser");
-        RequireExactObjectKeys(semantic.at("diagnostics"), {"frame_trace", "gpu_events", "s0p2_token_trace", "s0p3_history_trace", "s0p4_scopes"}, "semantic.diagnostics");
+        RequireExactObjectKeys(semantic.at("diagnostics"), {"frame_trace", "gpu_events", "s0p2_token_trace", "s0p3_history_trace", "s0p4_scopes", "render_debug_mode"}, "semantic.diagnostics");
         RequireExactObjectKeys(semantic.at("window"), {"warmup_seconds", "warmup_frames", "sample_frames", "capture_frame_index"}, "semantic.window");
         if (!semantic.at("s0_capability").is_object())
         {
@@ -143,5 +145,27 @@ namespace CaptureManifest
         {
             throw std::runtime_error("Capture manifest comparison.mode must be 'exact' or 'statistical'.");
         }
+    }
+
+    inline nlohmann::json LoadAndValidate(const std::filesystem::path& path)
+    {
+        std::ifstream input(path);
+        if (!input.is_open())
+        {
+            throw std::runtime_error("Could not open capture manifest: " + path.string());
+        }
+
+        nlohmann::json manifest;
+        try
+        {
+            input >> manifest;
+        }
+        catch (const nlohmann::json::exception& exception)
+        {
+            throw std::runtime_error(
+                "Could not parse capture manifest '" + path.string() + "': " + exception.what());
+        }
+        Validate(manifest);
+        return manifest;
     }
 }

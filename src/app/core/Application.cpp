@@ -584,7 +584,13 @@ void Application::Run()
                 if (m_automatedBenchmarkCapture->ObserveFrame(
                         sceneReady,
                         GfxContext::Get().GetGpuTimings(),
-                        frameDiagnostics))
+                        frameDiagnostics,
+                        m_projectSession->GetProjectFilePath(),
+                        m_projectSession->GetProjectRootDirectory(),
+                        *m_camera,
+                        m_scene->GetRenderer().GetDxrSettings(),
+                        m_scene->GetRenderer().GetScreenSpaceEffects(),
+                        static_cast<int>(m_scene->GetRenderer().GetRenderDebugMode())))
                 {
                     RequestForcedClose();
                 }
