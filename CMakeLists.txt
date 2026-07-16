@@ -290,8 +290,8 @@ target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
 
 
 
-include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/AgilitySdk.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
 
 set(GAME_ENGINE_APP_SOURCES
     src/main.cpp
