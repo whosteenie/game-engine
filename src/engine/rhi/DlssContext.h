@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -19,6 +20,91 @@ enum class DlssQuality
     Balanced,
     Performance,
     UltraPerformance,
+};
+
+enum class DlssReconstructionFeature
+{
+    SuperResolution,
+    RayReconstruction,
+};
+
+struct DlssExtent
+{
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+
+    bool operator==(const DlssExtent& other) const
+    {
+        return width == other.width && height == other.height;
+    }
+};
+
+// S2-P2 shadow-mode cache identity. Viewport remains part of the key even though the current SDK
+// query itself is viewport-independent: Scene and Game own independent planned and active state.
+struct DlssExtentRecommendationKey
+{
+    std::uint32_t viewportId = 0;
+    DlssExtent outputExtent{};
+    DlssReconstructionFeature feature = DlssReconstructionFeature::SuperResolution;
+    DlssQuality quality = DlssQuality::DLAA;
+
+    bool operator==(const DlssExtentRecommendationKey& other) const;
+    bool operator<(const DlssExtentRecommendationKey& other) const;
+};
+
+struct DlssExtentRecommendation
+{
+    DlssExtent recommended{};
+    DlssExtent minimum{};
+    DlssExtent maximum{};
+};
+
+enum class DlssExtentPlanSource
+{
+    Sdk,
+    ExplicitFallback,
+};
+
+// The only planned-extent object exposed by the reconstruction integration. S2-P2 populates and
+// reports it in shadow mode; S2-P4 alone may make active allocations consume it.
+struct DlssPlannedExtent
+{
+    DlssExtentRecommendationKey key{};
+    DlssExtentRecommendation extent{};
+    DlssExtentPlanSource source = DlssExtentPlanSource::ExplicitFallback;
+    std::string fallbackReason = "not-planned";
+    bool rrNoArbitraryDrs = false;
+
+    bool IsValid() const;
+    bool IsSdkRecommendation() const { return source == DlssExtentPlanSource::Sdk; }
+};
+
+struct DlssExtentPlanLookup
+{
+    DlssPlannedExtent plan{};
+    bool cacheHit = false;
+};
+
+// SDK-independent query/cache core used by DlssContext and deterministic CPU contract tests.
+class DlssExtentRecommendationCache
+{
+public:
+    using QueryFunction = bool(*)(
+        void* userData,
+        const DlssExtentRecommendationKey& key,
+        DlssExtentRecommendation& recommendation,
+        std::string& failureReason);
+
+    DlssExtentPlanLookup Plan(
+        const DlssExtentRecommendationKey& key,
+        QueryFunction query,
+        void* userData);
+    void Erase(const DlssExtentRecommendationKey& key);
+    void Clear() { m_entries.clear(); }
+    std::size_t Size() const { return m_entries.size(); }
+
+private:
+    std::map<DlssExtentRecommendationKey, DlssPlannedExtent> m_entries;
 };
 
 // DLSS-RR model preset (D4 experiment, devdoc/dxr/pt/rr-gi-diagnosis.md). Maps to sl::DLSSDPreset
@@ -187,6 +273,11 @@ public:
     // with eDisableCLStateTracking so it does not restore command-list state).
     bool Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs);
 
+    // Query/cache the SDK's optimal render extent and supported range. This is planning only in
+    // S2-P2: callers must not use it for allocation, tags, motion scaling, or jitter before S2-P4.
+    DlssPlannedExtent PlanReconstructionExtent(const DlssExtentRecommendationKey& key);
+    void ClearPlannedExtentCache();
+
     // Releases Streamline's lazy per-viewport allocations for both SR and Ray Reconstruction.
     // The caller must flush every command list that could contain an evaluation first.
     void ReleaseViewportResources(std::uint32_t viewportId);
@@ -219,6 +310,8 @@ private:
     std::atomic<bool> m_swapChainUpgraded{false};
 
     mutable std::mutex m_statusMutex;
+    mutable std::mutex m_extentPlanMutex;
+    DlssExtentRecommendationCache m_extentPlanCache;
     std::string m_status = "DLSS: initializing…";
     void* m_interposer = nullptr; // HMODULE for sl.interposer.dll (dynamic load)
     DlssFrameTokenState m_frameTokenState;

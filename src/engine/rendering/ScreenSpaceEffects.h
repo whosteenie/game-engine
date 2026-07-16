@@ -49,8 +49,8 @@ enum class AntiAliasingMode
     DLSS = 7,
 };
 
-// DLSS Super Resolution quality preset. Per-axis internal render scale relative to display res
-// (see DlssPresetRenderScale). DLAA (native) is a separate AntiAliasingMode, not a preset.
+// DLSS Super Resolution quality preset. DLAA (native) is a separate AntiAliasingMode. S2-P2 keeps
+// the fixed scales below only as active-allocation compatibility until S2-P4.
 enum class DlssPreset
 {
     Quality = 0,          // ~0.667x per axis
@@ -59,8 +59,8 @@ enum class DlssPreset
     UltraPerformance = 3, // ~0.333x
 };
 
-// Standard DLSS per-axis render-scale factors. In later phases the exact internal extent comes from
-// slDLSSGetOptimalSettings; these fixed ratios drive the internal-res allocation until then.
+// Legacy active-allocation factors. They are not SDK recommendations and remain active only until
+// S2-P4 switches allocation to DlssPlannedExtent.
 float DlssPresetRenderScale(DlssPreset preset);
 
 enum class AmbientOcclusionMode
@@ -532,6 +532,10 @@ public:
 
     int GetRenderWidth() const;
     int GetRenderHeight() const;
+    const DlssPlannedExtent& GetPlannedReconstructionExtent() const
+    {
+        return m_plannedReconstructionExtent;
+    }
 
     // log2(render/display) when DLAA/DLSS is active, else 0. Add to the renderer's user mip bias
     // before GfxContext::SetMaterialTextureMipBias (see devdoc/rendering/dlss-super-resolution.md §Mip bias).
@@ -577,6 +581,7 @@ private:
     void ResizeLdrTonemapTarget(int width, int height);
     void ResizeAntiAliasingTargets(int width, int height);
     void ResizeDlssDisplayTargets(int viewportWidth, int viewportHeight);
+    void UpdatePlannedReconstructionExtent();
     float GetActiveRenderScale() const;
     void ResetTaaHistory() const;
     void InvalidateTemporalHistory() const;
@@ -803,6 +808,7 @@ private:
     int m_height = 0;
     int m_viewportWidth = 0;
     int m_viewportHeight = 0;
+    DlssPlannedExtent m_plannedReconstructionExtent{};
 
     bool m_enabled = true;
     mutable bool m_logHdrApplySnapshot = false;

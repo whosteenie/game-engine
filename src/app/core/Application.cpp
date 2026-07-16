@@ -685,6 +685,120 @@ void Application::ApplyS2p1CaptureModeIfRequested()
             + ", authored display EV=" + std::to_string(exposureEv));
 }
 
+bool Application::RunS2p2ExtentQueryMatrixIfRequested()
+{
+    if (m_s2p2ExtentQueryMatrixComplete)
+    {
+        return false;
+    }
+    const char* const outputPath = std::getenv("GAME_ENGINE_S2P2_QUERY_MATRIX_OUTPUT");
+    if (outputPath == nullptr)
+    {
+        m_s2p2ExtentQueryMatrixComplete = true;
+        return false;
+    }
+
+    DlssContext& context = DlssContext::Get();
+    if (!context.IsReady())
+    {
+        return false;
+    }
+
+    const std::filesystem::path path(outputPath);
+    std::error_code error;
+    if (path.has_parent_path())
+    {
+        std::filesystem::create_directories(path.parent_path(), error);
+    }
+    if (error)
+    {
+        throw std::runtime_error("Could not create S2-P2 matrix directory: " + error.message());
+    }
+    std::ofstream output(path, std::ios::trunc);
+    if (!output)
+    {
+        throw std::runtime_error("Could not open S2-P2 matrix output: " + path.string());
+    }
+
+    constexpr DlssQuality qualities[] = {
+        DlssQuality::DLAA,
+        DlssQuality::Quality,
+        DlssQuality::Balanced,
+        DlssQuality::Performance,
+        DlssQuality::UltraPerformance};
+    constexpr DlssReconstructionFeature features[] = {
+        DlssReconstructionFeature::SuperResolution,
+        DlssReconstructionFeature::RayReconstruction};
+    constexpr DlssExtent outputExtents[] = {{1280u, 720u}, {1920u, 1080u}};
+    const auto qualityName = [](const DlssQuality quality) {
+        switch (quality)
+        {
+        case DlssQuality::DLAA: return "dlaa";
+        case DlssQuality::Quality: return "quality";
+        case DlssQuality::Balanced: return "balanced";
+        case DlssQuality::Performance: return "performance";
+        case DlssQuality::UltraPerformance: return "ultra-performance";
+        }
+        return "unknown";
+    };
+
+    context.ClearPlannedExtentCache();
+    output << "{\n  \"record_type\": \"s2p2_extent_query_matrix\",\n"
+           << "  \"schema_version\": 1,\n"
+           << "  \"allocation_mode\": \"shadow-active-unchanged-until-s2p4\",\n"
+           << "  \"forced_failure\": "
+           << (std::getenv("GAME_ENGINE_S2P2_FORCE_QUERY_FAILURE") != nullptr ? "true" : "false")
+           << ",\n  \"entries\": [\n";
+    bool first = true;
+    for (std::uint32_t viewport = 0; viewport < 2u; ++viewport)
+    {
+        for (const DlssReconstructionFeature feature : features)
+        {
+            for (const DlssQuality quality : qualities)
+            {
+                DlssExtentRecommendationKey key{};
+                key.viewportId = viewport;
+                key.outputExtent = outputExtents[viewport];
+                key.feature = feature;
+                key.quality = quality;
+                const DlssPlannedExtent plan = context.PlanReconstructionExtent(key);
+                if (!first)
+                {
+                    output << ",\n";
+                }
+                first = false;
+                output << "    {\"viewport_id\": " << viewport
+                       << ", \"feature\": \""
+                       << (feature == DlssReconstructionFeature::RayReconstruction ? "rr" : "dlss")
+                       << "\", \"quality\": \"" << qualityName(quality)
+                       << "\", \"output\": [" << key.outputExtent.width << ", "
+                       << key.outputExtent.height << "], \"recommended\": ["
+                       << plan.extent.recommended.width << ", "
+                       << plan.extent.recommended.height << "], \"minimum\": ["
+                       << plan.extent.minimum.width << ", " << plan.extent.minimum.height
+                       << "], \"maximum\": [" << plan.extent.maximum.width << ", "
+                       << plan.extent.maximum.height << "], \"source\": \""
+                       << (plan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
+                       << "\", \"fallback_reason\": "
+                       << (plan.fallbackReason.empty()
+                               ? "null"
+                               : std::string("\"") + plan.fallbackReason + "\"")
+                       << ", \"rr_no_arbitrary_drs\": "
+                       << (plan.rrNoArbitraryDrs ? "true" : "false") << '}';
+            }
+        }
+    }
+    output << "\n  ]\n}\n";
+    output.close();
+    if (!output)
+    {
+        throw std::runtime_error("Could not finish S2-P2 matrix output: " + path.string());
+    }
+    m_s2p2ExtentQueryMatrixComplete = true;
+    EngineLog::Info("benchmark", "S2-P2 extent query matrix complete: " + path.string());
+    return true;
+}
+
 void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
@@ -760,6 +874,11 @@ void Application::Run()
     while (!glfwWindowShouldClose(m_window))
     {
         if (ConsumeConsoleCloseRequest())
+        {
+            RequestForcedClose();
+            break;
+        }
+        if (RunS2p2ExtentQueryMatrixIfRequested())
         {
             RequestForcedClose();
             break;

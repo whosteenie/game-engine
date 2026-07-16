@@ -64,6 +64,7 @@ private:
     void ProcessPendingProjectTeardown();
     void ApplyS1p6CaptureModeIfRequested();
     void ApplyS2p1CaptureModeIfRequested();
+    bool RunS2p2ExtentQueryMatrixIfRequested();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -119,6 +120,7 @@ private:
     bool m_automationDualViewportLayout = false;
     bool m_s1p6CaptureModeApplied = false;
     bool m_s2p1CaptureModeApplied = false;
+    bool m_s2p2ExtentQueryMatrixComplete = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

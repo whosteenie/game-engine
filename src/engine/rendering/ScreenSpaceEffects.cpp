@@ -1421,6 +1421,29 @@ float DlssPresetRenderScale(const DlssPreset preset)
     }
 }
 
+void ScreenSpaceEffects::UpdatePlannedReconstructionExtent()
+{
+    if (m_antiAliasingMode != AntiAliasingMode::DLAA
+        && m_antiAliasingMode != AntiAliasingMode::DLSS)
+    {
+        m_plannedReconstructionExtent = {};
+        return;
+    }
+
+    DlssExtentRecommendationKey key{};
+    key.viewportId = m_dlssViewportId;
+    key.outputExtent = {
+        static_cast<std::uint32_t>(std::max(1, m_viewportWidth)),
+        static_cast<std::uint32_t>(std::max(1, m_viewportHeight))};
+    key.feature = m_rayReconstruction
+        ? DlssReconstructionFeature::RayReconstruction
+        : DlssReconstructionFeature::SuperResolution;
+    key.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
+        ? DlssQuality::DLAA
+        : ToDlssQuality(m_dlssPreset);
+    m_plannedReconstructionExtent = DlssContext::Get().PlanReconstructionExtent(key);
+}
+
 float ScreenSpaceEffects::GetActiveRenderScale() const
 {
     switch (m_antiAliasingMode)
@@ -1431,7 +1454,7 @@ float ScreenSpaceEffects::GetActiveRenderScale() const
         // DLSS at native resolution: internal == display.
         return 1.0f;
     case AntiAliasingMode::DLSS:
-        // Super resolution: render below display res; the composite/DLSS pass upscales to viewport.
+        // S2-P2 shadow mode: allocation intentionally remains on the legacy scale through S2-P4.
         return DlssPresetRenderScale(m_dlssPreset);
     default:
         return 1.0f;
@@ -1756,6 +1779,7 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     const int prevViewportHeight = m_viewportHeight;
     m_viewportWidth = viewportWidth;
     m_viewportHeight = viewportHeight;
+    UpdatePlannedReconstructionExtent();
     const int renderWidth = GetRenderWidth();
     const int renderHeight = GetRenderHeight();
 

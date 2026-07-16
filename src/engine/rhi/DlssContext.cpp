@@ -8,6 +8,12 @@
 
 #include "engine/platform/EngineLog.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <sstream>
+#include <tuple>
+
 #ifdef GAME_ENGINE_ENABLE_DLSS
 #include <windows.h>
 
@@ -46,6 +52,7 @@ PFun_slDLSSSetOptions* g_slDLSSSetOptions = nullptr;
 PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings = nullptr;
 // DLSS-RR (Ray Reconstruction) feature function (kFeatureDLSS_RR).
 PFun_slDLSSDSetOptions* g_slDLSSDSetOptions = nullptr;
+PFun_slDLSSDGetOptimalSettings* g_slDLSSDGetOptimalSettings = nullptr;
 
 // Single viewport — the editor drives one scene view through DLSS at a time.
 
@@ -105,6 +112,167 @@ const char* ResultToString(sl::Result r)
 }
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
+
+namespace
+{
+const char* ExtentFeatureName(const DlssReconstructionFeature feature)
+{
+    return feature == DlssReconstructionFeature::RayReconstruction ? "rr" : "dlss";
+}
+
+const char* ExtentQualityName(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::DLAA: return "dlaa";
+    case DlssQuality::Quality: return "quality";
+    case DlssQuality::Balanced: return "balanced";
+    case DlssQuality::Performance: return "performance";
+    case DlssQuality::UltraPerformance: return "ultra-performance";
+    }
+    return "unknown";
+}
+
+float LegacyFallbackScale(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::Quality: return 0.667f;
+    case DlssQuality::Balanced: return 0.58f;
+    case DlssQuality::Performance: return 0.5f;
+    case DlssQuality::UltraPerformance: return 0.333f;
+    case DlssQuality::DLAA: return 1.0f;
+    }
+    return 1.0f;
+}
+
+DlssPlannedExtent MakeExplicitFallback(
+    const DlssExtentRecommendationKey& key,
+    std::string reason)
+{
+    DlssPlannedExtent plan{};
+    plan.key = key;
+    plan.source = DlssExtentPlanSource::ExplicitFallback;
+    plan.fallbackReason = reason.empty() ? "query-failed-without-reason" : std::move(reason);
+    plan.rrNoArbitraryDrs = key.feature == DlssReconstructionFeature::RayReconstruction;
+
+    // RR never invents a DRS ratio. If its recommendation query fails, native is the only planned
+    // fallback. Ordinary SR retains the legacy active ratio, but labels it explicitly as fallback;
+    // it is never represented as an SDK recommendation. Active allocation remains separate.
+    const float scale = key.feature == DlssReconstructionFeature::RayReconstruction
+        ? 1.0f
+        : LegacyFallbackScale(key.quality);
+    const auto scaled = [scale](const std::uint32_t value) {
+        return std::max<std::uint32_t>(
+            1u,
+            static_cast<std::uint32_t>(std::lround(static_cast<double>(value) * scale)));
+    };
+    plan.extent.recommended = {scaled(key.outputExtent.width), scaled(key.outputExtent.height)};
+    plan.extent.minimum = plan.extent.recommended;
+    plan.extent.maximum = plan.extent.recommended;
+    return plan;
+}
+
+bool IsValidSdkRecommendation(
+    const DlssExtentRecommendationKey& key,
+    const DlssExtentRecommendation& recommendation,
+    std::string& reason)
+{
+    const DlssExtent& value = recommendation.recommended;
+    const DlssExtent& minimum = recommendation.minimum;
+    const DlssExtent& maximum = recommendation.maximum;
+    if (key.outputExtent.width == 0 || key.outputExtent.height == 0)
+    {
+        reason = "invalid-output-extent";
+        return false;
+    }
+    if (value.width == 0 || value.height == 0 || minimum.width == 0 || minimum.height == 0
+        || maximum.width == 0 || maximum.height == 0)
+    {
+        reason = "sdk-returned-zero-extent";
+        return false;
+    }
+    if (minimum.width > value.width || value.width > maximum.width
+        || minimum.height > value.height || value.height > maximum.height)
+    {
+        reason = "sdk-recommendation-outside-returned-range";
+        return false;
+    }
+    if (key.quality == DlssQuality::DLAA && !(value == key.outputExtent))
+    {
+        reason = "sdk-dlaa-recommendation-is-not-native";
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool DlssExtentRecommendationKey::operator==(const DlssExtentRecommendationKey& other) const
+{
+    return viewportId == other.viewportId && outputExtent == other.outputExtent
+        && feature == other.feature && quality == other.quality;
+}
+
+bool DlssExtentRecommendationKey::operator<(const DlssExtentRecommendationKey& other) const
+{
+    return std::tie(viewportId, outputExtent.width, outputExtent.height, feature, quality)
+        < std::tie(
+            other.viewportId,
+            other.outputExtent.width,
+            other.outputExtent.height,
+            other.feature,
+            other.quality);
+}
+
+bool DlssPlannedExtent::IsValid() const
+{
+    return extent.recommended.width > 0 && extent.recommended.height > 0
+        && extent.minimum.width > 0 && extent.minimum.height > 0
+        && extent.maximum.width > 0 && extent.maximum.height > 0;
+}
+
+DlssExtentPlanLookup DlssExtentRecommendationCache::Plan(
+    const DlssExtentRecommendationKey& key,
+    const QueryFunction query,
+    void* const userData)
+{
+    const auto found = m_entries.find(key);
+    if (found != m_entries.end())
+    {
+        return {found->second, true};
+    }
+
+    DlssExtentRecommendation recommendation{};
+    std::string failureReason;
+    bool succeeded = query != nullptr && query(userData, key, recommendation, failureReason);
+    if (succeeded)
+    {
+        succeeded = IsValidSdkRecommendation(key, recommendation, failureReason);
+    }
+
+    DlssPlannedExtent plan{};
+    if (succeeded)
+    {
+        plan.key = key;
+        plan.extent = recommendation;
+        plan.source = DlssExtentPlanSource::Sdk;
+        plan.fallbackReason.clear();
+        plan.rrNoArbitraryDrs = key.feature == DlssReconstructionFeature::RayReconstruction;
+    }
+    else
+    {
+        plan = MakeExplicitFallback(
+            key,
+            query == nullptr ? "query-entrypoint-unavailable" : std::move(failureReason));
+    }
+    m_entries.emplace(key, plan);
+    return {plan, false};
+}
+
+void DlssExtentRecommendationCache::Erase(const DlssExtentRecommendationKey& key)
+{
+    m_entries.erase(key);
+}
 
 DlssContext& DlssContext::Get()
 {
@@ -260,6 +428,13 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         {
             g_slDLSSDSetOptions = reinterpret_cast<PFun_slDLSSDSetOptions*>(fn);
         }
+        fn = nullptr;
+        if (g_slGetFeatureFunction(
+                sl::kFeatureDLSS_RR, "slDLSSDGetOptimalSettings", fn) == sl::Result::eOk)
+        {
+            g_slDLSSDGetOptimalSettings =
+                reinterpret_cast<PFun_slDLSSDGetOptimalSettings*>(fn);
+        }
     }
 
     DXGI_ADAPTER_DESC desc{};
@@ -324,6 +499,7 @@ void DlssContext::Shutdown()
     {
         m_worker.join();
     }
+    ClearPlannedExtentCache();
 #ifdef GAME_ENGINE_ENABLE_DLSS
     if (m_initialized.load(std::memory_order_acquire) && g_slShutdown != nullptr)
     {
@@ -346,6 +522,7 @@ void DlssContext::Shutdown()
     g_slDLSSSetOptions = nullptr;
     g_slDLSSGetOptimalSettings = nullptr;
     g_slDLSSDSetOptions = nullptr;
+    g_slDLSSDGetOptimalSettings = nullptr;
     g_slUpgradeInterface = nullptr;
     if (m_interposer != nullptr)
     {
@@ -444,6 +621,144 @@ const char* ToTraceFeature(const DlssFrameInputs& inputs)
 }
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
+
+namespace
+{
+bool QuerySdkExtentRecommendation(
+    void* const userData,
+    const DlssExtentRecommendationKey& key,
+    DlssExtentRecommendation& recommendation,
+    std::string& failureReason)
+{
+    auto& context = *static_cast<DlssContext*>(userData);
+    if (std::getenv("GAME_ENGINE_S2P2_FORCE_QUERY_FAILURE") != nullptr)
+    {
+        failureReason = "forced-query-failure";
+        return false;
+    }
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    (void)context;
+    (void)key;
+    (void)recommendation;
+    failureReason = "dlss-compiled-out";
+    return false;
+#else
+    if (!context.IsReady() || !context.IsRuntimeInitialized())
+    {
+        failureReason = "runtime-unavailable";
+        return false;
+    }
+
+    if (key.feature == DlssReconstructionFeature::RayReconstruction)
+    {
+        if (!context.IsRrSupported())
+        {
+            failureReason = "rr-feature-unavailable";
+            return false;
+        }
+        if (g_slDLSSDGetOptimalSettings == nullptr)
+        {
+            failureReason = "rr-optimal-settings-entrypoint-unavailable";
+            return false;
+        }
+        sl::DLSSDOptions options{};
+        options.mode = ToDlssMode(key.quality);
+        options.outputWidth = key.outputExtent.width;
+        options.outputHeight = key.outputExtent.height;
+        sl::DLSSDOptimalSettings settings{};
+        const sl::Result result = g_slDLSSDGetOptimalSettings(options, settings);
+        if (result != sl::Result::eOk)
+        {
+            failureReason = std::string("rr-optimal-settings-query-failed-") + ResultToString(result);
+            return false;
+        }
+        recommendation = {
+            {settings.optimalRenderWidth, settings.optimalRenderHeight},
+            {settings.renderWidthMin, settings.renderHeightMin},
+            {settings.renderWidthMax, settings.renderHeightMax}};
+        return true;
+    }
+
+    if (!context.IsDlssSupported())
+    {
+        failureReason = "dlss-feature-unavailable";
+        return false;
+    }
+    if (g_slDLSSGetOptimalSettings == nullptr)
+    {
+        failureReason = "dlss-optimal-settings-entrypoint-unavailable";
+        return false;
+    }
+    sl::DLSSOptions options{};
+    options.mode = ToDlssMode(key.quality);
+    options.outputWidth = key.outputExtent.width;
+    options.outputHeight = key.outputExtent.height;
+    sl::DLSSOptimalSettings settings{};
+    const sl::Result result = g_slDLSSGetOptimalSettings(options, settings);
+    if (result != sl::Result::eOk)
+    {
+        failureReason = std::string("dlss-optimal-settings-query-failed-") + ResultToString(result);
+        return false;
+    }
+    recommendation = {
+        {settings.optimalRenderWidth, settings.optimalRenderHeight},
+        {settings.renderWidthMin, settings.renderHeightMin},
+        {settings.renderWidthMax, settings.renderHeightMax}};
+    return true;
+#endif
+}
+} // namespace
+
+DlssPlannedExtent DlssContext::PlanReconstructionExtent(
+    const DlssExtentRecommendationKey& key)
+{
+    std::lock_guard<std::mutex> lock(m_extentPlanMutex);
+    DlssExtentPlanLookup lookup =
+        m_extentPlanCache.Plan(key, &QuerySdkExtentRecommendation, this);
+
+    // A viewport can request its first plan while asynchronous SDK initialization is still in
+    // flight. Retry that one transient fallback once the runtime becomes queryable.
+    if (lookup.cacheHit && lookup.plan.fallbackReason == "runtime-unavailable"
+        && IsReady() && IsRuntimeInitialized())
+    {
+        m_extentPlanCache.Erase(key);
+        lookup = m_extentPlanCache.Plan(key, &QuerySdkExtentRecommendation, this);
+    }
+
+    if (!lookup.cacheHit)
+    {
+        std::ostringstream message;
+        message << "extent-plan viewport=" << key.viewportId
+                << " feature=" << ExtentFeatureName(key.feature)
+                << " quality=" << ExtentQualityName(key.quality)
+                << " output=" << key.outputExtent.width << 'x' << key.outputExtent.height
+                << " planned=" << lookup.plan.extent.recommended.width << 'x'
+                << lookup.plan.extent.recommended.height
+                << " range=" << lookup.plan.extent.minimum.width << 'x'
+                << lookup.plan.extent.minimum.height << ".."
+                << lookup.plan.extent.maximum.width << 'x'
+                << lookup.plan.extent.maximum.height
+                << " source=" << (lookup.plan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
+                << " rr-no-arbitrary-drs=" << (lookup.plan.rrNoArbitraryDrs ? "true" : "false")
+                << " active-allocation=unchanged-shadow-mode";
+        if (lookup.plan.IsSdkRecommendation())
+        {
+            EngineLog::Info("dlss", message.str());
+        }
+        else
+        {
+            message << " fallback-reason=" << lookup.plan.fallbackReason;
+            EngineLog::Warn("dlss", message.str());
+        }
+    }
+    return lookup.plan;
+}
+
+void DlssContext::ClearPlannedExtentCache()
+{
+    std::lock_guard<std::mutex> lock(m_extentPlanMutex);
+    m_extentPlanCache.Clear();
+}
 
 DlssFrameToken DlssFrameTokenState::BeginFrame(
     const AcquireFunction acquire,

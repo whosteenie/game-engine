@@ -590,6 +590,7 @@ add_executable(engine-tests
     tests/capture_manifest_test.cpp
     tests/temporal_camera_packet_test.cpp
     tests/dlss_frame_token_test.cpp
+    tests/dlss_extent_planner_test.cpp
     tests/reconstruction_exposure_test.cpp
     tests/history_compatibility_test.cpp
     tests/viewport_resize_stabilizer_test.cpp
