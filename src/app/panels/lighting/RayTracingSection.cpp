@@ -760,6 +760,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         const std::string& adapterName =
             gfx.IsInitialized() ? gfx.GetAdapterDescription() : std::string("(GPU not initialized)");
 
+        ImGui::SeparatorText("Hardware & runtime");
         ImGui::Text("Adapter: %s", adapterName.c_str());
         char tierText[64]{};
         FormatRaytracingTierText(raytracingTier, tierText, sizeof(tierText));
@@ -813,6 +814,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             ImGui::BeginDisabled();
         }
 
+        ImGui::SeparatorText("General");
         ImGui::PushID("RayTracing");
         bool dxrEnabled = dxrSettings.IsEnabled();
         const bool pathTracingActive =
@@ -885,6 +887,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
         if (dxrSettings.GetRenderingMode() == RenderingMode::PathTraced && dxrEnabled)
         {
+            ImGui::SeparatorText("Path tracing");
+
             // PF7 runtime A/B selector. This belongs to DxrPathTracerDispatch, rather than
             // DxrSettings, so it never becomes scene/project state or an undo command.
             int serOverride = static_cast<int>(renderer.GetPathTracerSerOverride());
@@ -1066,6 +1070,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "0 = unoccluded ambient (recommended). Raise only if open shadows wash out.");
             }
 
+            ImGui::SeparatorText("ReSTIR direct lighting");
             int restirDiCandidates = dxrSettings.GetRestirDiCandidateCount();
             UndoableRendererSliderInt(
                 "PT ReSTIR DI candidates",
@@ -1108,6 +1113,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
 
             RendererSettingUi::MarkRendered("pt_restir_di_temporal");
 
+            ImGui::SeparatorText("ReSTIR global illumination");
             if (diagnosticBatch.active)
             {
                 ImGui::BeginDisabled();
@@ -1198,6 +1204,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "~0.27 deg matches the real sun. Wider = softer contact shadows. Shared with RT shadows.");
             }
 
+            ImGui::SeparatorText("Path tracing diagnostics");
             if (dxrSettings.IsPtReferenceConvergence())
             {
                 const std::uint32_t spp =
@@ -1703,6 +1710,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             }
         }
 
+        ImGui::SeparatorText("Hybrid RT effects");
         bool debugTraceEnabled = dxrSettings.IsDebugTraceEnabled();
         UndoableRendererCheckbox(
             "Enable RT debug trace",
@@ -2006,7 +2014,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         ImGui::PopID();
 
         const DxrDiagnostics& dxrDiagnostics = renderer.GetDxrDiagnostics();
-        ImGui::Separator();
+        ImGui::SeparatorText("Runtime diagnostics");
         ImGui::Text("BLAS count: %u", dxrDiagnostics.blasCount);
         ImGui::Text("TLAS instances: %u", dxrDiagnostics.tlasInstanceCount);
         ImGui::Text("RT triangles (unique): %llu", static_cast<unsigned long long>(dxrDiagnostics.totalRtTriangles));

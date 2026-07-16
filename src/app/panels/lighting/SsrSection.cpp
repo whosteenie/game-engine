@@ -67,6 +67,7 @@ void DrawSsrSection(const LightingPanelContext& ctx)
         LightingPanelUi::DrawWrappedHelp(
             "Specular screen-space trace from the scene-color buffer. Use Diagnostics > SSR views to inspect stages.");
 
+        ImGui::PushID("SSR");
         if (sectionDisabled)
         {
             ImGui::BeginDisabled();
@@ -214,5 +215,6 @@ void DrawSsrSection(const LightingPanelContext& ctx)
         {
             ImGui::EndDisabled();
         }
+        ImGui::PopID();
     }
 }

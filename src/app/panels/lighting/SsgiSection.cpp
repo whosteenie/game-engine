@@ -72,6 +72,7 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
         LightingPanelUi::DrawWrappedHelp(
             "Screen-space indirect from the radiance buffer. Use Diagnostics > SSGI views to inspect the pipeline.");
 
+        ImGui::PushID("SSGI");
         if (sectionDisabled)
         {
             ImGui::BeginDisabled();
@@ -219,5 +220,6 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
         {
             ImGui::EndDisabled();
         }
+        ImGui::PopID();
     }
 }
