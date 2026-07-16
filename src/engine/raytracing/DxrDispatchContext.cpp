@@ -1272,7 +1272,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     const bool historyOk = m_ptPrevSurfaceHistoryValid && m_restirReservoirHistoryValid
         && dispatchConstants.historyValid != 0u;
     FrameDiagnostics::LogHistoryEvent(
-        0,
+        m_historyViewportId,
         "restir-temporal",
         historyOk ? "consume" : "request",
         "path-tracer",

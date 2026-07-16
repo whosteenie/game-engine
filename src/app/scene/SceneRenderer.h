@@ -230,7 +230,8 @@ private:
         Framebuffer* target,
         const SceneRenderOptions& options,
         bool freezeTemporalJitter,
-        bool splitLightingMrt);
+        bool splitLightingMrt,
+        RenderViewport renderViewport);
     void RenderGizmoPass(
         const Scene& scene,
         const Camera& camera,
@@ -243,7 +244,8 @@ private:
         int dispatchWidth,
         int dispatchHeight,
         std::uintptr_t depthSrvCpuHandle,
-        bool usePostProcess);
+        bool usePostProcess,
+        RenderViewport renderViewport);
     void SyncEffectiveMaterialMipBias() const;
     void EnsureGameViewScreenSpaceEffects();
     void SyncGameViewScreenSpaceSettings();

@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <stdexcept>
 
 namespace
 {
@@ -47,32 +48,26 @@ DxrPathTracerDispatch::~DxrPathTracerDispatch()
     Release();
 }
 
-void DxrPathTracerDispatch::Release()
+DxrPathTracerDispatch::ViewportState::ViewportState(const std::uint32_t viewportId)
+    : ViewportSequenceState(viewportId)
 {
-    ReleaseCore();
-    m_diagnosticShaderBindingTable.Release();
-    m_diagnosticPipeline.Release();
-    m_serShaderBindingTable.Release();
-    m_serPipeline.Release();
-    m_serDiagnosticShaderBindingTable.Release();
-    m_serDiagnosticPipeline.Release();
-    m_diagnosticPipelineReady = false;
-    m_serPipelineReady = false;
-    m_serDiagnosticPipelineReady = false;
+    m_dispatchContext.SetHistoryViewportId(viewportId);
+}
+
+void DxrPathTracerDispatch::ViewportState::ReleaseResources()
+{
+    m_dispatchContext.Release();
+    BeginEvaluation();
     m_activeDiagnosticPermutation = false;
     m_activeSerPermutation = false;
-    m_frameIndex = 0;
+    ResetAccumulation();
     m_lastCameraPacket = {};
     m_lastCameraConstants = {};
 }
 
-void DxrPathTracerDispatch::ResetProjectResources()
+void DxrPathTracerDispatch::ViewportState::ResetProjectResources()
 {
-    ResetDispatchResources();
-    m_dispatchedThisFrame = false;
-    m_activeDiagnosticPermutation = false;
-    m_activeSerPermutation = false;
-    m_frameIndex = 0;
+    ReleaseResources();
     m_lastEnvEquirectSrvCpuHandle = 0;
     m_lastEnvImportanceCdfSrvIndex = UINT32_MAX;
     m_lastEnvImportanceCount = 0;
@@ -85,8 +80,56 @@ void DxrPathTracerDispatch::ResetProjectResources()
     m_lastSunDirection = glm::vec3(0.0f, 1.0f, 0.0f);
     m_lastSunAngularTanRadius = 0.0f;
     m_lastDebugMode = 0;
-    m_lastCameraPacket = {};
-    m_lastCameraConstants = {};
+}
+
+DxrPathTracerDispatch::ViewportState& DxrPathTracerDispatch::StateFor(
+    const std::uint32_t viewportId)
+{
+    if (viewportId == m_sceneViewportState.GetViewportId())
+    {
+        return m_sceneViewportState;
+    }
+    if (viewportId == m_gameViewportState.GetViewportId())
+    {
+        return m_gameViewportState;
+    }
+    throw std::out_of_range("Unsupported path-tracer viewport id");
+}
+
+const DxrPathTracerDispatch::ViewportState& DxrPathTracerDispatch::StateFor(
+    const std::uint32_t viewportId) const
+{
+    if (viewportId == m_sceneViewportState.GetViewportId())
+    {
+        return m_sceneViewportState;
+    }
+    if (viewportId == m_gameViewportState.GetViewportId())
+    {
+        return m_gameViewportState;
+    }
+    throw std::out_of_range("Unsupported path-tracer viewport id");
+}
+
+void DxrPathTracerDispatch::Release()
+{
+    m_sceneViewportState.ReleaseResources();
+    m_gameViewportState.ReleaseResources();
+    ReleaseCore();
+    m_diagnosticShaderBindingTable.Release();
+    m_diagnosticPipeline.Release();
+    m_serShaderBindingTable.Release();
+    m_serPipeline.Release();
+    m_serDiagnosticShaderBindingTable.Release();
+    m_serDiagnosticPipeline.Release();
+    m_diagnosticPipelineReady = false;
+    m_serPipelineReady = false;
+    m_serDiagnosticPipelineReady = false;
+}
+
+void DxrPathTracerDispatch::ResetProjectResources()
+{
+    m_sceneViewportState.ResetProjectResources();
+    m_gameViewportState.ResetProjectResources();
 }
 
 void DxrPathTracerDispatch::SetSerOverride(const SerOverride value)
@@ -223,6 +266,7 @@ bool DxrPathTracerDispatch::EnsurePipeline(
 }
 
 bool DxrPathTracerDispatch::DispatchIfEnabled(
+    const std::uint32_t viewportId,
     const DxrAccelerationStructures& accelerationStructures,
     const Camera& camera,
     const bool dxrEnabled,
@@ -241,7 +285,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const int ptAmbientAoRayCount,
     const int ptDebugIsolateMode)
 {
-    m_dispatchedThisFrame = false;
+    ViewportState& viewport = StateFor(viewportId);
+    viewport.BeginEvaluation();
 
     if (!pathTracingActive)
     {
@@ -301,13 +346,14 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         }
     }
 
-    if (m_activeDiagnosticPermutation != diagnosticPermutation || m_activeSerPermutation != serPermutation)
+    if (viewport.m_activeDiagnosticPermutation != diagnosticPermutation
+        || viewport.m_activeSerPermutation != serPermutation)
     {
         // Reservoir contents and the displayed PT output must never cross a permutation boundary.
         // This is intentionally the only invalidation performed for a switch.
-        m_dispatchContext.InvalidateRestirHistory();
-        m_activeDiagnosticPermutation = diagnosticPermutation;
-        m_activeSerPermutation = serPermutation;
+        viewport.m_dispatchContext.InvalidateRestirHistory();
+        viewport.m_activeDiagnosticPermutation = diagnosticPermutation;
+        viewport.m_activeSerPermutation = serPermutation;
     }
 
     DxrBreadcrumb("path-tracer dispatch begin");
@@ -323,28 +369,28 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         || !TryBuildCameraConstants(
             frameInputs.cameraPacket,
             frameInputs.centerPrimaryRays,
-            m_lastCameraConstants))
+            viewport.m_lastCameraConstants))
     {
-        m_dispatchContext.InvalidateRestirHistory();
+        viewport.m_dispatchContext.InvalidateRestirHistory();
         DxrBreadcrumb("path-tracer skipped: current camera packet incomplete");
         return false;
     }
-    if (!m_lastCameraConstants.historyValid)
+    if (!viewport.m_lastCameraConstants.historyValid)
     {
         // These are complete current-camera values, never identity/zero substitutes. Both the PT
         // motion flag and ReSTIR history flag prohibit temporal consumers from reading them.
-        m_dispatchContext.InvalidateRestirHistory();
+        viewport.m_dispatchContext.InvalidateRestirHistory();
     }
-    m_lastCameraPacket = frameInputs.cameraPacket;
+    viewport.m_lastCameraPacket = frameInputs.cameraPacket;
 
-    const glm::mat4& viewMatrix = m_lastCameraConstants.view;
-    const glm::mat4& viewProj = m_lastCameraConstants.viewProjection;
-    const glm::mat4& invViewProj = m_lastCameraConstants.inverseViewProjection;
+    const glm::mat4& viewMatrix = viewport.m_lastCameraConstants.view;
+    const glm::mat4& viewProj = viewport.m_lastCameraConstants.viewProjection;
+    const glm::mat4& invViewProj = viewport.m_lastCameraConstants.inverseViewProjection;
     const glm::mat4& unjitteredViewProj =
-        m_lastCameraConstants.unjitteredViewProjection;
+        viewport.m_lastCameraConstants.unjitteredViewProjection;
     // g_PrevViewProj (MV output projection + sky anchor): prev UNJITTERED — jitter must never
     // appear in the emitted motion vectors (motionVectorsJittered = false).
-    const glm::mat4& prevViewProj = m_lastCameraConstants.previousViewProjection;
+    const glm::mat4& prevViewProj = viewport.m_lastCameraConstants.previousViewProjection;
     // g_PrevInvViewProj (glass virtual-motion ray REPLAY only): prev VIEW composed with the
     // CURRENT jittered projection, so the replayed prev primary ray enters the pane at the same
     // sub-pixel offset as this frame's ray. Jitter then cancels out of the virtual MV: static
@@ -353,9 +399,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     // (pre-cab2529 behavior) diverged the two refraction paths by the per-frame Halton delta,
     // which refraction amplifies -> frame-varying MVs on STATIC glass -> RR boiled the glass.
     const glm::mat4& prevInvViewProj =
-        m_lastCameraConstants.previousReplayInverseViewProjection;
-    const glm::vec3& cameraPos = m_lastCameraConstants.worldPosition;
-    const glm::vec3& prevCameraPos = m_lastCameraConstants.previousWorldPosition;
+        viewport.m_lastCameraConstants.previousReplayInverseViewProjection;
+    const glm::vec3& cameraPos = viewport.m_lastCameraConstants.worldPosition;
+    const glm::vec3& prevCameraPos = viewport.m_lastCameraConstants.previousWorldPosition;
 
     DxrRootSignature::ReflectionDispatchConstants constants{};
     constants.outputWidth = static_cast<std::uint32_t>(width);
@@ -383,7 +429,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.maxTraceDistance = maxTraceDistance;
     constants.environmentIntensity = frameInputs.environmentIntensity;
     constants.maxReflectionLod = frameInputs.maxReflectionLod;
-    constants.frameIndex = m_frameIndex;
+    constants.frameIndex = viewport.GetAccumulationFrameIndex();
     constants.samplesPerPixel = static_cast<std::uint32_t>(std::clamp(ptMaxBounces, 1, 16));
     // Path-tracer-only packing in reflection fields unused by this pass (see path_tracer.hlsl).
     constants.aoRayCount = ptFireflyClamp ? 1u : 0u;
@@ -414,7 +460,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         / static_cast<float>(std::max(height, 1));
     // _PadUnjitteredViewProj.w = motion history valid (lit.vs uTemporalHistoryValid parity).
     constants.paddingUnjitteredViewProj[3] =
-        m_lastCameraConstants.historyValid ? 1.0f : 0.0f;
+        viewport.m_lastCameraConstants.historyValid ? 1.0f : 0.0f;
     constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptDebugIsolateMode =
@@ -440,18 +486,18 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.restirGiInitialEnabled = frameInputs.restirGiInitialEnabled ? 1.0f : 0.0f;
     constants._restirDiPad1 = frameInputs.environmentRotationYRadians;
 
-    m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
-    m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
-    m_lastEnvImportanceCount = frameInputs.envImportanceSampleCount;
-    m_lastEnvCdfWidth = frameInputs.envImportanceCdfWidth;
-    m_lastEnvCdfHeight = frameInputs.envImportanceCdfHeight;
-    m_lastEnvironmentIntensity = frameInputs.environmentIntensity;
-    m_lastEnvironmentRotationYRadians = frameInputs.environmentRotationYRadians;
-    m_lastEnvDirectLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
-    m_lastSunIntensity = frameInputs.sunIntensity;
-    m_lastSunDirection = frameInputs.sunDirection;
-    m_lastSunAngularTanRadius = std::tan(glm::radians(frameInputs.sunAngularRadiusDegrees));
-    m_lastDebugMode = static_cast<std::uint32_t>(std::max(ptDebugIsolateMode, 0));
+    viewport.m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
+    viewport.m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
+    viewport.m_lastEnvImportanceCount = frameInputs.envImportanceSampleCount;
+    viewport.m_lastEnvCdfWidth = frameInputs.envImportanceCdfWidth;
+    viewport.m_lastEnvCdfHeight = frameInputs.envImportanceCdfHeight;
+    viewport.m_lastEnvironmentIntensity = frameInputs.environmentIntensity;
+    viewport.m_lastEnvironmentRotationYRadians = frameInputs.environmentRotationYRadians;
+    viewport.m_lastEnvDirectLuminanceClamp = frameInputs.envDirectLightingLuminanceClamp;
+    viewport.m_lastSunIntensity = frameInputs.sunIntensity;
+    viewport.m_lastSunDirection = frameInputs.sunDirection;
+    viewport.m_lastSunAngularTanRadius = std::tan(glm::radians(frameInputs.sunAngularRadiusDegrees));
+    viewport.m_lastDebugMode = static_cast<std::uint32_t>(std::max(ptDebugIsolateMode, 0));
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = accelerationStructures.GetTlasResource();
@@ -478,7 +524,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.envEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
 
     const GfxContext::GpuTimerScope gpuScopePrimary("Path tracer/Primary rays");
-    if (!m_dispatchContext.DispatchPathTracer(
+    if (!viewport.m_dispatchContext.DispatchPathTracer(
             commandList4,
             serPermutation
                 ? (diagnosticPermutation ? m_serDiagnosticPipeline.GetStateObject() : m_serPipeline.GetStateObject())
@@ -504,16 +550,16 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         return false;
     }
 
-    ++m_frameIndex;
+    viewport.CommitRenderedFrame();
     DxrBreadcrumb("path-tracer dispatch ok");
     dispatchScope.Success();
     DxrEnableTrustMode();
-    m_dispatchedThisFrame = true;
     GfxContext::Get().ReportDxrPathTracerDispatch(diagnosticPermutation, serPermutation);
     return true;
 }
 
 bool DxrPathTracerDispatch::DispatchRestirTemporal(
+    const std::uint32_t viewportId,
     DxrRestirDispatch& restirDispatch,
     const DxrAccelerationStructures& accelerationStructures,
     const Camera& camera,
@@ -526,7 +572,8 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     const bool enableGiTemporal,
     const bool shadeOutput)
 {
-    if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsPipelineReady())
+    ViewportState& viewport = StateFor(viewportId);
+    if (!realTimeMode || !viewport.DispatchedThisFrame() || !restirDispatch.IsPipelineReady())
     {
         return false;
     }
@@ -537,33 +584,35 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
         return false;
     }
 
-    m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion, motionVersion);
+    viewport.m_dispatchContext.InvalidateRestirHistoryIfSceneChanged(sceneVersion, motionVersion);
 
     const bool duplicateCameraAgrees = TemporalCamera::Agree(
-        m_lastCameraPacket.current,
+        viewport.m_lastCameraPacket.current,
         CameraStateFromCamera(camera));
     assert(duplicateCameraAgrees && "ReSTIR temporal current camera packet mismatch");
     if (!duplicateCameraAgrees)
     {
-        m_dispatchContext.InvalidateRestirHistory();
+        viewport.m_dispatchContext.InvalidateRestirHistory();
         return false;
     }
 
     DxrRootSignature::RestirTemporalConstants constants{};
-    constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
-    constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
-    constants.historyValid = m_lastCameraConstants.historyValid ? 1u : 0u;
-    constants.frameIndex = m_frameIndex;
+    constants.outputWidth =
+        static_cast<std::uint32_t>(viewport.m_dispatchContext.GetRestirBufferWidth());
+    constants.outputHeight =
+        static_cast<std::uint32_t>(viewport.m_dispatchContext.GetRestirBufferHeight());
+    constants.historyValid = viewport.m_lastCameraConstants.historyValid ? 1u : 0u;
+    constants.frameIndex = viewport.GetAccumulationFrameIndex();
     std::memcpy(
         constants.invViewProj,
-        glm::value_ptr(m_lastCameraConstants.inverseViewProjection),
+        glm::value_ptr(viewport.m_lastCameraConstants.inverseViewProjection),
         sizeof(constants.invViewProj));
-    constants.cameraPos[0] = m_lastCameraConstants.worldPosition.x;
-    constants.cameraPos[1] = m_lastCameraConstants.worldPosition.y;
-    constants.cameraPos[2] = m_lastCameraConstants.worldPosition.z;
-    constants.prevCameraPos[0] = m_lastCameraConstants.previousWorldPosition.x;
-    constants.prevCameraPos[1] = m_lastCameraConstants.previousWorldPosition.y;
-    constants.prevCameraPos[2] = m_lastCameraConstants.previousWorldPosition.z;
+    constants.cameraPos[0] = viewport.m_lastCameraConstants.worldPosition.x;
+    constants.cameraPos[1] = viewport.m_lastCameraConstants.worldPosition.y;
+    constants.cameraPos[2] = viewport.m_lastCameraConstants.worldPosition.z;
+    constants.prevCameraPos[0] = viewport.m_lastCameraConstants.previousWorldPosition.x;
+    constants.prevCameraPos[1] = viewport.m_lastCameraConstants.previousWorldPosition.y;
+    constants.prevCameraPos[2] = viewport.m_lastCameraConstants.previousWorldPosition.z;
     constants.maxTraceDistance = maxTraceDistance;
     constants.shadeOutput = shadeOutput ? 1u : 0u;
     constants.spatialSampleCount = 5u;
@@ -571,24 +620,24 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
     constants.spatialIteration = 0u;
     constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
-    constants.envImportanceCount = m_lastEnvImportanceCount;
-    constants.envCdfWidth = m_lastEnvCdfWidth;
-    constants.envCdfHeight = m_lastEnvCdfHeight;
-    constants.environmentIntensity = m_lastEnvironmentIntensity;
-    constants.environmentRotationYRadians = m_lastEnvironmentRotationYRadians;
-    constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
-    constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
-    constants.sunDirection[0] = m_lastSunDirection.x;
-    constants.sunDirection[1] = m_lastSunDirection.y;
-    constants.sunDirection[2] = m_lastSunDirection.z;
-    constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
-    constants.debugMode = m_lastDebugMode;
+    constants.envImportanceCount = viewport.m_lastEnvImportanceCount;
+    constants.envCdfWidth = viewport.m_lastEnvCdfWidth;
+    constants.envCdfHeight = viewport.m_lastEnvCdfHeight;
+    constants.environmentIntensity = viewport.m_lastEnvironmentIntensity;
+    constants.environmentRotationYRadians = viewport.m_lastEnvironmentRotationYRadians;
+    constants.envDirectLuminanceClamp = viewport.m_lastEnvDirectLuminanceClamp;
+    constants.analyticSunActive = viewport.m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
+    constants.sunDirection[0] = viewport.m_lastSunDirection.x;
+    constants.sunDirection[1] = viewport.m_lastSunDirection.y;
+    constants.sunDirection[2] = viewport.m_lastSunDirection.z;
+    constants.sunAngularTanRadius = viewport.m_lastSunAngularTanRadius;
+    constants.debugMode = viewport.m_lastDebugMode;
     constants.enableDiTemporal = enableDiTemporal ? 1u : 0u;
     constants.enableGiTemporal = enableGiTemporal ? 1u : 0u;
 
     std::string error;
     const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR temporal");
-    if (!m_dispatchContext.DispatchRestirTemporal(
+    if (!viewport.m_dispatchContext.DispatchRestirTemporal(
             commandList4,
             restirDispatch.GetStateObject(),
             restirDispatch.GetGlobalRootSignature(),
@@ -601,10 +650,10 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
             accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
                 ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
                 : accelerationStructures.GetGeometryLookupSrvIndex(),
-            m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
-                ? m_lastEnvImportanceCdfSrvIndex
+            viewport.m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                ? viewport.m_lastEnvImportanceCdfSrvIndex
                 : accelerationStructures.GetGeometryLookupSrvIndex(),
-            m_lastEnvEquirectSrvCpuHandle,
+            viewport.m_lastEnvEquirectSrvCpuHandle,
             constants,
             error))
     {
@@ -618,6 +667,7 @@ bool DxrPathTracerDispatch::DispatchRestirTemporal(
 }
 
 bool DxrPathTracerDispatch::DispatchRestirSpatial(
+    const std::uint32_t viewportId,
     DxrRestirDispatch& restirDispatch,
     const DxrAccelerationStructures& accelerationStructures,
     const Camera& camera,
@@ -629,7 +679,8 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     const bool enableGiSpatialReuse,
     const bool shadeOutput)
 {
-    if (!realTimeMode || !m_dispatchedThisFrame || !restirDispatch.IsSpatialPipelineReady())
+    ViewportState& viewport = StateFor(viewportId);
+    if (!realTimeMode || !viewport.DispatchedThisFrame() || !restirDispatch.IsSpatialPipelineReady())
     {
         return false;
     }
@@ -641,12 +692,12 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     }
 
     const bool duplicateCameraAgrees = TemporalCamera::Agree(
-        m_lastCameraPacket.current,
+        viewport.m_lastCameraPacket.current,
         CameraStateFromCamera(camera));
     assert(duplicateCameraAgrees && "ReSTIR spatial current camera packet mismatch");
     if (!duplicateCameraAgrees)
     {
-        m_dispatchContext.InvalidateRestirHistory();
+        viewport.m_dispatchContext.InvalidateRestirHistory();
         return false;
     }
 
@@ -658,20 +709,22 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
 
     const auto makeSpatialConstants = [&](const std::uint32_t iteration, const bool shadeThisPass) {
         DxrRootSignature::RestirTemporalConstants constants{};
-        constants.outputWidth = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferWidth());
-        constants.outputHeight = static_cast<std::uint32_t>(m_dispatchContext.GetRestirBufferHeight());
-        constants.historyValid = m_lastCameraConstants.historyValid ? 1u : 0u;
-        constants.frameIndex = m_frameIndex;
+        constants.outputWidth =
+            static_cast<std::uint32_t>(viewport.m_dispatchContext.GetRestirBufferWidth());
+        constants.outputHeight =
+            static_cast<std::uint32_t>(viewport.m_dispatchContext.GetRestirBufferHeight());
+        constants.historyValid = viewport.m_lastCameraConstants.historyValid ? 1u : 0u;
+        constants.frameIndex = viewport.GetAccumulationFrameIndex();
         std::memcpy(
             constants.invViewProj,
-            glm::value_ptr(m_lastCameraConstants.inverseViewProjection),
+            glm::value_ptr(viewport.m_lastCameraConstants.inverseViewProjection),
             sizeof(constants.invViewProj));
-        constants.cameraPos[0] = m_lastCameraConstants.worldPosition.x;
-        constants.cameraPos[1] = m_lastCameraConstants.worldPosition.y;
-        constants.cameraPos[2] = m_lastCameraConstants.worldPosition.z;
-        constants.prevCameraPos[0] = m_lastCameraConstants.previousWorldPosition.x;
-        constants.prevCameraPos[1] = m_lastCameraConstants.previousWorldPosition.y;
-        constants.prevCameraPos[2] = m_lastCameraConstants.previousWorldPosition.z;
+        constants.cameraPos[0] = viewport.m_lastCameraConstants.worldPosition.x;
+        constants.cameraPos[1] = viewport.m_lastCameraConstants.worldPosition.y;
+        constants.cameraPos[2] = viewport.m_lastCameraConstants.worldPosition.z;
+        constants.prevCameraPos[0] = viewport.m_lastCameraConstants.previousWorldPosition.x;
+        constants.prevCameraPos[1] = viewport.m_lastCameraConstants.previousWorldPosition.y;
+        constants.prevCameraPos[2] = viewport.m_lastCameraConstants.previousWorldPosition.z;
         constants.maxTraceDistance = maxTraceDistance;
         constants.shadeOutput = shadeThisPass ? 1u : 0u;
         constants.spatialSampleCount = 5u;
@@ -679,18 +732,18 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         constants.spatialIteration = iteration;
         constants.emissiveLightCount = accelerationStructures.GetEmissiveLightCount();
         constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
-        constants.envImportanceCount = m_lastEnvImportanceCount;
-        constants.envCdfWidth = m_lastEnvCdfWidth;
-        constants.envCdfHeight = m_lastEnvCdfHeight;
-        constants.environmentIntensity = m_lastEnvironmentIntensity;
-        constants.environmentRotationYRadians = m_lastEnvironmentRotationYRadians;
-        constants.envDirectLuminanceClamp = m_lastEnvDirectLuminanceClamp;
-        constants.analyticSunActive = m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
-        constants.sunDirection[0] = m_lastSunDirection.x;
-        constants.sunDirection[1] = m_lastSunDirection.y;
-        constants.sunDirection[2] = m_lastSunDirection.z;
-        constants.sunAngularTanRadius = m_lastSunAngularTanRadius;
-        constants.debugMode = m_lastDebugMode;
+        constants.envImportanceCount = viewport.m_lastEnvImportanceCount;
+        constants.envCdfWidth = viewport.m_lastEnvCdfWidth;
+        constants.envCdfHeight = viewport.m_lastEnvCdfHeight;
+        constants.environmentIntensity = viewport.m_lastEnvironmentIntensity;
+        constants.environmentRotationYRadians = viewport.m_lastEnvironmentRotationYRadians;
+        constants.envDirectLuminanceClamp = viewport.m_lastEnvDirectLuminanceClamp;
+        constants.analyticSunActive = viewport.m_lastSunIntensity > 1e-4f ? 1.0f : 0.0f;
+        constants.sunDirection[0] = viewport.m_lastSunDirection.x;
+        constants.sunDirection[1] = viewport.m_lastSunDirection.y;
+        constants.sunDirection[2] = viewport.m_lastSunDirection.z;
+        constants.sunAngularTanRadius = viewport.m_lastSunAngularTanRadius;
+        constants.debugMode = viewport.m_lastDebugMode;
         // The shared cbuffer fields select the corresponding resampling domain in either pass.
         constants.enableDiTemporal = enableDiSpatial ? 1u : 0u;
         constants.enableGiTemporal = enableGiSpatialReuse ? 1u : 0u;
@@ -703,7 +756,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
             makeSpatialConstants(0u, false);
         std::string filterError;
         const GfxContext::GpuTimerScope gpuScope("Path tracer/ReSTIR GI boiling filter");
-        if (!m_dispatchContext.DispatchRestirSpatial(
+        if (!viewport.m_dispatchContext.DispatchRestirSpatial(
                 commandList4,
                 restirDispatch.GetStateObject(),
                 restirDispatch.GetGlobalRootSignature(),
@@ -716,10 +769,10 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
                 accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
                     ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
                     : accelerationStructures.GetGeometryLookupSrvIndex(),
-                m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
-                    ? m_lastEnvImportanceCdfSrvIndex
+                viewport.m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                    ? viewport.m_lastEnvImportanceCdfSrvIndex
                     : accelerationStructures.GetGeometryLookupSrvIndex(),
-                m_lastEnvEquirectSrvCpuHandle,
+                viewport.m_lastEnvEquirectSrvCpuHandle,
                 filterConstants,
                 true,
                 filterError))
@@ -740,7 +793,7 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
         std::string error;
         const GfxContext::GpuTimerScope gpuScope(
             iteration == 0u ? "Path tracer/ReSTIR spatial 0" : "Path tracer/ReSTIR spatial 1");
-        if (!m_dispatchContext.DispatchRestirSpatial(
+        if (!viewport.m_dispatchContext.DispatchRestirSpatial(
                 commandList4,
                 restirDispatch.GetStateObject(),
                 restirDispatch.GetGlobalRootSignature(),
@@ -753,10 +806,10 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
                 accelerationStructures.GetEmissiveTrianglesSrvIndex() != UINT32_MAX
                     ? accelerationStructures.GetEmissiveTrianglesSrvIndex()
                     : accelerationStructures.GetGeometryLookupSrvIndex(),
-                m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
-                    ? m_lastEnvImportanceCdfSrvIndex
+                viewport.m_lastEnvImportanceCdfSrvIndex != UINT32_MAX
+                    ? viewport.m_lastEnvImportanceCdfSrvIndex
                     : accelerationStructures.GetGeometryLookupSrvIndex(),
-                m_lastEnvEquirectSrvCpuHandle,
+                viewport.m_lastEnvEquirectSrvCpuHandle,
                 constants,
                 false,
                 error))
@@ -771,104 +824,151 @@ bool DxrPathTracerDispatch::DispatchRestirSpatial(
     return true;
 }
 
-void DxrPathTracerDispatch::FinalizePathTracerSurfaceHistory(void* commandList)
+void DxrPathTracerDispatch::FinalizePathTracerSurfaceHistory(
+    const std::uint32_t viewportId,
+    void* const commandList)
 {
-    m_dispatchContext.FinalizePathTracerSurfaceHistory(
+    StateFor(viewportId).m_dispatchContext.FinalizePathTracerSurfaceHistory(
         static_cast<ID3D12GraphicsCommandList*>(commandList));
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPrimaryOutputSrvCpuHandle() const
+void DxrPathTracerDispatch::InvalidateRestirHistory(const std::uint32_t viewportId)
 {
-    return m_dispatchContext.GetPrimaryOutputSrvCpuHandle();
+    StateFor(viewportId).m_dispatchContext.InvalidateRestirHistory();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPrimaryMetadataSrvCpuHandle() const
+void DxrPathTracerDispatch::ResetAccumulation(const std::uint32_t viewportId)
 {
-    return m_dispatchContext.GetPrimaryMetadataSrvCpuHandle();
+    StateFor(viewportId).ResetAccumulation();
 }
 
-ID3D12Resource* DxrPathTracerDispatch::GetPrimaryOutputResource() const
+std::uint32_t DxrPathTracerDispatch::GetAccumulationFrameIndex(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPrimaryOutputResource();
+    return StateFor(viewportId).GetAccumulationFrameIndex();
 }
 
-std::uint32_t DxrPathTracerDispatch::GetPrimaryOutputResourceState() const
+bool DxrPathTracerDispatch::DispatchedThisFrame(const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPrimaryOutputResourceState();
+    return StateFor(viewportId).DispatchedThisFrame();
 }
 
-void DxrPathTracerDispatch::SetPrimaryOutputResourceState(const std::uint32_t state)
+bool DxrPathTracerDispatch::IsSerActive(const std::uint32_t viewportId) const
 {
-    m_dispatchContext.SetPrimaryOutputResourceState(state);
+    return StateFor(viewportId).m_activeSerPermutation;
 }
 
-ID3D12Resource* DxrPathTracerDispatch::GetPathTracerDepthResource() const
+std::uintptr_t DxrPathTracerDispatch::GetPrimaryOutputSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerDepthResource();
+    return StateFor(viewportId).m_dispatchContext.GetPrimaryOutputSrvCpuHandle();
 }
 
-std::uint32_t DxrPathTracerDispatch::GetPathTracerDepthResourceState() const
+std::uintptr_t DxrPathTracerDispatch::GetPrimaryMetadataSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerDepthResourceState();
+    return StateFor(viewportId).m_dispatchContext.GetPrimaryMetadataSrvCpuHandle();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerDepthSrvCpuHandle() const
+ID3D12Resource* DxrPathTracerDispatch::GetPrimaryOutputResource(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerDepthSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPrimaryOutputResource();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerMotionSrvCpuHandle() const
+std::uint32_t DxrPathTracerDispatch::GetPrimaryOutputResourceState(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerMotionSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPrimaryOutputResourceState();
 }
 
-ID3D12Resource* DxrPathTracerDispatch::GetPathTracerMotionResource() const
+void DxrPathTracerDispatch::SetPrimaryOutputResourceState(
+    const std::uint32_t viewportId,
+    const std::uint32_t state)
 {
-    return m_dispatchContext.GetPathTracerMotionResource();
+    StateFor(viewportId).m_dispatchContext.SetPrimaryOutputResourceState(state);
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerDiffuseAlbedoSrvCpuHandle() const
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerDepthResource(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerDiffuseAlbedoSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerDepthResource();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerSpecularAlbedoSrvCpuHandle() const
+std::uint32_t DxrPathTracerDispatch::GetPathTracerDepthResourceState(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerSpecularAlbedoSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerDepthResourceState();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle() const
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerDepthSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerDepthSrvCpuHandle();
 }
 
-bool DxrPathTracerDispatch::IsPathTracerPrevSurfaceHistoryValid() const
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerMotionSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.IsPathTracerPrevSurfaceHistoryValid();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerMotionSrvCpuHandle();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevDepthSrvCpuHandle() const
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerMotionResource(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerPrevDepthSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerMotionResource();
 }
 
-std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerDiffuseAlbedoSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerPrevNormalRoughnessSrvCpuHandle();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerDiffuseAlbedoSrvCpuHandle();
 }
 
-bool DxrPathTracerDispatch::HasRestirBuffers() const
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerSpecularAlbedoSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.HasRestirBuffers();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerSpecularAlbedoSrvCpuHandle();
 }
 
-std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState() const
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPathTracerMotionResourceState();
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
 }
 
-bool DxrPathTracerDispatch::HasValidOutput() const
+bool DxrPathTracerDispatch::IsPathTracerPrevSurfaceHistoryValid(
+    const std::uint32_t viewportId) const
 {
-    return m_dispatchContext.GetPrimaryOutputSrvCpuHandle() != 0
-        && m_dispatchContext.GetPrimaryMetadataSrvCpuHandle() != 0;
+    return StateFor(viewportId).m_dispatchContext.IsPathTracerPrevSurfaceHistoryValid();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevDepthSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerPrevDepthSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPrevNormalRoughnessSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerPrevNormalRoughnessSrvCpuHandle();
+}
+
+bool DxrPathTracerDispatch::HasRestirBuffers(const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.HasRestirBuffers();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerMotionResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerMotionResourceState();
+}
+
+bool DxrPathTracerDispatch::HasValidOutput(const std::uint32_t viewportId) const
+{
+    const DxrDispatchContext& context = StateFor(viewportId).m_dispatchContext;
+    return context.GetPrimaryOutputSrvCpuHandle() != 0
+        && context.GetPrimaryMetadataSrvCpuHandle() != 0;
 }

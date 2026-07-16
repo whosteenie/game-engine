@@ -29,6 +29,12 @@ public:
     DxrDispatchContext(const DxrDispatchContext&) = delete;
     DxrDispatchContext& operator=(const DxrDispatchContext&) = delete;
 
+    // History resources are viewport-local even though the RTPSO and scene acceleration data are
+    // shared. The owner id is diagnostic metadata only; callers must still provide a distinct
+    // DxrDispatchContext for every concurrently retained viewport history.
+    void SetHistoryViewportId(const std::uint32_t viewportId) { m_historyViewportId = viewportId; }
+    std::uint32_t GetHistoryViewportId() const { return m_historyViewportId; }
+
     bool EnsureOutput(int width, int height, std::string& outError);
     void Release();
 
@@ -482,6 +488,7 @@ private:
     std::uint32_t m_restirElementCount = 0;
     int m_restirWriteIndex = 0; // PT + temporal write; other index is prev-frame read
     bool m_restirReservoirHistoryValid = false;
+    std::uint32_t m_historyViewportId = 0;
     std::uint32_t m_restirLastSceneVersion = 0;
     std::uint32_t m_restirLastMotionVersion = 0;
     std::vector<RetiredOutput> m_retiredRestirBuffers;

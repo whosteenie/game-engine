@@ -529,6 +529,7 @@ add_executable(engine-tests
     tests/capture_manifest_test.cpp
     tests/temporal_camera_packet_test.cpp
     tests/dlss_frame_token_test.cpp
+    tests/pt_viewport_ownership_test.cpp
     tests/shader_compile_test.cpp
 )
 

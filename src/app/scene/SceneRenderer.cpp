@@ -122,8 +122,12 @@ void SceneRenderer::ApplyPendingSceneContentInvalidation()
     // Real-time PT owns ReSTIR and its own accumulation independently of ScreenSpaceEffects.
     if (m_dxrPathTracerDispatch != nullptr)
     {
-        m_dxrPathTracerDispatch->ResetAccumulation();
-        m_dxrPathTracerDispatch->InvalidateRestirHistory();
+        for (const RenderViewport viewport : {RenderViewport::SceneView, RenderViewport::GameView})
+        {
+            const std::uint32_t viewportId = RenderViewportHistoryId(viewport);
+            m_dxrPathTracerDispatch->ResetAccumulation(viewportId);
+            m_dxrPathTracerDispatch->InvalidateRestirHistory(viewportId);
+        }
     }
 
     m_sceneContentInvalidationPending = false;
@@ -163,8 +167,9 @@ void SceneRenderer::ResetPathTracerRestirDiagnosticState()
     }
     if (m_dxrPathTracerDispatch != nullptr)
     {
-        m_dxrPathTracerDispatch->ResetAccumulation();
-        m_dxrPathTracerDispatch->InvalidateRestirHistory();
+        const std::uint32_t sceneViewportId = RenderViewportHistoryId(RenderViewport::SceneView);
+        m_dxrPathTracerDispatch->ResetAccumulation(sceneViewportId);
+        m_dxrPathTracerDispatch->InvalidateRestirHistory(sceneViewportId);
     }
 }
 
@@ -994,8 +999,10 @@ void SceneRenderer::RecordDxrPass(
     const int dispatchWidth,
     const int dispatchHeight,
     const std::uintptr_t depthSrvCpuHandle,
-    const bool usePostProcess)
+    const bool usePostProcess,
+    const RenderViewport renderViewport)
 {
+    const std::uint32_t pathTracerViewportId = RenderViewportHistoryId(renderViewport);
     if (!m_dxrSettings.IsEnabled() || !GfxContext::Get().IsRaytracingSupported())
     {
         // Master RT off (or unsupported): clear every DXR SRV + composite flag so the post stack
@@ -1118,6 +1125,7 @@ void SceneRenderer::RecordDxrPass(
         // it records this frame's SRV->UAV transition. Without this handoff the enhanced barriers
         // validator rejects the command list and shutdown cannot safely drain/release the RTPSO.
         m_dxrPathTracerDispatch->SetPrimaryOutputResourceState(
+            pathTracerViewportId,
             m_screenSpaceEffects->GetPathTracerOutputResourceState());
 
         DxrBreadcrumb("render: path-tracer DispatchIfEnabled begin");
@@ -1231,6 +1239,7 @@ void SceneRenderer::RecordDxrPass(
         const int ptDebugMode = PtDebugIsolateModeFromRenderDebug(debugMode);
 
         pathTracerDispatched = m_dxrPathTracerDispatch->DispatchIfEnabled(
+            pathTracerViewportId,
             *m_dxrAccelerationStructures,
             camera,
             true,
@@ -1299,6 +1308,7 @@ void SceneRenderer::RecordDxrPass(
             {
                 const bool shadeRestirOutput = ptDebugMode == 0;
                 const bool temporalSucceeded = m_dxrPathTracerDispatch->DispatchRestirTemporal(
+                    pathTracerViewportId,
                     *m_dxrRestirDispatch,
                     *m_dxrAccelerationStructures,
                     camera,
@@ -1312,10 +1322,11 @@ void SceneRenderer::RecordDxrPass(
                     shadeRestirOutput);
                 if (!temporalSucceeded)
                 {
-                    m_dxrPathTracerDispatch->InvalidateRestirHistory();
+                    m_dxrPathTracerDispatch->InvalidateRestirHistory(pathTracerViewportId);
                 }
                 else if ((diTemporalEnabled || giSpatialEnabled || giSpatialMeasurement)
                     && !m_dxrPathTracerDispatch->DispatchRestirSpatial(
+                        pathTracerViewportId,
                         *m_dxrRestirDispatch,
                         *m_dxrAccelerationStructures,
                         camera,
@@ -1327,16 +1338,17 @@ void SceneRenderer::RecordDxrPass(
                         giSpatialReuseEnabled,
                         shadeRestirOutput))
                 {
-                    m_dxrPathTracerDispatch->InvalidateRestirHistory();
+                    m_dxrPathTracerDispatch->InvalidateRestirHistory(pathTracerViewportId);
                 }
             }
             else
             {
-                m_dxrPathTracerDispatch->InvalidateRestirHistory();
+                m_dxrPathTracerDispatch->InvalidateRestirHistory(pathTracerViewportId);
             }
             {
                 const GfxContext::GpuTimerScope gpuScopePtHistory("Path tracer/Surface history");
                 m_dxrPathTracerDispatch->FinalizePathTracerSurfaceHistory(
+                    pathTracerViewportId,
                     GfxContext::Get().GetCommandList());
             }
         }
@@ -1358,7 +1370,7 @@ void SceneRenderer::RecordDxrPass(
 
             m_screenSpaceEffects->AccumulatePathTracerReference(
                 historyKey,
-                m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle(),
+                m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle(pathTracerViewportId),
                 dispatchWidth,
                 dispatchHeight);
         }
@@ -1374,20 +1386,49 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
         m_screenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle() : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPrimaryOutputSrvCpuHandle(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPrimaryMetadataSrvCpuHandle(pathTracerViewportId)
+                : 0,
             m_dxrSettings.GetPtConvergenceMode(),
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResource() : nullptr,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPrimaryOutputResourceState() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResource() : nullptr,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthResourceState() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResource() : nullptr,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerDiffuseAlbedoSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerSpecularAlbedoSrvCpuHandle() : 0,
-            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle() : 0);
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPrimaryOutputResource(pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPrimaryOutputResourceState(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerDepthResource(pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerDepthResourceState(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerMotionResource(pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerMotionResourceState(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerDepthSrvCpuHandle(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerMotionSrvCpuHandle(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerDiffuseAlbedoSrvCpuHandle(
+                    pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerSpecularAlbedoSrvCpuHandle(
+                    pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle(
+                    pathTracerViewportId)
+                : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
@@ -1887,7 +1928,8 @@ void SceneRenderer::RenderPostProcessPass(
     Framebuffer* target,
     const SceneRenderOptions& options,
     const bool freezeTemporalJitter,
-    const bool splitLightingMrt)
+    const bool splitLightingMrt,
+    const RenderViewport renderViewport)
 {
     {
         SceneRenderTrace::Scope endPassScope("EndScenePass");
@@ -1940,7 +1982,8 @@ void SceneRenderer::RenderPostProcessPass(
         m_screenSpaceEffects->GetRenderWidth(),
         m_screenSpaceEffects->GetRenderHeight(),
         m_screenSpaceEffects->GetSceneDepthSrvCpuHandle(),
-        true);
+        true,
+        renderViewport);
 
     if (target != nullptr)
     {
@@ -2342,7 +2385,8 @@ void SceneRenderer::Render(
                 target,
                 options,
                 freezeTemporalJitter,
-                splitLightingMrt);
+                splitLightingMrt,
+                renderViewport);
         }
         m_renderFrameDiagnostics.postProcessCpuMs =
             std::chrono::duration<double, std::milli>(
@@ -2351,12 +2395,14 @@ void SceneRenderer::Render(
     }
     else if (options.showGrid && scene.GetShowGrid())
     {
-        RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
+        RecordDxrPass(
+            scene, camera, viewportWidth, viewportHeight, 0, false, renderViewport);
         m_grid->Draw(camera, false);
     }
     else
     {
-        RecordDxrPass(scene, camera, viewportWidth, viewportHeight, 0, false);
+        RecordDxrPass(
+            scene, camera, viewportWidth, viewportHeight, 0, false, renderViewport);
     }
 
     if (!usePostProcess && options.showEditorOverlay)
@@ -2510,7 +2556,9 @@ void SceneRenderer::SetPathTracerSerOverride(const DxrPathTracerDispatch::SerOve
 
 bool SceneRenderer::IsPathTracerSerActive() const
 {
-    return m_dxrPathTracerDispatch != nullptr && m_dxrPathTracerDispatch->IsSerActive();
+    return m_dxrPathTracerDispatch != nullptr
+        && m_dxrPathTracerDispatch->IsSerActive(
+            RenderViewportHistoryId(RenderViewport::SceneView));
 }
 
 const DxrDiagnostics& SceneRenderer::GetDxrDiagnostics() const
