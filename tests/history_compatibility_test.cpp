@@ -1,6 +1,7 @@
 #include "engine/rendering/HistoryCompatibility.h"
 
 #include <cstdint>
+#include <iostream>
 
 namespace
 {
@@ -95,6 +96,70 @@ void RunHistoryCompatibilityTests(int& failures)
     pathTraced.producer = HistoryRenderProducer::PathTracer;
     pathTraced.guideProducer = HistoryGuideProducer::PathTracer;
     ExpectOneTransition(hybrid, pathTraced, Producer | Guide, All, failures);
+
+    // S1-P5 conservative transmission matrix. Streamline exposes a viewport reset here but no
+    // documented per-pixel rejection input, so an optical generation change rejects only the
+    // reconstruction/display-bloom owners of the affected viewport. Camera-only motion retains
+    // reuse because it does not change the scene or instance-transform generations.
+    HistoryCompatibilityKey transmission = base;
+    transmission.producer = HistoryRenderProducer::PathTracer;
+    transmission.guideProducer = HistoryGuideProducer::PathTracer;
+    transmission.feature = HistoryReconstructionFeature::RayReconstruction;
+    transmission.opticalSceneVersion = 11;
+    transmission.opticalMotionVersion = 29;
+    HistoryCompatibilityState transmissionState = SeededState(transmission, failures);
+    const HistoryCompatibilityTransition cameraOnly = transmissionState.Begin(transmission);
+    Expect(cameraOnly.IsCompatible() && !cameraOnly.scheduled, failures);
+    std::cout << "S1-P5 case=camera-only result=reuse optical_scene=11 optical_motion=29\n";
+    transmissionState.CancelPending();
+    int staticReuseFrames = 0;
+    for (int frame = 0; frame < 64; ++frame)
+    {
+        const HistoryCompatibilityTransition steady = transmissionState.Begin(transmission);
+        if (steady.IsCompatible() && !steady.scheduled)
+        {
+            ++staticReuseFrames;
+        }
+        transmissionState.CancelPending();
+    }
+    Expect(staticReuseFrames == 64, failures);
+    std::cout << "S1-P5 static-reuse frames=" << staticReuseFrames << "/64 resets=0\n";
+
+    auto expectOpticalReject = [&](const char* caseName, HistoryCompatibilityKey changed) {
+        HistoryCompatibilityState state = SeededState(transmission, failures);
+        const HistoryCompatibilityTransition rejected = state.Begin(changed);
+        Expect(rejected.scheduled, failures);
+        Expect(rejected.reasonBits == OpticalDomain, failures);
+        Expect(rejected.ownerBits == (Reconstruction | DisplayBloom), failures);
+        std::cout << "S1-P5 case=" << caseName
+                  << " result=reject reason_bits=" << rejected.reasonBits
+                  << " owner_bits=" << rejected.ownerBits
+                  << " optical_scene=" << changed.opticalSceneVersion
+                  << " optical_motion=" << changed.opticalMotionVersion << "\n";
+    };
+
+    HistoryCompatibilityKey movingChecker = transmission;
+    ++movingChecker.opticalMotionVersion;
+    expectOpticalReject("moving-checker-static-pane", movingChecker);
+    HistoryCompatibilityKey movingPane = transmission;
+    ++movingPane.opticalMotionVersion;
+    expectOpticalReject("moving-pane", movingPane);
+    HistoryCompatibilityKey movingReceiver = transmission;
+    ++movingReceiver.opticalMotionVersion;
+    expectOpticalReject("moving-receiver", movingReceiver);
+
+    // Replacement/topology/material edits are also outside the previous optical domain.
+    HistoryCompatibilityKey replacedBackground = transmission;
+    ++replacedBackground.opticalSceneVersion;
+    expectOpticalReject("replaced-background", replacedBackground);
+
+    // An opaque-only PT scene keeps zero optical generations, so unrelated instance motion does
+    // not enter this policy.
+    HistoryCompatibilityKey opaquePt = transmission;
+    opaquePt.opticalSceneVersion = 0;
+    opaquePt.opticalMotionVersion = 0;
+    HistoryCompatibilityState opaqueState = SeededState(opaquePt, failures);
+    Expect(opaqueState.Begin(opaquePt).IsCompatible(), failures);
 
     // DLSS/RR feature switches reset at identical quality and extent.
     HistoryCompatibilityKey rr = base;

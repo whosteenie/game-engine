@@ -1992,9 +1992,28 @@ void SceneRenderer::RenderPostProcessPass(
             ? HistoryRenderProducer::PathTracer
             : HistoryRenderProducer::Hybrid;
     }
+    // S1-P5 uses the smallest safe reset supported by the current Streamline integration: only
+    // this viewport's reconstruction/display-bloom histories are rejected when a path-traced scene
+    // containing transmission changes geometry or instance transforms. Camera-only motion leaves
+    // these generations unchanged. Without a previous TLAS, finer participation tests would replay
+    // moving optical boundaries/receivers against current geometry and are therefore not claimed.
+    const bool transmissionOpticalDomain = pathTracingActive
+        && m_dxrAccelerationStructures != nullptr
+        && m_dxrAccelerationStructures->SceneHasTransmission();
+    const std::uint32_t opticalSceneVersion = transmissionOpticalDomain
+        ? m_dxrAccelerationStructures->GetPtSceneVersion()
+        : 0u;
+    const std::uint32_t opticalMotionVersion = transmissionOpticalDomain
+        ? m_dxrAccelerationStructures->GetPtMotionVersion()
+        : 0u;
     const HistoryCompatibilityTransition historyTransition =
         m_screenSpaceEffects->BeginHistoryCompatibilityFrame(
-            historyProducer, camera, viewportWidth, viewportHeight);
+            historyProducer,
+            camera,
+            viewportWidth,
+            viewportHeight,
+            opticalSceneVersion,
+            opticalMotionVersion);
     if (historyTransition.Resets(HistoryCompatibilityOwner::RestirTemporal)
         && m_dxrPathTracerDispatch != nullptr)
     {

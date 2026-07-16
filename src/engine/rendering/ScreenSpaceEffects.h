@@ -113,7 +113,9 @@ public:
         HistoryRenderProducer producer,
         const Camera& camera,
         int outputWidth,
-        int outputHeight) const;
+        int outputHeight,
+        std::uint32_t opticalSceneVersion = 0,
+        std::uint32_t opticalMotionVersion = 0) const;
 
     void BeginScenePass(const EnvironmentMap& environmentMap) const;
     void EndScenePass() const;
@@ -582,7 +584,9 @@ private:
         HistoryRenderProducer producer,
         const Camera& camera,
         int outputWidth,
-        int outputHeight) const;
+        int outputHeight,
+        std::uint32_t opticalSceneVersion,
+        std::uint32_t opticalMotionVersion) const;
     void ApplyHistoryCompatibilityReset(
         const HistoryCompatibilityKey& key,
         const HistoryCompatibilityTransition& transition) const;

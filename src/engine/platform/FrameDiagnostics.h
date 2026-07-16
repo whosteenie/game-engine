@@ -62,6 +62,8 @@ namespace FrameDiagnostics
         int outputHeight,
         bool cameraValid,
         bool cameraCut,
+        std::uint32_t opticalSceneVersion,
+        std::uint32_t opticalMotionVersion,
         std::uint32_t diagnosticSignal,
         std::uint32_t reasonBits,
         std::uint32_t ownerBits);

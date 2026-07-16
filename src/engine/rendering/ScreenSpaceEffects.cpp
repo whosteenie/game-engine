@@ -1468,7 +1468,9 @@ HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
     const HistoryRenderProducer producer,
     const Camera& camera,
     const int outputWidth,
-    const int outputHeight) const
+    const int outputHeight,
+    const std::uint32_t opticalSceneVersion,
+    const std::uint32_t opticalMotionVersion) const
 {
     HistoryCompatibilityKey key{};
     key.producer = producer;
@@ -1548,6 +1550,8 @@ HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
     }
     if (producer == HistoryRenderProducer::PathTracer)
     {
+        key.opticalSceneVersion = opticalSceneVersion;
+        key.opticalMotionVersion = opticalMotionVersion;
         key.diagnosticSignal |=
             static_cast<std::uint32_t>(PtDebugIsolateModeFromRenderDebug(m_debugMode)) << 16;
     }
@@ -1558,10 +1562,12 @@ HistoryCompatibilityTransition ScreenSpaceEffects::BeginHistoryCompatibilityFram
     const HistoryRenderProducer producer,
     const Camera& camera,
     const int outputWidth,
-    const int outputHeight) const
+    const int outputHeight,
+    const std::uint32_t opticalSceneVersion,
+    const std::uint32_t opticalMotionVersion) const
 {
     const HistoryCompatibilityKey key = BuildHistoryCompatibilityKey(
-        producer, camera, outputWidth, outputHeight);
+        producer, camera, outputWidth, outputHeight, opticalSceneVersion, opticalMotionVersion);
     const HistoryCompatibilityTransition transition = m_historyCompatibilityState.Begin(key);
     FrameDiagnostics::LogHistoryCompatibility(
         m_dlssViewportId,
@@ -1578,6 +1584,8 @@ HistoryCompatibilityTransition ScreenSpaceEffects::BeginHistoryCompatibilityFram
         key.outputHeight,
         key.cameraPacketValid,
         key.cameraCut,
+        key.opticalSceneVersion,
+        key.opticalMotionVersion,
         key.diagnosticSignal,
         transition.reasonBits,
         transition.ownerBits);
@@ -1657,6 +1665,8 @@ void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
             key.outputHeight,
             key.cameraPacketValid,
             key.cameraCut,
+            key.opticalSceneVersion,
+            key.opticalMotionVersion,
             key.diagnosticSignal,
             0,
             0);
@@ -1682,6 +1692,8 @@ void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
         key.outputHeight,
         key.cameraPacketValid,
         key.cameraCut,
+        key.opticalSceneVersion,
+        key.opticalMotionVersion,
         key.diagnosticSignal,
         0,
         0);

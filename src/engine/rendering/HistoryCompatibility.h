@@ -50,6 +50,10 @@ struct HistoryCompatibilityKey
     int outputHeight = 0;
     bool cameraPacketValid = false;
     bool cameraCut = false;
+    // S1-P5: current-TLAS transmission replay is only compatible while both generations match.
+    // These stay zero outside path tracing or when the scene has no transmissive material.
+    std::uint32_t opticalSceneVersion = 0;
+    std::uint32_t opticalMotionVersion = 0;
     // Only diagnostics that alter the rendered/reconstruction signal are represented.
     std::uint32_t diagnosticSignal = 0;
 
@@ -69,6 +73,7 @@ namespace HistoryCompatibilityReason
     constexpr std::uint32_t CameraInvalid = 1u << 7;
     constexpr std::uint32_t CameraCut = 1u << 8;
     constexpr std::uint32_t DiagnosticSignal = 1u << 9;
+    constexpr std::uint32_t OpticalDomain = 1u << 10;
 }
 
 namespace HistoryCompatibilityOwner

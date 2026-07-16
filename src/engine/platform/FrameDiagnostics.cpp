@@ -219,6 +219,8 @@ namespace FrameDiagnostics
         const int outputHeight,
         const bool cameraValid,
         const bool cameraCut,
+        const std::uint32_t opticalSceneVersion,
+        const std::uint32_t opticalMotionVersion,
         const std::uint32_t diagnosticSignal,
         const std::uint32_t reasonBits,
         const std::uint32_t ownerBits)
@@ -232,7 +234,8 @@ namespace FrameDiagnostics
             stderr,
             "[frame] history-key app_serial=%llu viewport=%u event=%s producer=%s guide=%s "
             "guide_version=%u feature=%s quality=%s quality_version=%u render=%dx%d output=%dx%d "
-            "camera_valid=%u camera_cut=%u diagnostic=0x%X reason_bits=0x%X owner_bits=0x%X\n",
+            "camera_valid=%u camera_cut=%u optical_scene=%u optical_motion=%u "
+            "diagnostic=0x%X reason_bits=0x%X owner_bits=0x%X\n",
             static_cast<unsigned long long>(g_activeApplicationFrameSerial),
             viewportId,
             event != nullptr ? event : "unknown",
@@ -248,6 +251,8 @@ namespace FrameDiagnostics
             outputHeight,
             cameraValid ? 1u : 0u,
             cameraCut ? 1u : 0u,
+            opticalSceneVersion,
+            opticalMotionVersion,
             diagnosticSignal,
             reasonBits,
             ownerBits);

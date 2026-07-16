@@ -21,7 +21,8 @@ namespace
         {
             owners |= All;
         }
-        if ((reasons & (Guide | Feature | Quality | OutputExtent | DiagnosticSignal)) != 0)
+        if ((reasons & (Guide | Feature | Quality | OutputExtent | DiagnosticSignal
+                | OpticalDomain)) != 0)
         {
             owners |= Reconstruction | DisplayBloom;
         }
@@ -51,6 +52,8 @@ bool HistoryCompatibilityKey::operator==(const HistoryCompatibilityKey& rhs) con
         && outputHeight == rhs.outputHeight
         && cameraPacketValid == rhs.cameraPacketValid
         && cameraCut == rhs.cameraCut
+        && opticalSceneVersion == rhs.opticalSceneVersion
+        && opticalMotionVersion == rhs.opticalMotionVersion
         && diagnosticSignal == rhs.diagnosticSignal;
 }
 
@@ -103,6 +106,11 @@ HistoryCompatibilityTransition HistoryCompatibilityState::Begin(
         if (key.diagnosticSignal != m_committed.diagnosticSignal)
         {
             reasons |= HistoryCompatibilityReason::DiagnosticSignal;
+        }
+        if (key.opticalSceneVersion != m_committed.opticalSceneVersion
+            || key.opticalMotionVersion != m_committed.opticalMotionVersion)
+        {
+            reasons |= HistoryCompatibilityReason::OpticalDomain;
         }
     }
 
