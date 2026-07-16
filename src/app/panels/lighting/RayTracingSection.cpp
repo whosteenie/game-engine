@@ -902,6 +902,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 renderer.WarmUpDxrPipelineIfNeeded();
                 screenSpaceEffects.ResetPathTracerAccumulation();
             }
+            RendererSettingUi::MarkRendered("pt_ser_debug");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
@@ -974,6 +975,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             {
                 dxrSettings.SetPtRrBundleMode(rrBundleMode);
             }
+            RendererSettingUi::MarkRendered("pt_rr_inputs_debug");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
