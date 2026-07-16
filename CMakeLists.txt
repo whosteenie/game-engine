@@ -132,7 +132,23 @@ FetchContent_Declare(
 
 )
 
-FetchContent_MakeAvailable(nrd)
+FetchContent_GetProperties(nrd)
+if(NOT nrd_POPULATED)
+    FetchContent_Populate(nrd)
+endif()
+
+# NRD 4.17.3 declares its embedded-shader target without outputs, so Visual Studio runs all 159
+# DXIL tasks on every build and then relinks every downstream target. Apply a pinned, idempotent
+# project-owned patch before adding NRD; the patch fails if the expected upstream block changes.
+execute_process(
+    COMMAND ${CMAKE_COMMAND}
+        "-DNRD_SOURCE_DIR=${nrd_SOURCE_DIR}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/PatchNrdIncremental.cmake"
+    RESULT_VARIABLE _nrd_patch_result)
+if(NOT _nrd_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to apply the NRD incremental shader patch")
+endif()
+add_subdirectory("${nrd_SOURCE_DIR}" "${nrd_BINARY_DIR}")
 
 # NVIDIA Streamline (DLSS SR, devdoc/rendering/dlss-super-resolution.md Phase S0). Pinned to v2.12.0. The
 # release zip carries headers (include/), the import lib (lib/x64/sl.interposer.lib), and the
