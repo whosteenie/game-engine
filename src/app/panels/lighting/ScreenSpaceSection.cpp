@@ -122,6 +122,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Offsets the depth comparison to prevent surfaces from falsely occluding themselves. Too much can remove contact shading.");
 
             float ssaoPower = screenSpaceEffects.GetSsaoPower();
             if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
@@ -148,6 +150,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How thick nearby geometry appears to the occlusion test. Higher values can strengthen contact shadows.");
 
             float gtaoFalloff = screenSpaceEffects.GetGtaoFalloff();
             if (ImGui::SliderFloat("GTAO falloff", &gtaoFalloff, 0.25f, 6.0f))
@@ -156,6 +160,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How quickly occlusion fades with distance. Higher values keep the effect closer to surfaces.");
 
             float gtaoPower = screenSpaceEffects.GetGtaoPower();
             if (ImGui::SliderFloat("GTAO intensity", &gtaoPower, 0.25f, 4.0f))
@@ -172,6 +178,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Number of angles sampled around each pixel. More directions reduce banding but cost more GPU time.");
 
             int gtaoSteps = screenSpaceEffects.GetGtaoSteps();
             if (ImGui::SliderInt("GTAO steps", &gtaoSteps, 2, 12))
@@ -180,6 +188,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Samples taken along each direction. More steps improve range and stability but cost more GPU time.");
 
             bool gtaoDenoise = screenSpaceEffects.IsGtaoDenoiseEnabled();
             UndoableRendererCheckbox(
@@ -297,12 +307,12 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
             if (ssaoDiag.normalSrv == 0)
             {
                 EditorWidgets::TextColoredError(
-                    "normalSrv is null — geometry-normal G-buffer missing");
+                    "normalSrv is null - geometry-normal G-buffer missing");
             }
             if (ssaoDiag.shadowFactorSrv != 0 && ssaoDiag.normalSrv == ssaoDiag.shadowFactorSrv)
             {
                 EditorWidgets::TextColoredError(
-                    "normalSrv == shadowFactorSrv — bindings swapped?");
+                    "normalSrv == shadowFactorSrv - bindings swapped?");
             }
             ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");
             ImGui::TreePop();

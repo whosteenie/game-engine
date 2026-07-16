@@ -5,6 +5,7 @@
 #include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
+#include "app/panels/lighting/LightingPanelUi.h"
 #include "app/scene/RenderDiagnostics.h"
 #include "app/scene/Scene.h"
 #include "app/scene/SceneRenderer.h"
@@ -103,5 +104,7 @@ void DrawTextureFilteringSection(const LightingPanelContext& ctx)
         }
         HandleRendererFieldEditEvents(editContext);
         RendererSettingUi::MarkRendered("texture_mip_bias");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Chooses sharper or blurrier texture detail levels. Negative values sharpen but can add shimmer.");
     }
 }

@@ -21,6 +21,20 @@ namespace LightingPanelUi
         ImGui::TextWrapped("%s", text);
     }
 
+    void DrawTooltipForLastItem(const char* text)
+    {
+        if (!ImGui::IsItemHovered() || text == nullptr || *text == '\0')
+        {
+            return;
+        }
+
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    }
+
     FeatureState QueryFeatures(const SceneRenderer& renderer, const ScreenSpaceEffects& screenSpaceEffects)
     {
         FeatureState state;

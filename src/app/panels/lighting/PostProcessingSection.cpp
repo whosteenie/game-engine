@@ -72,6 +72,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                 });
         }
         RendererSettingUi::MarkRendered("post_tonemap");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Maps HDR lighting into the displayable range. ACES is cinematic; Reinhard is softer and simpler.");
 
         bool bloomEnabled = screenSpaceEffects.IsBloomEnabled();
         if (ImGui::Checkbox("Bloom", &bloomEnabled))
@@ -102,6 +104,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomThreshold(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Only pixels brighter than this value contribute to bloom.");
 
             float bloomSoftKnee = screenSpaceEffects.GetBloomSoftKnee();
             UndoableRendererSliderFloat(
@@ -115,6 +119,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomSoftKnee(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Softens the transition around the threshold to avoid a hard bloom cutoff.");
 
             float bloomIntensity = screenSpaceEffects.GetBloomIntensity();
             UndoableRendererSliderFloat(
@@ -141,6 +147,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomBlurRadius(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls how far bright highlights spread across nearby pixels.");
         }
 
         if (features.debugViewActive)

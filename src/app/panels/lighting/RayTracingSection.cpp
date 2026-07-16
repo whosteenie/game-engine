@@ -804,7 +804,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         DxrSettings& dxrSettings = renderer.GetDxrSettings();
 
         // RR5: when Ray Reconstruction is running it replaces the NRD denoisers entirely, so their
-        // tuning controls are inert. Render them disabled with a reason (not hidden) — toggling RR off
+        // tuning controls are inert. Render them disabled with a reason (not hidden) - toggling RR off
         // brings them back live. The RT feature enables + trace params stay live (RR consumes them).
         const bool rrActive = screenSpaceEffects.IsRayReconstructionActive();
 
@@ -840,7 +840,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             });
         RendererSettingUi::MarkRendered("raytracing_enabled");
 
-        // Phase P0 — rendering mode (devdoc/dxr/path-tracing.md). Hybrid (raster + hybrid RT, the
+        // Phase P0 - rendering mode (devdoc/dxr/path-tracing.md). Hybrid (raster + hybrid RT, the
         // default) vs the unified path tracer. Path tracing needs master RT on; greyed otherwise.
         const bool renderingModeSelectable = dxrEnabled;
         if (!renderingModeSelectable)
@@ -958,7 +958,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             RendererSettingUi::MarkRendered("pt_convergence");
 
             // Diagnostic switchboard (devdoc/dxr/pt/gi-shimmer.md): which RR inputs come from the
-            // PT vs raster. Direct set, no undo — this is a debug control, not scene state.
+            // PT vs raster. Direct set, no undo - this is a debug control, not scene state.
             int rrBundleMode = dxrSettings.GetPtRrBundleMode();
             const char* rrBundleLabels[] = {
                 "Full PT (depth+motion+guides)",
@@ -1008,6 +1008,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetDxrSettings().SetPtRussianRouletteEnabled(enabled);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Randomly ends low-contribution light paths to improve performance without systematically darkening the result.");
 
             bool ptFireflyClamp = dxrSettings.IsPtFireflyClampEnabled();
             UndoableRendererCheckbox(
@@ -1080,7 +1082,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             {
                 ImGui::SetTooltip(
                     "ReSTIR DI initial sampling for bounce-0 emissive + environment direct light\n"
-                    "(roadmap P2). 0 = off (plain NEE). 1 = one candidate each — should look IDENTICAL\n"
+                    "(roadmap P2). 0 = off (plain NEE). 1 = one candidate each - should look IDENTICAL\n"
                     "to off (converged), the A/B parity check. N>1 = resample N candidates with one\n"
                     "shadow ray each: less emissive/env noise at equal cost, same converged image.");
             }
@@ -1762,6 +1764,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetReflectionsSamplesPerPixel(samples);
                 target.MarkDirty();
             });
+        LightingPanelUi::DrawTooltipForLastItem(
+            "More rays reduce reflection noise but increase ray-tracing cost almost proportionally.");
 
         float maxTraceDistance = dxrSettings.GetMaxTraceDistance();
         UndoableRendererSliderFloat(
@@ -1775,6 +1779,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetMaxTraceDistance(distance);
                 target.MarkDirty();
             });
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Maximum distance a reflection ray can travel. Shorter distances are faster but can miss distant objects.");
 
         if (rrActive)
         {
@@ -1803,6 +1809,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetTemporalBlend(blend);
                 target.MarkDirty();
             });
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Reuses reflection history from previous frames. Higher values reduce noise but can leave trails during motion.");
 
         int atrousIterations = dxrSettings.GetReflectionAtrousIterations();
         UndoableRendererSliderInt(
@@ -1815,6 +1823,8 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetDxrSettings().SetReflectionAtrousIterations(iterations);
                 target.MarkDirty();
             });
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Number of edge-aware smoothing passes. More passes remove noise but may blur reflection detail.");
 
         bool antiFirefly = dxrSettings.IsReflectionAntiFireflyEnabled();
         UndoableRendererCheckbox(
@@ -1859,7 +1869,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
         LightingPanelUi::DrawWrappedNote(
             "Surfaces rougher than this skip the RT trace and use IBL (cheaper, less blur).");
 
-        // Phase D8 — RT soft sun shadows (devdoc/dxr/shadows.md). Supplemental over CSM.
+        // Phase D8 - RT soft sun shadows (devdoc/dxr/shadows.md). Supplemental over CSM.
         ImGui::SeparatorText("RT shadows");
 
         bool shadowsEnabled = dxrSettings.IsShadowsEnabled();
@@ -1915,7 +1925,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
             ImGui::EndDisabled();
         }
 
-        // Phase D9 — RT diffuse GI. Mutually exclusive with SSGI inject.
+        // Phase D9 - RT diffuse GI. Mutually exclusive with SSGI inject.
         ImGui::SeparatorText("RT diffuse GI");
 
         const bool ssgiBlocksRtGi = screenSpaceEffects.IsSsgiEnabled();

@@ -217,6 +217,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 ImGui::EndCombo();
             }
             RendererSettingUi::MarkRendered("dlss_preset");
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Trades image detail for performance. Quality renders at a higher internal resolution than Performance modes.");
 
             const int renderWidth = screenSpaceEffects.GetRenderWidth();
             const int renderHeight = screenSpaceEffects.GetRenderHeight();
@@ -305,7 +307,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
 
             // D4 (rr-gi-diagnosis.md): RR model preset A/B. DLSSDOptions are pushed every frame,
-            // so Streamline hot-swaps the model on change — no restart; history resets on switch.
+            // so Streamline hot-swaps the model on change - no restart; history resets on switch.
             {
                 const bool rrPresetSelectable = rrAvailable && rayReconstruction;
                 if (!rrPresetSelectable)
@@ -462,6 +464,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             ImGui::EndCombo();
         }
         RendererSettingUi::MarkRendered("geometry_msaa");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Smooths polygon edges by sampling geometry multiple times. Higher sample counts cost more GPU time and memory.");
 
         const bool reloadRequested = renderer.IsGeometryMsaaReloadRequested();
         if (screenSpaceEffects.IsMsaaPendingReload())
@@ -517,6 +521,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Higher values smooth more fine detail, but may make the image look softer.");
 
             float fxaaEdge = screenSpaceEffects.GetFxaaEdgeThreshold();
             if (ImGui::SliderFloat("FXAA edge threshold", &fxaaEdge, 0.03125f, 0.5f))
@@ -525,6 +531,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls which contrast changes count as edges. Lower values smooth more edges at extra cost.");
         }
         else if (currentAaMode == AntiAliasingMode::SMAA)
         {
@@ -536,6 +544,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls how sensitive SMAA is to edges. Lower values catch subtler edges but may over-smooth detail.");
 
             int smaaSteps = screenSpaceEffects.GetSmaaSearchSteps();
             if (ImGui::SliderInt("SMAA search steps", &smaaSteps, 1, 8))
@@ -544,6 +554,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How far SMAA searches along an edge. More steps improve long edges but cost more GPU time.");
         }
         else if (currentAaMode == AntiAliasingMode::TAA)
         {
@@ -556,6 +568,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How much of previous frames is reused. Higher values reduce shimmer but can leave trails behind motion.");
         }
         else if (currentAaMode == AntiAliasingMode::SSAA)
         {

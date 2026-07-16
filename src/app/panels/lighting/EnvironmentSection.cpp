@@ -202,6 +202,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         }
         RendererSettingUi::HandleFieldEdit("ibl_cubemap_resolution", editContext);
         RendererSettingUi::MarkRendered("ibl_cubemap_resolution");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Resolution used for environment lighting and reflections. Higher values improve detail but use more GPU memory.");
         LightingPanelUi::DrawWrappedNote(
             "Sky background uses the HDR file at full resolution. IBL cubemap resolution affects reflections only.");
 
@@ -219,7 +221,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 {
                     ImGui::TextColored(
                         ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                        "Low-res 1K asset — re-pick preset or use a 2K/4K HDR for sharper sky.");
+                        "Low-res 1K asset - re-pick preset or use a 2K/4K HDR for sharper sky.");
                 }
             }
 
