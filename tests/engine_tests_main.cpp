@@ -38,6 +38,8 @@ void RunFrustumCullTests();
 void RunCaptureManifestTests(int& failures);
 void RunTemporalCameraPacketTests(int& failures);
 void RunDlssFrameTokenTests(int& failures);
+void RunHistoryCompatibilityTests(int& failures);
+void RunViewportResizeStabilizerTests(int& failures);
 void RunPtViewportOwnershipTests(int& failures);
 void RunShaderCompileTests();
 
@@ -110,6 +112,12 @@ namespace
             "temporal_camera_packet",
             [] { RunTemporalCameraPacketTests(test::FailureCount()); });
         maybeRun("dlss_frame_token", [] { RunDlssFrameTokenTests(test::FailureCount()); });
+        maybeRun(
+            "history_compatibility",
+            [] { RunHistoryCompatibilityTests(test::FailureCount()); });
+        maybeRun(
+            "viewport_resize_stabilizer",
+            [] { RunViewportResizeStabilizerTests(test::FailureCount()); });
         maybeRun(
             "pt_viewport_ownership",
             [] { RunPtViewportOwnershipTests(test::FailureCount()); });

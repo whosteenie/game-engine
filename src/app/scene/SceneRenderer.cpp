@@ -1976,6 +1976,27 @@ void SceneRenderer::RenderPostProcessPass(
                 .count();
     }
 
+    // S1-P4 compatibility is scheduled before RecordDxrPass because PT reference accumulation and
+    // ReSTIR can consume history there. ScreenSpaceEffects commits the identity only after Apply
+    // draws this viewport.
+    m_screenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
+    HistoryRenderProducer historyProducer = HistoryRenderProducer::Raster;
+    if (m_dxrSettings.IsEnabled() && GfxContext::Get().IsRaytracingSupported())
+    {
+        historyProducer = pathTracingActive
+            ? HistoryRenderProducer::PathTracer
+            : HistoryRenderProducer::Hybrid;
+    }
+    const HistoryCompatibilityTransition historyTransition =
+        m_screenSpaceEffects->BeginHistoryCompatibilityFrame(
+            historyProducer, camera, viewportWidth, viewportHeight);
+    if (historyTransition.Resets(HistoryCompatibilityOwner::RestirTemporal)
+        && m_dxrPathTracerDispatch != nullptr)
+    {
+        m_dxrPathTracerDispatch->InvalidateRestirHistory(
+            RenderViewportHistoryId(renderViewport));
+    }
+
     RecordDxrPass(
         scene,
         camera,

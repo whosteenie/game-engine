@@ -4,6 +4,7 @@
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/rendering/DxrSettings.h"
 #include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/HistoryCompatibility.h"
 #include "engine/rendering/MotionVectorFrameState.h"
 #include "engine/rendering/SsaoDiagnostics.h"
 #include "engine/rendering/post/PostProcessContext.h"
@@ -105,6 +106,14 @@ public:
     void FinalizeAntiAliasingFrame(const Camera& camera, bool freezeJitter = false) const;
     const MotionVectorFrameState& GetMotionVectorFrameState() const;
     void AdvanceTemporalFrame(const Camera& camera) const;
+
+    // S1-P4: schedule per-viewport owner resets before any PT/ReSTIR/reconstruction consumer runs.
+    // The pending identity is committed internally only after Apply draws this viewport.
+    HistoryCompatibilityTransition BeginHistoryCompatibilityFrame(
+        HistoryRenderProducer producer,
+        const Camera& camera,
+        int outputWidth,
+        int outputHeight) const;
 
     void BeginScenePass(const EnvironmentMap& environmentMap) const;
     void EndScenePass() const;
@@ -569,6 +578,15 @@ private:
     float GetActiveRenderScale() const;
     void ResetTaaHistory() const;
     void InvalidateTemporalHistory() const;
+    HistoryCompatibilityKey BuildHistoryCompatibilityKey(
+        HistoryRenderProducer producer,
+        const Camera& camera,
+        int outputWidth,
+        int outputHeight) const;
+    void ApplyHistoryCompatibilityReset(
+        const HistoryCompatibilityKey& key,
+        const HistoryCompatibilityTransition& transition) const;
+    void CommitRenderedHistoryCompatibility() const;
     void DrawFullscreenQuad() const;
     void DrawFullscreenPass(Shader& shader, bool viewportLdr) const;
     void DrawFullscreenToTarget(
@@ -1000,6 +1018,7 @@ private:
     mutable int m_giFrameIndex = 0;
     mutable glm::mat4 m_giPrevViewProjection{1.0f};
     mutable MotionVectorFrameState m_motionVectorFrameState{};
+    mutable HistoryCompatibilityState m_historyCompatibilityState{};
     mutable std::uintptr_t m_lastSsgiInjectSrv = 0;
     AntiAliasingMode m_lastAntiAliasingMode = AntiAliasingMode::None;
 };

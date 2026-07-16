@@ -106,7 +106,7 @@ namespace
     // DLSS reset on large translation only. Rotation is NOT a cut — valid motion vectors carry
     // camera rotation; the old trace-based rotation branch (~1.8°/frame) pulsed RR history during
     // ordinary look-around (gi-shimmer.md F7).
-    bool DetectDlssCameraCut(const glm::mat4& currView, const MotionVectorFrameState& mvState)
+    bool DetectCameraCutImpl(const glm::mat4& currView, const MotionVectorFrameState& mvState)
     {
         if (!mvState.historyValid)
         {
@@ -119,6 +119,13 @@ namespace
         return glm::dot(translation, translation)
             > kCutThresholdWorldUnits * kCutThresholdWorldUnits;
     }
+}
+
+bool DlssResolvePass::DetectCameraCut(
+    const glm::mat4& currentView,
+    const MotionVectorFrameState& motionState)
+{
+    return DetectCameraCutImpl(currentView, motionState);
 }
 
 DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
@@ -360,7 +367,9 @@ void DlssResolvePass::Execute(
         in.depthInverted = false;
 
         const glm::mat4 view = inputs.camera->GetViewMatrix();
-        const bool cameraCut = DetectDlssCameraCut(view, inputs.motionVectorState);
+        const bool cameraCut = inputs.cameraCutKnown
+            ? inputs.cameraCut
+            : DetectCameraCut(view, inputs.motionVectorState);
         in.reset = inputs.forceDlssResetEveryFrame || !inputs.dlssHistoryValid
             || !inputs.motionVectorState.historyValid || cameraCut;
         const std::uint32_t resetReasonBits =

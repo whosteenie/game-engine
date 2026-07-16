@@ -19,6 +19,8 @@ struct DlssResolvePassInputs
     Framebuffer* sceneFramebuffer = nullptr;
     const Framebuffer* outputTarget = nullptr;
     MotionVectorFrameState motionVectorState{};
+    bool cameraCutKnown = false;
+    bool cameraCut = false;
 
     int viewportWidth = 0;
     int viewportHeight = 0;
@@ -137,6 +139,9 @@ struct DlssResolvePassOutputs
 class DlssResolvePass
 {
 public:
+    static bool DetectCameraCut(
+        const glm::mat4& currentView,
+        const MotionVectorFrameState& motionState);
     // May prepare the selected PT bundle / sky patch because those are part of the exact guide
     // path that Evaluate uses. Callers must have the scene framebuffer in SRV state.
     static DlssTemporalGuideInputs ResolveTemporalGuideInputs(const DlssResolvePassInputs& inputs);

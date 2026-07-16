@@ -147,6 +147,7 @@ void SceneViewportPanel::EnsureFramebufferSized() const
 void SceneViewportPanel::EnsureBenchmarkRenderTarget(const int width, const int height)
 {
     m_viewport.showPanel = true;
+    m_viewport.resizeStabilizer.Reset();
     m_viewport.renderWidth = std::max(width, 1);
     m_viewport.renderHeight = std::max(height, 1);
     m_viewport.framebuffer.Resize(m_viewport.renderWidth, m_viewport.renderHeight);

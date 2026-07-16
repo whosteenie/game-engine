@@ -203,4 +203,54 @@ namespace FrameDiagnostics
             cameraCut ? 1u : 0u, diagnosticInput ? 1u : 0u, reasonBits);
         std::fflush(stderr);
     }
+
+    void LogHistoryCompatibility(
+        const std::uint32_t viewportId,
+        const char* event,
+        const char* producer,
+        const char* guideProducer,
+        const std::uint32_t guideVersion,
+        const char* feature,
+        const char* quality,
+        const std::uint32_t qualityVersion,
+        const int renderWidth,
+        const int renderHeight,
+        const int outputWidth,
+        const int outputHeight,
+        const bool cameraValid,
+        const bool cameraCut,
+        const std::uint32_t diagnosticSignal,
+        const std::uint32_t reasonBits,
+        const std::uint32_t ownerBits)
+    {
+        if (!QueryEnabled())
+        {
+            return;
+        }
+
+        std::fprintf(
+            stderr,
+            "[frame] history-key app_serial=%llu viewport=%u event=%s producer=%s guide=%s "
+            "guide_version=%u feature=%s quality=%s quality_version=%u render=%dx%d output=%dx%d "
+            "camera_valid=%u camera_cut=%u diagnostic=0x%X reason_bits=0x%X owner_bits=0x%X\n",
+            static_cast<unsigned long long>(g_activeApplicationFrameSerial),
+            viewportId,
+            event != nullptr ? event : "unknown",
+            producer != nullptr ? producer : "unknown",
+            guideProducer != nullptr ? guideProducer : "unknown",
+            guideVersion,
+            feature != nullptr ? feature : "unknown",
+            quality != nullptr ? quality : "unknown",
+            qualityVersion,
+            renderWidth,
+            renderHeight,
+            outputWidth,
+            outputHeight,
+            cameraValid ? 1u : 0u,
+            cameraCut ? 1u : 0u,
+            diagnosticSignal,
+            reasonBits,
+            ownerBits);
+        std::fflush(stderr);
+    }
 }

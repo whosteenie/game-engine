@@ -290,6 +290,9 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.sceneFramebuffer = m_sceneFramebuffer.get();
     dlssInputs.outputTarget = state.outputTarget;
     dlssInputs.motionVectorState = m_motionVectorFrameState;
+    dlssInputs.cameraCutKnown = m_historyCompatibilityState.HasPendingKey();
+    dlssInputs.cameraCut = dlssInputs.cameraCutKnown
+        && m_historyCompatibilityState.PendingKey().cameraCut;
     dlssInputs.viewportWidth = state.viewportWidth;
     dlssInputs.viewportHeight = state.viewportHeight;
     dlssInputs.dlssViewportId = m_dlssViewportId;

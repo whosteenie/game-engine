@@ -44,4 +44,25 @@ namespace FrameDiagnostics
         bool cameraCut,
         bool diagnosticInput,
         std::uint32_t reasonBits);
+
+    // S1-P4: compatibility-key lifecycle. "schedule" records one owner-reset plan, "compatible"
+    // records a steady frame, and "commit" is emitted only after the viewport draw completes.
+    void LogHistoryCompatibility(
+        std::uint32_t viewportId,
+        const char* event,
+        const char* producer,
+        const char* guideProducer,
+        std::uint32_t guideVersion,
+        const char* feature,
+        const char* quality,
+        std::uint32_t qualityVersion,
+        int renderWidth,
+        int renderHeight,
+        int outputWidth,
+        int outputHeight,
+        bool cameraValid,
+        bool cameraCut,
+        std::uint32_t diagnosticSignal,
+        std::uint32_t reasonBits,
+        std::uint32_t ownerBits);
 }

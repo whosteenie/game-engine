@@ -1387,8 +1387,6 @@ void ScreenSpaceEffects::ResizeDlssDisplayTargets(const int viewportWidth, const
     ResizeInternalTarget(m_dlssBloomBlur2Target, bloomWidth, bloomHeight, hdrFormat);
     ResizeInternalTarget(m_dlssBloomHistoryTarget, bloomWidth, bloomHeight, hdrFormat);
     ResizeInternalTarget(m_dlssBloomTemporalTarget, bloomWidth, bloomHeight, hdrFormat);
-    m_dlssBloomHistoryValid = false;
-    m_dlssBloomTemporalWarmupFrames = 0;
 }
 
 namespace
@@ -1466,6 +1464,229 @@ float ScreenSpaceEffects::GetAutoMaterialMipBias() const
     return std::log2(renderScale);
 }
 
+HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
+    const HistoryRenderProducer producer,
+    const Camera& camera,
+    const int outputWidth,
+    const int outputHeight) const
+{
+    HistoryCompatibilityKey key{};
+    key.producer = producer;
+
+    if (m_antiAliasingMode == AntiAliasingMode::TAA)
+    {
+        key.feature = HistoryReconstructionFeature::Taa;
+        key.quality = HistoryReconstructionQuality::Taa;
+    }
+    else if (m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        key.feature = IsRayReconstructionActive()
+            ? HistoryReconstructionFeature::RayReconstruction
+            : HistoryReconstructionFeature::Dlss;
+        if (m_antiAliasingMode == AntiAliasingMode::DLAA)
+        {
+            key.quality = HistoryReconstructionQuality::Dlaa;
+        }
+        else
+        {
+            switch (m_dlssPreset)
+            {
+            case DlssPreset::Quality: key.quality = HistoryReconstructionQuality::Quality; break;
+            case DlssPreset::Balanced: key.quality = HistoryReconstructionQuality::Balanced; break;
+            case DlssPreset::Performance:
+                key.quality = HistoryReconstructionQuality::Performance;
+                break;
+            case DlssPreset::UltraPerformance:
+                key.quality = HistoryReconstructionQuality::UltraPerformance;
+                break;
+            }
+        }
+        key.qualityVersion = key.feature == HistoryReconstructionFeature::RayReconstruction
+            ? static_cast<std::uint8_t>(m_rrPreset)
+            : 0;
+    }
+
+    const bool reconstructionUsesGuides =
+        key.feature == HistoryReconstructionFeature::Dlss
+        || key.feature == HistoryReconstructionFeature::RayReconstruction;
+    if (reconstructionUsesGuides && producer == HistoryRenderProducer::PathTracer)
+    {
+        if (m_ptRrBundleMode == 0)
+        {
+            key.guideProducer = HistoryGuideProducer::PathTracer;
+        }
+        else if (m_ptRrBundleMode > 1)
+        {
+            key.guideProducer = HistoryGuideProducer::Mixed;
+        }
+    }
+
+    key.renderWidth = m_width;
+    key.renderHeight = m_height;
+    key.outputWidth = outputWidth;
+    key.outputHeight = outputHeight;
+    const TemporalCameraState currentCamera = TemporalCamera::MakeState(
+        camera.GetViewMatrix(),
+        camera.GetUnjitteredProjectionMatrix(),
+        glm::inverse(camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix()),
+        camera.GetPosition(),
+        camera.GetProjectionJitter());
+    key.cameraPacketValid = TemporalCamera::IsComplete(currentCamera)
+        && m_motionVectorFrameState.historyValid
+        && TemporalCamera::IsComplete(m_motionVectorFrameState.previousCamera);
+    key.cameraCut = key.cameraPacketValid
+        && DlssResolvePass::DetectCameraCut(camera.GetViewMatrix(), m_motionVectorFrameState);
+    if (reconstructionUsesGuides)
+    {
+        key.diagnosticSignal = (m_useDilatedDlssMotionVectors ? (1u << 8) : 0u)
+            | (m_reconstructDlssCameraMotion ? (1u << 9) : 0u);
+        if (producer == HistoryRenderProducer::PathTracer)
+        {
+            key.diagnosticSignal |= static_cast<std::uint32_t>(m_ptRrBundleMode & 0x7);
+        }
+    }
+    if (producer == HistoryRenderProducer::PathTracer)
+    {
+        key.diagnosticSignal |=
+            static_cast<std::uint32_t>(PtDebugIsolateModeFromRenderDebug(m_debugMode)) << 16;
+    }
+    return key;
+}
+
+HistoryCompatibilityTransition ScreenSpaceEffects::BeginHistoryCompatibilityFrame(
+    const HistoryRenderProducer producer,
+    const Camera& camera,
+    const int outputWidth,
+    const int outputHeight) const
+{
+    const HistoryCompatibilityKey key = BuildHistoryCompatibilityKey(
+        producer, camera, outputWidth, outputHeight);
+    const HistoryCompatibilityTransition transition = m_historyCompatibilityState.Begin(key);
+    FrameDiagnostics::LogHistoryCompatibility(
+        m_dlssViewportId,
+        transition.scheduled ? "schedule" : "compatible",
+        HistoryRenderProducerName(key.producer),
+        HistoryGuideProducerName(key.guideProducer),
+        key.guideVersion,
+        HistoryReconstructionFeatureName(key.feature),
+        HistoryReconstructionQualityName(key.quality),
+        key.qualityVersion,
+        key.renderWidth,
+        key.renderHeight,
+        key.outputWidth,
+        key.outputHeight,
+        key.cameraPacketValid,
+        key.cameraCut,
+        key.diagnosticSignal,
+        transition.reasonBits,
+        transition.ownerBits);
+    if (transition.scheduled)
+    {
+        ApplyHistoryCompatibilityReset(key, transition);
+    }
+    return transition;
+}
+
+void ScreenSpaceEffects::ApplyHistoryCompatibilityReset(
+    const HistoryCompatibilityKey&,
+    const HistoryCompatibilityTransition& transition) const
+{
+    using namespace HistoryCompatibilityOwner;
+    if (transition.Resets(Reconstruction))
+    {
+        m_taaHistoryValid = false;
+        m_taaFrameIndex = 0;
+        m_dlssHistoryValid = false;
+    }
+    if (transition.Resets(RenderBloom))
+    {
+        m_bloomHistoryValid = false;
+        m_bloomTemporalWarmupFrames = 0;
+        m_prevFrameBloomSrv = 0;
+    }
+    if (transition.Resets(DisplayBloom))
+    {
+        m_dlssBloomHistoryValid = false;
+        m_dlssBloomTemporalWarmupFrames = 0;
+    }
+    if (transition.Resets(PtReferenceAccumulation))
+    {
+        auto* self = const_cast<ScreenSpaceEffects*>(this);
+        self->m_ptAccumSampleCount = 0;
+        self->m_ptAccumHistoryKey = {};
+        self->m_ptAccumPingPongReadFromScratch = false;
+        self->m_ptAccumSumDisplaySrv = 0;
+    }
+
+    constexpr std::uint32_t kInvalidatesCameraHistory =
+        HistoryCompatibilityReason::Producer
+        | HistoryCompatibilityReason::RenderExtent
+        | HistoryCompatibilityReason::OutputExtent
+        | HistoryCompatibilityReason::CameraInvalid
+        | HistoryCompatibilityReason::CameraCut;
+    if ((transition.reasonBits & kInvalidatesCameraHistory) != 0)
+    {
+        m_motionVectorFrameState = {};
+    }
+}
+
+void ScreenSpaceEffects::CommitRenderedHistoryCompatibility() const
+{
+    if (!m_historyCompatibilityState.HasPendingKey())
+    {
+        return;
+    }
+    const HistoryCompatibilityKey key = m_historyCompatibilityState.PendingKey();
+    if (key.producer == HistoryRenderProducer::PathTracer && !m_pathTracerActive)
+    {
+        // The configured PT frame did not dispatch/present a PT signal (for example an empty or
+        // incomplete scene). Keep comparing against the last compatible rendered identity.
+        FrameDiagnostics::LogHistoryCompatibility(
+            m_dlssViewportId,
+            "cancel-unrendered",
+            HistoryRenderProducerName(key.producer),
+            HistoryGuideProducerName(key.guideProducer),
+            key.guideVersion,
+            HistoryReconstructionFeatureName(key.feature),
+            HistoryReconstructionQualityName(key.quality),
+            key.qualityVersion,
+            key.renderWidth,
+            key.renderHeight,
+            key.outputWidth,
+            key.outputHeight,
+            key.cameraPacketValid,
+            key.cameraCut,
+            key.diagnosticSignal,
+            0,
+            0);
+        m_historyCompatibilityState.CancelPending();
+        return;
+    }
+    if (!m_historyCompatibilityState.CommitRendered())
+    {
+        return;
+    }
+    FrameDiagnostics::LogHistoryCompatibility(
+        m_dlssViewportId,
+        "commit",
+        HistoryRenderProducerName(key.producer),
+        HistoryGuideProducerName(key.guideProducer),
+        key.guideVersion,
+        HistoryReconstructionFeatureName(key.feature),
+        HistoryReconstructionQualityName(key.quality),
+        key.qualityVersion,
+        key.renderWidth,
+        key.renderHeight,
+        key.outputWidth,
+        key.outputHeight,
+        key.cameraPacketValid,
+        key.cameraCut,
+        key.diagnosticSignal,
+        0,
+        0);
+}
+
 void ScreenSpaceEffects::InvalidateTemporalHistory() const
 {
     FrameDiagnostics::LogHistoryEvent(
@@ -1535,9 +1756,8 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
             && (prevViewportWidth != viewportWidth || prevViewportHeight != viewportHeight))
         {
             ResizeDlssDisplayTargets(viewportWidth, viewportHeight);
-            m_dlssHistoryValid = false;
-            m_dlssBloomHistoryValid = false;
-            m_dlssBloomTemporalWarmupFrames = 0;
+            // The output-extent key difference schedules reconstruction/display-bloom invalidation
+            // once at BeginHistoryCompatibilityFrame, immediately before their next consumers.
         }
         return;
     }
@@ -1593,8 +1813,16 @@ void ScreenSpaceEffects::Resize(const int viewportWidth, const int viewportHeigh
     }
     m_width = renderWidth;
     m_height = renderHeight;
-    ResetTaaHistory();
-    InvalidateTemporalHistory();
+
+    // Preserve the pre-S1-P4 resize invalidation for local histories outside the audited owner
+    // set. Reconstruction, both bloom domains, PT accumulation, and ReSTIR are reset once by the
+    // compatibility key at the authoritative pre-consumer boundary.
+    m_radianceHistoryValid = false;
+    m_giFrameIndex = 0;
+    m_giPrevViewProjection = glm::mat4(1.0f);
+    m_ssrHistoryValid = false;
+    m_ssrFrameIndex = 0;
+    ResetPathTracerTemporalDiagnostics();
 }
 
 void ScreenSpaceEffects::ReloadGeometryMsaaTargets(const int viewportWidth, const int viewportHeight)
@@ -3135,6 +3363,7 @@ void ScreenSpaceEffects::Apply(
 
     if (!m_enabled || !m_sceneFramebuffer->IsValid())
     {
+        m_historyCompatibilityState.CancelPending();
         const_cast<ScreenSpaceEffects*>(this)->m_ssrSceneColorRanLastFrame = false;
         const_cast<ScreenSpaceEffects*>(this)->m_ssrTraceRanLastFrame = false;
         const_cast<ScreenSpaceEffects*>(this)->m_ssrDenoiseRanLastFrame = false;
@@ -3155,6 +3384,7 @@ void ScreenSpaceEffects::Apply(
     }
     if (debugEarlyOut)
     {
+        CommitRenderedHistoryCompatibility();
         return;
     }
     {
@@ -3162,6 +3392,7 @@ void ScreenSpaceEffects::Apply(
         RunApplyPresentationStage(state);
     }
     FinalizeApplyFrame(state);
+    CommitRenderedHistoryCompatibility();
 }
 
 bool ScreenSpaceEffects::IsEnabled() const
@@ -3774,7 +4005,6 @@ void ScreenSpaceEffects::SetAntiAliasingMode(const AntiAliasingMode mode)
 
     if (m_antiAliasingMode != effectiveMode)
     {
-        ResetTaaHistory();
         m_lastAntiAliasingMode = effectiveMode;
         m_width = 0;
         m_height = 0;
@@ -3795,11 +4025,10 @@ void ScreenSpaceEffects::SetDlssPreset(const DlssPreset preset)
         return;
     }
     m_dlssPreset = preset;
-    // The internal render resolution changes with the preset — force a target reallocation and drop
-    // temporal history so the upscaler restarts cleanly.
+    // The internal render resolution changes with the preset. Force target reallocation; the
+    // compatibility key schedules the owner-specific temporal reset at the next evaluation.
     if (m_antiAliasingMode == AntiAliasingMode::DLSS)
     {
-        ResetTaaHistory();
         m_width = 0;
         m_height = 0;
     }
@@ -3817,9 +4046,7 @@ void ScreenSpaceEffects::SetRayReconstruction(const bool enabled)
         return;
     }
     m_rayReconstruction = enabled;
-    // Switching RR on/off changes the resolve owner (RR replaces the SR model) and the RT denoise
-    // path — drop temporal history so the reconstruction restarts cleanly.
-    ResetTaaHistory();
+    // The compatibility key observes the feature change and schedules one reset at next use.
 }
 
 bool ScreenSpaceEffects::IsRayReconstructionActive() const
@@ -3867,12 +4094,7 @@ void ScreenSpaceEffects::SetRrPreset(const DlssRrPreset preset)
         return;
     }
     m_rrPreset = preset;
-    // The RR model swaps on the next evaluate; break temporal history so the new network starts
-    // from a clean accumulation instead of inheriting the previous model's history.
-    if (m_antiAliasingMode == AntiAliasingMode::DLAA || m_antiAliasingMode == AntiAliasingMode::DLSS)
-    {
-        ResetTaaHistory();
-    }
+    // The compatibility key includes this model version and schedules one reset at next use.
 }
 
 int ScreenSpaceEffects::GetMsaaSampleCount() const

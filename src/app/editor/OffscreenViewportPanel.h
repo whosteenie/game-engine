@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/editor/EditorViewportRect.h"
+#include "app/editor/ViewportResizeStabilizer.h"
 
 #include "engine/rendering/Framebuffer.h"
 
@@ -16,6 +17,7 @@ namespace OffscreenViewportPanel
         mutable Framebuffer framebuffer;
         mutable int renderWidth = 0;
         mutable int renderHeight = 0;
+        ViewportResizeStabilizer resizeStabilizer{};
         mutable EditorViewportRect interactionRect{};
         ImDrawList* compositeDrawList = nullptr;
         ImVec2 compositeMin{};
@@ -35,6 +37,7 @@ namespace OffscreenViewportPanel
     void OnPanelHidden(State& state);
 
     bool HasValidRenderTarget(const State& state);
+    bool IsLiveResizePending(const State& state);
     std::uintptr_t GetFramebuffer(const State& state);
     std::uintptr_t GetColorTexture(const State& state);
     void EnsureFramebufferSized(const State& state);

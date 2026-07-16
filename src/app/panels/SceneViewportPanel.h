@@ -36,6 +36,10 @@ public:
 
     int GetRenderWidth() const { return m_viewport.renderWidth; }
     int GetRenderHeight() const { return m_viewport.renderHeight; }
+    bool IsLiveResizePending() const
+    {
+        return OffscreenViewportPanel::IsLiveResizePending(m_viewport);
+    }
 
     std::uintptr_t GetFramebuffer() const;
     std::uintptr_t GetColorTexture() const;

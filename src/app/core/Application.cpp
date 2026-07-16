@@ -530,6 +530,10 @@ void Application::Run()
     int suppressedRepeatedFrameErrors = 0;
     const bool s0p3Transitions = std::getenv("GAME_ENGINE_S0P3_TRANSITIONS") != nullptr;
     std::uint64_t s0p3TransitionFrame = 0;
+    const bool s1p4Transitions = std::getenv("GAME_ENGINE_S1P4_TRANSITIONS") != nullptr;
+    std::uint64_t s1p4TransitionFrame = 0;
+    const bool s1p4DualOwnership =
+        std::getenv("GAME_ENGINE_S1P4_DUAL_OWNERSHIP") != nullptr;
     const bool autoReopenOnce = std::getenv("GAME_ENGINE_AUTO_REOPEN_ONCE") != nullptr;
     int autoReopenState = 0;
     int autoReopenReadyFrames = 0;
@@ -602,6 +606,53 @@ void Application::Run()
             case 210: sceneRenderer.SetRenderDebugMode(RenderDebugMode::None); break;
             case 240: sceneRenderer.GetDxrSettings().SetRenderingMode(RenderingMode::Hybrid); break;
             case 270: sceneRenderer.GetDxrSettings().SetRenderingMode(RenderingMode::PathTraced); break;
+            default: break;
+            }
+        }
+
+        // S1-P4 dual ownership capture stays on raster/no-AA so a narrow automation pane never
+        // reaches Streamline. It is inert outside the dedicated evidence process.
+        if (s1p4DualOwnership && m_projectSession->HasActiveProject() && m_scene != nullptr)
+        {
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            sceneRenderer.GetDxrSettings().SetEnabled(false);
+            sceneRenderer.GetScreenSpaceEffects().SetAntiAliasingMode(AntiAliasingMode::None);
+        }
+
+        // S1-P4 capture-only compatibility matrix. Production behavior is unchanged unless the
+        // dedicated evidence script opts in.
+        if (s1p4Transitions && m_projectSession->HasActiveProject() && m_scene != nullptr)
+        {
+            ++s1p4TransitionFrame;
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+            DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+            switch (s1p4TransitionFrame)
+            {
+            case 10: dxr.SetEnabled(false); break;
+            case 20:
+                dxr.SetEnabled(true);
+                dxr.SetRenderingMode(RenderingMode::Hybrid);
+                break;
+            case 30: dxr.SetRenderingMode(RenderingMode::PathTraced); break;
+            case 40: effects.SetRayReconstruction(false); break;
+            case 50: effects.SetRayReconstruction(true); break;
+            case 60: effects.SetAntiAliasingMode(AntiAliasingMode::DLAA); break;
+            case 70:
+                effects.SetAntiAliasingMode(AntiAliasingMode::DLSS);
+                effects.SetDlssPreset(DlssPreset::Performance);
+                break;
+            case 80: dxr.SetPtRrBundleMode(3); break;
+            case 90: dxr.SetPtRrBundleMode(0); break;
+            case 110:
+                if (m_camera != nullptr)
+                {
+                    m_camera->SetPosition(m_camera->GetPosition() + glm::vec3(3.0f, 0.0f, 0.0f));
+                }
+                break;
+            case 120: effects.InvalidateMotionHistory(); break;
+            case 130: dxr.SetRenderingMode(RenderingMode::Hybrid); break;
+            case 140: dxr.SetRenderingMode(RenderingMode::PathTraced); break;
             default: break;
             }
         }
@@ -1797,7 +1848,8 @@ void Application::Render()
     const bool sceneViewWillRender = editorActive && projectLayoutStable
         && (projectLoadBenchmarkActive
             || EditorPanelConstraints::IsViewportTabSelected("Scene View"))
-        && m_sceneViewportPanel->HasValidRenderTarget();
+        && m_sceneViewportPanel->HasValidRenderTarget()
+        && (projectLoadBenchmarkActive || !m_sceneViewportPanel->IsLiveResizePending());
     if (sceneViewWillRender)
     {
         RunApplicationPhase("scene-view-render", [&]() {
@@ -1854,14 +1906,18 @@ void Application::Render()
     }
     else
     {
+        const char* const reason = m_sceneViewportPanel->IsLiveResizePending()
+            ? "viewport-live-resize"
+            : "scene-view-not-rendered";
         FrameDiagnostics::LogDlssEvent(
-            0, "not-evaluated", "not-evaluated", "skipped", "scene-view-not-rendered",
+            0, "not-evaluated", "not-evaluated", "skipped", reason,
             false, 0, false, 0);
     }
 
     const bool gameViewWillRender = editorActive && projectLayoutStable
         && EditorPanelConstraints::IsViewportTabSelected("Game View")
-        && m_gameViewportPanel->HasValidRenderTarget();
+        && m_gameViewportPanel->HasValidRenderTarget()
+        && !m_gameViewportPanel->IsLiveResizePending();
     if (gameViewWillRender)
     {
         RunApplicationPhase("game-view-render", [&]() {
@@ -1932,8 +1988,11 @@ void Application::Render()
     }
     else
     {
+        const char* const reason = m_gameViewportPanel->IsLiveResizePending()
+            ? "viewport-live-resize"
+            : "game-view-not-rendered";
         FrameDiagnostics::LogDlssEvent(
-            1, "not-evaluated", "not-evaluated", "skipped", "game-view-not-rendered",
+            1, "not-evaluated", "not-evaluated", "skipped", reason,
             false, 0, false, 0);
     }
 
