@@ -26,17 +26,23 @@ public:
 private:
     AutomatedBenchmarkCapture(
         std::string outputPath,
+        std::string imageOutputPath,
+        std::string comparisonMode,
         int warmupSeconds,
         int warmupFrames,
         int sampleFrames);
 
     std::string m_outputPath;
+    std::string m_imageOutputPath;
+    std::string m_comparisonMode;
     int m_warmupSeconds = 0;
     int m_warmupFrames = 0;
     int m_sampleFrames = 0;
     int m_capturedFrames = 0;
     bool m_started = false;
     bool m_complete = false;
+    bool m_imageCaptureRequested = false;
     std::chrono::steady_clock::time_point m_readyTime{};
+    std::chrono::steady_clock::time_point m_imageCaptureRequestTime{};
     std::unique_ptr<std::ofstream> m_output;
 };

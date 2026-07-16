@@ -173,6 +173,20 @@ struct GfxContext::Impl
 
     int ImmediateUploadDepth = 0;
 
+    // S0-P5: a capture is copied by EndFrame on the normal command list and retired only after
+    // that frame's fence. It deliberately has no independent queue submission.
+    struct PresentedImageCaptureState
+    {
+        ID3D12Resource* Resource = nullptr;
+        D3D12MA::Allocation* Allocation = nullptr;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT Footprint{};
+        UINT64 FenceValue = 0;
+        int Width = 0;
+        int Height = 0;
+        bool Requested = false;
+        bool Submitted = false;
+    } PresentedImageCapture;
+
     std::uint32_t DrawSrvTableNextIndex = GfxContext::DrawTextureDescriptorStart;
 
     // CRASH-01/CRASH-03: releases queued until the covering fence value has completed.
@@ -725,6 +739,9 @@ void GfxContext::Shutdown()
     }
 
     PrepareForDeviceShutdown();
+    // PrepareForDeviceShutdown drained the fence governing this capture; it can now release its
+    // readback allocation without creating another queue submission during shutdown.
+    ReleasePresentedImageCapture();
     // Drop swapchain back-buffer refs before Streamline teardown (upgraded swapchains must have
     // zero outstanding references when slShutdown runs).
     ReleaseRenderTargets();
@@ -1110,6 +1127,12 @@ void GfxContext::EndFrame()
     }
     m_gpuProfiler.EndScope(commandList, uiScopeId);
 
+    if (m_impl->PresentedImageCapture.Requested)
+    {
+        GpuTimerScope captureScope("S0-P5/Capture final output");
+        RecordPresentedImageCapture(commandList, frame.RenderTarget.Get());
+    }
+
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = frame.RenderTarget.Get();
@@ -1143,6 +1166,11 @@ void GfxContext::EndFrame()
     // by GPU operations in-flight". m_frameIndex still refers to the frame we just rendered here
     // (AdvanceSwapchainFrameIndex() runs below), so the fence value is attributed correctly.
     SignalFrameSubmission();
+    if (m_impl->PresentedImageCapture.Submitted
+        && m_impl->PresentedImageCapture.FenceValue == 0)
+    {
+        m_impl->PresentedImageCapture.FenceValue = frame.FenceValue;
+    }
 
     m_frameRecording = false;
     m_boundOutputFramebuffer = nullptr;
@@ -2381,6 +2409,177 @@ void GfxContext::ReleaseRenderTargets()
 void GfxContext::RenderImGui(ImDrawData* drawData)
 {
     ImGui_ImplDX12_RenderDrawData(drawData, m_impl->CommandList.Get());
+}
+
+bool GfxContext::RequestPresentedImageCapture()
+{
+    if (m_impl == nullptr)
+    {
+        return false;
+    }
+
+    Impl::PresentedImageCaptureState& capture = m_impl->PresentedImageCapture;
+    if (capture.Requested || capture.Submitted || capture.Resource != nullptr)
+    {
+        return false;
+    }
+
+    capture.Requested = true;
+    return true;
+}
+
+bool GfxContext::HasPendingPresentedImageCapture() const
+{
+    return m_impl != nullptr
+        && (m_impl->PresentedImageCapture.Requested || m_impl->PresentedImageCapture.Submitted);
+}
+
+void GfxContext::RecordPresentedImageCapture(void* commandListPtr, void* renderTargetPtr)
+{
+    if (m_impl == nullptr || !m_impl->PresentedImageCapture.Requested || commandListPtr == nullptr
+        || renderTargetPtr == nullptr)
+    {
+        return;
+    }
+
+    Impl::PresentedImageCaptureState& capture = m_impl->PresentedImageCapture;
+    auto* const commandList = static_cast<ID3D12GraphicsCommandList*>(commandListPtr);
+    auto* const renderTarget = static_cast<ID3D12Resource*>(renderTargetPtr);
+    const D3D12_RESOURCE_DESC sourceDesc = renderTarget->GetDesc();
+    if (sourceDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        || sourceDesc.SampleDesc.Count != 1
+        || sourceDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM)
+    {
+        EngineLog::Error("s0p5-capture", "Final output is not a single-sample RGBA8 swapchain texture.");
+        capture.Requested = false;
+        return;
+    }
+
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+    UINT rows = 0;
+    UINT64 rowBytes = 0;
+    UINT64 totalBytes = 0;
+    m_impl->Device->GetCopyableFootprints(
+        &sourceDesc, 0, 1, 0, &footprint, &rows, &rowBytes, &totalBytes);
+    if (totalBytes == 0 || rows != sourceDesc.Height || rowBytes != sourceDesc.Width * 4ull)
+    {
+        EngineLog::Error("s0p5-capture", "Could not derive a canonical RGBA8 readback footprint.");
+        capture.Requested = false;
+        return;
+    }
+
+    D3D12_RESOURCE_DESC readbackDesc{};
+    readbackDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+    readbackDesc.Width = totalBytes;
+    readbackDesc.Height = 1;
+    readbackDesc.DepthOrArraySize = 1;
+    readbackDesc.MipLevels = 1;
+    readbackDesc.Format = DXGI_FORMAT_UNKNOWN;
+    readbackDesc.SampleDesc.Count = 1;
+    readbackDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    D3D12MA::ALLOCATION_DESC allocationDesc{};
+    allocationDesc.HeapType = D3D12_HEAP_TYPE_READBACK;
+    if (FAILED(m_impl->MemoryAllocator->CreateResource(
+            &allocationDesc,
+            &readbackDesc,
+            D3D12_RESOURCE_STATE_COPY_DEST,
+            nullptr,
+            &capture.Allocation,
+            IID_PPV_ARGS(&capture.Resource))))
+    {
+        capture.Allocation = nullptr;
+        capture.Resource = nullptr;
+        capture.Requested = false;
+        EngineLog::Error("s0p5-capture", "Could not allocate the final-output readback buffer.");
+        return;
+    }
+
+    D3D12_RESOURCE_BARRIER toCopy{};
+    toCopy.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toCopy.Transition.pResource = renderTarget;
+    toCopy.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    toCopy.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    toCopy.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    commandList->ResourceBarrier(1, &toCopy);
+
+    D3D12_TEXTURE_COPY_LOCATION source{};
+    source.pResource = renderTarget;
+    source.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    source.SubresourceIndex = 0;
+    D3D12_TEXTURE_COPY_LOCATION destination{};
+    destination.pResource = capture.Resource;
+    destination.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    destination.PlacedFootprint = footprint;
+    commandList->CopyTextureRegion(&destination, 0, 0, 0, &source, nullptr);
+
+    std::swap(toCopy.Transition.StateBefore, toCopy.Transition.StateAfter);
+    commandList->ResourceBarrier(1, &toCopy);
+
+    capture.Footprint = footprint;
+    capture.Width = static_cast<int>(sourceDesc.Width);
+    capture.Height = static_cast<int>(sourceDesc.Height);
+    capture.Requested = false;
+    capture.Submitted = true;
+}
+
+bool GfxContext::TryConsumePresentedImageCapture(PresentedImageCapture& outCapture)
+{
+    outCapture = {};
+    if (m_impl == nullptr)
+    {
+        return false;
+    }
+
+    Impl::PresentedImageCaptureState& capture = m_impl->PresentedImageCapture;
+    if (!capture.Submitted || capture.FenceValue == 0 || m_impl->Fence->GetCompletedValue() < capture.FenceValue)
+    {
+        return false;
+    }
+
+    const std::size_t rowBytes = static_cast<std::size_t>(capture.Width) * 4u;
+    std::vector<std::uint8_t> rgba8(rowBytes * static_cast<std::size_t>(capture.Height));
+    D3D12_RANGE readRange{0, capture.Footprint.Footprint.RowPitch * static_cast<SIZE_T>(capture.Height)};
+    void* mapped = nullptr;
+    if (FAILED(capture.Resource->Map(0, &readRange, &mapped)) || mapped == nullptr)
+    {
+        ReleasePresentedImageCapture();
+        EngineLog::Error("s0p5-capture", "Could not map completed final-output readback buffer.");
+        return false;
+    }
+    const auto* const source = static_cast<const std::uint8_t*>(mapped) + capture.Footprint.Offset;
+    for (int row = 0; row < capture.Height; ++row)
+    {
+        std::memcpy(
+            rgba8.data() + rowBytes * static_cast<std::size_t>(row),
+            source + capture.Footprint.Footprint.RowPitch * static_cast<std::size_t>(row),
+            rowBytes);
+    }
+    capture.Resource->Unmap(0, nullptr);
+
+    outCapture.width = capture.Width;
+    outCapture.height = capture.Height;
+    outCapture.rgba8 = std::move(rgba8);
+    ReleasePresentedImageCapture();
+    return true;
+}
+
+void GfxContext::ReleasePresentedImageCapture()
+{
+    if (m_impl == nullptr)
+    {
+        return;
+    }
+
+    Impl::PresentedImageCaptureState& capture = m_impl->PresentedImageCapture;
+    if (capture.Allocation != nullptr)
+    {
+        capture.Allocation->Release();
+    }
+    if (capture.Resource != nullptr)
+    {
+        capture.Resource->Release();
+    }
+    capture = {};
 }
 
 bool GfxContext::ReadbackPresentedColorPixel(const int x, const int y, float outRgba[4]) const

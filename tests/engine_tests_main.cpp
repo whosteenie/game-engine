@@ -35,6 +35,7 @@ void RunMisNeeTests();
 void RunEnvImportanceTests();
 void RunNeeMisIntegrationTests();
 void RunFrustumCullTests();
+void RunCaptureManifestTests(int& failures);
 void RunShaderCompileTests();
 
 namespace
@@ -101,6 +102,7 @@ namespace
         maybeRun("env_importance", RunEnvImportanceTests);
         maybeRun("nee_mis_integration", RunNeeMisIntegrationTests);
         maybeRun("frustum_cull", RunFrustumCullTests);
+        maybeRun("capture_manifest", [] { RunCaptureManifestTests(test::FailureCount()); });
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

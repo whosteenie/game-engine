@@ -161,6 +161,18 @@ public:
     // Reads a pixel from the swapchain buffer most recently presented by EndFrame().
     bool ReadbackPresentedColorPixel(int x, int y, float outRgba[4]) const;
 
+    // S0-P5: capture-only, fence-owned final-output copy. The copy is recorded on the normal frame
+    // command list before Present; it never submits a separate command list or changes renderer state.
+    struct PresentedImageCapture
+    {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint8_t> rgba8;
+    };
+    bool RequestPresentedImageCapture();
+    bool TryConsumePresentedImageCapture(PresentedImageCapture& outCapture);
+    bool HasPendingPresentedImageCapture() const;
+
     static std::string GetLastGpuAllocationError();
     void GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& outCapacity) const;
     bool IsDeviceRemoved(std::string* outReason = nullptr) const;
@@ -269,6 +281,8 @@ private:
     void ProcessPendingResize();
     void ResizeInternal(int width, int height);
     void EnsureStreamlineSwapChainUpgraded();
+    void RecordPresentedImageCapture(void* commandList, void* renderTarget);
+    void ReleasePresentedImageCapture();
     void CreateRenderTargets();
     void ReleaseRenderTargets();
     void RenderImGui(ImDrawData* drawData);
