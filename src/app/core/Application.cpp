@@ -95,6 +95,79 @@ namespace
 {
 #ifdef _WIN32
     std::atomic_bool g_consoleCloseRequested{false};
+    WNDPROC g_startupWindowPreviousProc = nullptr;
+    HBRUSH g_startupWindowBrush = nullptr;
+
+    LRESULT CALLBACK StartupWindowProc(
+        const HWND window,
+        const UINT message,
+        const WPARAM wParam,
+        const LPARAM lParam)
+    {
+        if (message == WM_ERASEBKGND)
+        {
+            RECT clientRect{};
+            GetClientRect(window, &clientRect);
+            FillRect(reinterpret_cast<HDC>(wParam), &clientRect, g_startupWindowBrush);
+            return 1;
+        }
+        if (message == WM_PAINT)
+        {
+            PAINTSTRUCT paint{};
+            HDC deviceContext = BeginPaint(window, &paint);
+            RECT clientRect{};
+            GetClientRect(window, &clientRect);
+            FillRect(deviceContext, &clientRect, g_startupWindowBrush);
+            SetBkMode(deviceContext, TRANSPARENT);
+            SetTextColor(deviceContext, RGB(220, 220, 225));
+            const HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+            const HGDIOBJ previousFont = SelectObject(deviceContext, font);
+            DrawTextW(
+                deviceContext,
+                L"Who Engine\nStarting...",
+                -1,
+                &clientRect,
+                DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
+            SelectObject(deviceContext, previousFont);
+            EndPaint(window, &paint);
+            return 0;
+        }
+
+        return g_startupWindowPreviousProc != nullptr
+            ? CallWindowProcW(g_startupWindowPreviousProc, window, message, wParam, lParam)
+            : DefWindowProcW(window, message, wParam, lParam);
+    }
+
+    void AttachStartupWindowPaint(GLFWwindow* window)
+    {
+        const HWND nativeWindow = glfwGetWin32Window(window);
+        g_startupWindowBrush = CreateSolidBrush(RGB(18, 18, 20));
+        g_startupWindowPreviousProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+            nativeWindow,
+            GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(StartupWindowProc)));
+        InvalidateRect(nativeWindow, nullptr, TRUE);
+    }
+
+    void DetachStartupWindowPaint(GLFWwindow* window)
+    {
+        if (g_startupWindowPreviousProc == nullptr)
+        {
+            return;
+        }
+
+        const HWND nativeWindow = glfwGetWin32Window(window);
+        SetWindowLongPtrW(
+            nativeWindow,
+            GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(g_startupWindowPreviousProc));
+        g_startupWindowPreviousProc = nullptr;
+        if (g_startupWindowBrush != nullptr)
+        {
+            DeleteObject(g_startupWindowBrush);
+            g_startupWindowBrush = nullptr;
+        }
+    }
 
     BOOL WINAPI ConsoleControlHandler(const DWORD controlType)
     {
@@ -346,10 +419,10 @@ Application::Application(int width, int height, const char* title)
 
         EditorSettings::EnsureAppDataDirectoryExists();
         EngineLog::EnsureLogDirectoryExists();
+        NativeProgressWindow::Instance().WarmUp();
 #ifdef _WIN32
         NativeProgressWindow::Instance().SetOwnerWindow(glfwGetWin32Window(m_window));
 #endif
-        NativeProgressWindow::Instance().WarmUp();
         m_imguiLayer = std::make_unique<ImGuiLayer>(m_window, EditorSettings::GetGlobalImGuiIniPath());
         GfxContext::Get().Initialize(m_window, framebufferWidth, framebufferHeight);
         m_imguiLayer->InitPlatformBackend();
@@ -403,6 +476,7 @@ Application::Application(int width, int height, const char* title)
     catch (...)
     {
 #ifdef _WIN32
+        DetachStartupWindowPaint(m_window);
         SetConsoleCtrlHandler(ConsoleControlHandler, FALSE);
 #endif
 
@@ -420,6 +494,7 @@ Application::Application(int width, int height, const char* title)
 Application::~Application()
 {
 #ifdef _WIN32
+    DetachStartupWindowPaint(m_window);
     SetConsoleCtrlHandler(ConsoleControlHandler, FALSE);
 #endif
 
@@ -829,7 +904,13 @@ void Application::InitGLFW()
 
     glfwSetWindowUserPointer(m_window, this);
     glfwSetFramebufferSizeCallback(m_window, FramebufferSizeCallback);
+#ifdef _WIN32
+    AttachStartupWindowPaint(m_window);
+#endif
     glfwShowWindow(m_window);
+#ifdef _WIN32
+    UpdateWindow(glfwGetWin32Window(m_window));
+#endif
 
 #ifdef _WIN32
     wchar_t modulePath[MAX_PATH]{};
@@ -852,7 +933,7 @@ void Application::PumpStartupFramesUntilDlssReady()
 
     constexpr int kMaxBootstrapFrames = 600;
     for (int frameIndex = 0;
-         frameIndex < kMaxBootstrapFrames && !DlssContext::Get().IsReady()
+         frameIndex < kMaxBootstrapFrames && (frameIndex == 0 || !DlssContext::Get().IsReady())
          && !glfwWindowShouldClose(m_window);
          ++frameIndex)
     {
@@ -873,6 +954,15 @@ void Application::PumpStartupFramesUntilDlssReady()
         m_renderer->BeginFrame();
         m_imguiLayer->EndFrame();
         m_renderer->EndFrame(m_window);
+
+        if (frameIndex == 0)
+        {
+#ifdef _WIN32
+            // The first swapchain image now completely replaces the lightweight GDI startup
+            // surface. Restore GLFW's window procedure only after that present succeeds.
+            DetachStartupWindowPaint(m_window);
+#endif
+        }
     }
 
     GfxContext::Get().TryDeferredStreamlineSwapChainUpgrade();
@@ -880,12 +970,15 @@ void Application::PumpStartupFramesUntilDlssReady()
 
 void Application::UpdatePendingProjectStartupProgress(const char* message) const
 {
-    if (message == nullptr || m_projectChooser == nullptr || !m_projectChooser->HasPendingProjectOpen())
+    if (message == nullptr)
     {
         return;
     }
 
-    NativeProgressWindow::Instance().SetMessage(message);
+    if (NativeProgressWindow::Instance().IsActive())
+    {
+        NativeProgressWindow::Instance().SetMessage(message);
+    }
     if (m_window != nullptr)
     {
         glfwPollEvents();

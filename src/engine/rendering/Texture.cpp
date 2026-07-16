@@ -1,5 +1,7 @@
 #include "engine/rendering/Texture.h"
 
+#include "engine/platform/BackgroundWork.h"
+
 #include "engine/rendering/Constants.h"
 #include "engine/rendering/Shader.h"
 #include "engine/rhi/GfxContext.h"
@@ -188,12 +190,12 @@ namespace
             // texture import time, so spread only those across a bounded number of CPU workers;
             // tiny tail levels stay serial to avoid thread-launch overhead.
             constexpr std::size_t kParallelMipPixelThreshold = 64u * 1024u;
-            constexpr unsigned int kMaxMipWorkers = 8;
             const std::size_t destPixelCount =
                 static_cast<std::size_t>(dest.width) * static_cast<std::size_t>(dest.height);
-            const unsigned int hardwareWorkers = std::max(1u, std::thread::hardware_concurrency());
-            const unsigned int workerCount = std::min(
-                {kMaxMipWorkers, hardwareWorkers, static_cast<unsigned int>(dest.height)});
+            const unsigned int workerCount = static_cast<unsigned int>(
+                BackgroundWork::ResponsiveWorkerCount(
+                    static_cast<std::size_t>(dest.height),
+                    std::thread::hardware_concurrency()));
             if (destPixelCount < kParallelMipPixelThreshold || workerCount <= 1)
             {
                 downsampleRows(0, dest.height);
@@ -208,7 +210,10 @@ namespace
                         (static_cast<long long>(dest.height) * workerIndex) / workerCount);
                     const int endY = static_cast<int>(
                         (static_cast<long long>(dest.height) * (workerIndex + 1)) / workerCount);
-                    workers.emplace_back(downsampleRows, beginY, endY);
+                    workers.emplace_back([&, beginY, endY]() {
+                        BackgroundWork::LowerCurrentThreadPriority();
+                        downsampleRows(beginY, endY);
+                    });
                 }
                 for (std::thread& worker : workers)
                 {

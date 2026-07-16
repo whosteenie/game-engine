@@ -41,6 +41,7 @@ void RunDlssFrameTokenTests(int& failures);
 void RunHistoryCompatibilityTests(int& failures);
 void RunViewportResizeStabilizerTests(int& failures);
 void RunProjectViewportRevealGateTests(int& failures);
+void RunBackgroundWorkTests(int& failures);
 void RunPtViewportOwnershipTests(int& failures);
 void RunShaderCompileTests();
 
@@ -122,6 +123,7 @@ namespace
         maybeRun(
             "project_viewport_reveal_gate",
             [] { RunProjectViewportRevealGateTests(test::FailureCount()); });
+        maybeRun("background_work", [] { RunBackgroundWorkTests(test::FailureCount()); });
         maybeRun(
             "pt_viewport_ownership",
             [] { RunPtViewportOwnershipTests(test::FailureCount()); });

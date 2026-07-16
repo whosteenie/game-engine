@@ -1,6 +1,7 @@
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
 #include "engine/platform/EngineLog.h"
+#include "engine/platform/BackgroundWork.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 
 #include <windows.h>
@@ -444,13 +445,11 @@ void PrewarmHlslStages(const std::vector<HlslStageCompileRequest>& requests)
     std::atomic<std::size_t> nextRequest{0};
     std::mutex failureMutex;
     std::exception_ptr failure;
-    const std::size_t workerCount = std::min<std::size_t>(
-        8,
-        std::max<std::size_t>(
-            1,
-            std::min<std::size_t>(requests.size(), std::thread::hardware_concurrency())));
+    const std::size_t workerCount = BackgroundWork::ResponsiveWorkerCount(
+        requests.size(), std::thread::hardware_concurrency());
 
     auto worker = [&]() {
+        BackgroundWork::LowerCurrentThreadPriority();
         while (true)
         {
             const std::size_t requestIndex = nextRequest.fetch_add(1, std::memory_order_relaxed);

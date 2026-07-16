@@ -12,6 +12,7 @@
 #include <ImGuizmo.h>
 
 #include "engine/platform/EngineLog.h"
+#include "engine/platform/BackgroundWork.h"
 #include "engine/platform/ExceptionMessage.h"
 #include "engine/platform/NativeProgressWindow.h"
 #include "engine/platform/ProjectLoadBenchmark.h"
@@ -727,9 +728,12 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         // no-hitch warm-up contract for production, diagnostics, and SER paths.
         std::vector<std::future<void>> shaderPrewarmJobs;
         const auto queueShaderPrewarm = [&](const char* libraryPath, DxrShaderLibraryCompileOptions options) {
-            shaderPrewarmJobs.emplace_back(std::async(std::launch::async, [libraryPath, options = std::move(options)]() {
-                (void)DxrShaderCache::Load(libraryPath, options);
-            }));
+            shaderPrewarmJobs.emplace_back(std::async(
+                std::launch::async,
+                [libraryPath, options = std::move(options)]() {
+                    BackgroundWork::LowerCurrentThreadPriority();
+                    (void)DxrShaderCache::Load(libraryPath, options);
+                }));
         };
         const auto queueDefaultShaderPrewarm = [&](const char* libraryPath) {
             queueShaderPrewarm(libraryPath, DxrShaderCache::MakeActiveDeviceCompileOptions());
@@ -790,6 +794,7 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         if (m_preWarmedPbrShader == nullptr)
         {
             pbrPrewarmJob = std::async(std::launch::async, []() {
+                BackgroundWork::LowerCurrentThreadPriority();
                 return ShaderCache::Load(EngineConstants::LitVertexShader, EngineConstants::PbrFragmentShader);
             });
         }

@@ -1,5 +1,7 @@
 #include "engine/rhi/DlssContext.h"
 
+#include "engine/platform/BackgroundWork.h"
+
 #include "engine/platform/FrameDiagnostics.h"
 
 #include "engine/rhi/GfxContext.h"
@@ -153,6 +155,7 @@ void DlssContext::BeginAsyncInitialize(ID3D12Device* device, IDXGIAdapter* adapt
 void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
 {
 #ifdef GAME_ENGINE_ENABLE_DLSS
+    BackgroundWork::LowerCurrentThreadPriority();
     HMODULE hmod = ::LoadLibraryW(L"sl.interposer.dll");
     if (hmod == nullptr)
     {
