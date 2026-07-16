@@ -590,14 +590,23 @@ void DlssResolvePass::Execute(
             bloomInputs.bloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
 
             DisplayResBloomOutputs bloomOutputs{};
+            const bool displayBloomCanConsumeHistory =
+                context.renderWidth == inputs.viewportWidth
+                && context.renderHeight == inputs.viewportHeight
+                && bloomInputs.hasVelocity
+                && bloomInputs.bloomTemporalShader != nullptr
+                && bloomInputs.bloomTemporalTarget != nullptr
+                && bloomInputs.bloomHistoryTarget != nullptr;
             FrameDiagnostics::LogHistoryEvent(
                 inputs.dlssViewportId, "dlss-display-bloom",
-                inputs.dlssBloomHistoryValid ? "consume" : "request",
+                !displayBloomCanConsumeHistory ? "skip"
+                    : (inputs.dlssBloomHistoryValid ? "consume" : "request"),
                 pathTracerDlssActive ? "path-tracer" : "raster",
                 ptBloomTemporalMotion || ptBloomTemporalDepth ? "pt-guide-bundle" : "raster-guides",
                 inputs.rayReconstructionActive ? "rr" : "dlss", DlssTraceQuality(inputs.quality),
                 context.renderWidth, context.renderHeight, inputs.viewportWidth, inputs.viewportHeight,
-                false, false, inputs.dlssBloomHistoryValid ? 0u : 1u);
+                false, false, !displayBloomCanConsumeHistory ? 0u
+                    : (inputs.dlssBloomHistoryValid ? 0u : 1u));
             {
                 const GfxContext::GpuTimerScope gpuScopeDisplayBloom("DLSS/Display bloom");
                 if (BloomTonemapPass::ExecuteDisplayResBloom(context, bloomInputs, bloomOutputs))
