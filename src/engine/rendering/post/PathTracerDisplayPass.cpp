@@ -11,9 +11,38 @@
 #include <dxgiformat.h>
 
 #include <cmath>
+#include <cstdlib>
 
 namespace
 {
+    bool ArePathTracerGpuEventsEnabled()
+    {
+        static const bool enabled = [] {
+            const char* const value = std::getenv("GAME_ENGINE_PT_GPU_EVENTS");
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }();
+        return enabled;
+    }
+
+    void BeginPathTracerGpuEvent(
+        ID3D12GraphicsCommandList* const commandList,
+        const wchar_t* const name,
+        const UINT nameSize)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->BeginEvent(0, name, nameSize);
+        }
+    }
+
+    void EndPathTracerGpuEvent(ID3D12GraphicsCommandList* const commandList)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->EndEvent();
+        }
+    }
+
     void TransitionResource(
         ID3D12GraphicsCommandList* commandList,
         ID3D12Resource* resource,
@@ -230,8 +259,15 @@ void PathTracerDisplayPass::AccumulateReference(
     inputs.accumulateShader->FlushUniforms();
 
     const float clearColor[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    auto* const commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    static constexpr wchar_t kPathTracerReferenceAccumulationMarker[] = L"PT.ReferenceAccumulation";
+    BeginPathTracerGpuEvent(
+        commandList,
+        kPathTracerReferenceAccumulationMarker,
+        static_cast<UINT>(sizeof(kPathTracerReferenceAccumulationMarker)));
     context.draw.DrawFullscreenToTarget(
         *inputs.accumulateShader, writeTarget, inputs.width, inputs.height, clearColor);
+    EndPathTracerGpuEvent(commandList);
 
     outputs.pingPongReadFromScratch = !outputs.pingPongReadFromScratch;
     outputs.sumDisplaySrv = writeTarget.srvCpuHandle;

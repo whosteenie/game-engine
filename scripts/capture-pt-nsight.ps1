@@ -370,6 +370,7 @@ foreach ($view in $settings.views) {
             "--capture-countdown-timer=$($warmupSeconds * 1000)",
             '--frame-count=1',
             '--terminate-after-capture',
+            '--no-block-on-interfering-application',
             '--no-hud'
         )
         $frameCaptureLog = Join-Path $viewDirectory "frame-capture.log"

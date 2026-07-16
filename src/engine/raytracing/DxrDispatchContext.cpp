@@ -13,10 +13,39 @@
 #include <D3D12MemAlloc.h>
 #include <d3d12.h>
 
+#include <cstdlib>
 #include <cstring>
 
 namespace
 {
+    bool ArePathTracerGpuEventsEnabled()
+    {
+        static const bool enabled = [] {
+            const char* const value = std::getenv("GAME_ENGINE_PT_GPU_EVENTS");
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }();
+        return enabled;
+    }
+
+    void BeginPathTracerGpuEvent(
+        ID3D12GraphicsCommandList* const commandList,
+        const wchar_t* const name,
+        const UINT nameSize)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->BeginEvent(0, name, nameSize);
+        }
+    }
+
+    void EndPathTracerGpuEvent(ID3D12GraphicsCommandList* const commandList)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->EndEvent();
+        }
+    }
+
     void DestroyOutputResource(
         ID3D12Resource*& resource,
         D3D12MA::Allocation*& allocation,
@@ -1087,6 +1116,14 @@ void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList*
         return;
     }
 
+    // Keep the history copies separate from ReSTIR reuse in captures. This scope deliberately
+    // includes only the guide transitions and copies recorded by this routine.
+    static constexpr wchar_t kPathTracerSurfaceHistoryMarker[] = L"PT.SurfaceHistory";
+    BeginPathTracerGpuEvent(
+        commandList,
+        kPathTracerSurfaceHistoryMarker,
+        static_cast<UINT>(sizeof(kPathTracerSurfaceHistoryMarker)));
+
     constexpr D3D12_RESOURCE_STATES kAllShaderRead =
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 
@@ -1131,6 +1168,7 @@ void DxrDispatchContext::CopyPathTracerSurfaceHistory(ID3D12GraphicsCommandList*
     copyGuide(m_ptRestirSurfaceMaterialTexture, m_ptPrevRestirSurfaceMaterialTexture);
     copyGuide(m_ptRestirSurfaceAlbedoMetallicTexture, m_ptPrevRestirSurfaceAlbedoMetallicTexture);
     m_ptPrevSurfaceHistoryValid = true;
+    EndPathTracerGpuEvent(commandList);
 }
 
 void DxrDispatchContext::FinalizePathTracerSurfaceHistory(ID3D12GraphicsCommandList* commandList)
@@ -1306,15 +1344,15 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), tlasResource);
     }
 
-    // Keep the spatial reuse dispatch independently visible in Nsight. The UI timer surrounds this
-    // call too, but the narrow marker is needed for shader profiling and live-state inspection.
-    static constexpr wchar_t kRestirSpatialDispatchMarker[] = L"PT.DispatchRays.RestirSpatial";
-    commandList->BeginEvent(
-        0,
-        kRestirSpatialDispatchMarker,
-        static_cast<UINT>(sizeof(kRestirSpatialDispatchMarker)));
+    // Keep the temporal reuse dispatch independently visible in captures. The UI timer surrounds
+    // this call too, but this narrow marker identifies the DispatchRays work alone.
+    static constexpr wchar_t kRestirTemporalDispatchMarker[] = L"PT.ReSTIR.Temporal";
+    BeginPathTracerGpuEvent(
+        commandList,
+        kRestirTemporalDispatchMarker,
+        static_cast<UINT>(sizeof(kRestirTemporalDispatchMarker)));
     recorder.DispatchRays(shaderBindingTable, width, height);
-    commandList->EndEvent();
+    EndPathTracerGpuEvent(commandList);
 
     RecordDxrUavBarrier(commandList, m_primaryOutputResource);
     RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);
@@ -1477,7 +1515,17 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     const int dispatchHeight = dispatchGiBoilingFilterTiles
         ? (height + kGiBoilingFilterTileSize - 1) / kGiBoilingFilterTileSize
         : height;
+    static constexpr wchar_t kRestirSpatialDispatchMarker[] = L"PT.ReSTIR.Spatial";
+    static constexpr wchar_t kRestirGiBoilingFilterMarker[] = L"PT.ReSTIR.GiBoilingFilter";
+    const wchar_t* const marker = dispatchGiBoilingFilterTiles
+        ? kRestirGiBoilingFilterMarker
+        : kRestirSpatialDispatchMarker;
+    const UINT markerSize = dispatchGiBoilingFilterTiles
+        ? static_cast<UINT>(sizeof(kRestirGiBoilingFilterMarker))
+        : static_cast<UINT>(sizeof(kRestirSpatialDispatchMarker));
+    BeginPathTracerGpuEvent(commandList, marker, markerSize);
     recorder.DispatchRays(shaderBindingTable, dispatchWidth, dispatchHeight);
+    EndPathTracerGpuEvent(commandList);
 
     RecordDxrUavBarrier(commandList, m_primaryOutputResource);
     RecordDxrUavBarrier(commandList, m_restirReservoirs[writeIndex].resource);
@@ -2663,13 +2711,13 @@ bool DxrDispatchContext::DispatchPathTracer(
     // Nsight's automatic CSV export does not otherwise identify this megakernel among the
     // command-list work. Keep the marker narrowly around DispatchRays so fixed-view captures can
     // compare this event without conflating its surrounding transitions and UAV barriers.
-    static constexpr wchar_t kPathTracerDispatchMarker[] = L"PT.DispatchRays.PathTracer";
-    commandList->BeginEvent(
-        0,
+    static constexpr wchar_t kPathTracerDispatchMarker[] = L"PT.Megakernel";
+    BeginPathTracerGpuEvent(
+        commandList,
         kPathTracerDispatchMarker,
         static_cast<UINT>(sizeof(kPathTracerDispatchMarker)));
     recorder.DispatchRays(shaderBindingTable, width, height);
-    commandList->EndEvent();
+    EndPathTracerGpuEvent(commandList);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryOutputResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_primaryMetadataResource);
     RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), m_ptDepthTexture.resource);

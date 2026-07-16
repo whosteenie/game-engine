@@ -36,6 +36,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <random>
@@ -45,6 +46,34 @@
 
 namespace
 {
+    bool ArePathTracerGpuEventsEnabled()
+    {
+        static const bool enabled = [] {
+            const char* const value = std::getenv("GAME_ENGINE_PT_GPU_EVENTS");
+            return value == nullptr || std::strcmp(value, "0") != 0;
+        }();
+        return enabled;
+    }
+
+    void BeginPathTracerGpuEvent(
+        ID3D12GraphicsCommandList* const commandList,
+        const wchar_t* const name,
+        const UINT nameSize)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->BeginEvent(0, name, nameSize);
+        }
+    }
+
+    void EndPathTracerGpuEvent(ID3D12GraphicsCommandList* const commandList)
+    {
+        if (ArePathTracerGpuEventsEnabled())
+        {
+            commandList->EndEvent();
+        }
+    }
+
     constexpr float kBackgroundSrgb[3] = {0.08f, 0.09f, 0.15f};
 
     // Fullscreen quad UVs for top-left texture origin (D3D12 convention).
@@ -1830,6 +1859,15 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
         return 0;
     }
 
+    // This function owns only the PT inputs prepared for the following RR evaluation. Keep all
+    // recorded depth and material-guide work in one independently attributable capture scope.
+    auto* const commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    static constexpr wchar_t kPathTracerRrPreparationMarker[] = L"PT.RR.Preparation";
+    BeginPathTracerGpuEvent(
+        commandList,
+        kPathTracerRrPreparationMarker,
+        static_cast<UINT>(sizeof(kPathTracerRrPreparationMarker)));
+
     const bool fullPtBundle = mode == 0;
     const bool wantGuides = fullPtBundle || mode == 2;
     const bool wantDepth = fullPtBundle || mode == 3 || mode == 4;
@@ -1843,6 +1881,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
         }
         else if (fullPtBundle)
         {
+            EndPathTracerGpuEvent(commandList);
             return 0; // full bundle is all-or-nothing (never a partial swap)
         }
     }
@@ -1857,6 +1896,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
             && m_rrNormalRoughnessTarget.resource != nullptr;
         if (!guidesAvailable)
         {
+            EndPathTracerGpuEvent(commandList);
             return fullPtBundle ? 0u : ready; // full bundle: all-or-nothing
         }
 
@@ -1883,6 +1923,7 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 
     }
 
+    EndPathTracerGpuEvent(commandList);
     return ready;
 }
 
