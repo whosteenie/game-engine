@@ -568,10 +568,10 @@ namespace
             ImGui::SetKeyboardFocusHere();
         }
 
-        const float textLineHeight = ImGui::GetTextLineHeight();
-        const float rawFramePaddingY = (textLineHeight - ImGui::GetFontSize()) * 0.5f;
-        const float framePaddingY = rawFramePaddingY > 0.0f ? rawFramePaddingY : 0.0f;
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, framePaddingY));
+        // Match the TreeNode row's vertical padding so swapping its label for an input does not
+        // move the text baseline or change the row height. Keep horizontal padding tight because
+        // the input begins at the label position rather than the tree-node origin.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
 
         const float inputWidth = ImGui::GetContentRegionAvail().x;
         ImGui::SetNextItemWidth(inputWidth > 0.0f ? inputWidth : -FLT_MIN);
