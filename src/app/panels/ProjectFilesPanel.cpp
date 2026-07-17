@@ -617,6 +617,45 @@ bool ProjectFilesPanel::TryDeletePath(const std::string& entryPath)
     return true;
 }
 
+void ProjectFilesPanel::BeginEntrySelectionGesture(const std::string& entryPath)
+{
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    {
+        m_selectionGesture = SelectionGesture::Entry;
+        m_selectionGesturePath = entryPath;
+    }
+}
+
+void ProjectFilesPanel::BeginBlankSelectionGesture()
+{
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        && m_selectionGesture == SelectionGesture::None)
+    {
+        m_selectionGesture = SelectionGesture::Blank;
+    }
+}
+
+void ProjectFilesPanel::CommitSelectionGesture()
+{
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+    {
+        return;
+    }
+
+    if (m_selectionGesture == SelectionGesture::Entry)
+    {
+        m_selectedEntryPath = m_selectionGesturePath;
+    }
+    else if (m_selectionGesture == SelectionGesture::Blank)
+    {
+        m_selectedEntryPath.clear();
+        CancelRename();
+    }
+
+    m_selectionGesture = SelectionGesture::None;
+    m_selectionGesturePath.clear();
+}
+
 void ProjectFilesPanel::ImportModelIntoScene(ProjectSession& project, const std::string& modelPath)
 {
     if (m_drawScene == nullptr || m_drawUndoStack == nullptr)
@@ -858,10 +897,10 @@ void ProjectFilesPanel::DrawFolderTree(ProjectSession& project, const std::strin
             m_folderOpenStates[entry.path] = opened;
         }
 
-        if (ImGui::IsItemClicked())
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             m_browsedDirectory = entry.path;
-            m_selectedEntryPath = entry.path;
+            BeginEntrySelectionGesture(entry.path);
             m_scrollSelectionIntoView = false;
         }
 
@@ -940,12 +979,13 @@ void ProjectFilesPanel::DrawFileDetailsView(ProjectSession& project, const std::
             else
             {
                 const std::string label = BuildEntryLabel(entry.isDirectory, entry.name);
-                if (ImGui::Selectable(
-                        label.c_str(),
-                        isSelected,
-                        ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                ImGui::Selectable(
+                    label.c_str(),
+                    isSelected,
+                    ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+                if (ImGui::IsItemHovered())
                 {
-                    m_selectedEntryPath = entry.path;
+                    BeginEntrySelectionGesture(entry.path);
                 }
 
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
@@ -1038,20 +1078,18 @@ void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::str
         {
             ImGui::PushFont(nullptr, iconFontSize);
             ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
-            const bool selected = ImGui::Selectable(
+            ImGui::Selectable(
                 EntryIcon(entry.isDirectory),
                 isSelected,
-                ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SelectOnClick,
+                ImGuiSelectableFlags_AllowDoubleClick,
                 ImVec2(tileWidth, iconHeight));
             ImGui::PopStyleVar();
             ImGui::PopFont();
             const bool isTileHovered = ImGui::IsItemHovered();
-            if (selected)
+            if (isTileHovered)
             {
-                m_selectedEntryPath = entry.path;
+                BeginEntrySelectionGesture(entry.path);
             }
-            m_iconViewTilePressInProgress =
-                m_iconViewTilePressInProgress || ImGui::IsItemActive();
 
             if (isTileHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
                 && entry.isDirectory)
@@ -1092,16 +1130,9 @@ void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::str
         }
     }
 
-    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+    if (ImGui::IsWindowHovered() && m_renamePath.empty())
     {
-        if (ImGui::IsWindowHovered()
-            && !m_iconViewTilePressInProgress
-            && m_renamePath.empty())
-        {
-            m_selectedEntryPath.clear();
-            CancelRename();
-        }
-        m_iconViewTilePressInProgress = false;
+        BeginBlankSelectionGesture();
     }
 }
 
@@ -1193,10 +1224,10 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     {
         m_folderOpenStates[projectRoot] = rootOpen;
     }
-    if (ImGui::IsItemClicked())
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         m_browsedDirectory = projectRoot;
-        m_selectedEntryPath = projectRoot;
+        BeginEntrySelectionGesture(projectRoot);
     }
 
     DrawEntryContextMenu(project, projectRoot, rootName, true);
@@ -1214,8 +1245,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
             ImGui::InvisibleButton("##ProjectFoldersBackground", backgroundSpace);
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             {
-                m_selectedEntryPath.clear();
-                CancelRename();
+                BeginBlankSelectionGesture();
             }
         }
     }
@@ -1258,8 +1288,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
             ImGui::InvisibleButton("##ProjectFilesBackground", backgroundSpace);
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             {
-                m_selectedEntryPath.clear();
-                CancelRename();
+                BeginBlankSelectionGesture();
             }
         }
     }
@@ -1269,26 +1298,6 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     HandleFilesPanelHotkeys();
     DrawDeleteConfirmPopup();
 
-    // A tile press can transiently update and clear the live selection before its final value is
-    // known on mouse release. Keep the footer on its last committed value throughout that press.
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
-    {
-        m_displayedSelectionPath = m_selectedEntryPath;
-    }
-
-    if (!m_statusMessage.empty())
-    {
-        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", m_statusMessage.c_str());
-    }
-    else if (m_displayedSelectionPath.empty())
-    {
-        ImGui::TextDisabled("No selection");
-    }
-    else
-    {
-        ImGui::TextDisabled("%s", m_displayedSelectionPath.c_str());
-    }
-
     // Clear selection when clicking outside this panel (other panels, viewport, etc.).
     // Skip while any popup is open so context-menu actions like Rename still apply.
     if (!m_selectedEntryPath.empty()
@@ -1296,8 +1305,22 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
         && !ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
         && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
     {
-        m_selectedEntryPath.clear();
-        CancelRename();
+        BeginBlankSelectionGesture();
+    }
+
+    CommitSelectionGesture();
+
+    if (!m_statusMessage.empty())
+    {
+        ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", m_statusMessage.c_str());
+    }
+    else if (m_selectedEntryPath.empty())
+    {
+        ImGui::TextDisabled("No selection");
+    }
+    else
+    {
+        ImGui::TextDisabled("%s", m_selectedEntryPath.c_str());
     }
 
     ImGui::End();
