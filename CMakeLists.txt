@@ -151,7 +151,7 @@ FetchContent_MakeAvailable(json)
 # MathLib) and compiles its internal shaders at build time; DXIL blobs are embedded in the
 # static lib. If the build cannot locate a dxc.exe for ShaderMake, set SHADERMAKE_DXC_PATH.
 set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
-# Guide-buffer encoding contract — must match assets/shaders/dxr/reflections.hlsl:
+# Guide-buffer encoding contract — must match assets/shaders/raytracing/libraries/reflections.hlsl:
 #   NRD_NORMAL_ENCODING 3 = RGBA16_UNORM: rgb = worldNormal * 0.5 + 0.5, a = roughness
 #   (same packing math as RGBA8, 16-bit precision — 8-bit normals quantize on curved
 #   surfaces and break RELAX's normal edge-stopping, reading as blur bands/shimmer)

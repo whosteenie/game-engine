@@ -1,7 +1,7 @@
 // SSR trace — quadratic view-space march, stochastic jitter, multi-sample averaging.
 // Miss returns 0; IBL fallback in composite (Phase S4).
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 
 Texture2D uDepthMap : register(t0);
 Texture2D uNormalMap : register(t1);

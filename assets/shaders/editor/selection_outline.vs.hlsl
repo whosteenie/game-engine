@@ -1,4 +1,4 @@
-#include "hlsl_common.hlsl"
+#include "../common/hlsl_common.hlsl"
 
 cbuffer PerVertex : register(b0)
 {

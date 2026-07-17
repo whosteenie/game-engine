@@ -7,7 +7,7 @@
 //     DISTANCE (a) — RELAX packing (raw world units; miss = maxTraceDistance).
 // u1: R32F linear viewZ. u2: RGBA16_UNORM normal+roughness (NRD_NORMAL_ENCODING=3). u3: RG16F MV.
 
-#include "hit_shading.hlsli"
+#include "../common/hit_shading.hlsli"
 
 RWTexture2D<float4> g_GiOutput : register(u0);
 RWTexture2D<float> g_ViewZOutput : register(u1);

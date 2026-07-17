@@ -1,4 +1,4 @@
-#include "hlsl_common.hlsl"
+#include "../common/hlsl_common.hlsl"
 
 // Motion-vector convention (SSGI Phase 1):
 //   velocity.xy = currentNDC.xy - previousNDC.xy

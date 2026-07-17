@@ -4,7 +4,7 @@
 #include <cmath>
 #include <cstdint>
 
-// CPU mirror of assets/shaders/dxr/restir_di.hlsli (ReSTIR DI initial sampling, roadmap P2).
+// CPU mirror of assets/shaders/raytracing/path_tracing/restir_di.hlsli (ReSTIR DI initial sampling, roadmap P2).
 // Keep the resampling math in lockstep with the HLSL — the expected-value parity, WRS
 // proportionality, and unbiasedness gates are proven against this mirror in tests/restir_di_test.cpp.
 

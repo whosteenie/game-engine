@@ -31,7 +31,7 @@ struct DxrGeometryLookupEntry
 
 // Material constants for in-hit reflection shading. Indexed by
 // g_GeometryLookup[InstanceID()].materialId. Layout must match MaterialEntry in
-// assets/shaders/dxr/hit_shading.hlsli.
+// assets/shaders/raytracing/common/hit_shading.hlsli.
 struct DxrMaterialEntry
 {
     float albedo[3] = {0.5f, 0.5f, 0.5f};
@@ -69,7 +69,7 @@ struct DxrPrevInstanceTransformEntry
 };
 
 // F2/F2b emissive NEE: one entry per emissive scene instance (S5 step 14 / A1).
-// Layout must match EmissiveLightEntry in assets/shaders/dxr/path_tracer.hlsl.
+// Layout must match EmissiveLightEntry in assets/shaders/raytracing/path_tracing/path_tracer.hlsl.
 struct DxrEmissiveLightEntry
 {
     float emissive[3] = {0.0f, 0.0f, 0.0f};

@@ -18,13 +18,13 @@ RWTexture2D<uint2> g_PrimaryMetadata : register(u1);
 RaytracingAccelerationStructure g_SceneTlas : register(t0);
 Texture2D<float> g_DepthMap : register(t1);
 
-#include "dxr_geometry_types.hlsli"
+#include "../common/dxr_geometry_types.hlsli"
 
 StructuredBuffer<GeometryLookupEntry> g_GeometryLookup : register(t2);
 StructuredBuffer<float> g_SceneVertexFloats : register(t3);
 StructuredBuffer<uint> g_SceneIndices : register(t4);
 
-#include "dxr_geometry.hlsli"
+#include "../common/dxr_geometry.hlsli"
 
 // DXR-04: primary visibility must return the CLOSEST hit. The previous implementation used
 // RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH (which returns *any* hit, not the closest) and then

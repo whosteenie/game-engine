@@ -4,7 +4,7 @@
 // Closest-hit only extracts surface data; shadow and bounce traces originate from raygen so
 // MaxTraceRecursionDepth = 1 suffices. P1 direct-only shading is subsumed by the loop.
 
-#include "hit_shading.hlsli"
+#include "../common/hit_shading.hlsli"
 #include "restir_pack.hlsli"
 #include "restir_di.hlsli"
 

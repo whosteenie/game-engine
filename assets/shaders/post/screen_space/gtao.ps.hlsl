@@ -1,4 +1,4 @@
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 
 Texture2D uDepthMap : register(t0);
 Texture2D uNormalMap : register(t1);

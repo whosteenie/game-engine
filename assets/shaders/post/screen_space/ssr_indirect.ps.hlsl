@@ -6,7 +6,7 @@
 // SSR (unlike DXR) has no env-on-miss, so the confidence weight (ssr.a, SVGF-denoised) still
 // selects IBL where the screen-space trace failed.
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 
 Texture2D uIndirectMap : register(t0);
 Texture2D uSsrMap : register(t1);

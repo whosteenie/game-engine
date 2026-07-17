@@ -1,7 +1,7 @@
 // SVGF pass 3 — variance-guided à-trous wavelet filter for SSR.
 // Multiple passes with increasing step (1, 2, 4, 8 px). Higher variance → stronger filter.
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 #include "ssr_svgf_common.hlsl"
 
 Texture2D uColor : register(t0);

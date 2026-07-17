@@ -8,7 +8,7 @@
 // the env, so the denoised RT carries both the reflected occluder and the sky/sun — no noisy
 // hit-mask needed; w is a smooth strength x receiver fade (0 when there is no fresh trace).
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 
 Texture2D uIndirectMap : register(t0);   // RT1
 Texture2D uRtDenoisedMap : register(t1); // NRD output (or raw when denoise off)

@@ -35,7 +35,7 @@ struct PrimaryDispatchConstants
 };
 
 // Phase D4 reflections (see devdoc/dxr/reflections.md). Layout mirrors the cbuffer in
-// assets/shaders/dxr/reflections.hlsl exactly.
+// assets/shaders/raytracing/libraries/reflections.hlsl exactly.
 struct ReflectionDispatchConstants
 {
     std::uint32_t outputWidth = 0;
@@ -51,7 +51,7 @@ struct ReflectionDispatchConstants
     float maxReflectionLod = 4.0f;
     std::uint32_t frameIndex = 0;
     std::uint32_t samplesPerPixel = 1;
-    // In-hit analytic shading inputs (see assets/shaders/dxr/reflections.hlsl).
+    // In-hit analytic shading inputs (see assets/shaders/raytracing/libraries/reflections.hlsl).
     float sunDirection[3] = {0.0f, -1.0f, 0.0f};
     float sunIntensity = 0.0f;
     float sunColor[3] = {1.0f, 1.0f, 1.0f};
@@ -107,7 +107,7 @@ static_assert(
     "PT previous camera-position packing mismatch");
 
 // Phase D8 shadows (see devdoc/dxr/shadows.md). Layout mirrors the cbuffer in
-// assets/shaders/dxr/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then
+// assets/shaders/raytracing/libraries/shadows.hlsl exactly (16-byte HLSL packing: matrices first, then
 // float3+float pairs, then scalars in multiples of 4).
 struct RestirTemporalConstants
 {

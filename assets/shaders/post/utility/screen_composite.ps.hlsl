@@ -1,4 +1,4 @@
-#include "environment_sampling.hlsl"
+#include "../../environment/environment_sampling.hlsl"
 
 Texture2D uDirectLighting : register(t0);
 Texture2D uIndirectLighting : register(t1);

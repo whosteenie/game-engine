@@ -13,7 +13,7 @@
 // uHasGiTrace = 0) the raster still omitted the ambient, so we restore a recomputed SH ambient as
 // a transient fallback. Mutually exclusive with SSGI inject (SceneRenderer gates one at a time).
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 
 Texture2D uIndirectMap : register(t0);   // current indirect chain (RT1 -> spec composite -> here)
 Texture2D uGiDenoisedMap : register(t1); // NRD RELAX_DIFFUSE output (or raw when denoise off)

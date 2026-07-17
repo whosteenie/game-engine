@@ -9,7 +9,7 @@
 // Hit shading: shared material evaluation in hit_shading.hlsli; this file adds GGX sampling,
 // visibility probes, and GI bounce traces for reflection hits.
 
-#include "hit_shading.hlsli"
+#include "../common/hit_shading.hlsli"
 
 RWTexture2D<float4> g_ReflectionOutput : register(u0);
 RWTexture2D<float> g_ViewZOutput : register(u1);

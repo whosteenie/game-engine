@@ -1,4 +1,4 @@
-#include "hlsl_common.hlsl"
+#include "../common/hlsl_common.hlsl"
 #include "scene_shadow_common.hlsli"
 
 static const uint MAX_MESHLET_VERTICES = 64;

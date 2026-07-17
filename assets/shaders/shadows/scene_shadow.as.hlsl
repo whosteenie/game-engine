@@ -1,5 +1,5 @@
 #include "scene_shadow_common.hlsli"
-#include "meshlet_cull.hlsli"
+#include "../geometry/meshlet_cull.hlsli"
 
 // Shadow amplification shader (C6): identical structure to the G-buffer AS, but culls meshlets
 // against the CASCADE frustum (supplied in uFrustumPlanes) instead of the camera frustum. A meshlet

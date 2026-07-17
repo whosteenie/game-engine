@@ -1,7 +1,7 @@
 // SVGF pass 2 — temporal variance accumulation for SSR.
 // Spatial variance from raw trace + history reprojection; boosted by temporal color delta.
 
-#include "screen_space_common.hlsl"
+#include "../../common/screen_space_common.hlsl"
 #include "ssr_svgf_common.hlsl"
 
 Texture2D uCurrentTrace : register(t0);
@@ -158,4 +158,4 @@ float4 main(PSInput input) : SV_Target
 
     return float4(max(variance, 1e-8), 0.0, 0.0, 0.0);
 }
-
+

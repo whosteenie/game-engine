@@ -1,7 +1,7 @@
 #ifndef PT_ENV_LIGHT_HLSLI
 #define PT_ENV_LIGHT_HLSLI
 
-#include "../environment_sampling.hlsl"
+#include "../../environment/environment_sampling.hlsl"
 
 // Path-tracer-only bindings (S5 / F2 environment importance sampling).
 Texture2D<float4> g_EnvEquirectMap : register(t17);
