@@ -56,6 +56,8 @@ private:
     mutable std::unordered_map<std::string, bool> m_folderOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
     mutable FileViewMode m_fileViewMode = FileViewMode::Details;
+    mutable bool m_iconViewTilePressInProgress = false;
+    mutable std::string m_displayedSelectionPath;
 
     mutable std::string m_renamePath;
     mutable char m_renameBuffer[260] = {};

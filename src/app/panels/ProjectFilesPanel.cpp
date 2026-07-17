@@ -1033,7 +1033,6 @@ void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::str
             {
                 CancelRename();
             }
-
         }
         else
         {
@@ -1042,16 +1041,19 @@ void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::str
             const bool selected = ImGui::Selectable(
                 EntryIcon(entry.isDirectory),
                 isSelected,
-                ImGuiSelectableFlags_AllowDoubleClick,
+                ImGuiSelectableFlags_AllowDoubleClick | ImGuiSelectableFlags_SelectOnClick,
                 ImVec2(tileWidth, iconHeight));
             ImGui::PopStyleVar();
             ImGui::PopFont();
+            const bool isTileHovered = ImGui::IsItemHovered();
             if (selected)
             {
                 m_selectedEntryPath = entry.path;
             }
+            m_iconViewTilePressInProgress =
+                m_iconViewTilePressInProgress || ImGui::IsItemActive();
 
-            if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+            if (isTileHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
                 && entry.isDirectory)
             {
                 m_browsedDirectory = entry.path;
@@ -1090,12 +1092,16 @@ void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::str
         }
     }
 
-    if (ImGui::IsWindowHovered()
-        && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-        && !ImGui::IsAnyItemHovered())
+    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
     {
-        m_selectedEntryPath.clear();
-        CancelRename();
+        if (ImGui::IsWindowHovered()
+            && !m_iconViewTilePressInProgress
+            && m_renamePath.empty())
+        {
+            m_selectedEntryPath.clear();
+            CancelRename();
+        }
+        m_iconViewTilePressInProgress = false;
     }
 }
 
@@ -1244,6 +1250,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
         DrawFileIconView(project, m_browsedDirectory);
     }
 
+    if (m_fileViewMode == FileViewMode::Details)
     {
         const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
         if (backgroundSpace.y > 0.0f)
@@ -1262,17 +1269,24 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     HandleFilesPanelHotkeys();
     DrawDeleteConfirmPopup();
 
+    // A tile press can transiently update and clear the live selection before its final value is
+    // known on mouse release. Keep the footer on its last committed value throughout that press.
+    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    {
+        m_displayedSelectionPath = m_selectedEntryPath;
+    }
+
     if (!m_statusMessage.empty())
     {
         ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", m_statusMessage.c_str());
     }
-    else if (m_selectedEntryPath.empty())
+    else if (m_displayedSelectionPath.empty())
     {
         ImGui::TextDisabled("No selection");
     }
     else
     {
-        ImGui::TextDisabled("%s", m_selectedEntryPath.c_str());
+        ImGui::TextDisabled("%s", m_displayedSelectionPath.c_str());
     }
 
     // Clear selection when clicking outside this panel (other panels, viewport, etc.).
