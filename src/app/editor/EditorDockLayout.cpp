@@ -38,7 +38,9 @@ void EditorDockLayout::BuildDefaultLayout(ImGuiID dockspaceId)
     ImGui::DockBuilderFinish(dockspaceId);
 }
 
-void EditorDockLayout::BuildDualViewportLayout(ImGuiID dockspaceId)
+void EditorDockLayout::BuildDualViewportLayout(
+    ImGuiID dockspaceId,
+    const float gameViewportFraction)
 {
     ImGui::DockBuilderRemoveNode(dockspaceId);
     ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
@@ -52,7 +54,8 @@ void EditorDockLayout::BuildDualViewportLayout(ImGuiID dockspaceId)
     const ImGuiID dockBottom =
         ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, kBottomRowFraction, nullptr, &dockMain);
     const ImGuiID dockGame =
-        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, 0.5f, nullptr, &dockMain);
+        ImGui::DockBuilderSplitNode(
+            dockMain, ImGuiDir_Right, gameViewportFraction, nullptr, &dockMain);
 
     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
     ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);

@@ -10,9 +10,12 @@ public:
     void AfterEditorPanels(bool validateRestoredLayout = false);
 
     bool IsLayoutBuilt() const { return m_layoutBuilt; }
-    void SetAutomationDualViewportLayout(bool enabled)
+    void SetAutomationDualViewportLayout(
+        bool enabled,
+        float gameViewportFraction = 0.5f)
     {
         m_automationDualViewportLayout = enabled;
+        m_automationGameViewportFraction = gameViewportFraction;
         if (enabled)
         {
             RequestLayoutRebuild();
@@ -29,4 +32,5 @@ private:
     bool m_forceDefaultLayout = false;
     bool m_deferLayoutBuild = false;
     bool m_automationDualViewportLayout = false;
+    float m_automationGameViewportFraction = 0.5f;
 };

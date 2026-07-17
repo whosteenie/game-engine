@@ -847,10 +847,14 @@ void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
     ProjectLoadBenchmark::StartFromEnvironment();
-    m_automationDualViewportLayout = std::getenv("GAME_ENGINE_AUTOMATION_DUAL_VIEW") != nullptr;
+    const bool s2p5Matrix = std::getenv("GAME_ENGINE_S2P5_MODE_MATRIX") != nullptr;
+    m_automationDualViewportLayout =
+        std::getenv("GAME_ENGINE_AUTOMATION_DUAL_VIEW") != nullptr || s2p5Matrix;
     if (m_automationDualViewportLayout)
     {
-        m_editorDockSpace->SetAutomationDualViewportLayout(true);
+        // S2-P5 deliberately uses unequal visible Scene/Game extents. The ordinary automation
+        // layout remains an even split for all earlier diagnostics.
+        m_editorDockSpace->SetAutomationDualViewportLayout(true, s2p5Matrix ? 0.38f : 0.5f);
     }
 
     if (const char* autoOpenPath = std::getenv("GAME_ENGINE_AUTO_OPEN"))
@@ -914,6 +918,8 @@ void Application::Run()
     std::uint64_t s2p4TransitionFrame = 0;
     const bool s2p4FallbackSmoke = std::getenv("GAME_ENGINE_S2P4_FALLBACK_SMOKE") != nullptr;
     std::uint64_t s2p4FallbackFrame = 0;
+    std::uint64_t s2p5ReadyFrame = 0;
+    std::uint64_t s2p5MatrixFrame = 0;
     const char* s2p4CaptureMode = std::getenv("GAME_ENGINE_S2P4_CAPTURE_MODE");
     const bool s2p4MotionAov = s2p4CaptureMode != nullptr
         && std::string_view(s2p4CaptureMode) == "motion-vectors";
@@ -1151,6 +1157,119 @@ void Application::Run()
             }
         }
 
+        // S2-P5 capture-only cross-system gate. It changes no production invariant: every cell
+        // uses the same setters as the editor, while the evidence script validates the resulting
+        // history, jitter, allocation, Streamline, exposure, and D3D12 records.
+        if (s2p5Matrix && m_projectSession->HasActiveProject() && m_scene != nullptr
+            && m_scene->GetRenderer().IsGpuResourcesReady())
+        {
+            ++s2p5ReadyFrame;
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+            DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+
+            if (s2p5ReadyFrame == 1)
+            {
+                dxr.SetEnabled(true);
+                dxr.SetRenderingMode(RenderingMode::PathTraced);
+                dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+                sceneRenderer.SetRenderDebugMode(RenderDebugMode::None);
+                effects.SetRayReconstruction(false);
+                effects.SetAntiAliasingMode(AntiAliasingMode::None);
+                effects.SetExposure(-2.0f);
+                glfwSetWindowSize(m_window, 1800, 1000);
+                EngineLog::Info("benchmark", "S2-P5 settling direct path at window=1800x1000");
+            }
+
+            constexpr std::uint64_t kSettleFrames = 120;
+            constexpr std::uint64_t kFramesPerCell = 40;
+            constexpr std::uint64_t kModeCount = 11;
+            constexpr std::uint64_t kExposureCount = 3;
+            constexpr std::uint64_t kExtentCount = 2;
+            constexpr std::uint64_t kCellCount = kModeCount * kExposureCount * kExtentCount;
+            if (s2p5ReadyFrame > kSettleFrames)
+            {
+                ++s2p5MatrixFrame;
+
+                // Small continuous translation exercises real temporal motion without reaching
+                // the camera-cut threshold or obscuring the fine scene geometry.
+                if (m_camera != nullptr)
+                {
+                    m_camera->SetPosition(
+                        m_camera->GetPosition() + glm::vec3(0.00025f, 0.0f, 0.0f));
+                }
+
+                if ((s2p5MatrixFrame - 1) % kFramesPerCell == 0)
+                {
+                    const std::uint64_t cellIndex = (s2p5MatrixFrame - 1) / kFramesPerCell;
+                    if (cellIndex < kCellCount)
+                    {
+                        const std::uint64_t cellsPerExtent = kModeCount * kExposureCount;
+                        const std::uint64_t extentCase = cellIndex / cellsPerExtent;
+                        const std::uint64_t localCell = cellIndex % cellsPerExtent;
+                        const std::uint64_t modeIndex = localCell / kExposureCount;
+                        const std::uint64_t exposureIndex = localCell % kExposureCount;
+                        const float exposureEv = exposureIndex == 0 ? -2.0f
+                            : exposureIndex == 1 ? 0.0f
+                                                 : 2.0f;
+                        if (cellIndex == cellsPerExtent)
+                        {
+                            glfwSetWindowSize(m_window, 1600, 1100);
+                            EngineLog::Info(
+                                "benchmark", "S2-P5 resize selected window=1600x1100");
+                        }
+
+                        const bool useRr = modeIndex >= 6;
+                        const bool useDlss = modeIndex >= 1 && modeIndex <= 5;
+                        const std::uint64_t qualityIndex = useRr ? modeIndex - 6
+                            : useDlss ? modeIndex - 1
+                                      : 0;
+                        const char* modeName = "direct";
+                        if (!useDlss && !useRr)
+                        {
+                            effects.SetRayReconstruction(false);
+                            effects.SetAntiAliasingMode(AntiAliasingMode::None);
+                        }
+                        else
+                        {
+                            const AntiAliasingMode aa = qualityIndex == 0
+                                ? AntiAliasingMode::DLAA
+                                : AntiAliasingMode::DLSS;
+                            const DlssPreset preset = qualityIndex <= 1 ? DlssPreset::Quality
+                                : qualityIndex == 2 ? DlssPreset::Balanced
+                                : qualityIndex == 3 ? DlssPreset::Performance
+                                                    : DlssPreset::UltraPerformance;
+                            effects.SetRayReconstruction(useRr);
+                            effects.SetAntiAliasingMode(aa);
+                            if (aa == AntiAliasingMode::DLSS)
+                            {
+                                effects.SetDlssPreset(preset);
+                            }
+                            constexpr const char* kQualityNames[] = {
+                                "dlaa", "quality", "balanced", "performance", "ultra-performance"};
+                            static std::string selectedMode;
+                            selectedMode = std::string(useRr ? "rr-" : "dlss-")
+                                + kQualityNames[qualityIndex];
+                            modeName = selectedMode.c_str();
+                        }
+                        effects.SetExposure(exposureEv);
+
+                        std::ostringstream marker;
+                        marker << "S2-P5 cell selected index=" << cellIndex
+                               << " extent-case=" << extentCase
+                               << " mode=" << modeName
+                               << " ev=" << exposureEv;
+                        EngineLog::Info("benchmark", marker.str());
+                    }
+                }
+
+                if (s2p5MatrixFrame > kCellCount * kFramesPerCell + 60)
+                {
+                    RequestForcedClose();
+                }
+            }
+        }
+
         try
         {
             const auto updateStart = std::chrono::steady_clock::now();
@@ -1313,7 +1432,10 @@ void Application::InitGLFW()
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     glfwWindowHint(
         GLFW_MAXIMIZED,
-        std::getenv("GAME_ENGINE_S2P4_WINDOWED") != nullptr ? GLFW_FALSE : GLFW_TRUE);
+        std::getenv("GAME_ENGINE_S2P4_WINDOWED") != nullptr
+                || std::getenv("GAME_ENGINE_S2P5_MODE_MATRIX") != nullptr
+            ? GLFW_FALSE
+            : GLFW_TRUE);
 
     m_window = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
     if (!m_window)

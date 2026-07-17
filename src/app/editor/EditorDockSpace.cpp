@@ -28,7 +28,8 @@ void EditorDockSpace::BuildLayoutIfNeeded()
     {
         if (m_automationDualViewportLayout)
         {
-            EditorDockLayout::BuildDualViewportLayout(dockspaceId);
+            EditorDockLayout::BuildDualViewportLayout(
+                dockspaceId, m_automationGameViewportFraction);
         }
         else
         {
