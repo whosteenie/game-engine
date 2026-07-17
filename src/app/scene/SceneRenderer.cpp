@@ -46,13 +46,16 @@
 #include "engine/raytracing/DxrTrace.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cmath>
 #include <future>
 #include <limits>
+#include <mutex>
 #include <thread>
 #include <utility>
+#include <vector>
 
 SceneRenderer::SceneRenderer() = default;
 
@@ -723,17 +726,17 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         }
 
         // Shader-library compilation is CPU work and does not touch the D3D12 device. Compile
-        // every exact library permutation needed by this project concurrently, then create the
-        // dependent RTPSOs in their normal (device-safe) order below. This preserves the full
-        // no-hitch warm-up contract for production, diagnostics, and SER paths.
-        std::vector<std::future<void>> shaderPrewarmJobs;
+        // every exact library permutation needed by this project before creating the dependent
+        // RTPSOs in their normal (device-safe) order below. Keep the worker count bounded: a
+        // project open must leave CPU time for the desktop, compositor, input, and UI threads.
+        struct ShaderPrewarmRequest
+        {
+            const char* libraryPath = nullptr;
+            DxrShaderLibraryCompileOptions options;
+        };
+        std::vector<ShaderPrewarmRequest> shaderPrewarmRequests;
         const auto queueShaderPrewarm = [&](const char* libraryPath, DxrShaderLibraryCompileOptions options) {
-            shaderPrewarmJobs.emplace_back(std::async(
-                std::launch::async,
-                [libraryPath, options = std::move(options)]() {
-                    BackgroundWork::LowerCurrentThreadPriority();
-                    (void)DxrShaderCache::Load(libraryPath, options);
-                }));
+            shaderPrewarmRequests.push_back({libraryPath, std::move(options)});
         };
         const auto queueDefaultShaderPrewarm = [&](const char* libraryPath) {
             queueShaderPrewarm(libraryPath, DxrShaderCache::MakeActiveDeviceCompileOptions());
@@ -790,8 +793,17 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         // already ready. Its bytecode/PSO construction is independent of DXR shader compilation,
         // so overlap it with that existing CPU warm-up and retain the result just long enough for
         // Material::EnsureShader() to take the cache reference in the first geometry pass.
+        const bool needsPbrPrewarm = m_preWarmedPbrShader == nullptr;
+        const std::size_t compilationWorkerBudget = BackgroundWork::ResponsiveWorkerCount(
+            shaderPrewarmRequests.size() + (needsPbrPrewarm ? 1u : 0u),
+            std::thread::hardware_concurrency());
+
+        // Reserve one bounded worker for PBR while DXR libraries compile. On a one-worker system,
+        // finish DXR first and compile PBR on the caller instead of exceeding the responsiveness
+        // budget merely to overlap the two tasks.
         std::future<std::shared_ptr<Shader>> pbrPrewarmJob;
-        if (m_preWarmedPbrShader == nullptr)
+        const bool runPbrConcurrently = needsPbrPrewarm && compilationWorkerBudget > 1;
+        if (runPbrConcurrently)
         {
             pbrPrewarmJob = std::async(std::launch::async, []() {
                 BackgroundWork::LowerCurrentThreadPriority();
@@ -800,24 +812,62 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         }
 
         ProjectLoadBenchmark::ScopedPhase shaderPrewarmPhase("renderer.dxr_shader_library_prewarm");
-        const int shaderLibraryJobCount = static_cast<int>(shaderPrewarmJobs.size());
+        const int shaderLibraryJobCount = static_cast<int>(shaderPrewarmRequests.size());
         int completedShaderLibraryJobCount = 0;
         ProjectLoadProgress::Report(
             "Compiling ray tracing shader libraries (0/" + std::to_string(shaderLibraryJobCount) + ")...",
             ProjectLoadProgress::kDxrWarmupStart);
-        while (completedShaderLibraryJobCount < shaderLibraryJobCount)
-        {
-            bool completedAnyJob = false;
-            for (std::future<void>& job : shaderPrewarmJobs)
+
+        const std::size_t dxrWorkerCount = std::max<std::size_t>(
+            1,
+            compilationWorkerBudget - (runPbrConcurrently ? 1u : 0u));
+        std::atomic<std::size_t> nextShaderRequest{0};
+        std::atomic<std::size_t> completedShaderRequests{0};
+        std::atomic<bool> stopShaderWorkers{false};
+        std::mutex shaderFailureMutex;
+        std::exception_ptr shaderFailure;
+        const auto compileShaderWorker = [&]() {
+            BackgroundWork::LowerCurrentThreadPriority();
+            while (!stopShaderWorkers.load(std::memory_order_acquire))
             {
-                if (!job.valid() || job.wait_for(std::chrono::milliseconds::zero()) != std::future_status::ready)
+                const std::size_t requestIndex = nextShaderRequest.fetch_add(1, std::memory_order_relaxed);
+                if (requestIndex >= shaderPrewarmRequests.size())
                 {
-                    continue;
+                    return;
                 }
 
-                job.get();
+                try
+                {
+                    const ShaderPrewarmRequest& request = shaderPrewarmRequests[requestIndex];
+                    (void)DxrShaderCache::Load(request.libraryPath, request.options);
+                    completedShaderRequests.fetch_add(1, std::memory_order_release);
+                }
+                catch (...)
+                {
+                    {
+                        std::lock_guard<std::mutex> lock(shaderFailureMutex);
+                        if (shaderFailure == nullptr)
+                        {
+                            shaderFailure = std::current_exception();
+                        }
+                    }
+                    stopShaderWorkers.store(true, std::memory_order_release);
+                    return;
+                }
+            }
+        };
+        std::vector<std::future<void>> shaderPrewarmWorkers;
+        shaderPrewarmWorkers.reserve(dxrWorkerCount);
+        for (std::size_t workerIndex = 0; workerIndex < dxrWorkerCount; ++workerIndex)
+        {
+            shaderPrewarmWorkers.emplace_back(std::async(std::launch::async, compileShaderWorker));
+        }
+        while (completedShaderLibraryJobCount < shaderLibraryJobCount)
+        {
+            const int completedRequests = static_cast<int>(completedShaderRequests.load(std::memory_order_acquire));
+            while (completedShaderLibraryJobCount < completedRequests)
+            {
                 ++completedShaderLibraryJobCount;
-                completedAnyJob = true;
                 ProjectLoadProgress::Report(
                     "Compiling ray tracing shader libraries ("
                         + std::to_string(completedShaderLibraryJobCount)
@@ -827,19 +877,39 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
                         / static_cast<float>(shaderLibraryJobCount)));
             }
 
+            if (stopShaderWorkers.load(std::memory_order_acquire))
+            {
+                break;
+            }
+
             // Compilation runs on worker threads. Yield briefly rather than spin while still
             // allowing the independently-owned native progress window to present completions.
-            if (!completedAnyJob)
-            {
-                std::this_thread::sleep_for(std::chrono::milliseconds(4));
-            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));
         }
-        if (pbrPrewarmJob.valid())
+        for (std::future<void>& worker : shaderPrewarmWorkers)
+        {
+            worker.get();
+        }
+        if (shaderFailure != nullptr)
+        {
+            std::rethrow_exception(shaderFailure);
+        }
+
+        if (needsPbrPrewarm)
         {
             ProjectLoadProgress::Report(
                 "Preparing the first scene shader...",
                 ProjectLoadProgress::kDxrShaderLibraryWarmupEnd);
-            m_preWarmedPbrShader = pbrPrewarmJob.get();
+            if (pbrPrewarmJob.valid())
+            {
+                m_preWarmedPbrShader = pbrPrewarmJob.get();
+            }
+            else
+            {
+                m_preWarmedPbrShader = ShaderCache::Load(
+                    EngineConstants::LitVertexShader,
+                    EngineConstants::PbrFragmentShader);
+            }
         }
 
         int warmedPipelineCount = 0;
