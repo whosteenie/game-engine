@@ -139,6 +139,95 @@ bool ComputeDielectricRefractDir(
     return true;
 }
 
+// Block 1 optical-temporal contract: this is the complete smooth first-interface calculation.
+// Bounce-zero radiance and the deterministic RR transmission guide consume this exact record so a
+// guide cannot silently choose a different normal, eta, or candidate direction.  Rough dielectric
+// sampling remains deliberately outside this contract (Block 3 owns its event/PDF model).
+static const uint kFirstOpticalEventNone = 0u;
+static const uint kFirstOpticalEventReflect = 1u;
+static const uint kFirstOpticalEventTransmit = 2u;
+static const uint kFirstOpticalEventTir = 3u;
+
+struct FirstOpticalInterface
+{
+    bool valid;
+    bool thinWalled;
+    bool enteringMedium;
+    bool refractValid;
+    float3 opticalNormal; // oriented toward wi; sourced from the radiance optical normal (Ns).
+    float fresnel;
+    float etaI;
+    float etaT;
+    float3 reflectDir;
+    float3 refractDir;
+};
+
+FirstOpticalInterface BuildFirstOpticalInterface(
+    float3 radianceOpticalNormal,
+    float3 rayDir,
+    float ior,
+    bool thinWalled,
+    bool pathInMedium)
+{
+    FirstOpticalInterface result;
+    result.valid = true;
+    result.thinWalled = thinWalled;
+    result.enteringMedium = !pathInMedium && !thinWalled;
+    result.opticalNormal = normalize(radianceOpticalNormal);
+    const float3 wi = -rayDir;
+    if (dot(wi, result.opticalNormal) < 0.0)
+    {
+        result.opticalNormal = -result.opticalNormal;
+    }
+
+    const float iorClamped = max(ior, 1.0);
+    result.etaI = pathInMedium && !thinWalled ? iorClamped : 1.0;
+    result.etaT = pathInMedium && !thinWalled ? 1.0 : iorClamped;
+    const float eta = result.etaI / result.etaT;
+    const float singleFaceFresnel = FresnelDielectric(dot(wi, result.opticalNormal), eta);
+    result.fresnel = thinWalled
+        ? (2.0 * singleFaceFresnel / (1.0 + singleFaceFresnel))
+        : singleFaceFresnel;
+    result.reflectDir = normalize(reflect(rayDir, result.opticalNormal));
+
+    if (thinWalled)
+    {
+        result.refractValid = RefractThinSlab(wi, result.opticalNormal, iorClamped, result.refractDir);
+    }
+    else
+    {
+        result.refractValid = RefractSnell(wi, result.opticalNormal, eta, result.refractDir);
+        if (result.refractValid)
+        {
+            result.refractDir = normalize(result.refractDir);
+        }
+    }
+    return result;
+}
+
+void SampleFirstOpticalInterface(
+    FirstOpticalInterface optical,
+    float fresnelXi,
+    out float3 nextDir,
+    out bool outPathInMedium,
+    out float scatterPdf,
+    out uint actualEvent)
+{
+    const bool chooseReflect = !optical.refractValid || fresnelXi < optical.fresnel;
+    scatterPdf = kDeltaScatterPdf;
+    if (chooseReflect)
+    {
+        nextDir = optical.reflectDir;
+        outPathInMedium = optical.thinWalled ? false : !optical.enteringMedium;
+        actualEvent = optical.refractValid ? kFirstOpticalEventReflect : kFirstOpticalEventTir;
+        return;
+    }
+
+    nextDir = optical.refractDir;
+    outPathInMedium = optical.thinWalled ? false : optical.enteringMedium;
+    actualEvent = kFirstOpticalEventTransmit;
+}
+
 // Dielectric interface scatter: stochastic reflect OR refract with Fresnel-proportional selection
 // (G2 / ReSTIR R0). Real-time and reference share this path — one sample, one pdf. Throughput is
 // unchanged on either branch because weight = f/pdf = 1 for Fresnel-proportional picks (C1).
@@ -225,6 +314,7 @@ void SampleDielectricInterface(
 struct TransmissionGuideHit
 {
     bool valid;
+    bool receiverMoved;
     float depth;
     float2 motion;
     uint instanceId;
@@ -238,19 +328,34 @@ struct TransmissionGuideHit
     float3 backgroundWorldPos;  // world position of the background hit (accounts for the bent path)
 };
 
-// DLSS-RR transmission guide: trace the refracted primary ray and return depth, motion, and the
-// background hit payload needed for PSR-style material guides (Omniverse virtual motion; NVIDIA PSR).
-TransmissionGuideHit TraceTransmissionGuide(
-    float3 hitPos,
-    float3 hitNormal,
-    float3 rayDir,
-    float ior,
-    bool thinWalled,
-    float originBias,
-    uint excludeInstanceId)
+// A reflected receiver uses the same complete hit payload as transmission.  Keep this separate
+// from the scalar RR hit-distance convention: Block 2 pairs depth, virtual motion, materials and
+// hit distance with this one receiver intersection.
+struct ReflectionGuideHit
 {
-    TransmissionGuideHit result;
+    bool valid;
+    bool receiverMoved;
+    float depth;
+    float2 motion;
+    uint instanceId;
+    uint primitiveIndex;
+    float2 barycentrics;
+    float3 normal;
+    float3 shadingNormal;
+    float triangleLod;
+    float3 reflectDir;
+    float reflectedHitDistance;
+    float3 receiverWorldPos;
+};
+
+ReflectionGuideHit TraceReflectionGuide(
+    float3 hitPos,
+    float3 reflectDir,
+    float originBias)
+{
+    ReflectionGuideHit result;
     result.valid = false;
+    result.receiverMoved = false;
     result.depth = 1.0;
     result.motion = 0.0.xx;
     result.instanceId = 0u;
@@ -259,17 +364,71 @@ TransmissionGuideHit TraceTransmissionGuide(
     result.normal = float3(0.0, 0.0, 1.0);
     result.shadingNormal = float3(0.0, 0.0, 1.0);
     result.triangleLod = 0.0;
-    result.refractDir = rayDir;
-    result.refractedHitDistance = 0.0;
-    result.backgroundWorldPos = hitPos;
+    result.reflectDir = reflectDir;
+    result.reflectedHitDistance = 0.0;
+    result.receiverWorldPos = hitPos;
 
-    float3 refractDir;
-    if (!ComputeDielectricRefractDir(hitNormal, rayDir, ior, thinWalled, false, refractDir))
+    RayDesc guideRay;
+    guideRay.Origin = hitPos + reflectDir * originBias;
+    guideRay.Direction = reflectDir;
+    guideRay.TMin = 0.001;
+    guideRay.TMax = g_MaxTraceDistance;
+
+    Payload guidePayload;
+    ResetPayload(guidePayload);
+    guidePayload.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
+    if (guidePayload.hit == 0)
     {
         return result;
     }
 
-    result.refractDir = refractDir;
+    result.valid = true;
+    result.receiverMoved = PayloadInstanceMoved(guidePayload);
+    result.depth = guidePayload.primaryDepth;
+    result.motion = PayloadPrimaryMotion(guidePayload);
+    result.instanceId = guidePayload.instanceId;
+    result.primitiveIndex = guidePayload.primitiveIndex;
+    result.barycentrics = PayloadBarycentrics(guidePayload);
+    result.normal = PayloadGeomNormal(guidePayload);
+    result.shadingNormal = PayloadShadingNormal(guidePayload);
+    result.triangleLod = PayloadTriangleLod(guidePayload);
+    result.reflectedHitDistance = guidePayload.hitDistance;
+    result.receiverWorldPos = hitPos + reflectDir * guidePayload.hitDistance;
+    return result;
+}
+
+// DLSS-RR transmission guide: trace the refracted primary ray and return depth, motion, and the
+// background hit payload needed for PSR-style material guides (Omniverse virtual motion; NVIDIA PSR).
+TransmissionGuideHit TraceTransmissionGuide(
+    float3 hitPos,
+    FirstOpticalInterface entryOptical,
+    float ior,
+    float originBias,
+    uint excludeInstanceId)
+{
+    TransmissionGuideHit result;
+    result.valid = false;
+    result.receiverMoved = false;
+    result.depth = 1.0;
+    result.motion = 0.0.xx;
+    result.instanceId = 0u;
+    result.primitiveIndex = 0u;
+    result.barycentrics = 0.0.xx;
+    result.normal = float3(0.0, 0.0, 1.0);
+    result.shadingNormal = float3(0.0, 0.0, 1.0);
+    result.triangleLod = 0.0;
+    result.refractDir = entryOptical.refractDir;
+    result.refractedHitDistance = 0.0;
+    result.backgroundWorldPos = hitPos;
+
+    if (!entryOptical.valid || !entryOptical.refractValid)
+    {
+        return result;
+    }
+
+    const bool thinWalled = entryOptical.thinWalled;
+    float3 refractDir = entryOptical.refractDir;
     float3 guideOrigin = hitPos + refractDir * originBias;
     // Solid volumes: the radiance path refracts at BOTH the entry and exit interfaces, so the guide
     // must too. Previously it continued straight through the glass after the front-face refraction,
@@ -300,6 +459,7 @@ TransmissionGuideHit TraceTransmissionGuide(
         if (guidePayload.instanceId != excludeInstanceId)
         {
             result.valid = true;
+            result.receiverMoved = PayloadInstanceMoved(guidePayload);
             result.depth = guidePayload.primaryDepth;
             result.motion = PayloadPrimaryMotion(guidePayload);
             result.instanceId = guidePayload.instanceId;
@@ -320,15 +480,17 @@ TransmissionGuideHit TraceTransmissionGuide(
         // straight-through direction (their radiance model transmits straight).
         if (!thinWalled)
         {
-            const float3 guideGeomNormal = PayloadGeomNormal(guidePayload);
+            // Keep the solid exit on the same radiance optical-normal policy as the entry.  Ng
+            // still owns boundary offsets/identity; this direction is the smooth Snell candidate.
+            const float3 guideOpticalNormal = PayloadShadingNormal(guidePayload);
             float3 exitDir;
-            if (RefractSnell(-refractDir, guideGeomNormal, max(ior, 1.0), exitDir))
+            if (RefractSnell(-refractDir, guideOpticalNormal, max(ior, 1.0), exitDir))
             {
                 refractDir = normalize(exitDir);
             }
             else
             {
-                refractDir = normalize(reflect(refractDir, guideGeomNormal));
+                refractDir = normalize(reflect(refractDir, guideOpticalNormal));
             }
         }
         guideOrigin = interfaceHitPos + refractDir * kThinShellMinExitBias;

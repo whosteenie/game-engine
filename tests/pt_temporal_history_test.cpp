@@ -37,4 +37,11 @@ void RunPtTemporalHistoryTests(int& failures)
         fingerprintA != ComputePtSettingsFingerprint(settingsC),
         "PtSettingsFingerprint changes when ambient AO ray count changes",
         failures);
+
+    DxrSettings settingsD{};
+    settingsD.SetPtDeterministicOpticalSplitEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsD),
+        "PtSettingsFingerprint changes when deterministic optical split changes",
+        failures);
 }

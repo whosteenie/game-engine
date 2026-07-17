@@ -71,6 +71,15 @@ public:
     bool IsPtFireflyClampEnabled() const { return m_ptFireflyClamp; }
     void SetPtFireflyClampEnabled(const bool enabled) { m_ptFireflyClamp = enabled; }
 
+    // Real-time smooth dielectrics: trace both Fresnel lobes at the primary interface instead of
+    // randomly selecting reflection or transmission every frame.  This removes branch flicker at
+    // the cost of a second optical tail for each supported smooth glass pixel.
+    bool IsPtDeterministicOpticalSplitEnabled() const { return m_ptDeterministicOpticalSplit; }
+    void SetPtDeterministicOpticalSplitEnabled(const bool enabled)
+    {
+        m_ptDeterministicOpticalSplit = enabled;
+    }
+
     // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr/pt/crevice-darkening.md). Reference ignores.
     float GetPtAmbientStrength() const { return m_ptAmbientStrength; }
     void SetPtAmbientStrength(const float strength);
@@ -207,6 +216,7 @@ private:
     int m_ptMaxBounces = 4;
     bool m_ptRussianRoulette = true;
     bool m_ptFireflyClamp = true;
+    bool m_ptDeterministicOpticalSplit = false;
     float m_ptAmbientStrength = 1.0f;
     int m_ptAmbientAoRayCount = 0;
     int m_ptRrBundleMode = 0;

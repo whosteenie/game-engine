@@ -81,6 +81,9 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 // ReSTIR DI initial sampling (roadmap P2): per-category candidate count (0 = off, plain NEE).
 #define g_PtRestirDiCandidateCount uint(round(max(g_PtRestirDiParams.x, 0.0)))
 #define kPtRestirGiInitialEnabled (g_PtRestirDiParams.y > 0.5)
+// Real-time opt-in: split a smooth primary dielectric into its deterministic Fresnel reflection
+// and transmission tails.  The host uses the otherwise spare .w component of this PT-only block.
+#define kPtDeterministicOpticalSplitEnabled (g_PtRestirDiParams.w > 0.5)
 
 // The shared cbuffer field g_SamplesPerPixel carries the PT max-bounce count (reused verbatim; the
 // reflection/GI passes read it as an actual sample count). Alias it for readable PT intent.
@@ -114,7 +117,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 48.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 55.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -133,6 +136,7 @@ static const uint kPayloadFlagVisibility = 2u;
 static const uint kPayloadReqShadingData = 4u; // normal-map, bary, triangleLod
 static const uint kPayloadReqPrimarySurface = 8u; // motion + depth (primary only)
 static const uint kPayloadHitBackFace = 16u; // packed into hit on closest-hit (G7/P1)
+static const uint kPayloadHitMovingInstance = 32u; // primary optical history must omit moving geometry
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
 // Below this roughness, specular uses a delta mirror bounce instead of VNDF (alpha floor ~0.032
@@ -233,6 +237,31 @@ float3 PrevWorldFromObject(uint instanceId, float3 objectPos)
     return float3(dot(prev.row0, p), dot(prev.row1, p), dot(prev.row2, p));
 }
 
+// Valid only in closest-hit, where ObjectToWorld3x4 identifies the intersected instance.
+bool CurrentInstanceTransformMoved(uint instanceId)
+{
+    if (!kPtHasInstanceMotion)
+    {
+        return false;
+    }
+
+    const float3x4 current = ObjectToWorld3x4();
+    const float3 probeObjectPoints[4] = {
+        float3(0.0, 0.0, 0.0), float3(1.0, 0.0, 0.0),
+        float3(0.0, 1.0, 0.0), float3(0.0, 0.0, 1.0) };
+    [unroll]
+    for (uint pointIndex = 0u; pointIndex < 4u; ++pointIndex)
+    {
+        const float3 objectPoint = probeObjectPoints[pointIndex];
+        const float3 currPoint = mul(current, float4(objectPoint, 1.0)).xyz;
+        if (length(currPoint - PrevWorldFromObject(instanceId, objectPoint)) > 1e-5)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 // DLSS-RR specular albedo guide (vendored ProgrammingGuideDLSS_RR.md §4.2.1, [Ray Tracing Gems
 // ch. 32]): preintegrated environment BRDF — NOT raw F0. Canonical call passes alpha = roughness².
 // Raw F0 underestimates rough-metal reflectance (missing the scale/bias lift), which over-amplifies
@@ -282,6 +311,11 @@ bool PayloadIsHit(Payload payload)
 bool PayloadHitBackFace(Payload payload)
 {
     return (payload.hit & kPayloadHitBackFace) != 0u;
+}
+
+bool PayloadInstanceMoved(Payload payload)
+{
+    return (payload.hit & kPayloadHitMovingInstance) != 0u;
 }
 
 // Matches lit.vs + pbr.ps: interpolate unjittered curr/prev clip per vertex for MVs; DLSS depth
@@ -577,90 +611,382 @@ float2 ComputeSkyAnchorMotion(float3 anchorDirection)
 
 // Dual-frame refracted motion: replay prev-camera primary → glass → refract → background, then
 // project both world hits (Omniverse translucent virtual motion). Fixes rotation smear through panes.
-float2 ComputeTransmissionVirtualMotion(
-    uint2 pixel,
-    float3 glassHitPos,
-    float3 primaryRayDir,
-    TransmissionGuideHit currGuide,
-    float originBias)
+// A receiver is visible to history only through a previous camera -> optical interface -> receiver
+// path.  Projecting receiverWorldPos through g_PrevViewProj skips that interface and is wrong for
+// curved mirrors and refractive solids.
+struct PreviousOpticalReceiver
 {
-    if (!kPtMotionHistoryValid)
-    {
-        return currGuide.valid ? currGuide.motion : 0.0.xx;
-    }
+    bool valid;
+    uint instanceId;
+    float3 worldPos;
+};
 
-    if (!currGuide.valid)
-    {
-        return ComputeSkyAnchorMotion(currGuide.refractDir);
-    }
+PreviousOpticalReceiver ReplayPreviousOpticalReceiver(
+    float2 prevNdc,
+    bool transmission)
+{
+    PreviousOpticalReceiver result;
+    result.valid = false;
+    result.instanceId = 0u;
+    result.worldPos = 0.0.xxx;
 
-    // True background hit position (the guide traced the full enter+exit path); reconstructing it as
-    // a single straight segment from the glass hit is wrong once the path bends through a solid.
-    const float3 worldCurr = currGuide.backgroundWorldPos;
-
-    // g_PrevInvViewProj = inverse(CURRENT jittered projection x prev view) — NOT the prev
-    // unjittered matrix. The replayed prev ray must share this frame's sub-pixel jitter offset so
-    // the two refraction paths coincide for a static camera (virtual MV exactly 0) and the jitter
-    // cancels out of the MV under motion. With the prev-unjittered inverse here, jittered primaries
-    // (cab2529) made the replay diverge from the current ray by the per-frame Halton delta, which
-    // refraction amplified into frame-varying MVs on STATIC glass -> RR boiled the glass (§E5).
-    const float2 clipXY = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
-    const float4 prevFarH = mul(g_PrevInvViewProj, float4(clipXY, 1.0, 1.0));
+    // g_PrevInvViewProj pairs the previous view with the current frame's jittered projection.
+    // Every inverse-solve probe uses it so a static camera remains an exactly zero-motion case.
+    const float4 prevFarH = mul(g_PrevInvViewProj, float4(prevNdc, 1.0, 1.0));
     const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
-
     RayDesc prevPrimaryRay;
     prevPrimaryRay.Origin = g_PrevCameraPos;
     prevPrimaryRay.Direction = prevRayDir;
     prevPrimaryRay.TMin = 0.001;
     prevPrimaryRay.TMax = g_MaxTraceDistance;
 
-    Payload prevPrimaryPayload;
-    ResetPayload(prevPrimaryPayload);
-    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimaryPayload);
-    if (prevPrimaryPayload.hit == 0)
+    Payload prevPrimary;
+    ResetPayload(prevPrimary);
+    prevPrimary.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimary);
+    if (prevPrimary.hit == 0u)
+    {
+        return result;
+    }
+
+    const float3 prevPrimaryPos = g_PrevCameraPos + prevRayDir * prevPrimary.hitDistance;
+    const float3 prevGeomNormal = PayloadGeomNormal(prevPrimary);
+    const float prevNdotV = saturate(dot(prevGeomNormal, -prevRayDir));
+    const float prevOriginBias =
+        max(prevPrimary.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - prevNdotV));
+
+    if (transmission)
+    {
+        const MaterialEntry prevMaterial = LoadMaterialForInstance(prevPrimary.instanceId);
+        if (DielectricWeight(prevMaterial.transmission, prevMaterial.metallic) <= 0.0)
+        {
+            return result;
+        }
+        const bool prevThin = prevMaterial.thinWalled > 0.5;
+        const FirstOpticalInterface prevOptical = BuildFirstOpticalInterface(
+            PayloadShadingNormal(prevPrimary),
+            prevRayDir,
+            prevMaterial.indexOfRefraction,
+            prevThin,
+            false);
+        const TransmissionGuideHit guide = TraceTransmissionGuide(
+            prevPrimaryPos,
+            prevOptical,
+            prevMaterial.indexOfRefraction,
+            prevThin ? max(prevOriginBias, kThinShellMinExitBias) : prevOriginBias,
+            prevPrimary.instanceId);
+        result.valid = guide.valid;
+        result.instanceId = guide.instanceId;
+        result.worldPos = guide.backgroundWorldPos;
+    }
+    else
+    {
+        const ReflectionGuideHit guide = TraceReflectionGuide(
+            prevPrimaryPos,
+            normalize(reflect(prevRayDir, PayloadShadingNormal(prevPrimary))),
+            prevOriginBias);
+        result.valid = guide.valid;
+        result.instanceId = guide.instanceId;
+        result.worldPos = guide.receiverWorldPos;
+    }
+    return result;
+}
+
+bool MatchesOpticalReceiver(
+    PreviousOpticalReceiver candidate,
+    uint receiverInstanceId)
+{
+    return candidate.valid && candidate.instanceId == receiverInstanceId;
+}
+
+// Invert F(previousNdc) = receiverWorldPos.  The primary-surface seed is exact for pure camera
+// rotation; the direct receiver seed is exact for a thin straight-through pane.  We replay both,
+// choose the closer physical path, then refine it with a 3D least-squares Newton step.
+float2 SolvePreviousOpticalReceiverMotion(
+    uint2 pixel,
+    float3 receiverWorldPos,
+    uint receiverInstanceId,
+    bool transmission,
+    float2 primarySurfaceMotion,
+    out bool replayValid)
+{
+    const float2 currNdc = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
+    const float4 directPrevClip = mul(g_PrevViewProj, float4(receiverWorldPos, 1.0));
+    const float2 directPrevNdc = directPrevClip.xy / max(directPrevClip.w, 1e-6);
+    const float2 primaryPrevNdc = currNdc - primarySurfaceMotion;
+
+    const PreviousOpticalReceiver directReplay = ReplayPreviousOpticalReceiver(directPrevNdc, transmission);
+    const PreviousOpticalReceiver primaryReplay = ReplayPreviousOpticalReceiver(primaryPrevNdc, transmission);
+    const bool directMatches = MatchesOpticalReceiver(directReplay, receiverInstanceId);
+    const bool primaryMatches = MatchesOpticalReceiver(primaryReplay, receiverInstanceId);
+    const float directError = directMatches
+        ? dot(directReplay.worldPos - receiverWorldPos, directReplay.worldPos - receiverWorldPos)
+        : 1.0e30;
+    const float primaryError = primaryMatches
+        ? dot(primaryReplay.worldPos - receiverWorldPos, primaryReplay.worldPos - receiverWorldPos)
+        : 1.0e30;
+
+    float2 previousNdc = directPrevNdc;
+    PreviousOpticalReceiver center = directReplay;
+    if (primaryError < directError)
+    {
+        previousNdc = primaryPrevNdc;
+        center = primaryReplay;
+    }
+    replayValid = directMatches || primaryMatches;
+    if (!replayValid)
+    {
+        // The receiver is absent from both prior optical paths: this is a disocclusion, not a
+        // conservative optical gate.  RR's ordinary depth/identity validation owns this case.
+        return currNdc - directPrevNdc;
+    }
+
+    const float2 probeStep = 3.0 / float2(g_OutputSize);
+    [unroll]
+    for (uint iteration = 0u; iteration < 2u; ++iteration)
+    {
+        const PreviousOpticalReceiver probeX = ReplayPreviousOpticalReceiver(
+            previousNdc + float2(probeStep.x, 0.0), transmission);
+        const PreviousOpticalReceiver probeY = ReplayPreviousOpticalReceiver(
+            previousNdc + float2(0.0, probeStep.y), transmission);
+        if (!MatchesOpticalReceiver(probeX, receiverInstanceId)
+            || !MatchesOpticalReceiver(probeY, receiverInstanceId))
+        {
+            break;
+        }
+
+        const float3 dFdx = (probeX.worldPos - center.worldPos) / probeStep.x;
+        const float3 dFdy = (probeY.worldPos - center.worldPos) / probeStep.y;
+        const float3 residual = center.worldPos - receiverWorldPos;
+        const float a = dot(dFdx, dFdx);
+        const float b = dot(dFdx, dFdy);
+        const float c = dot(dFdy, dFdy);
+        const float determinant = a * c - b * b;
+        if (determinant <= max((a + c) * (a + c) * 1.0e-8, 1.0e-12))
+        {
+            break;
+        }
+
+        float2 step;
+        step.x = (-c * dot(dFdx, residual) + b * dot(dFdy, residual)) / determinant;
+        step.y = ( b * dot(dFdx, residual) - a * dot(dFdy, residual)) / determinant;
+        // A Newton trust region prevents a discontinuous finite-difference probe from jumping
+        // across most of the screen before the next exact optical replay; it does not reject
+        // history or replace the solved coordinate with a fallback.
+        const float stepLength = length(step);
+        if (stepLength > 0.25)
+        {
+            step *= 0.25 / stepLength;
+        }
+        previousNdc += step;
+        center = ReplayPreviousOpticalReceiver(previousNdc, transmission);
+        if (!MatchesOpticalReceiver(center, receiverInstanceId))
+        {
+            replayValid = false;
+            break;
+        }
+    }
+
+    return currNdc - previousNdc;
+}
+
+float2 ComputeTransmissionVirtualMotion(
+    uint2 pixel,
+    TransmissionGuideHit currGuide,
+    float2 primarySurfaceMotion)
+{
+    if (!kPtMotionHistoryValid)
+    {
+        return currGuide.valid ? currGuide.motion : 0.0.xx;
+    }
+    if (!currGuide.valid)
     {
         return ComputeSkyAnchorMotion(currGuide.refractDir);
     }
 
-    const float3 prevGlassHitPos = g_PrevCameraPos + prevRayDir * prevPrimaryPayload.hitDistance;
-    const MaterialEntry prevGlassMat = LoadMaterialForInstance(prevPrimaryPayload.instanceId);
-    const float prevDielectricWeight =
-        DielectricWeight(prevGlassMat.transmission, prevGlassMat.metallic);
-    if (prevDielectricWeight < 0.01)
+    bool replayValid;
+    return SolvePreviousOpticalReceiverMotion(
+        pixel,
+        currGuide.backgroundWorldPos,
+        currGuide.instanceId,
+        true,
+        primarySurfaceMotion,
+        replayValid);
+}
+
+float2 ComputeReflectionVirtualMotion(
+    uint2 pixel,
+    ReflectionGuideHit currGuide,
+    float2 primarySurfaceMotion,
+    out bool replayValid)
+{
+    replayValid = false;
+    if (!currGuide.valid)
     {
+        return 0.0.xx;
+    }
+    if (!kPtMotionHistoryValid)
+    {
+        replayValid = true;
         return currGuide.motion;
     }
 
-    const float3 prevGeomNormal = PayloadGeomNormal(prevPrimaryPayload);
-    const float prevNdotV = saturate(dot(prevGeomNormal, -prevRayDir));
-    const float prevOriginBias =
-        max(prevPrimaryPayload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - prevNdotV));
-    const bool prevThinPane = prevGlassMat.thinWalled > 0.5;
+    return SolvePreviousOpticalReceiverMotion(
+        pixel,
+        currGuide.receiverWorldPos,
+        currGuide.instanceId,
+        false,
+        primarySurfaceMotion,
+        replayValid);
+}
 
-    const TransmissionGuideHit prevGuide = TraceTransmissionGuide(
-        prevGlassHitPos,
-        prevGeomNormal,
-        prevRayDir,
-        prevGlassMat.indexOfRefraction,
-        prevThinPane,
-        prevThinPane ? max(prevOriginBias, kThinShellMinExitBias) : prevOriginBias,
-        prevPrimaryPayload.instanceId);
+void ComputeOpticalReceiverMaterialGuides(
+    uint instanceId,
+    uint primitiveIndex,
+    float2 barycentrics,
+    float3 receiverGeomNormal,
+    float3 receiverShadingNormal,
+    float3 receiverDir,
+    float triangleLod,
+    float coneWidth,
+    out float3 diffuseGuide,
+    out float3 specGuide,
+    out float3 guideNormal,
+    out float guideRoughness)
+{
+    const MaterialEntry receiverMaterial = LoadMaterialForInstance(instanceId);
+    const float nDotD = max(saturate(dot(receiverGeomNormal, -receiverDir)), 0.05);
+    const float receiverLod = triangleLod + log2(max(coneWidth, 1e-6)) - log2(nDotD);
+    float3 receiverAlbedo;
+    float receiverMetallic;
+    float3 receiverEmissive;
+    ResolveSurfaceMaterialScalars(
+        instanceId,
+        primitiveIndex,
+        barycentrics,
+        receiverLod,
+        receiverAlbedo,
+        guideRoughness,
+        receiverMetallic,
+        receiverEmissive);
+    ComputePtPrimaryRrMaterialGuides(
+        receiverAlbedo,
+        receiverShadingNormal,
+        guideRoughness,
+        receiverMetallic,
+        receiverMaterial.transmission,
+        receiverMaterial.indexOfRefraction,
+        -receiverDir,
+        diffuseGuide,
+        specGuide,
+        guideNormal,
+        guideRoughness);
+}
 
-    if (!prevGuide.valid)
+#if PT_DIAGNOSTIC_PERMUTATION
+// Replays the PREVIOUS optical path at the receiver location selected by the exported motion.
+// Output is (normalized world-position error, same receiver instance, valid previous trace).
+// Unlike the old same-pixel replay, this directly tests the history coordinate RR will sample.
+float3 DiagnoseTransmissionReceiverReprojection(
+    uint2 pixel,
+    float2 opticalMotion,
+    TransmissionGuideHit currGuide,
+    float originBias)
+{
+    if (!kPtMotionHistoryValid || !currGuide.valid)
     {
-        return ComputeSkyAnchorMotion(prevGuide.refractDir);
+        return 0.0.xxx;
     }
 
-    // Reproject the CURRENT transmitted background point into the previous camera. Projecting
-    // worldPrev here instead merely compares two rays launched at the same pixel, which
-    // screen-locks a static front-parallel pane under a lateral camera move: Wc and Wp each
-    // project back to that pixel, so a checker behind the pane cannot reproject. The history
-    // lookup instead needs the previous screen location of Wc. The previous refracted trace
-    // above remains the validity/disocclusion check for the prior optical path.
-    const float4 currClipUnj = mul(g_UnjitteredViewProj, float4(worldCurr, 1.0));
-    const float4 prevClipUnj = mul(g_PrevViewProj, float4(worldCurr, 1.0));
-    return ComputeMotionNdc(currClipUnj, prevClipUnj);
+    const float2 currNdc = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
+    const float2 prevNdc = currNdc - opticalMotion;
+    const float4 prevFarH = mul(g_PrevInvViewProj, float4(prevNdc, 1.0, 1.0));
+    const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
+    RayDesc prevPrimaryRay;
+    prevPrimaryRay.Origin = g_PrevCameraPos;
+    prevPrimaryRay.Direction = prevRayDir;
+    prevPrimaryRay.TMin = 0.001;
+    prevPrimaryRay.TMax = g_MaxTraceDistance;
+    Payload prevPrimary;
+    ResetPayload(prevPrimary);
+    prevPrimary.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimary);
+    if (prevPrimary.hit == 0)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+
+    const MaterialEntry prevMaterial = LoadMaterialForInstance(prevPrimary.instanceId);
+    if (DielectricWeight(prevMaterial.transmission, prevMaterial.metallic) <= 0.0)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+    const bool prevThin = prevMaterial.thinWalled > 0.5;
+    const FirstOpticalInterface prevOptical = BuildFirstOpticalInterface(
+        PayloadShadingNormal(prevPrimary), prevRayDir, prevMaterial.indexOfRefraction, prevThin, false);
+    const float3 prevPrimaryPos = g_PrevCameraPos + prevRayDir * prevPrimary.hitDistance;
+    const TransmissionGuideHit prevGuide = TraceTransmissionGuide(
+        prevPrimaryPos,
+        prevOptical,
+        prevMaterial.indexOfRefraction,
+        prevThin ? max(originBias, kThinShellMinExitBias) : originBias,
+        prevPrimary.instanceId);
+    if (!prevGuide.valid)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+
+    const float positionError = length(prevGuide.backgroundWorldPos - currGuide.backgroundWorldPos)
+        / max(currGuide.refractedHitDistance, 0.05);
+    return float3(saturate(positionError * 8.0),
+        prevGuide.instanceId == currGuide.instanceId ? 1.0 : 0.0, 1.0);
 }
+
+float3 DiagnoseReflectionReceiverReprojection(
+    uint2 pixel,
+    float2 opticalMotion,
+    ReflectionGuideHit currGuide,
+    float originBias)
+{
+    if (!kPtMotionHistoryValid || !currGuide.valid)
+    {
+        return 0.0.xxx;
+    }
+
+    const float2 currNdc = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
+    const float2 prevNdc = currNdc - opticalMotion;
+    const float4 prevFarH = mul(g_PrevInvViewProj, float4(prevNdc, 1.0, 1.0));
+    const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
+    RayDesc prevPrimaryRay;
+    prevPrimaryRay.Origin = g_PrevCameraPos;
+    prevPrimaryRay.Direction = prevRayDir;
+    prevPrimaryRay.TMin = 0.001;
+    prevPrimaryRay.TMax = g_MaxTraceDistance;
+    Payload prevPrimary;
+    ResetPayload(prevPrimary);
+    prevPrimary.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimary);
+    if (prevPrimary.hit == 0)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+
+    const float3 prevPrimaryPos = g_PrevCameraPos + prevRayDir * prevPrimary.hitDistance;
+    const ReflectionGuideHit prevGuide = TraceReflectionGuide(
+        prevPrimaryPos,
+        normalize(reflect(prevRayDir, PayloadShadingNormal(prevPrimary))),
+        originBias);
+    if (!prevGuide.valid)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+
+    const float positionError = length(prevGuide.receiverWorldPos - currGuide.receiverWorldPos)
+        / max(currGuide.reflectedHitDistance, 0.05);
+    return float3(saturate(positionError * 8.0),
+        prevGuide.instanceId == currGuide.instanceId ? 1.0 : 0.0, 1.0);
+}
+#endif
 
 float TracePrimaryAmbientOcclusion(inout PathRng rng, float3 origin, float3 normal, uint rayCount)
 {
@@ -1533,10 +1859,13 @@ bool SampleMaterialBounce(
     float ior,
     bool thinWalled,
     bool pathInMedium,
+    bool useFirstOpticalInterface,
+    FirstOpticalInterface firstOpticalInterface,
     out float3 nextDir,
     out bool isSpecular,
     out bool outPathInMedium,
     out float scatterPdf,
+    out uint actualOpticalEvent,
     inout float3 throughput)
 {
     const float dielectricWeight = DielectricWeight(transmission, metallic);
@@ -1545,6 +1874,7 @@ bool SampleMaterialBounce(
     outPathInMedium = pathInMedium;
     isSpecular = false;
     scatterPdf = 1.0;
+    actualOpticalEvent = kFirstOpticalEventNone;
 
     const bool useGlassPath = dielectricWeight > 0.0
         && (kPtCenterPrimaryRays || xi.w < dielectricWeight);
@@ -1559,18 +1889,31 @@ bool SampleMaterialBounce(
         {
             throughput /= max(dielectricWeight, 1e-6);
         }
-        SampleDielectricInterface(
-            hitNormal,
-            rayDir,
-            roughness,
-            ior,
-            thinWalled,
-            pathInMedium,
-            xi.z,
-            xi.xy,
-            nextDir,
-            outPathInMedium,
-            scatterPdf);
+        if (useFirstOpticalInterface)
+        {
+            SampleFirstOpticalInterface(
+                firstOpticalInterface,
+                xi.z,
+                nextDir,
+                outPathInMedium,
+                scatterPdf,
+                actualOpticalEvent);
+        }
+        else
+        {
+            SampleDielectricInterface(
+                hitNormal,
+                rayDir,
+                roughness,
+                ior,
+                thinWalled,
+                pathInMedium,
+                xi.z,
+                xi.xy,
+                nextDir,
+                outPathInMedium,
+                scatterPdf);
+        }
         isSpecular = true;
         return true;
     }
@@ -1738,6 +2081,12 @@ void PathTracerRayGen()
     float2 opaquePrimaryMotionForDebug = 0.0.xx;
     float2 transmissionVirtualMotionForDebug = 0.0.xx;
     bool hasTransmissionVirtualMotionForDebug = false;
+    bool hasFirstOpticalInterfaceForDebug = false;
+    FirstOpticalInterface firstOpticalInterfaceForDebug;
+    uint actualOpticalEventForDebug = kFirstOpticalEventNone;
+    uint guideReceiverIdForDebug = 0u;
+    uint opticalFallbackFlagsForDebug = 0u;
+    float3 opticalReceiverReprojectionForDebug = 0.0.xxx;
 #endif
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
     float pathConeWidth = 0.0;
@@ -1753,6 +2102,17 @@ void PathTracerRayGen()
     float lastScatterPdf = kDeltaScatterPdf;
     bool pathInMedium = false;
     float3 mediumTint = 1.0.xxx;
+    // A deterministic smooth-glass primary launches reflection first, then resumes this stored
+    // transmission tail whenever the reflection path terminates.  Both tails accumulate with their
+    // physical Fresnel weights, so no per-frame branch choice reaches DLSS-RR.
+    bool pendingPrimaryTransmissionTail = false;
+    RayDesc pendingTransmissionRay;
+    float3 pendingTransmissionThroughput = 0.0.xxx;
+    bool pendingTransmissionPathInMedium = false;
+    float3 pendingTransmissionMediumTint = 1.0.xxx;
+    float pendingTransmissionConeWidth = 0.0;
+    float pendingTransmissionMissRoughness = 0.0;
+    bool pendingTransmissionAddEnvOnMiss = true;
 
 #if PT_DIAGNOSTIC_PERMUTATION
     float3 termDirectSun = 0.0.xxx;
@@ -1841,6 +2201,22 @@ void PathTracerRayGen()
             else
             {
                 directRadiance += missContrib;
+            }
+            if (pendingPrimaryTransmissionTail)
+            {
+                ray = pendingTransmissionRay;
+                throughput = pendingTransmissionThroughput;
+                pathInMedium = pendingTransmissionPathInMedium;
+                mediumTint = pendingTransmissionMediumTint;
+                pathConeWidth = pendingTransmissionConeWidth;
+                missEnvRoughness = pendingTransmissionMissRoughness;
+                addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
+                lastScatterPdf = kDeltaScatterPdf;
+                pendingPrimaryTransmissionTail = false;
+                // The loop increment resumes the stored secondary path at bounce one without
+                // re-shading the primary surface or duplicating its direct contribution.
+                bounce = 0u;
+                continue;
             }
             break;
         }
@@ -2153,127 +2529,136 @@ void PathTracerRayGen()
                 guideNormal,
                 guideRoughness);
 
-            // Glass: PSR-style transmission guides — depth, motion, and material guides describe the
-            // refracted background surface, not the glass polygon (devdoc/dxr/pt/transmission-rr-guides.md).
-            if (dielectricWeight > 0.0)
+            // Every supported smooth optical pixel exports one complete receiver bundle.  For
+            // refraction, its depth, motion, and material guides describe the refracted background
+            // receiver rather than the glass polygon (devdoc/dxr/pt/transmission-rr-guides.md).
+            // Never blend receiver domains: each guide bundle belongs to one selected optical lobe.
+            const float guideOriginBias =
+                max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
+            const bool smoothOptical = surfaceRoughness <= kPtDeltaSpecularRoughness;
+            const bool thinPane = material.thinWalled > 0.5;
+            const FirstOpticalInterface firstOpticalInterface = BuildFirstOpticalInterface(
+                hitNormal, ray.Direction, material.indexOfRefraction, thinPane, false);
+            // Pick one actual smooth lobe rather than applying an arbitrary transmission cutoff.
+            // This keeps high-IOR glass in an optical receiver domain: refraction wins through
+            // F=0.5, reflection wins above it, and the two guide bundles are never blended.
+            const bool transmissionLobeDominant =
+                firstOpticalInterface.refractValid && firstOpticalInterface.fresnel <= 0.5;
+            const bool reflectionLobeDominant =
+                !firstOpticalInterface.refractValid || firstOpticalInterface.fresnel > 0.5;
+            const bool selectTransmissionReceiver = dielectricWeight > 0.0
+                && smoothOptical
+                && transmissionLobeDominant;
+            const bool selectReflectionReceiver = smoothOptical
+                && ((dielectricWeight > 0.0 && reflectionLobeDominant)
+                    || (dielectricWeight <= 0.0 && surfaceMetallic >= 0.5));
+            const bool opticalMaterial = dielectricWeight > 0.0 || surfaceMetallic >= 0.5;
+            const bool primaryOpticalMoved = PayloadInstanceMoved(payload);
+            // Block 3 fallback policy: rough optical BSDFs and any moving optical interface or
+            // receiver are omitted.  Previous replay still traces the current TLAS, so exporting
+            // it as valid history for those paths would be knowingly incorrect.
+            bool omitOpticalGuide = (dielectricWeight > 0.0
+                    && !selectTransmissionReceiver && !selectReflectionReceiver)
+                || (surfaceMetallic >= 0.5 && !smoothOptical)
+                || (opticalMaterial && primaryOpticalMoved);
+
+#if PT_DIAGNOSTIC_PERMUTATION
+            if (opticalMaterial && !smoothOptical) opticalFallbackFlagsForDebug |= 1u;
+            if (opticalMaterial && primaryOpticalMoved) opticalFallbackFlagsForDebug |= 2u;
+#endif
+
+#if PT_DIAGNOSTIC_PERMUTATION
+            hasFirstOpticalInterfaceForDebug = dielectricWeight > 0.0 && smoothOptical;
+            firstOpticalInterfaceForDebug = firstOpticalInterface;
+#endif
+
+            if (selectTransmissionReceiver)
             {
-                specHitDistGuide = g_MaxTraceDistance;
-
-                const float guideOriginBias =
-                    max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
-                const bool thinPane = material.thinWalled > 0.5;
+                // The selected guide domain is refraction; reflection receives its own bundle only
+                // when it is the dominant smooth lobe below.
                 const float shellBias = thinPane ? max(guideOriginBias, kThinShellMinExitBias) : guideOriginBias;
-                const float transmitFresnel = FresnelDielectric(
-                    nDotVPrimary,
-                    1.0 / max(material.indexOfRefraction, 1.0));
-                const float transmitWeight = saturate(1.0 - transmitFresnel);
-
                 const TransmissionGuideHit txGuide = TraceTransmissionGuide(
-                    hitPos,
-                    hitNormalGeom,
-                    ray.Direction,
-                    material.indexOfRefraction,
-                    thinPane,
-                    shellBias,
-                    payload.instanceId);
-
+                    hitPos, firstOpticalInterface, material.indexOfRefraction, shellBias, payload.instanceId);
                 const float2 virtualMotion = ComputeTransmissionVirtualMotion(
-                    pixel, hitPos, ray.Direction, txGuide, shellBias);
+                    pixel, txGuide, PayloadPrimaryMotion(payload));
 #if PT_DIAGNOSTIC_PERMUTATION
                 transmissionVirtualMotionForDebug = virtualMotion;
                 hasTransmissionVirtualMotionForDebug = true;
+                if (txGuide.receiverMoved) opticalFallbackFlagsForDebug |= 4u;
+                opticalReceiverReprojectionForDebug = DiagnoseTransmissionReceiverReprojection(
+                    pixel, virtualMotion, txGuide, shellBias);
 #endif
-
-                if (txGuide.valid)
+                if (txGuide.valid && !txGuide.receiverMoved && !primaryOpticalMoved)
                 {
                     resolvedPrimaryDepth = txGuide.depth;
-                    resolvedPrimaryMotion = lerp(
-                        PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
-
-                    float3 bgDiffuse;
-                    float3 bgSpec;
-                    float3 bgNormal;
-                    float bgRoughness;
-                    const MaterialEntry bgMaterial = LoadMaterialForInstance(txGuide.instanceId);
-                    float3 bgAlbedo;
-                    float bgMetallic;
-                    float3 bgEmissive;
-                    ResolveSurfaceMaterialScalars(
-                        txGuide.instanceId,
-                        txGuide.primitiveIndex,
-                        txGuide.barycentrics,
-                        ComputeTransmissionGuideAlbedoLod(txGuide, pathConeWidth),
-                        bgAlbedo,
-                        bgRoughness,
-                        bgMetallic,
-                        bgEmissive);
-                    const float3 bgViewDir = -txGuide.refractDir;
-                    ComputePtPrimaryRrMaterialGuides(
-                        bgAlbedo,
-                        txGuide.shadingNormal,
-                        bgRoughness,
-                        bgMetallic,
-                        bgMaterial.transmission,
-                        bgMaterial.indexOfRefraction,
-                        bgViewDir,
-                        bgDiffuse,
-                        bgSpec,
-                        bgNormal,
-                        bgRoughness);
-
-                    diffuseGuide = lerp(diffuseGuide, bgDiffuse, transmitWeight);
-                    specGuide = lerp(specGuide, bgSpec, transmitWeight);
-                    guideNormal = normalize(lerp(guideNormal, bgNormal, transmitWeight));
-                    guideRoughness = lerp(guideRoughness, bgRoughness, transmitWeight);
+                    resolvedPrimaryMotion = virtualMotion;
+                    ComputeOpticalReceiverMaterialGuides(
+                        txGuide.instanceId, txGuide.primitiveIndex, txGuide.barycentrics,
+                        txGuide.normal, txGuide.shadingNormal, txGuide.refractDir, txGuide.triangleLod,
+                        pathConeWidth, diffuseGuide, specGuide, guideNormal, guideRoughness);
+#if PT_DIAGNOSTIC_PERMUTATION
+                    guideReceiverIdForDebug = txGuide.instanceId + 1u;
+#endif
                 }
                 else
                 {
+                    // A sky receiver is a coherent domain; do not retain pane materials or motion.
                     resolvedPrimaryDepth = 1.0;
-                    resolvedPrimaryMotion = lerp(
-                        PayloadPrimaryMotion(payload), virtualMotion, transmitWeight);
-                    const float3 skyGuide = float3(0.5, 0.5, 0.5);
-                    diffuseGuide = lerp(diffuseGuide, skyGuide, transmitWeight);
-                    specGuide = lerp(specGuide, skyGuide, transmitWeight);
+                    resolvedPrimaryMotion = ComputeSkyAnchorMotion(txGuide.refractDir);
+                    diffuseGuide = 0.5.xxx;
+                    specGuide = 0.5.xxx;
+                    guideNormal = float3(0.0, 0.0, 1.0);
+                    guideRoughness = 1.0;
                 }
+                specHitDistGuide = g_MaxTraceDistance;
+            }
+            else if (selectReflectionReceiver)
+            {
+                const ReflectionGuideHit reflectionGuide = TraceReflectionGuide(
+                    hitPos, firstOpticalInterface.reflectDir, guideOriginBias);
+                bool reflectionReplayValid;
+                const float2 reflectionMotion = ComputeReflectionVirtualMotion(
+                    pixel, reflectionGuide, PayloadPrimaryMotion(payload), reflectionReplayValid);
+#if PT_DIAGNOSTIC_PERMUTATION
+                if (reflectionGuide.receiverMoved) opticalFallbackFlagsForDebug |= 4u;
+                opticalReceiverReprojectionForDebug = DiagnoseReflectionReceiverReprojection(
+                    pixel, reflectionMotion, reflectionGuide, guideOriginBias);
+#endif
+                if (reflectionGuide.valid && !reflectionGuide.receiverMoved
+                    && !primaryOpticalMoved && reflectionReplayValid)
+                {
+                    resolvedPrimaryDepth = reflectionGuide.depth;
+                    resolvedPrimaryMotion = reflectionMotion;
+                    ComputeOpticalReceiverMaterialGuides(
+                        reflectionGuide.instanceId, reflectionGuide.primitiveIndex, reflectionGuide.barycentrics,
+                        reflectionGuide.normal, reflectionGuide.shadingNormal, reflectionGuide.reflectDir,
+                        reflectionGuide.triangleLod, pathConeWidth,
+                        diffuseGuide, specGuide, guideNormal, guideRoughness);
+                    specHitDistGuide = max(reflectionGuide.reflectedHitDistance, 0.05);
+#if PT_DIAGNOSTIC_PERMUTATION
+                    guideReceiverIdForDebug = reflectionGuide.instanceId + 1u;
+#endif
+                }
+                else
+                {
+                    omitOpticalGuide = true;
+                }
+            }
+
+            if (omitOpticalGuide)
+            {
+                // Explicit RR omission: neutral material, far depth, zero motion and no hit distance.
+                resolvedPrimaryDepth = 1.0;
+                resolvedPrimaryMotion = 0.0.xx;
+                diffuseGuide = 0.5.xxx;
+                specGuide = 0.5.xxx;
+                guideNormal = float3(0.0, 0.0, 1.0);
+                guideRoughness = 1.0;
+                specHitDistGuide = g_MaxTraceDistance;
             }
             g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
             g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
             g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
-
-            // Stable RR4 spec hit-distance guide (devdoc/dxr/pt/rr4-spec-hitdist.md): trace ONE
-            // DETERMINISTIC mirror ray from the primary hit (no RNG) so DLSS-RR can reproject
-            // reflections at their virtual depth without wobble. Reflective surfaces only; rougher /
-            // diffuse / miss report g_MaxTraceDistance ("no specular reprojection"). Independent of
-            // the stochastic radiance bounce chosen below.
-            // Scale out as dielectric weight rises — glass refraction must not use a mirror guide.
-            const float mirrorGuideWeight =
-                (1.0 - dielectricWeight)
-                * (1.0 - smoothstep(0.45, 0.65, surfaceRoughness));
-            if (mirrorGuideWeight > 0.0)
-            {
-                // Match the grazing-aware bounce offset — shadowOrigin self-intersects at silhouettes
-                // and reports ~0 hit distance, which RR reads as black sliding rims (F8).
-                const float guideOriginBias =
-                    max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - nDotVPrimary));
-                RayDesc guideRay;
-                guideRay.Origin = hitPos + hitNormal * guideOriginBias;
-                guideRay.Direction = normalize(reflect(ray.Direction, hitNormal));
-                guideRay.TMin = 0.001;
-                guideRay.TMax = g_MaxTraceDistance;
-
-                Payload guidePayload;
-                ResetPayload(guidePayload);
-                TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, guideRay, guidePayload);
-                if (guidePayload.hit != 0)
-                {
-                    const float finiteGuide = max(guidePayload.hitDistance, 0.05);
-                    specHitDistGuide = lerp(g_MaxTraceDistance, finiteGuide, mirrorGuideWeight);
-                }
-                else
-                {
-                    specHitDistGuide = g_MaxTraceDistance;
-                }
-            }
 
             // PF2: retire bounce-zero output state before secondary traces. Only `primary`, which
             // ReSTIR GI reconnects after the path terminates, remains live through the loop.
@@ -2298,6 +2683,20 @@ void PathTracerRayGen()
 
         if (terminalEmissiveHit)
         {
+            if (pendingPrimaryTransmissionTail)
+            {
+                ray = pendingTransmissionRay;
+                throughput = pendingTransmissionThroughput;
+                pathInMedium = pendingTransmissionPathInMedium;
+                mediumTint = pendingTransmissionMediumTint;
+                pathConeWidth = pendingTransmissionConeWidth;
+                missEnvRoughness = pendingTransmissionMissRoughness;
+                addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
+                lastScatterPdf = kDeltaScatterPdf;
+                pendingPrimaryTransmissionTail = false;
+                bounce = 0u;
+                continue;
+            }
             break;
         }
 
@@ -2328,6 +2727,20 @@ void PathTracerRayGen()
             {
                 directRadiance += terminalContrib;
             }
+            if (pendingPrimaryTransmissionTail)
+            {
+                ray = pendingTransmissionRay;
+                throughput = pendingTransmissionThroughput;
+                pathInMedium = pendingTransmissionPathInMedium;
+                mediumTint = pendingTransmissionMediumTint;
+                pathConeWidth = pendingTransmissionConeWidth;
+                missEnvRoughness = pendingTransmissionMissRoughness;
+                addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
+                lastScatterPdf = kDeltaScatterPdf;
+                pendingPrimaryTransmissionTail = false;
+                bounce = 0u;
+                continue;
+            }
             break;
         }
 
@@ -2335,24 +2748,107 @@ void PathTracerRayGen()
         bool isSpecular = false;
         float scatterPdf = 1.0;
         const bool pathInMediumBefore = pathInMedium;
-        SampleMaterialBounce(
-            rng,
+        const bool useFirstOpticalInterface = bounce == 0u
+            && dielectricWeight > 0.0
+            && surfaceRoughness <= kPtDeltaSpecularRoughness;
+        // This record is intentionally local to bounce zero: it is the smooth radiance interface
+        // consumed by the guide above, not a global Ng/Ns contract change.
+        const FirstOpticalInterface firstOpticalInterface = BuildFirstOpticalInterface(
             hitNormal,
             ray.Direction,
-            viewDir,
-            f0,
-            albedo,
-            surfaceRoughness,
-            surfaceMetallic,
-            material.transmission,
             material.indexOfRefraction,
             material.thinWalled > 0.5,
-            pathInMedium,
-            nextDir,
-            isSpecular,
-            pathInMedium,
-            scatterPdf,
-            throughput);
+            pathInMedium);
+        uint actualOpticalEvent = kFirstOpticalEventNone;
+        const bool deterministicPrimaryOpticalSplit =
+            kPtDeterministicOpticalSplitEnabled
+            && kPtCenterPrimaryRays
+            && bounce == 0u
+            && useFirstOpticalInterface
+            && firstOpticalInterface.refractValid;
+        if (deterministicPrimaryOpticalSplit)
+        {
+            // In real-time PT the conventional estimator follows only the glass component and
+            // applies dielectricWeight once.  Evaluate both delta lobes instead: F*Lr + (1-F)*Lt.
+            // This removes the high-contrast red/green event switching visible at IOR 1.5+.
+            const float reflectWeight = dielectricWeight * firstOpticalInterface.fresnel;
+            const float transmitWeight = dielectricWeight * (1.0 - firstOpticalInterface.fresnel);
+            const float primaryNdotV = saturate(dot(hitNormalGeom, viewDir));
+            const float primaryOriginBias =
+                max(payload.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - primaryNdotV));
+            const bool primaryThinPane = material.thinWalled > 0.5;
+            const bool transmitPathInMedium = primaryThinPane
+                ? false
+                : firstOpticalInterface.enteringMedium;
+            float3 transmitOrigin = hitPos + firstOpticalInterface.refractDir * primaryOriginBias;
+            if (primaryThinPane)
+            {
+                transmitOrigin = hitPos + firstOpticalInterface.refractDir
+                    * max(primaryOriginBias, kThinShellMinExitBias);
+            }
+            else if (!pathInMediumBefore && transmitPathInMedium)
+            {
+                transmitOrigin = hitPos + firstOpticalInterface.refractDir
+                    * max(primaryOriginBias, 0.02);
+            }
+            else if (pathInMediumBefore && !transmitPathInMedium)
+            {
+                transmitOrigin = hitPos + firstOpticalInterface.refractDir
+                    * max(primaryOriginBias, 0.02);
+            }
+
+            pendingPrimaryTransmissionTail = transmitWeight > 0.0;
+            pendingTransmissionRay.Origin = transmitOrigin;
+            pendingTransmissionRay.Direction = firstOpticalInterface.refractDir;
+            pendingTransmissionRay.TMin = 0.001;
+            pendingTransmissionRay.TMax = g_MaxTraceDistance;
+            pendingTransmissionThroughput = transmitWeight.xxx;
+            pendingTransmissionPathInMedium = transmitPathInMedium;
+            pendingTransmissionMediumTint = transmitPathInMedium && !pathInMediumBefore
+                ? albedo
+                : (pathInMediumBefore && !transmitPathInMedium ? 1.0.xxx : mediumTint);
+            pendingTransmissionConeWidth = pathConeWidth;
+            pendingTransmissionMissRoughness =
+                TransmissionMissEnvRoughness(surfaceRoughness, dielectricWeight);
+            pendingTransmissionAddEnvOnMiss = true;
+
+            nextDir = firstOpticalInterface.reflectDir;
+            isSpecular = true;
+            pathInMedium = primaryThinPane ? false : pathInMediumBefore;
+            scatterPdf = kDeltaScatterPdf;
+            actualOpticalEvent = kFirstOpticalEventReflect;
+            throughput *= reflectWeight;
+        }
+        else
+        {
+            SampleMaterialBounce(
+                rng,
+                hitNormal,
+                ray.Direction,
+                viewDir,
+                f0,
+                albedo,
+                surfaceRoughness,
+                surfaceMetallic,
+                material.transmission,
+                material.indexOfRefraction,
+                material.thinWalled > 0.5,
+                pathInMedium,
+                useFirstOpticalInterface,
+                firstOpticalInterface,
+                nextDir,
+                isSpecular,
+                pathInMedium,
+                scatterPdf,
+                actualOpticalEvent,
+                throughput);
+        }
+#if PT_DIAGNOSTIC_PERMUTATION
+        if (bounce == 0u && useFirstOpticalInterface)
+        {
+            actualOpticalEventForDebug = actualOpticalEvent;
+        }
+#endif
         if (pathInMedium && !pathInMediumBefore && material.thinWalled < 0.5)
         {
             mediumTint = albedo;
@@ -2368,8 +2864,18 @@ void PathTracerRayGen()
         // local throughput = 1 (ReSTIR GI / G5). Shade reconnects as t1 * Lo_tail.
         if (bounce == 0u)
         {
-            throughputAfterFirstScatter = throughput;
-            throughput = 1.0.xxx;
+            if (deterministicPrimaryOpticalSplit)
+            {
+                // Smooth dielectric primaries never enter ReSTIR GI. Keep the Fresnel weight in
+                // the live path so the two independent tails add directly into loTail.
+                throughputAfterFirstScatter = 1.0.xxx;
+                haveInitialSample = true;
+            }
+            else
+            {
+                throughputAfterFirstScatter = throughput;
+                throughput = 1.0.xxx;
+            }
             inTail = true;
             if (primary.dielectricWeight > 0.01
                 || primary.roughness <= kPtDeltaSpecularRoughness
@@ -2397,6 +2903,20 @@ void PathTracerRayGen()
             const float rrXi = PathRngNext(rng);
             if (rrProb <= 1e-4 || rrXi > rrProb)
             {
+                if (pendingPrimaryTransmissionTail)
+                {
+                    ray = pendingTransmissionRay;
+                    throughput = pendingTransmissionThroughput;
+                    pathInMedium = pendingTransmissionPathInMedium;
+                    mediumTint = pendingTransmissionMediumTint;
+                    pathConeWidth = pendingTransmissionConeWidth;
+                    missEnvRoughness = pendingTransmissionMissRoughness;
+                    addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
+                    lastScatterPdf = kDeltaScatterPdf;
+                    pendingPrimaryTransmissionTail = false;
+                    bounce = 0u;
+                    continue;
+                }
                 break;
             }
             throughput /= rrProb;
@@ -2546,6 +3066,56 @@ void PathTracerRayGen()
             ? float3(transmissionVirtualMotionForDebug * 4.0 + 0.5, 0.0)
             : 0.0.xxx;
     }
+    else if (primary.hit && g_PtDebugIsolateMode == 49u)
+    {
+        // Block 1 AOV: the actual smooth optical normal consumed by radiance and the guide.
+        displayRadiance = hasFirstOpticalInterfaceForDebug
+            ? firstOpticalInterfaceForDebug.opticalNormal * 0.5 + 0.5
+            : 0.0.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 50u)
+    {
+        // Event palette: red=reflection, green=transmission, blue=TIR, black=no smooth event.
+        displayRadiance = actualOpticalEventForDebug == kFirstOpticalEventReflect ? float3(1.0, 0.0, 0.0)
+            : actualOpticalEventForDebug == kFirstOpticalEventTransmit ? float3(0.0, 1.0, 0.0)
+            : actualOpticalEventForDebug == kFirstOpticalEventTir ? float3(0.0, 0.0, 1.0)
+            : 0.0.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 51u)
+    {
+        displayRadiance = hasFirstOpticalInterfaceForDebug
+            ? firstOpticalInterfaceForDebug.reflectDir * 0.5 + 0.5
+            : 0.0.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 52u)
+    {
+        displayRadiance = hasFirstOpticalInterfaceForDebug
+            && firstOpticalInterfaceForDebug.refractValid
+            ? firstOpticalInterfaceForDebug.refractDir * 0.5 + 0.5
+            : 0.0.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 53u)
+    {
+        // Stable receiver-ID hash; zero means sky/invalid guide. This is display-only and never
+        // aliases g_Metadata, whose production primary-surface meaning remains unchanged.
+        displayRadiance = guideReceiverIdForDebug == 0u
+            ? 0.0.xxx
+            : frac(float3(0.1031, 0.11369, 0.13787) * float(guideReceiverIdForDebug));
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 54u)
+    {
+        // Fallback policy AOV: R=unsupported rough, G=moving optical primary, B=moving receiver.
+        displayRadiance = float3(
+            (opticalFallbackFlagsForDebug & 1u) != 0u ? 1.0 : 0.0,
+            (opticalFallbackFlagsForDebug & 2u) != 0u ? 1.0 : 0.0,
+            (opticalFallbackFlagsForDebug & 4u) != 0u ? 1.0 : 0.0);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 55u)
+    {
+        // R: receiver position residual (black is exact; red saturates at 12.5% receiver range).
+        // G: receiver instance agrees; B: previous optical path at the exported history pixel exists.
+        displayRadiance = opticalReceiverReprojectionForDebug;
+    }
 #else
     const float3 displayRadiance = radiance;
 #endif
@@ -2668,6 +3238,7 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     float2 primaryMotion = 0.0.xx;
     float primaryDepth = 1.0;
     float primaryPrevLinearDepth = 0.0;
+    bool instanceMoved = false;
     if ((request & kPayloadReqPrimarySurface) != 0u)
     {
         ComputeVertexInterpolatedPrimarySurface(
@@ -2677,9 +3248,12 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
             instanceId,
             primitiveIndex,
             attribs.barycentrics);
+        instanceMoved = CurrentInstanceTransformMoved(instanceId);
     }
 
-    payload.hit = 1u | (hitBackFace ? kPayloadHitBackFace : 0u);
+    payload.hit = 1u
+        | (hitBackFace ? kPayloadHitBackFace : 0u)
+        | (instanceMoved ? kPayloadHitMovingInstance : 0u);
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;

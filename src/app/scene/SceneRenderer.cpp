@@ -1329,6 +1329,7 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.GetPtMaxBounces(),
             m_dxrSettings.IsPtRussianRouletteEnabled(),
             m_dxrSettings.IsPtFireflyClampEnabled(),
+            m_dxrSettings.IsPtDeterministicOpticalSplitEnabled(),
             m_dxrSettings.GetPtAmbientStrength(),
             m_dxrSettings.GetPtAmbientAoRayCount(),
             ptDebugMode);

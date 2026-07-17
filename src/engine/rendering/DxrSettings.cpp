@@ -141,6 +141,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptMaxBounces = source.m_ptMaxBounces;
     m_ptRussianRoulette = source.m_ptRussianRoulette;
     m_ptFireflyClamp = source.m_ptFireflyClamp;
+    m_ptDeterministicOpticalSplit = source.m_ptDeterministicOpticalSplit;
     m_ptAmbientStrength = source.m_ptAmbientStrength;
     m_ptAmbientAoRayCount = source.m_ptAmbientAoRayCount;
     m_restirDiCandidateCount = source.m_restirDiCandidateCount;
@@ -201,6 +202,7 @@ nlohmann::json DxrSettings::ToJson() const
         {"ptMaxBounces", m_ptMaxBounces},
         {"ptRussianRoulette", m_ptRussianRoulette},
         {"ptFireflyClamp", m_ptFireflyClamp},
+        {"ptDeterministicOpticalSplit", m_ptDeterministicOpticalSplit},
         {"ptAmbientStrength", m_ptAmbientStrength},
         {"ptAmbientAoRayCount", m_ptAmbientAoRayCount},
         {"restirDiCandidateCount", m_restirDiCandidateCount},
@@ -255,6 +257,11 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     if (value.contains("ptFireflyClamp"))
     {
         SetPtFireflyClampEnabled(value.at("ptFireflyClamp").get<bool>());
+    }
+    if (value.contains("ptDeterministicOpticalSplit"))
+    {
+        SetPtDeterministicOpticalSplitEnabled(
+            value.at("ptDeterministicOpticalSplit").get<bool>());
     }
     if (value.contains("ptAmbientStrength"))
     {

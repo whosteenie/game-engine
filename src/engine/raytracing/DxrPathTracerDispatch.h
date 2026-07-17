@@ -206,6 +206,7 @@ public:
         int ptMaxBounces,
         bool ptRussianRoulette,
         bool ptFireflyClamp,
+        bool ptDeterministicOpticalSplit,
         float ptAmbientStrength,
         int ptAmbientAoRayCount,
         int ptDebugIsolateMode = 0);

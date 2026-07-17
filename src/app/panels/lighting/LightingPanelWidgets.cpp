@@ -181,6 +181,13 @@ namespace
         RenderDebugMode::PtCameraOpaqueMotion,
         RenderDebugMode::PtTransmissionVirtualMotion,
         RenderDebugMode::PtRestirPreviousReceiverTargetAgreement,
+        RenderDebugMode::PtOpticalInterfaceNormal,
+        RenderDebugMode::PtOpticalInterfaceEvent,
+        RenderDebugMode::PtOpticalReflectCandidate,
+        RenderDebugMode::PtOpticalRefractCandidate,
+        RenderDebugMode::PtOpticalGuideReceiverId,
+        RenderDebugMode::PtOpticalGuideFallback,
+        RenderDebugMode::PtOpticalReceiverReprojection,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -726,6 +733,20 @@ namespace LightingPanelWidgets
             return "Camera-domain AOV: refraction-replayed current-minus-previous NDC motion through a dielectric. This diagnostic only changes the displayed PT output; the RGBA16F motion guide remains authoritative.";
         case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
             return "ReSTIR camera-domain AOV: R is normalized current/previous receiver error, G is fresh-sample target error, and B means a compatible prior receiver was found. A static compatible view is (0,0,1).";
+        case RenderDebugMode::PtOpticalInterfaceNormal:
+            return "Optical AOV: Ns-oriented smooth interface normal used by both bounce-zero radiance and its deterministic guide.";
+        case RenderDebugMode::PtOpticalInterfaceEvent:
+            return "Optical AOV: sampled smooth event (red reflection, green transmission, blue total internal reflection).";
+        case RenderDebugMode::PtOpticalReflectCandidate:
+            return "Optical AOV: deterministic smooth reflection candidate direction.";
+        case RenderDebugMode::PtOpticalRefractCandidate:
+            return "Optical AOV: deterministic smooth transmission candidate direction; black means TIR or no supported event.";
+        case RenderDebugMode::PtOpticalGuideReceiverId:
+            return "Optical AOV: hashed deterministic transmission-guide receiver ID; black means sky or no receiver.";
+        case RenderDebugMode::PtOpticalGuideFallback:
+            return "Optical fallback AOV: red=unsupported rough optics, green=moving optical interface, blue=moving receiver. These paths omit RR optical history.";
+        case RenderDebugMode::PtOpticalReceiverReprojection:
+            return "Optical receiver reprojection AOV: R is normalized receiver-position residual, G means the previous receiver instance matches, and B means the previous optical path exists at the exported history pixel. Ideal static optics are cyan (0,1,1).";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

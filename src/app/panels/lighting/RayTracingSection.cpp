@@ -1031,6 +1031,23 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Slightly biased; turn off in Reference for ground truth.");
             }
 
+            bool ptDeterministicOpticalSplit =
+                dxrSettings.IsPtDeterministicOpticalSplitEnabled();
+            UndoableRendererCheckbox(
+                "PT deterministic smooth glass",
+                &ptDeterministicOpticalSplit,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtDeterministicOpticalSplitEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Traces both smooth primary glass lobes (Fresnel reflection and transmission) every "
+                "frame instead of randomly selecting one. Removes Fresnel branch shimmer, but can "
+                "roughly double the tail-ray cost on visible smooth glass.");
+            RendererSettingUi::MarkRendered("pt_deterministic_optical_split");
+
             float ptAmbientStrength = dxrSettings.GetPtAmbientStrength();
             UndoableRendererSliderFloat(
                 "PT ambient strength",

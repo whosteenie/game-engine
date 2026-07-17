@@ -127,6 +127,14 @@ enum class RenderDebugMode
     PtCameraOpaqueMotion,
     PtTransmissionVirtualMotion,
     PtRestirPreviousReceiverTargetAgreement,
+    // Block 1 smooth optical interface diagnostics (display-only PT AOVs).
+    PtOpticalInterfaceNormal,
+    PtOpticalInterfaceEvent,
+    PtOpticalReflectCandidate,
+    PtOpticalRefractCandidate,
+    PtOpticalGuideReceiverId,
+    PtOpticalGuideFallback,
+    PtOpticalReceiverReprojection,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -154,6 +162,6 @@ bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 48;
+inline constexpr int kPtDebugIsolateModeMax = 55;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

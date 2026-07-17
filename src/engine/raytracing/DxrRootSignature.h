@@ -88,7 +88,8 @@ struct ReflectionDispatchConstants
     float restirDiCandidateCount = 0.0f;
     float restirGiInitialEnabled = 0.0f;
     float _restirDiPad1 = 0.0f;
-    float _restirDiPad2 = 0.0f;
+    // Path-tracer-only: deterministic smooth dielectric reflection+transmission split.
+    float ptDeterministicOpticalSplit = 0.0f;
 };
 static_assert(
     sizeof(ReflectionDispatchConstants) == 704,

@@ -281,6 +281,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const int ptMaxBounces,
     const bool ptRussianRoulette,
     const bool ptFireflyClamp,
+    const bool ptDeterministicOpticalSplit,
     const float ptAmbientStrength,
     const int ptAmbientAoRayCount,
     const int ptDebugIsolateMode)
@@ -485,6 +486,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.restirDiCandidateCount = static_cast<float>(frameInputs.restirDiCandidateCount);
     constants.restirGiInitialEnabled = frameInputs.restirGiInitialEnabled ? 1.0f : 0.0f;
     constants._restirDiPad1 = frameInputs.environmentRotationYRadians;
+    constants.ptDeterministicOpticalSplit = ptDeterministicOpticalSplit ? 1.0f : 0.0f;
 
     viewport.m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
     viewport.m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;

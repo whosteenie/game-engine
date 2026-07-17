@@ -216,6 +216,20 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT camera-domain: transmission virtual motion";
     case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
         return "PT ReSTIR: previous receiver/target agreement";
+    case RenderDebugMode::PtOpticalInterfaceNormal:
+        return "PT optical: smooth interface normal";
+    case RenderDebugMode::PtOpticalInterfaceEvent:
+        return "PT optical: sampled interface event";
+    case RenderDebugMode::PtOpticalReflectCandidate:
+        return "PT optical: reflection candidate";
+    case RenderDebugMode::PtOpticalRefractCandidate:
+        return "PT optical: refraction candidate";
+    case RenderDebugMode::PtOpticalGuideReceiverId:
+        return "PT optical: guide receiver ID";
+    case RenderDebugMode::PtOpticalGuideFallback:
+        return "PT optical: guide fallback policy";
+    case RenderDebugMode::PtOpticalReceiverReprojection:
+        return "PT optical: receiver reprojection residual";
     default:
         return "Unknown";
     }
@@ -443,6 +457,13 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtCameraOpaqueMotion:
     case RenderDebugMode::PtTransmissionVirtualMotion:
     case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
+    case RenderDebugMode::PtOpticalInterfaceNormal:
+    case RenderDebugMode::PtOpticalInterfaceEvent:
+    case RenderDebugMode::PtOpticalReflectCandidate:
+    case RenderDebugMode::PtOpticalRefractCandidate:
+    case RenderDebugMode::PtOpticalGuideReceiverId:
+    case RenderDebugMode::PtOpticalGuideFallback:
+    case RenderDebugMode::PtOpticalReceiverReprojection:
         return true;
     default:
         return false;
@@ -559,6 +580,13 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtCameraOpaqueMotion: return 46;
     case RenderDebugMode::PtTransmissionVirtualMotion: return 47;
     case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement: return 48;
+    case RenderDebugMode::PtOpticalInterfaceNormal: return 49;
+    case RenderDebugMode::PtOpticalInterfaceEvent: return 50;
+    case RenderDebugMode::PtOpticalReflectCandidate: return 51;
+    case RenderDebugMode::PtOpticalRefractCandidate: return 52;
+    case RenderDebugMode::PtOpticalGuideReceiverId: return 53;
+    case RenderDebugMode::PtOpticalGuideFallback: return 54;
+    case RenderDebugMode::PtOpticalReceiverReprojection: return 55;
     default: return 0;
     }
 }
