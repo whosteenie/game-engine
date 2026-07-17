@@ -403,9 +403,13 @@ void Scene::CollectDescendantIndices(int objectIndex, std::vector<int>& outIndic
     SceneHierarchyOps::CollectDescendantIndices(m_objectStore->Objects(), objectIndex, outIndices);
 }
 
-std::vector<int> Scene::ImportModel(const std::string& path, int parentIndex, const std::string& projectRoot)
+std::vector<int> Scene::ImportModel(
+    const std::string& path,
+    const int parentIndex,
+    const std::string& projectRoot,
+    const bool isProjectAsset)
 {
-    return m_importService->ImportModel(*this, path, parentIndex, projectRoot);
+    return m_importService->ImportModel(*this, path, parentIndex, projectRoot, isProjectAsset);
 }
 
 bool Scene::RemoveObject(std::size_t index)

@@ -21,7 +21,8 @@ public:
         Scene& scene,
         const std::string& path,
         int parentIndex,
-        const std::string& projectRoot);
+        const std::string& projectRoot,
+        bool isProjectAsset = false);
 
     const std::string& GetLastImportError() const;
     const std::string& GetLastImportWarning() const;

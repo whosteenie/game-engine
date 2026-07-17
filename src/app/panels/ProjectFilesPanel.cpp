@@ -675,7 +675,7 @@ void ProjectFilesPanel::ImportModelIntoScene(ProjectSession& project, const std:
     const std::string& projectRoot = project.GetProjectRootDirectory();
 
     PushInsertSubtree(undoStack, scene, "Import Model", [&](Scene& target) {
-        const std::vector<int> importedIndices = target.ImportModel(modelPath, -1, projectRoot);
+        const std::vector<int> importedIndices = target.ImportModel(modelPath, -1, projectRoot, true);
         if (!importedIndices.empty())
         {
             target.SelectSingle(importedIndices.front());

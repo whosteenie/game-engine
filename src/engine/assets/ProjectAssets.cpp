@@ -1,5 +1,7 @@
 #include "engine/assets/ProjectAssets.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <stdexcept>
 
@@ -18,6 +20,17 @@ namespace
         }
 
         return path;
+    }
+
+    std::string NormalizePathForComparison(const fs::path& path)
+    {
+        std::string normalized = NormalizeSlashes(path.generic_string());
+#ifdef _WIN32
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+#endif
+        return normalized;
     }
 
     std::string GetExtensionLower(const fs::path& path)
@@ -66,18 +79,16 @@ namespace
             return false;
         }
 
-        auto candidateIt = absoluteCandidate.begin();
-        for (const fs::path& rootPart : absoluteRoot)
+        const fs::path normalizedCandidate = fs::path(NormalizePathForComparison(absoluteCandidate));
+        const fs::path normalizedRoot = fs::path(NormalizePathForComparison(absoluteRoot));
+        const fs::path relativePath = normalizedCandidate.lexically_relative(normalizedRoot);
+        if (relativePath.empty() || relativePath.is_absolute())
         {
-            if (candidateIt == absoluteCandidate.end() || *candidateIt != rootPart)
-            {
-                return false;
-            }
-
-            ++candidateIt;
+            return false;
         }
 
-        return true;
+        const auto firstPart = relativePath.begin();
+        return firstPart == relativePath.end() || *firstPart != "..";
     }
 
     void CopyFileCreateParents(const fs::path& source, const fs::path& destination)

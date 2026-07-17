@@ -417,6 +417,7 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
             m_highestShaderModel = 0;
         }
 
+#if D3D12_SDK_VERSION >= 618
         D3D12_FEATURE_DATA_D3D12_OPTIONS22 options22{};
         if (SUCCEEDED(m_impl->Device->CheckFeatureSupport(
                 D3D12_FEATURE_D3D12_OPTIONS22,
@@ -435,6 +436,9 @@ bool GfxContext::Initialize(GLFWwindow* window, int width, int height)
         {
             m_dxrRuntimeSnapshot.options22Query = "unsupported_or_query_failed";
         }
+#else
+        m_dxrRuntimeSnapshot.options22Query = "unavailable_in_build_sdk";
+#endif
 
         // Some drivers report tier 0 on ID3D12Device even when ID3D12Device5 + AS builds work.
         if (m_raytracingTier < static_cast<int>(D3D12_RAYTRACING_TIER_1_0))

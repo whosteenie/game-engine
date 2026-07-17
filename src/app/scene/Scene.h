@@ -119,7 +119,8 @@ public:
     std::vector<int> ImportModel(
         const std::string& path,
         int parentIndex = -1,
-        const std::string& projectRoot = {});
+        const std::string& projectRoot = {},
+        bool isProjectAsset = false);
 
     static std::unique_ptr<Scene> CloneForPlayMode(const Scene& source, bool shareGpuResources = true);
 

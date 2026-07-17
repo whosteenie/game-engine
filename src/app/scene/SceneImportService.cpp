@@ -28,6 +28,24 @@
 
 namespace
 {
+    std::string CanonicalizeImportPath(const std::filesystem::path& path)
+    {
+        std::error_code error;
+        const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path, error);
+        return (error ? path : canonicalPath).string();
+    }
+
+    std::string MakeImportCacheKey(const std::filesystem::path& path)
+    {
+        std::string key = std::filesystem::path(CanonicalizeImportPath(path)).generic_string();
+#ifdef _WIN32
+        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+#endif
+        return key;
+    }
+
     std::string FormatVec3(const glm::vec3& value)
     {
         std::ostringstream stream;
@@ -149,11 +167,7 @@ SceneImportService::CachedImportedModel SceneImportService::BuildCachedModelFrom
             continue;
         }
 
-        std::error_code canonicalError;
-        const std::filesystem::path canonicalObjectPath =
-            std::filesystem::weakly_canonical(object.GetImportAssetPath(), canonicalError);
-        const std::string objectImportPath =
-            (canonicalError ? std::filesystem::path(object.GetImportAssetPath()) : canonicalObjectPath).string();
+        const std::string objectImportPath = MakeImportCacheKey(object.GetImportAssetPath());
         if (objectImportPath != importPath)
         {
             continue;
@@ -218,9 +232,7 @@ void SceneImportService::CacheLoadedProjectModel(
         return;
     }
 
-    std::error_code error;
-    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(importPath, error);
-    const std::string cachePath = (error ? std::filesystem::path(importPath) : canonicalPath).string();
+    const std::string cachePath = MakeImportCacheKey(importPath);
     CachedImportedModel cachedModel =
         BuildCachedModelFromLoadedGeometry(scene, cachePath, std::move(geometryModel));
     if (IsCachedModelUsable(scene, cachedModel))
@@ -327,7 +339,8 @@ std::vector<int> SceneImportService::ImportModel(
     Scene& scene,
     const std::string& path,
     int parentIndex,
-    const std::string& projectRoot)
+    const std::string& projectRoot,
+    const bool isProjectAsset)
 {
     m_lastImportError.clear();
     m_lastImportWarning.clear();
@@ -337,15 +350,13 @@ std::vector<int> SceneImportService::ImportModel(
 
     const std::string modelName = std::filesystem::path(path).filename().string();
 
-    std::error_code canonicalError;
-    const std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path, canonicalError);
-    if (!canonicalError)
+    const std::string sourceCachePath = MakeImportCacheKey(path);
+    if (!sourceCachePath.empty())
     {
-        const std::string earlyImportPath = canonicalPath.string();
-        const auto aliasIterator = m_sourceAssetAliases.find(earlyImportPath);
+        const auto aliasIterator = m_sourceAssetAliases.find(sourceCachePath);
         const std::string& cachePath = aliasIterator != m_sourceAssetAliases.end()
             ? aliasIterator->second
-            : earlyImportPath;
+            : sourceCachePath;
         const auto cachedIterator = m_cachedModels.find(cachePath);
         if (cachedIterator != m_cachedModels.end())
         {
@@ -361,8 +372,8 @@ std::vector<int> SceneImportService::ImportModel(
 
     ScopedNativeProgress progress("Importing Model", modelName);
 
-    std::string importPath = path;
-    if (!projectRoot.empty())
+    std::string importPath = CanonicalizeImportPath(path);
+    if (!projectRoot.empty() && !isProjectAsset)
     {
         progress.SetMessage("Copying model into project...");
         const ImportModelAssetResult assetResult = ImportModelToProject(path, projectRoot);
@@ -377,15 +388,10 @@ std::vector<int> SceneImportService::ImportModel(
         importPath = assetResult.absolutePath;
     }
 
-    std::error_code importPathError;
-    const std::filesystem::path canonicalImportPath =
-        std::filesystem::weakly_canonical(importPath, importPathError);
-    if (!importPathError)
-    {
-        importPath = canonicalImportPath.string();
-    }
+    importPath = CanonicalizeImportPath(importPath);
+    const std::string importCachePath = MakeImportCacheKey(importPath);
 
-    const auto cachedIterator = m_cachedModels.find(importPath);
+    const auto cachedIterator = m_cachedModels.find(importCachePath);
     if (cachedIterator != m_cachedModels.end())
     {
         if (IsCachedModelUsable(scene, cachedIterator->second))
@@ -432,10 +438,10 @@ std::vector<int> SceneImportService::ImportModel(
     }
 
     CachedImportedModel cachedModel = BuildCachedModel(scene, importedModel);
-    auto [cacheIterator, inserted] = m_cachedModels.insert_or_assign(importPath, std::move(cachedModel));
-    if (!canonicalError && canonicalPath.string() != importPath)
+    auto [cacheIterator, inserted] = m_cachedModels.insert_or_assign(importCachePath, std::move(cachedModel));
+    if (!sourceCachePath.empty() && sourceCachePath != importCachePath)
     {
-        m_sourceAssetAliases.insert_or_assign(canonicalPath.string(), importPath);
+        m_sourceAssetAliases.insert_or_assign(sourceCachePath, importCachePath);
     }
     const std::vector<int> importedIndices =
         InstantiateCachedModel(scene, importPath, cacheIterator->second, parentIndex);
@@ -525,11 +531,10 @@ int SceneImportService::PrewarmProjectModels(
     for (std::size_t modelIndex = 0; modelIndex < modelPaths.size(); ++modelIndex)
     {
         const fs::path& modelPath = modelPaths[modelIndex];
-        const fs::path canonicalPath = fs::weakly_canonical(modelPath, error);
-        const std::string importPath = (error ? modelPath : canonicalPath).string();
-        error.clear();
+        const std::string importPath = CanonicalizeImportPath(modelPath);
+        const std::string importCachePath = MakeImportCacheKey(importPath);
 
-        const auto cachedIterator = m_cachedModels.find(importPath);
+        const auto cachedIterator = m_cachedModels.find(importCachePath);
         if (cachedIterator != m_cachedModels.end() && IsCachedModelUsable(scene, cachedIterator->second))
         {
             ++warmedCount;
@@ -580,7 +585,7 @@ int SceneImportService::PrewarmProjectModels(
         }
 
         CachedImportedModel cachedModel = BuildCachedModel(scene, importedModel);
-        m_cachedModels.insert_or_assign(importPath, std::move(cachedModel));
+        m_cachedModels.insert_or_assign(importCachePath, std::move(cachedModel));
         ++warmedCount;
         const float progress = progressStart
             + progressSpan * (static_cast<float>(modelIndex + 1) / static_cast<float>(modelPaths.size()));

@@ -256,7 +256,11 @@ void SceneViewportPanel::DrawModelDropTarget(
                 m_modelDropPreviewSelectionBeforeIds = selectionBefore.ids;
                 m_modelDropPreviewSelectionBeforePrimary = selectionBefore.primary;
                 scene.SetDirtyNotificationsSuppressed(true);
-                previewRoots = scene.ImportModel(modelPath, -1, project.GetProjectRootDirectory());
+                previewRoots = scene.ImportModel(
+                    modelPath,
+                    -1,
+                    project.GetProjectRootDirectory(),
+                    true);
                 scene.SetDirtyNotificationsSuppressed(false);
                 if (!previewRoots.empty())
                 {
