@@ -35,7 +35,10 @@ namespace
         return (error ? path : canonicalPath).string();
     }
 
-    std::string MakeImportCacheKey(const std::filesystem::path& path)
+    std::string MakeImportCacheKey(
+        const std::filesystem::path& path,
+        const std::string& projectRoot = {},
+        const bool allowProjectAssetsFallback = false)
     {
         std::string key = std::filesystem::path(CanonicalizeImportPath(path)).generic_string();
 #ifdef _WIN32
@@ -43,7 +46,46 @@ namespace
             return static_cast<char>(std::tolower(character));
         });
 #endif
-        return key;
+
+        if (projectRoot.empty())
+        {
+            return "absolute:" + key;
+        }
+
+        std::string rootKey =
+            std::filesystem::path(CanonicalizeImportPath(projectRoot)).generic_string();
+#ifdef _WIN32
+        std::transform(rootKey.begin(), rootKey.end(), rootKey.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+#endif
+        while (rootKey.size() > 1 && rootKey.back() == '/')
+        {
+            rootKey.pop_back();
+        }
+
+        if (key.size() > rootKey.size()
+            && key.compare(0, rootKey.size(), rootKey) == 0
+            && key[rootKey.size()] == '/')
+        {
+            return "project:" + key.substr(rootKey.size() + 1);
+        }
+
+        if (allowProjectAssetsFallback)
+        {
+#ifdef _WIN32
+            constexpr const char* projectAssetsMarker = "/assets/models/";
+#else
+            constexpr const char* projectAssetsMarker = "/Assets/Models/";
+#endif
+            const std::size_t assetsMarker = key.find(projectAssetsMarker);
+            if (assetsMarker != std::string::npos)
+            {
+                return "project:" + key.substr(assetsMarker + 1);
+            }
+        }
+
+        return "absolute:" + key;
     }
 
     std::string FormatVec3(const glm::vec3& value)
@@ -350,7 +392,8 @@ std::vector<int> SceneImportService::ImportModel(
 
     const std::string modelName = std::filesystem::path(path).filename().string();
 
-    const std::string sourceCachePath = MakeImportCacheKey(path);
+    const std::string sourceCachePath =
+        MakeImportCacheKey(path, projectRoot, isProjectAsset);
     if (!sourceCachePath.empty())
     {
         const auto aliasIterator = m_sourceAssetAliases.find(sourceCachePath);
@@ -389,7 +432,8 @@ std::vector<int> SceneImportService::ImportModel(
     }
 
     importPath = CanonicalizeImportPath(importPath);
-    const std::string importCachePath = MakeImportCacheKey(importPath);
+    const std::string importCachePath =
+        MakeImportCacheKey(importPath, projectRoot, isProjectAsset);
 
     const auto cachedIterator = m_cachedModels.find(importCachePath);
     if (cachedIterator != m_cachedModels.end())
@@ -532,7 +576,7 @@ int SceneImportService::PrewarmProjectModels(
     {
         const fs::path& modelPath = modelPaths[modelIndex];
         const std::string importPath = CanonicalizeImportPath(modelPath);
-        const std::string importCachePath = MakeImportCacheKey(importPath);
+        const std::string importCachePath = MakeImportCacheKey(importPath, projectRoot, true);
 
         const auto cachedIterator = m_cachedModels.find(importCachePath);
         if (cachedIterator != m_cachedModels.end() && IsCachedModelUsable(scene, cachedIterator->second))
