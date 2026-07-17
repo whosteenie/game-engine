@@ -39,7 +39,7 @@ struct DlssExtent
     }
 };
 
-// S2-P2 shadow-mode cache identity. Viewport remains part of the key even though the current SDK
+// S2-P4 active-allocation cache identity. Viewport remains part of the key because the SDK
 // query itself is viewport-independent: Scene and Game own independent planned and active state.
 struct DlssExtentRecommendationKey
 {
@@ -65,8 +65,8 @@ enum class DlssExtentPlanSource
     ExplicitFallback,
 };
 
-// The only planned-extent object exposed by the reconstruction integration. S2-P2 populates and
-// reports it in shadow mode; S2-P4 alone may make active allocations consume it.
+// The only planned-extent object exposed by the reconstruction integration. S2-P2 introduced the
+// recommendation; S2-P4 makes active per-viewport allocations and tag extents consume it.
 struct DlssPlannedExtent
 {
     DlssExtentRecommendationKey key{};
@@ -78,6 +78,14 @@ struct DlssPlannedExtent
     bool IsValid() const;
     bool IsSdkRecommendation() const { return source == DlssExtentPlanSource::Sdk; }
 };
+
+// S2-P4 activation boundary shared by production and deterministic CPU tests. A plan may drive
+// allocation only when its complete tuple matches the active viewport/output/feature/quality key.
+// An empty extent is returned on contradiction and reason explains the rejected contract.
+DlssExtent ResolveDlssActiveRenderExtent(
+    const DlssPlannedExtent& plan,
+    const DlssExtentRecommendationKey& activeKey,
+    std::string& reason);
 
 struct DlssExtentPlanLookup
 {
@@ -139,6 +147,9 @@ struct DlssFrameInputs
     // False asks Streamline to reconstruct camera motion from depth + clipToPrevClip. The supplied
     // motion texture must then contain object-only motion (the diagnostic path supplies zeroes).
     bool cameraMotionIncluded = true;
+
+    // Exact S2-P2 recommendation that owns this evaluation's S2-P4 allocation and tag extents.
+    DlssPlannedExtent extentPlan{};
 
     unsigned int renderWidth = 0;
     unsigned int renderHeight = 0;
@@ -274,7 +285,7 @@ public:
     bool Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs);
 
     // Query/cache the SDK's optimal render extent and supported range. This is planning only in
-    // S2-P2: callers must not use it for allocation, tags, motion scaling, or jitter before S2-P4.
+    // S2-P4: this recommendation owns allocation, tag extents, and motion/depth scale inputs.
     DlssPlannedExtent PlanReconstructionExtent(const DlssExtentRecommendationKey& key);
     void ClearPlannedExtentCache();
 

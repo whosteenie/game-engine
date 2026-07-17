@@ -38,6 +38,7 @@ struct DlssResolvePassInputs
     bool pathTracerGridOverlayEnabled = false;
 
     DlssQuality quality = DlssQuality::DLAA;
+    DlssPlannedExtent plannedExtent{};
     float exposure = 1.0f;
     float meanInputLuminance = 0.0f;
     bool meanInputLuminanceValid = false;
@@ -90,6 +91,7 @@ struct DlssResolvePassInputs
     std::function<bool()> patchPathTracerSkyMotion;
     std::function<void()> generateRrGuides;
     std::function<bool(std::uintptr_t depthSrv, std::uintptr_t motionSrv)> generateDilatedDlssMotion;
+    std::function<bool(std::uintptr_t motionSrv)> generateSupportedDlssMotion;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
 
     // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT

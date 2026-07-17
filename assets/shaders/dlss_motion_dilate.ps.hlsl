@@ -20,7 +20,7 @@ struct PSInput
 
 // DLSS expects dilated vectors to assign foreground motion to disoccluded background pixels. With
 // conventional [0,1] hardware depth, the smallest depth in a 3x3 footprint is the foreground.
-float4 main(PSInput input) : SV_Target
+float2 main(PSInput input) : SV_Target
 {
     float closestDepth = 2.0;
     float2 closestMotion = 0.0.xx;
@@ -39,5 +39,5 @@ float4 main(PSInput input) : SV_Target
             }
         }
     }
-    return float4(closestMotion, 0.0, 1.0);
+    return closestMotion;
 }

@@ -2,7 +2,6 @@
 #include "engine/rendering/ScreenSpaceEffects.h"
 
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <string>
 
@@ -93,21 +92,13 @@ void RunDlssExtentPlannerTests(int& failures)
         DlssReconstructionFeature::RayReconstruction};
     constexpr std::array<DlssExtent, 2> sceneGameExtents = {
         DlssExtent{1280u, 720u},
-        DlssExtent{1920u, 1080u}};
+        DlssExtent{1600u, 1200u}};
 
     DlssExtentRecommendationCache cache;
     FakeSdk sdk{};
 
-    // S2-P2 is shadow-only: the pre-existing active allocation factors remain unchanged.
-    Expect(DlssPresetRenderScale(DlssPreset::Quality) == 0.667f, failures);
-    Expect(DlssPresetRenderScale(DlssPreset::Balanced) == 0.58f, failures);
-    Expect(DlssPresetRenderScale(DlssPreset::Performance) == 0.5f, failures);
-    Expect(DlssPresetRenderScale(DlssPreset::UltraPerformance) == 0.333f, failures);
-    Expect(
-        std::lround(1920.0f * DlssPresetRenderScale(DlssPreset::Quality)) == 1281,
-        failures);
-
-    // Every exposed DLSS/RR x DLAA/SR tuple at two independent Scene/Game viewport sizes.
+    // Every exposed DLSS/RR x DLAA/SR tuple activates the SDK recommendation at two independent
+    // Scene/Game viewport sizes and two aspect ratios.
     for (std::uint32_t viewport = 0; viewport < sceneGameExtents.size(); ++viewport)
     {
         for (const DlssReconstructionFeature feature : features)
@@ -120,6 +111,11 @@ void RunDlssExtentPlannerTests(int& failures)
                 Expect(!lookup.cacheHit, failures);
                 Expect(lookup.plan.IsValid() && lookup.plan.IsSdkRecommendation(), failures);
                 Expect(lookup.plan.key == key, failures);
+                std::string activationFailure;
+                const DlssExtent active = ResolveDlssActiveRenderExtent(
+                    lookup.plan, key, activationFailure);
+                Expect(activationFailure.empty(), failures);
+                Expect(active == lookup.plan.extent.recommended, failures);
                 Expect(
                     lookup.plan.rrNoArbitraryDrs
                         == (feature == DlssReconstructionFeature::RayReconstruction),
@@ -132,6 +128,20 @@ void RunDlssExtentPlannerTests(int& failures)
         }
     }
     Expect(sdk.calls == 20u && cache.Size() == 20u, failures);
+
+    // A plan can never cross viewport, output/aspect, feature, or quality ownership.
+    const DlssExtentRecommendationKey sceneQuality = MakeKey(
+        0u, sceneGameExtents[0], DlssReconstructionFeature::SuperResolution, DlssQuality::Quality);
+    const DlssPlannedExtent sceneQualityPlan =
+        cache.Plan(sceneQuality, &QueryFakeSdk, &sdk).plan;
+    DlssExtentRecommendationKey crossedViewport = sceneQuality;
+    crossedViewport.viewportId = 1u;
+    std::string crossedReason;
+    Expect(
+        ResolveDlssActiveRenderExtent(sceneQualityPlan, crossedViewport, crossedReason)
+            == DlssExtent{},
+        failures);
+    Expect(crossedReason == "planned-tuple-does-not-match-active-tuple", failures);
 
     // Repeating the complete matrix is cache-only.
     for (std::uint32_t viewport = 0; viewport < sceneGameExtents.size(); ++viewport)
@@ -193,6 +203,12 @@ void RunDlssExtentPlannerTests(int& failures)
     Expect(rrFailure.plan.fallbackReason == "forced-test-failure", failures);
     Expect(rrFailure.plan.extent.recommended == rrFailureKey.outputExtent, failures);
     Expect(rrFailure.plan.rrNoArbitraryDrs, failures);
+    std::string rrFallbackReason;
+    Expect(
+        ResolveDlssActiveRenderExtent(rrFailure.plan, rrFailureKey, rrFallbackReason)
+            == rrFailureKey.outputExtent,
+        failures);
+    Expect(rrFallbackReason.empty(), failures);
 
     // Ordinary SR fallback is visibly labelled fallback rather than an SDK recommendation.
     const DlssExtentRecommendationKey srFailureKey = MakeKey(

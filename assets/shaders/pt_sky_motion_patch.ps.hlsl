@@ -20,7 +20,7 @@ struct PSInput
 
 struct PSOutput
 {
-    float4 oMotion : SV_Target0;
+    float2 oMotion : SV_Target0;
 };
 
 PSOutput main(PSInput input)
@@ -32,6 +32,6 @@ PSOutput main(PSInput input)
     const float4 pt = uPtMotion.Sample(uPointSampler, input.texCoord);
 
     // Metadata.r = instanceId + 1; 0 => primary camera ray missed (sky).
-    output.oMotion = (meta.x == 0u) ? pt : raster;
+    output.oMotion = (meta.x == 0u) ? pt.xy : raster.xy;
     return output;
 }

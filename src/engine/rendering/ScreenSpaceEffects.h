@@ -50,8 +50,8 @@ enum class AntiAliasingMode
     DLSS = 7,
 };
 
-// DLSS Super Resolution quality preset. DLAA (native) is a separate AntiAliasingMode. S2-P2 keeps
-// the fixed scales below only as active-allocation compatibility until S2-P4.
+// DLSS Super Resolution quality preset. DLAA (native) is a separate AntiAliasingMode. S2-P4 maps
+// this selector to the SDK recommendation; no fixed ratio owns active allocation.
 enum class DlssPreset
 {
     Quality = 0,          // ~0.667x per axis
@@ -59,10 +59,6 @@ enum class DlssPreset
     Performance = 2,      // 0.5x
     UltraPerformance = 3, // ~0.333x
 };
-
-// Legacy active-allocation factors. They are not SDK recommendations and remain active only until
-// S2-P4 switches allocation to DlssPlannedExtent.
-float DlssPresetRenderScale(DlssPreset preset);
 
 enum class AmbientOcclusionMode
 {
@@ -562,6 +558,7 @@ private:
     // view) is active, so the RR-off path is unchanged.
     void GenerateRrGuides() const;
     bool GenerateDilatedDlssMotion(std::uintptr_t depthSrv, std::uintptr_t motionSrv) const;
+    bool GenerateSupportedDlssMotion(std::uintptr_t motionSrv) const;
     bool GenerateZeroDlssMotion() const;
     bool PreparePathTracerMotionReprojectionAudit() const;
     void CommitPathTracerMotionReprojectionAudit(std::uintptr_t depthSrv) const;
@@ -584,6 +581,7 @@ private:
     void ResizeDlssDisplayTargets(int viewportWidth, int viewportHeight);
     void UpdatePlannedReconstructionExtent();
     float GetActiveRenderScale() const;
+    DlssExtentRecommendationKey BuildActiveDlssExtentKey() const;
     void ResetTaaHistory() const;
     void InvalidateTemporalHistory() const;
     HistoryCompatibilityKey BuildHistoryCompatibilityKey(
@@ -743,6 +741,8 @@ private:
     // P4: render-res D24 target holding the path tracer's primary-hit depth for DLSS (resolved from
     // the PT R32 depth UAV). Streamline expects a D24 depth resource; feeding the R32 UAV shimmers.
     InternalDepthTarget m_ptDlssDepthTarget;
+    // Controlled Streamline-supported RG16F bridge. PT/raster authoring remains RGBA16F; only the
+    // exact motion resource tagged into DLSS/RR is converted to the documented two-channel format.
     InternalTarget m_ptDlssMotionTarget;
     InternalTarget m_dlssDilatedMotionTarget;
     InternalTarget m_dlssBloomExtractTarget;
@@ -787,6 +787,7 @@ private:
     std::unique_ptr<Shader> m_temporalReprojectShader;
     std::unique_ptr<Shader> m_giDepthHistoryShader;
     std::unique_ptr<Shader> m_dlssMotionDilateShader;
+    std::unique_ptr<Shader> m_dlssMotionCopyShader;
     std::unique_ptr<Shader> m_dlssZeroMotionShader;
     std::unique_ptr<Shader> m_giTemporalDebugShader;
     std::unique_ptr<Shader> m_ssgiNoiseInjectShader;

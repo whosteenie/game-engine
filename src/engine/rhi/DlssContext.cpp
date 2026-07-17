@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <initializer_list>
 #include <sstream>
 #include <tuple>
 
@@ -229,6 +230,50 @@ bool DlssPlannedExtent::IsValid() const
     return extent.recommended.width > 0 && extent.recommended.height > 0
         && extent.minimum.width > 0 && extent.minimum.height > 0
         && extent.maximum.width > 0 && extent.maximum.height > 0;
+}
+
+DlssExtent ResolveDlssActiveRenderExtent(
+    const DlssPlannedExtent& plan,
+    const DlssExtentRecommendationKey& activeKey,
+    std::string& reason)
+{
+    reason.clear();
+    if (!(plan.key == activeKey))
+    {
+        reason = "planned-tuple-does-not-match-active-tuple";
+        return {};
+    }
+    if (!plan.IsValid())
+    {
+        reason = "planned-extent-is-invalid";
+        return {};
+    }
+    const DlssExtent& render = plan.extent.recommended;
+    if (render.width < plan.extent.minimum.width || render.width > plan.extent.maximum.width
+        || render.height < plan.extent.minimum.height || render.height > plan.extent.maximum.height)
+    {
+        reason = "planned-extent-is-outside-supported-range";
+        return {};
+    }
+    if (activeKey.quality == DlssQuality::DLAA && !(render == activeKey.outputExtent))
+    {
+        reason = "dlaa-active-extent-is-not-native";
+        return {};
+    }
+    if (activeKey.feature == DlssReconstructionFeature::RayReconstruction)
+    {
+        if (!plan.rrNoArbitraryDrs)
+        {
+            reason = "rr-plan-does-not-enforce-no-arbitrary-drs";
+            return {};
+        }
+        if (!plan.IsSdkRecommendation() && !(render == activeKey.outputExtent))
+        {
+            reason = "rr-fallback-is-not-native";
+            return {};
+        }
+    }
+    return render;
 }
 
 DlssExtentPlanLookup DlssExtentRecommendationCache::Plan(
@@ -599,7 +644,48 @@ sl::Resource MakeTex(void* native, unsigned int state, unsigned int width, unsig
     sl::Resource resource(sl::ResourceType::eTex2d, native, static_cast<uint32_t>(state));
     resource.width = width;
     resource.height = height;
+    if (native != nullptr)
+    {
+        const D3D12_RESOURCE_DESC desc = static_cast<ID3D12Resource*>(native)->GetDesc();
+        resource.nativeFormat = static_cast<std::uint32_t>(desc.Format);
+        resource.mipLevels = desc.MipLevels;
+        resource.arrayLayers = desc.DepthOrArraySize;
+    }
     return resource;
+}
+
+bool ValidateTaggedTexture(
+    void* const native,
+    const std::uint32_t expectedWidth,
+    const std::uint32_t expectedHeight,
+    const std::initializer_list<DXGI_FORMAT> allowedFormats,
+    const char* const label,
+    std::string& reason)
+{
+    if (native == nullptr)
+    {
+        reason = std::string(label) + "-resource-is-null";
+        return false;
+    }
+    const D3D12_RESOURCE_DESC desc = static_cast<ID3D12Resource*>(native)->GetDesc();
+    if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        || desc.Width != expectedWidth || desc.Height != expectedHeight)
+    {
+        std::ostringstream message;
+        message << label << "-resource-extent=" << desc.Width << 'x' << desc.Height
+                << "-expected=" << expectedWidth << 'x' << expectedHeight;
+        reason = message.str();
+        return false;
+    }
+    if (allowedFormats.size() != 0
+        && std::find(allowedFormats.begin(), allowedFormats.end(), desc.Format)
+            == allowedFormats.end())
+    {
+        reason = std::string(label) + "-unsupported-format-"
+            + std::to_string(static_cast<unsigned int>(desc.Format));
+        return false;
+    }
+    return true;
 }
 
 const char* ToTraceQuality(const DlssQuality quality)
@@ -740,7 +826,7 @@ DlssPlannedExtent DlssContext::PlanReconstructionExtent(
                 << lookup.plan.extent.maximum.height
                 << " source=" << (lookup.plan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
                 << " rr-no-arbitrary-drs=" << (lookup.plan.rrNoArbitraryDrs ? "true" : "false")
-                << " active-allocation=unchanged-shadow-mode";
+                << " active-allocation=s2-p4-plan-owned";
         if (lookup.plan.IsSdkRecommendation())
         {
             EngineLog::Info("dlss", message.str());
@@ -860,11 +946,97 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
             "application-frame-token-unavailable", false, 0, false, 0);
         return false;
     }
+
+    DlssExtentRecommendationKey activeKey{};
+    activeKey.viewportId = inputs.viewportId;
+    activeKey.outputExtent = {inputs.displayWidth, inputs.displayHeight};
+    activeKey.feature = inputs.useRayReconstruction
+        ? DlssReconstructionFeature::RayReconstruction
+        : DlssReconstructionFeature::SuperResolution;
+    activeKey.quality = inputs.quality;
+    std::string contractReason;
+    const DlssExtent activeRenderExtent =
+        ResolveDlssActiveRenderExtent(inputs.extentPlan, activeKey, contractReason);
+    if (activeRenderExtent.width != inputs.renderWidth
+        || activeRenderExtent.height != inputs.renderHeight)
+    {
+        if (contractReason.empty())
+        {
+            contractReason = "active-allocation-does-not-match-planned-extent";
+        }
+        EngineLog::Error("dlss", "S2-P4 extent contract failed: " + contractReason);
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            contractReason.c_str(), false, 0, false, 0);
+        return false;
+    }
+
+    const auto validate = [&](void* const resource, const std::uint32_t width,
+                              const std::uint32_t height,
+                              const std::initializer_list<DXGI_FORMAT> formats,
+                              const char* const label)
+    {
+        return ValidateTaggedTexture(resource, width, height, formats, label, contractReason);
+    };
+    bool resourcesValid =
+        validate(inputs.colorInput, inputs.renderWidth, inputs.renderHeight, {}, "color-input")
+        && validate(inputs.colorOutput, inputs.displayWidth, inputs.displayHeight, {}, "color-output")
+        && validate(
+            inputs.depth,
+            inputs.renderWidth,
+            inputs.renderHeight,
+            {DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT,
+             DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_D32_FLOAT},
+            "depth")
+        && validate(
+            inputs.motionVectors,
+            inputs.renderWidth,
+            inputs.renderHeight,
+            {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R32G32_FLOAT},
+            "motion");
+    if (resourcesValid && inputs.useRayReconstruction)
+    {
+        resourcesValid =
+            validate(inputs.diffuseAlbedo, inputs.renderWidth, inputs.renderHeight, {}, "diffuse-albedo")
+            && validate(inputs.specularAlbedo, inputs.renderWidth, inputs.renderHeight, {}, "specular-albedo")
+            && validate(inputs.normalRoughness, inputs.renderWidth, inputs.renderHeight, {}, "normal-roughness")
+            && (inputs.specularHitDistance == nullptr
+                || validate(
+                    inputs.specularHitDistance,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R32_FLOAT},
+                    "specular-hit-distance"));
+    }
+    const unsigned int states[] = {
+        inputs.colorInputState, inputs.colorOutputState, inputs.depthState,
+        inputs.motionVectorsState, inputs.diffuseAlbedoState, inputs.specularAlbedoState,
+        inputs.normalRoughnessState, inputs.specularHitDistanceState};
+    const std::size_t requiredStateCount = inputs.useRayReconstruction
+        ? (inputs.specularHitDistance != nullptr ? 8u : 7u)
+        : 4u;
+    if (resourcesValid
+        && std::find(std::begin(states), std::begin(states) + requiredStateCount, UINT_MAX)
+            != std::begin(states) + requiredStateCount)
+    {
+        contractReason = "required-tag-state-is-unknown";
+        resourcesValid = false;
+    }
+    if (!resourcesValid)
+    {
+        EngineLog::Error("dlss", "S2-P4 resource contract failed: " + contractReason);
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            contractReason.c_str(), false, 0, false, 0);
+        return false;
+    }
     auto* const nativeFrameToken = static_cast<sl::FrameToken*>(frameToken.native);
     const std::uint32_t frameIndex = frameToken.frameIndex;
 
-    // Tag the four buffers DLSS SR consumes/produces. eValidUntilPresent is the recommended default;
-    // the generating GPU work (tonemap/scene passes) is already recorded on cmdList before this call.
+    // Tags use the exact active allocation rectangles. All resources are per-viewport allocations
+    // retained and unmodified until present; tracked states describe their state at this call.
+    const sl::Extent inputExtent{0, 0, inputs.renderWidth, inputs.renderHeight};
+    const sl::Extent outputExtent{0, 0, inputs.displayWidth, inputs.displayHeight};
     sl::Resource colorIn =
         MakeTex(inputs.colorInput, inputs.colorInputState, inputs.renderWidth, inputs.renderHeight);
     sl::Resource colorOut = MakeTex(
@@ -882,13 +1054,14 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
 
     std::vector<sl::ResourceTag> tags;
     tags.reserve(8);
-    tags.emplace_back(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent);
     tags.emplace_back(
-        &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent);
+        &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
     tags.emplace_back(
-        &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent);
+        &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
     tags.emplace_back(
-        &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent);
+        &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+    tags.emplace_back(
+        &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
     if (inputs.useRayReconstruction)
     {
         // RR material guides (devdoc/dxr/dlss-rr.md). normalRoughness is PACKED (DLSSDNormalRoughnessMode::ePacked).
@@ -899,11 +1072,11 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
         normalRoughness = MakeTex(
             inputs.normalRoughness, inputs.normalRoughnessState, inputs.renderWidth, inputs.renderHeight);
         tags.emplace_back(
-            &diffuseAlbedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+            &diffuseAlbedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         tags.emplace_back(
-            &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+            &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         tags.emplace_back(
-            &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent);
+            &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         // Optional spec hit-distance guide (RR4): present only when reflections ran this frame.
         if (inputs.specularHitDistance != nullptr)
         {
@@ -912,8 +1085,29 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
                 inputs.renderWidth, inputs.renderHeight);
             tags.emplace_back(
                 &specularHitDistance, sl::kBufferTypeSpecularHitDistance,
-                sl::ResourceLifecycle::eValidUntilPresent);
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         }
+    }
+    if (inputs.reset)
+    {
+        const auto motionDesc = static_cast<ID3D12Resource*>(inputs.motionVectors)->GetDesc();
+        const auto depthDesc = static_cast<ID3D12Resource*>(inputs.depth)->GetDesc();
+        std::ostringstream message;
+        message << "active-contract viewport=" << inputs.viewportId
+                << " feature=" << ToTraceFeature(inputs)
+                << " quality=" << ToTraceQuality(inputs.quality)
+                << " render=" << inputs.renderWidth << 'x' << inputs.renderHeight
+                << " output=" << inputs.displayWidth << 'x' << inputs.displayHeight
+                << " source=" << (inputs.extentPlan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
+                << " motion-format=" << static_cast<unsigned int>(motionDesc.Format)
+                << " depth-format=" << static_cast<unsigned int>(depthDesc.Format)
+                << " states=" << inputs.colorInputState << ',' << inputs.colorOutputState << ','
+                << inputs.depthState << ',' << inputs.motionVectorsState
+                << " motion-scale=" << inputs.mvecScaleX << ',' << inputs.mvecScaleY
+                << " tag-extents=explicit lifetimes=valid-until-present"
+                << " rr-no-arbitrary-drs="
+                << (inputs.extentPlan.rrNoArbitraryDrs ? "true" : "false");
+        EngineLog::Info("dlss", message.str());
     }
     if (g_slSetTagForFrame(*nativeFrameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)

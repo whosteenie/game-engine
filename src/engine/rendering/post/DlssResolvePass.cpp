@@ -194,13 +194,15 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
         result.motionState = inputs.pathTracerMotionResourceState;
         result.motionSrv = inputs.pathTracerMotionSrv;
     }
-    else if (pathTracerDlssActive && inputs.patchPathTracerSkyMotion
+    bool motionAlreadySupported = false;
+    if (!usePtMotion && pathTracerDlssActive && inputs.patchPathTracerSkyMotion
         && inputs.patchPathTracerSkyMotion()
         && inputs.ptDlssMotionTarget != nullptr)
     {
         result.motion = inputs.ptDlssMotionTarget->resource;
         result.motionState = inputs.ptDlssMotionTarget->resourceState;
         result.motionSrv = inputs.ptDlssMotionTarget->srvCpuHandle;
+        motionAlreadySupported = true;
     }
 
     // For a static-scene diagnostic, feed zero object motion and let Streamline reconstruct the
@@ -215,6 +217,7 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
         result.motionState = inputs.dlssDilatedMotionTarget->resourceState;
         result.motionSrv = inputs.dlssDilatedMotionTarget->srvCpuHandle;
         result.cameraMotionReconstructed = true;
+        motionAlreadySupported = true;
     }
     else if (inputs.useDilatedDlssMotionVectors && inputs.generateDilatedDlssMotion
         && inputs.dlssDilatedMotionTarget != nullptr
@@ -225,6 +228,24 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
         result.motionState = inputs.dlssDilatedMotionTarget->resourceState;
         result.motionSrv = inputs.dlssDilatedMotionTarget->srvCpuHandle;
         result.motionVectorsDilated = true;
+        motionAlreadySupported = true;
+    }
+    else if (!motionAlreadySupported && inputs.generateSupportedDlssMotion
+        && inputs.dlssDilatedMotionTarget != nullptr
+        && inputs.dlssDilatedMotionTarget->resource != nullptr
+        && inputs.generateSupportedDlssMotion(result.motionSrv))
+    {
+        result.motion = inputs.dlssDilatedMotionTarget->resource;
+        result.motionState = inputs.dlssDilatedMotionTarget->resourceState;
+        result.motionSrv = inputs.dlssDilatedMotionTarget->srvCpuHandle;
+        motionAlreadySupported = true;
+    }
+
+    if (!motionAlreadySupported)
+    {
+        result.motion = nullptr;
+        result.motionState = 0;
+        result.motionSrv = 0;
     }
 
     return result;
@@ -359,6 +380,7 @@ void DlssResolvePass::Execute(
         in.motionVectorsState = guides.motionState;
         in.motionVectorsDilated = guides.motionVectorsDilated;
         in.cameraMotionIncluded = !guides.cameraMotionReconstructed;
+        in.extentPlan = inputs.plannedExtent;
 
         if (pathTracerDlssActive && inputs.ptRrBundleMode == 0 && !guides.usesPathTracerDepth)
         {

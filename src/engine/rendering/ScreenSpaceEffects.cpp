@@ -546,6 +546,10 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DlssMotionDilateFragmentShader,
           ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
+      m_dlssMotionCopyShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::DlssMotionCopyFragmentShader,
+          ShaderSamplerOverrides{(1u << 0), true})),
       m_dlssZeroMotionShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DlssZeroMotionFragmentShader)),
@@ -660,7 +664,7 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
 
 void ScreenSpaceEffects::PrewarmShaderStages()
 {
-    static const std::array<HlslStageCompileRequest, 52> kStages = {
+    static const std::array<HlslStageCompileRequest, 53> kStages = {
         HlslStageCompileRequest{EngineConstants::FullscreenVertexShader, "main", "vs_6_0"},
         HlslStageCompileRequest{EngineConstants::SsaoFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GtaoFragmentShader, "main", "ps_6_0"},
@@ -694,6 +698,7 @@ void ScreenSpaceEffects::PrewarmShaderStages()
         HlslStageCompileRequest{EngineConstants::TemporalReprojectFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GiDepthHistoryFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::DlssMotionDilateFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::DlssMotionCopyFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::DlssZeroMotionFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GiTemporalDebugFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::SsgiNoiseInjectFragmentShader, "main", "ps_6_0"},
@@ -1295,8 +1300,9 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     // P4: render-res D24 depth target for the path tracer's DLSS depth input (resolved from the PT
     // R32 depth each frame). D24 (not the R32 UAV) is what Streamline expects, avoiding shimmer.
     CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
-    ResizeInternalTarget(m_ptDlssMotionTarget, width, height, format);
-    ResizeInternalTarget(m_dlssDilatedMotionTarget, width, height, format);
+    const int supportedMotionFormat = static_cast<int>(DXGI_FORMAT_R16G16_FLOAT);
+    ResizeInternalTarget(m_ptDlssMotionTarget, width, height, supportedMotionFormat);
+    ResizeInternalTarget(m_dlssDilatedMotionTarget, width, height, supportedMotionFormat);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1404,23 +1410,6 @@ namespace
     }
 }
 
-float DlssPresetRenderScale(const DlssPreset preset)
-{
-    switch (preset)
-    {
-    case DlssPreset::Quality:
-        return 0.667f;
-    case DlssPreset::Balanced:
-        return 0.58f;
-    case DlssPreset::Performance:
-        return 0.5f;
-    case DlssPreset::UltraPerformance:
-        return 0.333f;
-    default:
-        return 0.667f;
-    }
-}
-
 void ScreenSpaceEffects::UpdatePlannedReconstructionExtent()
 {
     if (m_antiAliasingMode != AntiAliasingMode::DLAA
@@ -1430,18 +1419,24 @@ void ScreenSpaceEffects::UpdatePlannedReconstructionExtent()
         return;
     }
 
+    const DlssExtentRecommendationKey key = BuildActiveDlssExtentKey();
+    m_plannedReconstructionExtent = DlssContext::Get().PlanReconstructionExtent(key);
+}
+
+DlssExtentRecommendationKey ScreenSpaceEffects::BuildActiveDlssExtentKey() const
+{
     DlssExtentRecommendationKey key{};
     key.viewportId = m_dlssViewportId;
     key.outputExtent = {
         static_cast<std::uint32_t>(std::max(1, m_viewportWidth)),
         static_cast<std::uint32_t>(std::max(1, m_viewportHeight))};
-    key.feature = m_rayReconstruction
+    key.feature = IsRayReconstructionActive()
         ? DlssReconstructionFeature::RayReconstruction
         : DlssReconstructionFeature::SuperResolution;
     key.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
         ? DlssQuality::DLAA
         : ToDlssQuality(m_dlssPreset);
-    m_plannedReconstructionExtent = DlssContext::Get().PlanReconstructionExtent(key);
+    return key;
 }
 
 float ScreenSpaceEffects::GetActiveRenderScale() const
@@ -1454,8 +1449,8 @@ float ScreenSpaceEffects::GetActiveRenderScale() const
         // DLSS at native resolution: internal == display.
         return 1.0f;
     case AntiAliasingMode::DLSS:
-        // S2-P2 shadow mode: allocation intentionally remains on the legacy scale through S2-P4.
-        return DlssPresetRenderScale(m_dlssPreset);
+        // S2-P4 uses the exact planned dimensions in GetRenderWidth/Height, not a scalar ratio.
+        return 1.0f;
     default:
         return 1.0f;
     }
@@ -1463,11 +1458,47 @@ float ScreenSpaceEffects::GetActiveRenderScale() const
 
 int ScreenSpaceEffects::GetRenderWidth() const
 {
+    if (m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        const DlssExtentRecommendationKey activeKey = BuildActiveDlssExtentKey();
+        if (!m_plannedReconstructionExtent.IsValid()
+            || !(m_plannedReconstructionExtent.key == activeKey))
+        {
+            const_cast<ScreenSpaceEffects*>(this)->UpdatePlannedReconstructionExtent();
+        }
+        std::string reason;
+        const DlssExtent active = ResolveDlssActiveRenderExtent(
+            m_plannedReconstructionExtent, activeKey, reason);
+        if (active.width != 0)
+        {
+            return static_cast<int>(active.width);
+        }
+        throw std::runtime_error("DLSS active extent contract rejected: " + reason);
+    }
     return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportWidth) * GetActiveRenderScale())));
 }
 
 int ScreenSpaceEffects::GetRenderHeight() const
 {
+    if (m_antiAliasingMode == AntiAliasingMode::DLAA
+        || m_antiAliasingMode == AntiAliasingMode::DLSS)
+    {
+        const DlssExtentRecommendationKey activeKey = BuildActiveDlssExtentKey();
+        if (!m_plannedReconstructionExtent.IsValid()
+            || !(m_plannedReconstructionExtent.key == activeKey))
+        {
+            const_cast<ScreenSpaceEffects*>(this)->UpdatePlannedReconstructionExtent();
+        }
+        std::string reason;
+        const DlssExtent active = ResolveDlssActiveRenderExtent(
+            m_plannedReconstructionExtent, activeKey, reason);
+        if (active.height != 0)
+        {
+            return static_cast<int>(active.height);
+        }
+        throw std::runtime_error("DLSS active extent contract rejected: " + reason);
+    }
     return std::max(1, static_cast<int>(std::lround(static_cast<float>(m_viewportHeight) * GetActiveRenderScale())));
 }
 
@@ -3278,6 +3309,29 @@ bool ScreenSpaceEffects::GenerateDilatedDlssMotion(
         m_height,
         clear);
     dilateScope.Success();
+    return true;
+}
+
+bool ScreenSpaceEffects::GenerateSupportedDlssMotion(const std::uintptr_t motionSrv) const
+{
+    if (motionSrv == 0 || m_width <= 0 || m_height <= 0
+        || m_dlssDilatedMotionTarget.resource == nullptr || m_dlssMotionCopyShader == nullptr)
+    {
+        return false;
+    }
+
+    SceneRenderTrace::Scope copyScope("dlss supported motion conversion");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_dlssMotionCopyShader->Use(false);
+    m_dlssMotionCopyShader->SetInt("uMotion", 0);
+    m_dlssMotionCopyShader->BindTextureSlot(0, motionSrv);
+    DrawFullscreenToTarget(
+        *m_dlssMotionCopyShader,
+        const_cast<InternalTarget&>(m_dlssDilatedMotionTarget),
+        m_width,
+        m_height,
+        clear);
+    copyScope.Success();
     return true;
 }
 

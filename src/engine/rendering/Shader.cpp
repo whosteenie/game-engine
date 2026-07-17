@@ -551,6 +551,10 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
     const bool isGridComposite = fragmentPath.find("grid_composite") != std::string::npos;
     const bool isDepthBlit = fragmentPath.find("depth_blt") != std::string::npos;
     const bool isMsaaDepthResolve = fragmentPath.find("msaa_depth_resolve") != std::string::npos;
+    const bool isDlssMotionOutput =
+        fragmentPath.find("dlss_motion_") != std::string::npos
+        || fragmentPath.find("dlss_zero_motion") != std::string::npos
+        || fragmentPath.find("pt_sky_motion_patch") != std::string::npos;
 
     auto setupAlphaBlend = [](D3D12_RENDER_TARGET_BLEND_DESC& blendDesc) {
         blendDesc.BlendEnable = TRUE;
@@ -658,6 +662,16 @@ void Shader::BuildFromHlsl(const std::string& vertexPath, const std::string& fra
         psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
         psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_ALWAYS;
         psoDesc.DepthStencilState.StencilEnable = FALSE;
+    }
+    else if (isFullscreen && isDlssMotionOutput)
+    {
+        static D3D12_INPUT_ELEMENT_DESC fullscreenLayout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 8, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+        psoDesc.InputLayout = {fullscreenLayout, 2};
+        applySingleRenderTarget(DXGI_FORMAT_R16G16_FLOAT);
+        applyNoDepthPass();
     }
     else if (isFullscreen || isIblBrdf)
     {

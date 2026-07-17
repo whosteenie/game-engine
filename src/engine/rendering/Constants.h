@@ -10,6 +10,8 @@ namespace EngineConstants
     inline constexpr const char* GiDepthHistoryFragmentShader = "assets/shaders/gi_depth_history.ps.hlsl";
     inline constexpr const char* DlssMotionDilateFragmentShader =
         "assets/shaders/dlss_motion_dilate.ps.hlsl";
+    inline constexpr const char* DlssMotionCopyFragmentShader =
+        "assets/shaders/dlss_motion_copy.ps.hlsl";
     inline constexpr const char* DlssZeroMotionFragmentShader =
         "assets/shaders/dlss_zero_motion.ps.hlsl";
     inline constexpr const char* GiTemporalDebugFragmentShader = "assets/shaders/gi_temporal_debug.ps.hlsl";

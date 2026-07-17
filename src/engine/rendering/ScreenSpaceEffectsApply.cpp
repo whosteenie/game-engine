@@ -308,6 +308,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.quality = m_antiAliasingMode == AntiAliasingMode::DLAA
         ? DlssQuality::DLAA
         : ToDlssQuality(m_dlssPreset);
+    dlssInputs.plannedExtent = m_plannedReconstructionExtent;
     dlssInputs.exposure = m_exposure;
     dlssInputs.meanInputLuminance = m_ptMeanLuminance;
     dlssInputs.meanInputLuminanceValid = m_ptBoilMetricValid;
@@ -361,6 +362,11 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
         [this](const std::uintptr_t depthSrv, const std::uintptr_t motionSrv)
         {
             return GenerateDilatedDlssMotion(depthSrv, motionSrv);
+        };
+    dlssInputs.generateSupportedDlssMotion =
+        [this](const std::uintptr_t motionSrv)
+        {
+            return GenerateSupportedDlssMotion(motionSrv);
         };
     dlssInputs.generateZeroDlssMotion = [this]() { return GenerateZeroDlssMotion(); };
     // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to

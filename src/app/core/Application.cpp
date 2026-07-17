@@ -685,6 +685,50 @@ void Application::ApplyS2p1CaptureModeIfRequested()
             + ", authored display EV=" + std::to_string(exposureEv));
 }
 
+void Application::ApplyS2p4CaptureModeIfRequested()
+{
+    if (m_s2p4CaptureModeApplied)
+    {
+        return;
+    }
+    const char* rawCaptureMode = std::getenv("GAME_ENGINE_S2P4_CAPTURE_MODE");
+    if (rawCaptureMode == nullptr)
+    {
+        m_s2p4CaptureModeApplied = true;
+        return;
+    }
+    if (!m_projectSession->HasActiveProject() || m_scene == nullptr)
+    {
+        return;
+    }
+
+    const std::string captureMode(rawCaptureMode);
+    SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+    DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+    ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+    dxr.SetEnabled(true);
+    dxr.SetRenderingMode(RenderingMode::PathTraced);
+    dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+    effects.SetAntiAliasingMode(AntiAliasingMode::DLSS);
+    effects.SetDlssPreset(DlssPreset::Performance);
+    effects.SetRayReconstruction(true);
+    if (captureMode == "motion-vectors")
+    {
+        sceneRenderer.SetRenderDebugMode(RenderDebugMode::MotionVectors);
+    }
+    else if (captureMode == "primary-depth")
+    {
+        sceneRenderer.SetRenderDebugMode(RenderDebugMode::RtPrimaryDepth);
+    }
+    else
+    {
+        throw std::runtime_error(
+            "GAME_ENGINE_S2P4_CAPTURE_MODE must be motion-vectors or primary-depth.");
+    }
+    m_s2p4CaptureModeApplied = true;
+    EngineLog::Info("benchmark", "S2-P4 capture mode selected: " + captureMode);
+}
+
 bool Application::RunS2p2ExtentQueryMatrixIfRequested()
 {
     if (m_s2p2ExtentQueryMatrixComplete)
@@ -745,7 +789,7 @@ bool Application::RunS2p2ExtentQueryMatrixIfRequested()
     context.ClearPlannedExtentCache();
     output << "{\n  \"record_type\": \"s2p2_extent_query_matrix\",\n"
            << "  \"schema_version\": 1,\n"
-           << "  \"allocation_mode\": \"shadow-active-unchanged-until-s2p4\",\n"
+           << "  \"allocation_mode\": \"s2-p4-plan-owned\",\n"
            << "  \"forced_failure\": "
            << (std::getenv("GAME_ENGINE_S2P2_FORCE_QUERY_FAILURE") != nullptr ? "true" : "false")
            << ",\n  \"entries\": [\n";
@@ -866,6 +910,13 @@ void Application::Run()
     std::uint64_t s1p4TransitionFrame = 0;
     const bool s1p4DualOwnership =
         std::getenv("GAME_ENGINE_S1P4_DUAL_OWNERSHIP") != nullptr;
+    const bool s2p4Transitions = std::getenv("GAME_ENGINE_S2P4_TRANSITIONS") != nullptr;
+    std::uint64_t s2p4TransitionFrame = 0;
+    const bool s2p4FallbackSmoke = std::getenv("GAME_ENGINE_S2P4_FALLBACK_SMOKE") != nullptr;
+    std::uint64_t s2p4FallbackFrame = 0;
+    const char* s2p4CaptureMode = std::getenv("GAME_ENGINE_S2P4_CAPTURE_MODE");
+    const bool s2p4MotionAov = s2p4CaptureMode != nullptr
+        && std::string_view(s2p4CaptureMode) == "motion-vectors";
     const bool autoReopenOnce = std::getenv("GAME_ENGINE_AUTO_REOPEN_ONCE") != nullptr;
     int autoReopenState = 0;
     int autoReopenReadyFrames = 0;
@@ -956,6 +1007,14 @@ void Application::Run()
             sceneRenderer.GetScreenSpaceEffects().SetAntiAliasingMode(AntiAliasingMode::None);
         }
 
+        // Keep the camera moving during the capture-only motion AOV run so the presented
+        // diagnostic contains measurable vectors instead of a valid but uniformly black image.
+        if (s2p4MotionAov && m_camera != nullptr && m_projectSession->HasActiveProject()
+            && m_scene != nullptr && m_scene->GetRenderer().IsGpuResourcesReady())
+        {
+            m_camera->SetPosition(m_camera->GetPosition() + glm::vec3(0.0025f, 0.0f, 0.0f));
+        }
+
         // S1-P4 capture-only compatibility matrix. Production behavior is unchanged unless the
         // dedicated evidence script opts in.
         if (s1p4Transitions && m_projectSession->HasActiveProject() && m_scene != nullptr)
@@ -990,6 +1049,104 @@ void Application::Run()
             case 120: effects.InvalidateMotionHistory(); break;
             case 130: dxr.SetRenderingMode(RenderingMode::Hybrid); break;
             case 140: dxr.SetRenderingMode(RenderingMode::PathTraced); break;
+            default: break;
+            }
+        }
+
+        // S2-P4 capture-only active allocation/tag matrix. It uses the production setters and one
+        // controlled windowed aspect resize; it is inert outside the dedicated evidence process.
+        if (s2p4Transitions && m_projectSession->HasActiveProject() && m_scene != nullptr
+            && m_scene->GetRenderer().IsGpuResourcesReady())
+        {
+            ++s2p4TransitionFrame;
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+            DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+            const auto selectTuple = [&](const bool rr, const AntiAliasingMode aa, const DlssPreset preset)
+            {
+                effects.SetRayReconstruction(rr);
+                effects.SetAntiAliasingMode(aa);
+                if (aa == AntiAliasingMode::DLSS)
+                {
+                    effects.SetDlssPreset(preset);
+                }
+                const char* quality = aa == AntiAliasingMode::DLAA ? "dlaa"
+                    : preset == DlssPreset::Quality ? "quality"
+                    : preset == DlssPreset::Balanced ? "balanced"
+                    : preset == DlssPreset::Performance ? "performance"
+                    : "ultra-performance";
+                EngineLog::Info(
+                    "benchmark",
+                    std::string("S2-P4 tuple selected feature=") + (rr ? "rr" : "dlss")
+                        + " quality=" + quality);
+            };
+            switch (s2p4TransitionFrame)
+            {
+            case 1:
+                dxr.SetEnabled(true);
+                dxr.SetRenderingMode(RenderingMode::PathTraced);
+                sceneRenderer.SetRenderDebugMode(RenderDebugMode::None);
+                selectTuple(false, AntiAliasingMode::DLAA, DlssPreset::Quality);
+                break;
+            case 20: selectTuple(false, AntiAliasingMode::DLSS, DlssPreset::Quality); break;
+            case 40: selectTuple(false, AntiAliasingMode::DLSS, DlssPreset::Balanced); break;
+            case 60: selectTuple(false, AntiAliasingMode::DLSS, DlssPreset::Performance); break;
+            case 80: selectTuple(false, AntiAliasingMode::DLSS, DlssPreset::UltraPerformance); break;
+            case 100: selectTuple(true, AntiAliasingMode::DLAA, DlssPreset::Quality); break;
+            case 120: selectTuple(true, AntiAliasingMode::DLSS, DlssPreset::Quality); break;
+            case 140: selectTuple(true, AntiAliasingMode::DLSS, DlssPreset::Balanced); break;
+            case 160: selectTuple(true, AntiAliasingMode::DLSS, DlssPreset::Performance); break;
+            case 180: selectTuple(true, AntiAliasingMode::DLSS, DlssPreset::UltraPerformance); break;
+            case 220:
+                // 1280x720 -> 1440x900 changes both size and aspect while remaining a safe,
+                // non-minimized viewport. The resize stabilizer commits one coherent reallocation.
+                glfwSetWindowSize(m_window, 1440, 900);
+                EngineLog::Info("benchmark", "S2-P4 resize selected window=1440x900");
+                selectTuple(false, AntiAliasingMode::DLSS, DlssPreset::Quality);
+                break;
+            case 260: selectTuple(true, AntiAliasingMode::DLSS, DlssPreset::Performance); break;
+            case 300:
+                sceneRenderer.SetRenderDebugMode(RenderDebugMode::MotionVectors);
+                EngineLog::Info("benchmark", "S2-P4 AOV selected motion-vectors");
+                break;
+            case 420:
+                sceneRenderer.SetRenderDebugMode(RenderDebugMode::RtPrimaryDepth);
+                EngineLog::Info("benchmark", "S2-P4 AOV selected primary-depth");
+                break;
+            case 500: selectTuple(false, AntiAliasingMode::DLAA, DlssPreset::Quality); break;
+            case 540:
+                sceneRenderer.SetRenderDebugMode(RenderDebugMode::None);
+                EngineLog::Info("benchmark", "S2-P4 AOV selected final");
+                break;
+            case 580: RequestForcedClose(); break;
+            default: break;
+            }
+        }
+
+        // S2-P4 explicit-query-failure smoke: prove ordinary SR fallback and native RR fallback
+        // both own real allocations/tags without weakening the production failure visibility.
+        if (s2p4FallbackSmoke && m_projectSession->HasActiveProject() && m_scene != nullptr
+            && m_scene->GetRenderer().IsGpuResourcesReady())
+        {
+            ++s2p4FallbackFrame;
+            SceneRenderer& sceneRenderer = m_scene->GetRenderer();
+            ScreenSpaceEffects& effects = sceneRenderer.GetScreenSpaceEffects();
+            DxrSettings& dxr = sceneRenderer.GetDxrSettings();
+            switch (s2p4FallbackFrame)
+            {
+            case 1:
+                dxr.SetEnabled(true);
+                dxr.SetRenderingMode(RenderingMode::PathTraced);
+                effects.SetRayReconstruction(false);
+                effects.SetAntiAliasingMode(AntiAliasingMode::DLSS);
+                effects.SetDlssPreset(DlssPreset::Performance);
+                EngineLog::Info("benchmark", "S2-P4 fallback selected feature=dlss quality=performance");
+                break;
+            case 60:
+                effects.SetRayReconstruction(true);
+                EngineLog::Info("benchmark", "S2-P4 fallback selected feature=rr quality=performance");
+                break;
+            case 120: RequestForcedClose(); break;
             default: break;
             }
         }
@@ -1154,7 +1311,9 @@ void Application::InitGLFW()
     }
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_MAXIMIZED, GLFW_TRUE);
+    glfwWindowHint(
+        GLFW_MAXIMIZED,
+        std::getenv("GAME_ENGINE_S2P4_WINDOWED") != nullptr ? GLFW_FALSE : GLFW_TRUE);
 
     m_window = glfwCreateWindow(m_width, m_height, m_title, nullptr, nullptr);
     if (!m_window)
@@ -2155,6 +2314,7 @@ void Application::Render()
             });
             ApplyS1p6CaptureModeIfRequested();
             ApplyS2p1CaptureModeIfRequested();
+            ApplyS2p4CaptureModeIfRequested();
             RunApplicationPhase("prepare-frame-gpu", [&]() {
                 ProjectLoadBenchmark::ScopedPhase projectLoadGpuPrepare(
                     presentingProjectLoad ? "renderer.first_gpu_prepare" : nullptr);
