@@ -310,8 +310,8 @@ private:
     std::uint64_t m_builtTlasTransformFingerprint = 0;
     bool m_pendingGeometryContentReupload = false;
     std::uint32_t m_ptSceneVersion = 1;
-    // P1: changes on any TLAS instance-transform change. ReSTIR conservatively invalidates all
-    // secondary samples until per-instance secondary-point transforms land in a later phase.
+    // Changes on any TLAS instance-transform change. Per-pixel motion/surface validation decides
+    // whether an individual temporal ReSTIR sample can be reused.
     std::uint32_t m_ptMotionVersion = 1;
 
     void EnsureScratchBufferReadyForBuild(ID3D12GraphicsCommandList* commandList);

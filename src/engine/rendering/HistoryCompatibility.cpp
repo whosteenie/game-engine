@@ -107,8 +107,9 @@ HistoryCompatibilityTransition HistoryCompatibilityState::Begin(
         {
             reasons |= HistoryCompatibilityReason::DiagnosticSignal;
         }
-        if (key.opticalSceneVersion != m_committed.opticalSceneVersion
-            || key.opticalMotionVersion != m_committed.opticalMotionVersion)
+        // Object motion is handled by the PT motion guide and per-pixel surface validation.
+        // Only a structural/material optical-domain change invalidates the viewport history.
+        if (key.opticalSceneVersion != m_committed.opticalSceneVersion)
         {
             reasons |= HistoryCompatibilityReason::OpticalDomain;
         }

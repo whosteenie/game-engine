@@ -125,7 +125,7 @@ void RunHistoryCompatibilityTests(int& failures)
     Expect(staticReuseFrames == 64, failures);
     std::cout << "S1-P5 static-reuse frames=" << staticReuseFrames << "/64 resets=0\n";
 
-    auto expectOpticalReject = [&](const char* caseName, HistoryCompatibilityKey changed) {
+    auto expectOpticalSceneReject = [&](const char* caseName, HistoryCompatibilityKey changed) {
         HistoryCompatibilityState state = SeededState(transmission, failures);
         const HistoryCompatibilityTransition rejected = state.Begin(changed);
         Expect(rejected.scheduled, failures);
@@ -138,20 +138,26 @@ void RunHistoryCompatibilityTests(int& failures)
                   << " optical_motion=" << changed.opticalMotionVersion << "\n";
     };
 
+    // Motion is resolved by the PT motion guide and per-pixel surface validation. It must not
+    // reset the full viewport history just because some other instance is moving.
     HistoryCompatibilityKey movingChecker = transmission;
     ++movingChecker.opticalMotionVersion;
-    expectOpticalReject("moving-checker-static-pane", movingChecker);
+    Expect(transmissionState.Begin(movingChecker).IsCompatible(), failures);
+    transmissionState.CancelPending();
     HistoryCompatibilityKey movingPane = transmission;
     ++movingPane.opticalMotionVersion;
-    expectOpticalReject("moving-pane", movingPane);
+    Expect(transmissionState.Begin(movingPane).IsCompatible(), failures);
+    transmissionState.CancelPending();
     HistoryCompatibilityKey movingReceiver = transmission;
     ++movingReceiver.opticalMotionVersion;
-    expectOpticalReject("moving-receiver", movingReceiver);
+    Expect(transmissionState.Begin(movingReceiver).IsCompatible(), failures);
+    transmissionState.CancelPending();
+    std::cout << "S1-P5 moving transforms result=per-pixel reuse\n";
 
     // Replacement/topology/material edits are also outside the previous optical domain.
     HistoryCompatibilityKey replacedBackground = transmission;
     ++replacedBackground.opticalSceneVersion;
-    expectOpticalReject("replaced-background", replacedBackground);
+    expectOpticalSceneReject("replaced-background", replacedBackground);
 
     // An opaque-only PT scene keeps zero optical generations, so unrelated instance motion does
     // not enter this policy.

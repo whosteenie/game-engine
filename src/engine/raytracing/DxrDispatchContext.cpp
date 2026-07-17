@@ -1180,12 +1180,13 @@ void DxrDispatchContext::InvalidateRestirHistoryIfSceneChanged(
     const std::uint32_t sceneVersion,
     const std::uint32_t motionVersion)
 {
-    if (sceneVersion != m_restirLastSceneVersion || motionVersion != m_restirLastMotionVersion)
+    if (sceneVersion != m_restirLastSceneVersion)
     {
         m_restirReservoirHistoryValid = false;
-        m_restirLastSceneVersion = sceneVersion;
-        m_restirLastMotionVersion = motionVersion;
     }
+
+    m_restirLastSceneVersion = sceneVersion;
+    m_restirLastMotionVersion = motionVersion;
 }
 
 bool DxrDispatchContext::DispatchRestirTemporal(
