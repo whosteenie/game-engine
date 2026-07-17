@@ -931,6 +931,8 @@ void ProjectFilesPanel::DrawFileDetailsView(ProjectSession& project, const std::
         return;
     }
 
+    const ImVec2 tableMin = ImGui::GetCursorScreenPos();
+    const ImVec2 tableSize = ImGui::GetContentRegionAvail();
     if (ImGui::BeginTable(
             "ProjectFilesTable",
             3,
@@ -1026,6 +1028,11 @@ void ProjectFilesPanel::DrawFileDetailsView(ProjectSession& project, const std::
         }
 
         ImGui::EndTable();
+    }
+
+    if (ImGui::IsMouseHoveringRect(tableMin, tableMin + tableSize))
+    {
+        BeginBlankSelectionGesture();
     }
 }
 
