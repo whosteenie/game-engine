@@ -25,10 +25,17 @@ public:
         const std::unordered_map<std::string, bool>& folderOpenStates);
 
 private:
+    enum class FileViewMode
+    {
+        Details,
+        Icons
+    };
+
     void ResetBrowseState(const std::string& projectRoot);
     void DrawToolbar(ProjectSession& project);
     void DrawFolderTree(ProjectSession& project, const std::string& directory);
-    void DrawFileList(ProjectSession& project, const std::string& directory);
+    void DrawFileDetailsView(ProjectSession& project, const std::string& directory);
+    void DrawFileIconView(ProjectSession& project, const std::string& directory);
     void DrawEntryContextMenu(
         ProjectSession& project,
         const std::string& entryPath,
@@ -48,6 +55,7 @@ private:
     mutable std::string m_trackedProjectRoot;
     mutable std::unordered_map<std::string, bool> m_folderOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
+    mutable FileViewMode m_fileViewMode = FileViewMode::Details;
 
     mutable std::string m_renamePath;
     mutable char m_renameBuffer[260] = {};
