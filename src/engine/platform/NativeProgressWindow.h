@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <string>
 
 class NativeProgressWindow
@@ -35,6 +36,8 @@ private:
     // must not make a visible load operation move backward.
     float m_lastProgress = 0.0f;
     bool m_hasDeterminateProgress = false;
+    std::string m_lastMessage;
+    std::chrono::steady_clock::time_point m_lastMessageUpdate{};
 };
 
 class ScopedNativeProgress

@@ -4,22 +4,21 @@
 
 #include <algorithm>
 
-// A single, benchmark-calibrated presentation profile for project opening.
-//
-// This profile is based on the d12test8 cold-process benchmark captured on 2026-07-14 after
-// parallel DXR and screen-space stage prewarming (about 3.6 s median): project opening is about
-// 22%, GPU initialization plus environment work about 9%, DXR warm-up about 37%, and the first
-// Scene View frame consumes most of the remainder. Update these anchors when the benchmark changes;
-// callers should only use the named stages below rather than embedding display percentages.
-// This is intentionally a presentation estimate, not a stopwatch: project content and enabled
-// renderer features can change the exact duration of an individual stage.
+// A single, ordered presentation profile for project opening. Callers must use these milestones
+// rather than embedding display percentages. The bar is an ETA-style UX indicator, not a
+// stopwatch, but its ranges follow the real dependency order: file I/O and scene deserialization,
+// imported-model prewarm, editor setup, GPU setup, environment work, DXR warm-up, then the first
+// frame. No stage may report into a later stage's range.
 namespace ProjectLoadProgress
 {
     constexpr float kOpeningProject = 0.01f;
     constexpr float kFinishingPreviousGpuWork = 0.01f;
-    constexpr float kReadingProjectFile = 0.015f;
-    constexpr float kDeserializingSceneStart = 0.02f;
-    constexpr float kDeserializingSceneEnd = 0.20f;
+    constexpr float kReadingProjectFile = 0.02f;
+    constexpr float kParsingProjectFile = 0.04f;
+    constexpr float kDeserializingSceneStart = 0.05f;
+    constexpr float kDeserializingSceneEnd = 0.18f;
+    constexpr float kPrewarmingProjectModelsStart = kDeserializingSceneEnd;
+    constexpr float kPrewarmingProjectModelsEnd = 0.22f;
     constexpr float kProjectOpened = 0.22f;
     constexpr float kEditorReady = 0.23f;
 

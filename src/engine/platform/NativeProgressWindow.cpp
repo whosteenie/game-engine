@@ -33,6 +33,7 @@ void ScopedNativeProgress::SetProgress(float) const {}
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -613,16 +614,33 @@ void NativeProgressWindow::Begin(const std::string& title, const std::string& me
     {
         m_lastProgress = 0.0f;
         m_hasDeterminateProgress = false;
+        m_lastMessage = message;
+        m_lastMessageUpdate = std::chrono::steady_clock::now();
         Win32ProgressWindow::Get().Begin(title, message);
     }
 }
 
 void NativeProgressWindow::SetMessage(const std::string& message)
 {
-    if (m_depth > 0)
+    if (m_depth <= 0 || message == m_lastMessage)
     {
-        Win32ProgressWindow::Get().SetMessage(message);
+        return;
     }
+
+    // Model import can produce a detail message for every texture/node. Publishing each one
+    // floods the popup's Win32 message queue and makes the label unreadable, so publish changes
+    // on a short cadence instead.
+    constexpr auto kMinimumMessageInterval = std::chrono::milliseconds(80);
+    const auto now = std::chrono::steady_clock::now();
+    if (m_lastMessageUpdate.time_since_epoch().count() != 0
+        && now - m_lastMessageUpdate < kMinimumMessageInterval)
+    {
+        return;
+    }
+
+    m_lastMessage = message;
+    m_lastMessageUpdate = now;
+    Win32ProgressWindow::Get().SetMessage(message);
 }
 
 void NativeProgressWindow::SetProgress(float progress)
@@ -644,7 +662,17 @@ void NativeProgressWindow::SetProgress(float progress)
     }
 
     const float clampedProgress = std::clamp(progress, 0.0f, 1.0f);
-    if (m_hasDeterminateProgress && clampedProgress < m_lastProgress)
+    if (m_hasDeterminateProgress && clampedProgress <= m_lastProgress)
+    {
+        return;
+    }
+
+    // 0.2% is below a visibly meaningful change in this small popup. Coalescing those updates
+    // preserves smooth forward movement while preventing thousands of queued UI messages for a
+    // large scene or imported model. Always publish completion.
+    constexpr float kMinimumVisibleProgressDelta = 0.002f;
+    if (m_hasDeterminateProgress && clampedProgress < 1.0f
+        && clampedProgress - m_lastProgress < kMinimumVisibleProgressDelta)
     {
         return;
     }
@@ -668,7 +696,7 @@ void NativeProgressWindow::Report(const std::string& message, float progress)
 
     if (!message.empty())
     {
-        Win32ProgressWindow::Get().SetMessage(message);
+        SetMessage(message);
     }
 
     SetProgress(progress);
@@ -687,6 +715,8 @@ void NativeProgressWindow::End()
         Win32ProgressWindow::Get().End();
         m_lastProgress = 0.0f;
         m_hasDeterminateProgress = false;
+        m_lastMessage.clear();
+        m_lastMessageUpdate = {};
     }
 }
 
@@ -699,6 +729,8 @@ void NativeProgressWindow::Shutdown()
     }
     m_lastProgress = 0.0f;
     m_hasDeterminateProgress = false;
+    m_lastMessage.clear();
+    m_lastMessageUpdate = {};
 
     Win32ProgressWindow::Get().Shutdown();
 }

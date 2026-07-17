@@ -1495,7 +1495,7 @@ bool SceneProjectIO::Load(
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
-        progress.SetProgress(0.09f);
+        progress.SetProgress(ProjectLoadProgress::kReadingProjectFile);
 
         json root;
         {
@@ -1510,7 +1510,7 @@ bool SceneProjectIO::Load(
             }
 
             progress.SetMessage("Parsing project file...");
-            progress.SetProgress(0.10f);
+            progress.SetProgress(ProjectLoadProgress::kParsingProjectFile);
             ProjectLoadTrace::Step("parse project json");
             input >> root;
             ProjectLoadTrace::Step("parse project json ok");
