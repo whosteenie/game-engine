@@ -1,5 +1,7 @@
 #include "engine/assets/ModelImporter.h"
 
+#include "engine/platform/ProjectLoadBenchmark.h"
+
 // tinygltf must be initialized before headers that pull nlohmann json_fwd (e.g. Material.h).
 #define TINYGLTF_NO_STB_IMAGE
 #define TINYGLTF_NO_STB_IMAGE_WRITE
@@ -686,7 +688,8 @@ namespace
         const tinygltf::Primitive& primitive,
         std::unique_ptr<Mesh>& outMesh,
         glm::vec3& boundsMin,
-        glm::vec3& boundsMax)
+        glm::vec3& boundsMax,
+        const bool benchmarkProjectGeometryLoad)
     {
         if (primitive.mode != TINYGLTF_MODE_TRIANGLES && primitive.mode != -1)
         {
@@ -833,6 +836,10 @@ namespace
 
         if (tangents == nullptr)
         {
+            ProjectLoadBenchmark::ScopedPhase tangentGenerationPhase(
+                benchmarkProjectGeometryLoad
+                    ? "project.deserialize.imported_model_tangent_generation"
+                    : nullptr);
             TangentSpace::GenerateMikkTSpaceTangents(vertices, indices);
         }
 
@@ -897,7 +904,21 @@ namespace
                 std::unique_ptr<Mesh> meshData;
                 glm::vec3 boundsMin;
                 glm::vec3 boundsMax;
-                if (!BuildMeshFromPrimitive(model, primitive, meshData, boundsMin, boundsMax))
+                bool builtMesh = false;
+                {
+                    ProjectLoadBenchmark::ScopedPhase meshBuildPhase(
+                        loadMode == ModelLoadMode::GeometryOnly
+                            ? "project.deserialize.imported_model_mesh_build"
+                            : nullptr);
+                    builtMesh = BuildMeshFromPrimitive(
+                        model,
+                        primitive,
+                        meshData,
+                        boundsMin,
+                        boundsMax,
+                        loadMode == ModelLoadMode::GeometryOnly);
+                }
+                if (!builtMesh)
                 {
                     continue;
                 }
@@ -1003,9 +1024,16 @@ ImportedModel LoadModelFromFile(
     std::string warning;
 
     const std::string extension = GetFileExtensionLower(path);
-    const bool loaded = extension == ".glb"
-        ? loader.LoadBinaryFromFile(&model, &error, &warning, path)
-        : loader.LoadASCIIFromFile(&model, &error, &warning, path);
+    bool loaded = false;
+    {
+        ProjectLoadBenchmark::ScopedPhase parseModelPhase(
+            loadMode == ModelLoadMode::GeometryOnly
+                ? "project.deserialize.imported_model_parse"
+                : nullptr);
+        loaded = extension == ".glb"
+            ? loader.LoadBinaryFromFile(&model, &error, &warning, path)
+            : loader.LoadASCIIFromFile(&model, &error, &warning, path);
+    }
 
     if (!warning.empty())
     {

@@ -249,6 +249,8 @@ namespace SceneProjectIODetail
         ImportedAssetCacheEntry& cacheEntry = importCache[resolvedPath];
         if (!cacheEntry.loaded)
         {
+            ProjectLoadBenchmark::ScopedPhase geometryLoadPhase(
+                "project.deserialize.imported_model_geometry_load");
             cacheEntry.model = LoadModelFromFile(
                 resolvedPath,
                 projectRoot,
@@ -1077,6 +1079,7 @@ namespace SceneProjectIODetail
                 return false;
             }
 
+            ProjectLoadBenchmark::ScopedPhase objectRecordPhase("project.deserialize.object_record");
             std::unique_ptr<Material> material;
             if (objectValue.contains("material"))
             {

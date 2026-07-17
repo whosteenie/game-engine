@@ -185,8 +185,12 @@ namespace ProjectLoadBenchmark
     }
 
     ScopedPhase::ScopedPhase(const char* name)
-        : m_name(name), m_start(std::chrono::steady_clock::now()), m_active(IsActive() && name != nullptr)
+        : m_name(name), m_active(IsActive() && name != nullptr)
     {
+        if (m_active)
+        {
+            m_start = std::chrono::steady_clock::now();
+        }
     }
 
     ScopedPhase::~ScopedPhase()
