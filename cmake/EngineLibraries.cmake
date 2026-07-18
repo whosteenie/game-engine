@@ -71,7 +71,11 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/passes/MeshShaderShadowRenderer.cpp
     src/engine/rendering/passes/GridRenderer.cpp
     src/engine/rendering/passes/SkyboxRenderer.cpp
-    src/engine/assets/ModelImporter.cpp
+      src/engine/assets/gltf/Images.cpp
+      src/engine/assets/gltf/Importer.cpp
+      src/engine/assets/gltf/Materials.cpp
+      src/engine/assets/gltf/Meshes.cpp
+      src/engine/assets/gltf/Nodes.cpp
     src/engine/assets/TangentSpace.cpp
     src/engine/assets/StbImage.cpp
     src/engine/assets/ProjectAssets.cpp
