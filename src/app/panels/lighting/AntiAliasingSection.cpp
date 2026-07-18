@@ -1,45 +1,21 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
-#include "app/editor/EditorUndoWidgets.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
 #include "app/editor/RendererSettingUi.h"
-#include "app/editor/EditorWidgets.h"
+#include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/rendering/RenderDiagnostics.h"
-#include "app/scene/document/Scene.h"
-#include "app/scene/rendering/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/diagnostics/EngineLog.h"
-#include "engine/rendering/core/Constants.h"
-#include "engine/rendering/core/RenderDebug.h"
-#include "engine/rendering/post/ScreenSpaceEffects.h"
-#include "engine/rendering/core/DxrCapabilities.h"
-#include "engine/rendering/core/DxrSettings.h"
-#include "engine/raytracing/core/DxrDiagnostics.h"
-#include "engine/raytracing/core/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
+#include "engine/rhi/DlssContext.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
+#include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <vector>
+
 
 void DrawAntiAliasingSection(const LightingPanelContext& ctx)
 {
@@ -73,7 +49,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         const DlssContext& dlss = DlssContext::Get();
         if (!dlss.IsReady())
         {
-            ImGui::TextDisabled("DLSS: initializing…");
+            ImGui::TextDisabled("DLSS: initializing...");
         }
         else if (dlss.IsDlssSupported())
         {
@@ -166,7 +142,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                             ImGui::SetTooltip(
                                 DlssContext::Get().IsReady()
                                     ? "Requires an NVIDIA RTX GPU with a recent driver."
-                                    : "DLSS is still initializing…");
+                            : "DLSS is still initializing...");
                         }
                         else if (geometryMsaaBlocksResolve && modeOwnsResolve)
                         {
@@ -235,7 +211,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
             else
             {
-                ImGui::TextDisabled("DLSS GPU pass: (collecting…)");
+                ImGui::TextDisabled("DLSS GPU pass: (collecting...)");
             }
         }
         else if (currentAaMode == AntiAliasingMode::DLAA)
@@ -378,27 +354,27 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         if (geometryMsaaBlocksResolve || resolveBlocksGeometryMsaa)
         {
             LightingPanelUi::DrawWrappedNote(
-                "Geometry MSAA above 1× and TAA/DLAA/DLSS are mutually exclusive. "
+                    "Geometry MSAA above 1x and TAA/DLAA/DLSS are mutually exclusive. "
                 "Incompatible options are grayed out; choosing MSAA while a resolve owner is active switches post AA to None.");
         }
         else
         {
             LightingPanelUi::DrawWrappedNote(
-                "Geometry MSAA supersamples the scene pass before post AA. Pick 1× for standard single-sample rendering.");
+                "Geometry MSAA supersamples the scene pass before post AA. Pick 1x for standard single-sample rendering.");
         }
 
-        const char* msaaPreview = "1× (None)";
+        const char* msaaPreview = "1x (None)";
         if (msaaSampleCount == 2)
         {
-            msaaPreview = "2× MSAA";
+            msaaPreview = "2x MSAA";
         }
         else if (msaaSampleCount == 4)
         {
-            msaaPreview = "4× MSAA";
+            msaaPreview = "4x MSAA";
         }
         else if (msaaSampleCount == 8)
         {
-            msaaPreview = "8× MSAA";
+            msaaPreview = "8x MSAA";
         }
 
         static constexpr struct MsaaPreset
@@ -406,10 +382,10 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             int count;
             const char* label;
         } kMsaaPresets[] = {
-            {1, "1× (None)"},
-            {2, "2× MSAA"},
-            {4, "4× MSAA"},
-            {8, "8× MSAA"},
+                {1, "1x (None)"},
+                {2, "2x MSAA"},
+                {4, "4x MSAA"},
+                {8, "8x MSAA"},
         };
 
         if (ImGui::BeginCombo("Geometry MSAA", msaaPreview))
@@ -494,7 +470,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             ImGui::SameLine();
             if (reloadRequested)
             {
-                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "Applying…");
+                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "Applying...");
             }
             else
             {
@@ -503,7 +479,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         }
         else if (msaaSampleCount > 1)
         {
-            ImGui::TextDisabled("Geometry MSAA active: %d×", msaaSampleCount);
+            ImGui::TextDisabled("Geometry MSAA active: %dx", msaaSampleCount);
         }
 
         if (renderer.HasGeometryMsaaReloadFailed() && !renderer.GetGeometryMsaaReloadError().empty())

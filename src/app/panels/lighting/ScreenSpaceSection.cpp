@@ -1,45 +1,15 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
+#include "app/editor/EditorWidgets.h"
 #include "app/editor/EditorUndoWidgets.h"
 #include "app/editor/RendererSettingUi.h"
-#include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/rendering/RenderDiagnostics.h"
-#include "app/scene/document/Scene.h"
-#include "app/scene/rendering/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/diagnostics/EngineLog.h"
-#include "engine/rendering/core/Constants.h"
-#include "engine/rendering/core/RenderDebug.h"
-#include "engine/rendering/post/ScreenSpaceEffects.h"
-#include "engine/rendering/core/DxrCapabilities.h"
-#include "engine/rendering/core/DxrSettings.h"
-#include "engine/raytracing/core/DxrDiagnostics.h"
-#include "engine/raytracing/core/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
-#include <cmath>
-#include <cstring>
-#include <vector>
 
 void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
 {
