@@ -80,8 +80,11 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/resources/Framebuffer.cpp
     src/engine/rendering/core/HistoryCompatibility.cpp
     src/engine/rendering/core/ReconstructionJitter.cpp
-    src/engine/rendering/post/ScreenSpaceEffects.cpp
-    src/engine/rendering/post/ScreenSpaceEffectsApply.cpp
+      src/engine/rendering/post/ScreenSpaceEffects.cpp
+      src/engine/rendering/post/ScreenSpaceEffectsControls.cpp
+      src/engine/rendering/post/ScreenSpaceEffectsRayTracing.cpp
+      src/engine/rendering/post/ScreenSpaceEffectsTemporal.cpp
+      src/engine/rendering/post/ScreenSpaceEffectsApply.cpp
     src/engine/rendering/post/ScreenSpaceEffectsSettings.cpp
     src/engine/rendering/post/PostProcessDraw.cpp
     src/engine/rendering/post/DxrDebugBlitPass.cpp
