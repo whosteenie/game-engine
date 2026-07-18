@@ -358,6 +358,10 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/core/AgilitySdkExports.cpp
     src/app/core/Application.cpp
+    src/app/core/application/Frame.cpp
+    src/app/core/application/Loop.cpp
+    src/app/core/application/Project.cpp
+    src/app/core/application/Startup.cpp
     src/app/core/benchmark/Capture.cpp
 
     src/app/editor/EditorSettings.cpp
