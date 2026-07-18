@@ -30,7 +30,7 @@ namespace
     constexpr double kFlySpeedOverlayFadeInSeconds = 0.12;
     constexpr double kFlySpeedOverlayFadeOutSeconds = 0.5;
 
-    glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const EditorViewportRect& viewport)
+    glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const ViewportRect& viewport)
     {
         const float scaleX = viewport.screenWidth > 0.0f
             ? static_cast<float>(viewport.width) / viewport.screenWidth
@@ -390,7 +390,7 @@ void SceneViewportPanel::UpdateModelDropPreview(
     Scene& scene,
     const std::vector<int>& previewRoots)
 {
-    const EditorViewportRect& viewport = m_viewport.interactionRect;
+    const ViewportRect& viewport = m_viewport.interactionRect;
     const ImVec2 mouse = ImGui::GetIO().MousePos;
     const glm::vec2 localMouse(mouse.x - viewport.screenX, mouse.y - viewport.screenY);
     const Ray dropRay = ScreenPointToRay(

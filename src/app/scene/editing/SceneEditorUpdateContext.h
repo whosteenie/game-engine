@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 
 #include <string>
 
@@ -20,5 +20,5 @@ struct SceneEditorUpdateContext
     bool allowKeyboardInput = true;
     UndoStack* undoStack = nullptr;
     std::string projectRoot;
-    const EditorViewportRect* viewport = nullptr;
+    const ViewportRect* viewport = nullptr;
 };

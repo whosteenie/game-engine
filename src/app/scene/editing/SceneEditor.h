@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/undo/UndoCommand.h"
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 
 #include <glm/glm.hpp>
 #include <memory>
@@ -49,7 +49,7 @@ public:
         bool allowKeyboardInput,
         UndoStack* undoStack,
         const std::string& projectRoot,
-        const EditorViewportRect* viewport);
+        const ViewportRect* viewport);
 
     void HandleEscapeKey(Scene& scene);
     void ResetInteractionState();
@@ -57,7 +57,7 @@ public:
     void RenderSelectionOverlay(const Scene& scene, const Camera& camera, bool useScreenSpace) const;
 
 private:
-    void DrawMarqueeOverlay(const EditorViewportRect& viewport) const;
+    void DrawMarqueeOverlay(const ViewportRect& viewport) const;
     void CancelMarqueeDrag();
 
     TransformTool m_tool = TransformTool::Translate;

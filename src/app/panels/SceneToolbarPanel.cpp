@@ -77,7 +77,7 @@ namespace
 void SceneToolbarPanel::Draw(
     Scene& scene,
     bool sceneViewVisible,
-    const EditorViewportRect& sceneViewRect,
+    const ViewportRect& sceneViewRect,
     UndoStack* undoStack) const
 {
     if (!m_showPanel || !sceneViewVisible || !sceneViewRect.valid)

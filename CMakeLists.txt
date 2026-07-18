@@ -353,27 +353,12 @@ target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
 include("${CMAKE_SOURCE_DIR}/cmake/AgilitySdk.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
 
-set(GAME_ENGINE_APP_SOURCES
-    src/main.cpp
-
-    src/app/core/AgilitySdkExports.cpp
-    src/app/core/Application.cpp
-    src/app/core/application/Frame.cpp
-    src/app/core/application/Loop.cpp
-    src/app/core/application/Project.cpp
-    src/app/core/application/Startup.cpp
-    src/app/core/benchmark/Capture.cpp
-
-    src/app/editor/EditorSettings.cpp
-    src/app/editor/TuningSectionState.cpp
+# Scene/document domain.  This owns scene state and its mutations, including the
+# editor-facing scene tools and renderer coordination.  Keeping it below the
+# application shell makes the scene usable by tests or a future non-editor host.
+set(APP_SCENE_SOURCES
     src/app/editor/SettingRegistry.cpp
-
-    src/app/editor/EditorDockSpace.cpp
-    src/app/editor/EditorDockLayout.cpp
-    src/app/editor/MainMenuBar.cpp
-    src/app/editor/EditorTopToolbar.cpp
-    src/app/editor/EditorClipboard.cpp
-    src/app/editor/EditorMouseWrapping.cpp
+    src/app/editor/TuningSectionState.cpp
 
     src/app/undo/UndoCommand.cpp
     src/app/undo/commands/ComponentCommands.cpp
@@ -384,15 +369,76 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/project/SceneDocument.cpp
     src/app/project/SceneSubtreeArchive.cpp
-    src/app/project/ProjectChooser.cpp
-    src/app/project/ProjectEditorState.cpp
-    src/app/project/ProjectSession.cpp
-
-    src/app/core/PlayModeController.cpp
-    src/app/core/PhysicsWorld.cpp
+    src/app/project/SceneProjectIO.cpp
 
     src/app/scene/document/SceneComponentCatalog.cpp
-    src/app/project/SceneProjectIO.cpp
+    src/app/scene/document/Scene.cpp
+    src/app/scene/document/SceneMeshLibrary.cpp
+    src/app/scene/document/SceneObjectStore.cpp
+    src/app/scene/editing/SceneCamera.cpp
+    src/app/scene/editing/SceneEditor.cpp
+    src/app/scene/editing/SceneEditingController.cpp
+    src/app/scene/editing/SceneHierarchyOps.cpp
+    src/app/scene/editing/SceneObjectOperations.cpp
+    src/app/scene/import/SceneImportService.cpp
+    src/app/scene/rendering/GpuSceneBuilder.cpp
+    src/app/scene/rendering/renderer/Dispatch.cpp
+    src/app/scene/rendering/renderer/Gizmos.cpp
+    src/app/scene/rendering/renderer/Lighting.cpp
+    src/app/scene/rendering/renderer/Raster.cpp
+    src/app/scene/rendering/renderer/RayTracing.cpp
+    src/app/scene/rendering/renderer/Renderer.cpp
+    src/app/scene/rendering/renderer/Resources.cpp
+    src/app/scene/selection/SceneSelectionController.cpp
+    src/app/scene/spawn/SceneSpawnService.cpp
+    src/app/scene/spawn/SceneSpawnBuilders.cpp
+)
+
+add_library(app-scene STATIC ${APP_SCENE_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-scene)
+target_include_directories(app-scene PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-scene PUBLIC
+    engine-render
+    engine-dxr
+    imgui_lib
+    imguizmo_lib
+    nlohmann_json::nlohmann_json)
+
+set(APP_STATE_SOURCES
+    src/app/editor/EditorSettings.cpp
+    src/app/project/ProjectEditorState.cpp
+    src/app/project/ProjectSession.cpp
+    src/app/core/PlayModeController.cpp
+    src/app/core/PhysicsWorld.cpp
+)
+
+add_library(app-state STATIC ${APP_STATE_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-state)
+target_include_directories(app-state PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-state PUBLIC
+    app-scene
+    imgui_lib
+    Jolt)
+
+set(APP_EDITOR_SOURCES
+    src/app/editor/EditorDockSpace.cpp
+    src/app/editor/EditorDockLayout.cpp
+    src/app/editor/MainMenuBar.cpp
+    src/app/editor/EditorTopToolbar.cpp
+    src/app/editor/EditorClipboard.cpp
+    src/app/editor/EditorMouseWrapping.cpp
+    src/app/editor/EditorWidgets.cpp
+    src/app/editor/OffscreenViewportPanel.cpp
+
+    src/app/project/ProjectChooser.cpp
 
     src/app/panels/ProjectFilesPanel.cpp
     src/app/panels/LightingPanel.cpp
@@ -411,54 +457,54 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/panels/lighting/RayTracingSection.cpp
     src/app/panels/lighting/DiagnosticsSection.cpp
     src/app/panels/PerformancePanel.cpp
-    src/app/scene/rendering/RenderDiagnostics.cpp
-
-    src/app/editor/EditorWidgets.cpp
-    src/app/editor/OffscreenViewportPanel.cpp
-
     src/app/panels/SceneHierarchyPanel.cpp
     src/app/panels/SceneInspectorPanel.cpp
-
-    src/app/inspector/InspectorEditMode.cpp
-    src/app/inspector/InspectorMultiEdit.cpp
-    src/app/inspector/InspectorTransform.cpp
-
     src/app/panels/SceneToolbarPanel.cpp
     src/app/panels/SceneViewportPanel.cpp
     src/app/panels/GameViewportPanel.cpp
 
-    src/app/scene/editing/SceneEditor.cpp
-    src/app/scene/editing/SceneEditingController.cpp
-    src/app/scene/rendering/GpuSceneBuilder.cpp
-    src/app/scene/document/Scene.cpp
-    src/app/scene/editing/SceneHierarchyOps.cpp
-    src/app/scene/import/SceneImportService.cpp
-    src/app/scene/document/SceneMeshLibrary.cpp
-    src/app/scene/editing/SceneObjectOperations.cpp
-    src/app/scene/document/SceneObjectStore.cpp
-    src/app/scene/rendering/renderer/Dispatch.cpp
-    src/app/scene/rendering/renderer/Gizmos.cpp
-    src/app/scene/rendering/renderer/Lighting.cpp
-    src/app/scene/rendering/renderer/Raster.cpp
-    src/app/scene/rendering/renderer/RayTracing.cpp
-    src/app/scene/rendering/renderer/Renderer.cpp
-    src/app/scene/rendering/renderer/Resources.cpp
-    src/app/scene/selection/SceneSelectionController.cpp
-    src/app/scene/spawn/SceneSpawnService.cpp
-    src/app/scene/spawn/SceneSpawnBuilders.cpp
-    src/app/scene/editing/SceneCamera.cpp
+    src/app/scene/rendering/RenderDiagnostics.cpp
+    src/app/inspector/InspectorEditMode.cpp
+    src/app/inspector/InspectorMultiEdit.cpp
+    src/app/inspector/InspectorTransform.cpp
 )
 
-add_executable(game-engine ${GAME_ENGINE_APP_SOURCES})
-game_engine_enable_msvc_parallel_compile(game-engine)
+add_library(app-editor STATIC ${APP_EDITOR_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-editor)
+target_include_directories(app-editor PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-editor PUBLIC
+    app-state
+    app-scene
+    imgui_lib
+    imguizmo_lib)
 
-target_include_directories(game-engine PRIVATE
+set(APP_RUNTIME_SOURCES
+    src/app/core/Application.cpp
+    src/app/core/application/Frame.cpp
+    src/app/core/application/Loop.cpp
+    src/app/core/application/Project.cpp
+    src/app/core/application/Startup.cpp
+    src/app/core/benchmark/Capture.cpp
+
+)
+
+add_library(app-runtime STATIC ${APP_RUNTIME_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-runtime)
+
+target_include_directories(app-runtime PUBLIC
     vendor/stb
     vendor/IconFontCppHeaders
     src
     ${tinygltf_SOURCE_DIR})
 
-target_link_libraries(game-engine PRIVATE
+target_link_libraries(app-runtime PUBLIC
+    app-editor
+    app-state
+    app-scene
     engine-render
     engine-dxr
     imgui_lib
@@ -466,6 +512,14 @@ target_link_libraries(game-engine PRIVATE
     nlohmann_json::nlohmann_json
     Jolt
 )
+
+add_executable(game-engine
+    src/main.cpp
+    # Must remain in the executable: the D3D12 Agility loader discovers these
+    # exports before static-library objects would necessarily be linked.
+    src/app/core/AgilitySdkExports.cpp)
+game_engine_enable_msvc_parallel_compile(game-engine)
+target_link_libraries(game-engine PRIVATE app-runtime)
 
 game_engine_enable_agility_sdk(game-engine)
 

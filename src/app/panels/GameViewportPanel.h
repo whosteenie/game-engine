@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 #include "app/editor/OffscreenViewportPanel.h"
 
 #include <imgui.h>
@@ -22,7 +22,7 @@ public:
     bool HasValidRenderTarget() const;
     bool HasGpuFramebuffer() const { return m_viewport.framebuffer.IsValid(); }
     bool IsHovered() const { return m_viewport.interactionRect.hovered; }
-    const EditorViewportRect& GetInteractionRect() const { return m_viewport.interactionRect; }
+    const ViewportRect& GetInteractionRect() const { return m_viewport.interactionRect; }
 
     int GetRenderWidth() const { return m_viewport.renderWidth; }
     int GetRenderHeight() const { return m_viewport.renderHeight; }

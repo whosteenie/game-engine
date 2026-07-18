@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 #include "app/scene/document/Scene.h"
 #include "app/undo/UndoCommand.h"
 #include "app/undo/UndoStack.h"
@@ -81,7 +81,7 @@ namespace
         scene.SetSelection(pickedIndices, pickedIndices.back());
     }
 
-    glm::vec2 ViewportPickPixelsToImGui(const glm::vec2& localPixels, const EditorViewportRect& viewport)
+    glm::vec2 ViewportPickPixelsToImGui(const glm::vec2& localPixels, const ViewportRect& viewport)
     {
         const float scaleX =
             viewport.width > 0 ? viewport.screenWidth / static_cast<float>(viewport.width) : 1.0f;
@@ -92,13 +92,13 @@ namespace
             viewport.screenY + localPixels.y * scaleY);
     }
 
-    glm::vec2 GetViewportLocalMouseScreen(const EditorViewportRect& viewport)
+    glm::vec2 GetViewportLocalMouseScreen(const ViewportRect& viewport)
     {
         const ImVec2 mousePos = ImGui::GetIO().MousePos;
         return glm::vec2(mousePos.x - viewport.screenX, mousePos.y - viewport.screenY);
     }
 
-    glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const EditorViewportRect& viewport)
+    glm::vec2 ScreenLocalToPickPixels(const glm::vec2& localScreen, const ViewportRect& viewport)
     {
         const float scaleX =
             viewport.screenWidth > 0.0f
@@ -111,7 +111,7 @@ namespace
         return glm::vec2(localScreen.x * scaleX, localScreen.y * scaleY);
     }
 
-    bool IsInsideViewportScreen(const glm::vec2& localScreen, const EditorViewportRect& viewport)
+    bool IsInsideViewportScreen(const glm::vec2& localScreen, const ViewportRect& viewport)
     {
         return localScreen.x >= 0.0f
             && localScreen.y >= 0.0f
@@ -305,7 +305,7 @@ namespace
         bool& surfaceSnapHasLastHit,
         glm::vec3& surfaceSnapLastPoint,
         glm::vec3& surfaceSnapLastNormal,
-        const EditorViewportRect* viewport)
+        const ViewportRect* viewport)
     {
         if (viewport == nullptr || !viewport->valid)
         {
@@ -546,7 +546,7 @@ void SceneEditor::Update(
     bool allowKeyboardInput,
     UndoStack* undoStack,
     const std::string& projectRoot,
-    const EditorViewportRect* viewport)
+        const ViewportRect* viewport)
 {
     const ImGuiIO& io = ImGui::GetIO();
 
@@ -757,7 +757,7 @@ void SceneEditor::CancelMarqueeDrag()
     m_marqueeActive = false;
 }
 
-void SceneEditor::DrawMarqueeOverlay(const EditorViewportRect& viewport) const
+void SceneEditor::DrawMarqueeOverlay(const ViewportRect& viewport) const
 {
     if (!m_marqueeActive)
     {

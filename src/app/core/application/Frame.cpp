@@ -18,7 +18,7 @@
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorMouseWrapping.h"
 #include "app/editor/EditorTopToolbar.h"
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 #include "app/panels/GameViewportPanel.h"
 #include "app/panels/LightingPanel.h"
 #include "app/panels/PerformancePanel.h"
@@ -114,7 +114,7 @@ namespace
         return true;
     }
 
-    bool IsPointInEditorViewportRect(const EditorViewportRect& rect, const double x, const double y)
+    bool IsPointInViewportRect(const ViewportRect& rect, const double x, const double y)
     {
         if (!rect.valid || rect.screenWidth <= 0.0f || rect.screenHeight <= 0.0f)
         {
@@ -315,11 +315,11 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
         || m_projectChooser->IsPresentingProjectLoad();
     if (editorActive)
     {
-        const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
+        const ViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
         double cursorX = 0.0;
         double cursorY = 0.0;
         m_input->GetCursorPosition(cursorX, cursorY);
-        const bool mouseOverSceneView = IsPointInEditorViewportRect(sceneViewRect, cursorX, cursorY);
+        const bool mouseOverSceneView = IsPointInViewportRect(sceneViewRect, cursorX, cursorY);
         const bool gameViewBlocksSceneInput =
             m_playModeController.IsActive() && m_gameViewportPanel->GetInteractionRect().hovered;
         const bool allowFlyCameraCapture =
@@ -528,7 +528,7 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
             ImGui::SetWindowFocus("Game View");
         }
 
-        const EditorViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
+        const ViewportRect& sceneViewRect = m_sceneViewportPanel->GetInteractionRect();
 
         m_sceneToolbarPanel->Draw(
             *editorScene,
@@ -639,8 +639,8 @@ void Application::Update(double deltaTime, ApplicationFrameDiagnostics& frameDia
         glfwGetFramebufferSize(m_window, &viewportWidth, &viewportHeight);
         glfwGetWindowSize(m_window, &windowWidth, &windowHeight);
 
-        const EditorViewportRect& viewportRect = m_sceneViewportPanel->GetInteractionRect();
-        const EditorViewportRect* viewportPtr =
+        const ViewportRect& viewportRect = m_sceneViewportPanel->GetInteractionRect();
+        const ViewportRect* viewportPtr =
             viewportRect.valid ? &viewportRect : nullptr;
 
         const SceneEditorUpdateContext editorUpdateContext{

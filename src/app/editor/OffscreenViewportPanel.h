@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 #include "app/editor/ViewportResizeStabilizer.h"
 
 #include "engine/rendering/resources/Framebuffer.h"
@@ -18,7 +18,7 @@ namespace OffscreenViewportPanel
         mutable int renderWidth = 0;
         mutable int renderHeight = 0;
         ViewportResizeStabilizer resizeStabilizer{};
-        mutable EditorViewportRect interactionRect{};
+        mutable ViewportRect interactionRect{};
         ImDrawList* compositeDrawList = nullptr;
         ImVec2 compositeMin{};
         ImVec2 compositeMax{};

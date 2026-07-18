@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
 #include "app/scene/document/Scene.h"
 
 class UndoStack;
@@ -11,7 +11,7 @@ public:
     void Draw(
         Scene& scene,
         bool sceneViewVisible,
-        const EditorViewportRect& sceneViewRect,
+        const ViewportRect& sceneViewRect,
         UndoStack* undoStack = nullptr) const;
 
     bool& ShowPanel() const { return m_showPanel; }

@@ -2,7 +2,8 @@
 
 struct ImGuiWindow;
 
-struct EditorViewportRect
+// Shared contract between the scene editor and the editor-hosted viewport panels.
+struct ViewportRect
 {
     bool valid = false;
     bool hovered = false;
