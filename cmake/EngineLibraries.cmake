@@ -4,22 +4,22 @@
 set(ENGINE_RENDER_SOURCES
     src/engine/camera/Camera.cpp
 
-    src/engine/platform/ImGuiLayer.cpp
-    src/engine/platform/ImGuiFonts.cpp
-    src/engine/platform/BackgroundWork.cpp
-    src/engine/platform/NativeProgressWindow.cpp
-    src/engine/platform/ProjectLoadBenchmark.cpp
-    src/engine/platform/Input.cpp
-    src/engine/platform/InputDiagnostics.cpp
-    src/engine/platform/EngineLog.cpp
-    src/engine/platform/EngineDiagnostics.cpp
-    src/engine/platform/CrashHandler.cpp
-    src/engine/platform/ExceptionMessage.cpp
-    src/engine/platform/FrameDiagnostics.cpp
-    src/engine/platform/ProjectLoadTrace.cpp
-    src/engine/platform/SceneRenderTrace.cpp
-    src/engine/platform/RenderPathDiagnostics.cpp
-    src/engine/platform/SystemResources.cpp
+    src/engine/platform/ui/ImGuiLayer.cpp
+    src/engine/platform/ui/ImGuiFonts.cpp
+    src/engine/platform/system/BackgroundWork.cpp
+    src/engine/platform/tooling/NativeProgressWindow.cpp
+    src/engine/platform/tooling/ProjectLoadBenchmark.cpp
+    src/engine/platform/input/Input.cpp
+    src/engine/platform/input/InputDiagnostics.cpp
+    src/engine/platform/diagnostics/EngineLog.cpp
+    src/engine/platform/diagnostics/EngineDiagnostics.cpp
+    src/engine/platform/system/CrashHandler.cpp
+    src/engine/platform/system/ExceptionMessage.cpp
+    src/engine/platform/diagnostics/FrameDiagnostics.cpp
+    src/engine/platform/diagnostics/ProjectLoadTrace.cpp
+    src/engine/platform/diagnostics/SceneRenderTrace.cpp
+    src/engine/platform/diagnostics/RenderPathDiagnostics.cpp
+    src/engine/platform/system/SystemResources.cpp
 
     src/engine/rhi/GfxContext.cpp
     src/engine/rhi/GpuProfiler.cpp
@@ -55,33 +55,33 @@ set(ENGINE_RENDER_SOURCES
     src/engine/lighting/ShadowMapMath.cpp
     src/engine/lighting/LightingProbe.cpp
     src/engine/lighting/CascadedShadowMap.cpp
-    src/engine/rendering/RenderDebug.cpp
+    src/engine/rendering/core/RenderDebug.cpp
     src/engine/lighting/IBL.cpp
     src/engine/lighting/EnvironmentMap.cpp
     src/engine/lighting/IrradianceSh.cpp
     src/engine/lighting/EnvironmentImportanceSampling.cpp
 
-    src/engine/rendering/Material.cpp
-    src/engine/rendering/Texture.cpp
+    src/engine/rendering/resources/Material.cpp
+    src/engine/rendering/resources/Texture.cpp
     src/engine/assets/TextureCache.cpp
-    src/engine/rendering/MaterialTextures.cpp
-    src/engine/rendering/Mesh.cpp
-    src/engine/rendering/MeshShaderGBufferRenderer.cpp
-    src/engine/rendering/MeshShaderShadowRenderer.cpp
-    src/engine/rendering/GridRenderer.cpp
-    src/engine/rendering/SkyboxRenderer.cpp
+    src/engine/rendering/resources/MaterialTextures.cpp
+    src/engine/rendering/resources/Mesh.cpp
+    src/engine/rendering/passes/MeshShaderGBufferRenderer.cpp
+    src/engine/rendering/passes/MeshShaderShadowRenderer.cpp
+    src/engine/rendering/passes/GridRenderer.cpp
+    src/engine/rendering/passes/SkyboxRenderer.cpp
     src/engine/assets/ModelImporter.cpp
     src/engine/assets/TangentSpace.cpp
     src/engine/assets/StbImage.cpp
     src/engine/assets/ProjectAssets.cpp
     src/engine/assets/FileDialog.cpp
-    src/engine/rendering/Renderer.cpp
-    src/engine/rendering/Framebuffer.cpp
-    src/engine/rendering/HistoryCompatibility.cpp
-    src/engine/rendering/ReconstructionJitter.cpp
-    src/engine/rendering/ScreenSpaceEffects.cpp
-    src/engine/rendering/ScreenSpaceEffectsApply.cpp
-    src/engine/rendering/ScreenSpaceEffectsSettings.cpp
+    src/engine/rendering/core/Renderer.cpp
+    src/engine/rendering/resources/Framebuffer.cpp
+    src/engine/rendering/core/HistoryCompatibility.cpp
+    src/engine/rendering/core/ReconstructionJitter.cpp
+    src/engine/rendering/post/ScreenSpaceEffects.cpp
+    src/engine/rendering/post/ScreenSpaceEffectsApply.cpp
+    src/engine/rendering/post/ScreenSpaceEffectsSettings.cpp
     src/engine/rendering/post/PostProcessDraw.cpp
     src/engine/rendering/post/DxrDebugBlitPass.cpp
     src/engine/rendering/post/AmbientOcclusionPass.cpp
@@ -93,11 +93,11 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/post/PathTracerDisplayPass.cpp
     src/engine/rendering/post/ScreenCompositePass.cpp
     src/engine/rendering/post/PostProcessDebugPass.cpp
-    src/engine/rendering/DxrSettings.cpp
-    src/engine/rendering/PtTemporalHistory.cpp
+    src/engine/rendering/core/DxrSettings.cpp
+    src/engine/rendering/core/PtTemporalHistory.cpp
     src/engine/lighting/DirectionalShadowSettings.cpp
-    src/engine/rendering/Shader.cpp
-    src/engine/rendering/ShaderCache.cpp
+    src/engine/rendering/shaders/Shader.cpp
+    src/engine/rendering/shaders/ShaderCache.cpp
 
     src/primitives/Cube.cpp
     src/primitives/PrimitiveMeshUtils.cpp
@@ -108,28 +108,28 @@ set(ENGINE_RENDER_SOURCES
 )
 
 set(ENGINE_DXR_SOURCES
-    src/engine/raytracing/DxrContext.cpp
-    src/engine/raytracing/DxrGpuResource.cpp
-    src/engine/raytracing/Blas.cpp
-    src/engine/raytracing/BlasCache.cpp
-    src/engine/raytracing/Tlas.cpp
-    src/engine/raytracing/DxrAccelerationStructures.cpp
-    src/engine/raytracing/DxrShaderCache.cpp
-    src/engine/raytracing/DxrRootSignature.cpp
-    src/engine/raytracing/DxrPipeline.cpp
-    src/engine/raytracing/ShaderBindingTable.cpp
-    src/engine/raytracing/DxrDispatchContext.cpp
-    src/engine/raytracing/DxrDispatchBase.cpp
-    src/engine/raytracing/DxrSmokeDispatch.cpp
-    src/engine/raytracing/DxrPrimaryDebugDispatch.cpp
-    src/engine/raytracing/DxrPathTracerDispatch.cpp
-    src/engine/raytracing/DxrReflectionsDispatch.cpp
-    src/engine/raytracing/DxrShadowsDispatch.cpp
-    src/engine/raytracing/DxrGiDispatch.cpp
-    src/engine/raytracing/DxrRestirDispatch.cpp
-    src/engine/raytracing/NrdCommon.cpp
-    src/engine/raytracing/NrdDenoiser.cpp
-    src/engine/raytracing/NrdShadowDenoiser.cpp
+    src/engine/raytracing/core/DxrContext.cpp
+    src/engine/raytracing/core/DxrGpuResource.cpp
+    src/engine/raytracing/acceleration/Blas.cpp
+    src/engine/raytracing/acceleration/BlasCache.cpp
+    src/engine/raytracing/acceleration/Tlas.cpp
+    src/engine/raytracing/acceleration/DxrAccelerationStructures.cpp
+    src/engine/raytracing/pipeline/DxrShaderCache.cpp
+    src/engine/raytracing/pipeline/DxrRootSignature.cpp
+    src/engine/raytracing/pipeline/DxrPipeline.cpp
+    src/engine/raytracing/pipeline/ShaderBindingTable.cpp
+    src/engine/raytracing/dispatch/DxrDispatchContext.cpp
+    src/engine/raytracing/dispatch/DxrDispatchBase.cpp
+    src/engine/raytracing/dispatch/DxrSmokeDispatch.cpp
+    src/engine/raytracing/dispatch/DxrPrimaryDebugDispatch.cpp
+    src/engine/raytracing/dispatch/DxrPathTracerDispatch.cpp
+    src/engine/raytracing/dispatch/DxrReflectionsDispatch.cpp
+    src/engine/raytracing/dispatch/DxrShadowsDispatch.cpp
+    src/engine/raytracing/dispatch/DxrGiDispatch.cpp
+    src/engine/raytracing/dispatch/DxrRestirDispatch.cpp
+    src/engine/raytracing/denoising/NrdCommon.cpp
+    src/engine/raytracing/denoising/NrdDenoiser.cpp
+    src/engine/raytracing/denoising/NrdShadowDenoiser.cpp
 )
 
 add_library(engine-render STATIC ${ENGINE_RENDER_SOURCES})

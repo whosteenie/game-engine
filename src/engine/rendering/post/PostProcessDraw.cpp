@@ -1,6 +1,6 @@
 #include "engine/rendering/post/PostProcessDraw.h"
 
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <d3d12.h>

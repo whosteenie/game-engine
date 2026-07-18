@@ -8,11 +8,11 @@
 #include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/raytracing/DxrRootSignature.h"
-#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/shaders/ShaderCache.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
+#include "engine/raytracing/pipeline/DxrShaderCache.h"
 
 #include <d3d12.h>
 #include <imgui.h>

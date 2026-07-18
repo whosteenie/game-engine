@@ -5,7 +5,7 @@
 //   3. Unbiasedness / expected-value parity: the multi-candidate RIS estimator and the plain-NEE
 //      estimator both converge to the same analytic direct-light integral (the P2 gate).
 
-#include "engine/raytracing/RestirDi.h"
+#include "engine/raytracing/restir/RestirDi.h"
 
 #include <array>
 #include <cmath>

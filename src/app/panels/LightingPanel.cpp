@@ -5,13 +5,13 @@
 #include "app/editor/EditorSettings.h"
 #include "app/panels/lighting/LightingPanelContext.h"
 #include "app/panels/lighting/LightingPanelSections.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
 #include "engine/camera/Camera.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 

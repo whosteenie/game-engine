@@ -1,6 +1,6 @@
 #include "primitives/Capsule.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "primitives/PrimitiveMeshUtils.h"
 
 #include <glm/gtc/constants.hpp>

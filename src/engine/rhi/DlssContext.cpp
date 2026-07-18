@@ -1,12 +1,12 @@
 #include "engine/rhi/DlssContext.h"
 
-#include "engine/platform/BackgroundWork.h"
+#include "engine/platform/system/BackgroundWork.h"
 
-#include "engine/platform/FrameDiagnostics.h"
+#include "engine/platform/diagnostics/FrameDiagnostics.h"
 
 #include "engine/rhi/GfxContext.h"
 
-#include "engine/platform/EngineLog.h"
+#include "engine/platform/diagnostics/EngineLog.h"
 
 #include <algorithm>
 #include <cmath>

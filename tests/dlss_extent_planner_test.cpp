@@ -1,5 +1,5 @@
 #include "engine/rhi/DlssContext.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <array>
 #include <cstdint>

@@ -5,12 +5,12 @@
 #include "app/editor/TuningSectionState.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelWidgets.h"
-#include "app/scene/RenderDiagnostics.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/rendering/RenderDiagnostics.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "engine/camera/Camera.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 

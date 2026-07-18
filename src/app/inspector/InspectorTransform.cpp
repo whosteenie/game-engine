@@ -2,7 +2,7 @@
 
 #include "app/editor/EditorWidgets.h"
 #include "app/inspector/InspectorMultiEdit.h"
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/Transform.h"
 

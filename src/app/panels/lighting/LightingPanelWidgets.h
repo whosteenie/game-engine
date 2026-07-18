@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/core/RenderDebug.h"
 
 class SceneRenderer;
 class ScreenSpaceEffects;

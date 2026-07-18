@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/resources/Framebuffer.h"
 #include "engine/rendering/post/PostProcessTarget.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
 

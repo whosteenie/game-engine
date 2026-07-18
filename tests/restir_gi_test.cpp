@@ -1,4 +1,4 @@
-#include "engine/raytracing/RestirGi.h"
+#include "engine/raytracing/restir/RestirGi.h"
 
 #include <cmath>
 #include <iostream>

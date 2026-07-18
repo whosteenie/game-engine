@@ -1,4 +1,4 @@
-#include "engine/raytracing/ShaderBindingTable.h"
+#include "engine/raytracing/pipeline/ShaderBindingTable.h"
 
 #include <d3d12.h>
 

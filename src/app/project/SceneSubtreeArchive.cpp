@@ -1,10 +1,10 @@
 #include "app/project/SceneSubtreeArchive.h"
 
-#include "app/scene/Scene.h"
-#include "app/scene/SceneMeshLibrary.h"
-#include "app/scene/SceneObjectStore.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/document/SceneMeshLibrary.h"
+#include "app/scene/document/SceneObjectStore.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectComponents.h"
 

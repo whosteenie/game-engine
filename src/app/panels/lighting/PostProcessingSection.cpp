@@ -4,10 +4,10 @@
 #include "app/editor/RendererSettingUi.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/panels/lighting/LightingPanelUi.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 

@@ -1,6 +1,6 @@
 #include "engine/scene/ScenePicker.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
 

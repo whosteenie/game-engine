@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/platform/SystemResources.h"
+#include "engine/platform/system/SystemResources.h"
 
 #include <cstdint>
 #include <string>

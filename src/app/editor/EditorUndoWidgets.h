@@ -6,7 +6,7 @@
 // Apply callbacks receive the current widget value after ImGui has updated it.
 // Do not capture locals by value in call-site lambdas — use the callback parameter.
 
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "app/undo/UndoCommand.h"
 #include "app/editor/SettingRegistry.h"
 #include "app/editor/TuningSectionState.h"

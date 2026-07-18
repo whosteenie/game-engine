@@ -1,4 +1,4 @@
-#include "engine/raytracing/DxrPathTracerDispatch.h"
+#include "engine/raytracing/dispatch/DxrPathTracerDispatch.h"
 
 namespace
 {

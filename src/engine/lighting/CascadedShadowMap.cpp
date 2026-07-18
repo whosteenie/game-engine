@@ -2,7 +2,7 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/lighting/ShadowMapMath.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <D3D12MemAlloc.h>

@@ -8,7 +8,7 @@
 #include "engine/components/ColliderComponent.h"
 #include "engine/scene/InspectorComponentOrder.h"
 #include "engine/components/LightComponent.h"
-#include "engine/rendering/Material.h"
+#include "engine/rendering/resources/Material.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneObjectId.h"
 #include "engine/scene/Transform.h"

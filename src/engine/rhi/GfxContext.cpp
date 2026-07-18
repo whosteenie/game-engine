@@ -2,13 +2,13 @@
 
 #include "engine/rhi/HresultFormat.h"
 
-#include "engine/platform/CrashHandler.h"
-#include "engine/platform/FrameDiagnostics.h"
-#include "engine/platform/EngineDiagnostics.h"
-#include "engine/platform/EngineLog.h"
+#include "engine/platform/system/CrashHandler.h"
+#include "engine/platform/diagnostics/FrameDiagnostics.h"
+#include "engine/platform/diagnostics/EngineDiagnostics.h"
+#include "engine/platform/diagnostics/EngineLog.h"
 #include "engine/rhi/DlssContext.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/core/DxrCapabilities.h"
+#include "engine/rendering/resources/Framebuffer.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
 

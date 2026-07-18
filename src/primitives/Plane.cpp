@@ -1,6 +1,6 @@
 #include "primitives/Plane.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "primitives/PrimitiveMeshUtils.h"
 
 #include <memory>

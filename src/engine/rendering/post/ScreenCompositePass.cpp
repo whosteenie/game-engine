@@ -4,10 +4,10 @@
 #include "engine/lighting/DirectionalShadowSettings.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
-#include "engine/platform/SceneRenderTrace.h"
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/Shader.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/shaders/Shader.h"
 
 namespace
 {

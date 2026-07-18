@@ -1,5 +1,5 @@
 #include "engine/camera/Camera.h"
-#include "engine/platform/Input.h"
+#include "engine/platform/input/Input.h"
 
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>

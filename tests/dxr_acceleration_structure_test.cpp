@@ -1,4 +1,4 @@
-#include "engine/raytracing/DxrInstanceTransform.h"
+#include "engine/raytracing/acceleration/DxrInstanceTransform.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>

@@ -3,8 +3,8 @@
 #include "app/core/PlayModeController.h"
 #include "app/editor/EditorIcons.h"
 #include "app/project/ProjectSession.h"
-#include "app/scene/Scene.h"
-#include "engine/platform/ImGuiFonts.h"
+#include "app/scene/document/Scene.h"
+#include "engine/platform/ui/ImGuiFonts.h"
 
 #include <imgui.h>
 

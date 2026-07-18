@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/rendering/TextureSamplerSettings.h"
-#include "engine/rendering/DxrRuntimeSnapshot.h"
+#include "engine/rendering/resources/TextureSamplerSettings.h"
+#include "engine/rendering/core/DxrRuntimeSnapshot.h"
 #include "engine/rhi/GpuProfiler.h"
 
 #include <cstdint>

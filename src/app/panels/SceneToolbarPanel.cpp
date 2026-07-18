@@ -1,7 +1,7 @@
 #include "app/panels/SceneToolbarPanel.h"
 
-#include "app/scene/Scene.h"
-#include "app/scene/SceneEditor.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/editing/SceneEditor.h"
 #include "app/undo/UndoCommand.h"
 
 #include <imgui.h>

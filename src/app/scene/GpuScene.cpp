@@ -1,8 +1,8 @@
 #include "app/scene/GpuScene.h"
 
-#include "app/scene/Scene.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/Mesh.h"
+#include "app/scene/document/Scene.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
 

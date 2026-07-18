@@ -2,7 +2,7 @@
 
 #include "app/editor/SettingRegistry.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "app/undo/UndoCommand.h"
 
 #include <functional>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/rendering/MotionVectorFrameState.h"
+#include "engine/rendering/core/MotionVectorFrameState.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessTarget.h"
 

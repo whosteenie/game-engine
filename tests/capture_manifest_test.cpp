@@ -1,4 +1,4 @@
-#include "engine/platform/CaptureManifest.h"
+#include "engine/platform/diagnostics/CaptureManifest.h"
 
 #include <nlohmann/json.hpp>
 

@@ -383,7 +383,7 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/core/PlayModeController.cpp
     src/app/core/PhysicsWorld.cpp
 
-    src/app/scene/SceneComponentCatalog.cpp
+    src/app/scene/document/SceneComponentCatalog.cpp
     src/app/project/SceneProjectIO.cpp
 
     src/app/panels/ProjectFilesPanel.cpp
@@ -403,7 +403,7 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/panels/lighting/RayTracingSection.cpp
     src/app/panels/lighting/DiagnosticsSection.cpp
     src/app/panels/PerformancePanel.cpp
-    src/app/scene/RenderDiagnostics.cpp
+    src/app/scene/rendering/RenderDiagnostics.cpp
 
     src/app/editor/EditorWidgets.cpp
     src/app/editor/OffscreenViewportPanel.cpp
@@ -419,20 +419,20 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/panels/SceneViewportPanel.cpp
     src/app/panels/GameViewportPanel.cpp
 
-    src/app/scene/SceneEditor.cpp
-    src/app/scene/SceneEditingController.cpp
+    src/app/scene/editing/SceneEditor.cpp
+    src/app/scene/editing/SceneEditingController.cpp
     src/app/scene/GpuScene.cpp
-    src/app/scene/Scene.cpp
-    src/app/scene/SceneHierarchyOps.cpp
-    src/app/scene/SceneImportService.cpp
-    src/app/scene/SceneMeshLibrary.cpp
-    src/app/scene/SceneObjectOperations.cpp
-    src/app/scene/SceneObjectStore.cpp
-    src/app/scene/SceneRenderer.cpp
-    src/app/scene/SceneSelectionController.cpp
-    src/app/scene/SceneSpawnService.cpp
-    src/app/scene/SceneSpawnBuilders.cpp
-    src/app/scene/SceneCamera.cpp
+    src/app/scene/document/Scene.cpp
+    src/app/scene/editing/SceneHierarchyOps.cpp
+    src/app/scene/import/SceneImportService.cpp
+    src/app/scene/document/SceneMeshLibrary.cpp
+    src/app/scene/editing/SceneObjectOperations.cpp
+    src/app/scene/document/SceneObjectStore.cpp
+    src/app/scene/rendering/SceneRenderer.cpp
+    src/app/scene/selection/SceneSelectionController.cpp
+    src/app/scene/spawn/SceneSpawnService.cpp
+    src/app/scene/spawn/SceneSpawnBuilders.cpp
+    src/app/scene/editing/SceneCamera.cpp
 )
 
 add_executable(game-engine ${GAME_ENGINE_APP_SOURCES})

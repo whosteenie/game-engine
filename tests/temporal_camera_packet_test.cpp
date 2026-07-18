@@ -1,5 +1,5 @@
-#include "engine/raytracing/DxrPathTracerDispatch.h"
-#include "engine/raytracing/DxrRootSignature.h"
+#include "engine/raytracing/dispatch/DxrPathTracerDispatch.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
 
 #include <cmath>
 #include <cstring>

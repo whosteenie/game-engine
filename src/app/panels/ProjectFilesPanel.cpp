@@ -4,12 +4,12 @@
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/ModelDragDrop.h"
 #include "app/project/ProjectSession.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneImportService.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/import/SceneImportService.h"
 #include "app/undo/UndoCommand.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
-#include "engine/platform/ImGuiFonts.h"
+#include "engine/platform/ui/ImGuiFonts.h"
 
 #include <imgui.h>
 

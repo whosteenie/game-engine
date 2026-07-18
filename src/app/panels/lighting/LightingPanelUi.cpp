@@ -1,10 +1,10 @@
 #include "app/panels/lighting/LightingPanelUi.h"
 
 #include "app/editor/EditorWidgets.h"
-#include "app/scene/SceneRenderer.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 

@@ -1,6 +1,6 @@
 #include "engine/assets/TangentSpace.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 
 #include <mikktspace.h>
 

@@ -1,4 +1,4 @@
-#include "engine/rendering/ReconstructionJitter.h"
+#include "engine/rendering/core/ReconstructionJitter.h"
 
 #include <array>
 #include <cmath>

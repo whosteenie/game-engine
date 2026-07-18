@@ -1,4 +1,4 @@
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/core/DxrSettings.h"
 
 #include <nlohmann/json.hpp>
 

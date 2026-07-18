@@ -1,6 +1,6 @@
 #include "engine/assets/ModelImporter.h"
 
-#include "engine/platform/ProjectLoadBenchmark.h"
+#include "engine/platform/tooling/ProjectLoadBenchmark.h"
 
 // tinygltf must be initialized before headers that pull nlohmann json_fwd (e.g. Material.h).
 #define TINYGLTF_NO_STB_IMAGE
@@ -10,17 +10,17 @@
 #define TINYGLTF_IMPLEMENTATION
 #include <tiny_gltf.h>
 
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/assets/TangentSpace.h"
 #include "engine/assets/ProjectAssets.h"
-#include "engine/rendering/Texture.h"
+#include "engine/rendering/resources/Texture.h"
 #include "engine/assets/TextureCache.h"
-#include "engine/rendering/TextureSamplerSettings.h"
+#include "engine/rendering/resources/TextureSamplerSettings.h"
 #include "primitives/PrimitiveMeshUtils.h"
 
-#include "engine/platform/RenderPathDiagnostics.h"
+#include "engine/platform/diagnostics/RenderPathDiagnostics.h"
 
 #include <stb_image.h>
 

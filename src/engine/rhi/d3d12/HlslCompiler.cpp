@@ -1,7 +1,7 @@
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
-#include "engine/platform/EngineLog.h"
-#include "engine/platform/BackgroundWork.h"
+#include "engine/platform/diagnostics/EngineLog.h"
+#include "engine/platform/system/BackgroundWork.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 
 #include <windows.h>

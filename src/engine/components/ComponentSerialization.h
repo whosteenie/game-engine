@@ -4,7 +4,7 @@
 #include "engine/components/ColliderComponent.h"
 #include "engine/components/LightComponent.h"
 #include "engine/components/RigidBodyComponent.h"
-#include "engine/rendering/Material.h"
+#include "engine/rendering/resources/Material.h"
 
 #include <functional>
 #include <memory>

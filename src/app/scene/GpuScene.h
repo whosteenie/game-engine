@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine/scene/SceneObjectId.h"
-#include "engine/raytracing/DxrGpuResource.h"
+#include "engine/raytracing/core/DxrGpuResource.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <glm/glm.hpp>

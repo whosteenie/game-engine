@@ -1,6 +1,6 @@
 #include "app/inspector/InspectorEditMode.h"
 
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "engine/scene/SceneObject.h"
 
 #include <algorithm>

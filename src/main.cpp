@@ -1,7 +1,7 @@
 #include "app/core/Application.h"
 
-#include "engine/platform/CrashHandler.h"
-#include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/system/CrashHandler.h"
+#include "engine/platform/system/ExceptionMessage.h"
 
 #include <iostream>
 #include <string>

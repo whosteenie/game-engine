@@ -4,12 +4,12 @@
 #include "app/editor/ModelDragDrop.h"
 #include "app/project/ProjectSession.h"
 #include "app/project/SceneSubtreeArchive.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneImportService.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/import/SceneImportService.h"
 #include "app/undo/UndoCommand.h"
 #include "app/undo/UndoStack.h"
 #include "engine/camera/Camera.h"
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/scene/ScenePicker.h"
 
 #include <ImGuizmo.h>

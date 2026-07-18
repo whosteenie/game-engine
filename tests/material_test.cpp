@@ -1,6 +1,6 @@
 #include "engine/components/ComponentSerialization.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Material.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/resources/Material.h"
 
 #include "test_expect.h"
 

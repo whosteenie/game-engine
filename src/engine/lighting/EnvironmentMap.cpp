@@ -2,8 +2,8 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/SkyboxRenderer.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/passes/SkyboxRenderer.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>

@@ -1,10 +1,10 @@
 #include "engine/rendering/post/PathTracerDisplayPass.h"
 
 #include "engine/camera/Camera.h"
-#include "engine/platform/SceneRenderTrace.h"
-#include "engine/platform/FrameDiagnostics.h"
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/Shader.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
+#include "engine/platform/diagnostics/FrameDiagnostics.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <d3d12.h>

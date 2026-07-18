@@ -1,10 +1,10 @@
 #include "engine/gizmos/SelectionRenderer.h"
 
 #include "engine/camera/Camera.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/Mesh.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/resources/Mesh.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <D3D12MemAlloc.h>

@@ -2,9 +2,9 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorWidgets.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
 

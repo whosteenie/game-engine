@@ -1,8 +1,8 @@
 #include "engine/assets/TextureCache.h"
 
-#include "engine/platform/ExceptionMessage.h"
-#include "engine/platform/ProjectLoadBenchmark.h"
-#include "engine/rendering/TextureSamplerSettings.h"
+#include "engine/platform/system/ExceptionMessage.h"
+#include "engine/platform/tooling/ProjectLoadBenchmark.h"
+#include "engine/rendering/resources/TextureSamplerSettings.h"
 
 #include <stdexcept>
 #include <string>

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "app/editor/EditorViewportRect.h"
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 
 class UndoStack;
 

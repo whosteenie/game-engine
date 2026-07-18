@@ -1,4 +1,4 @@
-#include "engine/raytracing/RestirSurfaceValidation.h"
+#include "engine/raytracing/restir/RestirSurfaceValidation.h"
 
 #include <iostream>
 

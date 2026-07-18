@@ -1,6 +1,6 @@
-#include "engine/rendering/PtTemporalHistory.h"
+#include "engine/rendering/core/PtTemporalHistory.h"
 
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/core/DxrSettings.h"
 
 #include <cstdlib>
 #include <iostream>

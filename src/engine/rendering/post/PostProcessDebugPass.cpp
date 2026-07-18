@@ -1,8 +1,8 @@
 #include "engine/rendering/post/PostProcessDebugPass.h"
 
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/shaders/Shader.h"
 
 #include <glm/glm.hpp>
 

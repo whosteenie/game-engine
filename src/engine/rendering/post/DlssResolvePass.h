@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/MotionVectorFrameState.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/MotionVectorFrameState.h"
 #include "engine/rendering/post/BloomTonemapPass.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessTarget.h"

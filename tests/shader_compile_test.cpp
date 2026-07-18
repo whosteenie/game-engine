@@ -1,9 +1,9 @@
 #include "test_expect.h"
 
 #ifdef _WIN32
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrRuntimeSnapshot.h"
-#include "engine/raytracing/DxrPathTracerDispatch.h"
+#include "engine/rendering/core/DxrCapabilities.h"
+#include "engine/rendering/core/DxrRuntimeSnapshot.h"
+#include "engine/raytracing/dispatch/DxrPathTracerDispatch.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
 
 #include <fstream>

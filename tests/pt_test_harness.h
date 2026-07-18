@@ -1,14 +1,14 @@
 #pragma once
 
 #include "engine/camera/Camera.h"
-#include "engine/raytracing/Blas.h"
-#include "engine/raytracing/DxrAccelerationStructures.h"
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrGpuResource.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/DxrRootSignature.h"
-#include "engine/raytracing/ShaderBindingTable.h"
-#include "engine/raytracing/Tlas.h"
+#include "engine/raytracing/acceleration/Blas.h"
+#include "engine/raytracing/acceleration/DxrAccelerationStructures.h"
+#include "engine/raytracing/dispatch/DxrDispatchContext.h"
+#include "engine/raytracing/core/DxrGpuResource.h"
+#include "engine/raytracing/pipeline/DxrPipeline.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
+#include "engine/raytracing/pipeline/ShaderBindingTable.h"
+#include "engine/raytracing/acceleration/Tlas.h"
 
 #include <glm/glm.hpp>
 

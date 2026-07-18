@@ -1,4 +1,4 @@
-#include "engine/rendering/HistoryCompatibility.h"
+#include "engine/rendering/core/HistoryCompatibility.h"
 
 #include <cstdint>
 #include <iostream>

@@ -1,4 +1,4 @@
-#include "engine/raytracing/RestirTypes.h"
+#include "engine/raytracing/restir/RestirTypes.h"
 
 #include <cstddef>
 #include <iostream>

@@ -1,10 +1,10 @@
 #include "pt_test_harness.h"
 
 #include "engine/lighting/IBL.h"
-#include "engine/raytracing/DxrContext.h"
-#include "engine/raytracing/DxrInstanceTransform.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rendering/Mesh.h"
+#include "engine/raytracing/core/DxrContext.h"
+#include "engine/raytracing/acceleration/DxrInstanceTransform.h"
+#include "engine/raytracing/core/DxrTrace.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/rhi/GfxContext.h"
 
 #include "primitives/Cube.h"

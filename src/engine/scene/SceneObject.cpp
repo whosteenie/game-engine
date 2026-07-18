@@ -1,7 +1,7 @@
 #include "engine/scene/SceneObject.h"
 
 #include "engine/scene/InspectorComponentOrder.h"
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 
 #include <array>
 #include <limits>

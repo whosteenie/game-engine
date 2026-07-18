@@ -1,6 +1,6 @@
 #include "engine/scene/SceneObjectComponents.h"
 
-#include "engine/rendering/Material.h"
+#include "engine/rendering/resources/Material.h"
 #include "engine/scene/SceneObject.h"
 
 SceneObjectComponentSnapshot CaptureSceneObjectComponents(const SceneObject& source)

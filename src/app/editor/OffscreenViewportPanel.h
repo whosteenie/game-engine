@@ -3,7 +3,7 @@
 #include "app/editor/EditorViewportRect.h"
 #include "app/editor/ViewportResizeStabilizer.h"
 
-#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/resources/Framebuffer.h"
 
 #include <imgui.h>
 

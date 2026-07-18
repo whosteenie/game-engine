@@ -1,14 +1,14 @@
 #include "app/core/AutomatedBenchmarkCapture.h"
 
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 
 #include "engine/camera/Camera.h"
-#include "engine/platform/CaptureManifest.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/platform/diagnostics/CaptureManifest.h"
+#include "engine/platform/diagnostics/EngineLog.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <algorithm>
