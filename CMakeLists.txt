@@ -432,7 +432,13 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/scene/document/SceneMeshLibrary.cpp
     src/app/scene/editing/SceneObjectOperations.cpp
     src/app/scene/document/SceneObjectStore.cpp
-    src/app/scene/rendering/SceneRenderer.cpp
+    src/app/scene/rendering/renderer/Dispatch.cpp
+    src/app/scene/rendering/renderer/Gizmos.cpp
+    src/app/scene/rendering/renderer/Lighting.cpp
+    src/app/scene/rendering/renderer/Raster.cpp
+    src/app/scene/rendering/renderer/RayTracing.cpp
+    src/app/scene/rendering/renderer/Renderer.cpp
+    src/app/scene/rendering/renderer/Resources.cpp
     src/app/scene/selection/SceneSelectionController.cpp
     src/app/scene/spawn/SceneSpawnService.cpp
     src/app/scene/spawn/SceneSpawnBuilders.cpp
