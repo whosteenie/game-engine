@@ -1,4 +1,4 @@
-#include "app/scene/GpuScene.h"
+#include "app/scene/rendering/GpuSceneBuilder.h"
 
 #include "app/scene/document/Scene.h"
 #include "engine/rendering/resources/Material.h"
@@ -318,13 +318,13 @@ void GpuScene::ReleaseGpuResources()
     m_gpuDiagnostics = {};
 }
 
-void GpuScene::Build(const Scene& scene, const PreviousWorldMap& previousWorldByObjectId)
+void GpuSceneBuilder::Build(GpuScene& gpuScene, const Scene& scene, const GpuScene::PreviousWorldMap& previousWorldByObjectId)
 {
-    Clear();
+    gpuScene.Clear();
 
     const std::vector<SceneObject>& objects = scene.GetObjects();
-    m_instances.reserve(objects.size());
-    m_objectIndexToInstanceId.assign(objects.size(), 0xFFFFFFFFu);
+    gpuScene.m_instances.reserve(objects.size());
+    gpuScene.m_objectIndexToInstanceId.assign(objects.size(), 0xFFFFFFFFu);
 
     std::unordered_set<SceneObjectId> seenEditorObjectIds;
     seenEditorObjectIds.reserve(objects.size());
@@ -340,41 +340,41 @@ void GpuScene::Build(const Scene& scene, const PreviousWorldMap& previousWorldBy
         Mesh* mesh = object.GetMesh();
         if (mesh == nullptr || !object.HasMaterial())
         {
-            ++m_diagnostics.invalidRenderableCount;
-            m_diagnostics.valid = false;
+            ++gpuScene.m_diagnostics.invalidRenderableCount;
+            gpuScene.m_diagnostics.valid = false;
             continue;
         }
 
         const SceneObjectId editorObjectId = object.GetId();
         if (editorObjectId == kInvalidSceneObjectId)
         {
-            ++m_diagnostics.invalidEditorObjectIdCount;
-            m_diagnostics.valid = false;
+            ++gpuScene.m_diagnostics.invalidEditorObjectIdCount;
+            gpuScene.m_diagnostics.valid = false;
         }
         else if (!seenEditorObjectIds.insert(editorObjectId).second)
         {
-            ++m_diagnostics.duplicateEditorObjectIdCount;
-            m_diagnostics.valid = false;
+            ++gpuScene.m_diagnostics.duplicateEditorObjectIdCount;
+            gpuScene.m_diagnostics.valid = false;
         }
 
         const Material& material = object.GetMaterial();
         GpuSceneInstanceRecord instance{};
-        instance.instanceId = static_cast<std::uint32_t>(m_instances.size());
+        instance.instanceId = static_cast<std::uint32_t>(gpuScene.m_instances.size());
         instance.objectIndex = static_cast<std::uint32_t>(objectIndex);
         instance.editorObjectId = editorObjectId;
-        instance.meshId = GetOrCreateMeshAssetId(*mesh);
-        instance.materialId = GetOrCreateMaterialId(material);
+        instance.meshId = gpuScene.GetOrCreateMeshAssetId(*mesh);
+        instance.materialId = gpuScene.GetOrCreateMaterialId(material);
         instance.world = scene.GetWorldMatrix(static_cast<int>(objectIndex));
         const auto previousWorld = previousWorldByObjectId.find(editorObjectId);
         if (previousWorld != previousWorldByObjectId.end())
         {
             instance.prevWorld = previousWorld->second;
-            ++m_diagnostics.previousWorldResolvedCount;
+            ++gpuScene.m_diagnostics.previousWorldResolvedCount;
         }
         else
         {
             instance.prevWorld = instance.world;
-            ++m_diagnostics.previousWorldInitializedCount;
+            ++gpuScene.m_diagnostics.previousWorldInitializedCount;
         }
         if (object.CastsShadow())
         {
@@ -389,9 +389,9 @@ void GpuScene::Build(const Scene& scene, const PreviousWorldMap& previousWorldBy
             instance.flags |= GpuSceneInstanceFlags::DoubleSided;
         }
 
-        m_objectIndexToInstanceId[objectIndex] = instance.instanceId;
-        m_editorObjectIdToInstanceIds[editorObjectId].push_back(instance.instanceId);
-        m_instances.push_back(instance);
+        gpuScene.m_objectIndexToInstanceId[objectIndex] = instance.instanceId;
+        gpuScene.m_editorObjectIdToInstanceIds[editorObjectId].push_back(instance.instanceId);
+        gpuScene.m_instances.push_back(instance);
     }
 }
 
@@ -514,7 +514,7 @@ GpuScenePickResult GpuScene::ResolvePickedInstanceId(const std::uint32_t instanc
     return result;
 }
 
-std::uint32_t GpuScene::CountSelectedRenderInstances(const Scene& scene) const
+std::uint32_t CountSelectedRenderInstances(const GpuScene& gpuScene, const Scene& scene)
 {
     std::unordered_set<int> selectedObjectIndices;
     for (const int selectedIndex : scene.GetSelection().indices)
@@ -525,7 +525,7 @@ std::uint32_t GpuScene::CountSelectedRenderInstances(const Scene& scene) const
     std::uint32_t selectedInstanceCount = 0;
     for (const int objectIndex : selectedObjectIndices)
     {
-        if (objectIndex >= 0 && FindInstanceForObjectIndex(static_cast<std::uint32_t>(objectIndex)) != 0xFFFFFFFFu)
+        if (objectIndex >= 0 && gpuScene.FindInstanceForObjectIndex(static_cast<std::uint32_t>(objectIndex)) != 0xFFFFFFFFu)
         {
             ++selectedInstanceCount;
         }
@@ -534,7 +534,7 @@ std::uint32_t GpuScene::CountSelectedRenderInstances(const Scene& scene) const
     return selectedInstanceCount;
 }
 
-const GpuSceneInstanceRecord* GpuScene::FindPrimarySelectionInstance(const Scene& scene) const
+const GpuSceneInstanceRecord* FindPrimarySelectionInstance(const GpuScene& gpuScene, const Scene& scene)
 {
     const int primaryRenderableIndex = FindFirstRenderableSelectionIndex(scene, scene.GetPrimarySelection());
     if (primaryRenderableIndex < 0)
@@ -542,8 +542,8 @@ const GpuSceneInstanceRecord* GpuScene::FindPrimarySelectionInstance(const Scene
         return nullptr;
     }
 
-    const std::uint32_t instanceId = FindInstanceForObjectIndex(static_cast<std::uint32_t>(primaryRenderableIndex));
-    return FindInstance(instanceId);
+    const std::uint32_t instanceId = gpuScene.FindInstanceForObjectIndex(static_cast<std::uint32_t>(primaryRenderableIndex));
+    return gpuScene.FindInstance(instanceId);
 }
 
 bool GpuScene::EnsureGpuTableCapacity(

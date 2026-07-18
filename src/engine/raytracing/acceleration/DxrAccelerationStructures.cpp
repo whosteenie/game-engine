@@ -1,7 +1,6 @@
 #include "engine/raytracing/acceleration/DxrAccelerationStructures.h"
 
-#include "app/scene/GpuScene.h"
-#include "app/scene/document/Scene.h"
+#include "engine/rendering/scene/GpuScene.h"
 #include "engine/platform/diagnostics/SceneRenderTrace.h"
 #include "engine/raytracing/acceleration/Blas.h"
 #include "engine/raytracing/core/DxrContext.h"
@@ -470,12 +469,10 @@ bool DxrAccelerationStructures::EnsureScratchBuffer(
 }
 
 bool DxrAccelerationStructures::EnsureGeometryBuffers(
-    const Scene& scene,
     const GpuScene& gpuScene,
     ID3D12GraphicsCommandList* commandList,
     std::string& outError)
 {
-    (void)scene;
     outError.clear();
     std::vector<DxrRenderableInstance> renderInstances = BuildDxrRenderableInstances(gpuScene);
     const bool emptyScene = renderInstances.empty();
@@ -1003,11 +1000,9 @@ namespace
 } // namespace
 
 bool DxrAccelerationStructures::UploadEmissiveLights(
-    const Scene& scene,
     const GpuScene& gpuScene,
     void* commandList)
 {
-    (void)scene;
     auto* d3dCommandList = static_cast<ID3D12GraphicsCommandList*>(commandList);
     if (d3dCommandList == nullptr || !GfxContext::Get().IsInitialized())
     {
@@ -1229,7 +1224,6 @@ bool DxrAccelerationStructures::UploadEmissiveLights(
 }
 
 void DxrAccelerationStructures::EnsureScene(
-    const Scene& scene,
     const GpuScene& gpuScene,
     const bool dxrEnabled,
     void* commandList)
@@ -1518,7 +1512,6 @@ void DxrAccelerationStructures::EnsureScene(
         std::chrono::duration<double, std::milli>(buildEnd - buildStart).count();
 
     if (!EnsureGeometryBuffers(
-            scene,
             gpuScene,
             static_cast<ID3D12GraphicsCommandList*>(commandList4),
             error))

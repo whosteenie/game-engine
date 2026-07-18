@@ -6,6 +6,8 @@
 
 #include "app/scene/rendering/SceneRenderer.h"
 
+#include "app/scene/rendering/GpuSceneBuilder.h"
+
 #include "app/project/SceneProjectIODetail.h"
 
 #include <imgui.h>
@@ -1126,7 +1128,6 @@ void SceneRenderer::RecordDxrPass(
             "renderer.first_scene.dxr_acceleration_structures");
         const GfxContext::GpuTimerScope gpuScope("DXR acceleration structures");
         m_dxrAccelerationStructures->EnsureScene(
-            scene,
             m_gpuScene,
             true,
             GfxContext::Get().GetCommandList());
@@ -2071,7 +2072,6 @@ void SceneRenderer::RenderPostProcessPass(
                 GfxContext::Get().GetCommandList());
         }
         m_dxrAccelerationStructures->UploadEmissiveLights(
-            scene,
             m_gpuScene,
             GfxContext::Get().GetCommandList());
         m_renderFrameDiagnostics.pathTracerFrameDataCpuMs =
@@ -2394,7 +2394,7 @@ void SceneRenderer::Render(
     const auto gpuSceneBuildStart = std::chrono::steady_clock::now();
     {
         ProjectLoadBenchmark::ScopedPhase gpuSceneBuildPhase("renderer.first_scene.gpu_scene_build");
-        m_gpuScene.Build(scene, *m_activePreviousWorldByObjectId);
+        GpuSceneBuilder::Build(m_gpuScene, scene, *m_activePreviousWorldByObjectId);
     }
     m_renderFrameDiagnostics.gpuSceneBuildCpuMs =
         std::chrono::duration<double, std::milli>(

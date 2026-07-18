@@ -13,7 +13,7 @@
 
 class Material;
 class Mesh;
-class Scene;
+class GpuSceneBuilder;
 
 struct GpuSceneInstanceFlags
 {
@@ -113,7 +113,6 @@ public:
 
     ~GpuScene();
 
-    void Build(const Scene& scene, const PreviousWorldMap& previousWorldByObjectId);
     void Clear();
     bool UploadGpuTables(void* commandList);
     void ReleaseGpuResources();
@@ -142,10 +141,9 @@ public:
     // instanceId/objectIndex/editorObjectId even though they share meshId.
     GpuScenePickResult ResolvePickedInstanceId(std::uint32_t instanceId) const;
 
-    std::uint32_t CountSelectedRenderInstances(const Scene& scene) const;
-    const GpuSceneInstanceRecord* FindPrimarySelectionInstance(const Scene& scene) const;
-
 private:
+    friend class GpuSceneBuilder;
+
     std::uint32_t GetOrCreateMeshAssetId(Mesh& mesh);
     std::uint32_t GetOrCreateMaterialId(const Material& material);
     bool EnsureGpuTableCapacity(

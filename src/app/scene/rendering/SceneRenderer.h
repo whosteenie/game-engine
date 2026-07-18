@@ -1,6 +1,6 @@
 #pragma once
 
-#include "app/scene/GpuScene.h"
+#include "engine/rendering/scene/GpuScene.h"
 #include "app/scene/document/Scene.h"
 #include "app/scene/rendering/RenderViewport.h"
 #include "engine/lighting/DirectionalShadowSettings.h"

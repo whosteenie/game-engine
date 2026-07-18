@@ -6,7 +6,8 @@
 #include "app/editor/TuningSectionState.h"
 #include "app/editor/RendererSettingUi.h"
 #include "app/scene/rendering/RenderDiagnostics.h"
-#include "app/scene/GpuScene.h"
+#include "engine/rendering/scene/GpuScene.h"
+#include "app/scene/rendering/GpuSceneBuilder.h"
 #include "app/scene/document/Scene.h"
 #include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
@@ -1362,7 +1363,7 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                             else
                             {
                                 const GpuSceneInstanceRecord* selectedInstance =
-                                    renderer.GetGpuScene().FindPrimarySelectionInstance(scene);
+                                    FindPrimarySelectionInstance(renderer.GetGpuScene(), scene);
                                 if (selectedInstance == nullptr)
                                 {
                                     diagnosticBatch.status =

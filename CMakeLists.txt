@@ -421,7 +421,7 @@ set(GAME_ENGINE_APP_SOURCES
 
     src/app/scene/editing/SceneEditor.cpp
     src/app/scene/editing/SceneEditingController.cpp
-    src/app/scene/GpuScene.cpp
+    src/app/scene/rendering/GpuSceneBuilder.cpp
     src/app/scene/document/Scene.cpp
     src/app/scene/editing/SceneHierarchyOps.cpp
     src/app/scene/import/SceneImportService.cpp
