@@ -44,4 +44,11 @@ void RunPtTemporalHistoryTests(int& failures)
         fingerprintA != ComputePtSettingsFingerprint(settingsD),
         "PtSettingsFingerprint changes when deterministic optical split changes",
         failures);
+
+    DxrSettings settingsE{};
+    settingsE.SetPtOpticalMotionReplayEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsE),
+        "PtSettingsFingerprint changes when optical motion replay changes",
+        failures);
 }

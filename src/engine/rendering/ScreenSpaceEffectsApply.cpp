@@ -316,6 +316,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.rrPreset = m_rrPreset;
     dlssInputs.tonemapMode = static_cast<int>(m_tonemapMode);
     dlssInputs.dlssHistoryValid = m_dlssHistoryValid;
+    dlssInputs.opticalTransmissionHistoryValid = m_dlssOpticalTransmissionHistoryValid;
     dlssInputs.forceDlssResetEveryFrame = m_forceDlssResetEveryFrame;
     dlssInputs.useDilatedDlssMotionVectors = m_useDilatedDlssMotionVectors;
     dlssInputs.reconstructDlssCameraMotion = m_reconstructDlssCameraMotion;
@@ -330,14 +331,22 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.dlssBloomHistoryValid = m_dlssBloomHistoryValid;
     dlssInputs.dlssBloomTemporalWarmupFrames = m_dlssBloomTemporalWarmupFrames;
     dlssInputs.rayReconstructionActive = IsRayReconstructionActive();
+    dlssInputs.independentOpticalRrLayers = m_ptIndependentOpticalRrLayers;
     dlssInputs.dlssOutputTarget = const_cast<InternalTarget*>(&m_dlssOutputTarget);
+    dlssInputs.dlssOpticalTransmissionOutputTarget = const_cast<InternalTarget*>(&m_dlssOpticalTransmissionOutputTarget);
+    dlssInputs.dlssOpticalCompositeTarget = const_cast<InternalTarget*>(&m_dlssOpticalCompositeTarget);
+    dlssInputs.ptOpticalReflectionInputTarget = const_cast<InternalTarget*>(&m_ptOpticalReflectionInputTarget);
     dlssInputs.ptDlssMotionTarget = const_cast<InternalTarget*>(&m_ptDlssMotionTarget);
     dlssInputs.dlssDilatedMotionTarget = const_cast<InternalTarget*>(&m_dlssDilatedMotionTarget);
+    dlssInputs.dlssOpticalTransmissionMotionTarget = const_cast<InternalTarget*>(&m_dlssOpticalTransmissionMotionTarget);
     dlssInputs.rrDiffuseAlbedoTarget = const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget);
     dlssInputs.rrSpecularAlbedoTarget = const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget);
     dlssInputs.rrNormalRoughnessTarget = const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget);
     dlssInputs.rrSpecularHitDistanceTarget =
         const_cast<InternalTarget*>(&m_rrSpecularHitDistanceTarget);
+    dlssInputs.rrOpticalTransmissionDiffuseAlbedoTarget = const_cast<InternalTarget*>(&m_rrOpticalTransmissionDiffuseAlbedoTarget);
+    dlssInputs.rrOpticalTransmissionSpecularAlbedoTarget = const_cast<InternalTarget*>(&m_rrOpticalTransmissionSpecularAlbedoTarget);
+    dlssInputs.rrOpticalTransmissionNormalRoughnessTarget = const_cast<InternalTarget*>(&m_rrOpticalTransmissionNormalRoughnessTarget);
     dlssInputs.dlssBloomExtractTarget = const_cast<InternalTarget*>(&m_dlssBloomExtractTarget);
     dlssInputs.dlssBloomBlurTarget = const_cast<InternalTarget*>(&m_dlssBloomBlurTarget);
     dlssInputs.dlssBloomBlur2Target = const_cast<InternalTarget*>(&m_dlssBloomBlur2Target);
@@ -348,6 +357,14 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.bloomTemporalShader = m_bloomTemporalShader.get();
     dlssInputs.tonemapShader = m_tonemapShader.get();
     dlssInputs.dlssMotionDilateShader = m_dlssMotionDilateShader.get();
+    dlssInputs.ptOpticalLayersShader = m_ptOpticalLayersShader.get();
+    dlssInputs.ptOpticalTransmissionDlssDepthTarget = const_cast<InternalDepthTarget*>(&m_ptOpticalTransmissionDlssDepthTarget);
+    dlssInputs.pathTracerOpticalTransmissionOutputResource = m_pathTracerOpticalTransmissionOutputResource;
+    dlssInputs.pathTracerOpticalTransmissionOutputResourceState = m_pathTracerOpticalTransmissionOutputResourceState;
+    dlssInputs.pathTracerOpticalTransmissionOutputSrv = m_pathTracerOpticalTransmissionOutputSrv;
+    dlssInputs.pathTracerOpticalTransmissionMotionResource = m_pathTracerOpticalTransmissionMotionResource;
+    dlssInputs.pathTracerOpticalTransmissionMotionResourceState = m_pathTracerOpticalTransmissionMotionResourceState;
+    dlssInputs.pathTracerOpticalTransmissionMotionSrv = m_pathTracerOpticalTransmissionMotionSrv;
     dlssInputs.fallbackTonemapInputs.hdrColorSrv = state.hdrColorSrv;
     dlssInputs.fallbackTonemapInputs.bloomSrv = state.bloomSrv;
     dlssInputs.fallbackTonemapInputs.texelSize = state.texelSize;
@@ -367,6 +384,11 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
         [this](const std::uintptr_t motionSrv)
         {
             return GenerateSupportedDlssMotion(motionSrv);
+        };
+    dlssInputs.generateSupportedOpticalTransmissionDlssMotion =
+        [this](const std::uintptr_t motionSrv)
+        {
+            return GenerateSupportedOpticalTransmissionDlssMotion(motionSrv);
         };
     dlssInputs.generateZeroDlssMotion = [this]() { return GenerateZeroDlssMotion(); };
     // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to
@@ -864,6 +886,8 @@ void ScreenSpaceEffects::RunApplyPresentationStage(ApplyFrameState& state) const
                 dlssOutputs.pathTracerOutputResourceState;
         }
         const_cast<ScreenSpaceEffects*>(this)->m_dlssHistoryValid = dlssOutputs.dlssHistoryValid;
+        const_cast<ScreenSpaceEffects*>(this)->m_dlssOpticalTransmissionHistoryValid =
+            dlssOutputs.opticalTransmissionHistoryValid;
         const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomHistoryValid = dlssOutputs.dlssBloomHistoryValid;
         const_cast<ScreenSpaceEffects*>(this)->m_dlssBloomTemporalWarmupFrames =
             dlssOutputs.dlssBloomTemporalWarmupFrames;

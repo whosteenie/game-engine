@@ -80,6 +80,22 @@ public:
         m_ptDeterministicOpticalSplit = enabled;
     }
 
+    // Reconstruct the owned primary-transmission signal with a second RR evaluation. Disabling
+    // this is a quality/performance comparison: the full PT signal uses the primary RR history.
+    bool IsPtIndependentOpticalRrLayersEnabled() const { return m_ptIndependentOpticalRrLayers; }
+    void SetPtIndependentOpticalRrLayersEnabled(const bool enabled)
+    {
+        m_ptIndependentOpticalRrLayers = enabled;
+    }
+
+    // Replays previous-frame camera -> optical surface -> receiver paths to solve virtual motion.
+    // Disabling this retains the current-frame receiver guides but uses their cheaper direct motion.
+    bool IsPtOpticalMotionReplayEnabled() const { return m_ptOpticalMotionReplay; }
+    void SetPtOpticalMotionReplayEnabled(const bool enabled)
+    {
+        m_ptOpticalMotionReplay = enabled;
+    }
+
     // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr/pt/crevice-darkening.md). Reference ignores.
     float GetPtAmbientStrength() const { return m_ptAmbientStrength; }
     void SetPtAmbientStrength(const float strength);
@@ -217,6 +233,8 @@ private:
     bool m_ptRussianRoulette = true;
     bool m_ptFireflyClamp = true;
     bool m_ptDeterministicOpticalSplit = false;
+    bool m_ptIndependentOpticalRrLayers = true;
+    bool m_ptOpticalMotionReplay = false;
     float m_ptAmbientStrength = 1.0f;
     int m_ptAmbientAoRayCount = 0;
     int m_ptRrBundleMode = 0;

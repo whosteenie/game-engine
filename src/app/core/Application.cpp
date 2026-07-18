@@ -846,6 +846,7 @@ bool Application::RunS2p2ExtentQueryMatrixIfRequested()
 void Application::Run()
 {
     m_automatedBenchmarkCapture = AutomatedBenchmarkCapture::CreateFromEnvironment();
+    m_automatedOpticalOrbitCapture = AutomatedOpticalOrbitCapture::CreateFromEnvironment();
     ProjectLoadBenchmark::StartFromEnvironment();
     const bool s2p5Matrix = std::getenv("GAME_ENGINE_S2P5_MODE_MATRIX") != nullptr;
     m_automationDualViewportLayout =
@@ -1270,6 +1271,17 @@ void Application::Run()
             }
         }
 
+        const bool automatedSceneReady = m_projectSession->HasActiveProject()
+            && !m_projectChooser->IsBlockingEditor()
+            && m_scene->GetRenderer().IsGpuResourcesReady()
+            && !m_projectChooser->IsPresentingProjectLoad()
+            && (!autoReopenOnce || autoReopenState == 3);
+        if (m_automatedOpticalOrbitCapture != nullptr)
+        {
+            m_automatedOpticalOrbitCapture->PrepareFrame(
+                automatedSceneReady, *m_scene, *m_camera);
+        }
+
         try
         {
             const auto updateStart = std::chrono::steady_clock::now();
@@ -1290,13 +1302,8 @@ void Application::Run()
             m_performancePanel->SetApplicationFrameDiagnostics(frameDiagnostics);
             if (m_automatedBenchmarkCapture != nullptr)
             {
-                const bool sceneReady = m_projectSession->HasActiveProject()
-                    && !m_projectChooser->IsBlockingEditor()
-                    && m_scene->GetRenderer().IsGpuResourcesReady()
-                    && !m_projectChooser->IsPresentingProjectLoad()
-                    && (!autoReopenOnce || autoReopenState == 3);
                 if (m_automatedBenchmarkCapture->ObserveFrame(
-                        sceneReady,
+                        automatedSceneReady,
                         GfxContext::Get().GetGpuTimings(),
                         frameDiagnostics,
                         m_projectSession->GetProjectFilePath(),
@@ -1308,6 +1315,11 @@ void Application::Run()
                 {
                     RequestForcedClose();
                 }
+            }
+            if (m_automatedOpticalOrbitCapture != nullptr
+                && m_automatedOpticalOrbitCapture->ObserveFrame())
+            {
+                RequestForcedClose();
             }
             suppressedRepeatedFrameErrors = 0;
         }

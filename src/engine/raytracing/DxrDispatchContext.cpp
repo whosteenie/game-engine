@@ -137,6 +137,12 @@ void DxrDispatchContext::Release()
     RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDiffuseAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionSpecularAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionNormalRoughnessTexture);
     RetireOrDestroyReflectionTexture(m_ptDirectTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
@@ -756,6 +762,12 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDiffuseAlbedoTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionSpecularAlbedoTexture);
+        RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionNormalRoughnessTexture);
         RetireOrDestroyReflectionTexture(m_ptDirectTexture);
         RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
         RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
@@ -865,6 +877,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     }
 
     if (m_ptDepthTexture.resource != nullptr && m_ptNormalRoughnessTexture.resource != nullptr
+        && m_ptOpticalTransmissionOutputTexture.resource != nullptr
+        && m_ptOpticalTransmissionNormalRoughnessTexture.resource != nullptr
         && m_ptDirectTexture.resource != nullptr
         && m_ptPrevDepthTexture.resource != nullptr
         && m_ptPrevNormalRoughnessTexture.resource != nullptr
@@ -884,6 +898,12 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDiffuseAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionSpecularAlbedoTexture);
+    RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionNormalRoughnessTexture);
     RetireOrDestroyReflectionTexture(m_ptDirectTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
@@ -909,6 +929,12 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptDiffuseAlbedoTexture},
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptSpecularAlbedoTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptNormalRoughnessTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionOutputTexture},
+        {DXGI_FORMAT_R32_FLOAT, &m_ptOpticalTransmissionDepthTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionMotionTexture},
+        {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptOpticalTransmissionDiffuseAlbedoTexture},
+        {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptOpticalTransmissionSpecularAlbedoTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionNormalRoughnessTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptDirectTexture},
         {DXGI_FORMAT_R32_FLOAT, &m_ptPrevDepthTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPrevNormalRoughnessTexture},
@@ -933,6 +959,12 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
             RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDiffuseAlbedoTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionSpecularAlbedoTexture);
+            RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionNormalRoughnessTexture);
             RetireOrDestroyReflectionTexture(m_ptDirectTexture);
             RetireOrDestroyReflectionTexture(m_ptPrevDepthTexture);
             RetireOrDestroyReflectionTexture(m_ptPrevNormalRoughnessTexture);
@@ -2569,6 +2601,12 @@ bool DxrDispatchContext::DispatchPathTracer(
         &m_ptDiffuseAlbedoTexture,
         &m_ptSpecularAlbedoTexture,
         &m_ptNormalRoughnessTexture,
+        &m_ptOpticalTransmissionOutputTexture,
+        &m_ptOpticalTransmissionDepthTexture,
+        &m_ptOpticalTransmissionMotionTexture,
+        &m_ptOpticalTransmissionDiffuseAlbedoTexture,
+        &m_ptOpticalTransmissionSpecularAlbedoTexture,
+        &m_ptOpticalTransmissionNormalRoughnessTexture,
         &m_ptDirectTexture,
         &m_ptRestirSurfacePositionDepthTexture,
         &m_ptRestirSurfaceMaterialTexture,
@@ -2666,14 +2704,16 @@ bool DxrDispatchContext::DispatchPathTracer(
         || m_ptDirectTexture.uavIndex == UINT32_MAX
         || m_ptRestirSurfacePositionDepthTexture.uavIndex == UINT32_MAX
         || m_ptRestirSurfaceMaterialTexture.uavIndex == UINT32_MAX
-        || m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex == UINT32_MAX)
+        || m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex == UINT32_MAX
+        || m_ptOpticalTransmissionOutputTexture.uavIndex == UINT32_MAX
+        || m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex == UINT32_MAX)
     {
         outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
         return false;
     }
 
-    // u0-u6 RR guides, u7 GI reservoir, u8 DI reservoirs, u9 base, u10-u12 P1 surface records.
-    constexpr std::uint32_t kPathTracerUavCount = 13;
+    // u0-u12 established PT outputs; u13-u18 are the independent optical-transmission RR layer.
+    constexpr std::uint32_t kPathTracerUavCount = 19;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -2687,7 +2727,13 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptDirectTexture.uavIndex,
         m_ptRestirSurfacePositionDepthTexture.uavIndex,
         m_ptRestirSurfaceMaterialTexture.uavIndex,
-        m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex};
+        m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex,
+        m_ptOpticalTransmissionOutputTexture.uavIndex,
+        m_ptOpticalTransmissionDepthTexture.uavIndex,
+        m_ptOpticalTransmissionMotionTexture.uavIndex,
+        m_ptOpticalTransmissionDiffuseAlbedoTexture.uavIndex,
+        m_ptOpticalTransmissionSpecularAlbedoTexture.uavIndex,
+        m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};

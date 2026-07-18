@@ -11,6 +11,7 @@
 
 class Camera;
 class DxrSettings;
+class Scene;
 class ScreenSpaceEffects;
 
 // Opt-in machine-readable capture of the existing unsmoothed D3D12 timestamp scopes. It is
@@ -62,4 +63,27 @@ private:
     std::chrono::steady_clock::time_point m_readyTime{};
     std::chrono::steady_clock::time_point m_imageCaptureRequestTime{};
     std::unique_ptr<std::ofstream> m_output;
+};
+
+// Opt-in deterministic camera-orbit image sequence for optical temporal diagnostics. A fresh
+// process owns one debug mode so switching display permutations never contaminates the history
+// being measured. The external PowerShell recipe converts the canonical RGBA8 frames to PNG and
+// combines per-mode manifests.
+class AutomatedOpticalOrbitCapture
+{
+public:
+    static std::unique_ptr<AutomatedOpticalOrbitCapture> CreateFromEnvironment();
+    ~AutomatedOpticalOrbitCapture();
+
+    // Called before Update/Render. Configures the selected diagnostic once, advances the camera on
+    // a fixed rendered-frame orbit, and queues captures without pausing temporal history.
+    void PrepareFrame(bool sceneReady, Scene& scene, Camera& camera);
+    // Called after Render. Drains the asynchronous presented-image readback and returns true only
+    // after the orbit and its final pending capture are complete.
+    bool ObserveFrame();
+
+private:
+    class Impl;
+    explicit AutomatedOpticalOrbitCapture(std::unique_ptr<Impl> impl);
+    std::unique_ptr<Impl> m_impl;
 };

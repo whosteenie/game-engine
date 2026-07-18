@@ -25,6 +25,15 @@ RWTexture2D<float4> g_DirectOutput : register(u9);
 RWTexture2D<float4> g_RestirSurfacePositionDepth : register(u10);
 RWTexture2D<uint4> g_RestirSurfaceMaterial : register(u11);
 RWTexture2D<float4> g_RestirSurfaceAlbedoMetallic : register(u12);
+// Independent smooth-dielectric transmission layer for DLSS Ray Reconstruction. The primary
+// output and u1/u3/u4-u6 remain the ordinary scene plus the reflection lobe; these resources are
+// black/neutral outside supported smooth dielectric primaries.
+RWTexture2D<float4> g_OpticalTransmissionOutput : register(u13);
+RWTexture2D<float> g_OpticalTransmissionDepth : register(u14);
+RWTexture2D<float4> g_OpticalTransmissionMotion : register(u15);
+RWTexture2D<float4> g_OpticalTransmissionDiffuseAlbedo : register(u16);
+RWTexture2D<float4> g_OpticalTransmissionSpecularAlbedo : register(u17);
+RWTexture2D<float4> g_OpticalTransmissionNormalRoughness : register(u18);
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -93,6 +102,16 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define kPtFireflyClampEnabled (g_AoRayCount != 0u)
 #define kPtRussianRouletteEnabled (g_HasGiTrace != 0u)
 #define kPtCenterPrimaryRays (g_RoughnessCutoff > 0.5)
+#define g_PtOpticalStabilityFlagBits uint(round(max(g_PtOpticalStabilityFlags, 0.0)))
+#define kPtOpticalMotionReplayEnabled ((g_PtOpticalStabilityFlagBits & 1u) != 0u)
+#define kPtIndependentOpticalRrEnabled ((g_PtOpticalStabilityFlagBits & 2u) != 0u)
+// The pre-experiment path selected one Fresnel-dominant receiver and used its established inverse
+// motion solve. With both lobe-separation features disabled, preserve that path byte-for-byte in
+// intent; the replay toggle only controls the experimental separated-lobe route.
+#define kPtLegacyOpticalRouting \
+    (!kPtDeterministicOpticalSplitEnabled && !kPtIndependentOpticalRrEnabled)
+#define kPtUseOpticalMotionReplay \
+    (kPtLegacyOpticalRouting || kPtOpticalMotionReplayEnabled)
 #define g_PtAmbientStrength g_GiStrength
 // Host packs a 0..8 integer as a float (DxrPathTracerDispatch clamps it). saturate() would collapse
 // every non-zero setting to a single ray — clamp to the real [0,8] range instead.
@@ -117,7 +136,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 55.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 64.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -793,18 +812,25 @@ float2 SolvePreviousOpticalReceiverMotion(
 float2 ComputeTransmissionVirtualMotion(
     uint2 pixel,
     TransmissionGuideHit currGuide,
-    float2 primarySurfaceMotion)
+    float2 primarySurfaceMotion,
+    out bool replayValid)
 {
+    replayValid = false;
     if (!kPtMotionHistoryValid)
     {
+        replayValid = currGuide.valid;
         return currGuide.valid ? currGuide.motion : 0.0.xx;
     }
     if (!currGuide.valid)
     {
         return ComputeSkyAnchorMotion(currGuide.refractDir);
     }
+    if (!kPtUseOpticalMotionReplay)
+    {
+        replayValid = true;
+        return currGuide.motion;
+    }
 
-    bool replayValid;
     return SolvePreviousOpticalReceiverMotion(
         pixel,
         currGuide.backgroundWorldPos,
@@ -812,6 +838,137 @@ float2 ComputeTransmissionVirtualMotion(
         true,
         primarySurfaceMotion,
         replayValid);
+}
+
+struct PreviousReflectionSky
+{
+    bool valid;
+    float3 reflectDir;
+};
+
+PreviousReflectionSky ReplayPreviousReflectionSky(float2 prevNdc)
+{
+    PreviousReflectionSky result;
+    result.valid = false;
+    result.reflectDir = 0.0.xxx;
+
+    const float4 prevFarH = mul(g_PrevInvViewProj, float4(prevNdc, 1.0, 1.0));
+    const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
+    RayDesc prevPrimaryRay;
+    prevPrimaryRay.Origin = g_PrevCameraPos;
+    prevPrimaryRay.Direction = prevRayDir;
+    prevPrimaryRay.TMin = 0.001;
+    prevPrimaryRay.TMax = g_MaxTraceDistance;
+
+    Payload prevPrimary;
+    ResetPayload(prevPrimary);
+    prevPrimary.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+    TraceRay(g_SceneTlas, kPrimaryRayFlags, 0xFF, 0, 0, 0, prevPrimaryRay, prevPrimary);
+    if (prevPrimary.hit == 0u)
+    {
+        return result;
+    }
+
+    const MaterialEntry prevMaterial = LoadMaterialForInstance(prevPrimary.instanceId);
+    const float prevDielectricWeight =
+        DielectricWeight(prevMaterial.transmission, prevMaterial.metallic);
+    if (prevDielectricWeight <= 0.0 && prevMaterial.metallic < 0.5)
+    {
+        return result;
+    }
+
+    const float3 prevPrimaryPos = g_PrevCameraPos + prevRayDir * prevPrimary.hitDistance;
+    const float3 prevGeomNormal = PayloadGeomNormal(prevPrimary);
+    const float prevNdotV = saturate(dot(prevGeomNormal, -prevRayDir));
+    const float prevOriginBias =
+        max(prevPrimary.hitDistance * 0.0015, 0.01) * (1.0 + 2.0 * (1.0 - prevNdotV));
+    const float3 reflectDir = normalize(reflect(prevRayDir, PayloadShadingNormal(prevPrimary)));
+    const ReflectionGuideHit guide =
+        TraceReflectionGuide(prevPrimaryPos, reflectDir, prevOriginBias);
+    if (guide.valid)
+    {
+        return result;
+    }
+
+    result.valid = true;
+    result.reflectDir = reflectDir;
+    return result;
+}
+
+float ReflectionSkyDirectionError(PreviousReflectionSky replay, float3 targetDirection)
+{
+    return replay.valid ? 1.0 - saturate(dot(replay.reflectDir, targetDirection)) : 1.0e30;
+}
+
+float2 SolvePreviousReflectionSkyMotion(
+    uint2 pixel,
+    float3 targetDirection,
+    float2 primarySurfaceMotion,
+    out bool replayValid)
+{
+    const float2 currNdc = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
+    const float2 skySeed = currNdc - ComputeSkyAnchorMotion(targetDirection);
+    const float2 primarySeed = currNdc - primarySurfaceMotion;
+    const PreviousReflectionSky skyReplay = ReplayPreviousReflectionSky(skySeed);
+    const PreviousReflectionSky primaryReplay = ReplayPreviousReflectionSky(primarySeed);
+
+    float2 previousNdc = skySeed;
+    PreviousReflectionSky center = skyReplay;
+    if (ReflectionSkyDirectionError(primaryReplay, targetDirection)
+        < ReflectionSkyDirectionError(skyReplay, targetDirection))
+    {
+        previousNdc = primarySeed;
+        center = primaryReplay;
+    }
+    replayValid = center.valid;
+    if (!replayValid)
+    {
+        return currNdc - skySeed;
+    }
+
+    const float2 probeStep = 3.0 / float2(g_OutputSize);
+    [unroll]
+    for (uint iteration = 0u; iteration < 2u; ++iteration)
+    {
+        const PreviousReflectionSky probeX = ReplayPreviousReflectionSky(
+            previousNdc + float2(probeStep.x, 0.0));
+        const PreviousReflectionSky probeY = ReplayPreviousReflectionSky(
+            previousNdc + float2(0.0, probeStep.y));
+        if (!probeX.valid || !probeY.valid)
+        {
+            break;
+        }
+
+        const float3 dFdx = (probeX.reflectDir - center.reflectDir) / probeStep.x;
+        const float3 dFdy = (probeY.reflectDir - center.reflectDir) / probeStep.y;
+        const float3 residual = center.reflectDir - targetDirection;
+        const float a = dot(dFdx, dFdx);
+        const float b = dot(dFdx, dFdy);
+        const float c = dot(dFdy, dFdy);
+        const float determinant = a * c - b * b;
+        if (determinant <= max((a + c) * (a + c) * 1.0e-8, 1.0e-12))
+        {
+            break;
+        }
+
+        float2 step;
+        step.x = (-c * dot(dFdx, residual) + b * dot(dFdy, residual)) / determinant;
+        step.y = ( b * dot(dFdx, residual) - a * dot(dFdy, residual)) / determinant;
+        const float stepLength = length(step);
+        if (stepLength > 0.25)
+        {
+            step *= 0.25 / stepLength;
+        }
+        previousNdc += step;
+        center = ReplayPreviousReflectionSky(previousNdc);
+        if (!center.valid)
+        {
+            replayValid = false;
+            break;
+        }
+    }
+
+    return currNdc - previousNdc;
 }
 
 float2 ComputeReflectionVirtualMotion(
@@ -823,9 +980,29 @@ float2 ComputeReflectionVirtualMotion(
     replayValid = false;
     if (!currGuide.valid)
     {
-        return 0.0.xx;
+        if (kPtLegacyOpticalRouting)
+        {
+            return 0.0.xx;
+        }
+        if (!kPtMotionHistoryValid)
+        {
+            replayValid = true;
+            return 0.0.xx;
+        }
+        if (!kPtOpticalMotionReplayEnabled)
+        {
+            replayValid = true;
+            return ComputeSkyAnchorMotion(currGuide.reflectDir);
+        }
+        return SolvePreviousReflectionSkyMotion(
+            pixel, currGuide.reflectDir, primarySurfaceMotion, replayValid);
     }
     if (!kPtMotionHistoryValid)
+    {
+        replayValid = true;
+        return currGuide.motion;
+    }
+    if (!kPtUseOpticalMotionReplay)
     {
         replayValid = true;
         return currGuide.motion;
@@ -948,13 +1125,23 @@ float3 DiagnoseReflectionReceiverReprojection(
     ReflectionGuideHit currGuide,
     float originBias)
 {
-    if (!kPtMotionHistoryValid || !currGuide.valid)
+    if (!kPtMotionHistoryValid)
     {
         return 0.0.xxx;
     }
 
     const float2 currNdc = PixelToClipXY((float2(pixel) + 0.5) / float2(g_OutputSize));
     const float2 prevNdc = currNdc - opticalMotion;
+    if (!currGuide.valid)
+    {
+        const PreviousReflectionSky previousSky = ReplayPreviousReflectionSky(prevNdc);
+        const float directionError = previousSky.valid
+            ? 1.0 - saturate(dot(previousSky.reflectDir, currGuide.reflectDir))
+            : 1.0;
+        return float3(saturate(directionError * 1024.0),
+            previousSky.valid ? 1.0 : 0.0, previousSky.valid ? 1.0 : 0.0);
+    }
+
     const float4 prevFarH = mul(g_PrevInvViewProj, float4(prevNdc, 1.0, 1.0));
     const float3 prevRayDir = normalize(prevFarH.xyz / prevFarH.w - g_PrevCameraPos);
     RayDesc prevPrimaryRay;
@@ -985,6 +1172,34 @@ float3 DiagnoseReflectionReceiverReprojection(
         / max(currGuide.reflectedHitDistance, 0.05);
     return float3(saturate(positionError * 8.0),
         prevGuide.instanceId == currGuide.instanceId ? 1.0 : 0.0, 1.0);
+}
+
+float3 EncodeOpticalReplayStatus(
+    bool currentGuideValid,
+    bool replayValid,
+    float3 reprojection)
+{
+    if (!currentGuideValid)
+    {
+        return 0.0.xxx;
+    }
+    if (!kPtMotionHistoryValid)
+    {
+        return float3(0.0, 0.0, 1.0);
+    }
+    if (!replayValid || reprojection.z < 0.5)
+    {
+        return float3(1.0, 0.0, 0.0);
+    }
+    if (reprojection.y < 0.5)
+    {
+        return float3(1.0, 0.0, 1.0);
+    }
+    if (reprojection.x > 0.1)
+    {
+        return float3(1.0, 1.0, 0.0);
+    }
+    return float3(0.0, 1.0, 0.0);
 }
 #endif
 
@@ -2027,6 +2242,19 @@ void PathTracerRayGen()
 
     const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
 
+    // Layer 1 is intentionally empty for opaque, rough, unsupported, mirror-only, and sky pixels.
+    // Neutral guides make those black samples a coherent far-field domain for the independent RR
+    // history without changing the established single-layer path.
+    if (!kPtLegacyOpticalRouting)
+    {
+        g_OpticalTransmissionOutput[pixel] = 0.0.xxxx;
+        g_OpticalTransmissionDepth[pixel] = 1.0;
+        g_OpticalTransmissionMotion[pixel] = 0.0.xxxx;
+        g_OpticalTransmissionDiffuseAlbedo[pixel] = float4(0.5, 0.5, 0.5, 1.0);
+        g_OpticalTransmissionSpecularAlbedo[pixel] = float4(0.5, 0.5, 0.5, 1.0);
+        g_OpticalTransmissionNormalRoughness[pixel] = float4(0.0, 0.0, 1.0, 1.0);
+    }
+
     PathRng rng = InitPathRng(pixel, g_FrameIndex);
     const uint pathSeed = rng.seed;
     const float4 primaryXi = PathRngNext4(rng);
@@ -2045,6 +2273,7 @@ void PathTracerRayGen()
     // G5: bounce-0 direct vs Lo_tail (bounce≥1) with local throughput reset after first scatter.
     float3 directRadiance = 0.0.xxx;
     float3 loTail = 0.0.xxx;
+    float3 transmissionLoTail = 0.0.xxx;
     float3 throughput = 1.0.xxx;
     float3 throughputAfterFirstScatter = 1.0.xxx;
     bool inTail = false;
@@ -2087,6 +2316,16 @@ void PathTracerRayGen()
     uint guideReceiverIdForDebug = 0u;
     uint opticalFallbackFlagsForDebug = 0u;
     float3 opticalReceiverReprojectionForDebug = 0.0.xxx;
+    float3 reflectionReceiverReprojectionForDebug = 0.0.xxx;
+    float3 transmissionReceiverReprojectionForDebug = 0.0.xxx;
+    float3 reflectionReplayStatusForDebug = 0.0.xxx;
+    float3 transmissionReplayStatusForDebug = 0.0.xxx;
+    bool deterministicSplitAcceptedForDebug = false;
+    bool transmissionContinuationResumedForDebug = false;
+    bool transmissionReceiverShadedForDebug = false;
+    float3 transmissionEnvironmentForDebug = 0.0.xxx;
+    float3 transmissionReceiverForDebug = 0.0.xxx;
+    float3 transmissionDeepBounceForDebug = 0.0.xxx;
 #endif
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
     float pathConeWidth = 0.0;
@@ -2106,6 +2345,7 @@ void PathTracerRayGen()
     // transmission tail whenever the reflection path terminates.  Both tails accumulate with their
     // physical Fresnel weights, so no per-frame branch choice reaches DLSS-RR.
     bool pendingPrimaryTransmissionTail = false;
+    bool tracingPrimaryTransmissionLayer = false;
     RayDesc pendingTransmissionRay;
     float3 pendingTransmissionThroughput = 0.0.xxx;
     bool pendingTransmissionPathInMedium = false;
@@ -2193,6 +2433,16 @@ void PathTracerRayGen()
             if (inTail)
             {
                 loTail += missContrib;
+                if (tracingPrimaryTransmissionLayer)
+                {
+                    transmissionLoTail += missContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    if (transmissionReceiverShadedForDebug)
+                        transmissionDeepBounceForDebug += missContrib;
+                    else
+                        transmissionEnvironmentForDebug += missContrib;
+#endif
+                }
                 if (!haveInitialSample)
                 {
                     sampleFlags |= kRestirSampleNoReuse;
@@ -2213,6 +2463,11 @@ void PathTracerRayGen()
                 addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
                 lastScatterPdf = kDeltaScatterPdf;
                 pendingPrimaryTransmissionTail = false;
+                tracingPrimaryTransmissionLayer = true;
+#if PT_DIAGNOSTIC_PERMUTATION
+                transmissionContinuationResumedForDebug = true;
+                transmissionReceiverShadedForDebug = false;
+#endif
                 // The loop increment resumes the stored secondary path at bounce one without
                 // re-shading the primary surface or duplicating its direct contribution.
                 bounce = 0u;
@@ -2309,6 +2564,16 @@ void PathTracerRayGen()
             if (inTail)
             {
                 loTail += emissiveContrib;
+                if (tracingPrimaryTransmissionLayer)
+                {
+                    transmissionLoTail += emissiveContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    if (transmissionReceiverShadedForDebug)
+                        transmissionDeepBounceForDebug += emissiveContrib;
+                    else
+                        transmissionReceiverForDebug += emissiveContrib;
+#endif
+                }
             }
             else
             {
@@ -2403,6 +2668,18 @@ void PathTracerRayGen()
             loTail += sunPathContrib;
             loTail += emissiveNeeContrib;
             loTail += envNeeContrib;
+            if (tracingPrimaryTransmissionLayer)
+            {
+                const float3 receiverLightingContrib =
+                    sunPathContrib + emissiveNeeContrib + envNeeContrib;
+                transmissionLoTail += receiverLightingContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
+                if (transmissionReceiverShadedForDebug)
+                    transmissionDeepBounceForDebug += receiverLightingContrib;
+                else
+                    transmissionReceiverForDebug += receiverLightingContrib;
+#endif
+            }
         }
         else
         {
@@ -2481,6 +2758,16 @@ void PathTracerRayGen()
             if (inTail)
             {
                 loTail += terminalSurfaceContrib;
+                if (tracingPrimaryTransmissionLayer)
+                {
+                    transmissionLoTail += terminalSurfaceContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    if (transmissionReceiverShadedForDebug)
+                        transmissionDeepBounceForDebug += terminalSurfaceContrib;
+                    else
+                        transmissionReceiverForDebug += terminalSurfaceContrib;
+#endif
+                }
             }
             else
             {
@@ -2539,19 +2826,23 @@ void PathTracerRayGen()
             const bool thinPane = material.thinWalled > 0.5;
             const FirstOpticalInterface firstOpticalInterface = BuildFirstOpticalInterface(
                 hitNormal, ray.Direction, material.indexOfRefraction, thinPane, false);
-            // Pick one actual smooth lobe rather than applying an arbitrary transmission cutoff.
-            // This keeps high-IOR glass in an optical receiver domain: refraction wins through
-            // F=0.5, reflection wins above it, and the two guide bundles are never blended.
+            // Separated optical histories export both lobes. The all-off compatibility path uses
+            // the pre-experiment Fresnel-dominant receiver so the shared RR history sees the same
+            // depth, motion, and material domain it did before this work.
             const bool transmissionLobeDominant =
                 firstOpticalInterface.refractValid && firstOpticalInterface.fresnel <= 0.5;
             const bool reflectionLobeDominant =
                 !firstOpticalInterface.refractValid || firstOpticalInterface.fresnel > 0.5;
             const bool selectTransmissionReceiver = dielectricWeight > 0.0
                 && smoothOptical
-                && transmissionLobeDominant;
+                && (kPtLegacyOpticalRouting
+                    ? transmissionLobeDominant
+                    : firstOpticalInterface.refractValid);
             const bool selectReflectionReceiver = smoothOptical
-                && ((dielectricWeight > 0.0 && reflectionLobeDominant)
-                    || (dielectricWeight <= 0.0 && surfaceMetallic >= 0.5));
+                && (kPtLegacyOpticalRouting
+                    ? ((dielectricWeight > 0.0 && reflectionLobeDominant)
+                        || (dielectricWeight <= 0.0 && surfaceMetallic >= 0.5))
+                    : (dielectricWeight > 0.0 || surfaceMetallic >= 0.5));
             const bool opticalMaterial = dielectricWeight > 0.0 || surfaceMetallic >= 0.5;
             const bool primaryOpticalMoved = PayloadInstanceMoved(payload);
             // Block 3 fallback policy: rough optical BSDFs and any moving optical interface or
@@ -2574,28 +2865,55 @@ void PathTracerRayGen()
 
             if (selectTransmissionReceiver)
             {
-                // The selected guide domain is refraction; reflection receives its own bundle only
-                // when it is the dominant smooth lobe below.
                 const float shellBias = thinPane ? max(guideOriginBias, kThinShellMinExitBias) : guideOriginBias;
                 const TransmissionGuideHit txGuide = TraceTransmissionGuide(
                     hitPos, firstOpticalInterface, material.indexOfRefraction, shellBias, payload.instanceId);
+                bool transmissionReplayValid;
                 const float2 virtualMotion = ComputeTransmissionVirtualMotion(
-                    pixel, txGuide, PayloadPrimaryMotion(payload));
+                    pixel, txGuide, PayloadPrimaryMotion(payload), transmissionReplayValid);
 #if PT_DIAGNOSTIC_PERMUTATION
                 transmissionVirtualMotionForDebug = virtualMotion;
                 hasTransmissionVirtualMotionForDebug = true;
                 if (txGuide.receiverMoved) opticalFallbackFlagsForDebug |= 4u;
-                opticalReceiverReprojectionForDebug = DiagnoseTransmissionReceiverReprojection(
+                transmissionReceiverReprojectionForDebug = DiagnoseTransmissionReceiverReprojection(
                     pixel, virtualMotion, txGuide, shellBias);
+                opticalReceiverReprojectionForDebug = transmissionReceiverReprojectionForDebug;
+                transmissionReplayStatusForDebug = txGuide.valid
+                    ? EncodeOpticalReplayStatus(
+                        true, transmissionReplayValid, transmissionReceiverReprojectionForDebug)
+                    // A refracted sky has no instance receiver, but its anchored direction is a
+                    // coherent supported history domain rather than a missing optical lobe.
+                    : float3(0.0, 1.0, 1.0);
 #endif
                 if (txGuide.valid && !txGuide.receiverMoved && !primaryOpticalMoved)
                 {
-                    resolvedPrimaryDepth = txGuide.depth;
-                    resolvedPrimaryMotion = virtualMotion;
+                    float3 txDiffuseGuide;
+                    float3 txSpecGuide;
+                    float3 txGuideNormal;
+                    float txGuideRoughness;
                     ComputeOpticalReceiverMaterialGuides(
                         txGuide.instanceId, txGuide.primitiveIndex, txGuide.barycentrics,
                         txGuide.normal, txGuide.shadingNormal, txGuide.refractDir, txGuide.triangleLod,
-                        pathConeWidth, diffuseGuide, specGuide, guideNormal, guideRoughness);
+                        pathConeWidth, txDiffuseGuide, txSpecGuide, txGuideNormal, txGuideRoughness);
+                    if (kPtLegacyOpticalRouting)
+                    {
+                        resolvedPrimaryDepth = txGuide.depth;
+                        resolvedPrimaryMotion = virtualMotion;
+                        diffuseGuide = txDiffuseGuide;
+                        specGuide = txSpecGuide;
+                        guideNormal = txGuideNormal;
+                        guideRoughness = txGuideRoughness;
+                        specHitDistGuide = g_MaxTraceDistance;
+                    }
+                    else
+                    {
+                        g_OpticalTransmissionDepth[pixel] = txGuide.depth;
+                        g_OpticalTransmissionMotion[pixel] = float4(virtualMotion, 0.0, 1.0);
+                        g_OpticalTransmissionDiffuseAlbedo[pixel] = float4(txDiffuseGuide, 1.0);
+                        g_OpticalTransmissionSpecularAlbedo[pixel] = float4(txSpecGuide, 1.0);
+                        g_OpticalTransmissionNormalRoughness[pixel] =
+                            float4(txGuideNormal, txGuideRoughness);
+                    }
 #if PT_DIAGNOSTIC_PERMUTATION
                     guideReceiverIdForDebug = txGuide.instanceId + 1u;
 #endif
@@ -2603,16 +2921,25 @@ void PathTracerRayGen()
                 else
                 {
                     // A sky receiver is a coherent domain; do not retain pane materials or motion.
-                    resolvedPrimaryDepth = 1.0;
-                    resolvedPrimaryMotion = ComputeSkyAnchorMotion(txGuide.refractDir);
-                    diffuseGuide = 0.5.xxx;
-                    specGuide = 0.5.xxx;
-                    guideNormal = float3(0.0, 0.0, 1.0);
-                    guideRoughness = 1.0;
+                    if (kPtLegacyOpticalRouting)
+                    {
+                        resolvedPrimaryDepth = 1.0;
+                        resolvedPrimaryMotion = ComputeSkyAnchorMotion(txGuide.refractDir);
+                        diffuseGuide = 0.5.xxx;
+                        specGuide = 0.5.xxx;
+                        guideNormal = float3(0.0, 0.0, 1.0);
+                        guideRoughness = 1.0;
+                        specHitDistGuide = g_MaxTraceDistance;
+                    }
+                    else
+                    {
+                        g_OpticalTransmissionDepth[pixel] = 1.0;
+                        g_OpticalTransmissionMotion[pixel] =
+                            float4(ComputeSkyAnchorMotion(txGuide.refractDir), 0.0, 1.0);
+                    }
                 }
-                specHitDistGuide = g_MaxTraceDistance;
             }
-            else if (selectReflectionReceiver)
+            if (selectReflectionReceiver)
             {
                 const ReflectionGuideHit reflectionGuide = TraceReflectionGuide(
                     hitPos, firstOpticalInterface.reflectDir, guideOriginBias);
@@ -2621,8 +2948,15 @@ void PathTracerRayGen()
                     pixel, reflectionGuide, PayloadPrimaryMotion(payload), reflectionReplayValid);
 #if PT_DIAGNOSTIC_PERMUTATION
                 if (reflectionGuide.receiverMoved) opticalFallbackFlagsForDebug |= 4u;
-                opticalReceiverReprojectionForDebug = DiagnoseReflectionReceiverReprojection(
+                reflectionReceiverReprojectionForDebug = DiagnoseReflectionReceiverReprojection(
                     pixel, reflectionMotion, reflectionGuide, guideOriginBias);
+                opticalReceiverReprojectionForDebug = reflectionReceiverReprojectionForDebug;
+                reflectionReplayStatusForDebug = reflectionGuide.valid
+                    ? EncodeOpticalReplayStatus(
+                        true, reflectionReplayValid, reflectionReceiverReprojectionForDebug)
+                    : (reflectionReplayValid
+                        ? float3(0.0, 1.0, 1.0)
+                        : float3(1.0, 0.0, 0.0));
 #endif
                 if (reflectionGuide.valid && !reflectionGuide.receiverMoved
                     && !primaryOpticalMoved && reflectionReplayValid)
@@ -2638,6 +2972,19 @@ void PathTracerRayGen()
 #if PT_DIAGNOSTIC_PERMUTATION
                     guideReceiverIdForDebug = reflectionGuide.instanceId + 1u;
 #endif
+                }
+                else if (!reflectionGuide.valid && !primaryOpticalMoved && reflectionReplayValid)
+                {
+                    // A reflected environment direction is a complete virtual receiver domain.
+                    // Its inverse replay motion maps that direction through the previous optical
+                    // surface; neutral far-field guides prevent the glass primary from leaking in.
+                    resolvedPrimaryDepth = 1.0;
+                    resolvedPrimaryMotion = reflectionMotion;
+                    diffuseGuide = 0.5.xxx;
+                    specGuide = 0.5.xxx;
+                    guideNormal = float3(0.0, 0.0, 1.0);
+                    guideRoughness = 1.0;
+                    specHitDistGuide = g_MaxTraceDistance;
                 }
                 else
                 {
@@ -2694,6 +3041,11 @@ void PathTracerRayGen()
                 addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
                 lastScatterPdf = kDeltaScatterPdf;
                 pendingPrimaryTransmissionTail = false;
+                tracingPrimaryTransmissionLayer = true;
+#if PT_DIAGNOSTIC_PERMUTATION
+                transmissionContinuationResumedForDebug = true;
+                transmissionReceiverShadedForDebug = false;
+#endif
                 bounce = 0u;
                 continue;
             }
@@ -2722,6 +3074,16 @@ void PathTracerRayGen()
             if (inTail)
             {
                 loTail += terminalContrib;
+                if (tracingPrimaryTransmissionLayer)
+                {
+                    transmissionLoTail += terminalContrib;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    if (transmissionReceiverShadedForDebug)
+                        transmissionDeepBounceForDebug += terminalContrib;
+                    else
+                        transmissionReceiverForDebug += terminalContrib;
+#endif
+                }
             }
             else
             {
@@ -2738,6 +3100,11 @@ void PathTracerRayGen()
                 addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
                 lastScatterPdf = kDeltaScatterPdf;
                 pendingPrimaryTransmissionTail = false;
+                tracingPrimaryTransmissionLayer = true;
+#if PT_DIAGNOSTIC_PERMUTATION
+                transmissionContinuationResumedForDebug = true;
+                transmissionReceiverShadedForDebug = false;
+#endif
                 bounce = 0u;
                 continue;
             }
@@ -2768,6 +3135,9 @@ void PathTracerRayGen()
             && firstOpticalInterface.refractValid;
         if (deterministicPrimaryOpticalSplit)
         {
+#if PT_DIAGNOSTIC_PERMUTATION
+            deterministicSplitAcceptedForDebug = true;
+#endif
             // In real-time PT the conventional estimator follows only the glass component and
             // applies dielectricWeight once.  Evaluate both delta lobes instead: F*Lr + (1-F)*Lt.
             // This removes the high-contrast red/green event switching visible at IOR 1.5+.
@@ -2818,6 +3188,7 @@ void PathTracerRayGen()
             scatterPdf = kDeltaScatterPdf;
             actualOpticalEvent = kFirstOpticalEventReflect;
             throughput *= reflectWeight;
+            tracingPrimaryTransmissionLayer = false;
         }
         else
         {
@@ -2842,8 +3213,23 @@ void PathTracerRayGen()
                 scatterPdf,
                 actualOpticalEvent,
                 throughput);
+            // Bounce zero establishes optical-layer ownership. Deeper scatters belong to that
+            // same tail; clearing this at the exit face of a solid dielectric discarded all
+            // radiance subsequently reached by the stored transmission continuation.
+            if (bounce == 0u)
+            {
+                tracingPrimaryTransmissionLayer =
+                    !kPtLegacyOpticalRouting
+                    && actualOpticalEvent == kFirstOpticalEventTransmit;
+            }
         }
 #if PT_DIAGNOSTIC_PERMUTATION
+        // The current surface's lighting belongs to the first opaque receiver. Contributions
+        // reached after its scatter are the genuinely deeper indirect-lighting bucket.
+        if (tracingPrimaryTransmissionLayer && opaqueWeight > 0.0)
+        {
+            transmissionReceiverShadedForDebug = true;
+        }
         if (bounce == 0u && useFirstOpticalInterface)
         {
             actualOpticalEventForDebug = actualOpticalEvent;
@@ -2914,6 +3300,11 @@ void PathTracerRayGen()
                     addEnvOnMiss = pendingTransmissionAddEnvOnMiss;
                     lastScatterPdf = kDeltaScatterPdf;
                     pendingPrimaryTransmissionTail = false;
+                    tracingPrimaryTransmissionLayer = true;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    transmissionContinuationResumedForDebug = true;
+                    transmissionReceiverShadedForDebug = false;
+#endif
                     bounce = 0u;
                     continue;
                 }
@@ -3013,6 +3404,15 @@ void PathTracerRayGen()
     {
         radiance = ClampRadiance(radiance);
     }
+
+    // Preserve the exact legacy full-radiance output for non-RR consumers. The RR resolve derives
+    // layer 0 as (full - transmission) and reconstructs this transmission layer independently.
+    const float3 transmissionRadianceRaw = throughputAfterFirstScatter * transmissionLoTail;
+    const float3 layerClampScale = float3(
+        radiancePreClamp.r > 1e-6 ? radiance.r / radiancePreClamp.r : 0.0,
+        radiancePreClamp.g > 1e-6 ? radiance.g / radiancePreClamp.g : 0.0,
+        radiancePreClamp.b > 1e-6 ? radiance.b / radiancePreClamp.b : 0.0);
+    const float3 transmissionRadiance = max(transmissionRadianceRaw * layerClampScale, 0.0.xxx);
 
     // P5: write raw secondary radiance and an explicit initial UCW; no source-primary shading.
     g_GiReservoirCurrent[pixelIndex] = giReservoir;
@@ -3116,6 +3516,63 @@ void PathTracerRayGen()
         // G: receiver instance agrees; B: previous optical path at the exported history pixel exists.
         displayRadiance = opticalReceiverReprojectionForDebug;
     }
+    else if (primary.hit && g_PtDebugIsolateMode == 56u)
+    {
+        displayRadiance = hasFirstOpticalInterfaceForDebug
+            ? float3(
+                1.0,
+                firstOpticalInterfaceForDebug.fresnel,
+                firstOpticalInterfaceForDebug.refractValid
+                    ? 1.0 - firstOpticalInterfaceForDebug.fresnel
+                    : 0.0)
+            : 0.0.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 57u)
+    {
+        displayRadiance = reflectionReceiverReprojectionForDebug;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 58u)
+    {
+        displayRadiance = transmissionReceiverReprojectionForDebug;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 59u)
+    {
+        displayRadiance = reflectionReplayStatusForDebug;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 60u)
+    {
+        displayRadiance = transmissionReplayStatusForDebug;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 61u)
+    {
+        // R: deterministic split accepted; G: stored transmission continuation resumed;
+        // B: that continuation accumulated finite, nonzero radiance into its owned tail.
+        displayRadiance = float3(
+            deterministicSplitAcceptedForDebug ? 1.0 : 0.0,
+            transmissionContinuationResumedForDebug ? 1.0 : 0.0,
+            all(isfinite(transmissionLoTail))
+                && max(transmissionLoTail.r, max(transmissionLoTail.g, transmissionLoTail.b)) > 1e-6
+                    ? 1.0
+                    : 0.0);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 62u)
+    {
+        displayRadiance = max(
+            transmissionEnvironmentForDebug * throughputAfterFirstScatter * layerClampScale,
+            0.0.xxx);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 63u)
+    {
+        displayRadiance = max(
+            transmissionReceiverForDebug * throughputAfterFirstScatter * layerClampScale,
+            0.0.xxx);
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 64u)
+    {
+        displayRadiance = max(
+            transmissionDeepBounceForDebug * throughputAfterFirstScatter * layerClampScale,
+            0.0.xxx);
+    }
 #else
     const float3 displayRadiance = radiance;
 #endif
@@ -3132,6 +3589,10 @@ void PathTracerRayGen()
     }
     g_DirectOutput[pixel] = float4(restirBaseRadiance, 0.0);
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
+    if (!kPtLegacyOpticalRouting)
+    {
+        g_OpticalTransmissionOutput[pixel] = float4(transmissionRadiance, g_MaxTraceDistance);
+    }
 }
 
 [shader("miss")]

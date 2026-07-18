@@ -38,7 +38,7 @@ cbuffer ReflectionDispatchConstants : register(b0)
     // F2 path-tracer-only: emissive NEE (zero for non-PT dispatches).
     uint g_EmissiveLightCount;
     float g_EmissiveLightPickWeightSum;
-    float _PadPtEmissiveTransport; // bloom is post-process only; never scales physical emission
+    float g_PtOpticalStabilityFlags; // path-tracer-only bitmask; exactly represented as float
     float _PadPtEmissiveNee; // path-tracer-only: radiance isolate mode (see RenderDebug.h)
     // PT-A: dual-frame refracted motion vectors (devdoc/dxr/pt/transmission-rr-guides.md).
     float4x4 g_PrevInvViewProj;

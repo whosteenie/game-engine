@@ -148,20 +148,41 @@ bool DxrPathTracerDispatch::IsPipelineReady() const
         || (m_serPipelineReady && m_serDiagnosticPipelineReady);
 }
 
-bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded()
+bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded(const PipelineWarmupProgress& progress)
 {
+    const bool serSupported = GfxContext::Get().IsShaderExecutionReorderingSupported();
+    const int stepCount = serSupported ? 4 : 2;
+    const auto reportStep = [&](const int step, const char* label) {
+        if (progress)
+        {
+            progress(step, stepCount, label);
+        }
+    };
+
     std::string error;
     // Build both permutations during the existing DXR warmup window. Switching debug views then
     // selects already-created state objects instead of compiling in an interactive frame.
-    if (!EnsurePipeline(false, false, error) || !EnsurePipeline(true, false, error))
+    reportStep(1, "production");
+    if (!EnsurePipeline(false, false, error))
     {
         return false;
     }
-    if (!GfxContext::Get().IsShaderExecutionReorderingSupported())
+    reportStep(2, "diagnostic");
+    if (!EnsurePipeline(true, false, error))
+    {
+        return false;
+    }
+    if (!serSupported)
     {
         return true;
     }
-    return EnsurePipeline(false, true, error) && EnsurePipeline(true, true, error);
+    reportStep(3, "production SER");
+    if (!EnsurePipeline(false, true, error))
+    {
+        return false;
+    }
+    reportStep(4, "diagnostic SER");
+    return EnsurePipeline(true, true, error);
 }
 
 bool DxrPathTracerDispatch::EnsurePipeline(
@@ -282,6 +303,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool ptRussianRoulette,
     const bool ptFireflyClamp,
     const bool ptDeterministicOpticalSplit,
+    const bool ptIndependentOpticalRrLayers,
+    const bool ptOpticalMotionReplay,
     const float ptAmbientStrength,
     const int ptAmbientAoRayCount,
     const int ptDebugIsolateMode)
@@ -466,6 +489,12 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptDebugIsolateMode =
         static_cast<float>(std::clamp(ptDebugIsolateMode, 0, kPtDebugIsolateModeMax));
+    constexpr std::uint32_t kOpticalMotionReplayFlag = 1u << 0u;
+    constexpr std::uint32_t kIndependentOpticalRrFlag = 1u << 1u;
+    const std::uint32_t opticalStabilityFlags =
+        (ptOpticalMotionReplay ? kOpticalMotionReplayFlag : 0u)
+        | (ptIndependentOpticalRrLayers ? kIndependentOpticalRrFlag : 0u);
+    constants.ptOpticalStabilityFlags = static_cast<float>(opticalStabilityFlags);
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
     // Opaque-fast NEE shadows when the scene has no dielectrics (a0cc7f8 regression fix).
@@ -937,6 +966,88 @@ std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle(
     const std::uint32_t viewportId) const
 {
     return StateFor(viewportId).m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionOutputSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionOutputSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerOpticalTransmissionOutputResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionOutputResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionOutputResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionOutputResourceState();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionDepthSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionDepthSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerOpticalTransmissionDepthResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerOpticalTransmissionDepthResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionDepthResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionDepthResourceState();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionMotionSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionMotionSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerOpticalTransmissionMotionResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerOpticalTransmissionMotionResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionMotionResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionMotionResourceState();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionDiffuseAlbedoSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionDiffuseAlbedoSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionSpecularAlbedoSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionSpecularAlbedoSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionNormalRoughnessSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext
+        .GetPathTracerOpticalTransmissionNormalRoughnessSrvCpuHandle();
 }
 
 bool DxrPathTracerDispatch::IsPathTracerPrevSurfaceHistoryValid(

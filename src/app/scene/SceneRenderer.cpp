@@ -988,14 +988,26 @@ void SceneRenderer::WarmUpDxrPipelineIfNeeded()
         }
         if (warmPathTracer && (m_dxrPathTracerDispatch == nullptr || !m_dxrPathTracerDispatch->IsPipelineReady()))
         {
-            reportPipelineBegin("Compiling path tracer pipeline...");
             if (m_dxrPathTracerDispatch == nullptr)
             {
                 m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
             }
             warmPipeline(
                 "renderer.dxr_warmup.path_tracer",
-                [&]() { m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded(); });
+                [&]() {
+                    m_dxrPathTracerDispatch->WarmUpPipelineIfNeeded(
+                        [&](const int step, const int stepCount, const char* label) {
+                            const float completedVariantFraction =
+                                static_cast<float>(step - 1) / static_cast<float>(stepCount);
+                            const float pipelineFraction =
+                                (static_cast<float>(warmedPipelineCount) + completedVariantFraction)
+                                / static_cast<float>(pendingPipelineCount);
+                            ProjectLoadProgress::Report(
+                                "Compiling path tracer pipeline (" + std::to_string(step) + "/"
+                                    + std::to_string(stepCount) + "): " + label + "...",
+                                ProjectLoadProgress::DxrPipelineWarmup(pipelineFraction));
+                        });
+                });
             markPipelineComplete();
         }
         if (warmRestir && (m_dxrRestirDispatch == nullptr || !m_dxrRestirDispatch->IsPipelineReady()))
@@ -1330,6 +1342,8 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.IsPtRussianRouletteEnabled(),
             m_dxrSettings.IsPtFireflyClampEnabled(),
             m_dxrSettings.IsPtDeterministicOpticalSplitEnabled(),
+            m_dxrSettings.IsPtIndependentOpticalRrLayersEnabled(),
+            m_dxrSettings.IsPtOpticalMotionReplayEnabled(),
             m_dxrSettings.GetPtAmbientStrength(),
             m_dxrSettings.GetPtAmbientAoRayCount(),
             ptDebugMode);
@@ -1460,6 +1474,8 @@ void SceneRenderer::RecordDxrPass(
         // let the normal composite draw the camera-relative environment background.
         const bool pathTracerShow = pathTracingActive && pathTracerDispatched;
         m_screenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
+        m_screenSpaceEffects->SetPtIndependentOpticalRrLayersEnabled(
+            m_dxrSettings.IsPtIndependentOpticalRrLayersEnabled());
         m_screenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,
             pathTracerShow
@@ -1504,7 +1520,19 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow
                 ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle(
                     pathTracerViewportId)
-                : 0);
+                : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionOutputResource(pathTracerViewportId) : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionOutputResourceState(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionOutputSrvCpuHandle(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionDepthResource(pathTracerViewportId) : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionDepthResourceState(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionDepthSrvCpuHandle(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionMotionResource(pathTracerViewportId) : nullptr,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionMotionResourceState(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionMotionSrvCpuHandle(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionDiffuseAlbedoSrvCpuHandle(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionSpecularAlbedoSrvCpuHandle(pathTracerViewportId) : 0,
+            pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionNormalRoughnessSrvCpuHandle(pathTracerViewportId) : 0);
     }
 
     // Phase D9 — RT diffuse GI trace (devdoc/dxr-diffuse-gi.md). Runs before reflections so
@@ -2148,6 +2176,7 @@ void SceneRenderer::RenderPostProcessPass(
         m_screenSpaceEffects->BlitRtShadowDebug(target, viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitRtGiDebug(target, viewportWidth, viewportHeight);
         m_screenSpaceEffects->BlitRrGuideDebug(target, viewportWidth, viewportHeight);
+        m_screenSpaceEffects->BlitPtOpticalLayerDebug(target, viewportWidth, viewportHeight);
         // Apply's PT diagnostic views draw directly to the viewport. Do not immediately replace
         // them with the legacy direct PT blit (which made every diagnostic appear as the final
         // noisy PT image regardless of the selected mode).

@@ -2400,8 +2400,8 @@ namespace render_tests
         float motionGuide[4]{};
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                fixture.stack.dispatchContext.GetPathTracerMotionResource(),
-                fixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                fixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResource(),
+                fixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResourceState(),
                 kPtFramebufferSize,
                 kPtFramebufferSize,
                 DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -2518,8 +2518,8 @@ namespace render_tests
         float motion[4]{};
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                currentFixture.stack.dispatchContext.GetPathTracerMotionResource(),
-                currentFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResourceState(),
                 kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, motion),
             "Lateral transmission motion readback should succeed");
         const int currentX = kPtFramebufferSize / 2;
@@ -2539,22 +2539,22 @@ namespace render_tests
         float previousCenterAlbedo[4]{};
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                currentFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
-                currentFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
                 kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, currentAlbedo,
                 currentX, currentY),
             "Current lateral-checker albedo readback should succeed");
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
-                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
                 kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousAlbedo,
                 previousX, previousY),
             "Reprojected previous lateral-checker albedo readback should succeed");
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResource(),
-                previousFixture.stack.dispatchContext.GetPathTracerDiffuseAlbedoResourceState(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
                 kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousCenterAlbedo,
                 currentX, currentY),
             "Unreprojected previous lateral-checker albedo readback should succeed");

@@ -1031,23 +1031,6 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Slightly biased; turn off in Reference for ground truth.");
             }
 
-            bool ptDeterministicOpticalSplit =
-                dxrSettings.IsPtDeterministicOpticalSplitEnabled();
-            UndoableRendererCheckbox(
-                "PT deterministic smooth glass",
-                &ptDeterministicOpticalSplit,
-                editContext,
-                [](Scene& target, bool enabled) {
-                    target.GetRenderer().GetDxrSettings().SetPtDeterministicOpticalSplitEnabled(enabled);
-                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
-                    target.MarkDirty();
-                });
-            LightingPanelUi::DrawTooltipForLastItem(
-                "Traces both smooth primary glass lobes (Fresnel reflection and transmission) every "
-                "frame instead of randomly selecting one. Removes Fresnel branch shimmer, but can "
-                "roughly double the tail-ray cost on visible smooth glass.");
-            RendererSettingUi::MarkRendered("pt_deterministic_optical_split");
-
             float ptAmbientStrength = dxrSettings.GetPtAmbientStrength();
             UndoableRendererSliderFloat(
                 "PT ambient strength",
@@ -1086,6 +1069,64 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                     "Real-time only: short cosine visibility rays that darken SH ambient in crevices.\n"
                     "0 = unoccluded ambient (recommended). Raise only if open shadows wash out.");
             }
+
+            ImGui::SeparatorText("Optical Stability");
+            ImGui::PushStyleColor(ImGuiCol_Text, EditorWidgets::ErrorTextColor());
+            ImGui::TextWrapped(
+                "Experimental: Optical stability features may degrade performance and can still "
+                "produce imperfect visuals.");
+            ImGui::PopStyleColor();
+
+            bool ptDeterministicOpticalSplit =
+                dxrSettings.IsPtDeterministicOpticalSplitEnabled();
+            UndoableRendererCheckbox(
+                "PT deterministic smooth glass",
+                &ptDeterministicOpticalSplit,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtDeterministicOpticalSplitEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().ResetPathTracerAccumulation();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Traces both smooth primary glass lobes (Fresnel reflection and transmission) every "
+                "frame instead of randomly selecting one. Removes Fresnel branch shimmer, but can "
+                "roughly double the tail-ray cost on visible smooth glass.");
+            RendererSettingUi::MarkRendered("pt_deterministic_optical_split");
+
+            bool ptIndependentOpticalRrLayers =
+                dxrSettings.IsPtIndependentOpticalRrLayersEnabled();
+            UndoableRendererCheckbox(
+                "PT independent glass RR layer",
+                &ptIndependentOpticalRrLayers,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtIndependentOpticalRrLayersEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Runs a second DLSS Ray Reconstruction evaluation for the owned primary-glass "
+                "transmission signal. Disable to measure its performance cost; the full path-traced "
+                "image then uses one shared RR history and may shimmer more through glass.");
+            RendererSettingUi::MarkRendered("pt_independent_optical_rr_layers");
+
+            bool ptOpticalMotionReplay = dxrSettings.IsPtOpticalMotionReplayEnabled();
+            UndoableRendererCheckbox(
+                "PT optical motion replay",
+                &ptOpticalMotionReplay,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtOpticalMotionReplayEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Separated-lobe mode: replays previous-frame optical paths to solve receiver motion "
+                "through glass and reflections. Improves temporal stability but can add many ray "
+                "traversals per visible optical pixel. The all-off compatibility path retains the "
+                "established pre-experiment single-lobe motion behavior.");
+            RendererSettingUi::MarkRendered("pt_optical_motion_replay");
 
             ImGui::SeparatorText("ReSTIR direct lighting");
             // TODO(REMOVE WHEN RESTIR IS STABLE): Remove this experimental-settings warning.

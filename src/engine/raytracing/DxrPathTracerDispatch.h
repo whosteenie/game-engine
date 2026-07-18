@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include <glm/glm.hpp>
@@ -207,6 +208,8 @@ public:
         bool ptRussianRoulette,
         bool ptFireflyClamp,
         bool ptDeterministicOpticalSplit,
+        bool ptIndependentOpticalRrLayers,
+        bool ptOpticalMotionReplay,
         float ptAmbientStrength,
         int ptAmbientAoRayCount,
         int ptDebugIsolateMode = 0);
@@ -214,7 +217,8 @@ public:
     void Release();
     void ResetProjectResources();
 
-    bool WarmUpPipelineIfNeeded();
+    using PipelineWarmupProgress = std::function<void(int step, int stepCount, const char* label)>;
+    bool WarmUpPipelineIfNeeded(const PipelineWarmupProgress& progress = {});
     bool IsPipelineReady() const;
     bool DispatchedThisFrame(std::uint32_t viewportId) const;
     SerOverride GetSerOverride() const { return m_serOverride; }
@@ -244,6 +248,18 @@ public:
     std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionDepthSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerOpticalTransmissionDepthResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerOpticalTransmissionDepthResourceState(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionMotionSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerOpticalTransmissionMotionResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerOpticalTransmissionMotionResourceState(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionDiffuseAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionSpecularAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerOpticalTransmissionNormalRoughnessSrvCpuHandle(std::uint32_t viewportId) const;
     bool IsPathTracerPrevSurfaceHistoryValid(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle(std::uint32_t viewportId) const;

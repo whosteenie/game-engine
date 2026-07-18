@@ -142,6 +142,24 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RR guide: specular albedo";
     case RenderDebugMode::RrNormalRoughness:
         return "RR guide: normal-roughness";
+    case RenderDebugMode::RrTransmissionDiffuseAlbedo:
+        return "RR transmission guide: diffuse albedo";
+    case RenderDebugMode::RrTransmissionSpecularAlbedo:
+        return "RR transmission guide: specular albedo";
+    case RenderDebugMode::RrTransmissionNormalRoughness:
+        return "RR transmission guide: normal-roughness";
+    case RenderDebugMode::PtOpticalRawReflection:
+        return "PT optical RR: raw reflection input";
+    case RenderDebugMode::PtOpticalRawTransmission:
+        return "PT optical RR: raw transmission input";
+    case RenderDebugMode::PtOpticalReconstructedReflection:
+        return "PT optical RR: reconstructed reflection";
+    case RenderDebugMode::PtOpticalReconstructedTransmission:
+        return "PT optical RR: reconstructed transmission";
+    case RenderDebugMode::PtOpticalReflectionReconstructionDelta:
+        return "PT optical RR: reflection reconstruction delta";
+    case RenderDebugMode::PtOpticalTransmissionReconstructionDelta:
+        return "PT optical RR: transmission reconstruction delta";
     case RenderDebugMode::PtIsolateDirectSun:
         return "PT isolate: direct sun";
     case RenderDebugMode::PtIsolateDirectEmissive:
@@ -230,6 +248,24 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT optical: guide fallback policy";
     case RenderDebugMode::PtOpticalReceiverReprojection:
         return "PT optical: receiver reprojection residual";
+    case RenderDebugMode::PtOpticalCoverageFresnel:
+        return "PT optical: coverage / Fresnel weights";
+    case RenderDebugMode::PtOpticalReflectionReprojection:
+        return "PT optical: reflection reprojection residual";
+    case RenderDebugMode::PtOpticalTransmissionReprojection:
+        return "PT optical: transmission reprojection residual";
+    case RenderDebugMode::PtOpticalReflectionReplayStatus:
+        return "PT optical: reflection replay status";
+    case RenderDebugMode::PtOpticalTransmissionReplayStatus:
+        return "PT optical: transmission replay status";
+    case RenderDebugMode::PtOpticalTransmissionAttribution:
+        return "PT optical: transmission tail attribution";
+    case RenderDebugMode::PtOpticalTransmissionEnvironment:
+        return "PT optical: transmission environment";
+    case RenderDebugMode::PtOpticalTransmissionReceiver:
+        return "PT optical: transmission first receiver";
+    case RenderDebugMode::PtOpticalTransmissionDeepBounce:
+        return "PT optical: transmission deep bounce";
     default:
         return "Unknown";
     }
@@ -399,6 +435,25 @@ bool IsRrGuideDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::RrDiffuseAlbedo:
     case RenderDebugMode::RrSpecularAlbedo:
     case RenderDebugMode::RrNormalRoughness:
+    case RenderDebugMode::RrTransmissionDiffuseAlbedo:
+    case RenderDebugMode::RrTransmissionSpecularAlbedo:
+    case RenderDebugMode::RrTransmissionNormalRoughness:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsPtOpticalLayerDebugMode(const RenderDebugMode mode)
+{
+    switch (mode)
+    {
+    case RenderDebugMode::PtOpticalRawReflection:
+    case RenderDebugMode::PtOpticalRawTransmission:
+    case RenderDebugMode::PtOpticalReconstructedReflection:
+    case RenderDebugMode::PtOpticalReconstructedTransmission:
+    case RenderDebugMode::PtOpticalReflectionReconstructionDelta:
+    case RenderDebugMode::PtOpticalTransmissionReconstructionDelta:
         return true;
     default:
         return false;
@@ -464,6 +519,15 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtOpticalGuideReceiverId:
     case RenderDebugMode::PtOpticalGuideFallback:
     case RenderDebugMode::PtOpticalReceiverReprojection:
+    case RenderDebugMode::PtOpticalCoverageFresnel:
+    case RenderDebugMode::PtOpticalReflectionReprojection:
+    case RenderDebugMode::PtOpticalTransmissionReprojection:
+    case RenderDebugMode::PtOpticalReflectionReplayStatus:
+    case RenderDebugMode::PtOpticalTransmissionReplayStatus:
+    case RenderDebugMode::PtOpticalTransmissionAttribution:
+    case RenderDebugMode::PtOpticalTransmissionEnvironment:
+    case RenderDebugMode::PtOpticalTransmissionReceiver:
+    case RenderDebugMode::PtOpticalTransmissionDeepBounce:
         return true;
     default:
         return false;
@@ -587,6 +651,15 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtOpticalGuideReceiverId: return 53;
     case RenderDebugMode::PtOpticalGuideFallback: return 54;
     case RenderDebugMode::PtOpticalReceiverReprojection: return 55;
+    case RenderDebugMode::PtOpticalCoverageFresnel: return 56;
+    case RenderDebugMode::PtOpticalReflectionReprojection: return 57;
+    case RenderDebugMode::PtOpticalTransmissionReprojection: return 58;
+    case RenderDebugMode::PtOpticalReflectionReplayStatus: return 59;
+    case RenderDebugMode::PtOpticalTransmissionReplayStatus: return 60;
+    case RenderDebugMode::PtOpticalTransmissionAttribution: return 61;
+    case RenderDebugMode::PtOpticalTransmissionEnvironment: return 62;
+    case RenderDebugMode::PtOpticalTransmissionReceiver: return 63;
+    case RenderDebugMode::PtOpticalTransmissionDeepBounce: return 64;
     default: return 0;
     }
 }

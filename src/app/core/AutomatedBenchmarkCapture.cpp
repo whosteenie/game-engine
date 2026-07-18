@@ -1,18 +1,25 @@
 #include "app/core/AutomatedBenchmarkCapture.h"
 
+#include "app/scene/Scene.h"
+#include "app/scene/SceneRenderer.h"
+
 #include "engine/camera/Camera.h"
 #include "engine/platform/CaptureManifest.h"
 #include "engine/platform/EngineLog.h"
 #include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/RenderDebug.h"
 #include "engine/rendering/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -197,7 +204,9 @@ namespace
                                 {"russian_roulette", dxrSettings.IsPtRussianRouletteEnabled()},
                                 {"firefly_clamp", dxrSettings.IsPtFireflyClampEnabled()},
                                 {"deterministic_optical_split",
-                                 dxrSettings.IsPtDeterministicOpticalSplitEnabled()}}},
+                                 dxrSettings.IsPtDeterministicOpticalSplitEnabled()},
+                                {"optical_motion_replay",
+                                 dxrSettings.IsPtOpticalMotionReplayEnabled()}}},
             {"restir", {{"di_candidates", dxrSettings.GetRestirDiCandidateCount()},
                           {"di_temporal", dxrSettings.IsRestirDiTemporalEnabled()},
                           {"gi_initial", dxrSettings.IsRestirGiInitialEnabled()},
@@ -206,6 +215,8 @@ namespace
                           {"diagnostic_mode", static_cast<int>(dxrSettings.GetRestirGiSpatialDiagnosticMode())}}},
             {"reconstruction", {{"feature", screenSpaceEffects.GetRayReconstruction() ? "ray_reconstruction" : "none"},
                                   {"quality", static_cast<int>(screenSpaceEffects.GetDlssPreset())},
+                                  {"independent_optical_rr_layers",
+                                   dxrSettings.IsPtIndependentOpticalRrLayersEnabled()},
                                   {"rr_bundle_mode", dxrSettings.GetPtRrBundleMode()}}},
             {"ser", {{"requested_policy", runtimeSnapshot.requestedSerPolicy},
                        {"selected_permutation", runtimeSnapshot.selectedPermutation},
@@ -518,4 +529,391 @@ bool AutomatedBenchmarkCapture::ObserveFrame(
     m_complete = true;
     EngineLog::Info("benchmark", "Timestamp capture complete: " + m_outputPath);
     return true;
+}
+
+namespace
+{
+    struct OpticalCaptureMode
+    {
+        RenderDebugMode debugMode = RenderDebugMode::None;
+        bool rayReconstruction = true;
+        AntiAliasingMode antiAliasing = AntiAliasingMode::DLAA;
+    };
+
+    OpticalCaptureMode ResolveOpticalCaptureMode(const std::string& mode)
+    {
+        if (mode == "raw-radiance")
+        {
+            return {RenderDebugMode::None, false, AntiAliasingMode::None};
+        }
+        if (mode == "final-rr")
+        {
+            return {RenderDebugMode::None, true, AntiAliasingMode::DLAA};
+        }
+
+        const std::pair<const char*, RenderDebugMode> rrModes[] = {
+            {"raw-reflection", RenderDebugMode::PtOpticalRawReflection},
+            {"raw-transmission", RenderDebugMode::PtOpticalRawTransmission},
+            {"reconstructed-reflection", RenderDebugMode::PtOpticalReconstructedReflection},
+            {"reconstructed-transmission", RenderDebugMode::PtOpticalReconstructedTransmission},
+            {"reflection-delta", RenderDebugMode::PtOpticalReflectionReconstructionDelta},
+            {"transmission-delta", RenderDebugMode::PtOpticalTransmissionReconstructionDelta},
+            {"reflection-guide-diffuse", RenderDebugMode::RrDiffuseAlbedo},
+            {"reflection-guide-specular", RenderDebugMode::RrSpecularAlbedo},
+            {"reflection-guide-normal", RenderDebugMode::RrNormalRoughness},
+            {"transmission-guide-diffuse", RenderDebugMode::RrTransmissionDiffuseAlbedo},
+            {"transmission-guide-specular", RenderDebugMode::RrTransmissionSpecularAlbedo},
+            {"transmission-guide-normal", RenderDebugMode::RrTransmissionNormalRoughness},
+        };
+        for (const auto& [name, debugMode] : rrModes)
+        {
+            if (mode == name)
+            {
+                return {debugMode, true, AntiAliasingMode::DLAA};
+            }
+        }
+
+        const std::pair<const char*, RenderDebugMode> rawAovModes[] = {
+            {"coverage-fresnel", RenderDebugMode::PtOpticalCoverageFresnel},
+            {"reflection-reprojection", RenderDebugMode::PtOpticalReflectionReprojection},
+            {"transmission-reprojection", RenderDebugMode::PtOpticalTransmissionReprojection},
+            {"reflection-replay-status", RenderDebugMode::PtOpticalReflectionReplayStatus},
+            {"transmission-replay-status", RenderDebugMode::PtOpticalTransmissionReplayStatus},
+            {"transmission-attribution", RenderDebugMode::PtOpticalTransmissionAttribution},
+            {"transmission-environment", RenderDebugMode::PtOpticalTransmissionEnvironment},
+            {"transmission-receiver", RenderDebugMode::PtOpticalTransmissionReceiver},
+            {"transmission-deep-bounce", RenderDebugMode::PtOpticalTransmissionDeepBounce},
+        };
+        for (const auto& [name, debugMode] : rawAovModes)
+        {
+            if (mode == name)
+            {
+                return {debugMode, false, AntiAliasingMode::None};
+            }
+        }
+
+        throw std::runtime_error("Unknown GAME_ENGINE_OPTICAL_CAPTURE_MODE: " + mode);
+    }
+
+    int FindNamedObject(const Scene& scene, const std::string& name)
+    {
+        const auto& objects = scene.GetObjects();
+        for (std::size_t index = 0; index < objects.size(); ++index)
+        {
+            if (objects[index].GetName() == name)
+            {
+                return static_cast<int>(index);
+            }
+        }
+        return -1;
+    }
+}
+
+class AutomatedOpticalOrbitCapture::Impl
+{
+public:
+    std::filesystem::path outputDirectory;
+    std::string mode;
+    std::string targetName;
+    OpticalCaptureMode captureMode;
+    int warmupFrames = 120;
+    int orbitFrames = 180;
+    int revolutions = 1;
+    int frameStride = 12;
+    bool configured = false;
+    bool complete = false;
+    int warmupRemaining = 0;
+    int orbitFrame = 0;
+    int captureIndex = 0;
+    bool finalCaptureQueued = false;
+    glm::vec3 target{0.0f};
+    glm::vec3 startPosition{0.0f};
+    float startYaw = 0.0f;
+    float startPitch = 0.0f;
+    float horizontalRadius = 0.0f;
+    float verticalOffset = 0.0f;
+    float startAngle = 0.0f;
+    std::optional<nlohmann::json> pendingCapture;
+    nlohmann::json captures = nlohmann::json::array();
+
+    void Configure(Scene& scene, Camera& camera)
+    {
+        const int targetIndex = FindNamedObject(scene, targetName);
+        if (targetIndex < 0)
+        {
+            throw std::runtime_error("Optical orbit target object not found: " + targetName);
+        }
+
+        glm::vec3 boundsMin;
+        glm::vec3 boundsMax;
+        scene.GetWorldBounds(targetIndex, boundsMin, boundsMax);
+        target = 0.5f * (boundsMin + boundsMax);
+        startPosition = camera.GetPosition();
+        startYaw = camera.GetYaw();
+        startPitch = camera.GetPitch();
+        const glm::vec3 offset = startPosition - target;
+        horizontalRadius = glm::length(glm::vec2(offset.x, offset.z));
+        verticalOffset = offset.y;
+        startAngle = std::atan2(offset.z, offset.x);
+        if (horizontalRadius < 0.1f)
+        {
+            throw std::runtime_error("Optical orbit camera is too close to the target's vertical axis.");
+        }
+
+        SceneRenderer& renderer = scene.GetRenderer();
+        DxrSettings& dxr = renderer.GetDxrSettings();
+        ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
+        dxr.SetEnabled(true);
+        dxr.SetRenderingMode(RenderingMode::PathTraced);
+        dxr.SetPtConvergenceMode(PtConvergenceMode::RealTime);
+        dxr.SetPtDeterministicOpticalSplitEnabled(true);
+        dxr.SetRestirDiTemporalEnabled(false);
+        dxr.SetRestirGiInitialEnabled(false);
+        dxr.SetRestirGiTemporalEnabled(false);
+        dxr.SetRestirGiSpatialEnabled(false);
+        effects.SetAntiAliasingMode(captureMode.antiAliasing);
+        effects.SetRayReconstruction(captureMode.rayReconstruction);
+        renderer.SetRenderDebugMode(captureMode.debugMode);
+        effects.InvalidateAllTemporalState();
+
+        camera.SetPosition(startPosition);
+        camera.SetOrientationFromDirection(target - startPosition);
+        warmupRemaining = warmupFrames;
+        configured = true;
+        EngineLog::Info(
+            "optical-capture",
+            "Configured mode=" + mode + " target=\"" + targetName + "\" warmup="
+                + std::to_string(warmupFrames) + " orbit_frames=" + std::to_string(orbitFrames)
+                + " stride=" + std::to_string(frameStride));
+    }
+
+    bool QueueCapture(const Camera& camera, const float angle, const int capturedOrbitFrame)
+    {
+        if (GfxContext::Get().HasPendingPresentedImageCapture())
+        {
+            return false;
+        }
+        if (!GfxContext::Get().RequestPresentedImageCapture())
+        {
+            throw std::runtime_error("Could not queue optical orbit presented-image capture.");
+        }
+        const glm::vec3 position = camera.GetPosition();
+        pendingCapture = {
+            {"capture_index", captureIndex},
+            {"orbit_frame", capturedOrbitFrame},
+            {"orbit_progress", static_cast<double>(capturedOrbitFrame) / static_cast<double>(orbitFrames)},
+            {"angle_degrees", glm::degrees(angle)},
+            {"camera_position", {position.x, position.y, position.z}},
+            {"camera_yaw", camera.GetYaw()},
+            {"camera_pitch", camera.GetPitch()},
+        };
+        return true;
+    }
+
+    void PrepareFrame(Scene& scene, Camera& camera)
+    {
+        if (!configured)
+        {
+            Configure(scene, camera);
+        }
+        if (complete)
+        {
+            return;
+        }
+        if (warmupRemaining > 0)
+        {
+            --warmupRemaining;
+            return;
+        }
+        if (orbitFrame >= orbitFrames)
+        {
+            if (!finalCaptureQueued && !pendingCapture.has_value())
+            {
+                constexpr float kTwoPi = 6.28318530717958647692f;
+                const int finalFrame = orbitFrames - 1;
+                const float progress = static_cast<float>(finalFrame) / static_cast<float>(orbitFrames);
+                const float angle = startAngle
+                    + kTwoPi * static_cast<float>(revolutions) * progress;
+                finalCaptureQueued = QueueCapture(camera, angle, finalFrame);
+            }
+            return;
+        }
+
+        constexpr float kTwoPi = 6.28318530717958647692f;
+        const float progress = static_cast<float>(orbitFrame) / static_cast<float>(orbitFrames);
+        const float angle = startAngle + kTwoPi * static_cast<float>(revolutions) * progress;
+        const glm::vec3 position = target + glm::vec3(
+            std::cos(angle) * horizontalRadius,
+            verticalOffset,
+            std::sin(angle) * horizontalRadius);
+        camera.SetPosition(position);
+        camera.SetOrientationFromDirection(target - position);
+
+        if (orbitFrame % frameStride == 0 || orbitFrame + 1 == orbitFrames)
+        {
+            const bool queued = QueueCapture(camera, angle, orbitFrame);
+            if (orbitFrame + 1 == orbitFrames)
+            {
+                finalCaptureQueued = queued;
+            }
+        }
+        ++orbitFrame;
+    }
+
+    void WriteCapture(GfxContext::PresentedImageCapture image)
+    {
+        if (!pendingCapture.has_value())
+        {
+            throw std::runtime_error("Optical image readback completed without capture metadata.");
+        }
+        std::ostringstream stem;
+        stem << "frame-" << std::setfill('0') << std::setw(4) << captureIndex;
+        const std::filesystem::path rgbaPath = outputDirectory / (stem.str() + ".rgba");
+        const std::filesystem::path metadataPath = outputDirectory / (stem.str() + ".json");
+        std::ofstream rgba(rgbaPath, std::ios::binary | std::ios::trunc);
+        if (!rgba)
+        {
+            throw std::runtime_error("Could not write optical capture: " + rgbaPath.string());
+        }
+        rgba.write(
+            reinterpret_cast<const char*>(image.rgba8.data()),
+            static_cast<std::streamsize>(image.rgba8.size()));
+        if (!rgba)
+        {
+            throw std::runtime_error("Could not finish optical capture: " + rgbaPath.string());
+        }
+
+        nlohmann::json metadata = std::move(*pendingCapture);
+        metadata["record_type"] = "optical_orbit_frame";
+        metadata["mode"] = mode;
+        metadata["extent"] = {image.width, image.height};
+        metadata["format"] = "rgba8";
+        metadata["rgba"] = rgbaPath.filename().generic_string();
+        std::ofstream metadataOutput(metadataPath, std::ios::trunc);
+        metadataOutput << metadata.dump(2) << '\n';
+        if (!metadataOutput)
+        {
+            throw std::runtime_error("Could not write optical metadata: " + metadataPath.string());
+        }
+        captures.push_back(metadata);
+        pendingCapture.reset();
+        ++captureIndex;
+    }
+
+    void Finish()
+    {
+        if (complete)
+        {
+            return;
+        }
+        const nlohmann::json manifest = {
+            {"record_type", "optical_orbit_capture"},
+            {"schema_version", 1},
+            {"mode", mode},
+            {"target", targetName},
+            {"target_world", {target.x, target.y, target.z}},
+            {"warmup_frames", warmupFrames},
+            {"orbit_frames", orbitFrames},
+            {"revolutions", revolutions},
+            {"frame_stride", frameStride},
+            {"start_camera", {
+                {"position", {startPosition.x, startPosition.y, startPosition.z}},
+                {"yaw", startYaw},
+                {"pitch", startPitch}}},
+            {"captures", captures},
+        };
+        std::ofstream output(outputDirectory / "capture.json", std::ios::trunc);
+        output << manifest.dump(2) << '\n';
+        if (!output)
+        {
+            throw std::runtime_error("Could not write optical orbit capture manifest.");
+        }
+        complete = true;
+        EngineLog::Info(
+            "optical-capture",
+            "Optical orbit complete mode=" + mode + " captures=" + std::to_string(captureIndex));
+    }
+};
+
+AutomatedOpticalOrbitCapture::AutomatedOpticalOrbitCapture(std::unique_ptr<Impl> impl)
+    : m_impl(std::move(impl))
+{
+}
+
+AutomatedOpticalOrbitCapture::~AutomatedOpticalOrbitCapture() = default;
+
+std::unique_ptr<AutomatedOpticalOrbitCapture> AutomatedOpticalOrbitCapture::CreateFromEnvironment()
+{
+    const std::string output = ReadOptionalEnvironmentString("GAME_ENGINE_OPTICAL_CAPTURE_OUTPUT");
+    if (output.empty())
+    {
+        return nullptr;
+    }
+    const std::string mode = ReadOptionalEnvironmentString("GAME_ENGINE_OPTICAL_CAPTURE_MODE");
+    if (mode.empty())
+    {
+        throw std::runtime_error(
+            "GAME_ENGINE_OPTICAL_CAPTURE_MODE is required with GAME_ENGINE_OPTICAL_CAPTURE_OUTPUT.");
+    }
+
+    auto impl = std::make_unique<Impl>();
+    impl->outputDirectory = output;
+    impl->mode = mode;
+    impl->captureMode = ResolveOpticalCaptureMode(mode);
+    impl->targetName = ReadOptionalEnvironmentString("GAME_ENGINE_OPTICAL_CAPTURE_TARGET");
+    if (impl->targetName.empty())
+    {
+        impl->targetName = "glass sphere";
+    }
+    impl->warmupFrames = ReadPositiveEnvironmentInt("GAME_ENGINE_OPTICAL_CAPTURE_WARMUP_FRAMES", 120);
+    impl->orbitFrames = ReadPositiveEnvironmentInt("GAME_ENGINE_OPTICAL_CAPTURE_ORBIT_FRAMES", 180);
+    impl->revolutions = ReadPositiveEnvironmentInt("GAME_ENGINE_OPTICAL_CAPTURE_REVOLUTIONS", 1);
+    impl->frameStride = ReadPositiveEnvironmentInt("GAME_ENGINE_OPTICAL_CAPTURE_FRAME_STRIDE", 12);
+    if (impl->frameStride > impl->orbitFrames)
+    {
+        throw std::runtime_error("GAME_ENGINE_OPTICAL_CAPTURE_FRAME_STRIDE cannot exceed orbit frames.");
+    }
+    std::error_code error;
+    std::filesystem::create_directories(impl->outputDirectory, error);
+    if (error)
+    {
+        throw std::runtime_error("Could not create optical capture directory: " + error.message());
+    }
+    return std::unique_ptr<AutomatedOpticalOrbitCapture>(
+        new AutomatedOpticalOrbitCapture(std::move(impl)));
+}
+
+void AutomatedOpticalOrbitCapture::PrepareFrame(
+    const bool sceneReady,
+    Scene& scene,
+    Camera& camera)
+{
+    if (sceneReady)
+    {
+        m_impl->PrepareFrame(scene, camera);
+    }
+}
+
+bool AutomatedOpticalOrbitCapture::ObserveFrame()
+{
+    if (!m_impl->configured || m_impl->complete)
+    {
+        return m_impl->complete;
+    }
+    if (m_impl->pendingCapture.has_value())
+    {
+        GfxContext::PresentedImageCapture image;
+        if (GfxContext::Get().TryConsumePresentedImageCapture(image))
+        {
+            m_impl->WriteCapture(std::move(image));
+        }
+    }
+    if (m_impl->orbitFrame >= m_impl->orbitFrames
+        && m_impl->finalCaptureQueued
+        && !m_impl->pendingCapture.has_value()
+        && !GfxContext::Get().HasPendingPresentedImageCapture())
+    {
+        m_impl->Finish();
+    }
+    return m_impl->complete;
 }

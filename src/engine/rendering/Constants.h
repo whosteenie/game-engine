@@ -66,6 +66,7 @@ namespace EngineConstants
     inline constexpr const char* TonemapFragmentShader = "assets/shaders/post/bloom/tonemap.ps.hlsl";
     inline constexpr const char* FxaaFragmentShader = "assets/shaders/post/aa/fxaa.ps.hlsl";
     inline constexpr const char* DownsampleFragmentShader = "assets/shaders/post/utility/downsample.ps.hlsl";
+    inline constexpr const char* PtOpticalLayersFragmentShader = "assets/shaders/post/utility/pt_optical_layers.ps.hlsl";
     inline constexpr const char* TaaFragmentShader = "assets/shaders/post/aa/taa.ps.hlsl";
     inline constexpr const char* SmaaEdgeFragmentShader = "assets/shaders/post/aa/smaa_edge.ps.hlsl";
     inline constexpr const char* SmaaNeighborFragmentShader = "assets/shaders/post/aa/smaa_neighbor.ps.hlsl";

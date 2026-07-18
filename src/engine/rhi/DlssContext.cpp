@@ -586,9 +586,8 @@ void DlssContext::ReleaseViewportResources(const std::uint32_t viewportId)
         return;
     }
 
-    const sl::ViewportHandle viewport(viewportId);
-    const auto releaseFeature = [&](const sl::Feature feature, const char* const label) {
-        const sl::Result result = g_slFreeResources(feature, viewport);
+    const auto releaseFeature = [&](const std::uint32_t id, const sl::Feature feature, const char* const label) {
+        const sl::Result result = g_slFreeResources(feature, sl::ViewportHandle(id));
         // Streamline uses eErrorInvalidParameter to mean this viewport never created an instance
         // for the feature (for example SR when the project used RR). That is already the desired
         // released state and should not surface as a teardown warning.
@@ -597,17 +596,21 @@ void DlssContext::ReleaseViewportResources(const std::uint32_t viewportId)
             EngineLog::Warn(
                 "dlss",
                 std::string("slFreeResources(") + label + ", viewport "
-                    + std::to_string(viewportId) + ") failed (" + ResultToString(result) + ")");
+                    + std::to_string(id) + ") failed (" + ResultToString(result) + ")");
         }
     };
 
-    if (IsDlssSupported())
+    constexpr std::uint32_t kOpticalTransmissionViewportBit = 0x80000000u;
+    for (const std::uint32_t id : {viewportId, viewportId ^ kOpticalTransmissionViewportBit})
     {
-        releaseFeature(sl::kFeatureDLSS, "DLSS");
-    }
-    if (IsRrSupported())
-    {
-        releaseFeature(sl::kFeatureDLSS_RR, "DLSS-RR");
+        if (IsDlssSupported())
+        {
+            releaseFeature(id, sl::kFeatureDLSS, "DLSS");
+        }
+        if (IsRrSupported())
+        {
+            releaseFeature(id, sl::kFeatureDLSS_RR, "DLSS-RR");
+        }
     }
 #else
     (void)viewportId;

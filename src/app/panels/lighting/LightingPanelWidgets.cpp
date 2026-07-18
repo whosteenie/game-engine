@@ -129,6 +129,19 @@ namespace
         RenderDebugMode::RrDiffuseAlbedo,
         RenderDebugMode::RrSpecularAlbedo,
         RenderDebugMode::RrNormalRoughness,
+        RenderDebugMode::RrTransmissionDiffuseAlbedo,
+        RenderDebugMode::RrTransmissionSpecularAlbedo,
+        RenderDebugMode::RrTransmissionNormalRoughness,
+    };
+
+    const RenderDebugMode kPtOpticalLayerModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::PtOpticalRawReflection,
+        RenderDebugMode::PtOpticalRawTransmission,
+        RenderDebugMode::PtOpticalReconstructedReflection,
+        RenderDebugMode::PtOpticalReconstructedTransmission,
+        RenderDebugMode::PtOpticalReflectionReconstructionDelta,
+        RenderDebugMode::PtOpticalTransmissionReconstructionDelta,
     };
 
     const RenderDebugMode kPtIsolateModes[] = {
@@ -188,6 +201,15 @@ namespace
         RenderDebugMode::PtOpticalGuideReceiverId,
         RenderDebugMode::PtOpticalGuideFallback,
         RenderDebugMode::PtOpticalReceiverReprojection,
+        RenderDebugMode::PtOpticalCoverageFresnel,
+        RenderDebugMode::PtOpticalReflectionReprojection,
+        RenderDebugMode::PtOpticalTransmissionReprojection,
+        RenderDebugMode::PtOpticalReflectionReplayStatus,
+        RenderDebugMode::PtOpticalTransmissionReplayStatus,
+        RenderDebugMode::PtOpticalTransmissionAttribution,
+        RenderDebugMode::PtOpticalTransmissionEnvironment,
+        RenderDebugMode::PtOpticalTransmissionReceiver,
+        RenderDebugMode::PtOpticalTransmissionDeepBounce,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
@@ -211,6 +233,7 @@ namespace
         {"SSR", kSsrModes, IM_ARRAYSIZE(kSsrModes)},
         {"Ray tracing", kRayTracingModes, IM_ARRAYSIZE(kRayTracingModes)},
         {"DLSS RR guides", kRrGuideModes, IM_ARRAYSIZE(kRrGuideModes)},
+        {"PT optical RR layers", kPtOpticalLayerModes, IM_ARRAYSIZE(kPtOpticalLayerModes)},
         {"Path tracer isolate", kPtIsolateModes, IM_ARRAYSIZE(kPtIsolateModes)},
         {"Path tracer diagnostics", kPtDiagnosticModes, IM_ARRAYSIZE(kPtDiagnosticModes)},
     };
@@ -409,8 +432,19 @@ namespace LightingPanelWidgets
 
         if (IsRrGuideDebugMode(mode))
         {
-            return screenSpaceEffects.GetRayReconstruction()
-                || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled);
+            const bool transmissionGuide = mode == RenderDebugMode::RrTransmissionDiffuseAlbedo
+                || mode == RenderDebugMode::RrTransmissionSpecularAlbedo
+                || mode == RenderDebugMode::RrTransmissionNormalRoughness;
+            return (screenSpaceEffects.GetRayReconstruction()
+                    && (!transmissionGuide || pathTracingActive))
+                || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled
+                    && (!transmissionGuide || pathTracingActive));
+        }
+
+        if (IsPtOpticalLayerDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled
+                && screenSpaceEffects.IsRayReconstructionActive();
         }
 
         if (IsPtRestirGiSpatialDebugMode(mode))
@@ -484,6 +518,11 @@ namespace LightingPanelWidgets
         if (IsRrGuideDebugMode(mode))
         {
             return "Requires DLSS Ray Reconstruction to be enabled.";
+        }
+
+        if (IsPtOpticalLayerDebugMode(mode))
+        {
+            return "Requires real-time path tracing with DLSS Ray Reconstruction active.";
         }
 
         if (IsPtRestirGiSpatialDebugMode(mode))
@@ -671,6 +710,21 @@ namespace LightingPanelWidgets
         case RenderDebugMode::RrSpecularAlbedo:
         case RenderDebugMode::RrNormalRoughness:
             return "DLSS Ray Reconstruction material guide buffers fed to Streamline.";
+        case RenderDebugMode::RrTransmissionDiffuseAlbedo:
+        case RenderDebugMode::RrTransmissionSpecularAlbedo:
+        case RenderDebugMode::RrTransmissionNormalRoughness:
+            return "Independent transmission-layer material guide fed to its Streamline RR evaluation. Black/neutral outside supported smooth dielectric coverage is expected.";
+        case RenderDebugMode::PtOpticalRawReflection:
+            return "Exact primary RR color input: full raw PT radiance minus the weighted transmission layer. Reinhard display mapping; RR remains active.";
+        case RenderDebugMode::PtOpticalRawTransmission:
+            return "Exact weighted smooth-dielectric transmission radiance submitted to the independent transmission RR history. Reinhard display mapping.";
+        case RenderDebugMode::PtOpticalReconstructedReflection:
+            return "Primary RR evaluation output before reconstructed transmission is added. It currently contains opaque radiance plus smooth optical reflection.";
+        case RenderDebugMode::PtOpticalReconstructedTransmission:
+            return "Independent transmission RR evaluation output before final optical composition.";
+        case RenderDebugMode::PtOpticalReflectionReconstructionDelta:
+        case RenderDebugMode::PtOpticalTransmissionReconstructionDelta:
+            return "RR output minus its raw layer input. Black=close; yellow=RR brighter; cyan=RR darker. Luminance delta is amplified 4x before display.";
         case RenderDebugMode::PtIsolateDirectSun:
         case RenderDebugMode::PtIsolateDirectEmissive:
         case RenderDebugMode::PtIsolateSurfaceEmissive:
@@ -746,7 +800,23 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtOpticalGuideFallback:
             return "Optical fallback AOV: red=unsupported rough optics, green=moving optical interface, blue=moving receiver. These paths omit RR optical history.";
         case RenderDebugMode::PtOpticalReceiverReprojection:
-            return "Optical receiver reprojection AOV: R is normalized receiver-position residual, G means the previous receiver instance matches, and B means the previous optical path exists at the exported history pixel. Ideal static optics are cyan (0,1,1).";
+            return "Legacy optical receiver reprojection AOV. Reflection wins when both deterministic lobes run; prefer the separate reflection/transmission views below.";
+        case RenderDebugMode::PtOpticalCoverageFresnel:
+            return "Smooth dielectric coverage and interface weights: R=covered, G=Fresnel reflection weight F, B=transmission weight 1-F. TIR appears yellow (1,1,0).";
+        case RenderDebugMode::PtOpticalReflectionReprojection:
+        case RenderDebugMode::PtOpticalTransmissionReprojection:
+            return "Selected lobe receiver reprojection: R=normalized receiver-position residual, G=previous receiver instance matches, B=previous optical path exists at the exported history pixel. Ideal static optics are cyan (0,1,1).";
+        case RenderDebugMode::PtOpticalReflectionReplayStatus:
+        case RenderDebugMode::PtOpticalTransmissionReplayStatus:
+            return "Inverse optical replay status: green=solved and low residual, yellow=solved but high residual, magenta=previous path reaches a different receiver, red=no valid previous optical path/solve, blue=no temporal history yet, black=no supported lobe.";
+        case RenderDebugMode::PtOpticalTransmissionAttribution:
+            return "Transmission-tail attribution: R=deterministic primary split accepted, G=stored transmission continuation resumed, B=finite nonzero radiance accumulated into the owned tail. Supported deterministic glass should be white.";
+        case RenderDebugMode::PtOpticalTransmissionEnvironment:
+            return "Raw owned transmission radiance that escapes to the environment before shading an opaque receiver.";
+        case RenderDebugMode::PtOpticalTransmissionReceiver:
+            return "Raw owned transmission radiance produced while shading the first opaque receiver behind the glass (direct lights, emitter hits, and local terminal lighting).";
+        case RenderDebugMode::PtOpticalTransmissionDeepBounce:
+            return "Raw owned transmission radiance produced after the first opaque receiver scatters the path. This is the floor/object GI-bounce hypothesis isolate.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

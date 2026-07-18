@@ -240,6 +240,20 @@ public:
     std::uint32_t GetPathTracerDiffuseAlbedoResourceState() const { return m_ptDiffuseAlbedoTexture.state; }
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const { return m_ptSpecularAlbedoTexture.srvCpuHandle; }
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle() const { return m_ptOpticalTransmissionOutputTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource() const { return m_ptOpticalTransmissionOutputTexture.resource; }
+    std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState() const { return m_ptOpticalTransmissionOutputTexture.state; }
+    std::uintptr_t GetPathTracerOpticalTransmissionDepthSrvCpuHandle() const { return m_ptOpticalTransmissionDepthTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerOpticalTransmissionDepthResource() const { return m_ptOpticalTransmissionDepthTexture.resource; }
+    std::uint32_t GetPathTracerOpticalTransmissionDepthResourceState() const { return m_ptOpticalTransmissionDepthTexture.state; }
+    std::uintptr_t GetPathTracerOpticalTransmissionMotionSrvCpuHandle() const { return m_ptOpticalTransmissionMotionTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerOpticalTransmissionMotionResource() const { return m_ptOpticalTransmissionMotionTexture.resource; }
+    std::uint32_t GetPathTracerOpticalTransmissionMotionResourceState() const { return m_ptOpticalTransmissionMotionTexture.state; }
+    std::uintptr_t GetPathTracerOpticalTransmissionDiffuseAlbedoSrvCpuHandle() const { return m_ptOpticalTransmissionDiffuseAlbedoTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerOpticalTransmissionDiffuseAlbedoResource() const { return m_ptOpticalTransmissionDiffuseAlbedoTexture.resource; }
+    std::uint32_t GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState() const { return m_ptOpticalTransmissionDiffuseAlbedoTexture.state; }
+    std::uintptr_t GetPathTracerOpticalTransmissionSpecularAlbedoSrvCpuHandle() const { return m_ptOpticalTransmissionSpecularAlbedoTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerOpticalTransmissionNormalRoughnessSrvCpuHandle() const { return m_ptOpticalTransmissionNormalRoughnessTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerNormalRoughnessResource() const { return m_ptNormalRoughnessTexture.resource; }
     std::uint32_t GetPathTracerNormalRoughnessResourceState() const { return m_ptNormalRoughnessTexture.state; }
     std::uintptr_t GetPathTracerDirectSrvCpuHandle() const { return m_ptDirectTexture.srvCpuHandle; }
@@ -444,6 +458,12 @@ private:
     ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
     ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: F0 = lerp(0.04, albedo, metallic)
     ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
+    ReflectionTexture m_ptOpticalTransmissionOutputTexture{}; // RGBA16F: weighted transmission radiance
+    ReflectionTexture m_ptOpticalTransmissionDepthTexture{};
+    ReflectionTexture m_ptOpticalTransmissionMotionTexture{};
+    ReflectionTexture m_ptOpticalTransmissionDiffuseAlbedoTexture{};
+    ReflectionTexture m_ptOpticalTransmissionSpecularAlbedoTexture{};
+    ReflectionTexture m_ptOpticalTransmissionNormalRoughnessTexture{};
     // R2: bounce-0 direct only (sun/emissive/env NEE + ambient) for temporal shade without (rgb−Y).
     ReflectionTexture m_ptDirectTexture{};
     // G4: previous-frame copies for ReSTIR temporal validation (same formats as current guides).

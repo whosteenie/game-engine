@@ -47,6 +47,7 @@ struct DlssResolvePassInputs
     int tonemapMode = 0;
 
     bool dlssHistoryValid = false;
+    bool opticalTransmissionHistoryValid = false;
     // Session-only diagnostic: forces Streamline's actual reset flag every evaluation. This is a
     // decisive history-boundary test, unlike optional responsiveness/bias hints.
     bool forceDlssResetEveryFrame = false;
@@ -64,14 +65,22 @@ struct DlssResolvePassInputs
     int dlssBloomTemporalWarmupFrames = 0;
 
     bool rayReconstructionActive = false;
+    bool independentOpticalRrLayers = true;
 
     PostProcessTarget* dlssOutputTarget = nullptr;
+    PostProcessTarget* dlssOpticalTransmissionOutputTarget = nullptr;
+    PostProcessTarget* dlssOpticalCompositeTarget = nullptr;
+    PostProcessTarget* ptOpticalReflectionInputTarget = nullptr;
     PostProcessTarget* ptDlssMotionTarget = nullptr;
     PostProcessTarget* dlssDilatedMotionTarget = nullptr;
+    PostProcessTarget* dlssOpticalTransmissionMotionTarget = nullptr;
     PostProcessTarget* rrDiffuseAlbedoTarget = nullptr;
     PostProcessTarget* rrSpecularAlbedoTarget = nullptr;
     PostProcessTarget* rrNormalRoughnessTarget = nullptr;
     PostProcessTarget* rrSpecularHitDistanceTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionDiffuseAlbedoTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionSpecularAlbedoTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionNormalRoughnessTarget = nullptr;
 
     PostProcessTarget* dlssBloomExtractTarget = nullptr;
     PostProcessTarget* dlssBloomBlurTarget = nullptr;
@@ -84,6 +93,7 @@ struct DlssResolvePassInputs
     Shader* bloomTemporalShader = nullptr;
     Shader* tonemapShader = nullptr;
     Shader* dlssMotionDilateShader = nullptr;
+    Shader* ptOpticalLayersShader = nullptr;
     std::function<bool()> generateZeroDlssMotion;
 
     TonemapPassInputs fallbackTonemapInputs{};
@@ -92,6 +102,7 @@ struct DlssResolvePassInputs
     std::function<void()> generateRrGuides;
     std::function<bool(std::uintptr_t depthSrv, std::uintptr_t motionSrv)> generateDilatedDlssMotion;
     std::function<bool(std::uintptr_t motionSrv)> generateSupportedDlssMotion;
+    std::function<bool(std::uintptr_t motionSrv)> generateSupportedOpticalTransmissionDlssMotion;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
 
     // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT
@@ -102,11 +113,18 @@ struct DlssResolvePassInputs
     std::function<std::uint32_t()> preparePathTracerRrBundle;
     int ptRrBundleMode = 0;
     PostProcessDepthTarget* ptDlssDepthTarget = nullptr;
+    PostProcessDepthTarget* ptOpticalTransmissionDlssDepthTarget = nullptr;
     void* pathTracerMotionResource = nullptr;
     std::uint32_t pathTracerMotionResourceState = 0;
     // P4b: PT primary depth (R32) and motion SRVs for bloom temporal when DLSS uses the PT bundle.
     std::uintptr_t pathTracerDepthSrv = 0;
     std::uintptr_t pathTracerMotionSrv = 0;
+    void* pathTracerOpticalTransmissionOutputResource = nullptr;
+    std::uint32_t pathTracerOpticalTransmissionOutputResourceState = 0;
+    std::uintptr_t pathTracerOpticalTransmissionOutputSrv = 0;
+    void* pathTracerOpticalTransmissionMotionResource = nullptr;
+    std::uint32_t pathTracerOpticalTransmissionMotionResourceState = 0;
+    std::uintptr_t pathTracerOpticalTransmissionMotionSrv = 0;
 };
 
 // The depth/motion resources selected for a Streamline evaluation. Kept as a small public value
@@ -124,6 +142,7 @@ struct DlssTemporalGuideInputs
     bool cameraMotionReconstructed = false;
     bool usesPathTracerDepth = false;
     bool usesPathTracerMotion = false;
+    std::uint32_t pathTracerBundleReady = 0;
 };
 
 struct DlssResolvePassOutputs
@@ -133,6 +152,7 @@ struct DlssResolvePassOutputs
     bool pathTracerOutputResourceStateValid = false;
     std::uint32_t pathTracerOutputResourceState = 0;
     bool dlssHistoryValid = false;
+    bool opticalTransmissionHistoryValid = false;
     bool dlssBloomHistoryValid = false;
     int dlssBloomTemporalWarmupFrames = 0;
     std::uintptr_t prevFrameBloomSrv = 0;

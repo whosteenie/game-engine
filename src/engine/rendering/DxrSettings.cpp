@@ -142,6 +142,8 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptRussianRoulette = source.m_ptRussianRoulette;
     m_ptFireflyClamp = source.m_ptFireflyClamp;
     m_ptDeterministicOpticalSplit = source.m_ptDeterministicOpticalSplit;
+    m_ptIndependentOpticalRrLayers = source.m_ptIndependentOpticalRrLayers;
+    m_ptOpticalMotionReplay = source.m_ptOpticalMotionReplay;
     m_ptAmbientStrength = source.m_ptAmbientStrength;
     m_ptAmbientAoRayCount = source.m_ptAmbientAoRayCount;
     m_restirDiCandidateCount = source.m_restirDiCandidateCount;
@@ -203,6 +205,8 @@ nlohmann::json DxrSettings::ToJson() const
         {"ptRussianRoulette", m_ptRussianRoulette},
         {"ptFireflyClamp", m_ptFireflyClamp},
         {"ptDeterministicOpticalSplit", m_ptDeterministicOpticalSplit},
+        {"ptIndependentOpticalRrLayers", m_ptIndependentOpticalRrLayers},
+        {"ptOpticalMotionReplay", m_ptOpticalMotionReplay},
         {"ptAmbientStrength", m_ptAmbientStrength},
         {"ptAmbientAoRayCount", m_ptAmbientAoRayCount},
         {"restirDiCandidateCount", m_restirDiCandidateCount},
@@ -262,6 +266,15 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     {
         SetPtDeterministicOpticalSplitEnabled(
             value.at("ptDeterministicOpticalSplit").get<bool>());
+    }
+    if (value.contains("ptIndependentOpticalRrLayers"))
+    {
+        SetPtIndependentOpticalRrLayersEnabled(
+            value.at("ptIndependentOpticalRrLayers").get<bool>());
+    }
+    if (value.contains("ptOpticalMotionReplay"))
+    {
+        SetPtOpticalMotionReplayEnabled(value.at("ptOpticalMotionReplay").get<bool>());
     }
     if (value.contains("ptAmbientStrength"))
     {

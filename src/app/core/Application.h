@@ -105,6 +105,7 @@ private:
     std::unique_ptr<GameViewportPanel> m_gameViewportPanel;
     std::unique_ptr<EditorDockSpace> m_editorDockSpace;
     std::unique_ptr<class AutomatedBenchmarkCapture> m_automatedBenchmarkCapture;
+    std::unique_ptr<class AutomatedOpticalOrbitCapture> m_automatedOpticalOrbitCapture;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;

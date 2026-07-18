@@ -71,6 +71,17 @@ enum class RenderDebugMode
     RrDiffuseAlbedo,
     RrSpecularAlbedo,
     RrNormalRoughness,
+    RrTransmissionDiffuseAlbedo,
+    RrTransmissionSpecularAlbedo,
+    RrTransmissionNormalRoughness,
+    // Post-RR optical layer inspection. These modes keep RR active and display the exact layer
+    // resources consumed or produced by the independent optical reconstruction evaluations.
+    PtOpticalRawReflection,
+    PtOpticalRawTransmission,
+    PtOpticalReconstructedReflection,
+    PtOpticalReconstructedTransmission,
+    PtOpticalReflectionReconstructionDelta,
+    PtOpticalTransmissionReconstructionDelta,
     // Path-tracer radiance isolation (devdoc/dxr/pt/crevice-darkening.md optional debug views).
     PtIsolateDirectSun,
     PtIsolateDirectEmissive,
@@ -135,6 +146,15 @@ enum class RenderDebugMode
     PtOpticalGuideReceiverId,
     PtOpticalGuideFallback,
     PtOpticalReceiverReprojection,
+    PtOpticalCoverageFresnel,
+    PtOpticalReflectionReprojection,
+    PtOpticalTransmissionReprojection,
+    PtOpticalReflectionReplayStatus,
+    PtOpticalTransmissionReplayStatus,
+    PtOpticalTransmissionAttribution,
+    PtOpticalTransmissionEnvironment,
+    PtOpticalTransmissionReceiver,
+    PtOpticalTransmissionDeepBounce,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -153,6 +173,7 @@ bool IsRtReflectionDebugMode(RenderDebugMode mode);
 bool IsRtShadowDebugMode(RenderDebugMode mode);
 bool IsRtGiDebugMode(RenderDebugMode mode);
 bool IsRrGuideDebugMode(RenderDebugMode mode);
+bool IsPtOpticalLayerDebugMode(RenderDebugMode mode);
 bool IsPtIsolateDebugMode(RenderDebugMode mode);
 bool IsPtTemporalStatsDebugMode(RenderDebugMode mode);
 bool IsPtRestirGiSpatialDebugMode(RenderDebugMode mode);
@@ -162,6 +183,6 @@ bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 55;
+inline constexpr int kPtDebugIsolateModeMax = 64;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

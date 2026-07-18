@@ -469,6 +469,9 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
       m_downsampleShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DownsampleFragmentShader)),
+      m_ptOpticalLayersShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::PtOpticalLayersFragmentShader)),
       m_taaShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::TaaFragmentShader,
@@ -664,7 +667,7 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
 
 void ScreenSpaceEffects::PrewarmShaderStages()
 {
-    static const std::array<HlslStageCompileRequest, 53> kStages = {
+    static const std::array<HlslStageCompileRequest, 54> kStages = {
         HlslStageCompileRequest{EngineConstants::FullscreenVertexShader, "main", "vs_6_0"},
         HlslStageCompileRequest{EngineConstants::SsaoFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GtaoFragmentShader, "main", "ps_6_0"},
@@ -677,6 +680,7 @@ void ScreenSpaceEffects::PrewarmShaderStages()
         HlslStageCompileRequest{EngineConstants::TonemapFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::FxaaFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::DownsampleFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::PtOpticalLayersFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::TaaFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::SmaaEdgeFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::SmaaNeighborFragmentShader, "main", "ps_6_0"},
@@ -754,6 +758,9 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_rrSpecularAlbedoTarget);
     DestroyInternalTarget(m_rrNormalRoughnessTarget);
     DestroyInternalTarget(m_rrSpecularHitDistanceTarget);
+    DestroyInternalTarget(m_rrOpticalTransmissionDiffuseAlbedoTarget);
+    DestroyInternalTarget(m_rrOpticalTransmissionSpecularAlbedoTarget);
+    DestroyInternalTarget(m_rrOpticalTransmissionNormalRoughnessTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -773,10 +780,15 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_ptTemporalPrevDepthTarget);
     DestroyInternalTarget(m_ptBoilMetricTarget);
     DestroyInternalTarget(m_dlssOutputTarget);
+    DestroyInternalTarget(m_dlssOpticalTransmissionOutputTarget);
+    DestroyInternalTarget(m_dlssOpticalCompositeTarget);
+    DestroyInternalTarget(m_ptOpticalReflectionInputTarget);
     DestroyInternalDepthTarget(m_dlssDisplayDepthTarget);
     DestroyInternalDepthTarget(m_ptDlssDepthTarget);
+    DestroyInternalDepthTarget(m_ptOpticalTransmissionDlssDepthTarget);
     DestroyInternalTarget(m_ptDlssMotionTarget);
     DestroyInternalTarget(m_dlssDilatedMotionTarget);
+    DestroyInternalTarget(m_dlssOpticalTransmissionMotionTarget);
     for (PtBoilMetricReadbackSlot& slot : m_ptBoilMetricReadbackSlots)
     {
         if (slot.resource != nullptr || slot.allocation != nullptr)
@@ -1294,15 +1306,21 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_rrDiffuseAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrSpecularAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrNormalRoughnessTarget, width, height, format);
+    ResizeInternalTarget(m_rrOpticalTransmissionDiffuseAlbedoTarget, width, height, albedoFormat);
+    ResizeInternalTarget(m_rrOpticalTransmissionSpecularAlbedoTarget, width, height, albedoFormat);
+    ResizeInternalTarget(m_rrOpticalTransmissionNormalRoughnessTarget, width, height, format);
+    ResizeInternalTarget(m_ptOpticalReflectionInputTarget, width, height, format);
     // RR4 spec hit-distance guide: single-channel raw ray length in world units (unambiguous channel).
     const int hitDistFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
     ResizeInternalTarget(m_rrSpecularHitDistanceTarget, width, height, hitDistFormat);
     // P4: render-res D24 depth target for the path tracer's DLSS depth input (resolved from the PT
     // R32 depth each frame). D24 (not the R32 UAV) is what Streamline expects, avoiding shimmer.
     CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
+    CreateInternalDepthTarget(m_ptOpticalTransmissionDlssDepthTarget, width, height);
     const int supportedMotionFormat = static_cast<int>(DXGI_FORMAT_R16G16_FLOAT);
     ResizeInternalTarget(m_ptDlssMotionTarget, width, height, supportedMotionFormat);
     ResizeInternalTarget(m_dlssDilatedMotionTarget, width, height, supportedMotionFormat);
+    ResizeInternalTarget(m_dlssOpticalTransmissionMotionTarget, width, height, supportedMotionFormat);
 }
 
 void ScreenSpaceEffects::ResizeSsrTargets(const int width, const int height)
@@ -1384,6 +1402,8 @@ void ScreenSpaceEffects::ResizeDlssDisplayTargets(const int viewportWidth, const
 {
     const int hdrFormat = static_cast<int>(DXGI_FORMAT_R16G16B16A16_FLOAT);
     CreateUavTarget(m_dlssOutputTarget, viewportWidth, viewportHeight, hdrFormat);
+    CreateUavTarget(m_dlssOpticalTransmissionOutputTarget, viewportWidth, viewportHeight, hdrFormat);
+    ResizeInternalTarget(m_dlssOpticalCompositeTarget, viewportWidth, viewportHeight, hdrFormat);
     ResizeDlssDisplayDepthTarget(viewportWidth, viewportHeight);
 
     const int bloomWidth = std::max(1, viewportWidth / 2);
@@ -1683,6 +1703,7 @@ void ScreenSpaceEffects::ApplyHistoryCompatibilityReset(
     {
         m_taaHistoryValid = false;
         m_dlssHistoryValid = false;
+        m_dlssOpticalTransmissionHistoryValid = false;
     }
     constexpr std::uint32_t kResetsJitterPhase =
         HistoryCompatibilityReason::FirstFrame
@@ -1812,6 +1833,7 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_ssrFrameIndex = 0;
     m_prevFrameBloomSrv = 0;
     m_dlssHistoryValid = false;
+    m_dlssOpticalTransmissionHistoryValid = false;
     m_dlssBloomHistoryValid = false;
     m_dlssBloomTemporalWarmupFrames = 0;
     const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
@@ -1834,6 +1856,7 @@ void ScreenSpaceEffects::ResetTaaHistory() const
     m_bloomHistoryValid = false;
     m_bloomTemporalWarmupFrames = 0;
     m_dlssHistoryValid = false;
+    m_dlssOpticalTransmissionHistoryValid = false;
     m_dlssBloomHistoryValid = false;
     m_dlssBloomTemporalWarmupFrames = 0;
 }
@@ -2239,9 +2262,11 @@ bool ScreenSpaceEffects::PatchPathTracerSkyMotion() const
 
 std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 {
-    // Return bits: 1 = PT material guides copied into the rr* targets, 2 = PT D24 depth resolved.
+    // Return bits: 1 = primary PT material guides, 2 = primary PT D24 depth, 4 = complete
+    // independent smooth-dielectric transmission bundle.
     constexpr std::uint32_t kGuidesReady = 1u;
     constexpr std::uint32_t kDepthReady = 2u;
+    constexpr std::uint32_t kOpticalTransmissionReady = 4u;
 
     m_ptFullGuidesThisFrame = false;
     const int mode = m_ptRrBundleMode;
@@ -2279,10 +2304,33 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
         }
     }
 
+    bool transmissionDepthReady = false;
+    if (fullPtBundle && m_pathTracerOpticalTransmissionDepthSrv != 0)
+    {
+        EnsureDepthBlitShader();
+        PathTracerDlssDepthResolveInputs txInputs{};
+        txInputs.pathTracerDepthSrv = m_pathTracerOpticalTransmissionDepthSrv;
+        txInputs.ptDlssDepthTarget = const_cast<InternalDepthTarget*>(
+            &m_ptOpticalTransmissionDlssDepthTarget);
+        txInputs.depthBlitShader = m_depthBlitShader.get();
+        txInputs.renderWidth = m_width;
+        txInputs.renderHeight = m_height;
+        transmissionDepthReady = PathTracerDisplayPass::ResolveDlssDepth(
+            BuildPostProcessContext(), txInputs);
+        if (!transmissionDepthReady)
+        {
+            EndPathTracerGpuEvent(commandList);
+            return 0;
+        }
+    }
+
     if (wantGuides)
     {
         const bool guidesAvailable = m_pathTracerDiffuseAlbedoSrv != 0
             && m_pathTracerSpecularAlbedoSrv != 0 && m_pathTracerNormalRoughnessSrv != 0
+            && (!fullPtBundle || (m_pathTracerOpticalTransmissionDiffuseAlbedoSrv != 0
+                && m_pathTracerOpticalTransmissionSpecularAlbedoSrv != 0
+                && m_pathTracerOpticalTransmissionNormalRoughnessSrv != 0))
             && m_downsampleShader != nullptr
             && m_rrDiffuseAlbedoTarget.resource != nullptr
             && m_rrSpecularAlbedoTarget.resource != nullptr
@@ -2302,6 +2350,9 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
             {m_pathTracerDiffuseAlbedoSrv, const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget)},
             {m_pathTracerSpecularAlbedoSrv, const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget)},
             {m_pathTracerNormalRoughnessSrv, const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget)},
+            {m_pathTracerOpticalTransmissionDiffuseAlbedoSrv, const_cast<InternalTarget*>(&m_rrOpticalTransmissionDiffuseAlbedoTarget)},
+            {m_pathTracerOpticalTransmissionSpecularAlbedoSrv, const_cast<InternalTarget*>(&m_rrOpticalTransmissionSpecularAlbedoTarget)},
+            {m_pathTracerOpticalTransmissionNormalRoughnessSrv, const_cast<InternalTarget*>(&m_rrOpticalTransmissionNormalRoughnessTarget)},
         };
         for (const auto& copy : copies)
         {
@@ -2313,6 +2364,12 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 
         m_ptFullGuidesThisFrame = true;
         ready |= kGuidesReady;
+        if (transmissionDepthReady
+            && m_pathTracerOpticalTransmissionOutputResource != nullptr
+            && m_pathTracerOpticalTransmissionMotionResource != nullptr)
+        {
+            ready |= kOpticalTransmissionReady;
+        }
 
     }
 
@@ -2415,7 +2472,19 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     const std::uintptr_t motionSrv,
     const std::uintptr_t diffuseAlbedoSrv,
     const std::uintptr_t specularAlbedoSrv,
-    const std::uintptr_t normalRoughnessSrv)
+    const std::uintptr_t normalRoughnessSrv,
+    void* const opticalTransmissionOutputResource,
+    const std::uint32_t opticalTransmissionOutputResourceState,
+    const std::uintptr_t opticalTransmissionOutputSrv,
+    void* const opticalTransmissionDepthResource,
+    const std::uint32_t opticalTransmissionDepthResourceState,
+    const std::uintptr_t opticalTransmissionDepthSrv,
+    void* const opticalTransmissionMotionResource,
+    const std::uint32_t opticalTransmissionMotionResourceState,
+    const std::uintptr_t opticalTransmissionMotionSrv,
+    const std::uintptr_t opticalTransmissionDiffuseAlbedoSrv,
+    const std::uintptr_t opticalTransmissionSpecularAlbedoSrv,
+    const std::uintptr_t opticalTransmissionNormalRoughnessSrv)
 {
     if (!active)
     {
@@ -2442,6 +2511,18 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerDiffuseAlbedoSrv = diffuseAlbedoSrv;
     m_pathTracerSpecularAlbedoSrv = specularAlbedoSrv;
     m_pathTracerNormalRoughnessSrv = normalRoughnessSrv;
+    m_pathTracerOpticalTransmissionOutputResource = opticalTransmissionOutputResource;
+    m_pathTracerOpticalTransmissionOutputResourceState = opticalTransmissionOutputResourceState;
+    m_pathTracerOpticalTransmissionOutputSrv = opticalTransmissionOutputSrv;
+    m_pathTracerOpticalTransmissionDepthResource = opticalTransmissionDepthResource;
+    m_pathTracerOpticalTransmissionDepthResourceState = opticalTransmissionDepthResourceState;
+    m_pathTracerOpticalTransmissionDepthSrv = opticalTransmissionDepthSrv;
+    m_pathTracerOpticalTransmissionMotionResource = opticalTransmissionMotionResource;
+    m_pathTracerOpticalTransmissionMotionResourceState = opticalTransmissionMotionResourceState;
+    m_pathTracerOpticalTransmissionMotionSrv = opticalTransmissionMotionSrv;
+    m_pathTracerOpticalTransmissionDiffuseAlbedoSrv = opticalTransmissionDiffuseAlbedoSrv;
+    m_pathTracerOpticalTransmissionSpecularAlbedoSrv = opticalTransmissionSpecularAlbedoSrv;
+    m_pathTracerOpticalTransmissionNormalRoughnessSrv = opticalTransmissionNormalRoughnessSrv;
     m_ptFullGuidesThisFrame = false;
     m_pathTracerDlssResolvedThisFrame = false;
 }
@@ -3335,6 +3416,31 @@ bool ScreenSpaceEffects::GenerateSupportedDlssMotion(const std::uintptr_t motion
     return true;
 }
 
+bool ScreenSpaceEffects::GenerateSupportedOpticalTransmissionDlssMotion(
+    const std::uintptr_t motionSrv) const
+{
+    if (motionSrv == 0 || m_width <= 0 || m_height <= 0
+        || m_dlssOpticalTransmissionMotionTarget.resource == nullptr
+        || m_dlssMotionCopyShader == nullptr)
+    {
+        return false;
+    }
+
+    SceneRenderTrace::Scope copyScope("dlss optical transmission motion conversion");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_dlssMotionCopyShader->Use(false);
+    m_dlssMotionCopyShader->SetInt("uMotion", 0);
+    m_dlssMotionCopyShader->BindTextureSlot(0, motionSrv);
+    DrawFullscreenToTarget(
+        *m_dlssMotionCopyShader,
+        const_cast<InternalTarget&>(m_dlssOpticalTransmissionMotionTarget),
+        m_width,
+        m_height,
+        clear);
+    copyScope.Success();
+    return true;
+}
+
 bool ScreenSpaceEffects::GenerateZeroDlssMotion() const
 {
     if (m_width <= 0 || m_height <= 0 || m_dlssDilatedMotionTarget.resource == nullptr
@@ -3461,6 +3567,15 @@ void ScreenSpaceEffects::BlitRrGuideDebug(
     case RenderDebugMode::RrDiffuseAlbedo: srv = m_rrDiffuseAlbedoTarget.srvCpuHandle; break;
     case RenderDebugMode::RrSpecularAlbedo: srv = m_rrSpecularAlbedoTarget.srvCpuHandle; break;
     case RenderDebugMode::RrNormalRoughness: srv = m_rrNormalRoughnessTarget.srvCpuHandle; break;
+    case RenderDebugMode::RrTransmissionDiffuseAlbedo:
+        srv = m_rrOpticalTransmissionDiffuseAlbedoTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::RrTransmissionSpecularAlbedo:
+        srv = m_rrOpticalTransmissionSpecularAlbedoTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::RrTransmissionNormalRoughness:
+        srv = m_rrOpticalTransmissionNormalRoughnessTarget.srvCpuHandle;
+        break;
     default: return;
     }
     if (srv == 0)
@@ -3477,6 +3592,66 @@ void ScreenSpaceEffects::BlitRrGuideDebug(
     m_debugChannelShader->SetVec2("uUvScale", glm::vec2(1.0f, 1.0f));
     m_debugChannelShader->BindTextureSlot(0, srv);
     m_debugChannelShader->FlushUniforms();
+    DrawFullscreenQuad();
+}
+
+void ScreenSpaceEffects::BlitPtOpticalLayerDebug(
+    const Framebuffer* outputTarget,
+    const int viewportWidth,
+    const int viewportHeight) const
+{
+    if (!IsPtOpticalLayerDebugMode(m_debugMode) || outputTarget == nullptr
+        || m_ptOpticalLayersShader == nullptr || !m_pathTracerDlssResolvedThisFrame
+        || !m_dlssOpticalTransmissionHistoryValid)
+    {
+        return;
+    }
+
+    std::uintptr_t firstSrv = 0;
+    std::uintptr_t secondSrv = 0;
+    int shaderMode = 2; // Reinhard display of firstSrv.
+    switch (m_debugMode)
+    {
+    case RenderDebugMode::PtOpticalRawReflection:
+        firstSrv = m_ptOpticalReflectionInputTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::PtOpticalRawTransmission:
+        firstSrv = m_pathTracerOpticalTransmissionOutputSrv;
+        break;
+    case RenderDebugMode::PtOpticalReconstructedReflection:
+        firstSrv = m_dlssOutputTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::PtOpticalReconstructedTransmission:
+        firstSrv = m_dlssOpticalTransmissionOutputTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::PtOpticalReflectionReconstructionDelta:
+        firstSrv = m_ptOpticalReflectionInputTarget.srvCpuHandle;
+        secondSrv = m_dlssOutputTarget.srvCpuHandle;
+        shaderMode = 3;
+        break;
+    case RenderDebugMode::PtOpticalTransmissionReconstructionDelta:
+        firstSrv = m_pathTracerOpticalTransmissionOutputSrv;
+        secondSrv = m_dlssOpticalTransmissionOutputTarget.srvCpuHandle;
+        shaderMode = 3;
+        break;
+    default:
+        return;
+    }
+    if (firstSrv == 0)
+    {
+        return;
+    }
+    if (secondSrv == 0)
+    {
+        secondSrv = firstSrv;
+    }
+
+    BindOutputTarget(outputTarget, viewportWidth, viewportHeight);
+    m_ptOpticalLayersShader->Use(false, true);
+    m_ptOpticalLayersShader->SetInt("uComposite", shaderMode);
+    m_ptOpticalLayersShader->BindTextureSlot(0, firstSrv);
+    m_ptOpticalLayersShader->BindTextureSlot(1, secondSrv);
+    m_ptOpticalLayersShader->FlushUniforms();
     DrawFullscreenQuad();
 }
 

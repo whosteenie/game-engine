@@ -143,10 +143,26 @@ public:
         std::uintptr_t motionSrv = 0,
         std::uintptr_t diffuseAlbedoSrv = 0,
         std::uintptr_t specularAlbedoSrv = 0,
-        std::uintptr_t normalRoughnessSrv = 0);
+        std::uintptr_t normalRoughnessSrv = 0,
+        void* opticalTransmissionOutputResource = nullptr,
+        std::uint32_t opticalTransmissionOutputResourceState = 0,
+        std::uintptr_t opticalTransmissionOutputSrv = 0,
+        void* opticalTransmissionDepthResource = nullptr,
+        std::uint32_t opticalTransmissionDepthResourceState = 0,
+        std::uintptr_t opticalTransmissionDepthSrv = 0,
+        void* opticalTransmissionMotionResource = nullptr,
+        std::uint32_t opticalTransmissionMotionResourceState = 0,
+        std::uintptr_t opticalTransmissionMotionSrv = 0,
+        std::uintptr_t opticalTransmissionDiffuseAlbedoSrv = 0,
+        std::uintptr_t opticalTransmissionSpecularAlbedoSrv = 0,
+        std::uintptr_t opticalTransmissionNormalRoughnessSrv = 0);
     bool IsPathTracerDisplayActive() const { return m_pathTracerActive; }
     // Diagnostic RR-input switchboard (DxrSettings::GetPtRrBundleMode; devdoc/dxr/pt/gi-shimmer.md).
     void SetPtRrBundleMode(int mode);
+    void SetPtIndependentOpticalRrLayersEnabled(bool enabled)
+    {
+        m_ptIndependentOpticalRrLayers = enabled;
+    }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
     // A post-process debug pass has already written the viewport and must not be covered by the
@@ -248,6 +264,12 @@ public:
     // RR1: visualize a DLSS-RR material guide (diffuse/specular albedo, normal-roughness). Runs the
     // guide pass straight to the output; only active for the RR-guide debug views (no cost otherwise).
     void BlitRrGuideDebug(
+        const Framebuffer* outputTarget,
+        int viewportWidth,
+        int viewportHeight) const;
+    // Displays authoritative pre/post Streamline optical layer resources while keeping both RR
+    // evaluations active. Unlike PT isolate modes, these views do not alter the path-tracer output.
+    void BlitPtOpticalLayerDebug(
         const Framebuffer* outputTarget,
         int viewportWidth,
         int viewportHeight) const;
@@ -375,6 +397,7 @@ public:
     {
         m_reconstructDlssCameraMotion = enabled;
         m_dlssHistoryValid = false;
+        m_dlssOpticalTransmissionHistoryValid = false;
     }
     // Session-only A/B: removes projection jitter from both rendering and Streamline.
     bool GetFreezeTemporalJitterDiagnostic() const { return m_freezeTemporalJitterDiagnostic; }
@@ -382,6 +405,7 @@ public:
     {
         m_freezeTemporalJitterDiagnostic = enabled;
         m_dlssHistoryValid = false;
+        m_dlssOpticalTransmissionHistoryValid = false;
     }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
@@ -559,6 +583,7 @@ private:
     void GenerateRrGuides() const;
     bool GenerateDilatedDlssMotion(std::uintptr_t depthSrv, std::uintptr_t motionSrv) const;
     bool GenerateSupportedDlssMotion(std::uintptr_t motionSrv) const;
+    bool GenerateSupportedOpticalTransmissionDlssMotion(std::uintptr_t motionSrv) const;
     bool GenerateZeroDlssMotion() const;
     bool PreparePathTracerMotionReprojectionAudit() const;
     void CommitPathTracerMotionReprojectionAudit(std::uintptr_t depthSrv) const;
@@ -717,6 +742,9 @@ private:
     InternalTarget m_rrSpecularAlbedoTarget;  // F0 = lerp(0.04, albedo, metallic)
     InternalTarget m_rrNormalRoughnessTarget; // packed: world normal rgb + roughness a
     InternalTarget m_rrSpecularHitDistanceTarget; // R16F reflection ray length (world units), RR4
+    InternalTarget m_rrOpticalTransmissionDiffuseAlbedoTarget;
+    InternalTarget m_rrOpticalTransmissionSpecularAlbedoTarget;
+    InternalTarget m_rrOpticalTransmissionNormalRoughnessTarget;
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -737,14 +765,19 @@ private:
     InternalTarget m_ptBoilMetricTarget;
     // DLSS path (S4): HDR upscale output + display-res bloom chain (post-DLSS tonemap input).
     InternalTarget m_dlssOutputTarget;
+    InternalTarget m_dlssOpticalTransmissionOutputTarget;
+    InternalTarget m_dlssOpticalCompositeTarget;
+    InternalTarget m_ptOpticalReflectionInputTarget;
     InternalDepthTarget m_dlssDisplayDepthTarget;
     // P4: render-res D24 target holding the path tracer's primary-hit depth for DLSS (resolved from
     // the PT R32 depth UAV). Streamline expects a D24 depth resource; feeding the R32 UAV shimmers.
     InternalDepthTarget m_ptDlssDepthTarget;
+    InternalDepthTarget m_ptOpticalTransmissionDlssDepthTarget;
     // Controlled Streamline-supported RG16F bridge. PT/raster authoring remains RGBA16F; only the
     // exact motion resource tagged into DLSS/RR is converted to the documented two-channel format.
     InternalTarget m_ptDlssMotionTarget;
     InternalTarget m_dlssDilatedMotionTarget;
+    InternalTarget m_dlssOpticalTransmissionMotionTarget;
     InternalTarget m_dlssBloomExtractTarget;
     InternalTarget m_dlssBloomBlurTarget;
     InternalTarget m_dlssBloomBlur2Target;
@@ -762,6 +795,7 @@ private:
     std::unique_ptr<Shader> m_tonemapShader;
     std::unique_ptr<Shader> m_fxaaShader;
     std::unique_ptr<Shader> m_downsampleShader;
+    std::unique_ptr<Shader> m_ptOpticalLayersShader;
     std::unique_ptr<Shader> m_taaShader;
     std::unique_ptr<Shader> m_smaaEdgeShader;
     std::unique_ptr<Shader> m_smaaNeighborShader;
@@ -896,10 +930,23 @@ private:
     std::uintptr_t m_pathTracerDiffuseAlbedoSrv = 0;
     std::uintptr_t m_pathTracerSpecularAlbedoSrv = 0;
     std::uintptr_t m_pathTracerNormalRoughnessSrv = 0;
+    void* m_pathTracerOpticalTransmissionOutputResource = nullptr;
+    std::uint32_t m_pathTracerOpticalTransmissionOutputResourceState = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionOutputSrv = 0;
+    void* m_pathTracerOpticalTransmissionDepthResource = nullptr;
+    std::uint32_t m_pathTracerOpticalTransmissionDepthResourceState = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionDepthSrv = 0;
+    void* m_pathTracerOpticalTransmissionMotionResource = nullptr;
+    std::uint32_t m_pathTracerOpticalTransmissionMotionResourceState = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionMotionSrv = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionDiffuseAlbedoSrv = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionSpecularAlbedoSrv = 0;
+    std::uintptr_t m_pathTracerOpticalTransmissionNormalRoughnessSrv = 0;
     // True after PreparePathTracerRrBundle copied PT guides into the rr* targets this frame:
     // GenerateRrGuides must then skip its raster material modes (0-2) to avoid overwriting them.
     mutable bool m_ptFullGuidesThisFrame = false;
     int m_ptRrBundleMode = 0;
+    bool m_ptIndependentOpticalRrLayers = true;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
     mutable bool m_pathTracerPostIntegrated = false;
     mutable bool m_postProcessDebugRenderedThisFrame = false;
@@ -1019,6 +1066,7 @@ private:
     // false the next DLSS evaluate sets the SL reset flag. Cleared on mode/preset change, resize,
     // and temporal-history invalidation.
     mutable bool m_dlssHistoryValid = false;
+    mutable bool m_dlssOpticalTransmissionHistoryValid = false;
     bool m_forceDlssResetEveryFrame = false;
     bool m_useDilatedDlssMotionVectors = false;
     bool m_reconstructDlssCameraMotion = false;

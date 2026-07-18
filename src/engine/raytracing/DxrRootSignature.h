@@ -70,7 +70,7 @@ struct ReflectionDispatchConstants
     // F2 path-tracer-only: emissive NEE light list (t15). Zero for non-PT dispatches.
     std::uint32_t emissiveLightCount = 0;
     float emissiveLightPickWeightSum = 0.0f;
-    float paddingPtEmissiveTransport = 0.0f;
+    float ptOpticalStabilityFlags = 0.0f; // path-tracer-only bitmask; exactly represented as float
     float ptDebugIsolateMode = 0.0f; // path-tracer-only radiance term isolation (see RenderDebug.h)
     // PT-A transmission virtual motion: previous unjittered frustum + camera for dual-frame refract MV.
     float prevInvViewProj[16] = {};

@@ -164,6 +164,7 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
     {
         ptBundleReady = inputs.preparePathTracerRrBundle();
     }
+    result.pathTracerBundleReady = ptBundleReady;
 
     const int bundleMode = inputs.ptRrBundleMode;
     const bool usePtDepth = (ptBundleReady & 2u) != 0
@@ -273,9 +274,11 @@ void DlssResolvePass::Execute(
     outputs.pathTracerOutputResourceStateValid = false;
     outputs.pathTracerOutputResourceState = 0;
     outputs.dlssHistoryValid = inputs.dlssHistoryValid;
+    outputs.opticalTransmissionHistoryValid = inputs.opticalTransmissionHistoryValid;
     outputs.dlssBloomHistoryValid = inputs.dlssBloomHistoryValid;
     outputs.dlssBloomTemporalWarmupFrames = inputs.dlssBloomTemporalWarmupFrames;
     outputs.prevFrameBloomSrv = 0;
+    PostProcessTarget* resolvedDlssTarget = inputs.dlssOutputTarget;
 
     if (inputs.camera == nullptr || inputs.sceneFramebuffer == nullptr
         || inputs.outputTarget == nullptr || inputs.dlssOutputTarget == nullptr
@@ -374,6 +377,51 @@ void DlssResolvePass::Execute(
         const DlssTemporalGuideInputs guides = ResolveTemporalGuideInputs(inputs);
         ptBloomTemporalMotion = guides.usesPathTracerMotion;
         ptBloomTemporalDepth = guides.usesPathTracerDepth;
+        const bool opticalLayerSplit = pathTracerDlssActive
+            && inputs.independentOpticalRrLayers
+            && inputs.rayReconstructionActive
+            && dlss.IsRrSupported()
+            && inputs.generateRrGuides
+            && (guides.pathTracerBundleReady & 4u) != 0u
+            && inputs.pathTracerOpticalTransmissionOutputResource != nullptr
+            && inputs.pathTracerOpticalTransmissionOutputSrv != 0
+            && inputs.pathTracerOpticalTransmissionMotionSrv != 0
+            && inputs.ptOpticalReflectionInputTarget != nullptr
+            && inputs.ptOpticalReflectionInputTarget->resource != nullptr
+            && inputs.dlssOpticalTransmissionOutputTarget != nullptr
+            && inputs.dlssOpticalTransmissionOutputTarget->resource != nullptr
+            && inputs.dlssOpticalCompositeTarget != nullptr
+            && inputs.ptOpticalTransmissionDlssDepthTarget != nullptr
+            && inputs.ptOpticalTransmissionDlssDepthTarget->resource != nullptr
+            && inputs.ptDlssMotionTarget != nullptr
+            && inputs.ptDlssMotionTarget->resource != nullptr
+            && inputs.dlssOpticalTransmissionMotionTarget != nullptr
+            && inputs.dlssOpticalTransmissionMotionTarget->resource != nullptr
+            && inputs.rrOpticalTransmissionDiffuseAlbedoTarget != nullptr
+            && inputs.rrOpticalTransmissionSpecularAlbedoTarget != nullptr
+            && inputs.rrOpticalTransmissionNormalRoughnessTarget != nullptr
+            && inputs.ptOpticalLayersShader != nullptr;
+        if (pathTracerDlssActive && inputs.rayReconstructionActive && !opticalLayerSplit)
+        {
+            outputs.opticalTransmissionHistoryValid = false;
+        }
+        if (opticalLayerSplit)
+        {
+            const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+            inputs.ptOpticalLayersShader->Use(false, false);
+            inputs.ptOpticalLayersShader->SetInt("uComposite", 0);
+            inputs.ptOpticalLayersShader->BindTextureSlot(0, inputs.dxrPathTracerOutputSrv);
+            inputs.ptOpticalLayersShader->BindTextureSlot(
+                1, inputs.pathTracerOpticalTransmissionOutputSrv);
+            context.draw.DrawFullscreenToTarget(
+                *inputs.ptOpticalLayersShader,
+                *inputs.ptOpticalReflectionInputTarget,
+                context.renderWidth,
+                context.renderHeight,
+                clear);
+            in.colorInput = inputs.ptOpticalReflectionInputTarget->resource;
+            in.colorInputState = inputs.ptOpticalReflectionInputTarget->resourceState;
+        }
         in.depth = guides.depth;
         in.depthState = guides.depthState;
         in.motionVectors = guides.motion;
@@ -523,33 +571,109 @@ void DlssResolvePass::Execute(
 
         {
             const GfxContext::GpuTimerScope gpuScopeEvaluate("DLSS/Evaluate");
-            outputs.dlssRan = dlss.Evaluate(dlss.CurrentFrameToken(), in);
+            const bool primaryRan = dlss.Evaluate(dlss.CurrentFrameToken(), in);
             GfxContext::Get().RebindFrameDescriptorHeaps();
+            TransitionResource(
+                commandList,
+                dlssOut,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            inputs.dlssOutputTarget->resourceState = kPixelSrv;
+            outputs.dlssHistoryValid = primaryRan;
+            outputs.dlssRan = primaryRan;
+
+            if (primaryRan && opticalLayerSplit && in.useRayReconstruction
+                && inputs.generateSupportedOpticalTransmissionDlssMotion
+                && inputs.generateSupportedOpticalTransmissionDlssMotion(
+                    inputs.pathTracerOpticalTransmissionMotionSrv))
+            {
+                DlssFrameInputs txIn = in;
+                constexpr std::uint32_t kOpticalTransmissionViewportBit = 0x80000000u;
+                txIn.viewportId = inputs.dlssViewportId ^ kOpticalTransmissionViewportBit;
+                txIn.extentPlan.key.viewportId = txIn.viewportId;
+                txIn.colorInput = inputs.pathTracerOpticalTransmissionOutputResource;
+                txIn.colorInputState = inputs.pathTracerOpticalTransmissionOutputResourceState;
+                auto* txOut = static_cast<ID3D12Resource*>(
+                    inputs.dlssOpticalTransmissionOutputTarget->resource);
+                TransitionResource(
+                    commandList,
+                    txOut,
+                    static_cast<D3D12_RESOURCE_STATES>(
+                        inputs.dlssOpticalTransmissionOutputTarget->resourceState),
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                inputs.dlssOpticalTransmissionOutputTarget->resourceState =
+                    static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                txIn.colorOutput = txOut;
+                txIn.colorOutputState =
+                    static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+                txIn.depth = inputs.ptOpticalTransmissionDlssDepthTarget->resource;
+                txIn.depthState = inputs.ptOpticalTransmissionDlssDepthTarget->resourceState;
+                txIn.motionVectors = inputs.dlssOpticalTransmissionMotionTarget->resource;
+                txIn.motionVectorsState = inputs.dlssOpticalTransmissionMotionTarget->resourceState;
+                txIn.diffuseAlbedo = inputs.rrOpticalTransmissionDiffuseAlbedoTarget->resource;
+                txIn.diffuseAlbedoState = inputs.rrOpticalTransmissionDiffuseAlbedoTarget->resourceState;
+                txIn.specularAlbedo = inputs.rrOpticalTransmissionSpecularAlbedoTarget->resource;
+                txIn.specularAlbedoState = inputs.rrOpticalTransmissionSpecularAlbedoTarget->resourceState;
+                txIn.normalRoughness = inputs.rrOpticalTransmissionNormalRoughnessTarget->resource;
+                txIn.normalRoughnessState = inputs.rrOpticalTransmissionNormalRoughnessTarget->resourceState;
+                txIn.specularHitDistance = nullptr;
+                txIn.specularHitDistanceState = 0;
+                txIn.reset = inputs.forceDlssResetEveryFrame
+                    || !inputs.opticalTransmissionHistoryValid
+                    || !inputs.motionVectorState.historyValid || cameraCut;
+                FrameDiagnostics::LogHistoryEvent(
+                    txIn.viewportId,
+                    "reconstruction-optical-transmission",
+                    txIn.reset ? "request" : "consume",
+                    "path-tracer",
+                    "pt-transmission-guide-bundle",
+                    "rr",
+                    DlssTraceQuality(inputs.quality),
+                    context.renderWidth,
+                    context.renderHeight,
+                    inputs.viewportWidth,
+                    inputs.viewportHeight,
+                    cameraCut,
+                    false,
+                    txIn.reset ? 1u : 0u);
+                const bool transmissionRan = dlss.Evaluate(dlss.CurrentFrameToken(), txIn);
+                GfxContext::Get().RebindFrameDescriptorHeaps();
+                TransitionResource(
+                    commandList,
+                    txOut,
+                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                inputs.dlssOpticalTransmissionOutputTarget->resourceState = kPixelSrv;
+                outputs.opticalTransmissionHistoryValid = transmissionRan;
+                outputs.dlssRan = transmissionRan;
+
+                if (transmissionRan)
+                {
+                    const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+                    inputs.ptOpticalLayersShader->Use(false, false);
+                    inputs.ptOpticalLayersShader->SetInt("uComposite", 1);
+                    inputs.ptOpticalLayersShader->BindTextureSlot(
+                        0, inputs.dlssOutputTarget->srvCpuHandle);
+                    inputs.ptOpticalLayersShader->BindTextureSlot(
+                        1, inputs.dlssOpticalTransmissionOutputTarget->srvCpuHandle);
+                    context.draw.DrawFullscreenToTarget(
+                        *inputs.ptOpticalLayersShader,
+                        *inputs.dlssOpticalCompositeTarget,
+                        inputs.viewportWidth,
+                        inputs.viewportHeight,
+                        clear);
+                    resolvedDlssTarget = inputs.dlssOpticalCompositeTarget;
+                }
+            }
+            else if (primaryRan && opticalLayerSplit)
+            {
+                outputs.dlssRan = false;
+                outputs.opticalTransmissionHistoryValid = false;
+            }
 
             if (outputs.dlssRan && pathTracerDlssActive)
             {
                 outputs.pathTracerDlssResolvedThisFrame = true;
-            }
-
-            if (outputs.dlssRan)
-            {
-                TransitionResource(
-                    commandList,
-                    dlssOut,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                inputs.dlssOutputTarget->resourceState = kPixelSrv;
-                outputs.dlssHistoryValid = true;
-            }
-            else
-            {
-                TransitionResource(
-                    commandList,
-                    dlssOut,
-                    D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                inputs.dlssOutputTarget->resourceState = kPixelSrv;
-                outputs.dlssHistoryValid = false;
             }
         }
         evalScope.Success();
@@ -578,7 +702,7 @@ void DlssResolvePass::Execute(
         {
             const GfxContext::GpuTimerScope gpuScopePtOverlay("DLSS/PT overlay");
             inputs.drawPathTracerGridOverlay(
-                *inputs.dlssOutputTarget,
+                *resolvedDlssTarget,
                 inputs.viewportWidth,
                 inputs.viewportHeight);
         }
@@ -588,7 +712,7 @@ void DlssResolvePass::Execute(
             && inputs.dlssBloomExtractTarget->srvCpuHandle != 0)
         {
             DisplayResBloomInputs bloomInputs{};
-            bloomInputs.hdrColorSrv = inputs.dlssOutputTarget->srvCpuHandle;
+            bloomInputs.hdrColorSrv = resolvedDlssTarget->srvCpuHandle;
             bloomInputs.displayWidth = inputs.viewportWidth;
             bloomInputs.displayHeight = inputs.viewportHeight;
             bloomInputs.renderWidth = context.renderWidth;
@@ -671,7 +795,7 @@ void DlssResolvePass::Execute(
                 inputs.outputTarget,
                 inputs.viewportWidth,
                 inputs.viewportHeight,
-                inputs.dlssOutputTarget->srvCpuHandle,
+                resolvedDlssTarget->srvCpuHandle,
                 displayBloomSrv,
                 exposurePolicy.displayExposureEv,
                 inputs.tonemapMode,
