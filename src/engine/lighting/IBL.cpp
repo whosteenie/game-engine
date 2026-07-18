@@ -1,5 +1,5 @@
 #include "engine/lighting/IBL.h"
-#include "engine/lighting/EnvironmentImportanceSampling.h"
+#include "engine/lighting/environment/Importance.h"
 #include "engine/lighting/IrradianceSh.h"
 
 #include "engine/platform/tooling/NativeProgressWindow.h"

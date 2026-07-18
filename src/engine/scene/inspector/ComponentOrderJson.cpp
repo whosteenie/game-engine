@@ -1,4 +1,4 @@
-#include "engine/scene/InspectorComponentOrderJson.h"
+#include "engine/scene/inspector/ComponentOrderJson.h"
 
 #include "engine/scene/SceneObject.h"
 

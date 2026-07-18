@@ -36,7 +36,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/components/RigidBodyComponent.cpp
     src/engine/lighting/SceneLighting.cpp
     src/engine/scene/InspectorComponentOrder.cpp
-    src/engine/scene/InspectorComponentOrderJson.cpp
+    src/engine/scene/inspector/ComponentOrderJson.cpp
     src/engine/scene/RotationUtils.cpp
     src/engine/scene/SceneObject.cpp
     src/engine/scene/SceneObjectComponents.cpp
@@ -59,7 +59,7 @@ set(ENGINE_RENDER_SOURCES
     src/engine/lighting/IBL.cpp
     src/engine/lighting/EnvironmentMap.cpp
     src/engine/lighting/IrradianceSh.cpp
-    src/engine/lighting/EnvironmentImportanceSampling.cpp
+    src/engine/lighting/environment/Importance.cpp
 
     src/engine/rendering/resources/Material.cpp
     src/engine/rendering/resources/Texture.cpp
@@ -81,11 +81,11 @@ set(ENGINE_RENDER_SOURCES
     src/engine/rendering/core/HistoryCompatibility.cpp
     src/engine/rendering/core/ReconstructionJitter.cpp
       src/engine/rendering/post/ScreenSpaceEffects.cpp
-      src/engine/rendering/post/ScreenSpaceEffectsControls.cpp
-      src/engine/rendering/post/ScreenSpaceEffectsRayTracing.cpp
-      src/engine/rendering/post/ScreenSpaceEffectsTemporal.cpp
-      src/engine/rendering/post/ScreenSpaceEffectsApply.cpp
-    src/engine/rendering/post/ScreenSpaceEffectsSettings.cpp
+      src/engine/rendering/post/effects/Controls.cpp
+      src/engine/rendering/post/effects/RayTracing.cpp
+      src/engine/rendering/post/effects/Temporal.cpp
+      src/engine/rendering/post/effects/Apply.cpp
+    src/engine/rendering/post/effects/Settings.cpp
     src/engine/rendering/post/PostProcessDraw.cpp
     src/engine/rendering/post/DxrDebugBlitPass.cpp
     src/engine/rendering/post/AmbientOcclusionPass.cpp

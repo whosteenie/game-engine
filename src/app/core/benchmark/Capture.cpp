@@ -1,4 +1,4 @@
-#include "app/core/AutomatedBenchmarkCapture.h"
+#include "app/core/benchmark/Capture.h"
 
 #include "app/scene/document/Scene.h"
 #include "app/scene/rendering/SceneRenderer.h"

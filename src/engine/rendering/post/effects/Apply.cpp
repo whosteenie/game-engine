@@ -1,4 +1,4 @@
-#include "engine/rendering/post/ScreenSpaceEffectsApply.h"
+#include "engine/rendering/post/effects/Apply.h"
 
 #include "engine/camera/Camera.h"
 #include "engine/lighting/DirectionalShadowSettings.h"

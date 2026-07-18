@@ -1,5 +1,5 @@
 #include "engine/rendering/post/DlssResolvePass.h"
-#include "engine/rendering/post/ReconstructionExposurePolicy.h"
+#include "engine/rendering/post/reconstruction/ExposurePolicy.h"
 
 #include "engine/platform/diagnostics/FrameDiagnostics.h"
 

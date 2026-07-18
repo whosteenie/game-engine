@@ -1,4 +1,4 @@
-#include "engine/rendering/post/ScreenSpaceEffectsSettings.h"
+#include "engine/rendering/post/effects/Settings.h"
 
 #include "engine/platform/diagnostics/EngineLog.h"
 #include "engine/rhi/DlssContext.h"

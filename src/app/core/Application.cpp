@@ -13,7 +13,7 @@
 #endif
 
 #include "app/core/Application.h"
-#include "app/core/AutomatedBenchmarkCapture.h"
+#include "app/core/benchmark/Capture.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorDockSpace.h"
 #include "app/editor/EditorPanelConstraints.h"

@@ -1,4 +1,4 @@
-#include "engine/lighting/EnvironmentImportanceSampling.h"
+#include "engine/lighting/environment/Importance.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>

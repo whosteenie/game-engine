@@ -21,7 +21,7 @@
 #include "engine/rendering/post/DlssResolvePass.h"
 #include "engine/rendering/post/PathTracerDisplayPass.h"
 #include "engine/rendering/post/PostProcessContext.h"
-#include "engine/rendering/post/ScreenSpaceEffectsApply.h"
+#include "engine/rendering/post/effects/Apply.h"
 #include "engine/rhi/DlssContext.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/HlslCompiler.h"
