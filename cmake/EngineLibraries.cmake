@@ -63,6 +63,7 @@ set(ENGINE_RENDER_SOURCES
 
     src/engine/rendering/resources/Material.cpp
     src/engine/rendering/resources/Texture.cpp
+    src/engine/rendering/scene/GpuScene.cpp
     src/engine/assets/TextureCache.cpp
     src/engine/rendering/resources/MaterialTextures.cpp
     src/engine/rendering/resources/Mesh.cpp
