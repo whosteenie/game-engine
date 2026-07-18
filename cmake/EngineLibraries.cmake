@@ -22,6 +22,10 @@ set(ENGINE_RENDER_SOURCES
     src/engine/platform/system/SystemResources.cpp
 
     src/engine/rhi/GfxContext.cpp
+    src/engine/rhi/context/Descriptors.cpp
+    src/engine/rhi/context/Frame.cpp
+    src/engine/rhi/context/Sync.cpp
+    src/engine/rhi/context/Presentation.cpp
     src/engine/rhi/GpuProfiler.cpp
     src/engine/rhi/DlssContext.cpp
     src/engine/rhi/HresultFormat.cpp
