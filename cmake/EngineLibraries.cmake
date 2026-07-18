@@ -127,6 +127,10 @@ set(ENGINE_DXR_SOURCES
     src/engine/raytracing/pipeline/DxrPipeline.cpp
     src/engine/raytracing/pipeline/ShaderBindingTable.cpp
     src/engine/raytracing/dispatch/DxrDispatchContext.cpp
+    src/engine/raytracing/dispatch/context/Effects.cpp
+    src/engine/raytracing/dispatch/context/PathTracer.cpp
+    src/engine/raytracing/dispatch/context/Primary.cpp
+    src/engine/raytracing/dispatch/context/Restir.cpp
     src/engine/raytracing/dispatch/DxrDispatchBase.cpp
     src/engine/raytracing/dispatch/DxrSmokeDispatch.cpp
     src/engine/raytracing/dispatch/DxrPrimaryDebugDispatch.cpp
