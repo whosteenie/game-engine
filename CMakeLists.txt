@@ -372,6 +372,10 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/editor/EditorMouseWrapping.cpp
 
     src/app/undo/UndoCommand.cpp
+    src/app/undo/commands/ComponentCommands.cpp
+    src/app/undo/commands/RendererCommands.cpp
+    src/app/undo/commands/SystemComponentCommands.cpp
+    src/app/undo/commands/TransformCommands.cpp
     src/app/undo/UndoStack.cpp
 
     src/app/project/SceneDocument.cpp
