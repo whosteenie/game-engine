@@ -1,21 +1,3 @@
-#include "engine/raytracing/dispatch/DxrDispatchContext.h"
-#include "engine/platform/diagnostics/FrameDiagnostics.h"
-
-#include "engine/raytracing/core/DxrContext.h"
-#include "engine/raytracing/core/DxrGpuResource.h"
-#include "engine/raytracing/pipeline/DxrPipeline.h"
-#include "engine/raytracing/core/DxrTrace.h"
-#include "engine/raytracing/restir/RestirTypes.h"
-#include "engine/raytracing/pipeline/ShaderBindingTable.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/rhi/HresultFormat.h"
-
-#include <D3D12MemAlloc.h>
-#include <d3d12.h>
-
-#include <cstdlib>
-#include <cstring>
-
 #include "engine/raytracing/dispatch/context/Detail.h"
 
 bool DxrDispatchContext::CreateReflectionTexture(

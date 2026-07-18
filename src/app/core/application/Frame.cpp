@@ -13,7 +13,6 @@
 #endif
 
 #include "app/core/Application.h"
-#include "app/core/benchmark/Capture.h"
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorDockSpace.h"
 #include "app/editor/EditorPanelConstraints.h"
@@ -33,9 +32,7 @@
 #include "app/project/SceneProjectIODetail.h"
 #include "app/scene/document/Scene.h"
 #include "app/scene/rendering/SceneRenderer.h"
-#include "engine/rendering/post/ScreenSpaceEffects.h"
 #include "app/scene/editing/SceneEditingController.h"
-#include "app/scene/editing/SceneEditor.h"
 #include "app/scene/editing/SceneEditorUpdateContext.h"
 #include "app/panels/SceneHierarchyPanel.h"
 #include "app/panels/SceneInspectorPanel.h"
@@ -47,49 +44,28 @@
 #include "engine/camera/Camera.h"
 #include "engine/scene/RotationUtils.h"
 #include "engine/scene/SceneObject.h"
-#include "engine/rendering/core/Constants.h"
-#include "engine/rendering/resources/Material.h"
-#include "engine/rendering/core/RenderingPipelineCache.h"
-#include "engine/assets/FileDialog.h"
-#include "engine/assets/TextureCache.h"
-#include "app/editor/TuningSectionState.h"
 #include "engine/platform/ui/ImGuiLayer.h"
-#include "engine/platform/diagnostics/EngineLog.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
 #include "engine/rhi/GfxContext.h"
-#include "engine/rhi/DlssContext.h"
 #include "engine/rhi/HresultFormat.h"
 
 #include <ImGuizmo.h>
-#include "engine/platform/tooling/NativeProgressWindow.h"
 #include "engine/platform/tooling/ProjectLoadBenchmark.h"
 #include "engine/platform/tooling/ProjectLoadProgress.h"
 #include "engine/platform/input/Input.h"
 #include "engine/platform/input/InputDiagnostics.h"
 #include "engine/platform/diagnostics/FrameDiagnostics.h"
 #include "engine/platform/diagnostics/SceneRenderTrace.h"
-#include "engine/platform/system/ExceptionMessage.h"
 #include "engine/rendering/core/Renderer.h"
 
 #include <imgui_impl_glfw.h>
 
-#include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <stdexcept>
-
-#include <cfloat>
-#include <cstdlib>
-#include <filesystem>
-#include <fstream>
-#include <iostream>
-#include <typeinfo>
 #include <cstring>
 
 #include <glm/gtc/matrix_inverse.hpp>
-#include <unordered_map>
 
 #include "app/core/application/Detail.h"
 

@@ -1,3 +1,5 @@
+#pragma once
+
 #include "engine/raytracing/dispatch/DxrDispatchContext.h"
 #include "engine/platform/diagnostics/FrameDiagnostics.h"
 
@@ -15,8 +17,6 @@
 
 #include <cstdlib>
 #include <cstring>
-
-#pragma once
 
 namespace
 {
