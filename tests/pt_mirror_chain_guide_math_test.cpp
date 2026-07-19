@@ -374,6 +374,17 @@ void RunPtMirrorChainGuideMathTests(int& failures)
             shader,
             "specHitDistGuide = g_MaxTraceDistance;",
             "Mirror-chain owner neutralizes the invalid folded hit-distance segment");
+
+        const std::string opticalComposition = ReadTextFile(
+            "assets/shaders/post/utility/pt_optical_layers.ps.hlsl");
+        test::ExpectContains(
+            opticalComposition,
+            "transmission.rgb * lerp(1.0.xxx, throughput, owner)",
+            "PSR glass preprocessing subtracts transmission in physical prefix space");
+        test::ExpectContains(
+            opticalComposition,
+            "max(transmission.rgb, 0.0.xxx) * throughput",
+            "PSR glass composition remultiplies reconstructed transmission by mirror throughput");
     }
 
     {

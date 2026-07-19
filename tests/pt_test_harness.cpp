@@ -538,6 +538,7 @@ bool MinimalPtGlassScene::Build(
 bool MinimalPtGlassScene::BuildMirrorChain(
     ID3D12GraphicsCommandList4* commandList,
     DxrGpuResource& scratch,
+    const bool glassReceiver,
     std::string& outError)
 {
     outError.clear();
@@ -582,12 +583,44 @@ bool MinimalPtGlassScene::BuildMirrorChain(
     const glm::mat4 receiverTransform =
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f))
         * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.2f));
-
-    m_instances = {
-        InstanceDesc{m_backdropMesh.get(), receiverTransform, MakeMirrorReceiverMaterial()},
-        InstanceDesc{m_backdropMesh.get(), mirrorATransform, MakeMirrorMaterial()},
-        InstanceDesc{m_backdropMesh.get(), mirrorBTransform, MakeMirrorMaterial()},
-    };
+    if (glassReceiver)
+    {
+        // The final mirror segment travels diagonally toward (-X,-Z). A thin glass receiver at the
+        // old rough-receiver position preserves that deterministic chain, and the red backdrop
+        // farther along the same ray makes successful transmission unambiguous in readback.
+        const glm::mat4 glassTransform =
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f))
+            * glm::rotate(
+                glm::mat4(1.0f),
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f))
+            * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.02f));
+        const glm::mat4 backdropTransform =
+            glm::translate(glm::mat4(1.0f), glm::vec3(-2.0f, 0.0f, -8.0f))
+            * glm::rotate(
+                glm::mat4(1.0f),
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f))
+            * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.2f));
+        DxrMaterialEntry emissiveBackdrop = MakeBackdropMaterial();
+        emissiveBackdrop.emissive[0] = 4.0f;
+        emissiveBackdrop.emissive[1] = 0.2f;
+        emissiveBackdrop.emissive[2] = 0.1f;
+        m_instances = {
+            InstanceDesc{m_backdropMesh.get(), glassTransform, MakeGlassMaterial()},
+            InstanceDesc{m_backdropMesh.get(), backdropTransform, emissiveBackdrop},
+            InstanceDesc{m_backdropMesh.get(), mirrorATransform, MakeMirrorMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorBTransform, MakeMirrorMaterial()},
+        };
+    }
+    else
+    {
+        m_instances = {
+            InstanceDesc{m_backdropMesh.get(), receiverTransform, MakeMirrorReceiverMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorATransform, MakeMirrorMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorBTransform, MakeMirrorMaterial()},
+        };
+    }
 
     if (!UploadGeometryBuffersForInstances(m_instances, commandList,
             m_geometryLookupStaging,
@@ -863,9 +896,13 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     constants.samplesPerPixel = std::clamp(params.ptMaxBounces, 1u, 16u);
     constants.roughnessCutoff = 1.0f;
     constants.restirDiCandidateCount = static_cast<float>(params.restirDiCandidateCount);
+    constexpr std::uint32_t kIndependentOpticalRrFlag = 1u << 1u;
     constexpr std::uint32_t kMirrorChainPsrFlag = 1u << 2u;
     constants.ptOpticalStabilityFlags = static_cast<float>(
-        params.ptMirrorChainPsr ? kMirrorChainPsrFlag : 0u);
+        (params.ptIndependentOpticalRrLayers ? kIndependentOpticalRrFlag : 0u)
+        | (params.ptMirrorChainPsr ? kMirrorChainPsrFlag : 0u));
+    constants.ptDeterministicOpticalSplit =
+        params.ptDeterministicOpticalSplit ? 1.0f : 0.0f;
     constants.ptPsrParams[0] = static_cast<float>(params.ptPsrMaxBounces);
     constants.ptPsrParams[1] = params.ptPsrSubpixelThreshold;
     constants.paddingUnjitteredViewProj[3] = params.motionHistoryValid ? 1.0f : 0.0f;

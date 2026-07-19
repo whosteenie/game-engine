@@ -917,6 +917,54 @@ PtRrGuideOwner BuildPtRrSurfaceGuideOwner(
     return owner;
 }
 
+bool ProjectPtPsrVirtualReceiver(
+    PtMirrorVirtualTransform virtualTransform,
+    float3 physicalWorldPosition,
+    out float3 virtualWorldPosition,
+    out float virtualDepth,
+    out float virtualLinearDepth)
+{
+    virtualWorldPosition = PtMirrorTransformPoint(virtualTransform, physicalWorldPosition);
+    virtualDepth = 1.0;
+    virtualLinearDepth = 0.0;
+    if (!virtualTransform.valid || !all(isfinite(virtualWorldPosition)))
+    {
+        return false;
+    }
+
+    const float4 clipJittered = mul(g_ViewProj, float4(virtualWorldPosition, 1.0));
+    const float4 clipUnjittered = mul(g_UnjitteredViewProj, float4(virtualWorldPosition, 1.0));
+    if (!all(isfinite(clipJittered)) || !all(isfinite(clipUnjittered))
+        || clipJittered.w <= 1e-6 || clipUnjittered.w <= 1e-6)
+    {
+        return false;
+    }
+
+    virtualDepth = saturate(clipJittered.z / clipJittered.w);
+    virtualLinearDepth = clipUnjittered.w;
+    return isfinite(virtualDepth) && isfinite(virtualLinearDepth);
+}
+
+float2 ComputePtPsrVirtualPointMotion(
+    PtMirrorVirtualTransform virtualTransform,
+    float3 physicalWorldPosition)
+{
+    const float3 virtualPosition =
+        PtMirrorTransformPoint(virtualTransform, physicalWorldPosition);
+    const float4 currentClip = mul(g_UnjitteredViewProj, float4(virtualPosition, 1.0));
+    float4 previousClip = mul(g_PrevViewProj, float4(virtualPosition, 1.0));
+    if (!kPtMotionHistoryValid)
+    {
+        previousClip = currentClip;
+    }
+    if (!virtualTransform.valid || !all(isfinite(currentClip)) || !all(isfinite(previousClip))
+        || currentClip.w <= 1e-6 || previousClip.w <= 1e-6)
+    {
+        return 0.0.xx;
+    }
+    return ComputeMotionNdc(currentClip, previousClip);
+}
+
 PtRrGuideOwner BuildPtRrSkyGuideOwner(
     float3 terminalDirection,
     PtMirrorVirtualTransform virtualTransform,
@@ -1148,8 +1196,10 @@ float2 SolvePreviousOpticalReceiverMotion(
     const float2 directPrevNdc = directPrevClip.xy / max(directPrevClip.w, 1e-6);
     const float2 primaryPrevNdc = currNdc - primarySurfaceMotion;
 
-    const PreviousOpticalReceiver directReplay = ReplayPreviousOpticalReceiver(directPrevNdc, transmission);
-    const PreviousOpticalReceiver primaryReplay = ReplayPreviousOpticalReceiver(primaryPrevNdc, transmission);
+    const PreviousOpticalReceiver directReplay = ReplayPreviousOpticalReceiver(
+        directPrevNdc, transmission);
+    const PreviousOpticalReceiver primaryReplay = ReplayPreviousOpticalReceiver(
+        primaryPrevNdc, transmission);
     const bool directMatches = MatchesOpticalReceiver(directReplay, receiverInstanceId);
     const bool primaryMatches = MatchesOpticalReceiver(primaryReplay, receiverInstanceId);
     const float directError = directMatches
@@ -1429,6 +1479,27 @@ float2 ComputeReflectionVirtualMotion(
         false,
         primarySurfaceMotion,
         replayValid);
+}
+
+// Static PSR glass uses the same affine unfolded receiver point for current/previous projection.
+// Replaying mirror links inside every optical Newton probe inflated the diagnostic DXIL by ~100 KB
+// and made Debug RTPSO creation exceed seven minutes; a dedicated prepass is the appropriate future
+// home for that nonlinear refinement. This projection remains coherent with the exported virtual
+// depth/normal and is exact for a static camera.
+float2 ComputePsrOpticalReceiverMotion(
+    float3 physicalReceiverPosition,
+    PtMirrorVirtualTransform mirrorVirtualTransform,
+    out bool replayValid)
+{
+    replayValid = false;
+    if (!kPtMotionHistoryValid)
+    {
+        replayValid = true;
+        return 0.0.xx;
+    }
+    replayValid = true;
+    return ComputePtPsrVirtualPointMotion(
+        mirrorVirtualTransform, physicalReceiverPosition);
 }
 
 void ComputeOpticalReceiverMaterialGuides(
@@ -2775,6 +2846,7 @@ void PathTracerRayGen()
     float mirrorProjectedSpanPx = 0.0;
     bool mirrorProjectionValid = false;
     bool psrOwned = false;
+    bool psrGlassReceiver = false;
     uint psrTerminalReason = kPtPsrTerminalPrimaryReceiver;
     PtMirrorVirtualTransform mirrorVirtualTransform = InitPtMirrorVirtualTransform();
 #if PT_DIAGNOSTIC_PERMUTATION
@@ -3125,10 +3197,10 @@ void PathTracerRayGen()
 
         if (kPtMirrorChainPsrEnabled && mirrorChainActive)
         {
-            // The first non-mirror hit is the PSR receiver. Moving/transmissive receivers are not a
-            // coherent static virtual surface and terminate explicitly instead of publishing a
-            // partially precise guide bundle.
-            if (PayloadInstanceMoved(payload) || psrDielectricWeight > 0.0)
+            // The first non-mirror hit is the PSR receiver. Static glass is a supported receiver:
+            // its reflection and transmission lobes are resolved below from this virtual primary
+            // interface. Moving receivers still lack previous virtual geometry in this version.
+            if (PayloadInstanceMoved(payload))
             {
                 directRadiance += mirrorChainThroughput
                     * SampleEnvironment(ray.Direction, max(surfaceRoughness, 0.5));
@@ -3157,6 +3229,7 @@ void PathTracerRayGen()
                 break;
             }
             psrOwned = true;
+            psrGlassReceiver = psrDielectricWeight > 0.0;
             psrTerminalReason = kPtPsrTerminalReceiver;
             g_PsrThroughput[pixel] = float4(mirrorChainThroughput, 1.0);
             g_PsrMetadata[pixel] = PackPtPsrMetadata(
@@ -3577,8 +3650,39 @@ void PathTracerRayGen()
                 const TransmissionGuideHit txGuide = TraceTransmissionGuide(
                     hitPos, firstOpticalInterface, material.indexOfRefraction, shellBias, payload.instanceId);
                 bool transmissionReplayValid;
-                const float2 virtualMotion = ComputeTransmissionVirtualMotion(
+                float2 virtualMotion = ComputeTransmissionVirtualMotion(
                     pixel, txGuide, PayloadPrimaryMotion(payload), transmissionReplayValid);
+                float txDepth = txGuide.depth;
+                float3 txGeomNormal = txGuide.normal;
+                float3 txShadingNormal = txGuide.shadingNormal;
+                float3 txReceiverDirection = txGuide.refractDir;
+                if (psrGlassReceiver && txGuide.valid)
+                {
+                    float3 virtualReceiverPosition;
+                    float virtualReceiverLinearDepth;
+                    if (!ProjectPtPsrVirtualReceiver(
+                            mirrorVirtualTransform,
+                            txGuide.backgroundWorldPos,
+                            virtualReceiverPosition,
+                            txDepth,
+                            virtualReceiverLinearDepth))
+                    {
+                        transmissionReplayValid = false;
+                    }
+                    else
+                    {
+                        virtualMotion = ComputePsrOpticalReceiverMotion(
+                            txGuide.backgroundWorldPos,
+                            mirrorVirtualTransform,
+                            transmissionReplayValid);
+                        txGeomNormal = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, txGuide.normal));
+                        txShadingNormal = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, txGuide.shadingNormal));
+                        txReceiverDirection = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, txGuide.refractDir));
+                    }
+                }
 #if PT_DIAGNOSTIC_PERMUTATION
                 transmissionVirtualMotionForDebug = virtualMotion;
                 hasTransmissionVirtualMotionForDebug = true;
@@ -3601,11 +3705,11 @@ void PathTracerRayGen()
                     float txGuideRoughness;
                     ComputeOpticalReceiverMaterialGuides(
                         txGuide.instanceId, txGuide.primitiveIndex, txGuide.barycentrics,
-                        txGuide.normal, txGuide.shadingNormal, txGuide.refractDir, txGuide.triangleLod,
+                        txGeomNormal, txShadingNormal, txReceiverDirection, txGuide.triangleLod,
                         pathConeWidth, txDiffuseGuide, txSpecGuide, txGuideNormal, txGuideRoughness);
                     if (kPtLegacyOpticalRouting)
                     {
-                        resolvedPrimaryDepth = txGuide.depth;
+                        resolvedPrimaryDepth = txDepth;
                         resolvedPrimaryMotion = virtualMotion;
                         diffuseGuide = txDiffuseGuide;
                         specGuide = txSpecGuide;
@@ -3615,7 +3719,7 @@ void PathTracerRayGen()
                     }
                     else
                     {
-                        g_OpticalTransmissionDepth[pixel] = txGuide.depth;
+                        g_OpticalTransmissionDepth[pixel] = txDepth;
                         g_OpticalTransmissionMotion[pixel] = float4(virtualMotion, 0.0, 1.0);
                         g_OpticalTransmissionDiffuseAlbedo[pixel] = float4(txDiffuseGuide, 1.0);
                         g_OpticalTransmissionSpecularAlbedo[pixel] = float4(txSpecGuide, 1.0);
@@ -3642,8 +3746,12 @@ void PathTracerRayGen()
                     else
                     {
                         g_OpticalTransmissionDepth[pixel] = 1.0;
+                        const float3 transmissionSkyDirection = psrGlassReceiver
+                            ? normalize(PtMirrorTransformDirection(
+                                mirrorVirtualTransform, txGuide.refractDir))
+                            : txGuide.refractDir;
                         g_OpticalTransmissionMotion[pixel] =
-                            float4(ComputeSkyAnchorMotion(txGuide.refractDir), 0.0, 1.0);
+                            float4(ComputeSkyAnchorMotion(transmissionSkyDirection), 0.0, 1.0);
                     }
                 }
             }
@@ -3652,8 +3760,47 @@ void PathTracerRayGen()
                 const ReflectionGuideHit reflectionGuide = TraceReflectionGuide(
                     hitPos, firstOpticalInterface.reflectDir, guideOriginBias);
                 bool reflectionReplayValid;
-                const float2 reflectionMotion = ComputeReflectionVirtualMotion(
+                float2 reflectionMotion = ComputeReflectionVirtualMotion(
                     pixel, reflectionGuide, PayloadPrimaryMotion(payload), reflectionReplayValid);
+                float reflectionDepth = reflectionGuide.depth;
+                float3 reflectionGeomNormal = reflectionGuide.normal;
+                float3 reflectionShadingNormal = reflectionGuide.shadingNormal;
+                float3 reflectionReceiverDirection = reflectionGuide.reflectDir;
+                if (psrGlassReceiver && reflectionGuide.valid)
+                {
+                    float3 virtualReceiverPosition;
+                    float virtualReceiverLinearDepth;
+                    if (!ProjectPtPsrVirtualReceiver(
+                            mirrorVirtualTransform,
+                            reflectionGuide.receiverWorldPos,
+                            virtualReceiverPosition,
+                            reflectionDepth,
+                            virtualReceiverLinearDepth))
+                    {
+                        reflectionReplayValid = false;
+                    }
+                    else
+                    {
+                        reflectionMotion = ComputePsrOpticalReceiverMotion(
+                            reflectionGuide.receiverWorldPos,
+                            mirrorVirtualTransform,
+                            reflectionReplayValid);
+                        reflectionGeomNormal = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, reflectionGuide.normal));
+                        reflectionShadingNormal = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, reflectionGuide.shadingNormal));
+                        reflectionReceiverDirection = normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, reflectionGuide.reflectDir));
+                    }
+                }
+                else if (psrGlassReceiver)
+                {
+                    const float3 virtualReflectionDirection = normalize(
+                        PtMirrorTransformDirection(
+                            mirrorVirtualTransform, reflectionGuide.reflectDir));
+                    reflectionMotion = ComputeSkyAnchorMotion(virtualReflectionDirection);
+                    reflectionReplayValid = mirrorVirtualTransform.valid;
+                }
 #if PT_DIAGNOSTIC_PERMUTATION
                 if (reflectionGuide.receiverMoved) opticalFallbackFlagsForDebug |= 4u;
                 reflectionReceiverReprojectionForDebug = DiagnoseReflectionReceiverReprojection(
@@ -3669,11 +3816,11 @@ void PathTracerRayGen()
                 if (reflectionGuide.valid && !reflectionGuide.receiverMoved
                     && !primaryOpticalMoved && reflectionReplayValid)
                 {
-                    resolvedPrimaryDepth = reflectionGuide.depth;
+                    resolvedPrimaryDepth = reflectionDepth;
                     resolvedPrimaryMotion = reflectionMotion;
                     ComputeOpticalReceiverMaterialGuides(
                         reflectionGuide.instanceId, reflectionGuide.primitiveIndex, reflectionGuide.barycentrics,
-                        reflectionGuide.normal, reflectionGuide.shadingNormal, reflectionGuide.reflectDir,
+                        reflectionGeomNormal, reflectionShadingNormal, reflectionReceiverDirection,
                         reflectionGuide.triangleLod, pathConeWidth,
                         diffuseGuide, specGuide, guideNormal, guideRoughness);
                     specHitDistGuide = max(reflectionGuide.reflectedHitDistance, 0.05);
@@ -3687,7 +3834,13 @@ void PathTracerRayGen()
                     // Its inverse replay motion maps that direction through the previous optical
                     // surface; neutral far-field guides prevent the glass primary from leaking in.
                     resolvedPrimaryDepth = 1.0;
-                    resolvedPrimaryMotion = reflectionMotion;
+                    const float3 reflectionSkyDirection = psrGlassReceiver
+                        ? normalize(PtMirrorTransformDirection(
+                            mirrorVirtualTransform, reflectionGuide.reflectDir))
+                        : reflectionGuide.reflectDir;
+                    resolvedPrimaryMotion = psrGlassReceiver
+                        ? ComputeSkyAnchorMotion(reflectionSkyDirection)
+                        : reflectionMotion;
                     diffuseGuide = 0.5.xxx;
                     specGuide = 0.5.xxx;
                     guideNormal = float3(0.0, 0.0, 1.0);
@@ -3711,7 +3864,7 @@ void PathTracerRayGen()
                 guideRoughness = 1.0;
                 specHitDistGuide = g_MaxTraceDistance;
             }
-            if (!psrOwned)
+            if (!psrOwned || psrGlassReceiver)
             {
                 g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
                 g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
@@ -3732,16 +3885,19 @@ void PathTracerRayGen()
                 ((payload.instanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
                 (primaryMaterialId & 0xffffu) | (f32tof16(primary.roughness) << 16u));
             g_RestirSurfaceAlbedoMetallic[pixel] = float4(primary.albedo, primary.metallic);
-            if (!psrOwned)
+            if (!psrOwned || psrGlassReceiver)
             {
                 g_DepthOutput[pixel] = resolvedPrimaryDepth;
             }
             const float previousDepthDelta = primaryPreviousLinearDepth > 0.0
                 ? primaryPreviousLinearDepth - restirLinearViewDepth
                 : 0.0;
-            if (!psrOwned)
+            if (!psrOwned || psrGlassReceiver)
             {
-                g_MotionOutput[pixel] = float4(resolvedPrimaryMotion, previousDepthDelta, 1.0);
+                g_MotionOutput[pixel] = float4(
+                    resolvedPrimaryMotion,
+                    psrGlassReceiver ? 0.0 : previousDepthDelta,
+                    1.0);
                 g_SpecularMotion[pixel] = resolvedPrimaryMotion;
             }
             g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);

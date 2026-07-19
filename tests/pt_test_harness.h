@@ -45,6 +45,7 @@ public:
     bool BuildMirrorChain(
         ID3D12GraphicsCommandList4* commandList,
         DxrGpuResource& scratch,
+        bool glassReceiver,
         std::string& outError);
     void Release();
 
@@ -139,6 +140,8 @@ struct PtFrameDispatchParams
     // Mirrors production ptOpticalStabilityFlags bit 2. The default keeps every existing PT GPU
     // fixture on the feature-disabled compatibility path.
     bool ptMirrorChainPsr = false;
+    bool ptIndependentOpticalRrLayers = false;
+    bool ptDeterministicOpticalSplit = false;
     std::uint32_t ptPsrMaxBounces = 24;
     float ptPsrSubpixelThreshold = 0.0f; // harness has no production per-instance bounds stream
     // Test-only selection of the existing PT diagnostic permutation. It must not change guide

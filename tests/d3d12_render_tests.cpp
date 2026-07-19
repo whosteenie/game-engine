@@ -2088,7 +2088,8 @@ namespace render_tests
         bool Setup(
             const bool includeGlassPane = true,
             const bool checkerBackdrop = false,
-            const bool mirrorChain = false)
+            const bool mirrorChain = false,
+            const bool mirrorChainGlassReceiver = false)
         {
             lastError.clear();
             if (!GfxContext::Get().IsRaytracingSupported())
@@ -2112,7 +2113,8 @@ namespace render_tests
                 "PT glass scratch buffer alloc");
 
             const bool sceneBuilt = mirrorChain
-                ? scene.BuildMirrorChain(commandList4, scratch, lastError)
+                ? scene.BuildMirrorChain(
+                    commandList4, scratch, mirrorChainGlassReceiver, lastError)
                 : scene.Build(
                     commandList4,
                     scratch,
@@ -2129,7 +2131,12 @@ namespace render_tests
 
         bool SetupMirrorChain()
         {
-            return Setup(false, false, true);
+            return Setup(false, false, true, false);
+        }
+
+        bool SetupMirrorChainGlassReceiver()
+        {
+            return Setup(false, false, true, true);
         }
 
         void Teardown()
@@ -2153,7 +2160,9 @@ namespace render_tests
         const int ptDebugIsolateMode = 0,
         const std::uint32_t restirDiCandidateCount = 0,
         const bool ptMirrorChainPsr = false,
-        const std::uint32_t ptMaxBounces = 1)
+        const std::uint32_t ptMaxBounces = 1,
+        const bool ptIndependentOpticalRrLayers = false,
+        const bool ptDeterministicOpticalSplit = false)
     {
         PtFrameDispatchParams params{};
         params.scene = &fixture.scene;
@@ -2171,6 +2180,8 @@ namespace render_tests
         params.ptDebugIsolateMode = ptDebugIsolateMode;
         params.restirDiCandidateCount = restirDiCandidateCount;
         params.ptMirrorChainPsr = ptMirrorChainPsr;
+        params.ptIndependentOpticalRrLayers = ptIndependentOpticalRrLayers;
+        params.ptDeterministicOpticalSplit = ptDeterministicOpticalSplit;
         params.ptMaxBounces = ptMaxBounces;
 
         std::string dispatchError;
@@ -3052,6 +3063,116 @@ namespace render_tests
         fixture.Teardown();
     }
 
+    void TestPtMirrorChainPsrGlassReceiver()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain glass receiver (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.SetupMirrorChainGlassReceiver())
+        {
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        Camera camera = MakePtGlassCamera();
+        const glm::mat4 viewProjection =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        Framebuffer framebuffer;
+        test::ExpectTrue(
+            framebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize),
+            "PT mirror-chain glass framebuffer resize should succeed");
+        BeginOffscreenPass(framebuffer, false);
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                viewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                true,
+                3u,
+                71,
+                0u,
+                true,
+                4u,
+                true,
+                true))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        DxrDispatchContext& context = fixture.stack.dispatchContext;
+        float terminal[4]{};
+        float throughput[4]{};
+        float transmission[4]{};
+        float transmissionDepth[4]{};
+        const bool readbackOk =
+            ReadbackPtGuideCenterPixel(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                terminal)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerPsrThroughputResource(),
+                context.GetPathTracerPsrThroughputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                throughput)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerOpticalTransmissionOutputResource(),
+                context.GetPathTracerOpticalTransmissionOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                transmission)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerOpticalTransmissionDepthResource(),
+                context.GetPathTracerOpticalTransmissionDepthResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R32_FLOAT,
+                transmissionDepth);
+        test::ExpectTrue(readbackOk, "PT mirror-chain glass outputs should read back");
+        if (readbackOk)
+        {
+            std::cout << "mirror-chain glass center: terminal=(" << terminal[0] << ", "
+                      << terminal[1] << ", " << terminal[2] << ") throughput=("
+                      << throughput[0] << ", " << throughput[1] << ", "
+                      << throughput[2] << ", owner=" << throughput[3]
+                      << ") transmission=(" << transmission[0] << ", "
+                      << transmission[1] << ", " << transmission[2]
+                      << ") txDepth=" << transmissionDepth[0] << "\n";
+            test::ExpectNear(terminal[0], 0.0f, 0.001f,
+                "Glass after a mirror chain must not use an ineligible terminal");
+            test::ExpectNear(terminal[1], 1.0f, 0.001f,
+                "Glass after a mirror chain must remain a resolved PSR receiver");
+            test::ExpectNear(terminal[2], 0.0f, 0.001f,
+                "Resolved PSR glass terminal must use the receiver diagnostic color");
+            test::ExpectTrue(throughput[3] > 0.99f,
+                "PSR glass receiver must retain mirror-prefix ownership");
+            test::ExpectTrue(
+                std::isfinite(transmission[0]) && std::isfinite(transmission[1])
+                    && std::isfinite(transmission[2])
+                    && transmission[0] + transmission[1] + transmission[2] > 1.0e-4f,
+                "PSR glass receiver must export finite non-black transmission radiance");
+            test::ExpectTrue(
+                std::isfinite(transmissionDepth[0]) && transmissionDepth[0] < 0.999f,
+                "PSR glass transmission must export a finite virtual receiver depth");
+        }
+
+        fixture.Teardown();
+    }
+
     void TestPtRestirStaticPreviousReceiverTargetAgreement()
     {
         if (!GfxContext::Get().IsRaytracingSupported())
@@ -3283,6 +3404,7 @@ namespace render_tests
         add("PtTransmissionDiagnosticsOffEquivalence", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionDiagnosticsOffEquivalence);
         add("PtMirrorChainPsrOpaqueParity", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrOpaqueParity);
         add("PtMirrorChainPsrTwoBounceReceiver", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrTwoBounceReceiver);
+        add("PtMirrorChainPsrGlassReceiver", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrGlassReceiver);
         add("PtRestirStaticPreviousReceiverTargetAgreement", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtRestirStaticPreviousReceiverTargetAgreement);
     }
 }

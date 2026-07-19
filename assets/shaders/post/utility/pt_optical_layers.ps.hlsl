@@ -53,8 +53,12 @@ float4 main(PSInput input) : SV_Target
 
         if (preprocess)
         {
+            // The path tracer stores the separated transmission lobe in receiver space. For a PSR
+            // glass receiver, convert it to physical space before subtracting it from the physical
+            // full signal, then demodulate the remaining reflection lobe exactly once.
+            const float3 physicalTransmission = transmission.rgb * lerp(1.0.xxx, throughput, owner);
             const float3 physical = max(
-                first.rgb - (uComposite == 6 ? transmission.rgb : 0.0.xxx),
+                first.rgb - (uComposite == 6 ? physicalTransmission : 0.0.xxx),
                 0.0.xxx);
             const float3 epsilon = 1.0e-3.xxx;
             const float3 receiver = float3(
@@ -67,8 +71,12 @@ float4 main(PSInput input) : SV_Target
         }
 
         const float3 remodulated = lerp(first.rgb, first.rgb * throughput, owner);
+        const float3 remodulatedTransmission = lerp(
+            max(transmission.rgb, 0.0.xxx),
+            max(transmission.rgb, 0.0.xxx) * throughput,
+            owner);
         const float3 combined = remodulated
-            + (uComposite == 7 ? max(transmission.rgb, 0.0.xxx) : 0.0.xxx);
+            + (uComposite == 7 ? remodulatedTransmission : 0.0.xxx);
         return float4(max(combined, 0.0.xxx), 1.0);
     }
 
