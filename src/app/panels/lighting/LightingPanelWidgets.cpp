@@ -144,6 +144,20 @@ namespace
         RenderDebugMode::PtOpticalTransmissionReconstructionDelta,
     };
 
+    const RenderDebugMode kPtMirrorChainModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::PtMirrorChainOwner,
+        RenderDebugMode::PtMirrorChainLength,
+        RenderDebugMode::PtMirrorChainConfidence,
+        RenderDebugMode::PtMirrorChainReceiverId,
+        RenderDebugMode::PtMirrorChainReceiverDepth,
+        RenderDebugMode::PtMirrorChainReceiverMotion,
+        RenderDebugMode::PtPsrTerminalReason,
+        RenderDebugMode::PtPsrProjectedSpan,
+        RenderDebugMode::PtPsrThroughput,
+        RenderDebugMode::PtPsrReceiverSignal,
+    };
+
     const RenderDebugMode kPtIsolateModes[] = {
         RenderDebugMode::None,
         RenderDebugMode::PtIsolateDirectSun,
@@ -234,6 +248,7 @@ namespace
         {"Ray tracing", kRayTracingModes, IM_ARRAYSIZE(kRayTracingModes)},
         {"DLSS RR guides", kRrGuideModes, IM_ARRAYSIZE(kRrGuideModes)},
         {"PT optical RR layers", kPtOpticalLayerModes, IM_ARRAYSIZE(kPtOpticalLayerModes)},
+        {"PT mirror-chain PSR", kPtMirrorChainModes, IM_ARRAYSIZE(kPtMirrorChainModes)},
         {"Path tracer isolate", kPtIsolateModes, IM_ARRAYSIZE(kPtIsolateModes)},
         {"Path tracer diagnostics", kPtDiagnosticModes, IM_ARRAYSIZE(kPtDiagnosticModes)},
     };
@@ -817,6 +832,26 @@ namespace LightingPanelWidgets
             return "Raw owned transmission radiance produced while shading the first opaque receiver behind the glass (direct lights, emitter hits, and local terminal lighting).";
         case RenderDebugMode::PtOpticalTransmissionDeepBounce:
             return "Raw owned transmission radiance produced after the first opaque receiver scatters the path. This is the floor/object GI-bounce hypothesis isolate.";
+        case RenderDebugMode::PtMirrorChainOwner:
+            return "Mirror-chain guide owner: gray=primary; red/green/blue=exact delta receiver at chain length 1/2/3+; cyan=sky; yellow=bounce-cap or roulette fallback; magenta=non-delta, moving, or unsupported fallback.";
+        case RenderDebugMode::PtMirrorChainLength:
+            return "Actual sampled delta-chain length as grayscale length/8 (saturated). A mirror -> mirror -> receiver path is 0.25.";
+        case RenderDebugMode::PtMirrorChainConfidence:
+            return "Exact receiver/sky confidence is white. Non-delta glossy confidence is continuous and diagnostic-only; production retains the bounce-zero bundle because RR has no per-pixel validity input.";
+        case RenderDebugMode::PtMirrorChainReceiverId:
+            return "Stable hash of the selected receiver instance. Black means primary fallback or sky.";
+        case RenderDebugMode::PtMirrorChainReceiverDepth:
+            return "Unfolded virtual-receiver linear view depth divided by max trace distance. Sky is white; primary fallback is black.";
+        case RenderDebugMode::PtMirrorChainReceiverMotion:
+            return "Unfolded virtual-receiver current-minus-previous NDC motion: RG are signed motion * 4 + 0.5 and B marks a valid exact receiver. The RGBA16F PT motion guide remains authoritative.";
+        case RenderDebugMode::PtPsrTerminalReason:
+            return "PSR terminal: green=receiver, cyan=sky, blue=sub-pixel, red=significant hard cap, magenta=ineligible, orange=invalid projection.";
+        case RenderDebugMode::PtPsrProjectedSpan:
+            return "Conservative unjittered mirror span at RR input resolution; white is 16 pixels or more.";
+        case RenderDebugMode::PtPsrThroughput:
+            return "Physical delta-prefix mirror throughput, kept separate from receiver material guides.";
+        case RenderDebugMode::PtPsrReceiverSignal:
+            return "Receiver-domain radiance before post-RR throughput remodulation.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

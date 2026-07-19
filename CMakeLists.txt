@@ -647,6 +647,7 @@ add_executable(engine-tests
     tests/dxr_shader_infrastructure_test.cpp
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
+    tests/pt_mirror_chain_guide_math_test.cpp
     tests/payload_pack_test.cpp
     tests/restir_temporal_chain_test.cpp
     tests/refraction_test.cpp
@@ -681,6 +682,9 @@ add_custom_command(TARGET engine-tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:engine-tests>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/tests/fixtures"
+        "$<TARGET_FILE_DIR:engine-tests>/fixtures"
     COMMENT "Copying assets for engine-tests")
 
 add_test(NAME engine-tests COMMAND engine-tests)

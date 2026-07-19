@@ -210,6 +210,9 @@ public:
         bool ptDeterministicOpticalSplit,
         bool ptIndependentOpticalRrLayers,
         bool ptOpticalMotionReplay,
+        bool ptMirrorChainPsr,
+        int ptPsrMaxBounces,
+        float ptPsrSubpixelThreshold,
         float ptAmbientStrength,
         int ptAmbientAoRayCount,
         int ptDebugIsolateMode = 0);
@@ -248,6 +251,11 @@ public:
     std::uintptr_t GetPathTracerDiffuseAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerPsrThroughputSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerPsrMetadataSrvCpuHandle(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerSpecularMotionSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerSpecularMotionResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerSpecularMotionResourceState(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle(std::uint32_t viewportId) const;
     ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource(std::uint32_t viewportId) const;
     std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState(std::uint32_t viewportId) const;

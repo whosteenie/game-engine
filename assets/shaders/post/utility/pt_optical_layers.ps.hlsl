@@ -1,5 +1,6 @@
 Texture2D uFullOrReflection : register(t0);
 Texture2D uTransmission : register(t1);
+Texture2D uPsrThroughput : register(t2);
 
 SamplerState uLinearSampler : register(s0);
 
@@ -30,6 +31,45 @@ float4 main(PSInput input) : SV_Target
     {
         const float3 positive = max(first.rgb, 0.0.xxx);
         return float4(positive / (1.0 + positive), 1.0);
+    }
+    if (uComposite >= 4 && uComposite <= 7)
+    {
+        // Render-resolution preprocessing uses point ownership and throughput so the one RR input
+        // never mixes primary and PSR domains. Display-resolution composition uses linear sampling
+        // as a compact edge-aware upsample; alpha gates the remodulation at mirror silhouettes.
+        uint width;
+        uint height;
+        uPsrThroughput.GetDimensions(width, height);
+        const int2 sourcePixel = clamp(
+            int2(input.texCoord * float2(width, height)),
+            int2(0, 0),
+            int2(width - 1, height - 1));
+        const float4 psrPoint = uPsrThroughput.Load(int3(sourcePixel, 0));
+        const float4 psrLinear = uPsrThroughput.Sample(uLinearSampler, input.texCoord);
+        const bool preprocess = uComposite == 4 || uComposite == 6;
+        const float4 psr = preprocess ? psrPoint : psrLinear;
+        const float owner = preprocess ? (psr.a >= 0.5 ? 1.0 : 0.0) : saturate(psr.a);
+        const float3 throughput = max(psr.rgb, 0.0.xxx);
+
+        if (preprocess)
+        {
+            const float3 physical = max(
+                first.rgb - (uComposite == 6 ? transmission.rgb : 0.0.xxx),
+                0.0.xxx);
+            const float3 epsilon = 1.0e-3.xxx;
+            const float3 receiver = float3(
+                throughput.r > epsilon.r ? physical.r / throughput.r : 0.0,
+                throughput.g > epsilon.g ? physical.g / throughput.g : 0.0,
+                throughput.b > epsilon.b ? physical.b / throughput.b : 0.0);
+            // Bound demodulation independently of the firefly clamp. Zero-throughput channels are
+            // defined as zero receiver contribution and can never produce NaN/Inf or hue leakage.
+            return float4(lerp(physical, min(receiver, 65504.0.xxx), owner), first.a);
+        }
+
+        const float3 remodulated = lerp(first.rgb, first.rgb * throughput, owner);
+        const float3 combined = remodulated
+            + (uComposite == 7 ? max(transmission.rgb, 0.0.xxx) : 0.0.xxx);
+        return float4(max(combined, 0.0.xxx), 1.0);
     }
 
     // Diagnostic delta is second - first. Yellow means RR made the layer brighter, cyan means

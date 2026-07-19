@@ -202,6 +202,9 @@ struct DlssFrameInputs
     // Tagged only when non-null (reflections on); RR runs without it otherwise. Sharpens reflections.
     void* specularHitDistance = nullptr;
     unsigned int specularHitDistanceState = 0;
+    // Optional RR guide: dense specular-domain motion in the same NDC convention as main motion.
+    void* specularMotionVectors = nullptr;
+    unsigned int specularMotionVectorsState = 0;
     float worldToCameraView[16] = {}; // DLSSDOptions requires the view + inverse-view matrices
     float cameraViewToWorld[16] = {};
 };

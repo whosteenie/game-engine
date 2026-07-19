@@ -3,7 +3,7 @@
 
 namespace
 {
-    // Mirrors assets/shaders/dxr/hit_shading.hlsli PathRng (G3).
+    // Mirrors assets/shaders/raytracing/common/hit_shading.hlsli PathRng (G3).
     struct PathRng
     {
         std::uint32_t seed = 1;

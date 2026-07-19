@@ -1054,6 +1054,7 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
     sl::Resource specularAlbedo{};
     sl::Resource normalRoughness{};
     sl::Resource specularHitDistance{};
+    sl::Resource specularMotionVectors{};
 
     std::vector<sl::ResourceTag> tags;
     tags.reserve(8);
@@ -1088,6 +1089,15 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
                 inputs.renderWidth, inputs.renderHeight);
             tags.emplace_back(
                 &specularHitDistance, sl::kBufferTypeSpecularHitDistance,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (inputs.specularMotionVectors != nullptr)
+        {
+            specularMotionVectors = MakeTex(
+                inputs.specularMotionVectors, inputs.specularMotionVectorsState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &specularMotionVectors, sl::kBufferTypeSpecularMotionVectors,
                 sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         }
     }

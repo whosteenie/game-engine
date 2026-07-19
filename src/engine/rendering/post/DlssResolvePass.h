@@ -66,6 +66,10 @@ struct DlssResolvePassInputs
 
     bool rayReconstructionActive = false;
     bool independentOpticalRrLayers = true;
+    bool mirrorChainPsr = false;
+    std::uintptr_t pathTracerPsrThroughputSrv = 0;
+    void* pathTracerSpecularMotionResource = nullptr;
+    std::uint32_t pathTracerSpecularMotionResourceState = 0;
 
     PostProcessTarget* dlssOutputTarget = nullptr;
     PostProcessTarget* dlssOpticalTransmissionOutputTarget = nullptr;

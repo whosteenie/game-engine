@@ -123,6 +123,16 @@ void DxrSettings::SetPtMaxBounces(const int bounces)
     m_ptMaxBounces = std::clamp(bounces, 1, 16);
 }
 
+void DxrSettings::SetPtPsrMaxBounces(const int bounces)
+{
+    m_ptPsrMaxBounces = std::clamp(bounces, 1, 32);
+}
+
+void DxrSettings::SetPtPsrSubpixelThreshold(const float threshold)
+{
+    m_ptPsrSubpixelThreshold = std::clamp(threshold, 0.0f, 2.0f);
+}
+
 void DxrSettings::SetPtAmbientStrength(const float strength)
 {
     m_ptAmbientStrength = std::clamp(strength, 0.0f, 2.0f);
@@ -144,6 +154,9 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptDeterministicOpticalSplit = source.m_ptDeterministicOpticalSplit;
     m_ptIndependentOpticalRrLayers = source.m_ptIndependentOpticalRrLayers;
     m_ptOpticalMotionReplay = source.m_ptOpticalMotionReplay;
+    m_ptMirrorChainPsr = source.m_ptMirrorChainPsr;
+    m_ptPsrMaxBounces = source.m_ptPsrMaxBounces;
+    m_ptPsrSubpixelThreshold = source.m_ptPsrSubpixelThreshold;
     m_ptAmbientStrength = source.m_ptAmbientStrength;
     m_ptAmbientAoRayCount = source.m_ptAmbientAoRayCount;
     m_restirDiCandidateCount = source.m_restirDiCandidateCount;
@@ -191,6 +204,8 @@ void DxrSettings::ClampToHardwareCapabilities(const bool raytracingSupported)
     SetSunAngularRadiusDegrees(m_sunAngularRadiusDegrees);
     SetGiStrength(m_giStrength);
     SetPtMaxBounces(m_ptMaxBounces);
+    SetPtPsrMaxBounces(m_ptPsrMaxBounces);
+    SetPtPsrSubpixelThreshold(m_ptPsrSubpixelThreshold);
     SetPtAmbientStrength(m_ptAmbientStrength);
     SetPtAmbientAoRayCount(m_ptAmbientAoRayCount);
 }
@@ -207,6 +222,9 @@ nlohmann::json DxrSettings::ToJson() const
         {"ptDeterministicOpticalSplit", m_ptDeterministicOpticalSplit},
         {"ptIndependentOpticalRrLayers", m_ptIndependentOpticalRrLayers},
         {"ptOpticalMotionReplay", m_ptOpticalMotionReplay},
+        {"ptMirrorChainPsr", m_ptMirrorChainPsr},
+        {"ptPsrMaxBounces", m_ptPsrMaxBounces},
+        {"ptPsrSubpixelThreshold", m_ptPsrSubpixelThreshold},
         {"ptAmbientStrength", m_ptAmbientStrength},
         {"ptAmbientAoRayCount", m_ptAmbientAoRayCount},
         {"restirDiCandidateCount", m_restirDiCandidateCount},
@@ -275,6 +293,18 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     if (value.contains("ptOpticalMotionReplay"))
     {
         SetPtOpticalMotionReplayEnabled(value.at("ptOpticalMotionReplay").get<bool>());
+    }
+    if (value.contains("ptMirrorChainPsr"))
+    {
+        SetPtMirrorChainPsrEnabled(value.at("ptMirrorChainPsr").get<bool>());
+    }
+    if (value.contains("ptPsrMaxBounces"))
+    {
+        SetPtPsrMaxBounces(value.at("ptPsrMaxBounces").get<int>());
+    }
+    if (value.contains("ptPsrSubpixelThreshold"))
+    {
+        SetPtPsrSubpixelThreshold(value.at("ptPsrSubpixelThreshold").get<float>());
     }
     if (value.contains("ptAmbientStrength"))
     {

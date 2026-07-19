@@ -22,7 +22,8 @@ class Mesh;
 
 struct ID3D12GraphicsCommandList4;
 
-// Minimal two-instance PT scene (glass pane + colored backdrop) without the app Scene class.
+// Minimal primitive-only PT fixture scene without the app Scene class. Supports the established
+// glass/backdrop layouts and the deterministic mirror-chain Tier-5 layout.
 class MinimalPtGlassScene
 {
 public:
@@ -38,6 +39,12 @@ public:
         DxrGpuResource& scratch,
         bool includeGlassPane,
         bool checkerBackdrop,
+        std::string& outError);
+    // Deterministic camera -> mirror A -> mirror B -> ordinary receiver layout used by the
+    // mirror-chain RR guide Tier-5 gate. All instances use the built-in cube primitive.
+    bool BuildMirrorChain(
+        ID3D12GraphicsCommandList4* commandList,
+        DxrGpuResource& scratch,
         std::string& outError);
     void Release();
 
@@ -123,9 +130,17 @@ struct PtFrameDispatchParams
     glm::vec3 prevCameraPos{0.0f};
     bool motionHistoryValid = false;
     std::uint32_t frameIndex = 0;
+    // Production packs PT max bounces through samplesPerPixel. One preserves the established
+    // glass fixtures; mirror-chain tests opt into enough depth to reach their receiver.
+    std::uint32_t ptMaxBounces = 1;
     // Enables the existing ReSTIR-DI candidate generation for the temporal AOV fixture.  Zero
     // remains the default so the established transmission tests keep their original transport.
     std::uint32_t restirDiCandidateCount = 0;
+    // Mirrors production ptOpticalStabilityFlags bit 2. The default keeps every existing PT GPU
+    // fixture on the feature-disabled compatibility path.
+    bool ptMirrorChainPsr = false;
+    std::uint32_t ptPsrMaxBounces = 24;
+    float ptPsrSubpixelThreshold = 0.0f; // harness has no production per-instance bounds stream
     // Test-only selection of the existing PT diagnostic permutation. It must not change guide
     // resources; S1-P2 compares its output with diagnostics disabled.
     int ptDebugIsolateMode = 0;

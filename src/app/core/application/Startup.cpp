@@ -89,6 +89,25 @@ void Application::ApplyS1p6CaptureModeIfRequested()
             "GAME_ENGINE_S1P6_CAPTURE_MODE must be raw-radiance, rr-diffuse-guide, "
             "rr-specular-guide, rr-normal-roughness, final-rr, or reference.");
     }
+
+    if (const char* rawMirrorChainOverride =
+        std::getenv("GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR"))
+    {
+        const std::string mirrorChainOverride(rawMirrorChainOverride);
+        if (mirrorChainOverride == "0")
+        {
+            dxr.SetPtMirrorChainPsrEnabled(false);
+        }
+        else if (mirrorChainOverride == "1")
+        {
+            dxr.SetPtMirrorChainPsrEnabled(true);
+        }
+        else
+        {
+            throw std::runtime_error(
+                "GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR must be 0 or 1.");
+        }
+    }
     m_s1p6CaptureModeApplied = true;
     EngineLog::Info("benchmark", "S1-P6 capture mode selected: " + captureMode);
 }

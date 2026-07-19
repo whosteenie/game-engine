@@ -1239,7 +1239,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
 
     DrawEntryContextMenu(project, projectRoot, rootName, true);
 
-    if (rootOpen)
+    if (rootOpen && rootHasChildren)
     {
         DrawFolderTree(project, projectRoot);
         ImGui::TreePop();

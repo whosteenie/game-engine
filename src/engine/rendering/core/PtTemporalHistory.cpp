@@ -63,6 +63,10 @@ std::uint64_t ComputePtSettingsFingerprint(const DxrSettings& settings)
         fingerprint, settings.IsPtDeterministicOpticalSplitEnabled() ? 1u : 0u);
     fingerprint = HashCombine(
         fingerprint, settings.IsPtOpticalMotionReplayEnabled() ? 1u : 0u);
+    fingerprint = HashCombine(
+        fingerprint, settings.IsPtMirrorChainPsrEnabled() ? 1u : 0u);
+    fingerprint = HashCombine(fingerprint, static_cast<std::uint64_t>(settings.GetPtPsrMaxBounces()));
+    fingerprint = HashFloatBits(fingerprint, settings.GetPtPsrSubpixelThreshold());
     fingerprint = HashFloatBits(fingerprint, settings.GetPtAmbientStrength());
     fingerprint = HashCombine(fingerprint, static_cast<std::uint64_t>(settings.GetPtAmbientAoRayCount()));
     fingerprint = HashCombine(fingerprint, static_cast<std::uint64_t>(settings.GetPtRrBundleMode()));

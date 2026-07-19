@@ -332,6 +332,10 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.dlssBloomTemporalWarmupFrames = m_dlssBloomTemporalWarmupFrames;
     dlssInputs.rayReconstructionActive = IsRayReconstructionActive();
     dlssInputs.independentOpticalRrLayers = m_ptIndependentOpticalRrLayers;
+    dlssInputs.mirrorChainPsr = m_ptMirrorChainPsr;
+    dlssInputs.pathTracerPsrThroughputSrv = m_pathTracerPsrThroughputSrv;
+    dlssInputs.pathTracerSpecularMotionResource = m_pathTracerSpecularMotionResource;
+    dlssInputs.pathTracerSpecularMotionResourceState = m_pathTracerSpecularMotionResourceState;
     dlssInputs.dlssOutputTarget = const_cast<InternalTarget*>(&m_dlssOutputTarget);
     dlssInputs.dlssOpticalTransmissionOutputTarget = const_cast<InternalTarget*>(&m_dlssOpticalTransmissionOutputTarget);
     dlssInputs.dlssOpticalCompositeTarget = const_cast<InternalTarget*>(&m_dlssOpticalCompositeTarget);

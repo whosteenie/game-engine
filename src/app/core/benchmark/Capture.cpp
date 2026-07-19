@@ -206,7 +206,10 @@ namespace
                                 {"deterministic_optical_split",
                                  dxrSettings.IsPtDeterministicOpticalSplitEnabled()},
                                 {"optical_motion_replay",
-                                 dxrSettings.IsPtOpticalMotionReplayEnabled()}}},
+                                 dxrSettings.IsPtOpticalMotionReplayEnabled()},
+                                {"mirror_chain_psr", dxrSettings.IsPtMirrorChainPsrEnabled()},
+                                {"psr_max_bounces", dxrSettings.GetPtPsrMaxBounces()},
+                                {"psr_subpixel_threshold", dxrSettings.GetPtPsrSubpixelThreshold()}}},
             {"restir", {{"di_candidates", dxrSettings.GetRestirDiCandidateCount()},
                           {"di_temporal", dxrSettings.IsRestirDiTemporalEnabled()},
                           {"gi_initial", dxrSettings.IsRestirGiInitialEnabled()},
@@ -214,7 +217,10 @@ namespace
                           {"gi_spatial", dxrSettings.IsRestirGiSpatialEnabled()},
                           {"diagnostic_mode", static_cast<int>(dxrSettings.GetRestirGiSpatialDiagnosticMode())}}},
             {"reconstruction", {{"feature", screenSpaceEffects.GetRayReconstruction() ? "ray_reconstruction" : "none"},
+                                  {"anti_aliasing_mode",
+                                   static_cast<int>(screenSpaceEffects.GetAntiAliasingMode())},
                                   {"quality", static_cast<int>(screenSpaceEffects.GetDlssPreset())},
+                                  {"rr_preset", static_cast<int>(screenSpaceEffects.GetRrPreset())},
                                   {"independent_optical_rr_layers",
                                    dxrSettings.IsPtIndependentOpticalRrLayersEnabled()},
                                   {"rr_bundle_mode", dxrSettings.GetPtRrBundleMode()}}},
@@ -583,6 +589,16 @@ namespace
             {"transmission-environment", RenderDebugMode::PtOpticalTransmissionEnvironment},
             {"transmission-receiver", RenderDebugMode::PtOpticalTransmissionReceiver},
             {"transmission-deep-bounce", RenderDebugMode::PtOpticalTransmissionDeepBounce},
+            {"mirror-chain-owner", RenderDebugMode::PtMirrorChainOwner},
+            {"mirror-chain-length", RenderDebugMode::PtMirrorChainLength},
+            {"mirror-chain-confidence", RenderDebugMode::PtMirrorChainConfidence},
+            {"mirror-chain-receiver-id", RenderDebugMode::PtMirrorChainReceiverId},
+            {"mirror-chain-receiver-depth", RenderDebugMode::PtMirrorChainReceiverDepth},
+            {"mirror-chain-receiver-motion", RenderDebugMode::PtMirrorChainReceiverMotion},
+            {"psr-terminal-reason", RenderDebugMode::PtPsrTerminalReason},
+            {"psr-projected-span", RenderDebugMode::PtPsrProjectedSpan},
+            {"psr-throughput", RenderDebugMode::PtPsrThroughput},
+            {"psr-receiver-signal", RenderDebugMode::PtPsrReceiverSignal},
         };
         for (const auto& [name, debugMode] : rawAovModes)
         {
@@ -635,6 +651,8 @@ public:
     float startAngle = 0.0f;
     std::optional<nlohmann::json> pendingCapture;
     nlohmann::json captures = nlohmann::json::array();
+    nlohmann::json rendererConfiguration = nlohmann::json::object();
+    nlohmann::json capability = nlohmann::json::object();
 
     void Configure(Scene& scene, Camera& camera)
     {
@@ -671,10 +689,48 @@ public:
         dxr.SetRestirGiInitialEnabled(false);
         dxr.SetRestirGiTemporalEnabled(false);
         dxr.SetRestirGiSpatialEnabled(false);
+        const std::string mirrorChainOverride =
+            ReadOptionalEnvironmentString("GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR");
+        if (mirrorChainOverride == "0")
+        {
+            dxr.SetPtMirrorChainPsrEnabled(false);
+        }
+        else if (mirrorChainOverride == "1")
+        {
+            dxr.SetPtMirrorChainPsrEnabled(true);
+        }
+        else if (!mirrorChainOverride.empty())
+        {
+            throw std::runtime_error(
+                "GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR must be 0 or 1.");
+        }
         effects.SetAntiAliasingMode(captureMode.antiAliasing);
         effects.SetRayReconstruction(captureMode.rayReconstruction);
         renderer.SetRenderDebugMode(captureMode.debugMode);
         effects.InvalidateAllTemporalState();
+
+        rendererConfiguration = {
+            {"path_tracer", {
+                {"rendering_mode", DxrSettings::RenderingModeToString(dxr.GetRenderingMode())},
+                {"convergence_mode",
+                 DxrSettings::PtConvergenceModeToString(dxr.GetPtConvergenceMode())},
+                {"max_bounces", dxr.GetPtMaxBounces()},
+                {"russian_roulette", dxr.IsPtRussianRouletteEnabled()},
+                {"firefly_clamp", dxr.IsPtFireflyClampEnabled()},
+                {"mirror_chain_psr", dxr.IsPtMirrorChainPsrEnabled()},
+                {"psr_max_bounces", dxr.GetPtPsrMaxBounces()},
+                {"psr_subpixel_threshold", dxr.GetPtPsrSubpixelThreshold()}}},
+            {"reconstruction", {
+                {"anti_aliasing_mode", static_cast<int>(effects.GetAntiAliasingMode())},
+                {"ray_reconstruction", effects.GetRayReconstruction()},
+                {"dlss_quality", static_cast<int>(effects.GetDlssPreset())},
+                {"rr_preset", static_cast<int>(effects.GetRrPreset())},
+                {"rr_bundle_mode", dxr.GetPtRrBundleMode()}}},
+            {"viewport", {
+                {"output_extent", {GfxContext::Get().GetWidth(), GfxContext::Get().GetHeight()}},
+                {"render_extent", {effects.GetRenderWidth(), effects.GetRenderHeight()}}}},
+        };
+        capability = MakeCapabilityRecord(GfxContext::Get().GetDxrRuntimeSnapshot());
 
         camera.SetPosition(startPosition);
         camera.SetOrientationFromDirection(target - startPosition);
@@ -808,7 +864,7 @@ public:
         }
         const nlohmann::json manifest = {
             {"record_type", "optical_orbit_capture"},
-            {"schema_version", 1},
+            {"schema_version", 2},
             {"mode", mode},
             {"target", targetName},
             {"target_world", {target.x, target.y, target.z}},
@@ -820,6 +876,11 @@ public:
                 {"position", {startPosition.x, startPosition.y, startPosition.z}},
                 {"yaw", startYaw},
                 {"pitch", startPitch}}},
+            {"renderer", rendererConfiguration},
+            {"capability", capability},
+            {"timing_evidence",
+             "Use the paired fixed-pose benchmark timing CSV; optical readback and GPU profiler "
+             "slices are asynchronous and are not falsely attributed to individual orbit frames."},
             {"captures", captures},
         };
         std::ofstream output(outputDirectory / "capture.json", std::ios::trunc);

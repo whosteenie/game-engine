@@ -95,6 +95,8 @@ public:
         std::uint32_t emissiveLightAliasSrvIndex = UINT32_MAX;
         std::uint32_t emissiveTriangleAliasSrvIndex = UINT32_MAX;
         std::uint32_t emissiveLightByInstanceSrvIndex = UINT32_MAX;
+        // Mirror PSR only (t22): conservative current-world instance AABBs.
+        std::uint32_t ptPsrInstanceBoundsSrvIndex = UINT32_MAX;
         // F2 environment IS (t16 CDF, t17 HDR equirect). UINT32_MAX / 0 = unavailable.
         std::uint32_t envImportanceCdfSrvIndex = UINT32_MAX;
         std::uintptr_t envEquirectSrvCpuHandle = 0;
@@ -239,7 +241,16 @@ public:
     ID3D12Resource* GetPathTracerDiffuseAlbedoResource() const { return m_ptDiffuseAlbedoTexture.resource; }
     std::uint32_t GetPathTracerDiffuseAlbedoResourceState() const { return m_ptDiffuseAlbedoTexture.state; }
     std::uintptr_t GetPathTracerSpecularAlbedoSrvCpuHandle() const { return m_ptSpecularAlbedoTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerSpecularAlbedoResource() const { return m_ptSpecularAlbedoTexture.resource; }
+    std::uint32_t GetPathTracerSpecularAlbedoResourceState() const { return m_ptSpecularAlbedoTexture.state; }
     std::uintptr_t GetPathTracerNormalRoughnessSrvCpuHandle() const { return m_ptNormalRoughnessTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerPsrThroughputSrvCpuHandle() const { return m_ptPsrThroughputTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerPsrThroughputResource() const { return m_ptPsrThroughputTexture.resource; }
+    std::uint32_t GetPathTracerPsrThroughputResourceState() const { return m_ptPsrThroughputTexture.state; }
+    std::uintptr_t GetPathTracerPsrMetadataSrvCpuHandle() const { return m_ptPsrMetadataTexture.srvCpuHandle; }
+    std::uintptr_t GetPathTracerSpecularMotionSrvCpuHandle() const { return m_ptSpecularMotionTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerSpecularMotionResource() const { return m_ptSpecularMotionTexture.resource; }
+    std::uint32_t GetPathTracerSpecularMotionResourceState() const { return m_ptSpecularMotionTexture.state; }
     std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle() const { return m_ptOpticalTransmissionOutputTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource() const { return m_ptOpticalTransmissionOutputTexture.resource; }
     std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState() const { return m_ptOpticalTransmissionOutputTexture.state; }
@@ -458,6 +469,9 @@ private:
     ReflectionTexture m_ptDiffuseAlbedoTexture{};   // RGBA8: albedo·(1−metallic)
     ReflectionTexture m_ptSpecularAlbedoTexture{};  // RGBA8: F0 = lerp(0.04, albedo, metallic)
     ReflectionTexture m_ptNormalRoughnessTexture{}; // RGBA16F: world normal xyz + roughness w
+    ReflectionTexture m_ptPsrThroughputTexture{}; // RGBA16F: chain throughput rgb + ownership
+    ReflectionTexture m_ptPsrMetadataTexture{}; // R32_UINT: length/reason/flags
+    ReflectionTexture m_ptSpecularMotionTexture{}; // RG16F: dense reflected/primary fallback motion
     ReflectionTexture m_ptOpticalTransmissionOutputTexture{}; // RGBA16F: weighted transmission radiance
     ReflectionTexture m_ptOpticalTransmissionDepthTexture{};
     ReflectionTexture m_ptOpticalTransmissionMotionTexture{};

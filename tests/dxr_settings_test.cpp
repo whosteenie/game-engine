@@ -15,6 +15,9 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         !settings.IsPtOpticalMotionReplayEnabled(),
         "optical motion replay defaults off");
+    expectTrue(
+        !settings.IsPtMirrorChainPsrEnabled(),
+        "mirror-chain PSR defaults off");
     settings.SetEnabled(true);
     settings.SetReflectionsEnabled(true);
     settings.ClampToHardwareCapabilities(false);
@@ -33,6 +36,9 @@ void RunDxrSettingsTests(int& failures)
     settings.SetRestirGiDiagnosticOrbitRevolutions(13);
     settings.SetPtDeterministicOpticalSplitEnabled(true);
     settings.SetPtOpticalMotionReplayEnabled(true);
+    settings.SetPtMirrorChainPsrEnabled(true);
+    settings.SetPtPsrMaxBounces(99);
+    settings.SetPtPsrSubpixelThreshold(9.0f);
     settings.ClampToHardwareCapabilities(true);
     expectTrue(settings.IsEnabled(), "enabled preserved when RT supported");
     expectTrue(settings.GetReflectionsSamplesPerPixel() == 16, "samples clamped to 16");
@@ -63,6 +69,17 @@ void RunDxrSettingsTests(int& failures)
         roundTrip.IsPtOpticalMotionReplayEnabled(),
         "json round-trip optical motion replay toggle");
     expectTrue(
+        roundTrip.IsPtMirrorChainPsrEnabled(),
+        "json round-trip mirror-chain PSR toggle");
+    expectTrue(roundTrip.GetPtPsrMaxBounces() == 32, "json round-trip PSR max bounce clamp");
+    expectTrue(roundTrip.GetPtPsrSubpixelThreshold() == 2.0f, "json round-trip PSR threshold clamp");
+    expectTrue(
         roundTrip.GetRestirGiDiagnosticOrbitRevolutions() == 13,
         "json round-trip ReSTIR GI diagnostic orbit revolutions");
+
+    DxrSettings copied;
+    copied.CopySettingsFrom(settings);
+    expectTrue(
+        copied.IsPtMirrorChainPsrEnabled(),
+        "copy preserves mirror-chain PSR toggle");
 }

@@ -51,6 +51,8 @@ cbuffer ReflectionDispatchConstants : register(b0)
     uint g_EnvIsCdfHeight;
     // ReSTIR DI initial sampling (roadmap P2). .x = per-category candidate count (0 = off), rest pad.
     float4 g_PtRestirDiParams;
+    // Path-tracer-only mirror PSR parameters: max links, RR-input sub-pixel threshold, reserved.
+    float4 g_PtPsrParams;
 };
 
 RaytracingAccelerationStructure g_SceneTlas : register(t0);

@@ -125,6 +125,9 @@ bool DxrDispatchContext::EnsurePrimaryOutput(const int width, const int height, 
         RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
         RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+        RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
+        RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
+        RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
         RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
         RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
         RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
@@ -240,6 +243,9 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     }
 
     if (m_ptDepthTexture.resource != nullptr && m_ptNormalRoughnessTexture.resource != nullptr
+        && m_ptPsrThroughputTexture.resource != nullptr
+        && m_ptPsrMetadataTexture.resource != nullptr
+        && m_ptSpecularMotionTexture.resource != nullptr
         && m_ptOpticalTransmissionOutputTexture.resource != nullptr
         && m_ptOpticalTransmissionNormalRoughnessTexture.resource != nullptr
         && m_ptDirectTexture.resource != nullptr
@@ -261,6 +267,9 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
     RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+    RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
+    RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
+    RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
@@ -292,6 +301,9 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptDiffuseAlbedoTexture},
         {DXGI_FORMAT_R8G8B8A8_UNORM, &m_ptSpecularAlbedoTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptNormalRoughnessTexture},
+        {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPsrThroughputTexture},
+        {DXGI_FORMAT_R32_UINT, &m_ptPsrMetadataTexture},
+        {DXGI_FORMAT_R16G16_FLOAT, &m_ptSpecularMotionTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionOutputTexture},
         {DXGI_FORMAT_R32_FLOAT, &m_ptOpticalTransmissionDepthTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionMotionTexture},
@@ -322,6 +334,9 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
             RetireOrDestroyReflectionTexture(m_ptDiffuseAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptSpecularAlbedoTexture);
             RetireOrDestroyReflectionTexture(m_ptNormalRoughnessTexture);
+            RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
+            RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
+            RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);

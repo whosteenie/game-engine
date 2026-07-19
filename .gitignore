@@ -53,6 +53,12 @@ imgui.ini
 *.ngfx-capture
 *.ngfx-gputrace
 
+# `diagnostics/` also matches this source directory. Keep the capture-manifest contract visible
+# without surfacing generated diagnostics or the rest of the pre-existing ignored subtree.
+!src/engine/platform/diagnostics/
+src/engine/platform/diagnostics/*
+!src/engine/platform/diagnostics/CaptureManifest.h
+
 # Ad-hoc local test and startup logs
 err.txt
 out.txt

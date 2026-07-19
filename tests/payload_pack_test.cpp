@@ -1,4 +1,4 @@
-// CPU mirror of the packed-Payload encode/decode in assets/shaders/dxr/path_tracer.hlsl.
+// CPU mirror of packed Payload encoding in assets/shaders/raytracing/path_tracing/path_tracer.hlsl.
 // Gates the one novel quantization the packing pass introduced: snorm16 octahedral normals
 // (RestirOctEncode composed with snorm16x2). Proves the roundtrip is precise enough for glass
 // refraction (well under a hundredth of a degree) and that the lod/prevDepth half-pair recovers

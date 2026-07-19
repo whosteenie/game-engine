@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <unordered_map>
@@ -313,6 +314,14 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
             GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
         }
     }
+
+    for (const std::uint32_t srvIndex : m_ptPsrInstanceBoundsSrvIndices)
+    {
+        if (srvIndex != UINT32_MAX)
+        {
+            GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex);
+        }
+    }
     for (const std::uint32_t srvIndex : m_emissiveLightAliasSrvIndices)
     {
         if (srvIndex != UINT32_MAX) { GfxContext::Get().DeferredFreeOffscreenSrv(srvIndex); }
@@ -330,6 +339,7 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_sceneVertexFloatsSrvIndices.fill(UINT32_MAX);
     m_sceneIndicesSrvIndices.fill(UINT32_MAX);
     m_materialSrvIndices.fill(UINT32_MAX);
+    m_ptPsrInstanceBoundsSrvIndices.fill(UINT32_MAX);
     m_prevTransformsSrvIndices.fill(UINT32_MAX);
     m_emissiveLightsSrvIndices.fill(UINT32_MAX);
     m_emissiveTrianglesSrvIndices.fill(UINT32_MAX);
@@ -339,6 +349,7 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
 
     m_geometryLookupStaging.Release();
     m_materialStaging.Release();
+    m_ptPsrInstanceBoundsStaging.Release();
     m_sceneVertexFloatsStaging.Release();
     m_sceneIndicesStaging.Release();
     m_prevTransformsStaging.Release();
@@ -349,6 +360,7 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_emissiveLightByInstanceStaging.Release();
     m_geometryLookupGpu.Release();
     m_materialGpu.Release();
+    m_ptPsrInstanceBoundsGpu.Release();
     m_sceneVertexFloatsGpu.Release();
     m_sceneIndicesGpu.Release();
     m_prevTransformsGpu.Release();
@@ -358,6 +370,7 @@ void DxrAccelerationStructures::ReleaseGeometryBuffers()
     m_emissiveTriangleAliasGpu.Release();
     m_emissiveLightByInstanceGpu.Release();
     m_uploadedGeometryFingerprint.fill(0);
+    m_uploadedPsrBoundsFingerprint.fill(0);
     m_prevTransformsUploadFrame.fill(0);
     m_emissiveLightsUploadFrame.fill(0);
     m_emissiveTrianglesUploadFrame.fill(0);
@@ -485,8 +498,89 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
     const bool geometryContentChanged = m_uploadedGeometryFingerprint[frameIndex] != fingerprint
         || m_geometryLookupSrvIndices[frameIndex] == UINT32_MAX;
-    if (!geometryContentChanged)
+    std::uint64_t psrBoundsFingerprint = fingerprint;
+    for (const DxrRenderableInstance& renderInstance : renderInstances)
     {
+        psrBoundsFingerprint = HashCombine(psrBoundsFingerprint, renderInstance.instanceId);
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                psrBoundsFingerprint = HashFloatBits(
+                    psrBoundsFingerprint, renderInstance.world[column][row]);
+            }
+        }
+    }
+    const bool psrBoundsChanged =
+        m_uploadedPsrBoundsFingerprint[frameIndex] != psrBoundsFingerprint
+        || m_ptPsrInstanceBoundsSrvIndices[frameIndex] == UINT32_MAX;
+
+    const auto buildPsrBounds = [&renderInstances]() {
+        std::vector<DxrPtPsrInstanceBounds> entries(renderInstances.size());
+        for (std::size_t instanceIndex = 0; instanceIndex < renderInstances.size(); ++instanceIndex)
+        {
+            const DxrRenderableInstance& renderInstance = renderInstances[instanceIndex];
+            DxrPtPsrInstanceBounds& bounds = entries[instanceIndex];
+            glm::vec3 boundsMin(std::numeric_limits<float>::max());
+            glm::vec3 boundsMax(std::numeric_limits<float>::lowest());
+            bool valid = false;
+            for (const glm::vec3& position : renderInstance.mesh->GetPositions())
+            {
+                const glm::vec4 worldPosition =
+                    renderInstance.world * glm::vec4(position, 1.0f);
+                if (!std::isfinite(worldPosition.x) || !std::isfinite(worldPosition.y)
+                    || !std::isfinite(worldPosition.z) || std::abs(worldPosition.w) <= 1.0e-8f)
+                {
+                    valid = false;
+                    break;
+                }
+                const glm::vec3 point = glm::vec3(worldPosition) / worldPosition.w;
+                boundsMin = glm::min(boundsMin, point);
+                boundsMax = glm::max(boundsMax, point);
+                valid = true;
+            }
+            if (valid)
+            {
+                std::memcpy(bounds.worldBoundsMin, &boundsMin.x, sizeof(bounds.worldBoundsMin));
+                std::memcpy(bounds.worldBoundsMax, &boundsMax.x, sizeof(bounds.worldBoundsMax));
+                bounds.valid = 1u;
+            }
+        }
+        return entries;
+    };
+
+    if (!geometryContentChanged && !psrBoundsChanged)
+    {
+        return true;
+    }
+
+    // Transform-only changes update the compact PSR bounds stream without re-uploading unrelated
+    // geometry/material buffers. This keeps a mirror ineligible while moving and makes its bounds
+    // current as soon as current/previous transforms settle again.
+    if (!geometryContentChanged && psrBoundsChanged
+        && m_ptPsrInstanceBoundsStaging.GetCapacity()
+            >= sizeof(DxrPtPsrInstanceBounds) * renderInstances.size()
+        && m_ptPsrInstanceBoundsGpu.GetCapacity()
+            >= sizeof(DxrPtPsrInstanceBounds) * renderInstances.size())
+    {
+        const std::vector<DxrPtPsrInstanceBounds> psrBoundsEntries = buildPsrBounds();
+        const std::uint64_t psrBoundsBytes =
+            psrBoundsEntries.size() * sizeof(DxrPtPsrInstanceBounds);
+        DxrGpuResource& psrBoundsUpload = m_ptPsrInstanceBoundsStaging.Slot(frameIndex);
+        void* mapped = nullptr;
+        if (FAILED(psrBoundsUpload.resource->Map(0, nullptr, &mapped)))
+        {
+            outError = "failed to map transformed PT PSR instance bounds";
+            return false;
+        }
+        std::memcpy(mapped, psrBoundsEntries.data(), psrBoundsBytes);
+        psrBoundsUpload.resource->Unmap(0, nullptr);
+        CopyDxrUploadToSrvBuffer(
+            commandList,
+            psrBoundsUpload,
+            m_ptPsrInstanceBoundsGpu.Slot(frameIndex),
+            psrBoundsBytes);
+        m_uploadedPsrBoundsFingerprint[frameIndex] = psrBoundsFingerprint;
         return true;
     }
 
@@ -494,6 +588,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     m_pendingGeometryContentReupload = true;
 
     std::vector<DxrGeometryLookupEntry> lookupEntries(renderInstances.size());
+    std::vector<DxrPtPsrInstanceBounds> psrBoundsEntries = buildPsrBounds();
     std::vector<DxrMaterialEntry> materialEntries(
         std::max<std::size_t>(gpuScene.GetMaterials().size(), 1u));
     std::vector<bool> materialTexturedStrideValid(materialEntries.size(), true);
@@ -641,10 +736,14 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         && m_geometryLookupStaging.GetCapacity()
             >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
         && m_materialStaging.GetCapacity() >= sizeof(DxrMaterialEntry) * materialEntries.size()
+        && m_ptPsrInstanceBoundsStaging.GetCapacity()
+            >= sizeof(DxrPtPsrInstanceBounds) * psrBoundsEntries.size()
         && m_sceneVertexFloatsStaging.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesStaging.GetCapacity() >= indices.size() * sizeof(std::uint32_t)
         && m_geometryLookupGpu.GetCapacity() >= sizeof(DxrGeometryLookupEntry) * renderInstances.size()
         && m_materialGpu.GetCapacity() >= sizeof(DxrMaterialEntry) * materialEntries.size()
+        && m_ptPsrInstanceBoundsGpu.GetCapacity()
+            >= sizeof(DxrPtPsrInstanceBounds) * psrBoundsEntries.size()
         && m_sceneVertexFloatsGpu.GetCapacity() >= vertexFloats.size() * sizeof(float)
         && m_sceneIndicesGpu.GetCapacity() >= indices.size() * sizeof(std::uint32_t);
 
@@ -654,15 +753,19 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 
         const std::uint64_t lookupBytes = sizeof(DxrGeometryLookupEntry) * renderInstances.size();
         const std::uint64_t materialBytes = sizeof(DxrMaterialEntry) * materialEntries.size();
+        const std::uint64_t psrBoundsBytes =
+            sizeof(DxrPtPsrInstanceBounds) * psrBoundsEntries.size();
         const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
         const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
         if (!m_geometryLookupStaging.EnsureCapacity(lookupBytes)
             || !m_materialStaging.EnsureCapacity(materialBytes)
+            || !m_ptPsrInstanceBoundsStaging.EnsureCapacity(psrBoundsBytes)
             || !m_sceneVertexFloatsStaging.EnsureCapacity(vertexBytes)
             || !m_sceneIndicesStaging.EnsureCapacity(indexBytes)
             || !m_geometryLookupGpu.EnsureCapacity(lookupBytes)
             || !m_materialGpu.EnsureCapacity(materialBytes)
+            || !m_ptPsrInstanceBoundsGpu.EnsureCapacity(psrBoundsBytes)
             || !m_sceneVertexFloatsGpu.EnsureCapacity(vertexBytes)
             || !m_sceneIndicesGpu.EnsureCapacity(indexBytes))
         {
@@ -675,10 +778,12 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         {
             m_geometryLookupSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
             m_materialSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
+            m_ptPsrInstanceBoundsSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
             m_sceneVertexFloatsSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
             m_sceneIndicesSrvIndices[frameIndex] = GfxContext::Get().AllocateOffscreenSrv();
             if (m_geometryLookupSrvIndices[frameIndex] == UINT32_MAX
                 || m_materialSrvIndices[frameIndex] == UINT32_MAX
+                || m_ptPsrInstanceBoundsSrvIndices[frameIndex] == UINT32_MAX
                 || m_sceneVertexFloatsSrvIndices[frameIndex] == UINT32_MAX
                 || m_sceneIndicesSrvIndices[frameIndex] == UINT32_MAX)
             {
@@ -726,6 +831,21 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
                 &materialSrvDesc,
                 materialHandle);
 
+            D3D12_CPU_DESCRIPTOR_HANDLE psrBoundsHandle{};
+            psrBoundsHandle.ptr = GfxContext::Get().GetSrvCpuHandle(
+                m_ptPsrInstanceBoundsSrvIndices[frameIndex]);
+            D3D12_SHADER_RESOURCE_VIEW_DESC psrBoundsSrvDesc{};
+            psrBoundsSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+            psrBoundsSrvDesc.Format = DXGI_FORMAT_UNKNOWN;
+            psrBoundsSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            psrBoundsSrvDesc.Buffer.FirstElement = 0;
+            psrBoundsSrvDesc.Buffer.NumElements = static_cast<UINT>(psrBoundsEntries.size());
+            psrBoundsSrvDesc.Buffer.StructureByteStride = sizeof(DxrPtPsrInstanceBounds);
+            device->CreateShaderResourceView(
+                m_ptPsrInstanceBoundsGpu.Slot(frameIndex).resource,
+                &psrBoundsSrvDesc,
+                psrBoundsHandle);
+
             D3D12_CPU_DESCRIPTOR_HANDLE vertexHandle{};
             vertexHandle.ptr =
                 GfxContext::Get().GetSrvCpuHandle(m_sceneVertexFloatsSrvIndices[frameIndex]);
@@ -758,11 +878,14 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 
     DxrGpuResource& geometryLookupUpload = m_geometryLookupStaging.Slot(frameIndex);
     DxrGpuResource& materialUpload = m_materialStaging.Slot(frameIndex);
+    DxrGpuResource& psrBoundsUpload = m_ptPsrInstanceBoundsStaging.Slot(frameIndex);
     DxrGpuResource& vertexUpload = m_sceneVertexFloatsStaging.Slot(frameIndex);
     DxrGpuResource& indexUpload = m_sceneIndicesStaging.Slot(frameIndex);
 
     const std::uint64_t lookupBytes = lookupEntries.size() * sizeof(DxrGeometryLookupEntry);
     const std::uint64_t materialBytes = materialEntries.size() * sizeof(DxrMaterialEntry);
+    const std::uint64_t psrBoundsBytes =
+        psrBoundsEntries.size() * sizeof(DxrPtPsrInstanceBounds);
     const std::uint64_t vertexBytes = vertexFloats.size() * sizeof(float);
     const std::uint64_t indexBytes = indices.size() * sizeof(std::uint32_t);
 
@@ -777,6 +900,12 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
     {
         std::memcpy(mapped, materialEntries.data(), materialEntries.size() * sizeof(DxrMaterialEntry));
         materialUpload.resource->Unmap(0, nullptr);
+    }
+
+    if (SUCCEEDED(psrBoundsUpload.resource->Map(0, nullptr, &mapped)))
+    {
+        std::memcpy(mapped, psrBoundsEntries.data(), psrBoundsBytes);
+        psrBoundsUpload.resource->Unmap(0, nullptr);
     }
 
     if (SUCCEEDED(vertexUpload.resource->Map(0, nullptr, &mapped)))
@@ -803,6 +932,11 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
         materialBytes);
     CopyDxrUploadToSrvBuffer(
         commandList,
+        psrBoundsUpload,
+        m_ptPsrInstanceBoundsGpu.Slot(frameIndex),
+        psrBoundsBytes);
+    CopyDxrUploadToSrvBuffer(
+        commandList,
         vertexUpload,
         m_sceneVertexFloatsGpu.Slot(frameIndex),
         vertexBytes);
@@ -814,6 +948,7 @@ bool DxrAccelerationStructures::EnsureGeometryBuffers(
 
     m_geometryObjectCount = sceneGeometryObjectCount;
     m_uploadedGeometryFingerprint[frameIndex] = fingerprint;
+    m_uploadedPsrBoundsFingerprint[frameIndex] = psrBoundsFingerprint;
     return true;
 }
 

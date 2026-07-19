@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-// CPU mirrors of the structured-buffer layouts in assets/shaders/dxr.
+// CPU mirrors of structured-buffer layouts in assets/shaders/raytracing/path_tracing.
 struct RestirGiReservoir
 {
     float position[3] = {};

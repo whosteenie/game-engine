@@ -54,6 +54,26 @@ namespace
         return f0 + (glm::vec3(1.0f) - f0) * (m2 * m2 * m);
     }
 
+    float OpaqueLobeSelectionProbability(
+        const glm::vec3& albedo,
+        const float metallic,
+        const glm::vec3& fresnelNoV)
+    {
+        const glm::vec3 baseDiffuse = albedo * (1.0f - std::clamp(metallic, 0.0f, 1.0f));
+        if (std::max(baseDiffuse.r, std::max(baseDiffuse.g, baseDiffuse.b)) <= 1.0e-6f)
+        {
+            // A zero-energy diffuse lobe is not a sampling technique. Keeping the old 0.9 ceiling
+            // injected one near-black sample per ten perfect-metal bounces.
+            return 1.0f;
+        }
+
+        const float specLum = Luminance(fresnelNoV);
+        const float diffLum = Luminance(baseDiffuse);
+        float pSpec = specLum / std::max(specLum + diffLum, 1e-4f);
+        pSpec = glm::mix(pSpec, 1.0f, std::clamp(metallic, 0.0f, 1.0f));
+        return std::clamp(pSpec, 0.1f, 0.9f);
+    }
+
     void BuildTangentFrame(const glm::vec3& n, glm::vec3& tangent, glm::vec3& bitangent)
     {
         const glm::vec3 up = std::abs(n.z) < 0.999f ? glm::vec3(0, 0, 1) : glm::vec3(1, 0, 0);
@@ -113,13 +133,13 @@ namespace
         const glm::vec3 baseDiffuse = albedo * (1.0f - std::clamp(metallic, 0.0f, 1.0f));
 
         const glm::vec3 fresnelNoV = FresnelSchlick(NoV, f0);
-        const float specLum = Luminance(fresnelNoV);
-        const float diffLum = Luminance(baseDiffuse);
-        float pSpec = specLum / std::max(specLum + diffLum, 1e-4f);
-        pSpec = glm::mix(pSpec, 1.0f, std::clamp(metallic, 0.0f, 1.0f));
-        pSpec = std::clamp(pSpec, 0.1f, 0.9f);
+        const float pSpec = OpaqueLobeSelectionProbability(albedo, metallic, fresnelNoV);
 
         const bool sampledSpecular = uLobe < pSpec;
+        if (sampledSpecular && roughness <= 0.03f)
+        {
+            return fresnelNoV / std::max(pSpec, 1.0e-6f);
+        }
         const glm::vec3 l = sampledSpecular
             ? glm::reflect(-v, SampleGgxVndfHalfVector(n, v, ggxRoughness, u1, u2))
             : CosineSampleHemisphere(n, u1, u2);
@@ -170,6 +190,32 @@ namespace
 void RunBrdfEnergyTests()
 {
     const int kSamples = 200000;
+
+    {
+        const glm::vec3 albedo(0.95f, 0.96f, 0.98f);
+        const glm::vec3 fresnel = FresnelSchlick(1.0f, albedo);
+        test::ExpectNear(
+            OpaqueLobeSelectionProbability(albedo, 1.0f, fresnel),
+            1.0f,
+            0.0f,
+            "Zero-diffuse perfect metal always selects its specular lobe");
+        for (int sample = 0; sample < 32; ++sample)
+        {
+            const float lobeSample = (static_cast<float>(sample) + 0.5f) / 32.0f;
+            const glm::vec3 weight = EstimatorWeight(
+                glm::vec3(0.0f, 0.0f, 1.0f),
+                glm::vec3(0.0f, 0.0f, 1.0f),
+                albedo,
+                1.0f,
+                0.0f,
+                lobeSample,
+                0.37f,
+                0.73f);
+            test::ExpectTrue(
+                weight.r > 0.9f && weight.g > 0.9f && weight.b > 0.9f,
+                "Perfect delta metal has no stochastic black lobe");
+        }
+    }
 
     // B3/B4/R4 regression catch: reflectance must never exceed 1 (no energy gain), across roughness
     // and view angle including grazing, for white dielectric AND white metal. The pre-fix code gained

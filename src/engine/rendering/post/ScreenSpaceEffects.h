@@ -144,6 +144,11 @@ public:
         std::uintptr_t diffuseAlbedoSrv = 0,
         std::uintptr_t specularAlbedoSrv = 0,
         std::uintptr_t normalRoughnessSrv = 0,
+        bool mirrorChainPsr = false,
+        std::uintptr_t psrThroughputSrv = 0,
+        void* specularMotionResource = nullptr,
+        std::uint32_t specularMotionResourceState = 0,
+        std::uintptr_t specularMotionSrv = 0,
         void* opticalTransmissionOutputResource = nullptr,
         std::uint32_t opticalTransmissionOutputResourceState = 0,
         std::uintptr_t opticalTransmissionOutputSrv = 0,
@@ -930,6 +935,11 @@ private:
     std::uintptr_t m_pathTracerDiffuseAlbedoSrv = 0;
     std::uintptr_t m_pathTracerSpecularAlbedoSrv = 0;
     std::uintptr_t m_pathTracerNormalRoughnessSrv = 0;
+    bool m_ptMirrorChainPsr = false;
+    std::uintptr_t m_pathTracerPsrThroughputSrv = 0;
+    void* m_pathTracerSpecularMotionResource = nullptr;
+    std::uint32_t m_pathTracerSpecularMotionResourceState = 0;
+    std::uintptr_t m_pathTracerSpecularMotionSrv = 0;
     void* m_pathTracerOpticalTransmissionOutputResource = nullptr;
     std::uint32_t m_pathTracerOpticalTransmissionOutputResourceState = 0;
     std::uintptr_t m_pathTracerOpticalTransmissionOutputSrv = 0;

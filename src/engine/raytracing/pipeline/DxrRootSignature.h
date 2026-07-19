@@ -70,7 +70,9 @@ struct ReflectionDispatchConstants
     // F2 path-tracer-only: emissive NEE light list (t15). Zero for non-PT dispatches.
     std::uint32_t emissiveLightCount = 0;
     float emissiveLightPickWeightSum = 0.0f;
-    float ptOpticalStabilityFlags = 0.0f; // path-tracer-only bitmask; exactly represented as float
+    // Path-tracer-only bitmask: bit 0 optical replay, bit 1 independent optical RR, bit 2 mirror
+    // chain receiver guides. Small integers are represented exactly as float; layout is unchanged.
+    float ptOpticalStabilityFlags = 0.0f;
     float ptDebugIsolateMode = 0.0f; // path-tracer-only radiance term isolation (see RenderDebug.h)
     // PT-A transmission virtual motion: previous unjittered frustum + camera for dual-frame refract MV.
     float prevInvViewProj[16] = {};
@@ -90,9 +92,11 @@ struct ReflectionDispatchConstants
     float _restirDiPad1 = 0.0f;
     // Path-tracer-only: deterministic smooth dielectric reflection+transmission split.
     float ptDeterministicOpticalSplit = 0.0f;
+    // Mirror-chain PSR resolver. x=max mirror links, y=sub-pixel threshold at RR input extent.
+    float ptPsrParams[4] = {24.0f, 0.5f, 0.0f, 0.0f};
 };
 static_assert(
-    sizeof(ReflectionDispatchConstants) == 704,
+    sizeof(ReflectionDispatchConstants) == 720,
     "PT/reflection cbuffer layout mismatch");
 static_assert(
     offsetof(ReflectionDispatchConstants, unjitteredViewProj) == 448,

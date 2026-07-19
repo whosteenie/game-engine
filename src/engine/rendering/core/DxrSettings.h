@@ -96,6 +96,17 @@ public:
         m_ptOpticalMotionReplay = enabled;
     }
 
+    // Resolves a static exact-delta mirror prefix as a primary-surface replacement domain.
+    bool IsPtMirrorChainPsrEnabled() const { return m_ptMirrorChainPsr; }
+    void SetPtMirrorChainPsrEnabled(const bool enabled)
+    {
+        m_ptMirrorChainPsr = enabled;
+    }
+    int GetPtPsrMaxBounces() const { return m_ptPsrMaxBounces; }
+    void SetPtPsrMaxBounces(int bounces);
+    float GetPtPsrSubpixelThreshold() const { return m_ptPsrSubpixelThreshold; }
+    void SetPtPsrSubpixelThreshold(float threshold);
+
     // Real-time PT diffuse-sky SH ambient strength (devdoc/dxr/pt/crevice-darkening.md). Reference ignores.
     float GetPtAmbientStrength() const { return m_ptAmbientStrength; }
     void SetPtAmbientStrength(const float strength);
@@ -235,6 +246,9 @@ private:
     bool m_ptDeterministicOpticalSplit = false;
     bool m_ptIndependentOpticalRrLayers = true;
     bool m_ptOpticalMotionReplay = false;
+    bool m_ptMirrorChainPsr = false;
+    int m_ptPsrMaxBounces = 24;
+    float m_ptPsrSubpixelThreshold = 0.5f;
     float m_ptAmbientStrength = 1.0f;
     int m_ptAmbientAoRayCount = 0;
     int m_ptRrBundleMode = 0;

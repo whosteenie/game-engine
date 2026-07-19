@@ -8,6 +8,8 @@ param(
     [string]$BuildDir = 'build',
     [ValidateSet('Debug', 'Release')][string]$Config = 'Debug',
     [string]$OutputDirectory = 'artifacts/pt-optical-orbit',
+    [ValidateSet('Project', 'Enabled', 'Disabled')]
+    [string]$MirrorChainPsr = 'Project',
     [string[]]$Modes = @(
         'final-rr',
         'raw-reflection', 'reconstructed-reflection', 'reflection-delta',
@@ -27,6 +29,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $projectPath = (Resolve-Path (Join-Path $repoRoot $Project)).Path
+$projectSha256 = (Get-FileHash -LiteralPath $projectPath -Algorithm SHA256).Hash
 $enginePath = Join-Path $repoRoot "$BuildDir\$Config\game-engine.exe"
 if (!(Test-Path -LiteralPath $enginePath)) { throw "Missing $enginePath; build game-engine first." }
 if ($FrameStride -gt $OrbitFrames) { throw 'FrameStride cannot exceed OrbitFrames.' }
@@ -47,6 +50,7 @@ $environmentNames = @(
     'GAME_ENGINE_OPTICAL_CAPTURE_MODE', 'GAME_ENGINE_OPTICAL_CAPTURE_TARGET',
     'GAME_ENGINE_OPTICAL_CAPTURE_WARMUP_FRAMES', 'GAME_ENGINE_OPTICAL_CAPTURE_ORBIT_FRAMES',
     'GAME_ENGINE_OPTICAL_CAPTURE_REVOLUTIONS', 'GAME_ENGINE_OPTICAL_CAPTURE_FRAME_STRIDE',
+    'GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR',
     'GAME_ENGINE_FRAME_DEBUG', 'GAME_ENGINE_LOG'
 )
 $savedEnvironment = @{}
@@ -83,6 +87,12 @@ function Invoke-OpticalMode([string]$Mode) {
     $env:GAME_ENGINE_OPTICAL_CAPTURE_ORBIT_FRAMES = [string]$OrbitFrames
     $env:GAME_ENGINE_OPTICAL_CAPTURE_REVOLUTIONS = [string]$Revolutions
     $env:GAME_ENGINE_OPTICAL_CAPTURE_FRAME_STRIDE = [string]$FrameStride
+    if ($MirrorChainPsr -eq 'Project') {
+        Remove-Item Env:GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR -ErrorAction SilentlyContinue
+    } else {
+        $env:GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR =
+            if ($MirrorChainPsr -eq 'Enabled') { '1' } else { '0' }
+    }
     $env:GAME_ENGINE_FRAME_DEBUG = '1'
     $env:GAME_ENGINE_LOG = '1'
 
@@ -112,8 +122,14 @@ function Invoke-OpticalMode([string]$Mode) {
         $process.WaitForExit()
     }
     else {
+        # Start-Process can report HasExited before its PowerShell wrapper has populated ExitCode.
+        # The parameterless wait returns immediately here and completes that bookkeeping.
+        $process.WaitForExit()
         $process.Refresh()
-        if ($process.ExitCode -ne 0) { throw "Optical capture $Mode exited with $($process.ExitCode)." }
+        $exitCode = $process.ExitCode
+        if ($null -ne $exitCode -and $exitCode -ne 0) {
+            throw "Optical capture $Mode exited with $exitCode."
+        }
     }
 
     $diagnostics = @(Select-String -LiteralPath $stderr -Pattern (
@@ -153,10 +169,12 @@ try {
     }
     [ordered]@{
         record_type = 'pt_optical_orbit_suite'
-        schema_version = 1
+        schema_version = 2
         revision = $revision
         project = $projectPath
+        project_sha256 = $projectSha256
         target = $Target
+        mirror_chain_psr = $MirrorChainPsr
         warmup_frames = $WarmupFrames
         orbit_frames = $OrbitFrames
         revolutions = $Revolutions

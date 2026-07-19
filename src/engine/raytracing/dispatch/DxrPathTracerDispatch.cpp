@@ -4,6 +4,7 @@
 #include "engine/platform/diagnostics/SceneRenderTrace.h"
 #include "engine/raytracing/acceleration/DxrAccelerationStructures.h"
 #include "engine/raytracing/core/DxrContext.h"
+#include "engine/raytracing/core/PtRrGuideMath.h"
 #include "engine/raytracing/dispatch/DxrRestirDispatch.h"
 #include "engine/raytracing/pipeline/DxrRootSignature.h"
 #include "engine/raytracing/core/DxrTrace.h"
@@ -305,6 +306,9 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const bool ptDeterministicOpticalSplit,
     const bool ptIndependentOpticalRrLayers,
     const bool ptOpticalMotionReplay,
+    const bool ptMirrorChainPsr,
+    const int ptPsrMaxBounces,
+    const float ptPsrSubpixelThreshold,
     const float ptAmbientStrength,
     const int ptAmbientAoRayCount,
     const int ptDebugIsolateMode)
@@ -489,11 +493,10 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.emissiveLightPickWeightSum = accelerationStructures.GetEmissiveLightPickWeightSum();
     constants.ptDebugIsolateMode =
         static_cast<float>(std::clamp(ptDebugIsolateMode, 0, kPtDebugIsolateModeMax));
-    constexpr std::uint32_t kOpticalMotionReplayFlag = 1u << 0u;
-    constexpr std::uint32_t kIndependentOpticalRrFlag = 1u << 1u;
     const std::uint32_t opticalStabilityFlags =
-        (ptOpticalMotionReplay ? kOpticalMotionReplayFlag : 0u)
-        | (ptIndependentOpticalRrLayers ? kIndependentOpticalRrFlag : 0u);
+        (ptOpticalMotionReplay ? PtRrGuideMath::kOpticalMotionReplayFlag : 0u)
+        | (ptIndependentOpticalRrLayers ? PtRrGuideMath::kIndependentOpticalRrFlag : 0u)
+        | (ptMirrorChainPsr ? PtRrGuideMath::kMirrorChainPsrFlag : 0u);
     constants.ptOpticalStabilityFlags = static_cast<float>(opticalStabilityFlags);
     constants.sunAngularTanRadius = std::tan(
         glm::radians(std::clamp(frameInputs.sunAngularRadiusDegrees, 0.0f, 5.0f)));
@@ -516,6 +519,8 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.restirGiInitialEnabled = frameInputs.restirGiInitialEnabled ? 1.0f : 0.0f;
     constants._restirDiPad1 = frameInputs.environmentRotationYRadians;
     constants.ptDeterministicOpticalSplit = ptDeterministicOpticalSplit ? 1.0f : 0.0f;
+    constants.ptPsrParams[0] = static_cast<float>(std::clamp(ptPsrMaxBounces, 1, 32));
+    constants.ptPsrParams[1] = std::clamp(ptPsrSubpixelThreshold, 0.0f, 2.0f);
 
     viewport.m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
     viewport.m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
@@ -551,6 +556,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     dispatchInputs.emissiveLightAliasSrvIndex = accelerationStructures.GetEmissiveLightAliasSrvIndex();
     dispatchInputs.emissiveTriangleAliasSrvIndex = accelerationStructures.GetEmissiveTriangleAliasSrvIndex();
     dispatchInputs.emissiveLightByInstanceSrvIndex = accelerationStructures.GetEmissiveLightByInstanceSrvIndex();
+    dispatchInputs.ptPsrInstanceBoundsSrvIndex = accelerationStructures.GetPtPsrInstanceBoundsSrvIndex();
     dispatchInputs.envImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
     dispatchInputs.envEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
 
@@ -966,6 +972,36 @@ std::uintptr_t DxrPathTracerDispatch::GetPathTracerNormalRoughnessSrvCpuHandle(
     const std::uint32_t viewportId) const
 {
     return StateFor(viewportId).m_dispatchContext.GetPathTracerNormalRoughnessSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPsrThroughputSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerPsrThroughputSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerPsrMetadataSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerPsrMetadataSrvCpuHandle();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerSpecularMotionSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerSpecularMotionSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerSpecularMotionResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerSpecularMotionResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerSpecularMotionResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerSpecularMotionResourceState();
 }
 
 std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionOutputSrvCpuHandle(

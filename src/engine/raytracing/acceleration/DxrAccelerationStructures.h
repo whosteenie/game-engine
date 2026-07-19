@@ -99,6 +99,17 @@ struct DxrEmissiveAliasEntry
     float probability = 1.0f;
     std::uint32_t aliasIndex = 0;
 };
+
+// Path-tracer-only conservative current-world AABBs, indexed by compact TLAS InstanceID. Kept
+// separate from DxrGeometryLookupEntry so unrelated ray-tracing passes retain the compact stride.
+struct DxrPtPsrInstanceBounds
+{
+    float worldBoundsMin[3] = {0.0f, 0.0f, 0.0f};
+    std::uint32_t valid = 0;
+    float worldBoundsMax[3] = {0.0f, 0.0f, 0.0f};
+    std::uint32_t flags = 0;
+};
+static_assert(sizeof(DxrPtPsrInstanceBounds) == 32);
 static_assert(sizeof(DxrEmissiveAliasEntry) == 8);
 
 class DxrAccelerationStructures
@@ -196,6 +207,11 @@ public:
             : UINT32_MAX;
     }
 
+    std::uint32_t GetPtPsrInstanceBoundsSrvIndex() const
+    {
+        return m_ptPsrInstanceBoundsSrvIndices[GfxContext::Get().GetFrameIndex()];
+    }
+
     std::uint32_t GetEmissiveLightAliasSrvIndex() const
     {
         return GetFrameUploadedSrvIndex(m_emissiveLightAliasSrvIndices, m_emissiveLightAliasUploadFrame);
@@ -248,6 +264,8 @@ private:
     DxrSrvBufferRing m_sceneVertexFloatsGpu{};
     DxrSrvBufferRing m_sceneIndicesGpu{};
     DxrSrvBufferRing m_materialGpu{};
+    DxrUploadRing m_ptPsrInstanceBoundsStaging{};
+    DxrSrvBufferRing m_ptPsrInstanceBoundsGpu{};
     std::array<std::uint32_t, GfxContext::FrameCount> m_geometryLookupSrvIndices{
         UINT32_MAX,
         UINT32_MAX};
@@ -258,6 +276,9 @@ private:
         UINT32_MAX,
         UINT32_MAX};
     std::array<std::uint32_t, GfxContext::FrameCount> m_materialSrvIndices{
+        UINT32_MAX,
+        UINT32_MAX};
+    std::array<std::uint32_t, GfxContext::FrameCount> m_ptPsrInstanceBoundsSrvIndices{
         UINT32_MAX,
         UINT32_MAX};
     // P4b prev-instance transforms (t14): per-frame upload → default-heap SRV ring.
@@ -304,6 +325,7 @@ private:
     bool m_sceneHasTransmission = false;
     std::size_t m_geometryObjectCount = 0;
     std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedGeometryFingerprint{};
+    std::array<std::uint64_t, GfxContext::FrameCount> m_uploadedPsrBoundsFingerprint{};
     std::uint64_t m_builtTlasTopologyFingerprint = 0;
     std::uint64_t m_builtTlasTransformFingerprint = 0;
     bool m_pendingGeometryContentReupload = false;

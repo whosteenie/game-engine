@@ -1,6 +1,6 @@
 // CPU regression for environment importance CDF build (S5 step 13 / F2).
 
-#include "engine/lighting/EnvironmentImportanceSampling.h"
+#include "engine/lighting/environment/Importance.h"
 #include "test_expect.h"
 
 #include <cmath>

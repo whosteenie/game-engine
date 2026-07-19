@@ -51,4 +51,11 @@ void RunPtTemporalHistoryTests(int& failures)
         fingerprintA != ComputePtSettingsFingerprint(settingsE),
         "PtSettingsFingerprint changes when optical motion replay changes",
         failures);
+
+    DxrSettings settingsF{};
+    settingsF.SetPtMirrorChainPsrEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsF),
+        "PtSettingsFingerprint changes when mirror-chain PSR changes",
+        failures);
 }

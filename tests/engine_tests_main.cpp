@@ -28,6 +28,7 @@ void RunRestirSurfaceValidationTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
+void RunPtMirrorChainGuideMathTests(int& failures);
 void RunPayloadPackTests();
 void RunRefractionTests();
 void RunBrdfEnergyTests();
@@ -105,6 +106,9 @@ namespace
             [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });
         maybeRun("material", RunMaterialTests);
         maybeRun("guide_encoding", RunGuideEncodingTests);
+        maybeRun(
+            "pt_mirror_chain_guide_math",
+            [] { RunPtMirrorChainGuideMathTests(test::FailureCount()); });
         maybeRun("payload_pack", RunPayloadPackTests);
         maybeRun("refraction", RunRefractionTests);
         maybeRun("brdf_energy", RunBrdfEnergyTests);

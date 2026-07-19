@@ -6,6 +6,8 @@ param(
     [string]$BuildDir = 'build',
     [ValidateSet('Debug', 'Release')][string]$Config = 'Debug',
     [string]$OutputDirectory = 'artifacts/s1p6/cornell',
+    [ValidateSet('Project', 'Enabled', 'Disabled')]
+    [string]$MirrorChainPsr = 'Project',
     [ValidateRange(1, 30)][int]$WarmupSeconds = 2,
     [ValidateRange(1, 2000)][int]$RealtimeWarmupFrames = 120,
     [ValidateRange(1, 20000)][int]$ReferenceWarmupFrames = 512,
@@ -16,6 +18,7 @@ $ErrorActionPreference = 'Stop'
 $scriptRoot = $PSScriptRoot
 $repoRoot = (Resolve-Path (Join-Path $scriptRoot '..')).Path
 $projectPath = (Resolve-Path (Join-Path $repoRoot $Project)).Path
+$projectSha256 = (Get-FileHash -LiteralPath $projectPath -Algorithm SHA256).Hash
 $enginePath = Join-Path $repoRoot "$BuildDir\$Config\game-engine.exe"
 if (!(Test-Path -LiteralPath $enginePath)) { throw "Missing $enginePath; build game-engine first." }
 $ffmpeg = (Get-Command ffmpeg -ErrorAction Stop).Source
@@ -32,6 +35,7 @@ $environmentNames = @(
     'GAME_ENGINE_CAPTURE_MANIFEST_OUTPUT', 'GAME_ENGINE_CAPTURE_MANIFEST_INPUT',
     'GAME_ENGINE_CAPTURE_REVISION', 'GAME_ENGINE_CAPTURE_COMPARISON_MODE',
     'GAME_ENGINE_S0P5_CAPTURE', 'GAME_ENGINE_S1P6_CAPTURE_MODE',
+    'GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR',
     'GAME_ENGINE_FRAME_DEBUG', 'GAME_ENGINE_LOG')
 $savedEnvironment = @{}
 foreach ($name in $environmentNames) {
@@ -71,6 +75,12 @@ function Invoke-CornellCapture([string]$Mode, [int]$WarmupFrames) {
     $env:GAME_ENGINE_CAPTURE_COMPARISON_MODE = 'statistical'
     $env:GAME_ENGINE_S0P5_CAPTURE = '1'
     $env:GAME_ENGINE_S1P6_CAPTURE_MODE = $Mode
+    if ($MirrorChainPsr -eq 'Project') {
+        Remove-Item Env:GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR -ErrorAction SilentlyContinue
+    } else {
+        $env:GAME_ENGINE_CAPTURE_PT_MIRROR_CHAIN_PSR =
+            if ($MirrorChainPsr -eq 'Enabled') { '1' } else { '0' }
+    }
     $env:GAME_ENGINE_FRAME_DEBUG = '1'
     $env:GAME_ENGINE_LOG = '1'
 
@@ -96,6 +106,7 @@ function Invoke-CornellCapture([string]$Mode, [int]$WarmupFrames) {
         Stop-Process -Id $process.Id -Force
         $process.WaitForExit()
     } else {
+        $process.WaitForExit()
         $process.Refresh()
         $exitCode = $process.ExitCode
         if ($null -ne $exitCode -and $exitCode -ne 0) {
@@ -152,9 +163,11 @@ try {
 
     $result = [ordered]@{
         record_type = 's1p6_cornell_output_set'
-        schema_version = 1
+        schema_version = 2
         revision = $revision
         project = $projectPath
+        project_sha256 = $projectSha256
+        mirror_chain_psr = $MirrorChainPsr
         identical_pose = $true
         output_extent = $baselineOutputExtent
         camera_pose = $baselineManifest.semantic.camera.pose_or_path

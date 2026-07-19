@@ -34,6 +34,9 @@ RWTexture2D<float4> g_OpticalTransmissionMotion : register(u15);
 RWTexture2D<float4> g_OpticalTransmissionDiffuseAlbedo : register(u16);
 RWTexture2D<float4> g_OpticalTransmissionSpecularAlbedo : register(u17);
 RWTexture2D<float4> g_OpticalTransmissionNormalRoughness : register(u18);
+RWTexture2D<float4> g_PsrThroughput : register(u19); // rgb=physical delta-prefix throughput, a=owner
+RWTexture2D<uint> g_PsrMetadata : register(u20); // length[0:7], terminal[8:11], flags[12:]
+RWTexture2D<float2> g_SpecularMotion : register(u21); // dense RR specular motion
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -81,6 +84,15 @@ StructuredBuffer<EmissiveAliasEntry> g_EmissiveLightAlias : register(t19);
 StructuredBuffer<EmissiveAliasEntry> g_EmissiveTriangleAlias : register(t20);
 StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 
+struct PtPsrInstanceBounds
+{
+    float3 worldBoundsMin;
+    uint valid;
+    float3 worldBoundsMax;
+    uint flags;
+};
+StructuredBuffer<PtPsrInstanceBounds> g_PtPsrInstanceBounds : register(t22);
+
 // Kept in the PT-only ReSTIR parameter block; this declaration must precede the environment
 // helper include because the helper applies it to every HDR lookup.
 #define g_EnvironmentRotationY g_PtRestirDiParams.z
@@ -105,6 +117,12 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define g_PtOpticalStabilityFlagBits uint(round(max(g_PtOpticalStabilityFlags, 0.0)))
 #define kPtOpticalMotionReplayEnabled ((g_PtOpticalStabilityFlagBits & 1u) != 0u)
 #define kPtIndependentOpticalRrEnabled ((g_PtOpticalStabilityFlagBits & 2u) != 0u)
+// Real-time-only mirror ownership. Bit 2 reuses the existing PT-only flag word, so neither the
+// root-signature layout nor the g_MaxBounces packing changes.
+#define kPtMirrorChainPsrEnabled \
+    (((g_PtOpticalStabilityFlagBits & 4u) != 0u) && kPtCenterPrimaryRays)
+#define g_PtPsrMaxBounces uint(round(clamp(g_PtPsrParams.x, 1.0, 32.0)))
+#define g_PtPsrSubpixelThreshold clamp(g_PtPsrParams.y, 0.0, 2.0)
 // The pre-experiment path selected one Fresnel-dominant receiver and used its established inverse
 // motion solve. With both lobe-separation features disabled, preserve that path byte-for-byte in
 // intent; the replay toggle only controls the experimental separated-lobe route.
@@ -136,7 +154,7 @@ StructuredBuffer<uint> g_EmissiveLightByInstance : register(t21);
 #define DXR_SER_PERMUTATION 0
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
-#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 64.0)))
+#define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 74.0)))
 #endif
 
 // Soft sun / ambient AO sample counts (RNG comes from PathRng — no salt blocks, G3).
@@ -156,6 +174,7 @@ static const uint kPayloadReqShadingData = 4u; // normal-map, bary, triangleLod
 static const uint kPayloadReqPrimarySurface = 8u; // motion + depth (primary only)
 static const uint kPayloadHitBackFace = 16u; // packed into hit on closest-hit (G7/P1)
 static const uint kPayloadHitMovingInstance = 32u; // primary optical history must omit moving geometry
+static const uint kPayloadHitPlanarSurface = 64u; // triangle, vertex normals, and mapped normal agree
 static const uint kRussianRouletteStartBounce = 3u;
 static const float kRussianRouletteMaxProb = 0.95;
 // Below this roughness, specular uses a delta mirror bounce instead of VNDF (alpha floor ~0.032
@@ -164,6 +183,23 @@ static const float kPtDeltaSpecularRoughness = 0.03;
 // Sentinel pdf for delta events (camera ray, perfect mirror, dielectric interface) so MIS gives
 // weight ≈ 1 when no BSDF-sampling partner exists (PBRT 14.3.x).
 static const float kDeltaScatterPdf = 1.0e10;
+
+// Metadata for the event selected by the actual radiance sample. Producing it consumes no RNG and
+// leaves direction, pdf, throughput, and the disabled feature path unchanged.
+static const uint kPtScatterEventInvalid = 0u;
+static const uint kPtScatterEventDeltaSpecular = 1u;
+static const uint kPtScatterEventGlossySpecular = 2u;
+static const uint kPtScatterEventDiffuse = 3u;
+static const uint kPtScatterEventOptical = 4u;
+
+static const uint kPtPsrTerminalPrimaryReceiver = 0u;
+static const uint kPtPsrTerminalReceiver = 1u;
+static const uint kPtPsrTerminalEnvironmentEscape = 2u;
+static const uint kPtPsrTerminalIneligibleLinkFallback = 3u;
+static const uint kPtPsrTerminalSubpixelTail = 4u;
+static const uint kPtPsrTerminalNegligibleThroughputTail = 5u;
+static const uint kPtPsrTerminalHardCapSignificant = 6u;
+static const uint kPtPsrTerminalInvalidProjectionFallback = 7u;
 
 // Payload PACKED to 40 bytes (10 dwords, down from 68/17). MaxPayloadSizeInBytes in DxrPipeline.cpp
 // must match. Normals are snorm16 octahedral (uniform ~0.03deg worst-case — precise enough for glass
@@ -186,7 +222,8 @@ struct PT_RAY_PAYLOAD Payload
     float hitDistance PT_RAY_PAYLOAD_ACCESS;
     uint instanceId PT_RAY_PAYLOAD_ACCESS;
     uint primitiveIndex PT_RAY_PAYLOAD_ACCESS;
-    // Pre-TraceRay: request bits. Post-hit: bit0=1, optional kPayloadHitBackFace.
+    // Pre-TraceRay: request bits. Post-hit: bit0=1 plus optional back-face, moving-instance, and
+    // exact-planar-surface classification bits.
     uint hit : read(caller, closesthit, miss) : write(caller, closesthit, miss);
     uint barycentricsHalf PT_RAY_PAYLOAD_ACCESS;  // barycentrics.xy as fp16 pair
     // low 16: ray-cone albedo LOD constant 0.5*log2(texelArea/worldArea) (RTG ch.20), fp16;
@@ -214,6 +251,163 @@ struct PtPrimaryReconnectState
     float3 albedo;
     float metallic;
 };
+
+// Complete single-domain RR ownership selected by the radiance path. This remains raygen-local;
+// no trace payload or cross-language ABI carries it.
+struct PtRrGuideOwner
+{
+    bool valid;
+    bool isVirtualReceiver;
+    bool terminalSky;
+    bool exactDeltaChain;
+    float confidence;
+    uint chainLength;
+    uint instanceId;
+    uint primitiveIndex;
+    float3 worldPosition;
+    float3 shadingNormal;
+    float3 diffuseGuide;
+    float3 specularGuide;
+    float roughness;
+    float depth;
+    float2 motionNdc;
+    float previousDepthDelta;
+    float linearDepth;
+    float pathDistance;
+};
+
+// Camera-to-receiver unfolding for exact static planar mirrors. Appending planes in path order
+// composes T = R0 * R1 * ... so applying T to the physical receiver yields the virtual surface
+// visible from the camera. Row storage avoids HLSL matrix-layout ambiguity in this raygen-local ABI.
+struct PtMirrorVirtualTransform
+{
+    bool valid;
+    float3 row0;
+    float3 row1;
+    float3 row2;
+    float3 translation;
+};
+
+PtMirrorVirtualTransform InitPtMirrorVirtualTransform()
+{
+    PtMirrorVirtualTransform transform;
+    transform.valid = true;
+    transform.row0 = float3(1.0, 0.0, 0.0);
+    transform.row1 = float3(0.0, 1.0, 0.0);
+    transform.row2 = float3(0.0, 0.0, 1.0);
+    transform.translation = 0.0.xxx;
+    return transform;
+}
+
+float3 PtMirrorTransformDirection(PtMirrorVirtualTransform transform, float3 direction)
+{
+    return float3(
+        dot(transform.row0, direction),
+        dot(transform.row1, direction),
+        dot(transform.row2, direction));
+}
+
+float3 PtMirrorTransformPoint(PtMirrorVirtualTransform transform, float3 position)
+{
+    return PtMirrorTransformDirection(transform, position) + transform.translation;
+}
+
+bool AppendPtMirrorPlane(
+    inout PtMirrorVirtualTransform transform,
+    float3 planePoint,
+    float3 planeNormal)
+{
+    const float normalLengthSquared = dot(planeNormal, planeNormal);
+    if (!transform.valid || !isfinite(normalLengthSquared) || normalLengthSquared <= 1e-12)
+    {
+        transform.valid = false;
+        return false;
+    }
+
+    const float3 normal = planeNormal * rsqrt(normalLengthSquared);
+    const float3 transformedNormal = PtMirrorTransformDirection(transform, normal);
+    const float planeOffset = dot(normal, planePoint);
+    transform.row0 -= 2.0 * transformedNormal.x * normal;
+    transform.row1 -= 2.0 * transformedNormal.y * normal;
+    transform.row2 -= 2.0 * transformedNormal.z * normal;
+    transform.translation += 2.0 * planeOffset * transformedNormal;
+    transform.valid = all(isfinite(transform.translation))
+        && all(isfinite(transform.row0))
+        && all(isfinite(transform.row1))
+        && all(isfinite(transform.row2));
+    return transform.valid;
+}
+
+bool ProjectPtPsrMirrorBounds(
+    uint instanceId,
+    PtMirrorVirtualTransform precedingMirrors,
+    out float projectedSpanPixels)
+{
+    projectedSpanPixels = 0.0;
+    const PtPsrInstanceBounds bounds = g_PtPsrInstanceBounds[instanceId];
+    if (bounds.valid == 0u || !precedingMirrors.valid
+        || any(bounds.worldBoundsMax < bounds.worldBoundsMin))
+    {
+        return false;
+    }
+
+    float2 minimumNdc = float2(1.0e30, 1.0e30);
+    float2 maximumNdc = float2(-1.0e30, -1.0e30);
+    [unroll]
+    for (uint corner = 0u; corner < 8u; ++corner)
+    {
+        const float3 physicalCorner = float3(
+            (corner & 1u) != 0u ? bounds.worldBoundsMax.x : bounds.worldBoundsMin.x,
+            (corner & 2u) != 0u ? bounds.worldBoundsMax.y : bounds.worldBoundsMin.y,
+            (corner & 4u) != 0u ? bounds.worldBoundsMax.z : bounds.worldBoundsMin.z);
+        const float3 virtualCorner = PtMirrorTransformPoint(precedingMirrors, physicalCorner);
+        const float4 clip = mul(g_UnjitteredViewProj, float4(virtualCorner, 1.0));
+        // Near-plane crossings require homogeneous clipping. Continuing is conservative and avoids
+        // a false early stop when the AABB straddles the camera.
+        if (!all(isfinite(clip)) || clip.w <= 1.0e-6)
+        {
+            return false;
+        }
+        const float2 ndc = clip.xy / clip.w;
+        minimumNdc = min(minimumNdc, ndc);
+        maximumNdc = max(maximumNdc, ndc);
+    }
+
+    if (maximumNdc.x < -1.0 || minimumNdc.x > 1.0
+        || maximumNdc.y < -1.0 || minimumNdc.y > 1.0)
+    {
+        return false;
+    }
+    const float2 clippedMin = clamp(minimumNdc, -1.0.xx, 1.0.xx);
+    const float2 clippedMax = clamp(maximumNdc, -1.0.xx, 1.0.xx);
+    const float2 span = max((clippedMax - clippedMin) * 0.5 * float2(g_OutputSize), 0.0.xx);
+    projectedSpanPixels = max(span.x, span.y);
+    return isfinite(projectedSpanPixels);
+}
+
+PtRrGuideOwner InitPtRrGuideOwner()
+{
+    PtRrGuideOwner owner;
+    owner.valid = false;
+    owner.isVirtualReceiver = false;
+    owner.terminalSky = false;
+    owner.exactDeltaChain = false;
+    owner.confidence = 0.0;
+    owner.chainLength = 0u;
+    owner.instanceId = 0u;
+    owner.primitiveIndex = 0u;
+    owner.worldPosition = 0.0.xxx;
+    owner.shadingNormal = float3(0.0, 0.0, 1.0);
+    owner.diffuseGuide = 0.5.xxx;
+    owner.specularGuide = 0.5.xxx;
+    owner.roughness = 1.0;
+    owner.depth = 1.0;
+    owner.motionNdc = 0.0.xx;
+    owner.previousDepthDelta = 0.0;
+    owner.linearDepth = g_MaxTraceDistance;
+    owner.pathDistance = g_MaxTraceDistance;
+    return owner;
+}
 
 // snorm16x2 pack/unpack (uniform ~3e-5 precision on [-1,1]; sign-extended unpack).
 uint PtPackSnorm16x2(float2 v)
@@ -335,6 +529,11 @@ bool PayloadHitBackFace(Payload payload)
 bool PayloadInstanceMoved(Payload payload)
 {
     return (payload.hit & kPayloadHitMovingInstance) != 0u;
+}
+
+bool PayloadIsPlanarSurface(Payload payload)
+{
+    return (payload.hit & kPayloadHitPlanarSurface) != 0u;
 }
 
 // Matches lit.vs + pbr.ps: interpolate unjittered curr/prev clip per vertex for MVs; DLSS depth
@@ -628,11 +827,226 @@ float2 ComputeSkyAnchorMotion(float3 anchorDirection)
     return ComputeMotionNdc(currClipUnj, prevClipUnj);
 }
 
-// Dual-frame refracted motion: replay prev-camera primary → glass → refract → background, then
-// project both world hits (Omniverse translucent virtual motion). Fixes rotation smear through panes.
-// A receiver is visible to history only through a previous camera -> optical interface -> receiver
-// path.  Projecting receiverWorldPos through g_PrevViewProj skips that interface and is wrong for
-// curved mirrors and refractive solids.
+// Exact static planar chains are one virtual scene: unfold the physical receiver position and normal
+// through every accepted mirror plane, then derive depth and motion from that coherent geometry.
+// Projecting the physical receiver directly skips the mirror mapping and produces false history.
+PtRrGuideOwner BuildPtRrSurfaceGuideOwner(
+    Payload payload,
+    float3 worldPosition,
+    float3 shadingNormal,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float transmission,
+    float indexOfRefraction,
+    PtMirrorVirtualTransform virtualTransform,
+    float3 chainThroughput,
+    uint chainLength,
+    float pathDistance)
+{
+    PtRrGuideOwner owner = InitPtRrGuideOwner();
+    if (!virtualTransform.valid)
+    {
+        return owner;
+    }
+
+    const float3 virtualPosition = PtMirrorTransformPoint(virtualTransform, worldPosition);
+    const float3 virtualNormalUnnormalized =
+        PtMirrorTransformDirection(virtualTransform, shadingNormal);
+    const float virtualNormalLengthSquared = dot(virtualNormalUnnormalized, virtualNormalUnnormalized);
+    const float3 virtualViewVector = g_CameraPos - virtualPosition;
+    const float virtualViewLengthSquared = dot(virtualViewVector, virtualViewVector);
+    if (!all(isfinite(virtualPosition))
+        || !isfinite(virtualNormalLengthSquared) || virtualNormalLengthSquared <= 1e-12
+        || !isfinite(virtualViewLengthSquared) || virtualViewLengthSquared <= 1e-12)
+    {
+        return owner;
+    }
+
+    const float3 virtualNormal = virtualNormalUnnormalized * rsqrt(virtualNormalLengthSquared);
+    const float3 virtualViewDir = virtualViewVector * rsqrt(virtualViewLengthSquared);
+    const float4 currClipJit = mul(g_ViewProj, float4(virtualPosition, 1.0));
+    const float4 currClipUnj = mul(g_UnjitteredViewProj, float4(virtualPosition, 1.0));
+    float4 prevClipUnj = mul(g_PrevViewProj, float4(virtualPosition, 1.0));
+    if (!kPtMotionHistoryValid)
+    {
+        prevClipUnj = currClipUnj;
+    }
+    if (!all(isfinite(currClipJit)) || !all(isfinite(currClipUnj))
+        || !all(isfinite(prevClipUnj))
+        || currClipJit.w <= 1e-6 || currClipUnj.w <= 1e-6 || prevClipUnj.w <= 1e-6)
+    {
+        return owner;
+    }
+
+    owner.valid = true;
+    owner.isVirtualReceiver = true;
+    owner.exactDeltaChain = true;
+    owner.confidence = 1.0;
+    owner.chainLength = chainLength;
+    owner.instanceId = payload.instanceId;
+    owner.primitiveIndex = payload.primitiveIndex;
+    owner.worldPosition = virtualPosition;
+    owner.shadingNormal = virtualNormal;
+    owner.roughness = roughness;
+    owner.depth = saturate(currClipJit.z / currClipJit.w);
+    owner.motionNdc = ComputeMotionNdc(currClipUnj, prevClipUnj);
+    owner.linearDepth = currClipUnj.w;
+    owner.previousDepthDelta = prevClipUnj.w - currClipUnj.w;
+    owner.pathDistance = pathDistance;
+    float3 guideNormal;
+    ComputePtPrimaryRrMaterialGuides(
+        albedo,
+        virtualNormal,
+        roughness,
+        metallic,
+        transmission,
+        indexOfRefraction,
+        virtualViewDir,
+        owner.diffuseGuide,
+        owner.specularGuide,
+        guideNormal,
+        owner.roughness);
+    // Receiver material stays in the receiver domain. Delta-prefix attenuation is exported
+    // separately through g_PsrThroughput and is never baked into RR material guides.
+    if (!all(isfinite(chainThroughput)) || any(chainThroughput < 0.0))
+    {
+        owner.valid = false;
+    }
+    owner.shadingNormal = guideNormal;
+    return owner;
+}
+
+PtRrGuideOwner BuildPtRrSkyGuideOwner(
+    float3 terminalDirection,
+    PtMirrorVirtualTransform virtualTransform,
+    float3 chainThroughput,
+    uint chainLength,
+    float pathDistance)
+{
+    PtRrGuideOwner owner = InitPtRrGuideOwner();
+    const float3 virtualDirectionUnnormalized =
+        PtMirrorTransformDirection(virtualTransform, terminalDirection);
+    const float virtualDirectionLengthSquared =
+        dot(virtualDirectionUnnormalized, virtualDirectionUnnormalized);
+    if (!virtualTransform.valid || !isfinite(virtualDirectionLengthSquared)
+        || virtualDirectionLengthSquared <= 1e-12)
+    {
+        return owner;
+    }
+    const float3 virtualDirection =
+        virtualDirectionUnnormalized * rsqrt(virtualDirectionLengthSquared);
+    owner.valid = true;
+    owner.isVirtualReceiver = true;
+    owner.terminalSky = true;
+    owner.exactDeltaChain = true;
+    owner.confidence = 1.0;
+    owner.chainLength = chainLength;
+    owner.motionNdc = ComputeSkyAnchorMotion(virtualDirection);
+    owner.pathDistance = pathDistance;
+    if (!all(isfinite(chainThroughput)) || any(chainThroughput < 0.0))
+    {
+        owner.valid = false;
+    }
+    return owner;
+}
+
+// A broad glossy lobe is not a single temporal receiver. This confidence is diagnostic-only until
+// RR exposes a documented per-pixel validity input. It is continuous in GGX alpha, sampled mixture
+// pdf, the world-space cone/lobe footprint, receiver depth, and projected pixel footprint.
+float ComputePtGlossyGuideConfidence(
+    float roughness,
+    float sampledPdf,
+    float coneWidthAtReceiver,
+    float scatterDistance,
+    float receiverLinearDepth)
+{
+    const float alpha = max(roughness * roughness, 1e-3);
+    const float lobeFootprintWorld = max(
+        coneWidthAtReceiver,
+        alpha * max(scatterDistance, 0.0));
+    const float pixelFootprintWorld = max(
+        receiverLinearDepth * g_PtPixelSpreadAngle,
+        1e-6);
+    const float footprintPixels = lobeFootprintWorld / pixelFootprintWorld;
+    const float pdfConfidence = sampledPdf / (sampledPdf + 1.0);
+    const float slopeConfidence = rcp(1.0 + 32.0 * alpha);
+    const float footprintConfidence = rcp(1.0 + footprintPixels * footprintPixels);
+    return saturate(pdfConfidence * slopeConfidence * footprintConfidence);
+}
+
+void CommitPtRrGuideOwner(
+    uint2 pixel,
+    PtRrGuideOwner owner,
+    inout float specHitDistGuide)
+{
+    if (!owner.valid || !owner.isVirtualReceiver || !owner.exactDeltaChain)
+    {
+        return;
+    }
+
+    // Logical all-or-nothing bundle. g_Metadata and ReSTIR surface identity intentionally remain
+    // primary-surface data; receiver identity is exposed only by the diagnostic permutation.
+    g_DepthOutput[pixel] = owner.depth;
+    g_MotionOutput[pixel] = float4(owner.motionNdc, owner.previousDepthDelta, 1.0);
+    g_DiffuseAlbedoGuide[pixel] = float4(owner.diffuseGuide, 1.0);
+    g_SpecularAlbedoGuide[pixel] = float4(owner.specularGuide, 1.0);
+    g_NormalRoughnessGuide[pixel] = float4(owner.shadingNormal, owner.roughness);
+    g_SpecularMotion[pixel] = owner.motionNdc;
+    // The Streamline scalar describes one ray from the primary surface to one hit. A virtualized
+    // multi-plane G-buffer has no truthful single segment, so neutralize this optional input rather
+    // than feeding the sum of a folded path.
+    specHitDistGuide = g_MaxTraceDistance;
+}
+
+uint PackPtPsrMetadata(uint chainLength, uint terminalReason, bool exactChain, bool projectionValid)
+{
+    return min(chainLength, 255u)
+        | ((terminalReason & 15u) << 8u)
+        | (exactChain ? (1u << 12u) : 0u)
+        | (projectionValid ? (1u << 13u) : 0u);
+}
+
+void CommitPtPsrPrimaryFallback(
+    uint2 pixel,
+    Payload payload,
+    float3 hitPosition,
+    float3 geometricNormal,
+    float3 hitNormal,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float transmission,
+    float indexOfRefraction,
+    float3 viewDir)
+{
+    float3 diffuseGuide;
+    float3 specularGuide;
+    float3 guideNormal;
+    float guideRoughness;
+    ComputePtPrimaryRrMaterialGuides(
+        albedo, hitNormal, roughness, metallic, transmission, indexOfRefraction, viewDir,
+        diffuseGuide, specularGuide, guideNormal, guideRoughness);
+    const float2 primaryMotion = PayloadPrimaryMotion(payload);
+    g_DepthOutput[pixel] = payload.primaryDepth;
+    g_MotionOutput[pixel] = float4(primaryMotion, 0.0, 1.0);
+    g_SpecularMotion[pixel] = primaryMotion;
+    g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
+    g_SpecularAlbedoGuide[pixel] = float4(specularGuide, 1.0);
+    g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
+    g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);
+    const float linearDepth = abs(mul(g_WorldToView, float4(hitPosition, 1.0)).z);
+    const uint materialId = g_GeometryLookup[payload.instanceId].materialId;
+    const uint surfaceFlags = 1u | (roughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
+    g_RestirSurfacePositionDepth[pixel] = float4(hitPosition, linearDepth);
+    g_RestirSurfaceMaterial[pixel] = uint4(
+        RestirPackOctNormal(geometricNormal),
+        RestirPackOctNormal(hitNormal),
+        ((payload.instanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
+        (materialId & 0xffffu) | (f32tof16(roughness) << 16u));
+    g_RestirSurfaceAlbedoMetallic[pixel] = float4(albedo, metallic);
+}
+
 struct PreviousOpticalReceiver
 {
     bool valid;
@@ -1417,10 +1831,45 @@ float3 FresnelSchlick(float cosTheta, float3 f0)
     return f0 + (1.0.xxx - f0) * (m2 * m2 * m);
 }
 
+bool OpaqueHasNoDiffuseLobe(float3 albedo, float metallic)
+{
+    const float3 baseDiffuse = abs(albedo * (1.0 - saturate(metallic)));
+    return max(baseDiffuse.r, max(baseDiffuse.g, baseDiffuse.b)) <= 1e-6;
+}
+
+bool IsPtOpaqueDeltaOnly(
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float dielectricWeight)
+{
+    return dielectricWeight <= 0.0
+        && roughness <= kPtDeltaSpecularRoughness
+        && OpaqueHasNoDiffuseLobe(albedo, metallic);
+}
+
+bool IsPtExactPlanarDeltaMirror(
+    Payload payload,
+    float3 albedo,
+    float roughness,
+    float metallic,
+    float dielectricWeight)
+{
+    return IsPtOpaqueDeltaOnly(albedo, roughness, metallic, dielectricWeight)
+        && PayloadIsPlanarSurface(payload)
+        && !PayloadInstanceMoved(payload);
+}
+
 float OpaqueBsdfLobeSelectionProbFromNoV(float NoV, float3 f0, float3 albedo, float metallic)
 {
     const float3 fresnelNoV = FresnelSchlick(NoV, f0);
     const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
+    if (OpaqueHasNoDiffuseLobe(albedo, metallic))
+    {
+        // A zero-energy diffuse lobe is not a useful sampling technique. The former 0.9 ceiling
+        // generated one near-black path per ten perfect-metal bounces, compounding through chains.
+        return 1.0;
+    }
     const float specLum = Luminance(fresnelNoV);
     const float diffLum = Luminance(baseDiffuse);
     float pSpec = specLum / max(specLum + diffLum, 1e-4);
@@ -1522,11 +1971,8 @@ void EvaluateOpaqueBsdfAndPdf(
 
     const float3 baseDiffuse = albedo * (1.0 - saturate(metallic));
     const float3 fresnelNoV = FresnelSchlick(noV, f0);
-    const float specLum = Luminance(fresnelNoV);
-    const float diffLum = Luminance(baseDiffuse);
-    float pSpec = specLum / max(specLum + diffLum, 1e-4);
-    pSpec = lerp(pSpec, 1.0, saturate(metallic));
-    pSpec = clamp(pSpec, 0.1, 0.9);
+    const float pSpec = OpaqueBsdfLobeSelectionProbFromNoV(
+        noV, f0, albedo, metallic);
 
     const float3 h = normalize(viewDir + wi);
     const float noH = saturate(dot(hitNormal, h));
@@ -1961,9 +2407,11 @@ void SampleOpaqueInterface(
     float lobeXi,
     out float3 nextDir,
     out bool isSpecular,
+    out uint scatterEvent,
     out float scatterPdf,
     inout float3 throughput)
 {
+    scatterEvent = kPtScatterEventInvalid;
     const float ggxRoughness = min(max(roughness, 1e-4), 0.99);
     const float alpha = max(ggxRoughness * ggxRoughness, 1e-3); // matches SampleGgxVndfHalfVector
     const float NoV = saturate(dot(hitNormal, viewDir));
@@ -1977,12 +2425,10 @@ void SampleOpaqueInterface(
 
     // Lobe selection probability: an importance-sampling heuristic — any value in (0,1) is unbiased
     // (it only affects variance). Balance specular vs diffuse reflectance, bias toward specular for
-    // metals, and keep BOTH lobes samplable so the mixture pdf stays valid.
-    const float specLum = Luminance(fresnelNoV);
-    const float diffLum = Luminance(baseDiffuse);
-    float pSpec = specLum / max(specLum + diffLum, 1e-4);
-    pSpec = lerp(pSpec, 1.0, saturate(metallic));
-    pSpec = clamp(pSpec, 0.1, 0.9);
+    // metals. A zero-energy diffuse component is removed from the sampling technique set entirely;
+    // otherwise both lobes remain samplable and the mixture pdf stays valid.
+    const float pSpec = OpaqueBsdfLobeSelectionProbFromNoV(
+        NoV, f0, albedo, metallic);
 
     const bool sampledSpecular = (lobeXi < pSpec);
     float3 l;
@@ -1991,11 +2437,13 @@ void SampleOpaqueInterface(
         // Delta mirror / near-mirror: bypass VNDF (its 1e-3 alpha floor reads as frosted).
         l = normalize(reflect(-viewDir, hitNormal));
         isSpecular = true;
+        scatterEvent = kPtScatterEventDeltaSpecular;
         nextDir = l;
 
         const float NoL = dot(hitNormal, l);
         if (NoL <= 0.0)
         {
+            scatterEvent = kPtScatterEventInvalid;
             scatterPdf = 1.0;
             throughput = 0.0.xxx;
             return;
@@ -2017,12 +2465,16 @@ void SampleOpaqueInterface(
     }
 
     isSpecular = sampledSpecular;
+    scatterEvent = sampledSpecular
+        ? kPtScatterEventGlossySpecular
+        : kPtScatterEventDiffuse;
     nextDir = l;
 
     const float NoL = dot(hitNormal, l);
     if (NoL <= 0.0)
     {
         // Sampled below the horizon: terminate this path sample (unbiased).
+        scatterEvent = kPtScatterEventInvalid;
         scatterPdf = 1.0;
         throughput = 0.0.xxx;
         return;
@@ -2080,6 +2532,7 @@ bool SampleMaterialBounce(
     out bool isSpecular,
     out bool outPathInMedium,
     out float scatterPdf,
+    out uint scatterEvent,
     out uint actualOpticalEvent,
     inout float3 throughput)
 {
@@ -2089,6 +2542,7 @@ bool SampleMaterialBounce(
     outPathInMedium = pathInMedium;
     isSpecular = false;
     scatterPdf = 1.0;
+    scatterEvent = kPtScatterEventInvalid;
     actualOpticalEvent = kFirstOpticalEventNone;
 
     const bool useGlassPath = dielectricWeight > 0.0
@@ -2130,6 +2584,7 @@ bool SampleMaterialBounce(
                 scatterPdf);
         }
         isSpecular = true;
+        scatterEvent = kPtScatterEventOptical;
         return true;
     }
 
@@ -2149,6 +2604,7 @@ bool SampleMaterialBounce(
         xi.z,
         nextDir,
         isSpecular,
+        scatterEvent,
         scatterPdf,
         throughput);
     return isSpecular;
@@ -2242,6 +2698,13 @@ void PathTracerRayGen()
 
     const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
 
+    // Dense neutral defaults make feature-off and non-PSR pixels explicit. PSR ownership is
+    // published only after at least one exact link is accepted.
+    g_PsrThroughput[pixel] = float4(1.0, 1.0, 1.0, 0.0);
+    g_PsrMetadata[pixel] = PackPtPsrMetadata(
+        0u, kPtPsrTerminalPrimaryReceiver, false, false);
+    g_SpecularMotion[pixel] = 0.0.xx;
+
     // Layer 1 is intentionally empty for opaque, rough, unsupported, mirror-only, and sky pixels.
     // Neutral guides make those black samples a coherent far-field domain for the independent RR
     // history without changing the established single-layer path.
@@ -2305,7 +2768,29 @@ void PathTracerRayGen()
     ray.TMax = g_MaxTraceDistance;
 
     float specHitDistGuide = g_MaxTraceDistance;
+    bool mirrorChainActive = false;
+    uint mirrorChainLength = 0u;
+    float mirrorChainDistance = 0.0;
+    float3 mirrorChainThroughput = 1.0.xxx;
+    float mirrorProjectedSpanPx = 0.0;
+    bool mirrorProjectionValid = false;
+    bool psrOwned = false;
+    uint psrTerminalReason = kPtPsrTerminalPrimaryReceiver;
+    PtMirrorVirtualTransform mirrorVirtualTransform = InitPtMirrorVirtualTransform();
 #if PT_DIAGNOSTIC_PERMUTATION
+    bool mirrorOwnerValidForDebug = false;
+    bool mirrorOwnerSkyForDebug = false;
+    uint mirrorOwnerChainLengthForDebug = 0u;
+    float mirrorOwnerConfidenceForDebug = 0.0;
+    uint mirrorOwnerInstanceIdForDebug = 0u;
+    float mirrorOwnerLinearDepthForDebug = 0.0;
+    float2 mirrorOwnerMotionForDebug = 0.0.xx;
+    bool mirrorBounceCapFallbackForDebug = false;
+    bool mirrorNonDeltaFallbackForDebug = false;
+    float mirrorGlossyConfidenceForDebug = 0.0;
+    bool mirrorGlossyPendingForDebug = false;
+    float mirrorGlossyRoughnessForDebug = 1.0;
+    float mirrorGlossyPdfForDebug = 0.0;
     uint primaryMaterialIdForDebug = 0u;
     float2 opaquePrimaryMotionForDebug = 0.0.xx;
     float2 transmissionVirtualMotionForDebug = 0.0.xx;
@@ -2363,14 +2848,20 @@ void PathTracerRayGen()
     float primarySunVis = 0.0;
 #endif
 
+    uint bounce = 0u;
+    const uint maxTraceSteps = maxBounces + (kPtMirrorChainPsrEnabled ? g_PtPsrMaxBounces : 0u);
     [loop]
-    for (uint bounce = 0u; bounce <= maxBounces; ++bounce)
+    for (uint traceStep = 0u; traceStep <= maxTraceSteps; ++traceStep)
     {
         Payload payload;
         ResetPayload(payload);
         // G7/P2: primary needs motion/depth; every shading bounce needs LOD/bary/normal-map.
         payload.hit = kPayloadReqShadingData;
-        if (bounce == 0u)
+        bool requestMirrorReceiverData = mirrorChainActive;
+#if PT_DIAGNOSTIC_PERMUTATION
+        requestMirrorReceiverData = requestMirrorReceiverData || mirrorGlossyPendingForDebug;
+#endif
+        if (bounce == 0u || (kPtMirrorChainPsrEnabled && requestMirrorReceiverData))
         {
             payload.hit |= kPayloadReqPrimarySurface;
         }
@@ -2378,7 +2869,54 @@ void PathTracerRayGen()
 
         if (payload.hit == 0)
         {
-            if (bounce == 0u)
+            if (kPtMirrorChainPsrEnabled && mirrorChainActive)
+            {
+                const PtRrGuideOwner skyOwner = BuildPtRrSkyGuideOwner(
+                    ray.Direction,
+                    mirrorVirtualTransform,
+                    throughputAfterFirstScatter * throughput,
+                    mirrorChainLength,
+                    g_MaxTraceDistance);
+                CommitPtRrGuideOwner(pixel, skyOwner, specHitDistGuide);
+                psrOwned = skyOwner.valid;
+                psrTerminalReason = skyOwner.valid
+                    ? kPtPsrTerminalEnvironmentEscape
+                    : kPtPsrTerminalInvalidProjectionFallback;
+                if (psrOwned)
+                {
+                    g_PsrThroughput[pixel] = float4(mirrorChainThroughput, 1.0);
+                }
+                g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                    mirrorChainLength,
+                    psrTerminalReason,
+                    skyOwner.valid,
+                    mirrorProjectionValid);
+#if PT_DIAGNOSTIC_PERMUTATION
+                mirrorOwnerValidForDebug = skyOwner.valid;
+                mirrorOwnerSkyForDebug = skyOwner.valid;
+                mirrorOwnerChainLengthForDebug = skyOwner.chainLength;
+                mirrorOwnerConfidenceForDebug = skyOwner.confidence;
+                mirrorOwnerLinearDepthForDebug = skyOwner.linearDepth;
+                mirrorOwnerMotionForDebug = skyOwner.motionNdc;
+                mirrorNonDeltaFallbackForDebug = mirrorNonDeltaFallbackForDebug || !skyOwner.valid;
+#endif
+                mirrorChainActive = false;
+            }
+#if PT_DIAGNOSTIC_PERMUTATION
+            if (kPtMirrorChainPsrEnabled && mirrorGlossyPendingForDebug)
+            {
+                const float skyDistance = g_MaxTraceDistance * 0.5;
+                mirrorGlossyConfidenceForDebug = ComputePtGlossyGuideConfidence(
+                    mirrorGlossyRoughnessForDebug,
+                    mirrorGlossyPdfForDebug,
+                    pathConeWidth + g_PtPixelSpreadAngle * skyDistance,
+                    skyDistance,
+                    skyDistance);
+                mirrorGlossyPendingForDebug = false;
+                mirrorNonDeltaFallbackForDebug = true;
+            }
+#endif
+            if (bounce == 0u && !psrOwned)
             {
                 // Sky pixel: camera-only reprojection (raster sky keeps MV=0; PT supplies finite anchor).
                 const float3 skyAnchor = g_CameraPos + ray.Direction * (g_MaxTraceDistance * 0.5);
@@ -2400,6 +2938,7 @@ void PathTracerRayGen()
                 g_RestirSurfaceAlbedoMetallic[pixel] = 0.0.xxxx;
                 g_DepthOutput[pixel] = 1.0;
                 g_MotionOutput[pixel] = float4(skyMotion, 0.0, 1.0);
+                g_SpecularMotion[pixel] = skyMotion;
                 g_Metadata[pixel] = uint2(0, 0);
             }
 
@@ -2470,7 +3009,7 @@ void PathTracerRayGen()
 #endif
                 // The loop increment resumes the stored secondary path at bounce one without
                 // re-shading the primary surface or duplicating its direct contribution.
-                bounce = 0u;
+                bounce = 1u;
                 continue;
             }
             break;
@@ -2498,6 +3037,154 @@ void PathTracerRayGen()
         const float3 viewDir = -ray.Direction;
         const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
         const float3 shadowOrigin = hitPos + hitNormalGeom * max(payload.hitDistance * 0.001, 0.002);
+
+        if (kPtMirrorChainPsrEnabled && mirrorChainActive)
+        {
+            mirrorChainDistance += payload.hitDistance;
+        }
+
+        // Deterministic PSR prefix. This classification happens before any NEE, material-scatter
+        // RNG, or roulette. Accepted mirror links therefore consume neither the ordinary lighting
+        // budget nor the path RNG sequence. The receiver below is shaded as lighting bounce zero.
+        const float psrDielectricWeight = DielectricWeight(material.transmission, surfaceMetallic);
+        const float3 psrF0 = lerp(0.04.xxx, albedo, surfaceMetallic);
+        const bool exactPsrMirror = kPtMirrorChainPsrEnabled
+            && IsPtExactPlanarDeltaMirror(
+                payload, albedo, surfaceRoughness, surfaceMetallic, psrDielectricWeight);
+        if (kPtMirrorChainPsrEnabled && (mirrorChainActive || bounce == 0u) && exactPsrMirror)
+        {
+            if (!mirrorChainActive)
+            {
+                CommitPtPsrPrimaryFallback(
+                    pixel, payload, hitPos, hitNormalGeom, hitNormal, albedo, surfaceRoughness,
+                    surfaceMetallic, material.transmission, material.indexOfRefraction, viewDir);
+            }
+
+            float projectedSpan = 0.0;
+            const bool projectionValid = g_PtPsrSubpixelThreshold > 0.0
+                && ProjectPtPsrMirrorBounds(
+                    payload.instanceId, mirrorVirtualTransform, projectedSpan);
+            mirrorProjectionValid = mirrorProjectionValid || projectionValid;
+            mirrorProjectedSpanPx = projectionValid ? projectedSpan : mirrorProjectedSpanPx;
+            const float nDotV = saturate(dot(hitNormal, viewDir));
+            const float3 linkThroughput = max(FresnelSchlick(nDotV, psrF0), 0.0.xxx);
+
+            const bool subpixelTerminal = projectionValid
+                && g_PtPsrSubpixelThreshold > 0.0
+                && projectedSpan <= g_PtPsrSubpixelThreshold;
+            const bool hardCapTerminal = mirrorChainLength >= g_PtPsrMaxBounces;
+            if (subpixelTerminal || hardCapTerminal)
+            {
+                const float3 tailDirection = normalize(reflect(ray.Direction, hitNormal));
+                const float3 tailThroughput = mirrorChainThroughput * linkThroughput;
+                const float3 filteredTail = SampleEnvironment(
+                    tailDirection, max(surfaceRoughness, 0.5));
+                directRadiance += tailThroughput * filteredTail;
+                psrTerminalReason = subpixelTerminal
+                    ? kPtPsrTerminalSubpixelTail
+                    : kPtPsrTerminalHardCapSignificant;
+                g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                    mirrorChainLength + 1u, psrTerminalReason, true, projectionValid);
+#if PT_DIAGNOSTIC_PERMUTATION
+                mirrorBounceCapFallbackForDebug = hardCapTerminal;
+#endif
+                // A filtered terminal has no finite receiver domain. Preserve the primary fallback
+                // guides and keep its already-attenuated radiance out of PSR demodulation.
+                psrOwned = false;
+                mirrorChainActive = false;
+                break;
+            }
+
+            if (!AppendPtMirrorPlane(mirrorVirtualTransform, hitPos, hitNormal))
+            {
+                const float3 tailDirection = normalize(reflect(ray.Direction, hitNormal));
+                directRadiance += mirrorChainThroughput * linkThroughput
+                    * SampleEnvironment(tailDirection, max(surfaceRoughness, 0.5));
+                psrOwned = false;
+                psrTerminalReason = kPtPsrTerminalInvalidProjectionFallback;
+                g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                    mirrorChainLength, psrTerminalReason, false, projectionValid);
+                mirrorChainActive = false;
+                break;
+            }
+
+            mirrorChainActive = true;
+            psrOwned = true;
+            mirrorChainLength += 1u;
+            mirrorChainThroughput *= linkThroughput;
+            psrTerminalReason = kPtPsrTerminalReceiver;
+            const float originBias = max(payload.hitDistance * 0.0015, 0.01);
+            ray.Direction = normalize(reflect(ray.Direction, hitNormal));
+            ray.Origin = hitPos + ray.Direction * originBias;
+            ray.TMin = 0.001;
+            ray.TMax = g_MaxTraceDistance;
+            missEnvRoughness = 0.0;
+            lastScatterPdf = kDeltaScatterPdf;
+            continue;
+        }
+
+        if (kPtMirrorChainPsrEnabled && mirrorChainActive)
+        {
+            // The first non-mirror hit is the PSR receiver. Moving/transmissive receivers are not a
+            // coherent static virtual surface and terminate explicitly instead of publishing a
+            // partially precise guide bundle.
+            if (PayloadInstanceMoved(payload) || psrDielectricWeight > 0.0)
+            {
+                directRadiance += mirrorChainThroughput
+                    * SampleEnvironment(ray.Direction, max(surfaceRoughness, 0.5));
+                psrOwned = false;
+                psrTerminalReason = kPtPsrTerminalIneligibleLinkFallback;
+                g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                    mirrorChainLength, psrTerminalReason, false, mirrorProjectionValid);
+                mirrorChainActive = false;
+                break;
+            }
+
+            const PtRrGuideOwner receiverOwner = BuildPtRrSurfaceGuideOwner(
+                payload, hitPos, hitNormal, albedo, surfaceRoughness, surfaceMetallic,
+                material.transmission, material.indexOfRefraction, mirrorVirtualTransform,
+                mirrorChainThroughput, mirrorChainLength, mirrorChainDistance);
+            CommitPtRrGuideOwner(pixel, receiverOwner, specHitDistGuide);
+            if (!receiverOwner.valid)
+            {
+                directRadiance += mirrorChainThroughput
+                    * SampleEnvironment(ray.Direction, max(surfaceRoughness, 0.5));
+                psrOwned = false;
+                psrTerminalReason = kPtPsrTerminalInvalidProjectionFallback;
+                g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                    mirrorChainLength, psrTerminalReason, false, mirrorProjectionValid);
+                mirrorChainActive = false;
+                break;
+            }
+            psrOwned = true;
+            psrTerminalReason = kPtPsrTerminalReceiver;
+            g_PsrThroughput[pixel] = float4(mirrorChainThroughput, 1.0);
+            g_PsrMetadata[pixel] = PackPtPsrMetadata(
+                mirrorChainLength, psrTerminalReason, true, mirrorProjectionValid);
+            mirrorChainActive = false;
+#if PT_DIAGNOSTIC_PERMUTATION
+            mirrorOwnerValidForDebug = true;
+            mirrorOwnerChainLengthForDebug = mirrorChainLength;
+            mirrorOwnerConfidenceForDebug = 1.0;
+            mirrorOwnerInstanceIdForDebug = receiverOwner.instanceId;
+            mirrorOwnerLinearDepthForDebug = receiverOwner.linearDepth;
+            mirrorOwnerMotionForDebug = receiverOwner.motionNdc;
+#endif
+        }
+#if PT_DIAGNOSTIC_PERMUTATION
+        if (kPtMirrorChainPsrEnabled && mirrorGlossyPendingForDebug)
+        {
+            const float receiverLinearDepth = abs(mul(g_WorldToView, float4(hitPos, 1.0)).z);
+            mirrorGlossyConfidenceForDebug = ComputePtGlossyGuideConfidence(
+                mirrorGlossyRoughnessForDebug,
+                mirrorGlossyPdfForDebug,
+                pathConeWidth,
+                payload.hitDistance,
+                receiverLinearDepth);
+            mirrorGlossyPendingForDebug = false;
+            mirrorNonDeltaFallbackForDebug = true;
+        }
+#endif
 
         if (pathInMedium && bounce > 0u)
         {
@@ -2780,9 +3467,15 @@ void PathTracerRayGen()
             primary.hit = true;
             primary.roughness = surfaceRoughness;
             primary.dielectricWeight = dielectricWeight;
-            primary.worldPos = hitPos;
-            primary.geomNormal = hitNormalGeom;
-            primary.shadingNormal = hitNormal;
+            primary.worldPos = psrOwned
+                ? PtMirrorTransformPoint(mirrorVirtualTransform, hitPos)
+                : hitPos;
+            primary.geomNormal = psrOwned
+                ? normalize(PtMirrorTransformDirection(mirrorVirtualTransform, hitNormalGeom))
+                : hitNormalGeom;
+            primary.shadingNormal = psrOwned
+                ? normalize(PtMirrorTransformDirection(mirrorVirtualTransform, hitNormal))
+                : hitNormal;
             primary.albedo = albedo;
             primary.metallic = surfaceMetallic;
             const uint primaryMaterialId = g_GeometryLookup[payload.instanceId].materialId;
@@ -2838,20 +3531,35 @@ void PathTracerRayGen()
                 && (kPtLegacyOpticalRouting
                     ? transmissionLobeDominant
                     : firstOpticalInterface.refractValid);
-            const bool selectReflectionReceiver = smoothOptical
+            // Exact virtual geometry requires a static planar, normal-map-free, zero-diffuse delta
+            // link. The feature claims opaque mirror primaries as one domain: unsupported curved,
+            // glossy, mixed, or moving links retain the complete bounce-zero bundle instead of
+            // silently falling back to the incompatible one-hop/direct-projection representation.
+            const bool mirrorFeatureClaimsOpaqueMetal = kPtMirrorChainPsrEnabled
+                && dielectricWeight <= 0.0
+                && surfaceMetallic >= 0.5;
+            const bool opaqueMirrorOwnedByRadiancePath = mirrorFeatureClaimsOpaqueMetal
+                && IsPtExactPlanarDeltaMirror(
+                    payload, albedo, surfaceRoughness, surfaceMetallic, dielectricWeight);
+            const bool selectReflectionReceiver = !mirrorFeatureClaimsOpaqueMetal
+                && smoothOptical
                 && (kPtLegacyOpticalRouting
                     ? ((dielectricWeight > 0.0 && reflectionLobeDominant)
                         || (dielectricWeight <= 0.0 && surfaceMetallic >= 0.5))
                     : (dielectricWeight > 0.0 || surfaceMetallic >= 0.5));
             const bool opticalMaterial = dielectricWeight > 0.0 || surfaceMetallic >= 0.5;
+            const bool legacyOpticalMaterial = dielectricWeight > 0.0
+                || (surfaceMetallic >= 0.5 && !mirrorFeatureClaimsOpaqueMetal);
             const bool primaryOpticalMoved = PayloadInstanceMoved(payload);
             // Block 3 fallback policy: rough optical BSDFs and any moving optical interface or
             // receiver are omitted.  Previous replay still traces the current TLAS, so exporting
             // it as valid history for those paths would be knowingly incorrect.
             bool omitOpticalGuide = (dielectricWeight > 0.0
                     && !selectTransmissionReceiver && !selectReflectionReceiver)
-                || (surfaceMetallic >= 0.5 && !smoothOptical)
-                || (opticalMaterial && primaryOpticalMoved);
+                || (mirrorFeatureClaimsOpaqueMetal && !opaqueMirrorOwnedByRadiancePath)
+                || (!opaqueMirrorOwnedByRadiancePath
+                    && surfaceMetallic >= 0.5 && !smoothOptical)
+                || (legacyOpticalMaterial && primaryOpticalMoved);
 
 #if PT_DIAGNOSTIC_PERMUTATION
             if (opticalMaterial && !smoothOptical) opticalFallbackFlagsForDebug |= 1u;
@@ -3003,16 +3711,20 @@ void PathTracerRayGen()
                 guideRoughness = 1.0;
                 specHitDistGuide = g_MaxTraceDistance;
             }
-            g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
-            g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
-            g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
+            if (!psrOwned)
+            {
+                g_DiffuseAlbedoGuide[pixel] = float4(diffuseGuide, 1.0);
+                g_SpecularAlbedoGuide[pixel] = float4(specGuide, 1.0);
+                g_NormalRoughnessGuide[pixel] = float4(guideNormal, guideRoughness);
+            }
 
             // PF2: retire bounce-zero output state before secondary traces. Only `primary`, which
             // ReSTIR GI reconnects after the path terminates, remains live through the loop.
             const float restirLinearViewDepth = abs(mul(g_WorldToView, float4(primary.worldPos, 1.0)).z);
             const uint surfaceFlags = 1u
                 | (primary.dielectricWeight > 0.01 ? 2u : 0u)
-                | (primary.roughness <= kPtDeltaSpecularRoughness ? 4u : 0u);
+                | (primary.roughness <= kPtDeltaSpecularRoughness ? 4u : 0u)
+                | (psrOwned ? 8u : 0u);
             g_RestirSurfacePositionDepth[pixel] = float4(primary.worldPos, restirLinearViewDepth);
             g_RestirSurfaceMaterial[pixel] = uint4(
                 RestirPackOctNormal(primary.geomNormal),
@@ -3020,12 +3732,49 @@ void PathTracerRayGen()
                 ((payload.instanceId + 1u) & 0x00ffffffu) | (surfaceFlags << 24u),
                 (primaryMaterialId & 0xffffu) | (f32tof16(primary.roughness) << 16u));
             g_RestirSurfaceAlbedoMetallic[pixel] = float4(primary.albedo, primary.metallic);
-            g_DepthOutput[pixel] = resolvedPrimaryDepth;
+            if (!psrOwned)
+            {
+                g_DepthOutput[pixel] = resolvedPrimaryDepth;
+            }
             const float previousDepthDelta = primaryPreviousLinearDepth > 0.0
                 ? primaryPreviousLinearDepth - restirLinearViewDepth
                 : 0.0;
-            g_MotionOutput[pixel] = float4(resolvedPrimaryMotion, previousDepthDelta, 1.0);
+            if (!psrOwned)
+            {
+                g_MotionOutput[pixel] = float4(resolvedPrimaryMotion, previousDepthDelta, 1.0);
+                g_SpecularMotion[pixel] = resolvedPrimaryMotion;
+            }
             g_Metadata[pixel] = uint2(payload.instanceId + 1u, payload.primitiveIndex);
+        }
+
+        if (kPtMirrorChainPsrEnabled && mirrorChainActive && terminalEmissiveHit)
+        {
+            const float3 mirrorGuideThroughput = throughputAfterFirstScatter * throughput;
+            const PtRrGuideOwner emissiveOwner = BuildPtRrSurfaceGuideOwner(
+                payload,
+                hitPos,
+                hitNormal,
+                albedo,
+                surfaceRoughness,
+                surfaceMetallic,
+                material.transmission,
+                material.indexOfRefraction,
+                mirrorVirtualTransform,
+                mirrorGuideThroughput,
+                mirrorChainLength,
+                mirrorChainDistance);
+            CommitPtRrGuideOwner(pixel, emissiveOwner, specHitDistGuide);
+#if PT_DIAGNOSTIC_PERMUTATION
+            mirrorOwnerValidForDebug = emissiveOwner.valid;
+            mirrorOwnerSkyForDebug = false;
+            mirrorOwnerChainLengthForDebug = emissiveOwner.chainLength;
+            mirrorOwnerConfidenceForDebug = emissiveOwner.confidence;
+            mirrorOwnerInstanceIdForDebug = emissiveOwner.instanceId;
+            mirrorOwnerLinearDepthForDebug = emissiveOwner.linearDepth;
+            mirrorOwnerMotionForDebug = emissiveOwner.motionNdc;
+            mirrorNonDeltaFallbackForDebug = mirrorNonDeltaFallbackForDebug || !emissiveOwner.valid;
+#endif
+            mirrorChainActive = false;
         }
 
         if (terminalEmissiveHit)
@@ -3046,7 +3795,7 @@ void PathTracerRayGen()
                 transmissionContinuationResumedForDebug = true;
                 transmissionReceiverShadedForDebug = false;
 #endif
-                bounce = 0u;
+                bounce = 1u;
                 continue;
             }
             break;
@@ -3054,6 +3803,15 @@ void PathTracerRayGen()
 
         if (bounce >= maxBounces)
         {
+            if (kPtMirrorChainPsrEnabled && mirrorChainActive)
+            {
+                // The environment tail below is an integrator approximation, not an intersected
+                // receiver. Do not attach precise finite guides to it.
+                mirrorChainActive = false;
+#if PT_DIAGNOSTIC_PERMUTATION
+                mirrorBounceCapFallbackForDebug = true;
+#endif
+            }
             // Terminal specular tail: the mirror-direction environment, energy-weighted (a
             // hall-of-mirrors fade instead of black). The DIFFUSE tail is covered by primary-hit SH
             // in real-time, or added here in reference mode. Only fires for paths that did not escape.
@@ -3105,14 +3863,16 @@ void PathTracerRayGen()
                 transmissionContinuationResumedForDebug = true;
                 transmissionReceiverShadedForDebug = false;
 #endif
-                bounce = 0u;
+                bounce = 1u;
                 continue;
             }
             break;
         }
 
+        const float3 throughputBeforeScatter = throughput;
         float3 nextDir;
         bool isSpecular = false;
+        uint scatterEvent = kPtScatterEventInvalid;
         float scatterPdf = 1.0;
         const bool pathInMediumBefore = pathInMedium;
         const bool useFirstOpticalInterface = bounce == 0u
@@ -3186,6 +3946,7 @@ void PathTracerRayGen()
             isSpecular = true;
             pathInMedium = primaryThinPane ? false : pathInMediumBefore;
             scatterPdf = kDeltaScatterPdf;
+            scatterEvent = kPtScatterEventOptical;
             actualOpticalEvent = kFirstOpticalEventReflect;
             throughput *= reflectWeight;
             tracingPrimaryTransmissionLayer = false;
@@ -3211,6 +3972,7 @@ void PathTracerRayGen()
                 isSpecular,
                 pathInMedium,
                 scatterPdf,
+                scatterEvent,
                 actualOpticalEvent,
                 throughput);
             // Bounce zero establishes optical-layer ownership. Deeper scatters belong to that
@@ -3223,6 +3985,7 @@ void PathTracerRayGen()
                     && actualOpticalEvent == kFirstOpticalEventTransmit;
             }
         }
+
 #if PT_DIAGNOSTIC_PERMUTATION
         // The current surface's lighting belongs to the first opaque receiver. Contributions
         // reached after its scatter are the genuinely deeper indirect-lighting bucket.
@@ -3289,6 +4052,15 @@ void PathTracerRayGen()
             const float rrXi = PathRngNext(rng);
             if (rrProb <= 1e-4 || rrXi > rrProb)
             {
+                if (kPtMirrorChainPsrEnabled && mirrorChainActive)
+                {
+                    // Roulette terminated transport before a real receiver. Keep bounce-zero guides;
+                    // the killed path supplies no truthful finite owner.
+                    mirrorChainActive = false;
+#if PT_DIAGNOSTIC_PERMUTATION
+                    mirrorBounceCapFallbackForDebug = true;
+#endif
+                }
                 if (pendingPrimaryTransmissionTail)
                 {
                     ray = pendingTransmissionRay;
@@ -3305,7 +4077,7 @@ void PathTracerRayGen()
                     transmissionContinuationResumedForDebug = true;
                     transmissionReceiverShadedForDebug = false;
 #endif
-                    bounce = 0u;
+                    bounce = 1u;
                     continue;
                 }
                 break;
@@ -3333,6 +4105,7 @@ void PathTracerRayGen()
             ray.Origin = hitPos + nextDir * max(originBias, 0.02);
         }
         ray.Direction = nextDir;
+        bounce += 1u;
     }
 
     // G6: clamp Lo_tail before reservoir write; composite safety clamp remains below.
@@ -3350,6 +4123,7 @@ void PathTracerRayGen()
     // geometry and the traced primary-to-secondary segment proves visibility. Reused samples in P6
     // must retrace visibility and apply the reconnection Jacobian.
     const bool giEligible = kPtRestirGiInitialEnabled
+        && !psrOwned
         && primary.hit
         && haveInitialSample
         && primary.dielectricWeight <= 0.01
@@ -3404,6 +4178,9 @@ void PathTracerRayGen()
     {
         radiance = ClampRadiance(radiance);
     }
+    const float3 psrScale = psrOwned ? max(mirrorChainThroughput, 0.0.xxx) : 1.0.xxx;
+    const float3 physicalRadiancePreClamp = radiancePreClamp * psrScale;
+    const float3 physicalRadiance = radiance * psrScale;
 
     // Preserve the exact legacy full-radiance output for non-RR consumers. The RR resolve derives
     // layer 0 as (full - transmission) and reconstructs this transmission layer independently.
@@ -3422,8 +4199,8 @@ void PathTracerRayGen()
     float3 displayRadiance = SelectPtDebugRadiance(
         g_PtDebugIsolateMode,
         primary.hit,
-        radiance,
-        radiancePreClamp,
+        physicalRadiance,
+        physicalRadiancePreClamp,
         termDirectSun,
         termDirectEmissive,
         termSurfaceEmissive,
@@ -3573,8 +4350,93 @@ void PathTracerRayGen()
             transmissionDeepBounceForDebug * throughputAfterFirstScatter * layerClampScale,
             0.0.xxx);
     }
+    else if (primary.hit && g_PtDebugIsolateMode == 65u)
+    {
+        // Owner palette: gray=primary; red/green/blue=delta receiver length 1/2/3+;
+        // cyan=sky; yellow=bounce-cap/RR terminal; magenta=non-delta/unsupported fallback.
+        if (mirrorOwnerValidForDebug)
+        {
+            displayRadiance = mirrorOwnerSkyForDebug
+                ? float3(0.0, 1.0, 1.0)
+                : (mirrorOwnerChainLengthForDebug == 1u
+                    ? float3(1.0, 0.0, 0.0)
+                    : (mirrorOwnerChainLengthForDebug == 2u
+                        ? float3(0.0, 1.0, 0.0)
+                        : float3(0.0, 0.0, 1.0)));
+        }
+        else if (mirrorBounceCapFallbackForDebug)
+        {
+            displayRadiance = float3(1.0, 1.0, 0.0);
+        }
+        else if (mirrorNonDeltaFallbackForDebug)
+        {
+            displayRadiance = float3(1.0, 0.0, 1.0);
+        }
+        else
+        {
+            displayRadiance = 0.15.xxx;
+        }
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 66u)
+    {
+        const uint diagnosticChainLength = mirrorOwnerValidForDebug
+            ? mirrorOwnerChainLengthForDebug
+            : mirrorChainLength;
+        displayRadiance = saturate(float(diagnosticChainLength) / 8.0).xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 67u)
+    {
+        const float confidence = mirrorOwnerValidForDebug
+            ? mirrorOwnerConfidenceForDebug
+            : mirrorGlossyConfidenceForDebug;
+        displayRadiance = saturate(confidence).xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 68u)
+    {
+        const uint receiverId = mirrorOwnerValidForDebug && !mirrorOwnerSkyForDebug
+            ? mirrorOwnerInstanceIdForDebug + 1u
+            : 0u;
+        displayRadiance = receiverId == 0u
+            ? 0.0.xxx
+            : frac(float3(0.1031, 0.11369, 0.13787) * float(receiverId));
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 69u)
+    {
+        const float normalizedDepth = mirrorOwnerValidForDebug
+            ? saturate(mirrorOwnerLinearDepthForDebug / max(g_MaxTraceDistance, 1e-4))
+            : 0.0;
+        displayRadiance = normalizedDepth.xxx;
+    }
+    else if (primary.hit && g_PtDebugIsolateMode == 70u)
+    {
+        displayRadiance = mirrorOwnerValidForDebug
+            ? float3(mirrorOwnerMotionForDebug * 4.0 + 0.5, 1.0)
+            : 0.0.xxx;
+    }
+    else if (g_PtDebugIsolateMode == 71u)
+    {
+        displayRadiance = psrTerminalReason == kPtPsrTerminalReceiver ? float3(0.0, 1.0, 0.0)
+            : psrTerminalReason == kPtPsrTerminalEnvironmentEscape ? float3(0.0, 1.0, 1.0)
+            : psrTerminalReason == kPtPsrTerminalSubpixelTail ? float3(0.0, 0.25, 1.0)
+            : psrTerminalReason == kPtPsrTerminalHardCapSignificant ? float3(1.0, 0.0, 0.0)
+            : psrTerminalReason == kPtPsrTerminalIneligibleLinkFallback ? float3(1.0, 0.0, 1.0)
+            : psrTerminalReason == kPtPsrTerminalInvalidProjectionFallback ? float3(1.0, 0.5, 0.0)
+            : 0.15.xxx;
+    }
+    else if (g_PtDebugIsolateMode == 72u)
+    {
+        displayRadiance = saturate(mirrorProjectedSpanPx / 16.0).xxx;
+    }
+    else if (g_PtDebugIsolateMode == 73u)
+    {
+        displayRadiance = psrOwned ? saturate(mirrorChainThroughput) : 1.0.xxx;
+    }
+    else if (g_PtDebugIsolateMode == 74u)
+    {
+        displayRadiance = psrOwned ? max(radiance, 0.0.xxx) : physicalRadiance;
+    }
 #else
-    const float3 displayRadiance = radiance;
+    const float3 displayRadiance = physicalRadiance;
 #endif
 
     // P3 base signal excludes only fresh ReSTIR DI. Temporal shading adds its reevaluated
@@ -3587,6 +4449,7 @@ void PathTracerRayGen()
     {
         restirBaseRadiance = ClampRadiance(restirBaseRadiance);
     }
+    restirBaseRadiance *= psrScale;
     g_DirectOutput[pixel] = float4(restirBaseRadiance, 0.0);
     g_Output[pixel] = float4(displayRadiance, specHitDistGuide);
     if (!kPtLegacyOpticalRouting)
@@ -3651,6 +4514,52 @@ float ComputeTriangleAlbedoLodConstant(uint instanceId, uint primitiveIndex)
     return 0.5 * log2(texelArea / worldArea);
 }
 
+// Exact unfolding needs a real plane, not a tangent-plane approximation of a curved or
+// normal-mapped surface. Requiring every vertex normal to agree with the triangle normal rejects
+// smoothly shaded spheres even when the interpolated normal happens to align at one barycentric.
+bool TriangleSupportsPlanarMirrorUnfolding(
+    uint instanceId,
+    uint primitiveIndex,
+    float3 triangleNormal)
+{
+    const MaterialEntry material = LoadMaterialForInstance(instanceId);
+    if (material.normalTexIndex != 0xFFFFFFFFu)
+    {
+        return false;
+    }
+
+    const GeometryLookupEntry geo = g_GeometryLookup[instanceId];
+    if (geo.vertexStrideFloats < 6u)
+    {
+        return true;
+    }
+
+    const uint indexBase = geo.indexUintOffset + primitiveIndex * 3u;
+    const uint indices[3] = {
+        g_SceneIndices[indexBase + 0u],
+        g_SceneIndices[indexBase + 1u],
+        g_SceneIndices[indexBase + 2u] };
+    const float3x4 objectToWorld = ObjectToWorld3x4();
+    [unroll]
+    for (uint vertex = 0u; vertex < 3u; ++vertex)
+    {
+        const float3 worldNormalUnnormalized = mul(
+            (float3x3)objectToWorld,
+            LoadObjectNormal(geo, indices[vertex]));
+        const float worldNormalLengthSquared = dot(worldNormalUnnormalized, worldNormalUnnormalized);
+        if (!isfinite(worldNormalLengthSquared) || worldNormalLengthSquared <= 1e-12)
+        {
+            return false;
+        }
+        const float3 worldNormal = worldNormalUnnormalized * rsqrt(worldNormalLengthSquared);
+        if (abs(dot(worldNormal, triangleNormal)) < 0.99999)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 [shader("closesthit")]
 void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttributes attribs)
 {
@@ -3670,10 +4579,16 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     const bool hitBackFace = HitKind() == kHitKindTriangleBackFace;
     // Glass-shadow probes need smooth shading normals (not face geom): spheres/lenses get
     // blotchy Fresnel + refraction if each triangle uses a flat geometric normal.
+    float3 triangleNormal = ComputeWorldGeometricNormal(geo, primitiveIndex);
     float3 hitNormal = ComputeWorldShadingNormal(geo, primitiveIndex, attribs.barycentrics);
     if (hitBackFace)
     {
+        triangleNormal = -triangleNormal;
         hitNormal = -hitNormal;
+    }
+    if (dot(triangleNormal, rayDir) > 0.0)
+    {
+        triangleNormal = -triangleNormal;
     }
     if (dot(hitNormal, rayDir) > 0.0)
     {
@@ -3685,6 +4600,7 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
     float3 shadingNormal = hitNormal;
     float2 barycentrics = 0.0.xx;
     float triangleLod = 0.0;
+    bool planarSurface = false;
 
     // G7/P2: skip primary-only / shading work unless the raygen asked for it. Shadow and
     // transmission-visibility segments only need geometric normal + instance + distance.
@@ -3694,6 +4610,14 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
             instanceId, primitiveIndex, attribs.barycentrics, hitNormal, -rayDir, 0.0);
         barycentrics = attribs.barycentrics;
         triangleLod = ComputeTriangleAlbedoLodConstant(instanceId, primitiveIndex);
+        if (kPtMirrorChainPsrEnabled
+            && (request & kPayloadReqPrimarySurface) != 0u)
+        {
+            planarSurface = TriangleSupportsPlanarMirrorUnfolding(
+                    instanceId, primitiveIndex, triangleNormal)
+                && abs(dot(hitNormal, triangleNormal)) >= 0.99999
+                && abs(dot(shadingNormal, triangleNormal)) >= 0.99999;
+        }
     }
 
     float2 primaryMotion = 0.0.xx;
@@ -3714,7 +4638,8 @@ void PathTracerClosestHit(inout Payload payload, BuiltInTriangleIntersectionAttr
 
     payload.hit = 1u
         | (hitBackFace ? kPayloadHitBackFace : 0u)
-        | (instanceMoved ? kPayloadHitMovingInstance : 0u);
+        | (instanceMoved ? kPayloadHitMovingInstance : 0u)
+        | (planarSurface ? kPayloadHitPlanarSurface : 0u);
     payload.instanceId = instanceId;
     payload.primitiveIndex = primitiveIndex;
     payload.hitDistance = hitT;

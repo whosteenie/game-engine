@@ -264,7 +264,9 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         || m_ptRestirSurfaceAlbedoMetallicTexture.resource == nullptr
         || m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX
         || m_ptPrevRestirSurfaceAlbedoMetallicTexture.resource == nullptr
-        || m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX)
+        || m_ptPrevRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX
+        || m_ptPsrThroughputTexture.resource == nullptr
+        || m_ptPsrThroughputTexture.srvIndex == UINT32_MAX)
     {
         outError = "ReSTIR temporal buffers unavailable";
         return false;
@@ -298,6 +300,15 @@ bool DxrDispatchContext::DispatchRestirTemporal(
             static_cast<D3D12_RESOURCE_STATES>(m_ptDirectTexture.state),
             kAllShaderRead);
         m_ptDirectTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+    if (m_ptPsrThroughputTexture.state != static_cast<std::uint32_t>(kAllShaderRead))
+    {
+        TransitionResource(
+            commandList,
+            m_ptPsrThroughputTexture.resource,
+            static_cast<D3D12_RESOURCE_STATES>(m_ptPsrThroughputTexture.state),
+            kAllShaderRead);
+        m_ptPsrThroughputTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
     }
 
     auto ensureUav = [&](StructuredBufferUav& buffer) {
@@ -352,7 +363,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     const std::uint32_t envMapSrvIndex = DepthSrvIndexFromCpuHandle(envMapSrvCpuHandle);
-    const std::uint32_t srvIndices[13] = {
+    const std::uint32_t srvIndices[14] = {
         m_tlasSrvIndex,
         m_ptPrevRestirSurfacePositionDepthTexture.srvIndex,
         m_ptPrevRestirSurfaceMaterialTexture.srvIndex,
@@ -365,7 +376,8 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         emissiveLightsSrvIndex,
         emissiveTrianglesSrvIndex,
         envCdfSrvIndex,
-        envMapSrvIndex};
+        envMapSrvIndex,
+        m_ptPsrThroughputTexture.srvIndex};
     for (const std::uint32_t srvIndex : srvIndices)
     {
         if (srvIndex == UINT32_MAX)
@@ -374,7 +386,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
             return false;
         }
     }
-    recorder.BindSrvTables(1, srvIndices, 13);
+    recorder.BindSrvTables(1, srvIndices, 14);
 
     const std::uint32_t uavIndices[5] = {
         m_restirReservoirs[writeIndex].uavIndex,
@@ -387,7 +399,7 @@ bool DxrDispatchContext::DispatchRestirTemporal(
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(uavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(14 + uavIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(15 + uavIndex, uavTableHandle);
     }
 
     if (tlasResource != nullptr)
@@ -445,7 +457,9 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     if (!HasRestirBuffers() || m_primaryOutputResource == nullptr || m_primaryOutputUavIndex == UINT32_MAX
         || m_ptDirectTexture.resource == nullptr || m_ptDirectTexture.srvIndex == UINT32_MAX
         || m_ptRestirSurfaceAlbedoMetallicTexture.resource == nullptr
-        || m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX)
+        || m_ptRestirSurfaceAlbedoMetallicTexture.srvIndex == UINT32_MAX
+        || m_ptPsrThroughputTexture.resource == nullptr
+        || m_ptPsrThroughputTexture.srvIndex == UINT32_MAX)
     {
         outError = "ReSTIR spatial buffers unavailable";
         return false;
@@ -479,6 +493,15 @@ bool DxrDispatchContext::DispatchRestirSpatial(
             static_cast<D3D12_RESOURCE_STATES>(m_ptDirectTexture.state),
             kAllShaderRead);
         m_ptDirectTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+    if (m_ptPsrThroughputTexture.state != static_cast<std::uint32_t>(kAllShaderRead))
+    {
+        TransitionResource(
+            commandList,
+            m_ptPsrThroughputTexture.resource,
+            static_cast<D3D12_RESOURCE_STATES>(m_ptPsrThroughputTexture.state),
+            kAllShaderRead);
+        m_ptPsrThroughputTexture.state = static_cast<std::uint32_t>(kAllShaderRead);
     }
 
     auto ensureUav = [&](StructuredBufferUav& buffer) {
@@ -515,7 +538,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
     const std::uint32_t envMapSrvIndex = DepthSrvIndexFromCpuHandle(envMapSrvCpuHandle);
-    const std::uint32_t srvIndices[13] = {
+    const std::uint32_t srvIndices[14] = {
         m_tlasSrvIndex,
         m_ptPrevRestirSurfacePositionDepthTexture.srvIndex,
         m_ptPrevRestirSurfaceMaterialTexture.srvIndex,
@@ -528,7 +551,8 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         emissiveLightsSrvIndex,
         emissiveTrianglesSrvIndex,
         envCdfSrvIndex,
-        envMapSrvIndex};
+        envMapSrvIndex,
+        m_ptPsrThroughputTexture.srvIndex};
     for (const std::uint32_t srvIndex : srvIndices)
     {
         if (srvIndex == UINT32_MAX)
@@ -537,7 +561,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
             return false;
         }
     }
-    recorder.BindSrvTables(1, srvIndices, 13);
+    recorder.BindSrvTables(1, srvIndices, 14);
 
     // u0 = spatial write, u1 = prior reservoirs (temporal / previous spatial iter).
     const std::uint32_t uavIndices[5] = {
@@ -551,7 +575,7 @@ bool DxrDispatchContext::DispatchRestirSpatial(
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
         uavTableHandle.ptr = reinterpret_cast<UINT64>(
             GfxContext::Get().GetSrvHeapGpuHandle(uavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(14 + uavIndex, uavTableHandle);
+        commandList->SetComputeRootDescriptorTable(15 + uavIndex, uavTableHandle);
     }
 
     if (tlasResource != nullptr)

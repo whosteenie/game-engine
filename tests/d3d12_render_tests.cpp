@@ -41,6 +41,7 @@
 #include "engine/raytracing/core/DxrContext.h"
 #include "engine/raytracing/dispatch/DxrDispatchContext.h"
 #include "engine/raytracing/core/DxrGpuResource.h"
+#include "engine/raytracing/core/PtRrGuideMath.h"
 #include "engine/raytracing/acceleration/DxrInstanceTransform.h"
 #include "engine/raytracing/pipeline/DxrPipeline.h"
 #include "engine/raytracing/dispatch/DxrRestirDispatch.h"
@@ -2084,7 +2085,10 @@ namespace render_tests
         IBL* environmentIbl = nullptr;
         std::string lastError;
 
-        bool Setup(const bool includeGlassPane = true, const bool checkerBackdrop = false)
+        bool Setup(
+            const bool includeGlassPane = true,
+            const bool checkerBackdrop = false,
+            const bool mirrorChain = false)
         {
             lastError.clear();
             if (!GfxContext::Get().IsRaytracingSupported())
@@ -2107,12 +2111,25 @@ namespace render_tests
                 CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch),
                 "PT glass scratch buffer alloc");
 
-            test::ExpectTrue(
-                scene.Build(commandList4, scratch, includeGlassPane, checkerBackdrop, lastError),
-                lastError.c_str());
-            test::ExpectTrue(gbuffer.Create(lastError), lastError.c_str());
-            test::ExpectTrue(stack.EnsureReady(lastError), lastError.c_str());
-            return true;
+            const bool sceneBuilt = mirrorChain
+                ? scene.BuildMirrorChain(commandList4, scratch, lastError)
+                : scene.Build(
+                    commandList4,
+                    scratch,
+                    includeGlassPane,
+                    checkerBackdrop,
+                    lastError);
+            test::ExpectTrue(sceneBuilt, lastError.c_str());
+            const bool gbufferCreated = gbuffer.Create(lastError);
+            test::ExpectTrue(gbufferCreated, lastError.c_str());
+            const bool stackReady = stack.EnsureReady(lastError);
+            test::ExpectTrue(stackReady, lastError.c_str());
+            return sceneBuilt && gbufferCreated && stackReady;
+        }
+
+        bool SetupMirrorChain()
+        {
+            return Setup(false, false, true);
         }
 
         void Teardown()
@@ -2134,7 +2151,9 @@ namespace render_tests
         const bool motionHistoryValid,
         const std::uint32_t frameIndex,
         const int ptDebugIsolateMode = 0,
-        const std::uint32_t restirDiCandidateCount = 0)
+        const std::uint32_t restirDiCandidateCount = 0,
+        const bool ptMirrorChainPsr = false,
+        const std::uint32_t ptMaxBounces = 1)
     {
         PtFrameDispatchParams params{};
         params.scene = &fixture.scene;
@@ -2151,6 +2170,8 @@ namespace render_tests
         params.frameIndex = frameIndex;
         params.ptDebugIsolateMode = ptDebugIsolateMode;
         params.restirDiCandidateCount = restirDiCandidateCount;
+        params.ptMirrorChainPsr = ptMirrorChainPsr;
+        params.ptMaxBounces = ptMaxBounces;
 
         std::string dispatchError;
         const bool dispatched = DispatchMinimalPathTracerFrame(params, dispatchError);
@@ -2645,6 +2666,392 @@ namespace render_tests
         diagnosticsOnFixture.Teardown();
     }
 
+    void TestPtMirrorChainPsrOpaqueParity()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain RR guide opaque parity (no RTX tier)\n";
+            return;
+        }
+
+        struct CenterSample
+        {
+            float hdr[4]{};
+            float depth[4]{};
+            float motion[4]{};
+            float diffuseAlbedo[4]{};
+            float specularAlbedo[4]{};
+            float normalRoughness[4]{};
+        };
+
+        const auto readCenterSample = [](PtGlassTestFixture& fixture, CenterSample& sample) {
+            bool succeeded = true;
+            const auto read = [&](ID3D12Resource* resource,
+                                  const std::uint32_t state,
+                                  const DXGI_FORMAT format,
+                                  float (&channels)[4],
+                                  const char* message) {
+                const bool readbackSucceeded = ReadbackPtGuideCenterPixel(
+                    resource,
+                    state,
+                    kPtFramebufferSize,
+                    kPtFramebufferSize,
+                    format,
+                    channels);
+                test::ExpectTrue(readbackSucceeded, message);
+                succeeded = succeeded && readbackSucceeded;
+            };
+
+            DxrDispatchContext& context = fixture.stack.dispatchContext;
+            read(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.hdr,
+                "Mirror-chain opaque parity PT HDR readback should succeed");
+            read(
+                context.GetPathTracerDepthResource(),
+                context.GetPathTracerDepthResourceState(),
+                DXGI_FORMAT_R32_FLOAT,
+                sample.depth,
+                "Mirror-chain opaque parity depth readback should succeed");
+            read(
+                context.GetPathTracerMotionResource(),
+                context.GetPathTracerMotionResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.motion,
+                "Mirror-chain opaque parity motion readback should succeed");
+            read(
+                context.GetPathTracerDiffuseAlbedoResource(),
+                context.GetPathTracerDiffuseAlbedoResourceState(),
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                sample.diffuseAlbedo,
+                "Mirror-chain opaque parity diffuse-albedo readback should succeed");
+            read(
+                context.GetPathTracerSpecularAlbedoResource(),
+                context.GetPathTracerSpecularAlbedoResourceState(),
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                sample.specularAlbedo,
+                "Mirror-chain opaque parity specular-albedo readback should succeed");
+            read(
+                context.GetPathTracerNormalRoughnessResource(),
+                context.GetPathTracerNormalRoughnessResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.normalRoughness,
+                "Mirror-chain opaque parity normal-roughness readback should succeed");
+            return succeeded;
+        };
+
+        const auto dispatchAndRead = [&](const bool enabled, CenterSample& sample) {
+            PtGlassTestFixture fixture;
+            if (!fixture.Setup(false))
+            {
+                fixture.Teardown();
+                return false;
+            }
+
+            Camera camera = MakePtGlassCamera();
+            const glm::mat4 viewProjection =
+                camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+            if (!DispatchPtGlassFrame(
+                    fixture,
+                    camera,
+                    viewProjection,
+                    camera.GetViewMatrix(),
+                    camera.GetPosition(),
+                    false,
+                    7u,
+                    0,
+                    0u,
+                    enabled))
+            {
+                EndOffscreenPass();
+                fixture.Teardown();
+                return false;
+            }
+
+            EndOffscreenPass();
+            const bool readbackSucceeded = readCenterSample(fixture, sample);
+            fixture.Teardown();
+            return readbackSucceeded;
+        };
+
+        CenterSample disabled{};
+        CenterSample enabled{};
+        if (!dispatchAndRead(false, disabled) || !dispatchAndRead(true, enabled))
+        {
+            return;
+        }
+
+        test::ExpectTrue(
+            disabled.depth[0] > 0.0f,
+            "Mirror-chain opaque parity fixture must hit ordinary opaque geometry at center");
+
+        const auto expectChannelsNear = [](const float (&actual)[4],
+                                           const float (&expected)[4],
+                                           const float tolerance,
+                                           const char* label) {
+            for (int channel = 0; channel < 4; ++channel)
+            {
+                std::ostringstream message;
+                message << label << " channel " << channel;
+                test::ExpectNear(actual[channel], expected[channel], tolerance, message.str().c_str());
+            }
+        };
+
+        expectChannelsNear(enabled.hdr, disabled.hdr, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque PT HDR");
+        test::ExpectNear(enabled.depth[0], disabled.depth[0], 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR depth");
+        expectChannelsNear(enabled.motion, disabled.motion, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque RR motion");
+        expectChannelsNear(enabled.diffuseAlbedo, disabled.diffuseAlbedo, 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR diffuse albedo");
+        expectChannelsNear(enabled.specularAlbedo, disabled.specularAlbedo, 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR specular albedo");
+        expectChannelsNear(enabled.normalRoughness, disabled.normalRoughness, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque RR normal/roughness");
+    }
+
+    void TestPtMirrorChainPsrTwoBounceReceiver()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain two-bounce receiver (no RTX tier)\n";
+            return;
+        }
+
+        constexpr int kMirrorOwnerMode = 65;
+        constexpr int kMirrorChainLengthMode = 66;
+        constexpr int kMirrorReceiverDepthMode = 69;
+        constexpr int kMirrorReceiverMotionMode = 70;
+        constexpr std::uint32_t kMirrorMaxBounces = 4u;
+        constexpr std::uint32_t kMirrorFrameIndex = 7u;
+
+        struct DiagnosticSample
+        {
+            float aov[4]{};
+            float motion[4]{};
+            float normalRoughness[4]{};
+        };
+
+        PtGlassTestFixture fixture;
+        if (!fixture.SetupMirrorChain())
+        {
+            fixture.Teardown();
+            return;
+        }
+        // Setup opens the fixture's upload pass. Each diagnostic below gets an explicit pass so
+        // identical mode evaluations cannot accidentally share a caller-owned framebuffer.
+        EndOffscreenPass();
+
+        Camera previousCamera = MakePtGlassCamera();
+        previousCamera.SetPosition(glm::vec3(0.5f, 0.0f, 4.0f));
+        const glm::mat4 previousViewProjection =
+            previousCamera.GetUnjitteredProjectionMatrix() * previousCamera.GetViewMatrix();
+        Camera camera = MakePtGlassCamera();
+
+        const auto dispatchDiagnostic = [&](const int mode,
+                                            const bool enabled,
+                                            const std::uint32_t frameIndex,
+                                            DiagnosticSample& sample) {
+            Framebuffer framebuffer;
+            if (!framebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize))
+            {
+                test::ExpectTrue(false, "PT mirror-chain diagnostic framebuffer resize should succeed");
+                return false;
+            }
+            BeginOffscreenPass(framebuffer, false);
+            if (!DispatchPtGlassFrame(
+                    fixture,
+                    camera,
+                    previousViewProjection,
+                    previousCamera.GetViewMatrix(),
+                    previousCamera.GetPosition(),
+                    true,
+                    frameIndex,
+                    mode,
+                    0u,
+                    enabled,
+                    kMirrorMaxBounces))
+            {
+                EndOffscreenPass();
+                return false;
+            }
+            EndOffscreenPass();
+
+            DxrDispatchContext& context = fixture.stack.dispatchContext;
+            const bool aovRead = ReadbackPtGuideCenterPixel(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.aov);
+            test::ExpectTrue(aovRead, "PT mirror-chain diagnostic AOV readback should succeed");
+            const bool motionRead = ReadbackPtGuideCenterPixel(
+                context.GetPathTracerMotionResource(),
+                context.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.motion);
+            test::ExpectTrue(motionRead, "PT mirror-chain receiver motion readback should succeed");
+            const bool normalRead = ReadbackPtGuideCenterPixel(
+                context.GetPathTracerNormalRoughnessResource(),
+                context.GetPathTracerNormalRoughnessResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.normalRoughness);
+            test::ExpectTrue(normalRead, "PT mirror-chain receiver normal readback should succeed");
+            return aovRead && motionRead && normalRead;
+        };
+
+        DiagnosticSample owner{};
+        DiagnosticSample chainLength{};
+        DiagnosticSample receiverDepth{};
+        DiagnosticSample receiverMotion{};
+        DiagnosticSample disabled{};
+        if (!dispatchDiagnostic(kMirrorOwnerMode, true, kMirrorFrameIndex, owner)
+            || !dispatchDiagnostic(kMirrorChainLengthMode, true, kMirrorFrameIndex, chainLength)
+            || !dispatchDiagnostic(kMirrorReceiverDepthMode, true, kMirrorFrameIndex, receiverDepth)
+            || !dispatchDiagnostic(kMirrorReceiverMotionMode, true, kMirrorFrameIndex, receiverMotion)
+            || !dispatchDiagnostic(kMirrorChainLengthMode, false, kMirrorFrameIndex, disabled))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        std::cout << "mirror-chain center: owner=(" << owner.aov[0] << ", "
+                  << owner.aov[1] << ", " << owner.aov[2] << ") length="
+                  << chainLength.aov[0] * 8.0f << " motion=(" << receiverMotion.motion[0]
+                  << ", " << receiverMotion.motion[1] << ") virtualDepth="
+                  << receiverDepth.aov[0] * 100.0f << " enabledRoughness="
+                  << chainLength.normalRoughness[3] << " disabledRoughness="
+                  << disabled.normalRoughness[3] << "\n";
+
+        // Final owner palette contract: exact receiver length 2 is green.
+        test::ExpectNear(owner.aov[0], 0.0f, 0.001f,
+            "Two-bounce mirror owner AOV must have zero red");
+        test::ExpectNear(owner.aov[1], 1.0f, 0.001f,
+            "Two-bounce mirror owner AOV must report exact length-2 green");
+        test::ExpectNear(owner.aov[2], 0.0f, 0.001f,
+            "Two-bounce mirror owner AOV must have zero blue");
+
+        const float expectedLengthEncoding = 2.0f / 8.0f;
+        test::ExpectNear(chainLength.aov[0], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV must report two exact delta links");
+        test::ExpectNear(chainLength.aov[1], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV grayscale G must match R");
+        test::ExpectNear(chainLength.aov[2], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV grayscale B must match R");
+        test::ExpectNear(disabled.aov[0], 0.0f, 0.001f,
+            "Disabled mirror-chain feature must report zero chain length");
+
+        // The receiver's guide geometry must live in the unfolded virtual world. The physical
+        // receiver is only about 9.8 units from the camera; the exact two-plane virtual receiver is
+        // over 12 units deep and its +Z normal is rotated by the composed reflections.
+        test::ExpectTrue(
+            receiverDepth.aov[0] * 100.0f > 11.5f,
+            "Mirror-chain RR depth must describe unfolded virtual geometry, not the physical receiver");
+        test::ExpectNear(chainLength.normalRoughness[0], -0.7071068f, 0.03f,
+            "Mirror-chain RR normal X must be unfolded through both mirror planes");
+        test::ExpectNear(chainLength.normalRoughness[2], 0.7071068f, 0.03f,
+            "Mirror-chain RR normal Z must be unfolded through both mirror planes");
+
+        const float motionMagnitude = std::sqrt(
+            receiverMotion.motion[0] * receiverMotion.motion[0]
+            + receiverMotion.motion[1] * receiverMotion.motion[1]);
+        test::ExpectTrue(
+            motionMagnitude > 0.005f,
+            "Mirror-chain receiver guide must carry nonzero motion under camera translation");
+        test::ExpectNear(receiverMotion.aov[0], receiverMotion.motion[0] * 4.0f + 0.5f, 0.001f,
+            "Mirror receiver-motion AOV R must encode authoritative guide motion X");
+        test::ExpectNear(receiverMotion.aov[1], receiverMotion.motion[1] * 4.0f + 0.5f, 0.001f,
+            "Mirror receiver-motion AOV G must encode authoritative guide motion Y");
+        test::ExpectNear(receiverMotion.aov[2], 1.0f, 0.001f,
+            "Mirror receiver-motion AOV B must report a valid virtual receiver");
+
+        const auto directPhysicalProjection = PtRrGuideMath::ProjectStaticReceiver(
+            glm::vec3(0.0f, 0.0f, -5.8f),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            previousViewProjection,
+            true);
+        PtRrGuideMath::VirtualReflectionTransform expectedVirtualTransform{};
+        const float mirrorAAngle = glm::radians(67.5f);
+        const bool expectedTransformValid = expectedVirtualTransform.AppendReflection(
+            glm::vec3(0.0f),
+            glm::vec3(std::sin(mirrorAAngle), 0.0f, std::cos(mirrorAAngle)))
+            && expectedVirtualTransform.AppendReflection(
+                glm::vec3(3.0f, 0.0f, -3.0f),
+                glm::vec3(1.0f, 0.0f, 0.0f));
+        test::ExpectTrue(expectedTransformValid,
+            "Two-plane CPU mirror-chain oracle transform must be valid");
+        const auto expectedVirtualProjection = PtRrGuideMath::ProjectVirtualReceiver(
+            expectedVirtualTransform,
+            glm::vec3(0.0f, 0.0f, -5.8f),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            previousViewProjection,
+            true);
+        test::ExpectTrue(directPhysicalProjection.valid,
+            "Direct physical receiver projection used by the mirror-chain oracle must be valid");
+        test::ExpectTrue(expectedVirtualProjection.valid,
+            "Unfolded receiver projection used by the mirror-chain oracle must be valid");
+        test::ExpectNear(
+            receiverMotion.motion[0], expectedVirtualProjection.motionNdc.x, 0.001f,
+            "Mirror-chain RR motion X must match the exact unfolded receiver projection");
+        test::ExpectNear(
+            receiverMotion.motion[1], expectedVirtualProjection.motionNdc.y, 0.001f,
+            "Mirror-chain RR motion Y must match the exact unfolded receiver projection");
+        test::ExpectTrue(
+            std::abs(receiverMotion.motion[0] - directPhysicalProjection.motionNdc.x) > 0.005f,
+            "Mirror-chain RR motion must differ from ordinary direct projection of the receiver");
+
+        // Repeating the identical frame/camera through three diagnostic modes must leave the
+        // production guide untouched. This is the stability gate, not a tolerant visual heuristic.
+        test::ExpectNear(owner.motion[0], chainLength.motion[0], 0.0001f,
+            "Mirror receiver motion X must be stable across owner/length diagnostics");
+        test::ExpectNear(owner.motion[1], chainLength.motion[1], 0.0001f,
+            "Mirror receiver motion Y must be stable across owner/length diagnostics");
+        test::ExpectNear(chainLength.motion[0], receiverMotion.motion[0], 0.0001f,
+            "Mirror receiver motion X must be stable in motion diagnostic mode");
+        test::ExpectNear(chainLength.motion[1], receiverMotion.motion[1], 0.0001f,
+            "Mirror receiver motion Y must be stable in motion diagnostic mode");
+
+        test::ExpectTrue(
+            chainLength.normalRoughness[3] > 0.5f,
+            "Enabled mirror-chain guides must export the rough ordinary receiver");
+        test::ExpectTrue(
+            disabled.normalRoughness[3] < 0.05f,
+            "Disabled mirror-chain guides must preserve the smooth primary-mirror baseline");
+
+        // The former 0.9 lobe-probability ceiling made this pass for a lucky seed while injecting
+        // black/unsupported samples in other frames. Exercise a seed range so the GPU contract also
+        // requires every zero-diffuse delta mirror to stay on the exact two-link path.
+        for (std::uint32_t frameIndex = 0u; frameIndex < 16u; ++frameIndex)
+        {
+            DiagnosticSample seededOwner{};
+            if (!dispatchDiagnostic(kMirrorOwnerMode, true, frameIndex, seededOwner))
+            {
+                fixture.Teardown();
+                return;
+            }
+            std::ostringstream message;
+            message << "Perfect-metal mirror chain must retain its exact length-2 owner for RNG seed "
+                    << frameIndex;
+            test::ExpectTrue(
+                seededOwner.aov[0] < 0.001f
+                    && seededOwner.aov[1] > 0.999f
+                    && seededOwner.aov[2] < 0.001f,
+                message.str().c_str());
+        }
+
+        fixture.Teardown();
+    }
+
     void TestPtRestirStaticPreviousReceiverTargetAgreement()
     {
         if (!GfxContext::Get().IsRaytracingSupported())
@@ -2874,6 +3281,8 @@ namespace render_tests
         add("PtStaticOffOriginOpaqueMotion", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtStaticOffOriginOpaqueMotion);
         add("PtTransmissionVirtualMotionLateralChecker", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionLateralChecker);
         add("PtTransmissionDiagnosticsOffEquivalence", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionDiagnosticsOffEquivalence);
+        add("PtMirrorChainPsrOpaqueParity", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrOpaqueParity);
+        add("PtMirrorChainPsrTwoBounceReceiver", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrTwoBounceReceiver);
         add("PtRestirStaticPreviousReceiverTargetAgreement", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtRestirStaticPreviousReceiverTargetAgreement);
     }
 }

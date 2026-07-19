@@ -1117,6 +1117,48 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 "established pre-experiment single-lobe motion behavior.");
             RendererSettingUi::MarkRendered("pt_optical_motion_replay");
 
+            bool ptMirrorChainPsr = dxrSettings.IsPtMirrorChainPsrEnabled();
+            UndoableRendererCheckbox(
+                "PT mirror-chain PSR",
+                &ptMirrorChainPsr,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtMirrorChainPsrEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Deterministically resolves static planar exact-delta mirrors to a virtual primary "
+                "receiver. Mirror links use a separate budget and do not consume RNG or roulette.");
+            RendererSettingUi::MarkRendered("pt_mirror_chain_psr");
+
+            int ptPsrMaxBounces = dxrSettings.GetPtPsrMaxBounces();
+            UndoableRendererSliderInt(
+                "PT PSR max mirror bounces",
+                &ptPsrMaxBounces,
+                1,
+                32,
+                editContext,
+                [](Scene& target, int bounces) {
+                    target.GetRenderer().GetDxrSettings().SetPtPsrMaxBounces(bounces);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+
+            float ptPsrSubpixelThreshold = dxrSettings.GetPtPsrSubpixelThreshold();
+            UndoableRendererSliderFloat(
+                "PT PSR sub-pixel threshold",
+                &ptPsrSubpixelThreshold,
+                0.0f,
+                2.0f,
+                "%.2f px",
+                editContext,
+                [](Scene& target, float threshold) {
+                    target.GetRenderer().GetDxrSettings().SetPtPsrSubpixelThreshold(threshold);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+
             ImGui::SeparatorText("ReSTIR direct lighting");
             // TODO(REMOVE WHEN RESTIR IS STABLE): Remove this experimental-settings warning.
             ImGui::PushStyleColor(ImGuiCol_Text, EditorWidgets::ErrorTextColor());

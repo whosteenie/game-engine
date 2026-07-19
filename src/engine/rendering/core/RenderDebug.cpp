@@ -266,6 +266,26 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "PT optical: transmission first receiver";
     case RenderDebugMode::PtOpticalTransmissionDeepBounce:
         return "PT optical: transmission deep bounce";
+    case RenderDebugMode::PtMirrorChainOwner:
+        return "PT mirror chain: guide owner";
+    case RenderDebugMode::PtMirrorChainLength:
+        return "PT mirror chain: chain length";
+    case RenderDebugMode::PtMirrorChainConfidence:
+        return "PT mirror chain: glossy confidence";
+    case RenderDebugMode::PtMirrorChainReceiverId:
+        return "PT mirror chain: receiver ID";
+    case RenderDebugMode::PtMirrorChainReceiverDepth:
+        return "PT mirror chain: receiver depth";
+    case RenderDebugMode::PtMirrorChainReceiverMotion:
+        return "PT mirror chain: receiver motion";
+    case RenderDebugMode::PtPsrTerminalReason:
+        return "PT PSR: terminal reason";
+    case RenderDebugMode::PtPsrProjectedSpan:
+        return "PT PSR: projected mirror span";
+    case RenderDebugMode::PtPsrThroughput:
+        return "PT PSR: chain throughput";
+    case RenderDebugMode::PtPsrReceiverSignal:
+        return "PT PSR: receiver-domain signal";
     default:
         return "Unknown";
     }
@@ -528,6 +548,16 @@ bool IsPtIsolateDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::PtOpticalTransmissionEnvironment:
     case RenderDebugMode::PtOpticalTransmissionReceiver:
     case RenderDebugMode::PtOpticalTransmissionDeepBounce:
+    case RenderDebugMode::PtMirrorChainOwner:
+    case RenderDebugMode::PtMirrorChainLength:
+    case RenderDebugMode::PtMirrorChainConfidence:
+    case RenderDebugMode::PtMirrorChainReceiverId:
+    case RenderDebugMode::PtMirrorChainReceiverDepth:
+    case RenderDebugMode::PtMirrorChainReceiverMotion:
+    case RenderDebugMode::PtPsrTerminalReason:
+    case RenderDebugMode::PtPsrProjectedSpan:
+    case RenderDebugMode::PtPsrThroughput:
+    case RenderDebugMode::PtPsrReceiverSignal:
         return true;
     default:
         return false;
@@ -660,6 +690,16 @@ int PtDebugIsolateModeFromRenderDebug(const RenderDebugMode mode)
     case RenderDebugMode::PtOpticalTransmissionEnvironment: return 62;
     case RenderDebugMode::PtOpticalTransmissionReceiver: return 63;
     case RenderDebugMode::PtOpticalTransmissionDeepBounce: return 64;
+    case RenderDebugMode::PtMirrorChainOwner: return 65;
+    case RenderDebugMode::PtMirrorChainLength: return 66;
+    case RenderDebugMode::PtMirrorChainConfidence: return 67;
+    case RenderDebugMode::PtMirrorChainReceiverId: return 68;
+    case RenderDebugMode::PtMirrorChainReceiverDepth: return 69;
+    case RenderDebugMode::PtMirrorChainReceiverMotion: return 70;
+    case RenderDebugMode::PtPsrTerminalReason: return 71;
+    case RenderDebugMode::PtPsrProjectedSpan: return 72;
+    case RenderDebugMode::PtPsrThroughput: return 73;
+    case RenderDebugMode::PtPsrReceiverSignal: return 74;
     default: return 0;
     }
 }
@@ -673,6 +713,16 @@ RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(const int mode)
     case 30: return RenderDebugMode::PtEnvDiProbeCandidate;
     case 31: return RenderDebugMode::PtEnvDiProbeRadiance;
     case 32: return RenderDebugMode::PtEnvDiProbeMetadata;
+    case 65: return RenderDebugMode::PtMirrorChainOwner;
+    case 66: return RenderDebugMode::PtMirrorChainLength;
+    case 67: return RenderDebugMode::PtMirrorChainConfidence;
+    case 68: return RenderDebugMode::PtMirrorChainReceiverId;
+    case 69: return RenderDebugMode::PtMirrorChainReceiverDepth;
+    case 70: return RenderDebugMode::PtMirrorChainReceiverMotion;
+    case 71: return RenderDebugMode::PtPsrTerminalReason;
+    case 72: return RenderDebugMode::PtPsrProjectedSpan;
+    case 73: return RenderDebugMode::PtPsrThroughput;
+    case 74: return RenderDebugMode::PtPsrReceiverSignal;
     default: return RenderDebugMode::None;
     }
 }

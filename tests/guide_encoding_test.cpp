@@ -1,5 +1,5 @@
-// CPU mirrors of guide / motion math from assets/shaders/dxr/path_tracer.hlsl and
-// assets/shaders/dxr/pt_dielectric.hlsli. Keep in sync when shader formulas change.
+// CPU mirrors of guide / motion math from assets/shaders/raytracing/path_tracing/path_tracer.hlsl
+// and pt_dielectric.hlsli. Keep in sync when shader formulas change.
 
 #include "test_expect.h"
 

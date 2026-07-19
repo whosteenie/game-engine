@@ -1,4 +1,4 @@
-#include "engine/rendering/post/ReconstructionExposurePolicy.h"
+#include "engine/rendering/post/reconstruction/ExposurePolicy.h"
 
 #include <cmath>
 #include <iostream>

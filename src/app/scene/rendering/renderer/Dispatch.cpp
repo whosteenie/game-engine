@@ -282,6 +282,10 @@ void SceneRenderer::RecordDxrPass(
             m_dxrSettings.IsPtDeterministicOpticalSplitEnabled(),
             m_dxrSettings.IsPtIndependentOpticalRrLayersEnabled(),
             m_dxrSettings.IsPtOpticalMotionReplayEnabled(),
+            m_dxrSettings.IsPtMirrorChainPsrEnabled()
+                && !m_dxrSettings.IsPtReferenceConvergence(),
+            m_dxrSettings.GetPtPsrMaxBounces(),
+            m_dxrSettings.GetPtPsrSubpixelThreshold(),
             m_dxrSettings.GetPtAmbientStrength(),
             m_dxrSettings.GetPtAmbientAoRayCount(),
             ptDebugMode);
@@ -458,6 +462,19 @@ void SceneRenderer::RecordDxrPass(
             pathTracerShow
                 ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle(
                     pathTracerViewportId)
+                : 0,
+            pathTracerShow && m_dxrSettings.IsPtMirrorChainPsrEnabled(),
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerPsrThroughputSrvCpuHandle(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerSpecularMotionResource(pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerSpecularMotionResourceState(pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerSpecularMotionSrvCpuHandle(pathTracerViewportId)
                 : 0,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionOutputResource(pathTracerViewportId) : nullptr,
             pathTracerShow ? m_dxrPathTracerDispatch->GetPathTracerOpticalTransmissionOutputResourceState(pathTracerViewportId) : 0,

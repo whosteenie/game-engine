@@ -68,7 +68,14 @@ StructuredBuffer<EmissiveLightEntry> g_EmissiveLights : register(t9);
 StructuredBuffer<EmissiveTriangleEntry> g_EmissiveTriangles : register(t10);
 StructuredBuffer<float> g_EnvCdf : register(t11);
 Texture2D<float4> g_EnvMap : register(t12);
+Texture2D<float4> g_PsrThroughput : register(t13);
 SamplerState g_LinearClampSampler : register(s0);
+
+float3 RestirPsrThroughput(uint2 pixel)
+{
+    const float4 psr = g_PsrThroughput[pixel];
+    return psr.a > 0.5 ? max(psr.rgb, 0.0.xxx) : 1.0.xxx;
+}
 
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirCurrent : register(u0);
 RWStructuredBuffer<RestirDiReservoirSet> g_ReservoirPrev : register(u1);
@@ -866,11 +873,13 @@ void RestirTemporalRayGen()
             * max(length(hitPosition - g_CameraPos) * 0.001, 0.002);
         const float roughness = f16tof32(currMat.w >> 16u);
         const float4 am = g_CurrAlbedoMetallic[pixel];
-        float3 radiance = g_BaseRadiance[pixel].rgb
-            + ShadeDomain(outputSet.emissive, receiver, geomN, n, v, am.rgb, am.a, roughness)
+        const float3 reusedReceiverRadiance =
+            ShadeDomain(outputSet.emissive, receiver, geomN, n, v, am.rgb, am.a, roughness)
             + ShadeDomain(outputSet.environment, receiver, geomN, n, v, am.rgb, am.a, roughness)
             + ShadeGiWithInputMis(outputGi, hitPosition, receiver, geomN, n, v,
                 am.rgb, am.a, roughness);
+        float3 radiance = g_BaseRadiance[pixel].rgb
+            + reusedReceiverRadiance * RestirPsrThroughput(pixel);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
         const float4 old = g_Output[pixel];
@@ -1390,12 +1399,14 @@ void RestirSpatialRayGen()
     }
     if (g_ShadeOutput != 0u)
     {
-        float3 radiance = g_BaseRadiance[pixel].rgb
-            + ShadeDomain(outputSet.emissive, centerReceiver, centerGeomN, centerN, centerV,
+        const float3 reusedReceiverRadiance =
+            ShadeDomain(outputSet.emissive, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
             + ShadeDomain(outputSet.environment, centerReceiver, centerGeomN, centerN, centerV,
                 centerAm.rgb, centerAm.a, centerRoughness)
             + postSpatialGi;
+        float3 radiance = g_BaseRadiance[pixel].rgb
+            + reusedReceiverRadiance * RestirPsrThroughput(pixel);
         const float lum = RestirDiTargetLuminance(radiance);
         radiance *= min(1.0, 64.0 / max(lum, 1e-6));
         const float4 old = g_Output[pixel];

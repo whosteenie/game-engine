@@ -445,13 +445,14 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
 }
 
 // P4b path tracer: reflection layout plus t14 (prev-instance transforms for object motion),
-// t15 (emissive NEE light list), t18-t21 (geometry, aliases, instance lookup), u4-u6 (RR guides),
+// t15 (emissive NEE light list), t18-t21 (geometry, aliases, instance lookup), t22 PSR bounds,
+// u4-u6 (RR guides),
 // u7-u8 (ReSTIR GI + DI reservoirs), u9 direct, u10-u12 P1 surface records, and u13-u18 the
-// independent smooth-dielectric transmission RR layer and its guide bundle.
+// independent smooth-dielectric transmission RR layer and its guide bundle, and u19-u21 PSR data.
 void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     SerializeHitShadingGlobalRootSignatureBlob(
-        22, 19, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
+        23, 22, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()
@@ -732,7 +733,7 @@ void DxrRootSignature::SerializeRestirGlobalRootSignature(ComPtr<ID3DBlob>& outB
 {
     // t0-t12: TLAS, P1 history/current, motion/base, current/previous material params,
     // lights, and environment CDF/map.
-    constexpr std::uint32_t kSrvCount = 13;
+    constexpr std::uint32_t kSrvCount = 14;
     constexpr std::uint32_t kUavCount = 5;
     D3D12_DESCRIPTOR_RANGE1 srvRanges[kSrvCount]{};
     for (std::uint32_t registerIndex = 0; registerIndex < kSrvCount; ++registerIndex)

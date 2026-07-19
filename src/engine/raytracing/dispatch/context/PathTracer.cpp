@@ -221,6 +221,9 @@ bool DxrDispatchContext::DispatchPathTracer(
         &m_ptDiffuseAlbedoTexture,
         &m_ptSpecularAlbedoTexture,
         &m_ptNormalRoughnessTexture,
+        &m_ptPsrThroughputTexture,
+        &m_ptPsrMetadataTexture,
+        &m_ptSpecularMotionTexture,
         &m_ptOpticalTransmissionOutputTexture,
         &m_ptOpticalTransmissionDepthTexture,
         &m_ptOpticalTransmissionMotionTexture,
@@ -247,8 +250,8 @@ bool DxrDispatchContext::DispatchPathTracer(
     const DxrDispatchRecorder recorder(commandList);
     recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    // Path-tracer root signature: t0-t21 (emissive geometry, alias tables, and dense lookup).
-    constexpr std::uint32_t kPathTracerSrvCount = 22;
+    // Path-tracer root signature: t0-t22 (PSR bounds stay separate from compact geometry lookup).
+    constexpr std::uint32_t kPathTracerSrvCount = 23;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
         ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
         : srvIndicesFromHandles[5];
@@ -286,6 +289,9 @@ bool DxrDispatchContext::DispatchPathTracer(
         inputs.envEquirectSrvCpuHandle != 0
             ? DepthSrvIndexFromCpuHandle(inputs.envEquirectSrvCpuHandle)
             : srvIndicesFromHandles[6];
+    const std::uint32_t psrBoundsSrvIndex = inputs.ptPsrInstanceBoundsSrvIndex != UINT32_MAX
+        ? inputs.ptPsrInstanceBoundsSrvIndex
+        : inputs.geometryLookupSrvIndex;
     const std::uint32_t srvHeapIndices[kPathTracerSrvCount] = {
         m_tlasSrvIndex,
         srvIndicesFromHandles[0],
@@ -308,7 +314,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         emissiveTrianglesSrvIndex,
         emissiveLightAliasSrvIndex,
         emissiveTriangleAliasSrvIndex,
-        emissiveLightByInstanceSrvIndex};
+        emissiveLightByInstanceSrvIndex,
+        psrBoundsSrvIndex};
 
     if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
     {
@@ -326,14 +333,17 @@ bool DxrDispatchContext::DispatchPathTracer(
         || m_ptRestirSurfaceMaterialTexture.uavIndex == UINT32_MAX
         || m_ptRestirSurfaceAlbedoMetallicTexture.uavIndex == UINT32_MAX
         || m_ptOpticalTransmissionOutputTexture.uavIndex == UINT32_MAX
-        || m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex == UINT32_MAX)
+        || m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex == UINT32_MAX
+        || m_ptPsrThroughputTexture.uavIndex == UINT32_MAX
+        || m_ptPsrMetadataTexture.uavIndex == UINT32_MAX
+        || m_ptSpecularMotionTexture.uavIndex == UINT32_MAX)
     {
         outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
         return false;
     }
 
-    // u0-u12 established PT outputs; u13-u18 are the independent optical-transmission RR layer.
-    constexpr std::uint32_t kPathTracerUavCount = 19;
+    // u0-u18 established outputs; u19-u21 are PSR throughput, metadata, and specular motion.
+    constexpr std::uint32_t kPathTracerUavCount = 22;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -353,7 +363,10 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptOpticalTransmissionMotionTexture.uavIndex,
         m_ptOpticalTransmissionDiffuseAlbedoTexture.uavIndex,
         m_ptOpticalTransmissionSpecularAlbedoTexture.uavIndex,
-        m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex};
+        m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex,
+        m_ptPsrThroughputTexture.uavIndex,
+        m_ptPsrMetadataTexture.uavIndex,
+        m_ptSpecularMotionTexture.uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};

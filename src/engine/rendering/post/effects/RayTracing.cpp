@@ -121,6 +121,11 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     const std::uintptr_t diffuseAlbedoSrv,
     const std::uintptr_t specularAlbedoSrv,
     const std::uintptr_t normalRoughnessSrv,
+    const bool mirrorChainPsr,
+    const std::uintptr_t psrThroughputSrv,
+    void* const specularMotionResource,
+    const std::uint32_t specularMotionResourceState,
+    const std::uintptr_t specularMotionSrv,
     void* const opticalTransmissionOutputResource,
     const std::uint32_t opticalTransmissionOutputResourceState,
     const std::uintptr_t opticalTransmissionOutputSrv,
@@ -159,6 +164,11 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerDiffuseAlbedoSrv = diffuseAlbedoSrv;
     m_pathTracerSpecularAlbedoSrv = specularAlbedoSrv;
     m_pathTracerNormalRoughnessSrv = normalRoughnessSrv;
+    m_ptMirrorChainPsr = mirrorChainPsr;
+    m_pathTracerPsrThroughputSrv = psrThroughputSrv;
+    m_pathTracerSpecularMotionResource = specularMotionResource;
+    m_pathTracerSpecularMotionResourceState = specularMotionResourceState;
+    m_pathTracerSpecularMotionSrv = specularMotionSrv;
     m_pathTracerOpticalTransmissionOutputResource = opticalTransmissionOutputResource;
     m_pathTracerOpticalTransmissionOutputResourceState = opticalTransmissionOutputResourceState;
     m_pathTracerOpticalTransmissionOutputSrv = opticalTransmissionOutputSrv;

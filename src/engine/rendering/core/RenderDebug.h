@@ -155,6 +155,17 @@ enum class RenderDebugMode
     PtOpticalTransmissionEnvironment,
     PtOpticalTransmissionReceiver,
     PtOpticalTransmissionDeepBounce,
+    // Mirror-chain RR ownership diagnostics. Appended to preserve every existing enum value.
+    PtMirrorChainOwner,
+    PtMirrorChainLength,
+    PtMirrorChainConfidence,
+    PtMirrorChainReceiverId,
+    PtMirrorChainReceiverDepth,
+    PtMirrorChainReceiverMotion,
+    PtPsrTerminalReason,
+    PtPsrProjectedSpan,
+    PtPsrThroughput,
+    PtPsrReceiverSignal,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);
@@ -183,6 +194,6 @@ bool IsPtDepthReprojectionDebugMode(RenderDebugMode mode);
 bool IsPtMatrixDepthReprojectionDebugMode(RenderDebugMode mode);
 int PtDebugIsolateModeFromRenderDebug(RenderDebugMode mode);
 RenderDebugMode RenderDebugModeFromPtDebugIsolateMode(int mode);
-inline constexpr int kPtDebugIsolateModeMax = 64;
+inline constexpr int kPtDebugIsolateModeMax = 74;
 
 const char* RenderDebugModeLabel(RenderDebugMode mode);

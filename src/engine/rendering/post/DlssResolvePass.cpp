@@ -401,18 +401,34 @@ void DlssResolvePass::Execute(
             && inputs.rrOpticalTransmissionSpecularAlbedoTarget != nullptr
             && inputs.rrOpticalTransmissionNormalRoughnessTarget != nullptr
             && inputs.ptOpticalLayersShader != nullptr;
+        const bool psrSurfaceReplacement = pathTracerDlssActive
+            && inputs.mirrorChainPsr
+            && inputs.rayReconstructionActive
+            && inputs.pathTracerPsrThroughputSrv != 0
+            && inputs.ptOpticalReflectionInputTarget != nullptr
+            && inputs.ptOpticalReflectionInputTarget->resource != nullptr
+            && inputs.dlssOpticalCompositeTarget != nullptr
+            && inputs.dlssOpticalCompositeTarget->resource != nullptr
+            && inputs.ptOpticalLayersShader != nullptr;
         if (pathTracerDlssActive && inputs.rayReconstructionActive && !opticalLayerSplit)
         {
             outputs.opticalTransmissionHistoryValid = false;
         }
-        if (opticalLayerSplit)
+        if (opticalLayerSplit || psrSurfaceReplacement)
         {
             const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
             inputs.ptOpticalLayersShader->Use(false, false);
-            inputs.ptOpticalLayersShader->SetInt("uComposite", 0);
+            inputs.ptOpticalLayersShader->SetInt(
+                "uComposite",
+                psrSurfaceReplacement ? (opticalLayerSplit ? 6 : 4) : 0);
             inputs.ptOpticalLayersShader->BindTextureSlot(0, inputs.dxrPathTracerOutputSrv);
             inputs.ptOpticalLayersShader->BindTextureSlot(
                 1, inputs.pathTracerOpticalTransmissionOutputSrv);
+            if (psrSurfaceReplacement)
+            {
+                inputs.ptOpticalLayersShader->BindTextureSlot(
+                    2, inputs.pathTracerPsrThroughputSrv);
+            }
             context.draw.DrawFullscreenToTarget(
                 *inputs.ptOpticalLayersShader,
                 *inputs.ptOpticalReflectionInputTarget,
@@ -557,12 +573,18 @@ void DlssResolvePass::Execute(
             in.normalRoughnessState = inputs.rrNormalRoughnessTarget->resourceState;
             const bool ptSpecGuideActive =
                 pathTracerRealTime && inputs.dxrPathTracerOutputSrv != 0;
-            if ((inputs.dxrReflectionSrv != 0 || ptSpecGuideActive)
+            if (!inputs.mirrorChainPsr
+                && (inputs.dxrReflectionSrv != 0 || ptSpecGuideActive)
                 && inputs.rrSpecularHitDistanceTarget != nullptr
                 && inputs.rrSpecularHitDistanceTarget->resource != nullptr)
             {
                 in.specularHitDistance = inputs.rrSpecularHitDistanceTarget->resource;
                 in.specularHitDistanceState = inputs.rrSpecularHitDistanceTarget->resourceState;
+            }
+            if (inputs.mirrorChainPsr && inputs.pathTracerSpecularMotionResource != nullptr)
+            {
+                in.specularMotionVectors = inputs.pathTracerSpecularMotionResource;
+                in.specularMotionVectorsState = inputs.pathTracerSpecularMotionResourceState;
             }
             std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
             const glm::mat4 viewToWorld = glm::inverse(view);
@@ -651,11 +673,17 @@ void DlssResolvePass::Execute(
                 {
                     const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
                     inputs.ptOpticalLayersShader->Use(false, false);
-                    inputs.ptOpticalLayersShader->SetInt("uComposite", 1);
+                    inputs.ptOpticalLayersShader->SetInt(
+                        "uComposite", psrSurfaceReplacement ? 7 : 1);
                     inputs.ptOpticalLayersShader->BindTextureSlot(
                         0, inputs.dlssOutputTarget->srvCpuHandle);
                     inputs.ptOpticalLayersShader->BindTextureSlot(
                         1, inputs.dlssOpticalTransmissionOutputTarget->srvCpuHandle);
+                    if (psrSurfaceReplacement)
+                    {
+                        inputs.ptOpticalLayersShader->BindTextureSlot(
+                            2, inputs.pathTracerPsrThroughputSrv);
+                    }
                     context.draw.DrawFullscreenToTarget(
                         *inputs.ptOpticalLayersShader,
                         *inputs.dlssOpticalCompositeTarget,
@@ -669,6 +697,27 @@ void DlssResolvePass::Execute(
             {
                 outputs.dlssRan = false;
                 outputs.opticalTransmissionHistoryValid = false;
+            }
+
+            if (primaryRan && psrSurfaceReplacement && !opticalLayerSplit)
+            {
+                const float clear[] = {0.0f, 0.0f, 0.0f, 1.0f};
+                inputs.ptOpticalLayersShader->Use(false, false);
+                inputs.ptOpticalLayersShader->SetInt("uComposite", 5);
+                inputs.ptOpticalLayersShader->BindTextureSlot(
+                    0, inputs.dlssOutputTarget->srvCpuHandle);
+                // Mode 5 does not consume transmission, but keep every declared slot valid.
+                inputs.ptOpticalLayersShader->BindTextureSlot(
+                    1, inputs.dlssOutputTarget->srvCpuHandle);
+                inputs.ptOpticalLayersShader->BindTextureSlot(
+                    2, inputs.pathTracerPsrThroughputSrv);
+                context.draw.DrawFullscreenToTarget(
+                    *inputs.ptOpticalLayersShader,
+                    *inputs.dlssOpticalCompositeTarget,
+                    inputs.viewportWidth,
+                    inputs.viewportHeight,
+                    clear);
+                resolvedDlssTarget = inputs.dlssOpticalCompositeTarget;
             }
 
             if (outputs.dlssRan && pathTracerDlssActive)

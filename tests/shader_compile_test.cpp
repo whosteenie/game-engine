@@ -99,10 +99,10 @@ void RunShaderCompileTests()
             "ms_6_5",
             "scene_shadow.ms.hlsl should compile");
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/path_tracer.hlsl",
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl DXR library should compile");
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/restir_di_temporal.hlsl",
+            "assets/shaders/raytracing/path_tracing/restir_di_temporal.hlsl",
             "restir_di_temporal.hlsl DXR library should compile");
 
         HlslLibraryCompileOptions modernDxrOptions{};
@@ -113,25 +113,32 @@ void RunShaderCompileTests()
             "DXR_INLINE_VISIBILITY_PERMUTATION=0",
         };
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/path_tracer.hlsl",
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl modern DXR library should compile",
             modernDxrOptions);
+
+        HlslLibraryCompileOptions diagnosticDxrOptions = modernDxrOptions;
+        diagnosticDxrOptions.defines.push_back("PT_DIAGNOSTIC_PERMUTATION=1");
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
+            "path_tracer.hlsl diagnostic DXR library should compile",
+            diagnosticDxrOptions);
 
         HlslLibraryCompileOptions inlineVisibilityOptions = modernDxrOptions;
         inlineVisibilityOptions.defines[2] = "DXR_INLINE_VISIBILITY_PERMUTATION=1";
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/path_tracer.hlsl",
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl inline-visibility DXR library should compile",
             inlineVisibilityOptions);
 
         HlslLibraryCompileOptions inlineVisibility65Options = inlineVisibilityOptions;
         inlineVisibility65Options.targetProfile = "lib_6_5";
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/path_tracer.hlsl",
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl SM 6.5 inline-visibility library should compile",
             inlineVisibility65Options);
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/dxr_modern_smoke.hlsl",
+            "assets/shaders/raytracing/libraries/dxr_modern_smoke.hlsl",
             "dxr_modern_smoke.hlsl inline-ray-query library should compile",
             modernDxrOptions);
 
@@ -143,7 +150,7 @@ void RunShaderCompileTests()
             "DXR_INLINE_VISIBILITY_PERMUTATION=1",
         };
         ExpectShaderLibraryCompiles(
-            "assets/shaders/dxr/path_tracer.hlsl",
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl SER DXR library should compile",
             serDxrOptions);
 
