@@ -12,6 +12,8 @@ namespace EngineConstants
         "assets/shaders/post/utility/dlss_motion_dilate.ps.hlsl";
     inline constexpr const char* DlssMotionCopyFragmentShader =
         "assets/shaders/post/utility/dlss_motion_copy.ps.hlsl";
+    inline constexpr const char* RrMotionValidityFragmentShader =
+        "assets/shaders/post/utility/rr_motion_validity.ps.hlsl";
     inline constexpr const char* DlssZeroMotionFragmentShader =
         "assets/shaders/post/utility/dlss_zero_motion.ps.hlsl";
     inline constexpr const char* GiTemporalDebugFragmentShader = "assets/shaders/post/utility/gi_temporal_debug.ps.hlsl";
@@ -67,6 +69,10 @@ namespace EngineConstants
     inline constexpr const char* FxaaFragmentShader = "assets/shaders/post/aa/fxaa.ps.hlsl";
     inline constexpr const char* DownsampleFragmentShader = "assets/shaders/post/utility/downsample.ps.hlsl";
     inline constexpr const char* PtOpticalLayersFragmentShader = "assets/shaders/post/utility/pt_optical_layers.ps.hlsl";
+    inline constexpr const char* RrTemporalValidityFragmentShader =
+        "assets/shaders/post/utility/rr_temporal_validity.ps.hlsl";
+    inline constexpr const char* RrHistoryCopyFragmentShader =
+        "assets/shaders/post/utility/rr_history_copy.ps.hlsl";
     inline constexpr const char* TaaFragmentShader = "assets/shaders/post/aa/taa.ps.hlsl";
     inline constexpr const char* SmaaEdgeFragmentShader = "assets/shaders/post/aa/smaa_edge.ps.hlsl";
     inline constexpr const char* SmaaNeighborFragmentShader = "assets/shaders/post/aa/smaa_neighbor.ps.hlsl";

@@ -251,6 +251,12 @@ public:
     std::uintptr_t GetPathTracerSpecularMotionSrvCpuHandle() const { return m_ptSpecularMotionTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerSpecularMotionResource() const { return m_ptSpecularMotionTexture.resource; }
     std::uint32_t GetPathTracerSpecularMotionResourceState() const { return m_ptSpecularMotionTexture.state; }
+    std::uintptr_t GetPathTracerRrPrimaryOwnerSrvCpuHandle() const { return m_ptRrPrimaryOwnerTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerRrPrimaryOwnerResource() const { return m_ptRrPrimaryOwnerTexture.resource; }
+    std::uint32_t GetPathTracerRrPrimaryOwnerResourceState() const { return m_ptRrPrimaryOwnerTexture.state; }
+    std::uintptr_t GetPathTracerRrTransmissionOwnerSrvCpuHandle() const { return m_ptRrTransmissionOwnerTexture.srvCpuHandle; }
+    ID3D12Resource* GetPathTracerRrTransmissionOwnerResource() const { return m_ptRrTransmissionOwnerTexture.resource; }
+    std::uint32_t GetPathTracerRrTransmissionOwnerResourceState() const { return m_ptRrTransmissionOwnerTexture.state; }
     std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle() const { return m_ptOpticalTransmissionOutputTexture.srvCpuHandle; }
     ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource() const { return m_ptOpticalTransmissionOutputTexture.resource; }
     std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState() const { return m_ptOpticalTransmissionOutputTexture.state; }
@@ -472,6 +478,8 @@ private:
     ReflectionTexture m_ptPsrThroughputTexture{}; // RGBA16F: chain throughput rgb + ownership
     ReflectionTexture m_ptPsrMetadataTexture{}; // R32_UINT: length/reason/flags
     ReflectionTexture m_ptSpecularMotionTexture{}; // RG16F: dense reflected/primary fallback motion
+    ReflectionTexture m_ptRrPrimaryOwnerTexture{}; // R32_UINT: stable selected RR path owner
+    ReflectionTexture m_ptRrTransmissionOwnerTexture{}; // R32_UINT: independent refractive owner
     ReflectionTexture m_ptOpticalTransmissionOutputTexture{}; // RGBA16F: weighted transmission radiance
     ReflectionTexture m_ptOpticalTransmissionDepthTexture{};
     ReflectionTexture m_ptOpticalTransmissionMotionTexture{};

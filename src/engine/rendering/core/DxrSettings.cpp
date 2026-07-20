@@ -155,6 +155,7 @@ void DxrSettings::CopySettingsFrom(const DxrSettings& source)
     m_ptIndependentOpticalRrLayers = source.m_ptIndependentOpticalRrLayers;
     m_ptOpticalMotionReplay = source.m_ptOpticalMotionReplay;
     m_ptMirrorChainPsr = source.m_ptMirrorChainPsr;
+    m_ptRrTemporalValidity = source.m_ptRrTemporalValidity;
     m_ptPsrMaxBounces = source.m_ptPsrMaxBounces;
     m_ptPsrSubpixelThreshold = source.m_ptPsrSubpixelThreshold;
     m_ptAmbientStrength = source.m_ptAmbientStrength;
@@ -223,6 +224,7 @@ nlohmann::json DxrSettings::ToJson() const
         {"ptIndependentOpticalRrLayers", m_ptIndependentOpticalRrLayers},
         {"ptOpticalMotionReplay", m_ptOpticalMotionReplay},
         {"ptMirrorChainPsr", m_ptMirrorChainPsr},
+        {"ptRrTemporalValidity", m_ptRrTemporalValidity},
         {"ptPsrMaxBounces", m_ptPsrMaxBounces},
         {"ptPsrSubpixelThreshold", m_ptPsrSubpixelThreshold},
         {"ptAmbientStrength", m_ptAmbientStrength},
@@ -297,6 +299,10 @@ void DxrSettings::ApplyFromJson(const nlohmann::json& value)
     if (value.contains("ptMirrorChainPsr"))
     {
         SetPtMirrorChainPsrEnabled(value.at("ptMirrorChainPsr").get<bool>());
+    }
+    if (value.contains("ptRrTemporalValidity"))
+    {
+        SetPtRrTemporalValidityEnabled(value.at("ptRrTemporalValidity").get<bool>());
     }
     if (value.contains("ptPsrMaxBounces"))
     {

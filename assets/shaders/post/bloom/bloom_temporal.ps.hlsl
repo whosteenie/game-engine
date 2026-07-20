@@ -64,7 +64,6 @@ float3 ClipHistory(float3 historyRgb, float2 uv, float2 texelSize)
     return clamp(historyRgb, currentRgb - extent * 1.25, currentRgb + extent * 1.25);
 }
 
-// Reject bright bloom history on pixels that are now dark (occlusion / parallax reveal).
 float ComputeGhostRejectConfidence(float3 current, float3 history)
 {
     const float currentMax = BloomMax(current);
@@ -81,75 +80,50 @@ float4 main(PSInput input) : SV_Target
 
     if (depth >= 0.9999 || uHistoryValid <= 0.5)
     {
-        return float4(current, 1.0);
+        return float4(current, depth);
     }
 
     const float2 velocityNdc = uVelocity.Sample(uVelocitySampler, uv).rg;
     const float motion = length(velocityNdc);
-    const float staticWeight = saturate(1.0 - motion * 72.0);
-    const float movingWeight = saturate(motion * 120.0);
-
-    const float3 historySameUv = ClipHistory(
-        uHistoryBloom.Sample(uHistoryBloomSampler, uv).rgb,
-        uv,
-        texelSize);
-
-    float velocityAccepted = 0.0;
-    float depthCoherent = 0.0;
-    float3 historyVelocity = current;
-
     const float2 historyUv = uv - VelocityNdcToUvDelta(velocityNdc);
-    if (motion > 1e-6
-        && historyUv.x >= 0.0 && historyUv.x <= 1.0
-        && historyUv.y >= 0.0 && historyUv.y <= 1.0)
+    if (historyUv.x < 0.0 || historyUv.x > 1.0
+        || historyUv.y < 0.0 || historyUv.y > 1.0)
     {
-        const float depthAtHistoryUv = uDepth.Sample(uDepthSampler, historyUv).r;
-        const float depthDelta = depthAtHistoryUv - depth;
+        // A failed moving reprojection may not fall back to same-UV history.
+        return float4(current, depth);
+    }
 
-        // New closer surface at this pixel — do not pull history forward.
-        const float disoccluded = step(uDepthThreshold, depthDelta);
-        depthCoherent = (1.0 - disoccluded)
-            * (1.0 - saturate(abs(depthDelta) / max(uDepthThreshold, 1e-5)));
+    // History alpha owns the previous depth in the same guide domain as bloom motion.
+    const float4 historySample = uHistoryBloom.Sample(uHistoryBloomSampler, historyUv);
+    const float previousDepth = historySample.a;
+    const bool skyMismatch = (depth >= 0.9999) != (previousDepth >= 0.9999);
+    const float depthDelta = abs(previousDepth - depth);
+    if (skyMismatch || depthDelta >= uDepthThreshold)
+    {
+        return float4(current, depth);
+    }
 
-        if (depthCoherent > 0.01)
-        {
-            historyVelocity = ClipHistory(
-                uHistoryBloom.Sample(uHistoryBloomSampler, historyUv).rgb,
-                uv,
-                texelSize);
-            velocityAccepted = saturate(motion * 48.0) * depthCoherent;
-        }
+    const float depthCoherent = 1.0
+        - saturate(depthDelta / max(uDepthThreshold, 1e-5));
+    const float3 history = ClipHistory(historySample.rgb, uv, texelSize);
+    const float confidence = ComputeGhostRejectConfidence(current, history);
+    if (confidence < 0.12)
+    {
+        return float4(current, depth);
     }
 
     float3 result = current;
-
-    if (velocityAccepted > 0.01)
+    if (motion > 1e-6)
     {
-        const float confidence = ComputeGhostRejectConfidence(current, historyVelocity);
-        if (confidence >= 0.12)
-        {
-            result = lerp(current, historyVelocity, uBlendFactor * velocityAccepted * confidence);
-        }
+        const float velocityAccepted = saturate(motion * 48.0) * depthCoherent;
+        result = lerp(current, history, uBlendFactor * velocityAccepted * confidence);
     }
-    else if (staticWeight > 0.05)
+    else
     {
+        const float staticWeight = saturate(1.0 - motion * 72.0);
         const float blend = uSameUvBlendFactor * staticWeight * uWarmupFactor;
-        const float3 blended = lerp(current, historySameUv, blend);
-
-        // Never let temporal filtering suppress this frame's spatial bloom halo.
-        if (movingWeight > 0.2)
-        {
-            const float confidence = ComputeGhostRejectConfidence(current, historySameUv);
-            if (confidence >= 0.12)
-            {
-                result = max(current, lerp(current, historySameUv, blend * confidence));
-            }
-        }
-        else
-        {
-            result = max(current, blended);
-        }
+        result = max(current, lerp(current, history, blend));
     }
 
-    return float4(result, 1.0);
+    return float4(result, depth);
 }

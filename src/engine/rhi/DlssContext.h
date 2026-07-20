@@ -162,8 +162,8 @@ struct DlssFrameInputs
     bool colorIsHdr = false;
     bool depthInverted = false;
     bool reset = false; // break temporal history (camera cut, resize, mode/preset change, load)
-    float mvecScaleX = -0.5f; // NDC normalization; SL multiplies by render width internally
-    float mvecScaleY = 0.5f;  // Y-flip for texture space; SL multiplies by render height internally
+    float mvecScaleX = -0.5f; // NDC current-prev to pixel-space previous-current (times width in SL)
+    float mvecScaleY = 0.5f;  // NDC Y-up to pixel-space Y-down (times height in SL)
     float jitterX = 0.0f; // pixel-space jitter applied to the projection this frame
     float jitterY = 0.0f;
 
@@ -205,9 +205,47 @@ struct DlssFrameInputs
     // Optional RR guide: dense specular-domain motion in the same NDC convention as main motion.
     void* specularMotionVectors = nullptr;
     unsigned int specularMotionVectorsState = 0;
+    // Canonical application-owned RR temporal-response signal. Streamline 2.12 added the
+    // DLSS-RR-specific responsivity input as a one-channel R16F/R8_SNORM resource in [-1, 1].
+    // This integration interprets positive responsivity as favoring current information and
+    // supplies 1 for invalid history and 0 for stable history. Keep the sign isolated behind the
+    // submission A/B until the active NGX model's response is confirmed at runtime.
+    void* responsivityMask = nullptr;
+    unsigned int responsivityMaskState = 0;
+    void* disocclusionMask = nullptr;
+    unsigned int disocclusionMaskState = 0;
     float worldToCameraView[16] = {}; // DLSSDOptions requires the view + inverse-view matrices
     float cameraViewToWorld[16] = {};
 };
+
+// SDK-independent declaration of the optional tag set for one evaluation.  Resolve code builds a
+// fresh DlssFrameInputs for every viewport; this value type makes accidental optional-resource
+// inheritance directly testable without loading Streamline.
+struct DlssOptionalTagPlan
+{
+    bool specularHitDistance = false;
+    bool specularMotionVectors = false;
+    bool responsivityMask = false;
+    bool disocclusionMask = false;
+};
+
+inline DlssOptionalTagPlan BuildDlssOptionalTagPlan(const DlssFrameInputs& inputs)
+{
+    if (!inputs.useRayReconstruction)
+    {
+        return {};
+    }
+    return {
+        inputs.specularHitDistance != nullptr,
+        inputs.specularMotionVectors != nullptr,
+        inputs.responsivityMask != nullptr,
+        inputs.disocclusionMask != nullptr};
+}
+
+inline bool HasExclusiveRrTemporalMask(const DlssOptionalTagPlan& plan)
+{
+    return !(plan.responsivityMask && plan.disocclusionMask);
+}
 
 // Application-frame identity passed explicitly to every Streamline evaluation. The native token is
 // owned by Streamline; this value only carries the borrowed handle for the current application

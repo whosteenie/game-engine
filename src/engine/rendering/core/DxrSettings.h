@@ -102,6 +102,13 @@ public:
     {
         m_ptMirrorChainPsr = enabled;
     }
+    // Rejects moving RR guide pixels whose temporal owner or geometry no longer corresponds to
+    // history. Static guide variation remains accumulable.
+    bool IsPtRrTemporalValidityEnabled() const { return m_ptRrTemporalValidity; }
+    void SetPtRrTemporalValidityEnabled(const bool enabled)
+    {
+        m_ptRrTemporalValidity = enabled;
+    }
     int GetPtPsrMaxBounces() const { return m_ptPsrMaxBounces; }
     void SetPtPsrMaxBounces(int bounces);
     float GetPtPsrSubpixelThreshold() const { return m_ptPsrSubpixelThreshold; }
@@ -247,6 +254,7 @@ private:
     bool m_ptIndependentOpticalRrLayers = true;
     bool m_ptOpticalMotionReplay = false;
     bool m_ptMirrorChainPsr = false;
+    bool m_ptRrTemporalValidity = true;
     int m_ptPsrMaxBounces = 24;
     float m_ptPsrSubpixelThreshold = 0.5f;
     float m_ptAmbientStrength = 1.0f;

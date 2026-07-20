@@ -556,6 +556,10 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
       m_dlssZeroMotionShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::DlssZeroMotionFragmentShader)),
+      m_rrMotionValidityShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RrMotionValidityFragmentShader,
+          ShaderSamplerOverrides{(1u << 0) | (1u << 1), true})),
       m_giTemporalDebugShader(std::make_unique<Shader>(
           EngineConstants::FullscreenVertexShader,
           EngineConstants::GiTemporalDebugFragmentShader)),
@@ -641,6 +645,14 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
           EngineConstants::RrGuidesFragmentShader,
           // s0 = point clamp (G-buffer reads)
           ShaderSamplerOverrides{(1u << 0), true})),
+      m_rrTemporalValidityShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RrTemporalValidityFragmentShader,
+          ShaderSamplerOverrides{0x7fu, true})),
+      m_rrHistoryCopyShader(std::make_unique<Shader>(
+          EngineConstants::FullscreenVertexShader,
+          EngineConstants::RrHistoryCopyFragmentShader,
+          ShaderSamplerOverrides{1u, true})),
       m_draw(m_quadVb)
 {
     SceneRenderTrace::Section initSection("sse-init");
@@ -667,7 +679,7 @@ ScreenSpaceEffects::ScreenSpaceEffects(const std::uint32_t dlssViewportId)
 
 void ScreenSpaceEffects::PrewarmShaderStages()
 {
-    static const std::array<HlslStageCompileRequest, 54> kStages = {
+    static const std::array<HlslStageCompileRequest, 55> kStages = {
         HlslStageCompileRequest{EngineConstants::FullscreenVertexShader, "main", "vs_6_0"},
         HlslStageCompileRequest{EngineConstants::SsaoFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GtaoFragmentShader, "main", "ps_6_0"},
@@ -704,6 +716,7 @@ void ScreenSpaceEffects::PrewarmShaderStages()
         HlslStageCompileRequest{EngineConstants::DlssMotionDilateFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::DlssMotionCopyFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::DlssZeroMotionFragmentShader, "main", "ps_6_0"},
+        HlslStageCompileRequest{EngineConstants::RrMotionValidityFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::GiTemporalDebugFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::SsgiNoiseInjectFragmentShader, "main", "ps_6_0"},
         HlslStageCompileRequest{EngineConstants::SsgiDenoiseSpatialFragmentShader, "main", "ps_6_0"},
@@ -761,6 +774,18 @@ ScreenSpaceEffects::~ScreenSpaceEffects()
     DestroyInternalTarget(m_rrOpticalTransmissionDiffuseAlbedoTarget);
     DestroyInternalTarget(m_rrOpticalTransmissionSpecularAlbedoTarget);
     DestroyInternalTarget(m_rrOpticalTransmissionNormalRoughnessTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryMaskTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionMaskTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryMotionTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionMotionTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryValidityDiagnosticsTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionValidityDiagnosticsTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryPrevDepthTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryPrevNormalTarget);
+    DestroyInternalTarget(m_rrTemporalPrimaryPrevOwnerTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionPrevDepthTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionPrevNormalTarget);
+    DestroyInternalTarget(m_rrTemporalTransmissionPrevOwnerTarget);
     DestroyInternalTarget(m_bloomExtractTarget);
     DestroyInternalTarget(m_bloomBlurTarget);
     DestroyInternalTarget(m_bloomBlur2Target);
@@ -894,7 +919,7 @@ void ScreenSpaceEffects::CreateInternalDepthTarget(
     resourceDesc.Height = static_cast<UINT>(height);
     resourceDesc.DepthOrArraySize = 1;
     resourceDesc.MipLevels = 1;
-    resourceDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    resourceDesc.Format = DXGI_FORMAT_R24G8_TYPELESS;
     resourceDesc.SampleDesc.Count = 1;
     resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
     resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
@@ -935,7 +960,24 @@ void ScreenSpaceEffects::CreateInternalDepthTarget(
 
     D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle{
         GfxContext::Get().GetOffscreenDsvCpuHandle(target.dsvIndex)};
-    device->CreateDepthStencilView(resource, nullptr, dsvHandle);
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+    dsvDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    device->CreateDepthStencilView(resource, &dsvDesc, dsvHandle);
+
+    target.srvIndex = GfxContext::Get().AllocateOffscreenSrv();
+    if (target.srvIndex == UINT32_MAX)
+    {
+        DestroyInternalDepthTarget(target);
+        ThrowPostProcessTargetError("Failed to allocate display depth SRV descriptor");
+    }
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+    srvDesc.Format = DXGI_FORMAT_R24_UNORM_X8_TYPELESS;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Texture2D.MipLevels = 1;
+    GfxContext::Get().CreateShaderResourceView(resource, &srvDesc, target.srvIndex);
+    target.srvCpuHandle = GfxContext::Get().GetSrvCpuHandle(target.srvIndex);
 }
 
 void ScreenSpaceEffects::DestroyInternalDepthTarget(InternalDepthTarget& target) const
@@ -943,6 +985,8 @@ void ScreenSpaceEffects::DestroyInternalDepthTarget(InternalDepthTarget& target)
     if (!GfxContext::Get().IsInitialized())
     {
         target.dsvIndex = UINT32_MAX;
+        target.srvIndex = UINT32_MAX;
+        target.srvCpuHandle = 0;
         target.allocation = nullptr;
         target.resource = nullptr;
         target.width = 0;
@@ -957,6 +1001,12 @@ void ScreenSpaceEffects::DestroyInternalDepthTarget(InternalDepthTarget& target)
         GfxContext::Get().DeferredFreeOffscreenDsv(target.dsvIndex);
         target.dsvIndex = UINT32_MAX;
     }
+    if (target.srvIndex != UINT32_MAX)
+    {
+        GfxContext::Get().DeferredFreeOffscreenSrv(target.srvIndex);
+        target.srvIndex = UINT32_MAX;
+    }
+    target.srvCpuHandle = 0;
 
     if (target.allocation != nullptr || target.resource != nullptr)
     {
@@ -1309,6 +1359,21 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     ResizeInternalTarget(m_rrOpticalTransmissionDiffuseAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrOpticalTransmissionSpecularAlbedoTarget, width, height, albedoFormat);
     ResizeInternalTarget(m_rrOpticalTransmissionNormalRoughnessTarget, width, height, format);
+    const int scalarFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
+    const int depthHistoryFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
+    const int ownerFormat = static_cast<int>(DXGI_FORMAT_R32_UINT);
+    ResizeInternalTarget(m_rrTemporalPrimaryMaskTarget, width, height, scalarFormat);
+    ResizeInternalTarget(m_rrTemporalTransmissionMaskTarget, width, height, scalarFormat);
+    ResizeInternalTarget(m_rrTemporalPrimaryValidityDiagnosticsTarget, width, height, format);
+    ResizeInternalTarget(m_rrTemporalTransmissionValidityDiagnosticsTarget, width, height, format);
+    ResizeInternalTarget(m_rrTemporalPrimaryPrevDepthTarget, width, height, depthHistoryFormat);
+    ResizeInternalTarget(m_rrTemporalPrimaryPrevNormalTarget, width, height, format);
+    ResizeInternalTarget(m_rrTemporalPrimaryPrevOwnerTarget, width, height, ownerFormat);
+    ResizeInternalTarget(m_rrTemporalTransmissionPrevDepthTarget, width, height, depthHistoryFormat);
+    ResizeInternalTarget(m_rrTemporalTransmissionPrevNormalTarget, width, height, format);
+    ResizeInternalTarget(m_rrTemporalTransmissionPrevOwnerTarget, width, height, ownerFormat);
+    m_rrTemporalPrimaryHistoryValid = false;
+    m_rrTemporalTransmissionHistoryValid = false;
     ResizeInternalTarget(m_ptOpticalReflectionInputTarget, width, height, format);
     // RR4 spec hit-distance guide: single-channel raw ray length in world units (unambiguous channel).
     const int hitDistFormat = static_cast<int>(DXGI_FORMAT_R16_FLOAT);
@@ -1318,6 +1383,8 @@ void ScreenSpaceEffects::ResizeHdrColorTarget(const int width, const int height)
     CreateInternalDepthTarget(m_ptDlssDepthTarget, width, height);
     CreateInternalDepthTarget(m_ptOpticalTransmissionDlssDepthTarget, width, height);
     const int supportedMotionFormat = static_cast<int>(DXGI_FORMAT_R16G16_FLOAT);
+    ResizeInternalTarget(m_rrTemporalPrimaryMotionTarget, width, height, supportedMotionFormat);
+    ResizeInternalTarget(m_rrTemporalTransmissionMotionTarget, width, height, supportedMotionFormat);
     ResizeInternalTarget(m_ptDlssMotionTarget, width, height, supportedMotionFormat);
     ResizeInternalTarget(m_dlssDilatedMotionTarget, width, height, supportedMotionFormat);
     ResizeInternalTarget(m_dlssOpticalTransmissionMotionTarget, width, height, supportedMotionFormat);
@@ -1674,6 +1741,127 @@ std::uint32_t ScreenSpaceEffects::PreparePathTracerRrBundle() const
 
     EndPathTracerGpuEvent(commandList);
     return ready;
+}
+
+RrTemporalValidityResult ScreenSpaceEffects::PrepareRrTemporalValidity(
+    const RrTemporalValidityInputs& inputs) const
+{
+    RrTemporalValidityResult result{};
+    if (m_width <= 0 || m_height <= 0 || inputs.depthSrv == 0
+        || inputs.normalRoughnessSrv == 0 || inputs.ownerSrv == 0
+        || inputs.ownerResource == nullptr || inputs.motionSrv == 0
+        || m_rrTemporalValidityShader == nullptr || m_rrHistoryCopyShader == nullptr
+        || inputs.ownerResourceState == UINT32_MAX)
+    {
+        return result;
+    }
+
+    InternalTarget& mask = inputs.transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionMaskTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryMaskTarget);
+    InternalTarget& previousDepth = inputs.transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionPrevDepthTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryPrevDepthTarget);
+    InternalTarget& previousNormal = inputs.transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionPrevNormalTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryPrevNormalTarget);
+    InternalTarget& previousOwner = inputs.transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionPrevOwnerTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryPrevOwnerTarget);
+    bool& localHistoryValid = inputs.transmission
+        ? m_rrTemporalTransmissionHistoryValid
+        : m_rrTemporalPrimaryHistoryValid;
+    if (mask.resource == nullptr || previousDepth.resource == nullptr
+        || previousNormal.resource == nullptr || previousOwner.resource == nullptr)
+    {
+        localHistoryValid = false;
+        return result;
+    }
+
+    const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    const auto configureValidity = [&](const bool diagnostics)
+    {
+        m_rrTemporalValidityShader->Use(false, false);
+        m_rrTemporalValidityShader->SetFloat(
+            "uHistoryValid", inputs.historyValid && localHistoryValid ? 1.0f : 0.0f);
+        m_rrTemporalValidityShader->SetFloat("uDepthRelativeThreshold", 0.02f);
+        m_rrTemporalValidityShader->SetFloat("uNormalDotThreshold", 0.85f);
+        m_rrTemporalValidityShader->SetFloat("uDiagnosticOutput", diagnostics ? 1.0f : 0.0f);
+        m_rrTemporalValidityShader->SetFloat("uMvecScaleX", inputs.mvecScaleX);
+        m_rrTemporalValidityShader->SetFloat("uMvecScaleY", inputs.mvecScaleY);
+        m_rrTemporalValidityShader->SetVec2(
+            "uCurrentJitterNdc",
+            glm::vec2(inputs.currentJitterNdcX, inputs.currentJitterNdcY));
+        m_rrTemporalValidityShader->SetVec2(
+            "uPreviousJitterNdc",
+            glm::vec2(inputs.previousJitterNdcX, inputs.previousJitterNdcY));
+        m_rrTemporalValidityShader->SetMat4(
+            "uClipToPrevClip", glm::make_mat4(inputs.clipToPrevClip));
+        m_rrTemporalValidityShader->BindTextureSlot(0, inputs.depthSrv);
+        m_rrTemporalValidityShader->BindTextureSlot(1, inputs.normalRoughnessSrv);
+        m_rrTemporalValidityShader->BindTextureSlot(2, inputs.ownerSrv);
+        m_rrTemporalValidityShader->BindTextureSlot(3, inputs.motionSrv);
+        m_rrTemporalValidityShader->BindTextureSlot(4, previousDepth.srvCpuHandle);
+        m_rrTemporalValidityShader->BindTextureSlot(5, previousNormal.srvCpuHandle);
+        m_rrTemporalValidityShader->BindTextureSlot(6, previousOwner.srvCpuHandle);
+    };
+
+    configureValidity(false);
+    DrawFullscreenToTarget(
+        *m_rrTemporalValidityShader, mask, m_width, m_height, clear);
+
+    // Diagnostics have the same decision shader but independent targets, matching the two RR
+    // viewport histories. Neither evaluation may overwrite the other's evidence.
+    configureValidity(true);
+    InternalTarget& diagnostics = inputs.transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionValidityDiagnosticsTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryValidityDiagnosticsTarget);
+    DrawFullscreenToTarget(
+        *m_rrTemporalValidityShader,
+        diagnostics,
+        m_width,
+        m_height,
+        clear);
+
+    // Commit only after the exact current bundle has produced its rejection decision.
+    m_rrHistoryCopyShader->Use(false, false);
+    m_rrHistoryCopyShader->SetFloat("uDepthOnly", 1.0f);
+    m_rrHistoryCopyShader->BindTextureSlot(0, inputs.depthSrv);
+    DrawFullscreenToTarget(
+        *m_rrHistoryCopyShader, previousDepth, m_width, m_height, clear);
+
+    m_rrHistoryCopyShader->Use(false, false);
+    m_rrHistoryCopyShader->SetFloat("uDepthOnly", 0.0f);
+    m_rrHistoryCopyShader->BindTextureSlot(0, inputs.normalRoughnessSrv);
+    DrawFullscreenToTarget(
+        *m_rrHistoryCopyShader, previousNormal, m_width, m_height, clear);
+
+    // R32_UINT cannot use the shared fp16 fullscreen PSO. Copy the exact owner bits instead of
+    // converting them through a floating render target (which would destroy hash identity).
+    auto* commandList = static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList());
+    auto* ownerResource = static_cast<ID3D12Resource*>(inputs.ownerResource);
+    auto* previousOwnerResource = static_cast<ID3D12Resource*>(previousOwner.resource);
+    const auto ownerState = static_cast<D3D12_RESOURCE_STATES>(inputs.ownerResourceState);
+    const auto previousOwnerState =
+        static_cast<D3D12_RESOURCE_STATES>(previousOwner.resourceState);
+    TransitionResource(commandList, ownerResource, ownerState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    TransitionResource(
+        commandList, previousOwnerResource, previousOwnerState, D3D12_RESOURCE_STATE_COPY_DEST);
+    commandList->CopyResource(previousOwnerResource, ownerResource);
+    TransitionResource(
+        commandList, ownerResource, D3D12_RESOURCE_STATE_COPY_SOURCE, ownerState);
+    TransitionResource(
+        commandList,
+        previousOwnerResource,
+        D3D12_RESOURCE_STATE_COPY_DEST,
+        D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    previousOwner.resourceState =
+        static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+    localHistoryValid = true;
+    result.maskSrv = mask.srvCpuHandle;
+    result.ready = true;
+    return result;
 }
 
 void ScreenSpaceEffects::SetPtRrBundleMode(const int mode)

@@ -13,6 +13,31 @@
 class Camera;
 class Framebuffer;
 
+struct RrTemporalValidityInputs
+{
+    bool transmission = false;
+    bool historyValid = false;
+    std::uintptr_t depthSrv = 0;
+    std::uintptr_t normalRoughnessSrv = 0;
+    std::uintptr_t ownerSrv = 0;
+    void* ownerResource = nullptr;
+    std::uint32_t ownerResourceState = UINT32_MAX;
+    std::uintptr_t motionSrv = 0;
+    float mvecScaleX = -0.5f;
+    float mvecScaleY = 0.5f;
+    float currentJitterNdcX = 0.0f;
+    float currentJitterNdcY = 0.0f;
+    float previousJitterNdcX = 0.0f;
+    float previousJitterNdcY = 0.0f;
+    float clipToPrevClip[16] = {};
+};
+
+struct RrTemporalValidityResult
+{
+    std::uintptr_t maskSrv = 0;
+    bool ready = false;
+};
+
 struct DlssResolvePassInputs
 {
     const Camera* camera = nullptr;
@@ -53,6 +78,7 @@ struct DlssResolvePassInputs
     bool forceDlssResetEveryFrame = false;
     bool useDilatedDlssMotionVectors = false;
     bool reconstructDlssCameraMotion = false;
+    bool rrTemporalValidityEnabled = true;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;
@@ -78,6 +104,8 @@ struct DlssResolvePassInputs
     PostProcessTarget* ptDlssMotionTarget = nullptr;
     PostProcessTarget* dlssDilatedMotionTarget = nullptr;
     PostProcessTarget* dlssOpticalTransmissionMotionTarget = nullptr;
+    PostProcessTarget* rrTemporalPrimaryMotionTarget = nullptr;
+    PostProcessTarget* rrTemporalTransmissionMotionTarget = nullptr;
     PostProcessTarget* rrDiffuseAlbedoTarget = nullptr;
     PostProcessTarget* rrSpecularAlbedoTarget = nullptr;
     PostProcessTarget* rrNormalRoughnessTarget = nullptr;
@@ -99,6 +127,8 @@ struct DlssResolvePassInputs
     Shader* dlssMotionDilateShader = nullptr;
     Shader* ptOpticalLayersShader = nullptr;
     std::function<bool()> generateZeroDlssMotion;
+    std::function<bool(bool transmission, std::uintptr_t motionSrv, std::uintptr_t maskSrv)>
+        generateValidityFilteredRrMotion;
 
     TonemapPassInputs fallbackTonemapInputs{};
 
@@ -108,6 +138,8 @@ struct DlssResolvePassInputs
     std::function<bool(std::uintptr_t motionSrv)> generateSupportedDlssMotion;
     std::function<bool(std::uintptr_t motionSrv)> generateSupportedOpticalTransmissionDlssMotion;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
+    std::function<RrTemporalValidityResult(const RrTemporalValidityInputs&)>
+        prepareRrTemporalValidity;
 
     // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT
     // bounce-0 material guides into the rr* targets and/or resolves PT depth into
@@ -123,6 +155,12 @@ struct DlssResolvePassInputs
     // P4b: PT primary depth (R32) and motion SRVs for bloom temporal when DLSS uses the PT bundle.
     std::uintptr_t pathTracerDepthSrv = 0;
     std::uintptr_t pathTracerMotionSrv = 0;
+    std::uintptr_t pathTracerRrPrimaryOwnerSrv = 0;
+    void* pathTracerRrPrimaryOwnerResource = nullptr;
+    std::uint32_t pathTracerRrPrimaryOwnerResourceState = UINT32_MAX;
+    std::uintptr_t pathTracerRrTransmissionOwnerSrv = 0;
+    void* pathTracerRrTransmissionOwnerResource = nullptr;
+    std::uint32_t pathTracerRrTransmissionOwnerResourceState = UINT32_MAX;
     void* pathTracerOpticalTransmissionOutputResource = nullptr;
     std::uint32_t pathTracerOpticalTransmissionOutputResourceState = 0;
     std::uintptr_t pathTracerOpticalTransmissionOutputSrv = 0;

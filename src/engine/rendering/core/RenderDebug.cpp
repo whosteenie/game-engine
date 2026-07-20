@@ -148,6 +148,10 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
         return "RR transmission guide: specular albedo";
     case RenderDebugMode::RrTransmissionNormalRoughness:
         return "RR transmission guide: normal-roughness";
+    case RenderDebugMode::RrTemporalValidity:
+        return "RR primary temporal validity (R=invalid, G=owner, B=depth, A=normal)";
+    case RenderDebugMode::RrTransmissionTemporalValidity:
+        return "RR transmission temporal validity (R=invalid, G=owner, B=depth, A=normal)";
     case RenderDebugMode::PtOpticalRawReflection:
         return "PT optical RR: raw reflection input";
     case RenderDebugMode::PtOpticalRawTransmission:
@@ -458,6 +462,8 @@ bool IsRrGuideDebugMode(const RenderDebugMode mode)
     case RenderDebugMode::RrTransmissionDiffuseAlbedo:
     case RenderDebugMode::RrTransmissionSpecularAlbedo:
     case RenderDebugMode::RrTransmissionNormalRoughness:
+    case RenderDebugMode::RrTemporalValidity:
+    case RenderDebugMode::RrTransmissionTemporalValidity:
         return true;
     default:
         return false;

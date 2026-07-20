@@ -4,7 +4,13 @@ struct PSInput
     float2 texCoord : TEXCOORD0;
 };
 
+cbuffer PerFrame : register(b0)
+{
+    float2 uMotionValue;
+    float2 _padding;
+};
+
 float2 main(PSInput input) : SV_Target
 {
-    return float2(0.0, 0.0);
+    return uMotionValue;
 }

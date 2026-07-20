@@ -18,6 +18,9 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         !settings.IsPtMirrorChainPsrEnabled(),
         "mirror-chain PSR defaults off");
+    expectTrue(
+        settings.IsPtRrTemporalValidityEnabled(),
+        "RR temporal validity defaults on");
     settings.SetEnabled(true);
     settings.SetReflectionsEnabled(true);
     settings.ClampToHardwareCapabilities(false);
@@ -37,6 +40,7 @@ void RunDxrSettingsTests(int& failures)
     settings.SetPtDeterministicOpticalSplitEnabled(true);
     settings.SetPtOpticalMotionReplayEnabled(true);
     settings.SetPtMirrorChainPsrEnabled(true);
+    settings.SetPtRrTemporalValidityEnabled(false);
     settings.SetPtPsrMaxBounces(99);
     settings.SetPtPsrSubpixelThreshold(9.0f);
     settings.ClampToHardwareCapabilities(true);
@@ -71,6 +75,9 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         roundTrip.IsPtMirrorChainPsrEnabled(),
         "json round-trip mirror-chain PSR toggle");
+    expectTrue(
+        !roundTrip.IsPtRrTemporalValidityEnabled(),
+        "json round-trip RR temporal validity toggle");
     expectTrue(roundTrip.GetPtPsrMaxBounces() == 32, "json round-trip PSR max bounce clamp");
     expectTrue(roundTrip.GetPtPsrSubpixelThreshold() == 2.0f, "json round-trip PSR threshold clamp");
     expectTrue(
@@ -82,4 +89,7 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         copied.IsPtMirrorChainPsrEnabled(),
         "copy preserves mirror-chain PSR toggle");
+    expectTrue(
+        !copied.IsPtRrTemporalValidityEnabled(),
+        "copy preserves RR temporal validity toggle");
 }

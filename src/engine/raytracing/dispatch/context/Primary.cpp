@@ -246,6 +246,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         && m_ptPsrThroughputTexture.resource != nullptr
         && m_ptPsrMetadataTexture.resource != nullptr
         && m_ptSpecularMotionTexture.resource != nullptr
+        && m_ptRrPrimaryOwnerTexture.resource != nullptr
+        && m_ptRrTransmissionOwnerTexture.resource != nullptr
         && m_ptOpticalTransmissionOutputTexture.resource != nullptr
         && m_ptOpticalTransmissionNormalRoughnessTexture.resource != nullptr
         && m_ptDirectTexture.resource != nullptr
@@ -270,6 +272,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
     RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
     RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptRrPrimaryOwnerTexture);
+    RetireOrDestroyReflectionTexture(m_ptRrTransmissionOwnerTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);
@@ -304,6 +308,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptPsrThroughputTexture},
         {DXGI_FORMAT_R32_UINT, &m_ptPsrMetadataTexture},
         {DXGI_FORMAT_R16G16_FLOAT, &m_ptSpecularMotionTexture},
+        {DXGI_FORMAT_R32_UINT, &m_ptRrPrimaryOwnerTexture},
+        {DXGI_FORMAT_R32_UINT, &m_ptRrTransmissionOwnerTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionOutputTexture},
         {DXGI_FORMAT_R32_FLOAT, &m_ptOpticalTransmissionDepthTexture},
         {DXGI_FORMAT_R16G16B16A16_FLOAT, &m_ptOpticalTransmissionMotionTexture},
@@ -337,6 +343,8 @@ bool DxrDispatchContext::EnsurePathTracerGuides(const int width, const int heigh
             RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
             RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
             RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
+            RetireOrDestroyReflectionTexture(m_ptRrPrimaryOwnerTexture);
+            RetireOrDestroyReflectionTexture(m_ptRrTransmissionOwnerTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
             RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);

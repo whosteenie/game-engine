@@ -82,6 +82,8 @@ void DxrDispatchContext::Release()
     RetireOrDestroyReflectionTexture(m_ptPsrThroughputTexture);
     RetireOrDestroyReflectionTexture(m_ptPsrMetadataTexture);
     RetireOrDestroyReflectionTexture(m_ptSpecularMotionTexture);
+    RetireOrDestroyReflectionTexture(m_ptRrPrimaryOwnerTexture);
+    RetireOrDestroyReflectionTexture(m_ptRrTransmissionOwnerTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionOutputTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionDepthTexture);
     RetireOrDestroyReflectionTexture(m_ptOpticalTransmissionMotionTexture);

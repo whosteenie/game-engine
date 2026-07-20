@@ -166,6 +166,9 @@ enum class RenderDebugMode
     PtPsrProjectedSpan,
     PtPsrThroughput,
     PtPsrReceiverSignal,
+    // Shared RR history-rejection classes. Appended to preserve all existing persisted values.
+    RrTemporalValidity,
+    RrTransmissionTemporalValidity,
 };
 
 bool IsPbrMaterialDebugMode(RenderDebugMode mode);

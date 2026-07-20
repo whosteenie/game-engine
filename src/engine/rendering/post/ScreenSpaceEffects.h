@@ -26,6 +26,8 @@
 class Camera;
 class EnvironmentMap;
 class Shader;
+struct RrTemporalValidityInputs;
+struct RrTemporalValidityResult;
 
 // PathTracerHistoryKey lives in PathTracerDisplayPass.h (HK-C8).
 
@@ -144,6 +146,12 @@ public:
         std::uintptr_t diffuseAlbedoSrv = 0,
         std::uintptr_t specularAlbedoSrv = 0,
         std::uintptr_t normalRoughnessSrv = 0,
+        std::uintptr_t rrPrimaryOwnerSrv = 0,
+        void* rrPrimaryOwnerResource = nullptr,
+        std::uint32_t rrPrimaryOwnerResourceState = UINT32_MAX,
+        std::uintptr_t rrTransmissionOwnerSrv = 0,
+        void* rrTransmissionOwnerResource = nullptr,
+        std::uint32_t rrTransmissionOwnerResourceState = UINT32_MAX,
         bool mirrorChainPsr = false,
         std::uintptr_t psrThroughputSrv = 0,
         void* specularMotionResource = nullptr,
@@ -167,6 +175,16 @@ public:
     void SetPtIndependentOpticalRrLayersEnabled(bool enabled)
     {
         m_ptIndependentOpticalRrLayers = enabled;
+    }
+    void SetPtRrTemporalValidityEnabled(bool enabled)
+    {
+        if (m_ptRrTemporalValidity == enabled)
+            return;
+        m_ptRrTemporalValidity = enabled;
+        m_dlssHistoryValid = false;
+        m_dlssOpticalTransmissionHistoryValid = false;
+        m_rrTemporalPrimaryHistoryValid = false;
+        m_rrTemporalTransmissionHistoryValid = false;
     }
     bool PathTracerResolvedViaDlssThisFrame() const { return m_pathTracerDlssResolvedThisFrame; }
     bool PathTracerPostIntegratedThisFrame() const { return m_pathTracerPostIntegrated; }
@@ -395,7 +413,12 @@ public:
     void SetForceDlssResetEveryFrame(bool enabled) { m_forceDlssResetEveryFrame = enabled; }
     // Session-only A/B for the standard DLSS foreground-motion dilation integration.
     bool GetUseDilatedDlssMotionVectors() const { return m_useDilatedDlssMotionVectors; }
-    void SetUseDilatedDlssMotionVectors(bool enabled) { m_useDilatedDlssMotionVectors = enabled; }
+    void SetUseDilatedDlssMotionVectors(bool enabled)
+    {
+        m_useDilatedDlssMotionVectors = enabled;
+        m_rrTemporalPrimaryHistoryValid = false;
+        m_rrTemporalTransmissionHistoryValid = false;
+    }
     // Session-only static-scene A/B: Streamline reconstructs camera motion from depth/matrices.
     bool GetReconstructDlssCameraMotion() const { return m_reconstructDlssCameraMotion; }
     void SetReconstructDlssCameraMotion(bool enabled)
@@ -403,6 +426,8 @@ public:
         m_reconstructDlssCameraMotion = enabled;
         m_dlssHistoryValid = false;
         m_dlssOpticalTransmissionHistoryValid = false;
+        m_rrTemporalPrimaryHistoryValid = false;
+        m_rrTemporalTransmissionHistoryValid = false;
     }
     // Session-only A/B: removes projection jitter from both rendering and Streamline.
     bool GetFreezeTemporalJitterDiagnostic() const { return m_freezeTemporalJitterDiagnostic; }
@@ -411,6 +436,8 @@ public:
         m_freezeTemporalJitterDiagnostic = enabled;
         m_dlssHistoryValid = false;
         m_dlssOpticalTransmissionHistoryValid = false;
+        m_rrTemporalPrimaryHistoryValid = false;
+        m_rrTemporalTransmissionHistoryValid = false;
     }
     void ResetRtPrimaryDebugBlitSettle();
     void NotifyRtPrimaryDebugDispatched();
@@ -590,6 +617,8 @@ private:
     bool GenerateSupportedDlssMotion(std::uintptr_t motionSrv) const;
     bool GenerateSupportedOpticalTransmissionDlssMotion(std::uintptr_t motionSrv) const;
     bool GenerateZeroDlssMotion() const;
+    bool GenerateValidityFilteredRrMotion(
+        bool transmission, std::uintptr_t motionSrv, std::uintptr_t maskSrv) const;
     bool PreparePathTracerMotionReprojectionAudit() const;
     void CommitPathTracerMotionReprojectionAudit(std::uintptr_t depthSrv) const;
 
@@ -660,6 +689,8 @@ private:
     // 2 = depth); full mode (0) is all-or-nothing. Sets m_ptFullGuidesThisFrame when guides copied
     // so GenerateRrGuides skips raster modes 0-2. See devdoc/dxr/pt/full-rr-guides.md.
     std::uint32_t PreparePathTracerRrBundle() const;
+    RrTemporalValidityResult PrepareRrTemporalValidity(
+        const RrTemporalValidityInputs& inputs) const;
     int GetEffectiveGeometryMsaaSampleCount() const;
     void EnsureMsaaDepthResolveShader() const;
     void FinalizePendingSsaoGpuReadback() const;
@@ -750,6 +781,18 @@ private:
     InternalTarget m_rrOpticalTransmissionDiffuseAlbedoTarget;
     InternalTarget m_rrOpticalTransmissionSpecularAlbedoTarget;
     InternalTarget m_rrOpticalTransmissionNormalRoughnessTarget;
+    InternalTarget m_rrTemporalPrimaryMaskTarget;
+    InternalTarget m_rrTemporalTransmissionMaskTarget;
+    InternalTarget m_rrTemporalPrimaryMotionTarget;
+    InternalTarget m_rrTemporalTransmissionMotionTarget;
+    InternalTarget m_rrTemporalPrimaryValidityDiagnosticsTarget;
+    InternalTarget m_rrTemporalTransmissionValidityDiagnosticsTarget;
+    InternalTarget m_rrTemporalPrimaryPrevDepthTarget;
+    InternalTarget m_rrTemporalPrimaryPrevNormalTarget;
+    InternalTarget m_rrTemporalPrimaryPrevOwnerTarget;
+    InternalTarget m_rrTemporalTransmissionPrevDepthTarget;
+    InternalTarget m_rrTemporalTransmissionPrevNormalTarget;
+    InternalTarget m_rrTemporalTransmissionPrevOwnerTarget;
     InternalTarget m_bloomExtractTarget;
     InternalTarget m_bloomBlurTarget;
     InternalTarget m_bloomBlur2Target;
@@ -828,6 +871,7 @@ private:
     std::unique_ptr<Shader> m_dlssMotionDilateShader;
     std::unique_ptr<Shader> m_dlssMotionCopyShader;
     std::unique_ptr<Shader> m_dlssZeroMotionShader;
+    std::unique_ptr<Shader> m_rrMotionValidityShader;
     std::unique_ptr<Shader> m_giTemporalDebugShader;
     std::unique_ptr<Shader> m_ssgiNoiseInjectShader;
     std::unique_ptr<Shader> m_ssgiDenoiseSpatialShader;
@@ -846,6 +890,8 @@ private:
     std::unique_ptr<Shader> m_dxrIndirectShader;
     std::unique_ptr<Shader> m_dxrGiInjectShader;
     std::unique_ptr<Shader> m_rrGuidesShader;
+    std::unique_ptr<Shader> m_rrTemporalValidityShader;
+    std::unique_ptr<Shader> m_rrHistoryCopyShader;
 
     std::vector<glm::vec3> m_kernelSamples;
     int m_width = 0;
@@ -935,6 +981,12 @@ private:
     std::uintptr_t m_pathTracerDiffuseAlbedoSrv = 0;
     std::uintptr_t m_pathTracerSpecularAlbedoSrv = 0;
     std::uintptr_t m_pathTracerNormalRoughnessSrv = 0;
+    std::uintptr_t m_pathTracerRrPrimaryOwnerSrv = 0;
+    void* m_pathTracerRrPrimaryOwnerResource = nullptr;
+    std::uint32_t m_pathTracerRrPrimaryOwnerResourceState = UINT32_MAX;
+    std::uintptr_t m_pathTracerRrTransmissionOwnerSrv = 0;
+    void* m_pathTracerRrTransmissionOwnerResource = nullptr;
+    std::uint32_t m_pathTracerRrTransmissionOwnerResourceState = UINT32_MAX;
     bool m_ptMirrorChainPsr = false;
     std::uintptr_t m_pathTracerPsrThroughputSrv = 0;
     void* m_pathTracerSpecularMotionResource = nullptr;
@@ -957,6 +1009,7 @@ private:
     mutable bool m_ptFullGuidesThisFrame = false;
     int m_ptRrBundleMode = 0;
     bool m_ptIndependentOpticalRrLayers = true;
+    bool m_ptRrTemporalValidity = true;
     mutable bool m_pathTracerDlssResolvedThisFrame = false;
     mutable bool m_pathTracerPostIntegrated = false;
     mutable bool m_postProcessDebugRenderedThisFrame = false;
@@ -1078,6 +1131,8 @@ private:
     mutable bool m_dlssHistoryValid = false;
     mutable bool m_dlssOpticalTransmissionHistoryValid = false;
     bool m_forceDlssResetEveryFrame = false;
+    mutable bool m_rrTemporalPrimaryHistoryValid = false;
+    mutable bool m_rrTemporalTransmissionHistoryValid = false;
     bool m_useDilatedDlssMotionVectors = false;
     bool m_reconstructDlssCameraMotion = false;
     bool m_freezeTemporalJitterDiagnostic = false;

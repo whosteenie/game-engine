@@ -98,6 +98,15 @@ void RunShaderCompileTests()
             "main",
             "ms_6_5",
             "scene_shadow.ms.hlsl should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/post/utility/rr_temporal_validity.ps.hlsl",
+            "main", "ps_6_0", "RR temporal-validity shader should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/post/utility/rr_history_copy.ps.hlsl",
+            "main", "ps_6_0", "RR history-copy shader should compile");
+        ExpectShaderCompiles(
+            "assets/shaders/post/bloom/bloom_temporal.ps.hlsl",
+            "main", "ps_6_0", "bloom temporal shader should compile");
         ExpectShaderLibraryCompiles(
             "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl DXR library should compile");

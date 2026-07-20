@@ -117,6 +117,45 @@ namespace
         EngineLog::Breadcrumb("reconstruction-exposure", message.str());
     }
 
+    void CopyDlssCommonEvaluationFields(
+        const DlssFrameInputs& source,
+        DlssFrameInputs& destination)
+    {
+        destination.commandList = source.commandList;
+        destination.extentPlan = source.extentPlan;
+        destination.renderWidth = source.renderWidth;
+        destination.renderHeight = source.renderHeight;
+        destination.displayWidth = source.displayWidth;
+        destination.displayHeight = source.displayHeight;
+        destination.viewportId = source.viewportId;
+        destination.quality = source.quality;
+        destination.colorIsHdr = source.colorIsHdr;
+        destination.depthInverted = source.depthInverted;
+        destination.mvecScaleX = source.mvecScaleX;
+        destination.mvecScaleY = source.mvecScaleY;
+        destination.jitterX = source.jitterX;
+        destination.jitterY = source.jitterY;
+        destination.cameraNear = source.cameraNear;
+        destination.cameraFar = source.cameraFar;
+        destination.cameraFovVertical = source.cameraFovVertical;
+        destination.cameraAspect = source.cameraAspect;
+        destination.exposureScale = source.exposureScale;
+        destination.preExposure = source.preExposure;
+        destination.sharpness = source.sharpness;
+        destination.useRayReconstruction = source.useRayReconstruction;
+        destination.rrPreset = source.rrPreset;
+        std::memcpy(destination.cameraViewToClip, source.cameraViewToClip, sizeof(source.cameraViewToClip));
+        std::memcpy(destination.clipToCameraView, source.clipToCameraView, sizeof(source.clipToCameraView));
+        std::memcpy(destination.clipToPrevClip, source.clipToPrevClip, sizeof(source.clipToPrevClip));
+        std::memcpy(destination.prevClipToClip, source.prevClipToClip, sizeof(source.prevClipToClip));
+        std::memcpy(destination.cameraPos, source.cameraPos, sizeof(source.cameraPos));
+        std::memcpy(destination.cameraRight, source.cameraRight, sizeof(source.cameraRight));
+        std::memcpy(destination.cameraUp, source.cameraUp, sizeof(source.cameraUp));
+        std::memcpy(destination.cameraForward, source.cameraForward, sizeof(source.cameraForward));
+        std::memcpy(destination.worldToCameraView, source.worldToCameraView, sizeof(source.worldToCameraView));
+        std::memcpy(destination.cameraViewToWorld, source.cameraViewToWorld, sizeof(source.cameraViewToWorld));
+    }
+
     // DLSS reset on large translation only. Rotation is NOT a cut — valid motion vectors carry
     // camera rotation; the old trace-based rotation branch (~1.8°/frame) pulsed RR history during
     // ordinary look-around (gi-shimmer.md F7).
@@ -183,7 +222,7 @@ DlssTemporalGuideInputs DlssResolvePass::ResolveTemporalGuideInputs(
         : inputs.sceneFramebuffer->GetDepthResource();
     result.depthState = usePtDepth ? inputs.ptDlssDepthTarget->resourceState : kPixelSrv;
     result.depthSrv = usePtDepth
-        ? inputs.pathTracerDepthSrv
+        ? inputs.ptDlssDepthTarget->srvCpuHandle
         : inputs.sceneFramebuffer->GetDepthSrvCpuHandle();
     result.motion = inputs.sceneFramebuffer->GetGBufferColorResource(GBufferSlot::MotionVelocity);
     result.motionState = kPixelSrv;
@@ -581,10 +620,51 @@ void DlssResolvePass::Execute(
                 in.specularHitDistance = inputs.rrSpecularHitDistanceTarget->resource;
                 in.specularHitDistanceState = inputs.rrSpecularHitDistanceTarget->resourceState;
             }
-            if (inputs.mirrorChainPsr && inputs.pathTracerSpecularMotionResource != nullptr)
+            // PSR makes the virtual receiver the primary bundle.  Duplicating that same vector as
+            // optional specular motion does not describe a distinct reflected geometry domain.
+            in.specularMotionVectors = nullptr;
+            in.specularMotionVectorsState = 0;
+            if (pathTracerRealTime && inputs.prepareRrTemporalValidity
+                && inputs.pathTracerRrPrimaryOwnerSrv != 0 && guides.depthSrv != 0
+                && guides.motionSrv != 0)
             {
-                in.specularMotionVectors = inputs.pathTracerSpecularMotionResource;
-                in.specularMotionVectorsState = inputs.pathTracerSpecularMotionResourceState;
+                RrTemporalValidityInputs validity{};
+                validity.historyValid = !in.reset;
+                validity.depthSrv = guides.depthSrv;
+                validity.normalRoughnessSrv = inputs.rrNormalRoughnessTarget->srvCpuHandle;
+                validity.ownerSrv = inputs.pathTracerRrPrimaryOwnerSrv;
+                validity.ownerResource = inputs.pathTracerRrPrimaryOwnerResource;
+                validity.ownerResourceState = inputs.pathTracerRrPrimaryOwnerResourceState;
+                validity.motionSrv = guides.motionSrv;
+                validity.mvecScaleX = in.mvecScaleX;
+                validity.mvecScaleY = in.mvecScaleY;
+                const glm::vec2 currentJitterNdc = inputs.camera->GetProjectionJitter();
+                const glm::vec2 previousJitterNdc =
+                    inputs.motionVectorState.historyValid
+                    && TemporalCamera::IsComplete(inputs.motionVectorState.previousCamera)
+                    ? inputs.motionVectorState.previousCamera.jitterNdc
+                    : currentJitterNdc;
+                validity.currentJitterNdcX = currentJitterNdc.x;
+                validity.currentJitterNdcY = currentJitterNdc.y;
+                validity.previousJitterNdcX = previousJitterNdc.x;
+                validity.previousJitterNdcY = previousJitterNdc.y;
+                std::memcpy(
+                    validity.clipToPrevClip,
+                    in.clipToPrevClip,
+                    sizeof(validity.clipToPrevClip));
+                const RrTemporalValidityResult mask = inputs.prepareRrTemporalValidity(validity);
+                if (inputs.rrTemporalValidityEnabled && mask.ready && mask.maskSrv != 0
+                    && inputs.generateValidityFilteredRrMotion
+                    && inputs.rrTemporalPrimaryMotionTarget != nullptr
+                    && inputs.rrTemporalPrimaryMotionTarget->resource != nullptr
+                    && inputs.generateValidityFilteredRrMotion(
+                        false, validity.motionSrv, mask.maskSrv))
+                {
+                    in.motionVectors = inputs.rrTemporalPrimaryMotionTarget->resource;
+                    in.motionVectorsState =
+                        inputs.rrTemporalPrimaryMotionTarget->resourceState;
+                    in.motionVectorsDilated = false;
+                }
             }
             std::memcpy(in.worldToCameraView, glm::value_ptr(view), sizeof(float) * 16);
             const glm::mat4 viewToWorld = glm::inverse(view);
@@ -604,12 +684,15 @@ void DlssResolvePass::Execute(
             outputs.dlssHistoryValid = primaryRan;
             outputs.dlssRan = primaryRan;
 
-            if (primaryRan && opticalLayerSplit && in.useRayReconstruction
+            const bool transmissionMotionReady = primaryRan && opticalLayerSplit
+                && in.useRayReconstruction
                 && inputs.generateSupportedOpticalTransmissionDlssMotion
                 && inputs.generateSupportedOpticalTransmissionDlssMotion(
-                    inputs.pathTracerOpticalTransmissionMotionSrv))
+                    inputs.pathTracerOpticalTransmissionMotionSrv);
+            if (transmissionMotionReady)
             {
-                DlssFrameInputs txIn = in;
+                DlssFrameInputs txIn{};
+                CopyDlssCommonEvaluationFields(in, txIn);
                 constexpr std::uint32_t kOpticalTransmissionViewportBit = 0x80000000u;
                 txIn.viewportId = inputs.dlssViewportId ^ kOpticalTransmissionViewportBit;
                 txIn.extentPlan.key.viewportId = txIn.viewportId;
@@ -638,8 +721,12 @@ void DlssResolvePass::Execute(
                 txIn.specularAlbedoState = inputs.rrOpticalTransmissionSpecularAlbedoTarget->resourceState;
                 txIn.normalRoughness = inputs.rrOpticalTransmissionNormalRoughnessTarget->resource;
                 txIn.normalRoughnessState = inputs.rrOpticalTransmissionNormalRoughnessTarget->resourceState;
+                // All optional resources are absent by construction until this evaluation owns
+                // them explicitly. In particular, primary PSR motion/hit-distance cannot leak here.
                 txIn.specularHitDistance = nullptr;
-                txIn.specularHitDistanceState = 0;
+                txIn.specularMotionVectors = nullptr;
+                txIn.responsivityMask = nullptr;
+                txIn.disocclusionMask = nullptr;
                 txIn.reset = inputs.forceDlssResetEveryFrame
                     || !inputs.opticalTransmissionHistoryValid
                     || !inputs.motionVectorState.historyValid || cameraCut;
@@ -658,6 +745,54 @@ void DlssResolvePass::Execute(
                     cameraCut,
                     false,
                     txIn.reset ? 1u : 0u);
+                if (inputs.prepareRrTemporalValidity
+                    && inputs.pathTracerRrTransmissionOwnerSrv != 0
+                    && inputs.ptOpticalTransmissionDlssDepthTarget->srvCpuHandle != 0
+                    && inputs.dlssOpticalTransmissionMotionTarget->srvCpuHandle != 0)
+                {
+                    RrTemporalValidityInputs validity{};
+                    validity.transmission = true;
+                    validity.historyValid = !txIn.reset;
+                    validity.depthSrv = inputs.ptOpticalTransmissionDlssDepthTarget->srvCpuHandle;
+                    validity.normalRoughnessSrv =
+                        inputs.rrOpticalTransmissionNormalRoughnessTarget->srvCpuHandle;
+                    validity.ownerSrv = inputs.pathTracerRrTransmissionOwnerSrv;
+                    validity.ownerResource = inputs.pathTracerRrTransmissionOwnerResource;
+                    validity.ownerResourceState =
+                        inputs.pathTracerRrTransmissionOwnerResourceState;
+                    validity.motionSrv = inputs.dlssOpticalTransmissionMotionTarget->srvCpuHandle;
+                    validity.mvecScaleX = txIn.mvecScaleX;
+                    validity.mvecScaleY = txIn.mvecScaleY;
+                    const glm::vec2 currentJitterNdc = inputs.camera->GetProjectionJitter();
+                    const glm::vec2 previousJitterNdc =
+                        inputs.motionVectorState.historyValid
+                        && TemporalCamera::IsComplete(inputs.motionVectorState.previousCamera)
+                        ? inputs.motionVectorState.previousCamera.jitterNdc
+                        : currentJitterNdc;
+                    validity.currentJitterNdcX = currentJitterNdc.x;
+                    validity.currentJitterNdcY = currentJitterNdc.y;
+                    validity.previousJitterNdcX = previousJitterNdc.x;
+                    validity.previousJitterNdcY = previousJitterNdc.y;
+                    std::memcpy(
+                        validity.clipToPrevClip,
+                        txIn.clipToPrevClip,
+                        sizeof(validity.clipToPrevClip));
+                    const RrTemporalValidityResult mask =
+                        inputs.prepareRrTemporalValidity(validity);
+                    if (inputs.rrTemporalValidityEnabled && mask.ready && mask.maskSrv != 0
+                        && inputs.generateValidityFilteredRrMotion
+                        && inputs.rrTemporalTransmissionMotionTarget != nullptr
+                        && inputs.rrTemporalTransmissionMotionTarget->resource != nullptr
+                        && inputs.generateValidityFilteredRrMotion(
+                            true, validity.motionSrv, mask.maskSrv))
+                    {
+                        txIn.motionVectors =
+                            inputs.rrTemporalTransmissionMotionTarget->resource;
+                        txIn.motionVectorsState =
+                            inputs.rrTemporalTransmissionMotionTarget->resourceState;
+                        txIn.motionVectorsDilated = false;
+                    }
+                }
                 const bool transmissionRan = dlss.Evaluate(dlss.CurrentFrameToken(), txIn);
                 GfxContext::Get().RebindFrameDescriptorHeaps();
                 TransitionResource(
@@ -667,7 +802,7 @@ void DlssResolvePass::Execute(
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 inputs.dlssOpticalTransmissionOutputTarget->resourceState = kPixelSrv;
                 outputs.opticalTransmissionHistoryValid = transmissionRan;
-                outputs.dlssRan = transmissionRan;
+                outputs.dlssRan = outputs.dlssRan || transmissionRan;
 
                 if (transmissionRan)
                 {

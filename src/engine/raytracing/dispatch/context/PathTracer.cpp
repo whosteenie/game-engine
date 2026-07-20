@@ -224,6 +224,8 @@ bool DxrDispatchContext::DispatchPathTracer(
         &m_ptPsrThroughputTexture,
         &m_ptPsrMetadataTexture,
         &m_ptSpecularMotionTexture,
+        &m_ptRrPrimaryOwnerTexture,
+        &m_ptRrTransmissionOwnerTexture,
         &m_ptOpticalTransmissionOutputTexture,
         &m_ptOpticalTransmissionDepthTexture,
         &m_ptOpticalTransmissionMotionTexture,
@@ -336,14 +338,16 @@ bool DxrDispatchContext::DispatchPathTracer(
         || m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex == UINT32_MAX
         || m_ptPsrThroughputTexture.uavIndex == UINT32_MAX
         || m_ptPsrMetadataTexture.uavIndex == UINT32_MAX
-        || m_ptSpecularMotionTexture.uavIndex == UINT32_MAX)
+        || m_ptSpecularMotionTexture.uavIndex == UINT32_MAX
+        || m_ptRrPrimaryOwnerTexture.uavIndex == UINT32_MAX
+        || m_ptRrTransmissionOwnerTexture.uavIndex == UINT32_MAX)
     {
         outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
         return false;
     }
 
-    // u0-u18 established outputs; u19-u21 are PSR throughput, metadata, and specular motion.
-    constexpr std::uint32_t kPathTracerUavCount = 22;
+    // u0-u21 established outputs; u22-u23 are the independent temporal owner keys.
+    constexpr std::uint32_t kPathTracerUavCount = 24;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -366,7 +370,9 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptOpticalTransmissionNormalRoughnessTexture.uavIndex,
         m_ptPsrThroughputTexture.uavIndex,
         m_ptPsrMetadataTexture.uavIndex,
-        m_ptSpecularMotionTexture.uavIndex};
+        m_ptSpecularMotionTexture.uavIndex,
+        m_ptRrPrimaryOwnerTexture.uavIndex,
+        m_ptRrTransmissionOwnerTexture.uavIndex};
     for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};

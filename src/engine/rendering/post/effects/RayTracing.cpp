@@ -121,6 +121,12 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     const std::uintptr_t diffuseAlbedoSrv,
     const std::uintptr_t specularAlbedoSrv,
     const std::uintptr_t normalRoughnessSrv,
+    const std::uintptr_t rrPrimaryOwnerSrv,
+    void* const rrPrimaryOwnerResource,
+    const std::uint32_t rrPrimaryOwnerResourceState,
+    const std::uintptr_t rrTransmissionOwnerSrv,
+    void* const rrTransmissionOwnerResource,
+    const std::uint32_t rrTransmissionOwnerResourceState,
     const bool mirrorChainPsr,
     const std::uintptr_t psrThroughputSrv,
     void* const specularMotionResource,
@@ -164,6 +170,12 @@ void ScreenSpaceEffects::SetDxrPathTracerDisplay(
     m_pathTracerDiffuseAlbedoSrv = diffuseAlbedoSrv;
     m_pathTracerSpecularAlbedoSrv = specularAlbedoSrv;
     m_pathTracerNormalRoughnessSrv = normalRoughnessSrv;
+    m_pathTracerRrPrimaryOwnerSrv = rrPrimaryOwnerSrv;
+    m_pathTracerRrPrimaryOwnerResource = rrPrimaryOwnerResource;
+    m_pathTracerRrPrimaryOwnerResourceState = rrPrimaryOwnerResourceState;
+    m_pathTracerRrTransmissionOwnerSrv = rrTransmissionOwnerSrv;
+    m_pathTracerRrTransmissionOwnerResource = rrTransmissionOwnerResource;
+    m_pathTracerRrTransmissionOwnerResourceState = rrTransmissionOwnerResourceState;
     m_ptMirrorChainPsr = mirrorChainPsr;
     m_pathTracerPsrThroughputSrv = psrThroughputSrv;
     m_pathTracerSpecularMotionResource = specularMotionResource;
@@ -1110,6 +1122,7 @@ bool ScreenSpaceEffects::GenerateZeroDlssMotion() const
     SceneRenderTrace::Scope reconstructionScope("dlss camera motion reconstruction input");
     const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
     m_dlssZeroMotionShader->Use(false);
+    m_dlssZeroMotionShader->SetVec2("uMotionValue", glm::vec2(0.0f));
     DrawFullscreenToTarget(
         *m_dlssZeroMotionShader,
         const_cast<InternalTarget&>(m_dlssDilatedMotionTarget),
@@ -1117,6 +1130,38 @@ bool ScreenSpaceEffects::GenerateZeroDlssMotion() const
         m_height,
         clear);
     reconstructionScope.Success();
+    return true;
+}
+
+bool ScreenSpaceEffects::GenerateValidityFilteredRrMotion(
+    const bool transmission,
+    const std::uintptr_t motionSrv,
+    const std::uintptr_t maskSrv) const
+{
+    InternalTarget& target = transmission
+        ? const_cast<InternalTarget&>(m_rrTemporalTransmissionMotionTarget)
+        : const_cast<InternalTarget&>(m_rrTemporalPrimaryMotionTarget);
+    if (motionSrv == 0 || maskSrv == 0 || m_width <= 0 || m_height <= 0
+        || target.resource == nullptr || m_rrMotionValidityShader == nullptr)
+    {
+        return false;
+    }
+
+    SceneRenderTrace::Scope validityScope(
+        transmission ? "rr transmission motion validity" : "rr primary motion validity");
+    const float clear[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    m_rrMotionValidityShader->Use(false);
+    m_rrMotionValidityShader->SetInt("uMotion", 0);
+    m_rrMotionValidityShader->SetInt("uValidityMask", 1);
+    m_rrMotionValidityShader->BindTextureSlot(0, motionSrv);
+    m_rrMotionValidityShader->BindTextureSlot(1, maskSrv);
+    DrawFullscreenToTarget(
+        *m_rrMotionValidityShader,
+        target,
+        m_width,
+        m_height,
+        clear);
+    validityScope.Success();
     return true;
 }
 
@@ -1233,6 +1278,12 @@ void ScreenSpaceEffects::BlitRrGuideDebug(
         break;
     case RenderDebugMode::RrTransmissionNormalRoughness:
         srv = m_rrOpticalTransmissionNormalRoughnessTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::RrTemporalValidity:
+        srv = m_rrTemporalPrimaryValidityDiagnosticsTarget.srvCpuHandle;
+        break;
+    case RenderDebugMode::RrTransmissionTemporalValidity:
+        srv = m_rrTemporalTransmissionValidityDiagnosticsTarget.srvCpuHandle;
         break;
     default: return;
     }

@@ -997,6 +997,12 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
             inputs.renderHeight,
             {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R32G32_FLOAT},
             "motion");
+    const DlssOptionalTagPlan optionalTags = BuildDlssOptionalTagPlan(inputs);
+    if (!HasExclusiveRrTemporalMask(optionalTags))
+    {
+        contractReason = "multiple-temporal-masks";
+        resourcesValid = false;
+    }
     if (resourcesValid && inputs.useRayReconstruction)
     {
         resourcesValid =
@@ -1009,18 +1015,48 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
                     inputs.renderWidth,
                     inputs.renderHeight,
                     {DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R32_FLOAT},
-                    "specular-hit-distance"));
+                    "specular-hit-distance"))
+            && (!optionalTags.specularMotionVectors
+                || validate(
+                    inputs.specularMotionVectors,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R32G32_FLOAT},
+                    "specular-motion"))
+            && (!optionalTags.responsivityMask
+                || validate(
+                    inputs.responsivityMask,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R8_SNORM},
+                    "responsivity-mask"))
+            && (!optionalTags.disocclusionMask
+                || validate(
+                    inputs.disocclusionMask,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT},
+                    "disocclusion-mask"));
     }
-    const unsigned int states[] = {
+    std::vector<unsigned int> requiredStates = {
         inputs.colorInputState, inputs.colorOutputState, inputs.depthState,
-        inputs.motionVectorsState, inputs.diffuseAlbedoState, inputs.specularAlbedoState,
-        inputs.normalRoughnessState, inputs.specularHitDistanceState};
-    const std::size_t requiredStateCount = inputs.useRayReconstruction
-        ? (inputs.specularHitDistance != nullptr ? 8u : 7u)
-        : 4u;
-    if (resourcesValid
-        && std::find(std::begin(states), std::begin(states) + requiredStateCount, UINT_MAX)
-            != std::begin(states) + requiredStateCount)
+        inputs.motionVectorsState};
+    if (inputs.useRayReconstruction)
+    {
+        requiredStates.push_back(inputs.diffuseAlbedoState);
+        requiredStates.push_back(inputs.specularAlbedoState);
+        requiredStates.push_back(inputs.normalRoughnessState);
+        if (optionalTags.specularHitDistance)
+            requiredStates.push_back(inputs.specularHitDistanceState);
+        if (optionalTags.specularMotionVectors)
+            requiredStates.push_back(inputs.specularMotionVectorsState);
+        if (optionalTags.responsivityMask)
+            requiredStates.push_back(inputs.responsivityMaskState);
+        if (optionalTags.disocclusionMask)
+            requiredStates.push_back(inputs.disocclusionMaskState);
+    }
+    if (resourcesValid && std::find(requiredStates.begin(), requiredStates.end(), UINT_MAX)
+            != requiredStates.end())
     {
         contractReason = "required-tag-state-is-unknown";
         resourcesValid = false;
@@ -1055,9 +1091,11 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
     sl::Resource normalRoughness{};
     sl::Resource specularHitDistance{};
     sl::Resource specularMotionVectors{};
+    sl::Resource responsivityMask{};
+    sl::Resource disocclusionMask{};
 
     std::vector<sl::ResourceTag> tags;
-    tags.reserve(8);
+    tags.reserve(11);
     tags.emplace_back(
         &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
     tags.emplace_back(
@@ -1082,7 +1120,7 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
         tags.emplace_back(
             &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         // Optional spec hit-distance guide (RR4): present only when reflections ran this frame.
-        if (inputs.specularHitDistance != nullptr)
+        if (optionalTags.specularHitDistance)
         {
             specularHitDistance = MakeTex(
                 inputs.specularHitDistance, inputs.specularHitDistanceState,
@@ -1091,13 +1129,31 @@ bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInpu
                 &specularHitDistance, sl::kBufferTypeSpecularHitDistance,
                 sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         }
-        if (inputs.specularMotionVectors != nullptr)
+        if (optionalTags.specularMotionVectors)
         {
             specularMotionVectors = MakeTex(
                 inputs.specularMotionVectors, inputs.specularMotionVectorsState,
                 inputs.renderWidth, inputs.renderHeight);
             tags.emplace_back(
                 &specularMotionVectors, sl::kBufferTypeSpecularMotionVectors,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (optionalTags.responsivityMask)
+        {
+            responsivityMask = MakeTex(
+                inputs.responsivityMask, inputs.responsivityMaskState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &responsivityMask, sl::kBufferTypeResponsivityMask,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (optionalTags.disocclusionMask)
+        {
+            disocclusionMask = MakeTex(
+                inputs.disocclusionMask, inputs.disocclusionMaskState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &disocclusionMask, sl::kBufferTypeDisocclusionMask,
                 sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         }
     }

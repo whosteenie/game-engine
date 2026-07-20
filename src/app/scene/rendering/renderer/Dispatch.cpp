@@ -418,6 +418,8 @@ void SceneRenderer::RecordDxrPass(
         m_screenSpaceEffects->SetPtRrBundleMode(m_dxrSettings.GetPtRrBundleMode());
         m_screenSpaceEffects->SetPtIndependentOpticalRrLayersEnabled(
             m_dxrSettings.IsPtIndependentOpticalRrLayersEnabled());
+        m_screenSpaceEffects->SetPtRrTemporalValidityEnabled(
+            m_dxrSettings.IsPtRrTemporalValidityEnabled());
         m_screenSpaceEffects->SetDxrPathTracerDisplay(
             pathTracerShow,
             pathTracerShow
@@ -463,6 +465,30 @@ void SceneRenderer::RecordDxrPass(
                 ? m_dxrPathTracerDispatch->GetPathTracerNormalRoughnessSrvCpuHandle(
                     pathTracerViewportId)
                 : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrPrimaryOwnerSrvCpuHandle(
+                    pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrPrimaryOwnerResource(
+                    pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrPrimaryOwnerResourceState(
+                    pathTracerViewportId)
+                : UINT32_MAX,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrTransmissionOwnerSrvCpuHandle(
+                    pathTracerViewportId)
+                : 0,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrTransmissionOwnerResource(
+                    pathTracerViewportId)
+                : nullptr,
+            pathTracerShow
+                ? m_dxrPathTracerDispatch->GetPathTracerRrTransmissionOwnerResourceState(
+                    pathTracerViewportId)
+                : UINT32_MAX,
             pathTracerShow && m_dxrSettings.IsPtMirrorChainPsrEnabled(),
             pathTracerShow
                 ? m_dxrPathTracerDispatch->GetPathTracerPsrThroughputSrvCpuHandle(pathTracerViewportId)

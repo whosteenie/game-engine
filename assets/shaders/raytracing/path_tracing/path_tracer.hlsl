@@ -37,6 +37,8 @@ RWTexture2D<float4> g_OpticalTransmissionNormalRoughness : register(u18);
 RWTexture2D<float4> g_PsrThroughput : register(u19); // rgb=physical delta-prefix throughput, a=owner
 RWTexture2D<uint> g_PsrMetadata : register(u20); // length[0:7], terminal[8:11], flags[12:]
 RWTexture2D<float2> g_SpecularMotion : register(u21); // dense RR specular motion
+RWTexture2D<uint> g_RrPrimaryOwner : register(u22);
+RWTexture2D<uint> g_RrTransmissionOwner : register(u23);
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -200,6 +202,29 @@ static const uint kPtPsrTerminalSubpixelTail = 4u;
 static const uint kPtPsrTerminalNegligibleThroughputTail = 5u;
 static const uint kPtPsrTerminalHardCapSignificant = 6u;
 static const uint kPtPsrTerminalInvalidProjectionFallback = 7u;
+
+// Stable temporal domains.  Keys deliberately exclude primitive ID so triangulating a planar
+// surface cannot manufacture RR history seams.  Instance identity is combined in path order.
+static const uint kRrOwnerDomainSurface = 0x51f2e3d1u;
+static const uint kRrOwnerDomainSky = 0x8ad42f39u;
+static const uint kRrOwnerDomainMirror = 0xd1b54a35u;
+static const uint kRrOwnerDomainReflection = 0x94d049bbu;
+static const uint kRrOwnerDomainTransmission = 0x369dea0fu;
+static const uint kRrOwnerDomainEmptyTransmission = 0x7f4a7c15u;
+
+uint RrOwnerMix(uint owner, uint value)
+{
+    owner ^= value + 0x9e3779b9u + (owner << 6u) + (owner >> 2u);
+    owner ^= owner >> 16u;
+    owner *= 0x7feb352du;
+    owner ^= owner >> 15u;
+    return owner == 0u ? 1u : owner;
+}
+
+uint RrSurfaceOwner(uint instanceId)
+{
+    return RrOwnerMix(kRrOwnerDomainSurface, instanceId + 1u);
+}
 
 // Payload PACKED to 40 bytes (10 dwords, down from 68/17). MaxPayloadSizeInBytes in DxrPipeline.cpp
 // must match. Normals are snorm16 octahedral (uniform ~0.03deg worst-case — precise enough for glass
@@ -2775,6 +2800,8 @@ void PathTracerRayGen()
     g_PsrMetadata[pixel] = PackPtPsrMetadata(
         0u, kPtPsrTerminalPrimaryReceiver, false, false);
     g_SpecularMotion[pixel] = 0.0.xx;
+    g_RrPrimaryOwner[pixel] = kRrOwnerDomainSky;
+    g_RrTransmissionOwner[pixel] = kRrOwnerDomainEmptyTransmission;
 
     // Layer 1 is intentionally empty for opaque, rough, unsupported, mirror-only, and sky pixels.
     // Neutral guides make those black samples a coherent far-field domain for the independent RR
@@ -2841,6 +2868,7 @@ void PathTracerRayGen()
     float specHitDistGuide = g_MaxTraceDistance;
     bool mirrorChainActive = false;
     uint mirrorChainLength = 0u;
+    uint mirrorChainOwner = kRrOwnerDomainMirror;
     float mirrorChainDistance = 0.0;
     float3 mirrorChainThroughput = 1.0.xxx;
     float mirrorProjectedSpanPx = 0.0;
@@ -2957,6 +2985,7 @@ void PathTracerRayGen()
                 if (psrOwned)
                 {
                     g_PsrThroughput[pixel] = float4(mirrorChainThroughput, 1.0);
+                    g_RrPrimaryOwner[pixel] = RrOwnerMix(mirrorChainOwner, kRrOwnerDomainSky);
                 }
                 g_PsrMetadata[pixel] = PackPtPsrMetadata(
                     mirrorChainLength,
@@ -2990,6 +3019,7 @@ void PathTracerRayGen()
 #endif
             if (bounce == 0u && !psrOwned)
             {
+                g_RrPrimaryOwner[pixel] = kRrOwnerDomainSky;
                 // Sky pixel: camera-only reprojection (raster sky keeps MV=0; PT supplies finite anchor).
                 const float3 skyAnchor = g_CameraPos + ray.Direction * (g_MaxTraceDistance * 0.5);
                 float4 currClipUnj = mul(g_UnjitteredViewProj, float4(skyAnchor, 1.0));
@@ -3110,6 +3140,11 @@ void PathTracerRayGen()
         const float3 hitPos = ray.Origin + ray.Direction * payload.hitDistance;
         const float3 shadowOrigin = hitPos + hitNormalGeom * max(payload.hitDistance * 0.001, 0.002);
 
+        if (bounce == 0u && !mirrorChainActive)
+        {
+            g_RrPrimaryOwner[pixel] = RrSurfaceOwner(payload.instanceId);
+        }
+
         if (kPtMirrorChainPsrEnabled && mirrorChainActive)
         {
             mirrorChainDistance += payload.hitDistance;
@@ -3183,6 +3218,7 @@ void PathTracerRayGen()
             mirrorChainActive = true;
             psrOwned = true;
             mirrorChainLength += 1u;
+            mirrorChainOwner = RrOwnerMix(mirrorChainOwner, payload.instanceId + 1u);
             mirrorChainThroughput *= linkThroughput;
             psrTerminalReason = kPtPsrTerminalReceiver;
             const float originBias = max(payload.hitDistance * 0.0015, 0.01);
@@ -3231,6 +3267,7 @@ void PathTracerRayGen()
             psrOwned = true;
             psrGlassReceiver = psrDielectricWeight > 0.0;
             psrTerminalReason = kPtPsrTerminalReceiver;
+            g_RrPrimaryOwner[pixel] = RrOwnerMix(mirrorChainOwner, payload.instanceId + 1u);
             g_PsrThroughput[pixel] = float4(mirrorChainThroughput, 1.0);
             g_PsrMetadata[pixel] = PackPtPsrMetadata(
                 mirrorChainLength, psrTerminalReason, true, mirrorProjectionValid);
@@ -3699,6 +3736,12 @@ void PathTracerRayGen()
 #endif
                 if (txGuide.valid && !txGuide.receiverMoved && !primaryOpticalMoved)
                 {
+                    const uint txOwner = RrOwnerMix(
+                        RrOwnerMix(RrOwnerMix(
+                            psrGlassReceiver ? mirrorChainOwner : kRrOwnerDomainTransmission,
+                            payload.instanceId + 1u),
+                            kRrOwnerDomainTransmission),
+                        txGuide.instanceId + 1u);
                     float3 txDiffuseGuide;
                     float3 txSpecGuide;
                     float3 txGuideNormal;
@@ -3709,6 +3752,7 @@ void PathTracerRayGen()
                         pathConeWidth, txDiffuseGuide, txSpecGuide, txGuideNormal, txGuideRoughness);
                     if (kPtLegacyOpticalRouting)
                     {
+                        g_RrPrimaryOwner[pixel] = txOwner;
                         resolvedPrimaryDepth = txDepth;
                         resolvedPrimaryMotion = virtualMotion;
                         diffuseGuide = txDiffuseGuide;
@@ -3719,6 +3763,7 @@ void PathTracerRayGen()
                     }
                     else
                     {
+                        g_RrTransmissionOwner[pixel] = txOwner;
                         g_OpticalTransmissionDepth[pixel] = txDepth;
                         g_OpticalTransmissionMotion[pixel] = float4(virtualMotion, 0.0, 1.0);
                         g_OpticalTransmissionDiffuseAlbedo[pixel] = float4(txDiffuseGuide, 1.0);
@@ -3732,9 +3777,16 @@ void PathTracerRayGen()
                 }
                 else
                 {
+                    const uint txSkyOwner = RrOwnerMix(
+                        RrOwnerMix(RrOwnerMix(
+                            psrGlassReceiver ? mirrorChainOwner : kRrOwnerDomainTransmission,
+                            payload.instanceId + 1u),
+                            kRrOwnerDomainTransmission),
+                        kRrOwnerDomainSky);
                     // A sky receiver is a coherent domain; do not retain pane materials or motion.
                     if (kPtLegacyOpticalRouting)
                     {
+                        g_RrPrimaryOwner[pixel] = txSkyOwner;
                         resolvedPrimaryDepth = 1.0;
                         resolvedPrimaryMotion = ComputeSkyAnchorMotion(txGuide.refractDir);
                         diffuseGuide = 0.5.xxx;
@@ -3745,6 +3797,7 @@ void PathTracerRayGen()
                     }
                     else
                     {
+                        g_RrTransmissionOwner[pixel] = txSkyOwner;
                         g_OpticalTransmissionDepth[pixel] = 1.0;
                         const float3 transmissionSkyDirection = psrGlassReceiver
                             ? normalize(PtMirrorTransformDirection(
@@ -3816,6 +3869,12 @@ void PathTracerRayGen()
                 if (reflectionGuide.valid && !reflectionGuide.receiverMoved
                     && !primaryOpticalMoved && reflectionReplayValid)
                 {
+                    g_RrPrimaryOwner[pixel] = RrOwnerMix(
+                        RrOwnerMix(RrOwnerMix(
+                            psrGlassReceiver ? mirrorChainOwner : kRrOwnerDomainReflection,
+                            payload.instanceId + 1u),
+                            kRrOwnerDomainReflection),
+                        reflectionGuide.instanceId + 1u);
                     resolvedPrimaryDepth = reflectionDepth;
                     resolvedPrimaryMotion = reflectionMotion;
                     ComputeOpticalReceiverMaterialGuides(
@@ -3830,6 +3889,12 @@ void PathTracerRayGen()
                 }
                 else if (!reflectionGuide.valid && !primaryOpticalMoved && reflectionReplayValid)
                 {
+                    g_RrPrimaryOwner[pixel] = RrOwnerMix(
+                        RrOwnerMix(RrOwnerMix(
+                            psrGlassReceiver ? mirrorChainOwner : kRrOwnerDomainReflection,
+                            payload.instanceId + 1u),
+                            kRrOwnerDomainReflection),
+                        kRrOwnerDomainSky);
                     // A reflected environment direction is a complete virtual receiver domain.
                     // Its inverse replay motion maps that direction through the previous optical
                     // surface; neutral far-field guides prevent the glass primary from leaking in.
@@ -3855,6 +3920,10 @@ void PathTracerRayGen()
 
             if (omitOpticalGuide)
             {
+                // Unsupported optical lobes are one explicit fallback domain.  They cannot retain
+                // a previous deterministic receiver merely because their neutral guides match.
+                g_RrPrimaryOwner[pixel] = RrOwnerMix(
+                    RrSurfaceOwner(payload.instanceId), kRrOwnerDomainEmptyTransmission);
                 // Explicit RR omission: neutral material, far depth, zero motion and no hit distance.
                 resolvedPrimaryDepth = 1.0;
                 resolvedPrimaryMotion = 0.0.xx;

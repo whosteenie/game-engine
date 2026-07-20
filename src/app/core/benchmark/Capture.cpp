@@ -544,17 +544,36 @@ namespace
         RenderDebugMode debugMode = RenderDebugMode::None;
         bool rayReconstruction = true;
         AntiAliasingMode antiAliasing = AntiAliasingMode::DLAA;
+        bool forceRrReset = false;
+        bool rrTemporalValidity = true;
+        int bloomOverride = -1;
     };
 
     OpticalCaptureMode ResolveOpticalCaptureMode(const std::string& mode)
     {
         if (mode == "raw-radiance")
         {
-            return {RenderDebugMode::None, false, AntiAliasingMode::None};
+            return {RenderDebugMode::None, false, AntiAliasingMode::None, false,
+                false, 0};
         }
         if (mode == "final-rr")
         {
             return {RenderDebugMode::None, true, AntiAliasingMode::DLAA};
+        }
+        if (mode == "forced-reset-oracle")
+        {
+            return {RenderDebugMode::None, true, AntiAliasingMode::DLAA, true,
+                true, -1};
+        }
+        if (mode == "rr-temporal-validity-off")
+        {
+            return {RenderDebugMode::None, true, AntiAliasingMode::DLAA, false,
+                false, -1};
+        }
+        if (mode == "bloom-off")
+        {
+            return {RenderDebugMode::None, true, AntiAliasingMode::DLAA, false,
+                true, 0};
         }
 
         const std::pair<const char*, RenderDebugMode> rrModes[] = {
@@ -570,6 +589,8 @@ namespace
             {"transmission-guide-diffuse", RenderDebugMode::RrTransmissionDiffuseAlbedo},
             {"transmission-guide-specular", RenderDebugMode::RrTransmissionSpecularAlbedo},
             {"transmission-guide-normal", RenderDebugMode::RrTransmissionNormalRoughness},
+            {"rr-temporal-validity", RenderDebugMode::RrTemporalValidity},
+            {"rr-transmission-temporal-validity", RenderDebugMode::RrTransmissionTemporalValidity},
         };
         for (const auto& [name, debugMode] : rrModes)
         {
@@ -706,6 +727,12 @@ public:
         }
         effects.SetAntiAliasingMode(captureMode.antiAliasing);
         effects.SetRayReconstruction(captureMode.rayReconstruction);
+        effects.SetForceDlssResetEveryFrame(captureMode.forceRrReset);
+        dxr.SetPtRrTemporalValidityEnabled(captureMode.rrTemporalValidity);
+        if (captureMode.bloomOverride >= 0)
+        {
+            effects.SetBloomEnabled(captureMode.bloomOverride != 0);
+        }
         renderer.SetRenderDebugMode(captureMode.debugMode);
         effects.InvalidateAllTemporalState();
 
@@ -726,6 +753,10 @@ public:
                 {"dlss_quality", static_cast<int>(effects.GetDlssPreset())},
                 {"rr_preset", static_cast<int>(effects.GetRrPreset())},
                 {"rr_bundle_mode", dxr.GetPtRrBundleMode()}}},
+            {"temporal_validity", {
+                {"force_reset", captureMode.forceRrReset},
+                {"enabled", captureMode.rrTemporalValidity},
+                {"bloom_enabled", effects.IsBloomEnabled()}}},
             {"viewport", {
                 {"output_extent", {GfxContext::Get().GetWidth(), GfxContext::Get().GetHeight()}},
                 {"render_extent", {effects.GetRenderWidth(), effects.GetRenderHeight()}}}},

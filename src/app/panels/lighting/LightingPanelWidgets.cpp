@@ -132,6 +132,8 @@ namespace
         RenderDebugMode::RrTransmissionDiffuseAlbedo,
         RenderDebugMode::RrTransmissionSpecularAlbedo,
         RenderDebugMode::RrTransmissionNormalRoughness,
+        RenderDebugMode::RrTemporalValidity,
+        RenderDebugMode::RrTransmissionTemporalValidity,
     };
 
     const RenderDebugMode kPtOpticalLayerModes[] = {
@@ -729,6 +731,10 @@ namespace LightingPanelWidgets
         case RenderDebugMode::RrTransmissionSpecularAlbedo:
         case RenderDebugMode::RrTransmissionNormalRoughness:
             return "Independent transmission-layer material guide fed to its Streamline RR evaluation. Black/neutral outside supported smooth dielectric coverage is expected.";
+        case RenderDebugMode::RrTemporalValidity:
+            return "Primary RR rejection classes: red=invalid history or UV, green=path owner change, blue=depth disocclusion, alpha=normal incompatibility. The view does not alter the mask.";
+        case RenderDebugMode::RrTransmissionTemporalValidity:
+            return "Transmission RR rejection classes: red=invalid history or UV, green=path owner change, blue=depth disocclusion, alpha=normal incompatibility. This is independent from the primary RR viewport.";
         case RenderDebugMode::PtOpticalRawReflection:
             return "Exact primary RR color input: full raw PT radiance minus the weighted transmission layer. Reinhard display mapping; RR remains active.";
         case RenderDebugMode::PtOpticalRawTransmission:

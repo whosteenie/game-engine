@@ -452,7 +452,7 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
 void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     SerializeHitShadingGlobalRootSignatureBlob(
-        23, 22, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
+        23, 24, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()

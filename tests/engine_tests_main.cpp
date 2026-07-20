@@ -40,6 +40,7 @@ void RunCaptureManifestTests(int& failures);
 void RunTemporalCameraPacketTests(int& failures);
 void RunDlssFrameTokenTests(int& failures);
 void RunDlssExtentPlannerTests(int& failures);
+void RunRrTemporalValidityTests(int& failures);
 void RunReconstructionExposureTests(int& failures);
 void RunReconstructionJitterTests(int& failures);
 void RunHistoryCompatibilityTests(int& failures);
@@ -124,6 +125,9 @@ namespace
         maybeRun(
             "dlss_extent_planner",
             [] { RunDlssExtentPlannerTests(test::FailureCount()); });
+        maybeRun(
+            "rr_temporal_validity",
+            [] { RunRrTemporalValidityTests(test::FailureCount()); });
         maybeRun(
             "reconstruction_exposure",
             [] { RunReconstructionExposureTests(test::FailureCount()); });

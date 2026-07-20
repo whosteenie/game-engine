@@ -320,6 +320,7 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.forceDlssResetEveryFrame = m_forceDlssResetEveryFrame;
     dlssInputs.useDilatedDlssMotionVectors = m_useDilatedDlssMotionVectors;
     dlssInputs.reconstructDlssCameraMotion = m_reconstructDlssCameraMotion;
+    dlssInputs.rrTemporalValidityEnabled = m_ptRrTemporalValidity;
     dlssInputs.bloomEnabled = m_bloomEnabled;
     dlssInputs.bloomThreshold = m_bloomThreshold;
     dlssInputs.bloomSoftKnee = m_bloomSoftKnee;
@@ -343,6 +344,10 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.ptDlssMotionTarget = const_cast<InternalTarget*>(&m_ptDlssMotionTarget);
     dlssInputs.dlssDilatedMotionTarget = const_cast<InternalTarget*>(&m_dlssDilatedMotionTarget);
     dlssInputs.dlssOpticalTransmissionMotionTarget = const_cast<InternalTarget*>(&m_dlssOpticalTransmissionMotionTarget);
+    dlssInputs.rrTemporalPrimaryMotionTarget =
+        const_cast<InternalTarget*>(&m_rrTemporalPrimaryMotionTarget);
+    dlssInputs.rrTemporalTransmissionMotionTarget =
+        const_cast<InternalTarget*>(&m_rrTemporalTransmissionMotionTarget);
     dlssInputs.rrDiffuseAlbedoTarget = const_cast<InternalTarget*>(&m_rrDiffuseAlbedoTarget);
     dlssInputs.rrSpecularAlbedoTarget = const_cast<InternalTarget*>(&m_rrSpecularAlbedoTarget);
     dlssInputs.rrNormalRoughnessTarget = const_cast<InternalTarget*>(&m_rrNormalRoughnessTarget);
@@ -395,6 +400,13 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
             return GenerateSupportedOpticalTransmissionDlssMotion(motionSrv);
         };
     dlssInputs.generateZeroDlssMotion = [this]() { return GenerateZeroDlssMotion(); };
+    dlssInputs.generateValidityFilteredRrMotion = [this](
+        const bool transmission,
+        const std::uintptr_t motionSrv,
+        const std::uintptr_t maskSrv)
+    {
+        return GenerateValidityFilteredRrMotion(transmission, motionSrv, maskSrv);
+    };
     // P4b PT RR bundle: prepare callback + the PT depth/motion resources the resolve swaps to
     // per the bundle mode (devdoc/dxr/pt/full-rr-guides.md; gi-shimmer.md switchboard).
     dlssInputs.preparePathTracerRrBundle = [this]() { return PreparePathTracerRrBundle(); };
@@ -404,6 +416,17 @@ void ScreenSpaceEffects::FillDlssResolveInputs(ApplyFrameState& state) const
     dlssInputs.pathTracerMotionResourceState = m_pathTracerMotionResourceState;
     dlssInputs.pathTracerDepthSrv = m_pathTracerDepthSrv;
     dlssInputs.pathTracerMotionSrv = m_pathTracerMotionSrv;
+    dlssInputs.pathTracerRrPrimaryOwnerSrv = m_pathTracerRrPrimaryOwnerSrv;
+    dlssInputs.pathTracerRrPrimaryOwnerResource = m_pathTracerRrPrimaryOwnerResource;
+    dlssInputs.pathTracerRrPrimaryOwnerResourceState = m_pathTracerRrPrimaryOwnerResourceState;
+    dlssInputs.pathTracerRrTransmissionOwnerSrv = m_pathTracerRrTransmissionOwnerSrv;
+    dlssInputs.pathTracerRrTransmissionOwnerResource = m_pathTracerRrTransmissionOwnerResource;
+    dlssInputs.pathTracerRrTransmissionOwnerResourceState =
+        m_pathTracerRrTransmissionOwnerResourceState;
+    dlssInputs.prepareRrTemporalValidity = [this](const RrTemporalValidityInputs& validityInputs)
+    {
+        return PrepareRrTemporalValidity(validityInputs);
+    };
     dlssInputs.drawPathTracerGridOverlay =
         [this, camera = state.camera](PostProcessTarget& target, const int width, const int height)
         {

@@ -256,6 +256,12 @@ public:
     std::uintptr_t GetPathTracerSpecularMotionSrvCpuHandle(std::uint32_t viewportId) const;
     ID3D12Resource* GetPathTracerSpecularMotionResource(std::uint32_t viewportId) const;
     std::uint32_t GetPathTracerSpecularMotionResourceState(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerRrPrimaryOwnerSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerRrPrimaryOwnerResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerRrPrimaryOwnerResourceState(std::uint32_t viewportId) const;
+    std::uintptr_t GetPathTracerRrTransmissionOwnerSrvCpuHandle(std::uint32_t viewportId) const;
+    ID3D12Resource* GetPathTracerRrTransmissionOwnerResource(std::uint32_t viewportId) const;
+    std::uint32_t GetPathTracerRrTransmissionOwnerResourceState(std::uint32_t viewportId) const;
     std::uintptr_t GetPathTracerOpticalTransmissionOutputSrvCpuHandle(std::uint32_t viewportId) const;
     ID3D12Resource* GetPathTracerOpticalTransmissionOutputResource(std::uint32_t viewportId) const;
     std::uint32_t GetPathTracerOpticalTransmissionOutputResourceState(std::uint32_t viewportId) const;

@@ -11,7 +11,8 @@ param(
     [ValidateSet('Project', 'Enabled', 'Disabled')]
     [string]$MirrorChainPsr = 'Project',
     [string[]]$Modes = @(
-        'final-rr',
+        'raw-radiance', 'final-rr', 'forced-reset-oracle', 'rr-temporal-validity-off',
+        'rr-temporal-validity', 'rr-transmission-temporal-validity', 'bloom-off',
         'raw-reflection', 'reconstructed-reflection', 'reflection-delta',
         'reflection-reprojection', 'reflection-replay-status',
         'raw-transmission', 'reconstructed-transmission', 'transmission-delta',

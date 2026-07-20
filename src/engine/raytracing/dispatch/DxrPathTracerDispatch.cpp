@@ -1004,6 +1004,42 @@ std::uint32_t DxrPathTracerDispatch::GetPathTracerSpecularMotionResourceState(
     return StateFor(viewportId).m_dispatchContext.GetPathTracerSpecularMotionResourceState();
 }
 
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerRrPrimaryOwnerSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrPrimaryOwnerSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerRrPrimaryOwnerResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrPrimaryOwnerResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerRrPrimaryOwnerResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrPrimaryOwnerResourceState();
+}
+
+std::uintptr_t DxrPathTracerDispatch::GetPathTracerRrTransmissionOwnerSrvCpuHandle(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrTransmissionOwnerSrvCpuHandle();
+}
+
+ID3D12Resource* DxrPathTracerDispatch::GetPathTracerRrTransmissionOwnerResource(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrTransmissionOwnerResource();
+}
+
+std::uint32_t DxrPathTracerDispatch::GetPathTracerRrTransmissionOwnerResourceState(
+    const std::uint32_t viewportId) const
+{
+    return StateFor(viewportId).m_dispatchContext.GetPathTracerRrTransmissionOwnerResourceState();
+}
+
 std::uintptr_t DxrPathTracerDispatch::GetPathTracerOpticalTransmissionOutputSrvCpuHandle(
     const std::uint32_t viewportId) const
 {

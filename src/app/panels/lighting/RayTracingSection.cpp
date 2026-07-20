@@ -1132,6 +1132,22 @@ void DrawRayTracingSection(const LightingPanelContext& ctx)
                 "receiver. Mirror links use a separate budget and do not consume RNG or roulette.");
             RendererSettingUi::MarkRendered("pt_mirror_chain_psr");
 
+            bool ptRrTemporalValidity = dxrSettings.IsPtRrTemporalValidityEnabled();
+            UndoableRendererCheckbox(
+                "PT RR temporal validity",
+                &ptRrTemporalValidity,
+                editContext,
+                [](Scene& target, bool enabled) {
+                    target.GetRenderer().GetDxrSettings().SetPtRrTemporalValidityEnabled(enabled);
+                    target.GetRenderer().GetScreenSpaceEffects().InvalidateAllTemporalState();
+                    target.MarkDirty();
+                });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Rejects RR history at moving pixels when path ownership, depth, or normal no "
+                "longer corresponds to the prior frame. Static guide variation remains eligible "
+                "for temporal accumulation.");
+            RendererSettingUi::MarkRendered("pt_rr_temporal_validity");
+
             int ptPsrMaxBounces = dxrSettings.GetPtPsrMaxBounces();
             UndoableRendererSliderInt(
                 "PT PSR max mirror bounces",

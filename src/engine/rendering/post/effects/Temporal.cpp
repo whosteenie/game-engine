@@ -237,7 +237,8 @@ HistoryCompatibilityKey ScreenSpaceEffects::BuildHistoryCompatibilityKey(
     if (reconstructionUsesGuides)
     {
         key.diagnosticSignal = (m_useDilatedDlssMotionVectors ? (1u << 8) : 0u)
-            | (m_reconstructDlssCameraMotion ? (1u << 9) : 0u);
+            | (m_reconstructDlssCameraMotion ? (1u << 9) : 0u)
+            | (m_ptRrTemporalValidity ? (1u << 10) : 0u);
         if (producer == HistoryRenderProducer::PathTracer)
         {
             key.diagnosticSignal |= static_cast<std::uint32_t>(m_ptRrBundleMode & 0x7);
@@ -302,6 +303,8 @@ void ScreenSpaceEffects::ApplyHistoryCompatibilityReset(
         m_taaHistoryValid = false;
         m_dlssHistoryValid = false;
         m_dlssOpticalTransmissionHistoryValid = false;
+        m_rrTemporalPrimaryHistoryValid = false;
+        m_rrTemporalTransmissionHistoryValid = false;
     }
     constexpr std::uint32_t kResetsJitterPhase =
         HistoryCompatibilityReason::FirstFrame
@@ -432,6 +435,8 @@ void ScreenSpaceEffects::InvalidateTemporalHistory() const
     m_prevFrameBloomSrv = 0;
     m_dlssHistoryValid = false;
     m_dlssOpticalTransmissionHistoryValid = false;
+    m_rrTemporalPrimaryHistoryValid = false;
+    m_rrTemporalTransmissionHistoryValid = false;
     m_dlssBloomHistoryValid = false;
     m_dlssBloomTemporalWarmupFrames = 0;
     const_cast<ScreenSpaceEffects*>(this)->ResetPathTracerTemporalDiagnostics();
@@ -455,6 +460,8 @@ void ScreenSpaceEffects::ResetTaaHistory() const
     m_bloomTemporalWarmupFrames = 0;
     m_dlssHistoryValid = false;
     m_dlssOpticalTransmissionHistoryValid = false;
+    m_rrTemporalPrimaryHistoryValid = false;
+    m_rrTemporalTransmissionHistoryValid = false;
     m_dlssBloomHistoryValid = false;
     m_dlssBloomTemporalWarmupFrames = 0;
 }
