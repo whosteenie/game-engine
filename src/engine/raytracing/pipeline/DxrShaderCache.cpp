@@ -42,6 +42,10 @@ namespace
         {
             key += "#define=" + define;
         }
+        for (const std::string& exportName : options.exports)
+        {
+            key += "#export=" + exportName;
+        }
         return key;
     }
 }
@@ -140,6 +144,7 @@ std::shared_ptr<DxrCompiledLibrary> DxrShaderCache::Load(
     HlslLibraryCompileOptions compileOptions{};
     compileOptions.targetProfile = options.targetProfile.c_str();
     compileOptions.defines = options.featureDefines;
+    compileOptions.exports = options.exports;
     const HlslCompileResult compileResult = CompileHlslLibrary(source, libraryPath, compileOptions);
     DxrBreadcrumb(std::string("shader compile ok: ") + libraryPath);
     if (compileResult.shader == nullptr)

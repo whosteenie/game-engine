@@ -168,7 +168,12 @@ bool DxrDispatchContext::DispatchPathTracer(
         return false;
     }
 
-    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(constants);
+    const bool usePsrResolver =
+        (static_cast<std::uint32_t>(constants.ptOpticalStabilityFlags + 0.5f) & 4u) != 0u;
+    DxrRootSignature::ReflectionDispatchConstants shadingConstants = constants;
+    shadingConstants.ptPsrParams[2] = usePsrResolver ? 2.0f : 0.0f;
+    shadingConstants.ptPsrParams[3] = m_ptPsrResolvedHistoryValid ? 1.0f : 0.0f;
+    const std::uint64_t constantsGpuAddress = AllocateDispatchConstants(shadingConstants);
     if (constantsGpuAddress == 0)
     {
         outError = "failed to allocate transient DXR path tracer constants";
@@ -250,10 +255,34 @@ bool DxrDispatchContext::DispatchPathTracer(
     }
 
     const DxrDispatchRecorder recorder(commandList);
-    recorder.BeginDraw(stateObject, rootSignature, constantsGpuAddress);
 
-    // Path-tracer root signature: t0-t22 (PSR bounds stay separate from compact geometry lookup).
-    constexpr std::uint32_t kPathTracerSrvCount = 23;
+    const int psrResolvedWriteIndex = m_ptPsrResolvedWriteIndex;
+    const int psrResolvedPreviousIndex = 1 - psrResolvedWriteIndex;
+    StructuredBufferUav& psrResolvedCurrent = m_ptPsrResolvedRecords[psrResolvedWriteIndex];
+    StructuredBufferUav& psrResolvedPrevious = m_ptPsrResolvedRecords[psrResolvedPreviousIndex];
+    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
+        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+    if (psrResolvedCurrent.state != static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            psrResolvedCurrent.resource,
+            static_cast<D3D12_RESOURCE_STATES>(psrResolvedCurrent.state),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        psrResolvedCurrent.state = static_cast<std::uint32_t>(D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    }
+    if (psrResolvedPrevious.state != static_cast<std::uint32_t>(kAllShaderRead))
+    {
+        TransitionResource(
+            static_cast<ID3D12GraphicsCommandList*>(commandList),
+            psrResolvedPrevious.resource,
+            static_cast<D3D12_RESOURCE_STATES>(psrResolvedPrevious.state),
+            kAllShaderRead);
+        psrResolvedPrevious.state = static_cast<std::uint32_t>(kAllShaderRead);
+    }
+
+    // Path-tracer root signature: t0-t22 plus the previous PSR resolver record at t23.
+    constexpr std::uint32_t kPathTracerSrvCount = 24;
     const std::uint32_t giSrvIndex = inputs.giDenoisedSrvCpuHandle != 0
         ? DepthSrvIndexFromCpuHandle(inputs.giDenoisedSrvCpuHandle)
         : srvIndicesFromHandles[5];
@@ -317,15 +346,14 @@ bool DxrDispatchContext::DispatchPathTracer(
         emissiveLightAliasSrvIndex,
         emissiveTriangleAliasSrvIndex,
         emissiveLightByInstanceSrvIndex,
-        psrBoundsSrvIndex};
+        psrBoundsSrvIndex,
+        psrResolvedPrevious.srvIndex};
 
     if (inputs.giDenoisedSrvCpuHandle != 0 && giSrvIndex == UINT32_MAX)
     {
         outError = "DXR path tracer GI SRV binding unavailable";
         return false;
     }
-
-    recorder.BindSrvTables(1, srvHeapIndices, kPathTracerSrvCount);
 
     if (!HasRestirBuffers()
         || m_restirGiReservoirs[m_restirWriteIndex].uavIndex == UINT32_MAX
@@ -340,14 +368,16 @@ bool DxrDispatchContext::DispatchPathTracer(
         || m_ptPsrMetadataTexture.uavIndex == UINT32_MAX
         || m_ptSpecularMotionTexture.uavIndex == UINT32_MAX
         || m_ptRrPrimaryOwnerTexture.uavIndex == UINT32_MAX
-        || m_ptRrTransmissionOwnerTexture.uavIndex == UINT32_MAX)
+        || m_ptRrTransmissionOwnerTexture.uavIndex == UINT32_MAX
+        || psrResolvedCurrent.uavIndex == UINT32_MAX
+        || psrResolvedPrevious.srvIndex == UINT32_MAX)
     {
         outError = "DXR path tracer ReSTIR buffer UAVs unavailable";
         return false;
     }
 
-    // u0-u21 established outputs; u22-u23 are the independent temporal owner keys.
-    constexpr std::uint32_t kPathTracerUavCount = 24;
+    // u0-u23 established outputs; u24 is the compact deterministic resolver/shading record.
+    constexpr std::uint32_t kPathTracerUavCount = 25;
     const std::uint32_t pathTracerUavIndices[kPathTracerUavCount] = {
         m_primaryOutputUavIndex,
         m_ptDepthTexture.uavIndex,
@@ -372,31 +402,60 @@ bool DxrDispatchContext::DispatchPathTracer(
         m_ptPsrMetadataTexture.uavIndex,
         m_ptSpecularMotionTexture.uavIndex,
         m_ptRrPrimaryOwnerTexture.uavIndex,
-        m_ptRrTransmissionOwnerTexture.uavIndex};
-    for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
-    {
-        D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
-        uavTableHandle.ptr = reinterpret_cast<UINT64>(
-            GfxContext::Get().GetSrvHeapGpuHandle(pathTracerUavIndices[uavIndex]));
-        commandList->SetComputeRootDescriptorTable(1 + kPathTracerSrvCount + uavIndex, uavTableHandle);
-    }
-
-    {
+        m_ptRrTransmissionOwnerTexture.uavIndex,
+        psrResolvedCurrent.uavIndex};
+    const auto beginAndBind = [&](const std::uint64_t constantsAddress) {
+        recorder.BeginDraw(stateObject, rootSignature, constantsAddress);
+        recorder.BindSrvTables(1, srvHeapIndices, kPathTracerSrvCount);
+        for (std::uint32_t uavIndex = 0; uavIndex < kPathTracerUavCount; ++uavIndex)
+        {
+            D3D12_GPU_DESCRIPTOR_HANDLE uavTableHandle{};
+            uavTableHandle.ptr = reinterpret_cast<UINT64>(
+                GfxContext::Get().GetSrvHeapGpuHandle(pathTracerUavIndices[uavIndex]));
+            commandList->SetComputeRootDescriptorTable(
+                1 + kPathTracerSrvCount + uavIndex, uavTableHandle);
+        }
         auto* srvHeap = static_cast<ID3D12DescriptorHeap*>(GfxContext::Get().GetSrvHeap());
         const D3D12_GPU_DESCRIPTOR_HANDLE bindlessHandle =
             srvHeap->GetGPUDescriptorHandleForHeapStart();
         commandList->SetComputeRootDescriptorTable(
             1 + kPathTracerSrvCount + kPathTracerUavCount, bindlessHandle);
-    }
+    };
 
     if (inputs.tlasResource != nullptr)
     {
         RecordDxrUavBarrier(static_cast<ID3D12GraphicsCommandList*>(commandList), inputs.tlasResource);
     }
 
-    // Nsight's automatic CSV export does not otherwise identify this megakernel among the
-    // command-list work. Keep the marker narrowly around DispatchRays so fixed-view captures can
-    // compare this event without conflating its surrounding transitions and UAV barriers.
+    if (usePsrResolver)
+    {
+        DxrRootSignature::ReflectionDispatchConstants resolverConstants = constants;
+        resolverConstants.ptPsrParams[2] = 1.0f;
+        resolverConstants.ptPsrParams[3] = m_ptPsrResolvedHistoryValid ? 1.0f : 0.0f;
+        const std::uint64_t resolverConstantsAddress =
+            AllocateDispatchConstants(resolverConstants);
+        if (resolverConstantsAddress == 0)
+        {
+            outError = "failed to allocate transient PSR resolver constants";
+            return false;
+        }
+
+        beginAndBind(resolverConstantsAddress);
+        static constexpr wchar_t kPsrResolverMarker[] = L"PT.PSR GBuffer Resolve";
+        BeginPathTracerGpuEvent(
+            commandList, kPsrResolverMarker, static_cast<UINT>(sizeof(kPsrResolverMarker)));
+        recorder.DispatchRays(
+            shaderBindingTable,
+            width,
+            height,
+            shaderBindingTable.GetPathTracerPsrResolveRaygenGpuAddress());
+        EndPathTracerGpuEvent(commandList);
+        RecordDxrUavBarrier(
+            static_cast<ID3D12GraphicsCommandList*>(commandList), psrResolvedCurrent.resource);
+    }
+
+    // Nsight's automatic CSV export identifies the resolver and stochastic shading separately.
+    beginAndBind(constantsGpuAddress);
     static constexpr wchar_t kPathTracerDispatchMarker[] = L"PT.Megakernel";
     BeginPathTracerGpuEvent(
         commandList,
@@ -415,8 +474,6 @@ bool DxrDispatchContext::DispatchPathTracer(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_restirReservoirs[m_restirWriteIndex].resource);
 
-    constexpr D3D12_RESOURCE_STATES kAllShaderRead =
-        D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
     TransitionResource(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_ptDepthTexture.resource,
@@ -439,6 +496,14 @@ bool DxrDispatchContext::DispatchPathTracer(
             kAllShaderRead);
         guide->state = static_cast<std::uint32_t>(kAllShaderRead);
     }
+    RecordDxrUavBarrier(
+        static_cast<ID3D12GraphicsCommandList*>(commandList), psrResolvedCurrent.resource);
+    TransitionResource(
+        static_cast<ID3D12GraphicsCommandList*>(commandList),
+        psrResolvedCurrent.resource,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        kAllShaderRead);
+    psrResolvedCurrent.state = static_cast<std::uint32_t>(kAllShaderRead);
     TransitionResource(
         static_cast<ID3D12GraphicsCommandList*>(commandList),
         m_primaryOutputResource,
@@ -452,6 +517,12 @@ bool DxrDispatchContext::DispatchPathTracer(
         D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
         kAllShaderRead);
     m_primaryMetadataResourceState = static_cast<std::uint32_t>(kAllShaderRead);
+
+    if (usePsrResolver)
+    {
+        m_ptPsrResolvedHistoryValid = true;
+        m_ptPsrResolvedWriteIndex = psrResolvedPreviousIndex;
+    }
 
     // G4 copy + R2 temporal are owned by DxrPathTracerDispatch after this returns so temporal
     // can run before prev-surface history is overwritten.

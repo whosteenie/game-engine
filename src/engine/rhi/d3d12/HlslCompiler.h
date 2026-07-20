@@ -36,6 +36,9 @@ struct HlslLibraryCompileOptions
 {
     const char* targetProfile = "lib_6_3";
     std::vector<std::string> defines;
+    // Empty exports the complete library. A non-empty list lets large DXR programs be partitioned
+    // into independently optimized libraries without changing their HLSL source or shader ABI.
+    std::vector<std::string> exports;
 };
 
 DxilLibraryBytecode PrepareDxilLibraryBytecode(Microsoft::WRL::ComPtr<IDxcBlob> dxcOutput);

@@ -149,9 +149,9 @@ const char* RenderDebugModeLabel(RenderDebugMode mode)
     case RenderDebugMode::RrTransmissionNormalRoughness:
         return "RR transmission guide: normal-roughness";
     case RenderDebugMode::RrTemporalValidity:
-        return "RR primary temporal validity (R=invalid, G=owner, B=depth, A=normal)";
+        return "RR primary effective validity (R=history/UV, G=owner, B=depth, Y=normal)";
     case RenderDebugMode::RrTransmissionTemporalValidity:
-        return "RR transmission temporal validity (R=invalid, G=owner, B=depth, A=normal)";
+        return "RR transmission effective validity (R=history/UV, G=owner, B=depth, Y=normal)";
     case RenderDebugMode::PtOpticalRawReflection:
         return "PT optical RR: raw reflection input";
     case RenderDebugMode::PtOpticalRawTransmission:

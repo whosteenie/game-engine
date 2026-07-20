@@ -314,6 +314,7 @@ void RunPtMirrorChainGuideMathTests(int& failures)
             !PtRrGuideMath::ProjectVirtualBounds(
                 nearCrossing, identity, currentUnjittered, glm::uvec2(640u, 360u)).valid,
             "Near-plane-crossing bounds remain conservative and cannot terminate early");
+
     }
 
     {
@@ -374,6 +375,30 @@ void RunPtMirrorChainGuideMathTests(int& failures)
             shader,
             "specHitDistGuide = g_MaxTraceDistance;",
             "Mirror-chain owner neutralizes the invalid folded hit-distance segment");
+        test::ExpectContains(
+            shader,
+            "void ResolvePtPsrGBuffer(uint2 pixel)",
+            "Mirror-chain receiver selection has a dedicated deterministic G-buffer pass");
+        test::ExpectContains(
+            shader,
+            "void PathTracerPsrResolveRayGen()",
+            "The deterministic receiver resolver has an independent ray-generation export");
+        test::ExpectContains(
+            shader,
+            "void PathTracerShadeRayGen()",
+            "Stochastic path shading has an independent ray-generation export");
+        test::ExpectContains(
+            shader,
+            "bool resolvedPayloadPending = consumeResolvedPsr;",
+            "The shading pass consumes the immutable resolved receiver payload");
+        test::ExpectContains(
+            shader,
+            "record.transform2 = float4(",
+            "The resolver exports the complete affine virtual-surface transform");
+        test::ExpectContains(
+            shader,
+            "RWStructuredBuffer<uint4> g_PsrResolvedCurrent : register(u24);",
+            "The resolver exports a compact persistent record instead of nine texture UAVs");
 
         const std::string opticalComposition = ReadTextFile(
             "assets/shaders/post/utility/pt_optical_layers.ps.hlsl");

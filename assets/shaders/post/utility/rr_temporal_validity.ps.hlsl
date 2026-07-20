@@ -135,10 +135,20 @@ float4 main(PSInput input) : SV_Target
         }
     }
 
-    // Invalid history/UV is unconditional. Geometry/path disagreement is a disocclusion only
-    // while the represented receiver moves; static guide variation remains accumulable.
+    // Invalid history/UV is unconditional. Any moving owner or geometric disagreement rejects
+    // history; runtime isolation showed owner-only changes are necessary to remove retained images.
+    const float effectiveGeometryRejection = geometryHasMotion;
     const float selectedRejection = max(
         rejection.r,
-        max(max(rejection.g, rejection.b), rejection.a) * geometryHasMotion);
-    return uDiagnosticOutput > 0.5 ? rejection : selectedRejection.xxxx;
+        max(max(rejection.g, rejection.b), rejection.a) * effectiveGeometryRejection);
+    // The debug view shows the effective production decision, not raw static disagreement.
+    // Yellow makes normal rejection visible instead of hiding it in the display alpha channel.
+    const float3 diagnosticColor = saturate(float3(
+        rejection.r + rejection.a * effectiveGeometryRejection,
+        rejection.g * effectiveGeometryRejection
+            + rejection.a * effectiveGeometryRejection,
+        rejection.b * effectiveGeometryRejection));
+    return uDiagnosticOutput > 0.5
+        ? float4(diagnosticColor, 1.0)
+        : selectedRejection.xxxx;
 }

@@ -90,10 +90,14 @@ namespace
         D3D12_RAYTRACING_SHADER_CONFIG shaderConfig{};
         D3D12_RAYTRACING_PIPELINE_CONFIG pipelineConfig{};
         D3D12_DXIL_LIBRARY_DESC dxilLibraryDesc{};
+        D3D12_DXIL_LIBRARY_DESC secondaryDxilLibraryDesc{};
+        D3D12_DXIL_LIBRARY_DESC tertiaryDxilLibraryDesc{};
         D3D12_HIT_GROUP_DESC hitGroupDesc{};
         D3D12_GLOBAL_ROOT_SIGNATURE globalRootSignatureDesc{};
         D3D12_LOCAL_ROOT_SIGNATURE localRootSignatureDesc{};
         std::vector<D3D12_EXPORT_DESC> exports;
+        std::vector<D3D12_EXPORT_DESC> secondaryExports;
+        std::vector<D3D12_EXPORT_DESC> tertiaryExports;
         std::vector<LPCWSTR> exportNames;
         std::vector<LPCWSTR> allRtpsoExportNames;
         std::vector<LPCWSTR> hitGroupExportNames;
@@ -806,7 +810,9 @@ bool DxrPipeline::CreatePathTracerPipeline(
         }
     } localRootSignatureScope{localRootSignature};
 
-    std::shared_ptr<DxrCompiledLibrary> library;
+    std::shared_ptr<DxrCompiledLibrary> shadeLibrary;
+    std::shared_ptr<DxrCompiledLibrary> psrResolveLibrary;
+    std::shared_ptr<DxrCompiledLibrary> traceLibrary;
     try
     {
         // SER is deliberately a path-tracer-only library permutation. Other DXR pipelines keep
@@ -820,7 +826,30 @@ bool DxrPipeline::CreatePathTracerPipeline(
             // PT: unrelated DXR libraries do not carry the SM 6.9 payload contract.
             compileOptions.targetProfile = "lib_6_9";
         }
-        library = DxrShaderCache::Load(EngineConstants::DxrPathTracerLibraryShader, compileOptions);
+        DxrShaderLibraryCompileOptions shadeOptions = compileOptions;
+        shadeOptions.exports = {"PathTracerShadeRayGen"};
+        shadeLibrary = DxrShaderCache::Load(
+            EngineConstants::DxrPathTracerLibraryShader, shadeOptions);
+
+        DxrShaderLibraryCompileOptions psrResolveOptions = compileOptions;
+        psrResolveOptions.exports = {"PathTracerPsrResolveRayGen"};
+        psrResolveLibrary = DxrShaderCache::Load(
+            EngineConstants::DxrPathTracerLibraryShader, psrResolveOptions);
+
+        DxrShaderLibraryCompileOptions traceOptions = compileOptions;
+        // PT diagnostics live entirely in the ray-generation export. Keep miss/closest-hit on the
+        // production define set so production and diagnostic RTPSOs share one identical trace
+        // library blob (and the driver's compiled result) for a given shader-model/SER mode.
+        traceOptions.diagnosticPermutation = false;
+        traceOptions.featureDefines.erase(
+            std::remove(
+                traceOptions.featureDefines.begin(),
+                traceOptions.featureDefines.end(),
+                std::string("PT_DIAGNOSTIC_PERMUTATION=1")),
+            traceOptions.featureDefines.end());
+        traceOptions.exports = {"PathTracerMiss", "PathTracerClosestHit"};
+        traceLibrary = DxrShaderCache::Load(
+            EngineConstants::DxrPathTracerLibraryShader, traceOptions);
     }
     catch (const std::exception& exception)
     {
@@ -830,7 +859,9 @@ bool DxrPipeline::CreatePathTracerPipeline(
         return false;
     }
 
-    if (library == nullptr || library->dxilBytecode == nullptr)
+    if (shadeLibrary == nullptr || shadeLibrary->dxilBytecode == nullptr
+        || psrResolveLibrary == nullptr || psrResolveLibrary->dxilBytecode == nullptr
+        || traceLibrary == nullptr || traceLibrary->dxilBytecode == nullptr)
     {
         outError = "DXR path tracer library bytecode missing";
         m_pathTracerPipelineStatus.compilerLibrary = "failed";
@@ -839,17 +870,23 @@ bool DxrPipeline::CreatePathTracerPipeline(
     m_pathTracerPipelineStatus.compilerLibrary = "succeeded";
     m_pathTracerPipelineStatus.rtpso = "in_progress";
 
-    D3D12_SHADER_BYTECODE dxilBytecode{};
-    if (library->containerBytecode != nullptr)
-    {
-        dxilBytecode.pShaderBytecode = library->containerBytecode->GetBufferPointer();
-        dxilBytecode.BytecodeLength = library->containerBytecode->GetBufferSize();
-    }
-    else
-    {
-        dxilBytecode.pShaderBytecode = library->dxilBytecode->GetBufferPointer();
-        dxilBytecode.BytecodeLength = library->dxilBytecode->GetBufferSize();
-    }
+    const auto makeShaderBytecode = [](const std::shared_ptr<DxrCompiledLibrary>& library) {
+        D3D12_SHADER_BYTECODE bytecode{};
+        if (library->containerBytecode != nullptr)
+        {
+            bytecode.pShaderBytecode = library->containerBytecode->GetBufferPointer();
+            bytecode.BytecodeLength = library->containerBytecode->GetBufferSize();
+        }
+        else
+        {
+            bytecode.pShaderBytecode = library->dxilBytecode->GetBufferPointer();
+            bytecode.BytecodeLength = library->dxilBytecode->GetBufferSize();
+        }
+        return bytecode;
+    };
+    const D3D12_SHADER_BYTECODE shadeBytecode = makeShaderBytecode(shadeLibrary);
+    const D3D12_SHADER_BYTECODE psrResolveBytecode = makeShaderBytecode(psrResolveLibrary);
+    const D3D12_SHADER_BYTECODE traceBytecode = makeShaderBytecode(traceLibrary);
 
     SmokeRtpsoSubobjects subobjects{};
     // Must be >= the path_tracer.hlsl Payload struct size. The payload is packed to 10 DWORDs
@@ -860,34 +897,57 @@ bool DxrPipeline::CreatePathTracerPipeline(
     subobjects.shaderConfig.MaxAttributeSizeInBytes = 8;
     subobjects.pipelineConfig.MaxTraceRecursionDepth = 1u;
 
-    subobjects.exportNames = {L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit"};
+    subobjects.exportNames = {
+        L"PathTracerShadeRayGen",
+        L"PathTracerPsrResolveRayGen",
+        L"PathTracerMiss",
+        L"PathTracerClosestHit"};
     subobjects.allRtpsoExportNames = {
-        L"PathTracerRayGen", L"PathTracerMiss", L"PathTracerClosestHit", L"PathTracerHitGroup"};
+        L"PathTracerShadeRayGen",
+        L"PathTracerPsrResolveRayGen",
+        L"PathTracerMiss",
+        L"PathTracerClosestHit",
+        L"PathTracerHitGroup"};
     subobjects.hitGroupExportNames = {L"PathTracerHitGroup"};
 
-    subobjects.exports.resize(subobjects.exportNames.size());
-    for (std::size_t exportIndex = 0; exportIndex < subobjects.exportNames.size(); ++exportIndex)
-    {
-        subobjects.exports[exportIndex].Name = subobjects.exportNames[exportIndex];
-        subobjects.exports[exportIndex].ExportToRename = nullptr;
-        subobjects.exports[exportIndex].Flags = D3D12_EXPORT_FLAG_NONE;
-    }
+    subobjects.exports = {{L"PathTracerShadeRayGen", nullptr, D3D12_EXPORT_FLAG_NONE}};
+    subobjects.secondaryExports = {
+        {L"PathTracerPsrResolveRayGen", nullptr, D3D12_EXPORT_FLAG_NONE}};
+    subobjects.tertiaryExports = {
+        {L"PathTracerMiss", nullptr, D3D12_EXPORT_FLAG_NONE},
+        {L"PathTracerClosestHit", nullptr, D3D12_EXPORT_FLAG_NONE}};
 
-    subobjects.dxilLibraryDesc.DXILLibrary = dxilBytecode;
+    subobjects.dxilLibraryDesc.DXILLibrary = shadeBytecode;
     subobjects.dxilLibraryDesc.NumExports = static_cast<UINT>(subobjects.exports.size());
     subobjects.dxilLibraryDesc.pExports = subobjects.exports.data();
+    subobjects.secondaryDxilLibraryDesc.DXILLibrary = psrResolveBytecode;
+    subobjects.secondaryDxilLibraryDesc.NumExports =
+        static_cast<UINT>(subobjects.secondaryExports.size());
+    subobjects.secondaryDxilLibraryDesc.pExports = subobjects.secondaryExports.data();
+    subobjects.tertiaryDxilLibraryDesc.DXILLibrary = traceBytecode;
+    subobjects.tertiaryDxilLibraryDesc.NumExports =
+        static_cast<UINT>(subobjects.tertiaryExports.size());
+    subobjects.tertiaryDxilLibraryDesc.pExports = subobjects.tertiaryExports.data();
 
     subobjects.hitGroupDesc.Type = D3D12_HIT_GROUP_TYPE_TRIANGLES;
     subobjects.hitGroupDesc.HitGroupExport = L"PathTracerHitGroup";
     subobjects.hitGroupDesc.ClosestHitShaderImport = L"PathTracerClosestHit";
 
     subobjects.subobjects.clear();
-    subobjects.subobjects.reserve(10);
+    subobjects.subobjects.reserve(11);
 
     AppendSubobject(
         subobjects.subobjects,
         D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,
         &subobjects.dxilLibraryDesc);
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,
+        &subobjects.secondaryDxilLibraryDesc);
+    AppendSubobject(
+        subobjects.subobjects,
+        D3D12_STATE_SUBOBJECT_TYPE_DXIL_LIBRARY,
+        &subobjects.tertiaryDxilLibraryDesc);
 
     AppendSubobject(
         subobjects.subobjects,

@@ -20,8 +20,12 @@ bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, 
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
     RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[0]);
     RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[1]);
+    RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[0]);
+    RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[1]);
     m_restirWriteIndex = 0;
     m_restirReservoirHistoryValid = false;
+    m_ptPsrResolvedWriteIndex = 0;
+    m_ptPsrResolvedHistoryValid = false;
     m_restirLastSceneVersion = 0;
     m_restirLastMotionVersion = 0;
     m_restirBufferWidth = 0;
@@ -35,12 +39,24 @@ bool DxrDispatchContext::EnsureRestirBuffers(const int width, const int height, 
         || !CreateStructuredBufferUav(
             elementCount, sizeof(RestirGiReservoir), m_restirGiReservoirs[0], outError)
         || !CreateStructuredBufferUav(
-            elementCount, sizeof(RestirGiReservoir), m_restirGiReservoirs[1], outError))
+            elementCount, sizeof(RestirGiReservoir), m_restirGiReservoirs[1], outError)
+        || !CreateStructuredBufferUav(
+            elementCount * kPtPsrResolvedRecordLaneCount,
+            kPtPsrResolvedRecordStride,
+            m_ptPsrResolvedRecords[0],
+            outError)
+        || !CreateStructuredBufferUav(
+            elementCount * kPtPsrResolvedRecordLaneCount,
+            kPtPsrResolvedRecordStride,
+            m_ptPsrResolvedRecords[1],
+            outError))
     {
         RetireOrDestroyStructuredBufferUav(m_restirReservoirs[0]);
         RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
         RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[0]);
         RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[1]);
+        RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[0]);
+        RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[1]);
         return false;
     }
 
@@ -233,6 +249,7 @@ void DxrDispatchContext::InvalidateRestirHistoryIfSceneChanged(
     if (sceneVersion != m_restirLastSceneVersion)
     {
         m_restirReservoirHistoryValid = false;
+        m_ptPsrResolvedHistoryValid = false;
     }
 
     m_restirLastSceneVersion = sceneVersion;

@@ -524,8 +524,32 @@ HlslCompileResult CompileHlslLibrary(
         wideSourcePath.c_str(),
         L"-T",
         wideTargetProfile.c_str(),
-        L"-Zi",
+        // Runtime DXR libraries are consumed directly by CreateStateObject. Emitting debug DXIL
+        // makes the driver optimize substantially more input on every RTPSO build, while this
+        // path never retrieves the associated PDB. Keep the executable library optimized and
+        // stripped; shader diagnostics still report DXC source locations from DXC_OUT_ERRORS.
+        L"-O3",
+        L"-Qstrip_debug",
+        L"-Qstrip_reflect",
     };
+    std::wstring wideExports;
+    for (const std::string& exportName : options.exports)
+    {
+        if (exportName.empty())
+        {
+            continue;
+        }
+        if (!wideExports.empty())
+        {
+            wideExports.push_back(L';');
+        }
+        wideExports.append(Utf8ToWide(exportName));
+    }
+    if (!wideExports.empty())
+    {
+        compilerArgs.push_back(L"-exports");
+        compilerArgs.push_back(wideExports.c_str());
+    }
     std::vector<std::wstring> wideDefines;
     wideDefines.reserve(options.defines.size());
     for (const std::string& define : options.defines)

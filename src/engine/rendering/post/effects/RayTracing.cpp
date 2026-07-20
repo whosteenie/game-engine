@@ -1309,9 +1309,19 @@ void ScreenSpaceEffects::BlitPtOpticalLayerDebug(
     const int viewportWidth,
     const int viewportHeight) const
 {
+    const bool transmissionMode =
+        m_debugMode == RenderDebugMode::PtOpticalRawTransmission
+        || m_debugMode == RenderDebugMode::PtOpticalReconstructedTransmission
+        || m_debugMode == RenderDebugMode::PtOpticalTransmissionReconstructionDelta;
+    const bool reconstructedMode =
+        m_debugMode == RenderDebugMode::PtOpticalReconstructedReflection
+        || m_debugMode == RenderDebugMode::PtOpticalReconstructedTransmission
+        || m_debugMode == RenderDebugMode::PtOpticalReflectionReconstructionDelta
+        || m_debugMode == RenderDebugMode::PtOpticalTransmissionReconstructionDelta;
     if (!IsPtOpticalLayerDebugMode(m_debugMode) || outputTarget == nullptr
-        || m_ptOpticalLayersShader == nullptr || !m_pathTracerDlssResolvedThisFrame
-        || !m_dlssOpticalTransmissionHistoryValid)
+        || m_ptOpticalLayersShader == nullptr
+        || (reconstructedMode && !m_pathTracerDlssResolvedThisFrame)
+        || (transmissionMode && reconstructedMode && !m_dlssOpticalTransmissionHistoryValid))
     {
         return;
     }

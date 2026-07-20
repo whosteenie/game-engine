@@ -18,6 +18,7 @@ struct DxrShaderLibraryCompileOptions
 {
     std::string targetProfile = "lib_6_3";
     std::vector<std::string> featureDefines;
+    std::vector<std::string> exports;
     bool diagnosticPermutation = false;
     // Explicit feature states participating in the library cache key.
     bool serPermutation = false;

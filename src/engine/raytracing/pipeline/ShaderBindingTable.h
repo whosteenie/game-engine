@@ -42,6 +42,7 @@ public:
     void Release();
 
     std::uint64_t GetRaygenGpuAddress() const;
+    std::uint64_t GetPathTracerPsrResolveRaygenGpuAddress() const;
     std::uint64_t GetMissGpuAddress() const;
     std::uint64_t GetHitGroupGpuAddress() const;
     std::uint32_t GetMissRecordStride() const { return m_recordStride; }
@@ -61,6 +62,7 @@ private:
     DxrGpuResource m_uploadBuffer{};
     std::uint32_t m_recordStride = 0;
     std::uint64_t m_raygenOffset = 0;
+    std::uint64_t m_pathTracerPsrResolveRaygenOffset = 0;
     std::uint64_t m_missTableOffset = 0;
     std::uint64_t m_hitGroupTableOffset = 0;
 };

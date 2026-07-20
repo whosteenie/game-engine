@@ -635,22 +635,6 @@ const DxrSettings& SceneRenderer::GetDxrSettings() const
     return m_dxrSettings;
 }
 
-DxrPathTracerDispatch::SerOverride SceneRenderer::GetPathTracerSerOverride() const
-{
-    return m_dxrPathTracerDispatch != nullptr
-        ? m_dxrPathTracerDispatch->GetSerOverride()
-        : DxrPathTracerDispatch::SerOverride::Automatic;
-}
-
-void SceneRenderer::SetPathTracerSerOverride(const DxrPathTracerDispatch::SerOverride value)
-{
-    if (m_dxrPathTracerDispatch == nullptr)
-    {
-        m_dxrPathTracerDispatch = std::make_unique<DxrPathTracerDispatch>();
-    }
-    m_dxrPathTracerDispatch->SetSerOverride(value);
-}
-
 bool SceneRenderer::IsPathTracerSerActive() const
 {
     return m_dxrPathTracerDispatch != nullptr

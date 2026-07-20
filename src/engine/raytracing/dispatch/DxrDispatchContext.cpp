@@ -106,11 +106,15 @@ void DxrDispatchContext::Release()
     RetireOrDestroyStructuredBufferUav(m_restirReservoirs[1]);
     RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[0]);
     RetireOrDestroyStructuredBufferUav(m_restirGiReservoirs[1]);
+    RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[0]);
+    RetireOrDestroyStructuredBufferUav(m_ptPsrResolvedRecords[1]);
     m_restirBufferWidth = 0;
     m_restirBufferHeight = 0;
     m_restirElementCount = 0;
     m_restirWriteIndex = 0;
     m_restirReservoirHistoryValid = false;
+    m_ptPsrResolvedWriteIndex = 0;
+    m_ptPsrResolvedHistoryValid = false;
 
     ReleaseRetiredReflectionOutputs();
     for (ReflectionTexture& texture : m_reflectionTextures)

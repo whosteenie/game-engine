@@ -448,11 +448,12 @@ void DxrRootSignature::SerializeReflectionGlobalRootSignature(ComPtr<ID3DBlob>& 
 // t15 (emissive NEE light list), t18-t21 (geometry, aliases, instance lookup), t22 PSR bounds,
 // u4-u6 (RR guides),
 // u7-u8 (ReSTIR GI + DI reservoirs), u9 direct, u10-u12 P1 surface records, and u13-u18 the
-// independent smooth-dielectric transmission RR layer and its guide bundle, and u19-u21 PSR data.
+// independent smooth-dielectric transmission RR layer and its guide bundle, u19-u23 PSR/RR
+// ownership, u24 the current deterministic PSR resolver record, and t23 its previous frame.
 void DxrRootSignature::SerializePathTracerGlobalRootSignature(ComPtr<ID3DBlob>& outBlob)
 {
     SerializeHitShadingGlobalRootSignatureBlob(
-        23, 24, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
+        24, 25, "D3D12SerializeVersionedRootSignature failed for DXR path tracer", outBlob);
 }
 
 ID3D12RootSignature* DxrRootSignature::CreateReflectionGlobalRootSignature()

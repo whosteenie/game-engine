@@ -281,7 +281,11 @@ public:
     // Valid after the first successful PT dispatch following create/resize. Temporal reuse (R2)
     // must read these BEFORE the end-of-dispatch copy overwrites them for the next frame.
     bool IsPathTracerPrevSurfaceHistoryValid() const { return m_ptPrevSurfaceHistoryValid; }
-    void InvalidateRestirHistory() { m_restirReservoirHistoryValid = false; }
+    void InvalidateRestirHistory()
+    {
+        m_restirReservoirHistoryValid = false;
+        m_ptPsrResolvedHistoryValid = false;
+    }
     std::uintptr_t GetPathTracerPrevDepthSrvCpuHandle() const { return m_ptPrevDepthTexture.srvCpuHandle; }
     std::uintptr_t GetPathTracerPrevNormalRoughnessSrvCpuHandle() const
     {
@@ -301,7 +305,9 @@ public:
     {
         return m_restirReservoirs[0].resource != nullptr && m_restirReservoirs[1].resource != nullptr
             && m_restirGiReservoirs[0].resource != nullptr
-            && m_restirGiReservoirs[1].resource != nullptr;
+            && m_restirGiReservoirs[1].resource != nullptr
+            && m_ptPsrResolvedRecords[0].resource != nullptr
+            && m_ptPsrResolvedRecords[1].resource != nullptr;
     }
     int GetRestirBufferWidth() const { return m_restirBufferWidth; }
     int GetRestirBufferHeight() const { return m_restirBufferHeight; }
@@ -522,6 +528,14 @@ private:
         StructuredBufferUav& outBuffer,
         std::string& outError);
     void RetireOrDestroyStructuredBufferUav(StructuredBufferUav& buffer);
+
+    // Ten uint4 lanes per pixel shared with PtPsrResolvedRecord in path_tracer.hlsl. A 16-byte
+    // element avoids pathological driver lowering of whole 160-byte structured-buffer records.
+    static constexpr std::uint32_t kPtPsrResolvedRecordLaneCount = 10u;
+    static constexpr std::uint32_t kPtPsrResolvedRecordStride = 16u;
+    StructuredBufferUav m_ptPsrResolvedRecords[2]{};
+    int m_ptPsrResolvedWriteIndex = 0;
+    bool m_ptPsrResolvedHistoryValid = false;
 
     StructuredBufferUav m_restirReservoirs[2]{};
     StructuredBufferUav m_restirGiReservoirs[2]{};

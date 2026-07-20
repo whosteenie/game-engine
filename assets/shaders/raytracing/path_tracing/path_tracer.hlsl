@@ -39,6 +39,24 @@ RWTexture2D<uint> g_PsrMetadata : register(u20); // length[0:7], terminal[8:11],
 RWTexture2D<float2> g_SpecularMotion : register(u21); // dense RR specular motion
 RWTexture2D<uint> g_RrPrimaryOwner : register(u22);
 RWTexture2D<uint> g_RrTransmissionOwner : register(u23);
+// Deterministic PSR resolver -> shading ABI. Ten 16-byte lanes match the host's 160-byte stride.
+// Current and previous records are ping-ponged across frames; the stochastic integrator consumes
+// one immutable current receiver and never re-traverses its mirror prefix.
+struct PtPsrResolvedRecord
+{
+    uint4 identity;   // metadata, instance, primitive, barycentrics
+    uint4 surface;    // Ng, Ns, hit flags, lod/prev-depth
+    float4 position;  // physical receiver xyz, prefix distance
+    float4 incoming;  // incoming direction xyz, receiver hitT
+    float4 throughput;// prefix throughput rgb, cone width
+    float4 transform0;// affine row 0, translation x
+    float4 transform1;// affine row 1, translation y
+    float4 transform2;// affine row 2, translation z
+    float4 aux;       // primary motion xy, depth, owner bits as float
+    float4 temporal;  // footprint coverage, valid coverage, hysteresis, reserved
+};
+RWStructuredBuffer<uint4> g_PsrResolvedCurrent : register(u24);
+StructuredBuffer<uint4> g_PsrResolvedPrevious : register(t23);
 
 // P4b: previous-frame object-to-world rows per compact TLAS InstanceID.
 // Explicit rows (row_i = column-major glm m[col][i]) — see DxrPrevInstanceTransformEntry.
@@ -125,6 +143,10 @@ StructuredBuffer<PtPsrInstanceBounds> g_PtPsrInstanceBounds : register(t22);
     (((g_PtOpticalStabilityFlagBits & 4u) != 0u) && kPtCenterPrimaryRays)
 #define g_PtPsrMaxBounces uint(round(clamp(g_PtPsrParams.x, 1.0, 32.0)))
 #define g_PtPsrSubpixelThreshold clamp(g_PtPsrParams.y, 0.0, 2.0)
+// Internal dispatch contract: 1 resolves the extended PSR G-buffer, 2 shades it. Zero preserves
+// the single-dispatch path for reference PT and feature-off permutations.
+#define kPtPsrShadePass (uint(round(g_PtPsrParams.z)) == 2u)
+#define kPtPsrHistoryValid ((g_PtPsrParams.w > 0.5) && kPtMotionHistoryValid)
 // The pre-experiment path selected one Fresnel-dominant receiver and used its established inverse
 // motion solve. With both lobe-separation features disabled, preserve that path byte-for-byte in
 // intent; the replay toggle only controls the experimental separated-lobe route.
@@ -154,6 +176,9 @@ StructuredBuffer<PtPsrInstanceBounds> g_PtPsrInstanceBounds : register(t22);
 #endif
 #ifndef DXR_SER_PERMUTATION
 #define DXR_SER_PERMUTATION 0
+#endif
+#ifndef PT_PSR_FOOTPRINT_RESOLVER
+#define PT_PSR_FOOTPRINT_RESOLVER 1
 #endif
 #if PT_DIAGNOSTIC_PERMUTATION
 #define g_PtDebugIsolateMode uint(round(clamp(_PadPtEmissiveNee, 0.0, 74.0)))
@@ -2783,8 +2808,416 @@ float3 SelectPtDebugRadiance(
 }
 #endif
 
+PtPsrResolvedRecord InitPtPsrResolvedRecord()
+{
+    PtPsrResolvedRecord record;
+    record.identity = 0u.xxxx;
+    record.surface = 0u.xxxx;
+    record.position = 0.0.xxxx;
+    record.incoming = 0.0.xxxx;
+    record.throughput = float4(1.0, 1.0, 1.0, 0.0);
+    record.transform0 = float4(1.0, 0.0, 0.0, 0.0);
+    record.transform1 = float4(0.0, 1.0, 0.0, 0.0);
+    record.transform2 = float4(0.0, 0.0, 1.0, 0.0);
+    record.aux = 0.0.xxxx;
+    record.temporal = 0.0.xxxx;
+    return record;
+}
+
+void StorePtPsrResolvedRecord(uint pixelIndex, PtPsrResolvedRecord record)
+{
+    const uint baseLane = pixelIndex * 10u;
+    g_PsrResolvedCurrent[baseLane + 0u] = record.identity;
+    g_PsrResolvedCurrent[baseLane + 1u] = record.surface;
+    g_PsrResolvedCurrent[baseLane + 2u] = asuint(record.position);
+    g_PsrResolvedCurrent[baseLane + 3u] = asuint(record.incoming);
+    g_PsrResolvedCurrent[baseLane + 4u] = asuint(record.throughput);
+    g_PsrResolvedCurrent[baseLane + 5u] = asuint(record.transform0);
+    g_PsrResolvedCurrent[baseLane + 6u] = asuint(record.transform1);
+    g_PsrResolvedCurrent[baseLane + 7u] = asuint(record.transform2);
+    g_PsrResolvedCurrent[baseLane + 8u] = asuint(record.aux);
+    g_PsrResolvedCurrent[baseLane + 9u] = asuint(record.temporal);
+}
+
+PtPsrResolvedRecord LoadCurrentPtPsrResolvedRecord(uint pixelIndex)
+{
+    const uint baseLane = pixelIndex * 10u;
+    PtPsrResolvedRecord record;
+    record.identity = g_PsrResolvedCurrent[baseLane + 0u];
+    record.surface = g_PsrResolvedCurrent[baseLane + 1u];
+    record.position = asfloat(g_PsrResolvedCurrent[baseLane + 2u]);
+    record.incoming = asfloat(g_PsrResolvedCurrent[baseLane + 3u]);
+    record.throughput = asfloat(g_PsrResolvedCurrent[baseLane + 4u]);
+    record.transform0 = asfloat(g_PsrResolvedCurrent[baseLane + 5u]);
+    record.transform1 = asfloat(g_PsrResolvedCurrent[baseLane + 6u]);
+    record.transform2 = asfloat(g_PsrResolvedCurrent[baseLane + 7u]);
+    record.aux = asfloat(g_PsrResolvedCurrent[baseLane + 8u]);
+    record.temporal = asfloat(g_PsrResolvedCurrent[baseLane + 9u]);
+    return record;
+}
+
+bool IsPtPsrResolvedReceiver(PtPsrResolvedRecord record)
+{
+    return ((record.identity.x >> 8u) & 15u) == kPtPsrTerminalReceiver
+        && (record.identity.x & 255u) > 0u
+        && (record.identity.x & (1u << 12u)) != 0u;
+}
+
+bool SamePtPsrResolvedDomain(PtPsrResolvedRecord a, PtPsrResolvedRecord b)
+{
+    const bool validA = IsPtPsrResolvedReceiver(a);
+    const bool validB = IsPtPsrResolvedReceiver(b);
+    if (!validA || !validB)
+    {
+        return validA == validB;
+    }
+    return (a.identity.x & 255u) == (b.identity.x & 255u)
+        && a.identity.y == b.identity.y
+        && asuint(a.aux.w) == asuint(b.aux.w);
+}
+
+uint4 PtPsrResolvedDomainKey(PtPsrResolvedRecord record)
+{
+    return IsPtPsrResolvedReceiver(record)
+        ? uint4(1u, record.identity.x & 255u, record.identity.y, asuint(record.aux.w))
+        : 0u.xxxx;
+}
+
+bool SamePtPsrResolvedDomainKey(uint4 a, uint4 b)
+{
+    return all(a == b);
+}
+
+// Trace one deterministic point in the pixel footprint without drawing any lighting RNG.
+PtPsrResolvedRecord TracePtPsrCandidate(uint2 pixel, float2 footprintOffset)
+{
+    PtPsrResolvedRecord record = InitPtPsrResolvedRecord();
+
+    if (!kPtMirrorChainPsrEnabled)
+    {
+        return record;
+    }
+
+    const float2 extent = max(float2(g_OutputSize), 1.0.xx);
+    const float2 centerClip = PixelToClipXY(
+        (float2(pixel) + 0.5 + footprintOffset) / extent);
+    const float4 jitteredFarH = mul(g_InvViewProj, float4(centerClip, 1.0, 1.0));
+    if (!all(isfinite(jitteredFarH)) || abs(jitteredFarH.w) <= 1e-6)
+    {
+        return record;
+    }
+    const float3 jitteredFarWorld = jitteredFarH.xyz / jitteredFarH.w;
+    const float4 unjitteredClipH = mul(g_UnjitteredViewProj, float4(jitteredFarWorld, 1.0));
+    if (!all(isfinite(unjitteredClipH)) || abs(unjitteredClipH.w) <= 1e-6)
+    {
+        return record;
+    }
+    const float2 projectionJitter = centerClip
+        - unjitteredClipH.xy / unjitteredClipH.w;
+    const float4 stableFarH = mul(
+        g_InvViewProj, float4(centerClip + projectionJitter, 1.0, 1.0));
+    if (!all(isfinite(stableFarH)) || abs(stableFarH.w) <= 1e-6)
+    {
+        return record;
+    }
+
+    RayDesc ray;
+    ray.Origin = g_CameraPos;
+    ray.Direction = normalize(stableFarH.xyz / stableFarH.w - g_CameraPos);
+    ray.TMin = 0.001;
+    ray.TMax = g_MaxTraceDistance;
+
+    PtMirrorVirtualTransform virtualTransform = InitPtMirrorVirtualTransform();
+    float3 chainThroughput = 1.0.xxx;
+    float chainDistance = 0.0;
+    float coneWidth = 0.0;
+    uint chainLength = 0u;
+    uint chainOwner = kRrOwnerDomainMirror;
+    bool projectionValid = false;
+
+    [loop]
+    for (uint traceStep = 0u; traceStep <= g_PtPsrMaxBounces; ++traceStep)
+    {
+        Payload payload;
+        ResetPayload(payload);
+        payload.hit = kPayloadReqShadingData | kPayloadReqPrimarySurface;
+        TracePathRay(ray, payload);
+        if (payload.hit == 0u)
+        {
+            return record;
+        }
+
+        coneWidth += g_PtPixelSpreadAngle * payload.hitDistance;
+        const MaterialEntry material = LoadMaterialForInstance(payload.instanceId);
+        const float3 hitNormal = PayloadShadingNormal(payload);
+        const float3 hitPosition = ray.Origin + ray.Direction * payload.hitDistance;
+        float3 albedo;
+        float roughness;
+        float metallic;
+        float3 emissive;
+        ResolveSurfaceMaterialScalars(
+            payload.instanceId,
+            payload.primitiveIndex,
+            PayloadBarycentrics(payload),
+            ComputeAlbedoLod(payload, coneWidth, ray.Direction),
+            albedo,
+            roughness,
+            metallic,
+            emissive);
+        const float dielectricWeight = DielectricWeight(material.transmission, metallic);
+        const bool exactMirror = IsPtExactPlanarDeltaMirror(
+            payload, albedo, roughness, metallic, dielectricWeight);
+
+        if (exactMirror)
+        {
+            float projectedSpan = 0.0;
+            const bool linkProjectionValid = g_PtPsrSubpixelThreshold > 0.0
+                && ProjectPtPsrMirrorBounds(
+                    payload.instanceId, virtualTransform, projectedSpan);
+            projectionValid = projectionValid || linkProjectionValid;
+            if ((linkProjectionValid && projectedSpan <= g_PtPsrSubpixelThreshold)
+                || chainLength >= g_PtPsrMaxBounces)
+            {
+                return record;
+            }
+
+            if (!AppendPtMirrorPlane(virtualTransform, hitPosition, hitNormal))
+            {
+                return record;
+            }
+            const float3 f0 = lerp(0.04.xxx, albedo, metallic);
+            chainThroughput *= max(
+                FresnelSchlick(saturate(dot(hitNormal, -ray.Direction)), f0),
+                0.0.xxx);
+            chainDistance += payload.hitDistance;
+            chainLength += 1u;
+            chainOwner = RrOwnerMix(chainOwner, payload.instanceId + 1u);
+            ray.Direction = normalize(reflect(ray.Direction, hitNormal));
+            ray.Origin = hitPosition + ray.Direction
+                * max(payload.hitDistance * 0.0015, 0.01);
+            continue;
+        }
+
+        if (chainLength == 0u || PayloadInstanceMoved(payload))
+        {
+            return record;
+        }
+
+        const uint metadata = PackPtPsrMetadata(
+            chainLength, kPtPsrTerminalReceiver, true, projectionValid);
+        record.identity = uint4(
+            metadata, payload.instanceId, payload.primitiveIndex, payload.barycentricsHalf);
+        record.surface = uint4(
+            payload.normalOct, payload.shadingNormalOct, payload.hit, payload.lodPrevDepthHalf);
+        record.position = float4(hitPosition, chainDistance);
+        record.incoming = float4(ray.Direction, payload.hitDistance);
+        record.throughput = float4(
+            chainThroughput,
+            max(coneWidth - g_PtPixelSpreadAngle * payload.hitDistance, 0.0));
+        record.transform0 = float4(
+            virtualTransform.row0, virtualTransform.translation.x);
+        record.transform1 = float4(
+            virtualTransform.row1, virtualTransform.translation.y);
+        record.transform2 = float4(
+            virtualTransform.row2, virtualTransform.translation.z);
+        record.aux = float4(
+            PayloadPrimaryMotion(payload), payload.primaryDepth, asfloat(chainOwner));
+        record.temporal = float4(1.0, 1.0, 0.0, 0.0);
+        return record;
+    }
+    return record;
+}
+
+#if PT_PSR_FOOTPRINT_RESOLVER
+bool TryLoadPreviousPtPsrDomain(
+    PtPsrResolvedRecord current,
+    out uint4 previousDomainKey)
+{
+    previousDomainKey = 0u.xxxx;
+    if (!kPtPsrHistoryValid || !IsPtPsrResolvedReceiver(current))
+    {
+        return false;
+    }
+
+    PtMirrorVirtualTransform transform = InitPtMirrorVirtualTransform();
+    transform.row0 = current.transform0.xyz;
+    transform.row1 = current.transform1.xyz;
+    transform.row2 = current.transform2.xyz;
+    transform.translation = float3(
+        current.transform0.w, current.transform1.w, current.transform2.w);
+    transform.valid = all(isfinite(transform.row0)) && all(isfinite(transform.row1))
+        && all(isfinite(transform.row2)) && all(isfinite(transform.translation));
+    const float3 virtualPosition = PtMirrorTransformPoint(transform, current.position.xyz);
+    const float4 previousClip = mul(g_PrevViewProj, float4(virtualPosition, 1.0));
+    if (!transform.valid || !all(isfinite(previousClip)) || previousClip.w <= 1e-6)
+    {
+        return false;
+    }
+
+    const float2 previousNdc = previousClip.xy / previousClip.w;
+    const float2 previousUv = float2(
+        previousNdc.x * 0.5 + 0.5, 0.5 - previousNdc.y * 0.5);
+    if (any(previousUv < 0.0) || any(previousUv >= 1.0))
+    {
+        return false;
+    }
+    const uint2 previousPixel = min(
+        uint2(previousUv * float2(g_OutputSize)), g_OutputSize - 1u);
+    const uint previousIndex = previousPixel.y * g_OutputSize.x + previousPixel.x;
+    const uint previousBaseLane = previousIndex * 10u;
+    const uint4 previousIdentity = g_PsrResolvedPrevious[previousBaseLane + 0u];
+    const float previousOwnerBits = asfloat(g_PsrResolvedPrevious[previousBaseLane + 8u].w);
+    const bool previousValid = ((previousIdentity.x >> 8u) & 15u) == kPtPsrTerminalReceiver
+        && (previousIdentity.x & 255u) > 0u
+        && (previousIdentity.x & (1u << 12u)) != 0u;
+    previousDomainKey = previousValid
+        ? uint4(
+            1u, previousIdentity.x & 255u, previousIdentity.y, asuint(previousOwnerBits))
+        : 0u.xxxx;
+    return previousValid;
+}
+
+// Resolve a five-point deterministic footprint. History may retain a domain only when that same
+// domain is represented by a current-frame trace; stale radiance or geometry is never reused.
+void ResolvePtPsrGBuffer(uint2 pixel)
+{
+    static const float2 kFootprintOffsets[5] = {
+        float2(0.0, 0.0),
+        float2(-0.4, 0.0),
+        float2(0.4, 0.0),
+        float2(0.0, -0.4),
+        float2(0.0, 0.4)};
+    uint4 domainKeys[5] = {
+        0u.xxxx, 0u.xxxx, 0u.xxxx, 0u.xxxx, 0u.xxxx};
+    uint domainCounts[5] = {0u, 0u, 0u, 0u, 0u};
+    uint domainRepresentatives[5] = {0u, 0u, 0u, 0u, 0u};
+    uint domainCount = 0u;
+    uint validCount = 0u;
+
+    const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
+    PtPsrResolvedRecord candidate = TracePtPsrCandidate(pixel, kFootprintOffsets[0]);
+    const bool centerResolved = IsPtPsrResolvedReceiver(candidate);
+    const uint previousScreenBaseLane = pixelIndex * 10u;
+    const uint previousScreenMetadata =
+        g_PsrResolvedPrevious[previousScreenBaseLane + 0u].x;
+    const bool previousScreenPixelResolved = kPtPsrHistoryValid
+        && ((previousScreenMetadata >> 8u) & 15u) == kPtPsrTerminalReceiver
+        && (previousScreenMetadata & 255u) > 0u
+        && (previousScreenMetadata & (1u << 12u)) != 0u;
+    // Ordinary pixels retain the original one-ray resolver cost. A footprint is needed only where
+    // the current or immediately preceding frame identifies a mirror-chain domain.
+    if (!centerResolved && !previousScreenPixelResolved)
+    {
+        StorePtPsrResolvedRecord(pixelIndex, candidate);
+        return;
+    }
+
+    // Keep the candidate loop rolled: unrolling duplicates the complete nested TraceRay prefix
+    // five times in DXIL and makes RTPSO compilation pathologically expensive.
+    [loop]
+    for (uint candidateIndex = 0u; candidateIndex < 5u; ++candidateIndex)
+    {
+        if (candidateIndex != 0u)
+        {
+            candidate = TracePtPsrCandidate(
+                pixel, kFootprintOffsets[candidateIndex]);
+        }
+        validCount += IsPtPsrResolvedReceiver(candidate) ? 1u : 0u;
+        const uint4 candidateDomainKey = PtPsrResolvedDomainKey(candidate);
+        bool foundDomain = false;
+        [unroll]
+        for (uint domainIndex = 0u; domainIndex < 5u; ++domainIndex)
+        {
+            if (domainIndex < domainCount
+                && SamePtPsrResolvedDomainKey(candidateDomainKey, domainKeys[domainIndex]))
+            {
+                domainCounts[domainIndex] += 1u;
+                foundDomain = true;
+            }
+        }
+        if (!foundDomain)
+        {
+            domainRepresentatives[domainCount] = candidateIndex;
+            domainKeys[domainCount] = candidateDomainKey;
+            domainCounts[domainCount] = 1u;
+            domainCount += 1u;
+        }
+    }
+
+    uint dominantDomain = 0u;
+    [unroll]
+    for (uint domainIndex = 1u; domainIndex < 5u; ++domainIndex)
+    {
+        if (domainIndex < domainCount && domainCounts[domainIndex] > domainCounts[dominantDomain])
+        {
+            dominantDomain = domainIndex;
+        }
+    }
+
+    // Candidate traces retain only compact keys. Recreate the winning full record once so the
+    // driver's RTPSO compiler does not carry five 160-byte records across the nested ray loop.
+    PtPsrResolvedRecord selected = TracePtPsrCandidate(
+        pixel, kFootprintOffsets[domainRepresentatives[dominantDomain]]);
+
+    uint selectedDomain = dominantDomain;
+    bool retainedPreviousDomain = false;
+    uint4 previousDomainKey;
+    if (TryLoadPreviousPtPsrDomain(selected, previousDomainKey))
+    {
+        [unroll]
+        for (uint domainIndex = 0u; domainIndex < 5u; ++domainIndex)
+        {
+            if (domainIndex < domainCount
+                && SamePtPsrResolvedDomainKey(
+                    domainKeys[domainIndex], previousDomainKey)
+                && (domainIndex == dominantDomain
+                    || domainCounts[dominantDomain] < domainCounts[domainIndex] + 2u))
+            {
+                selectedDomain = domainIndex;
+                retainedPreviousDomain = domainIndex != dominantDomain;
+            }
+        }
+    }
+
+    if (selectedDomain != dominantDomain)
+    {
+        selected = TracePtPsrCandidate(
+            pixel, kFootprintOffsets[domainRepresentatives[selectedDomain]]);
+    }
+    selected.temporal = float4(
+        float(domainCounts[selectedDomain]) / 5.0,
+        float(validCount) / 5.0,
+        retainedPreviousDomain ? 1.0 : 0.0,
+        0.0);
+    StorePtPsrResolvedRecord(pixelIndex, selected);
+}
+#else
+
+void ResolvePtPsrGBuffer(uint2 pixel)
+{
+    const uint pixelIndex = pixel.y * g_OutputSize.x + pixel.x;
+    PtPsrResolvedRecord selected = TracePtPsrCandidate(pixel, 0.0.xx);
+    selected.temporal = IsPtPsrResolvedReceiver(selected)
+        ? float4(1.0, 1.0, 0.0, 0.0)
+        : 0.0.xxxx;
+    StorePtPsrResolvedRecord(pixelIndex, selected);
+}
+#endif
+
 [shader("raygeneration")]
-void PathTracerRayGen()
+void PathTracerPsrResolveRayGen()
+{
+    const uint2 pixel = DispatchRaysIndex().xy;
+    if (pixel.x >= g_OutputSize.x || pixel.y >= g_OutputSize.y)
+    {
+        return;
+    }
+
+    ResolvePtPsrGBuffer(pixel);
+}
+
+[shader("raygeneration")]
+void PathTracerShadeRayGen()
 {
     const uint2 pixel = DispatchRaysIndex().xy;
     if (pixel.x >= g_OutputSize.x || pixel.y >= g_OutputSize.y)
@@ -2826,6 +3259,20 @@ void PathTracerRayGen()
     const float4 farH = mul(g_InvViewProj, float4(clipXY, 1.0, 1.0));
     const float3 farWorld = farH.xyz / farH.w;
     const float3 cameraRayDir = normalize(farWorld - g_CameraPos);
+    const PtPsrResolvedRecord resolvedRecord = LoadCurrentPtPsrResolvedRecord(pixelIndex);
+    const uint4 resolvedIdentity = resolvedRecord.identity;
+    const uint4 resolvedSurface = resolvedRecord.surface;
+    const float4 resolvedPosition = resolvedRecord.position;
+    const float4 resolvedIncoming = resolvedRecord.incoming;
+    const float4 resolvedThroughput = resolvedRecord.throughput;
+    const float4 resolvedTransform0 = resolvedRecord.transform0;
+    const float4 resolvedTransform1 = resolvedRecord.transform1;
+    const float4 resolvedTransform2 = resolvedRecord.transform2;
+    const float4 resolvedAux = resolvedRecord.aux;
+    const bool consumeResolvedPsr = kPtPsrShadePass
+        && ((resolvedIdentity.x >> 8u) & 15u) == kPtPsrTerminalReceiver
+        && (resolvedIdentity.x & 255u) > 0u
+        && (resolvedIdentity.x & (1u << 12u)) != 0u;
 
     // Match the host clamp (DxrSettings 1..16) and the reflection/GI passes; previously capped at 8,
     // so slider values 9..16 silently did nothing.
@@ -2860,23 +3307,35 @@ void PathTracerRayGen()
     float3 freshDiRadiance = 0.0.xxx;
 
     RayDesc ray;
-    ray.Origin = g_CameraPos;
-    ray.Direction = cameraRayDir;
+    ray.Direction = consumeResolvedPsr ? normalize(resolvedIncoming.xyz) : cameraRayDir;
+    ray.Origin = consumeResolvedPsr
+        ? resolvedPosition.xyz - ray.Direction * resolvedIncoming.w
+        : g_CameraPos;
     ray.TMin = 0.001;
     ray.TMax = g_MaxTraceDistance;
 
     float specHitDistGuide = g_MaxTraceDistance;
-    bool mirrorChainActive = false;
-    uint mirrorChainLength = 0u;
-    uint mirrorChainOwner = kRrOwnerDomainMirror;
-    float mirrorChainDistance = 0.0;
-    float3 mirrorChainThroughput = 1.0.xxx;
+    bool mirrorChainActive = consumeResolvedPsr;
+    uint mirrorChainLength = consumeResolvedPsr ? (resolvedIdentity.x & 255u) : 0u;
+    uint mirrorChainOwner = consumeResolvedPsr ? asuint(resolvedAux.w) : kRrOwnerDomainMirror;
+    float mirrorChainDistance = consumeResolvedPsr ? resolvedPosition.w : 0.0;
+    float3 mirrorChainThroughput = consumeResolvedPsr ? resolvedThroughput.rgb : 1.0.xxx;
     float mirrorProjectedSpanPx = 0.0;
-    bool mirrorProjectionValid = false;
+    bool mirrorProjectionValid = consumeResolvedPsr
+        && (resolvedIdentity.x & (1u << 13u)) != 0u;
     bool psrOwned = false;
     bool psrGlassReceiver = false;
     uint psrTerminalReason = kPtPsrTerminalPrimaryReceiver;
     PtMirrorVirtualTransform mirrorVirtualTransform = InitPtMirrorVirtualTransform();
+    if (consumeResolvedPsr)
+    {
+        mirrorVirtualTransform.row0 = resolvedTransform0.xyz;
+        mirrorVirtualTransform.row1 = resolvedTransform1.xyz;
+        mirrorVirtualTransform.row2 = resolvedTransform2.xyz;
+        mirrorVirtualTransform.translation = float3(
+            resolvedTransform0.w, resolvedTransform1.w, resolvedTransform2.w);
+        mirrorVirtualTransform.valid = true;
+    }
 #if PT_DIAGNOSTIC_PERMUTATION
     bool mirrorOwnerValidForDebug = false;
     bool mirrorOwnerSkyForDebug = false;
@@ -2913,7 +3372,7 @@ void PathTracerRayGen()
     float3 transmissionDeepBounceForDebug = 0.0.xxx;
 #endif
     // Ray-cone width for albedo texture LOD, grown by pixel spread × distance along the path.
-    float pathConeWidth = 0.0;
+    float pathConeWidth = consumeResolvedPsr ? resolvedThroughput.w : 0.0;
     // Roughness of the surface that launched the current ray — drives env mip on miss, matching
     // reflections.hlsl (payload.surfaceRoughness). Previously bounce>=1 always used 1.0, which
     // made mirror sky reflections black while primary camera misses (roughness 0) still worked.
@@ -2949,6 +3408,7 @@ void PathTracerRayGen()
 #endif
 
     uint bounce = 0u;
+    bool resolvedPayloadPending = consumeResolvedPsr;
     const uint maxTraceSteps = maxBounces + (kPtMirrorChainPsrEnabled ? g_PtPsrMaxBounces : 0u);
     [loop]
     for (uint traceStep = 0u; traceStep <= maxTraceSteps; ++traceStep)
@@ -2965,7 +3425,24 @@ void PathTracerRayGen()
         {
             payload.hit |= kPayloadReqPrimarySurface;
         }
-        TracePathRay(ray, payload);
+        if (resolvedPayloadPending)
+        {
+            payload.normalOct = resolvedSurface.x;
+            payload.shadingNormalOct = resolvedSurface.y;
+            payload.hit = resolvedSurface.z;
+            payload.lodPrevDepthHalf = resolvedSurface.w;
+            payload.instanceId = resolvedIdentity.y;
+            payload.primitiveIndex = resolvedIdentity.z;
+            payload.barycentricsHalf = resolvedIdentity.w;
+            payload.hitDistance = resolvedIncoming.w;
+            payload.primaryMotionHalf = RestirPackHalf2(resolvedAux.xy);
+            payload.primaryDepth = resolvedAux.z;
+            resolvedPayloadPending = false;
+        }
+        else
+        {
+            TracePathRay(ray, payload);
+        }
 
         if (payload.hit == 0)
         {
@@ -3195,8 +3672,8 @@ void PathTracerRayGen()
 #if PT_DIAGNOSTIC_PERMUTATION
                 mirrorBounceCapFallbackForDebug = hardCapTerminal;
 #endif
-                // A filtered terminal has no finite receiver domain. Preserve the primary fallback
-                // guides and keep its already-attenuated radiance out of PSR demodulation.
+                // No finite receiver exists at this terminal. Preserve primary-mirror guides and
+                // keep the already attenuated environment estimate out of PSR demodulation.
                 psrOwned = false;
                 mirrorChainActive = false;
                 break;
@@ -4414,7 +4891,8 @@ void PathTracerRayGen()
         radiancePreClamp.r > 1e-6 ? radiance.r / radiancePreClamp.r : 0.0,
         radiancePreClamp.g > 1e-6 ? radiance.g / radiancePreClamp.g : 0.0,
         radiancePreClamp.b > 1e-6 ? radiance.b / radiancePreClamp.b : 0.0);
-    const float3 transmissionRadiance = max(transmissionRadianceRaw * layerClampScale, 0.0.xxx);
+    const float3 transmissionRadiance =
+        max(transmissionRadianceRaw * layerClampScale, 0.0.xxx);
 
     // P5: write raw secondary radiance and an explicit initial UCW; no source-primary shading.
     g_GiReservoirCurrent[pixelIndex] = giReservoir;

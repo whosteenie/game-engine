@@ -41,7 +41,7 @@ void RunDxrSettingsTests(int& failures)
     settings.SetPtOpticalMotionReplayEnabled(true);
     settings.SetPtMirrorChainPsrEnabled(true);
     settings.SetPtRrTemporalValidityEnabled(false);
-    settings.SetPtPsrMaxBounces(99);
+    settings.SetPtPsrMaxBounces(999);
     settings.SetPtPsrSubpixelThreshold(9.0f);
     settings.ClampToHardwareCapabilities(true);
     expectTrue(settings.IsEnabled(), "enabled preserved when RT supported");

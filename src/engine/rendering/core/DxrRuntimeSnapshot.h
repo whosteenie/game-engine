@@ -33,7 +33,7 @@ struct DxrRuntimeSnapshot
     std::uint32_t options22Max1DDispatchSize = 0;
     std::uint32_t options22Max1DDispatchMeshSize = 0;
     std::array<PermutationResult, 4> permutations{};
-    std::string requestedSerPolicy = "automatic";
+    std::string requestedSerPolicy = "capability_selected";
     std::string selectedPermutation = "not_selected";
     std::string dispatchedPermutation = "not_dispatched";
     std::string fallbackReason = "not_evaluated";

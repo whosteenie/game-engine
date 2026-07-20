@@ -120,10 +120,16 @@ public:
         }
     }
 
-    void DispatchRays(const ShaderBindingTable& shaderBindingTable, const int width, const int height) const
+    void DispatchRays(
+        const ShaderBindingTable& shaderBindingTable,
+        const int width,
+        const int height,
+        const std::uint64_t raygenGpuAddress = 0) const
     {
         D3D12_DISPATCH_RAYS_DESC dispatchDesc{};
-        dispatchDesc.RayGenerationShaderRecord.StartAddress = shaderBindingTable.GetRaygenGpuAddress();
+        dispatchDesc.RayGenerationShaderRecord.StartAddress = raygenGpuAddress != 0
+            ? raygenGpuAddress
+            : shaderBindingTable.GetRaygenGpuAddress();
         dispatchDesc.RayGenerationShaderRecord.SizeInBytes = D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES;
         dispatchDesc.MissShaderTable.StartAddress = shaderBindingTable.GetMissGpuAddress();
         dispatchDesc.MissShaderTable.SizeInBytes = shaderBindingTable.GetMissRecordStride();

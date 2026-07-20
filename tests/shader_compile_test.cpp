@@ -110,6 +110,24 @@ void RunShaderCompileTests()
         ExpectShaderLibraryCompiles(
             "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
             "path_tracer.hlsl DXR library should compile");
+        HlslLibraryCompileOptions pathTracerRayGenerationOptions{};
+        pathTracerRayGenerationOptions.exports = {"PathTracerShadeRayGen"};
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
+            "path_tracer.hlsl partitioned shading ray-generation library should compile",
+            pathTracerRayGenerationOptions);
+        HlslLibraryCompileOptions pathTracerPsrResolveOptions{};
+        pathTracerPsrResolveOptions.exports = {"PathTracerPsrResolveRayGen"};
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
+            "path_tracer.hlsl partitioned PSR resolve library should compile",
+            pathTracerPsrResolveOptions);
+        HlslLibraryCompileOptions pathTracerTraceOptions{};
+        pathTracerTraceOptions.exports = {"PathTracerMiss", "PathTracerClosestHit"};
+        ExpectShaderLibraryCompiles(
+            "assets/shaders/raytracing/path_tracing/path_tracer.hlsl",
+            "path_tracer.hlsl partitioned trace library should compile",
+            pathTracerTraceOptions);
         ExpectShaderLibraryCompiles(
             "assets/shaders/raytracing/path_tracing/restir_di_temporal.hlsl",
             "restir_di_temporal.hlsl DXR library should compile");
@@ -188,14 +206,8 @@ void RunShaderCompileTests()
             static_cast<int>(D3D_SHADER_MODEL_6_9)};
         test::ExpectTrue(
             serCapabilities.SupportsShaderExecutionReordering()
-                && std::string(serCapabilities.GetPreferredLibraryProfile()) == "lib_6_6"
-                && DxrPathTracerDispatch::ShouldUseSerPermutation(
-                    true, DxrPathTracerDispatch::SerOverride::Automatic)
-                && !DxrPathTracerDispatch::ShouldUseSerPermutation(
-                    true, DxrPathTracerDispatch::SerOverride::ForceOff)
-                && !DxrPathTracerDispatch::ShouldUseSerPermutation(
-                    false, DxrPathTracerDispatch::SerOverride::ForceOn),
-            "SER selection should require SM 6.9 and always preserve the fallback");
+                && std::string(serCapabilities.GetPreferredLibraryProfile()) == "lib_6_6",
+            "SER selection should be fixed by SM 6.9 capability");
 
         const DxrFeatureCapabilities inlineCapabilities{
             static_cast<int>(D3D12_RAYTRACING_TIER_1_1),
@@ -224,17 +236,6 @@ void RunShaderCompileTests()
                 && unsupportedJson.find("\"fallback_reason\":\"capability_gate_not_supported\"")
                     != std::string::npos,
             "DXR runtime snapshot should distinguish unsupported capability fallback");
-
-        DxrRuntimeSnapshot forceOffSnapshot{};
-        forceOffSnapshot.requestedSerPolicy = "force_off";
-        forceOffSnapshot.selectedPermutation = "fallback_production";
-        forceOffSnapshot.fallbackReason = "requested_force_off";
-        const std::string forceOffJson = SerializeDxrRuntimeSnapshotJson(forceOffSnapshot);
-        test::ExpectTrue(
-            forceOffJson.find("\"requested_ser_policy\":\"force_off\"") != std::string::npos
-                && forceOffJson.find("\"selected_permutation\":\"fallback_production\"")
-                    != std::string::npos,
-            "DXR runtime snapshot should distinguish requested fallback policy");
 
         DxrRuntimeSnapshot supportedSnapshot{};
         supportedSnapshot.options22Query = "succeeded";

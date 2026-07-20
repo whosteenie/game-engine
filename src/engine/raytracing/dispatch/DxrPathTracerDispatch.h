@@ -21,13 +21,6 @@ class DxrRestirDispatch;
 class DxrPathTracerDispatch : public DxrDispatchBase
 {
 public:
-    enum class SerOverride : std::uint8_t
-    {
-        Automatic,
-        ForceOff,
-        ForceOn,
-    };
-
     struct FrameInputs
     {
         std::uintptr_t depthSrvCpuHandle = 0;
@@ -224,13 +217,7 @@ public:
     bool WarmUpPipelineIfNeeded(const PipelineWarmupProgress& progress = {});
     bool IsPipelineReady() const;
     bool DispatchedThisFrame(std::uint32_t viewportId) const;
-    SerOverride GetSerOverride() const { return m_serOverride; }
-    void SetSerOverride(SerOverride value);
     bool IsSerActive(std::uint32_t viewportId) const;
-    static bool ShouldUseSerPermutation(const bool supported, const SerOverride override)
-    {
-        return supported && override != SerOverride::ForceOff;
-    }
     static bool IsSupportedViewportId(const std::uint32_t viewportId)
     {
         return viewportId == 0 || viewportId == 1;
@@ -322,18 +309,11 @@ private:
     ViewportState& StateFor(std::uint32_t viewportId);
     const ViewportState& StateFor(std::uint32_t viewportId) const;
 
-    // The production pipeline lives in DxrDispatchBase. Diagnostics use an identical root/SBT
-    // layout but a separate compile-time shader permutation, kept warm to make mode changes cheap.
+    // The production pipeline lives in DxrDispatchBase. Diagnostics use the same root/SBT layout
+    // and are compiled lazily when first selected. SER is fixed by device capability.
     DxrPipeline m_diagnosticPipeline;
     ShaderBindingTable m_diagnosticShaderBindingTable;
     bool m_diagnosticPipelineReady = false;
-    DxrPipeline m_serPipeline;
-    ShaderBindingTable m_serShaderBindingTable;
-    bool m_serPipelineReady = false;
-    DxrPipeline m_serDiagnosticPipeline;
-    ShaderBindingTable m_serDiagnosticShaderBindingTable;
-    bool m_serDiagnosticPipelineReady = false;
-    SerOverride m_serOverride = SerOverride::Automatic;
     ViewportState m_sceneViewportState{0};
     ViewportState m_gameViewportState{1};
 };

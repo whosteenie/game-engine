@@ -2031,6 +2031,14 @@ void ScreenSpaceEffects::Apply(
         const GfxContext::GpuTimerScope gpuScopePresentation("Post-process/Presentation stage");
         RunApplyPresentationStage(state);
     }
+    // Optical-layer diagnostics consume scratch targets produced by the current frame's RR
+    // evaluation, so they must run after presentation rather than in the earlier generic debug
+    // stage. Previously these modes fell through and left the final composite on screen.
+    if (IsPtOpticalLayerDebugMode(state.debugMode))
+    {
+        BlitPtOpticalLayerDebug(state.outputTarget, state.viewportWidth, state.viewportHeight);
+        const_cast<ScreenSpaceEffects*>(this)->m_postProcessDebugRenderedThisFrame = true;
+    }
     FinalizeApplyFrame(state);
     CommitRenderedHistoryCompatibility();
 }

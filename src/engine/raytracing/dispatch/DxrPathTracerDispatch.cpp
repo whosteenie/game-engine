@@ -20,17 +20,6 @@
 
 namespace
 {
-    const char* GetSerPolicyLabel(const DxrPathTracerDispatch::SerOverride value)
-    {
-        switch (value)
-        {
-        case DxrPathTracerDispatch::SerOverride::ForceOff: return "force_off";
-        case DxrPathTracerDispatch::SerOverride::ForceOn: return "force_on";
-        case DxrPathTracerDispatch::SerOverride::Automatic: return "automatic";
-        }
-        return "missing";
-    }
-
     TemporalCameraState CameraStateFromCamera(const Camera& camera)
     {
         const glm::mat4 view = camera.GetViewMatrix();
@@ -118,13 +107,7 @@ void DxrPathTracerDispatch::Release()
     ReleaseCore();
     m_diagnosticShaderBindingTable.Release();
     m_diagnosticPipeline.Release();
-    m_serShaderBindingTable.Release();
-    m_serPipeline.Release();
-    m_serDiagnosticShaderBindingTable.Release();
-    m_serDiagnosticPipeline.Release();
     m_diagnosticPipelineReady = false;
-    m_serPipelineReady = false;
-    m_serDiagnosticPipelineReady = false;
 }
 
 void DxrPathTracerDispatch::ResetProjectResources()
@@ -133,57 +116,22 @@ void DxrPathTracerDispatch::ResetProjectResources()
     m_gameViewportState.ResetProjectResources();
 }
 
-void DxrPathTracerDispatch::SetSerOverride(const SerOverride value)
-{
-    m_serOverride = value;
-    GfxContext::Get().SetDxrRuntimeSerPolicy(GetSerPolicyLabel(value));
-}
-
 bool DxrPathTracerDispatch::IsPipelineReady() const
 {
-    if (!DxrDispatchBase::IsPipelineReady() || !m_diagnosticPipelineReady)
-    {
-        return false;
-    }
-    return !GfxContext::Get().IsShaderExecutionReorderingSupported()
-        || (m_serPipelineReady && m_serDiagnosticPipelineReady);
+    return DxrDispatchBase::IsPipelineReady();
 }
 
 bool DxrPathTracerDispatch::WarmUpPipelineIfNeeded(const PipelineWarmupProgress& progress)
 {
-    const bool serSupported = GfxContext::Get().IsShaderExecutionReorderingSupported();
-    const int stepCount = serSupported ? 4 : 2;
-    const auto reportStep = [&](const int step, const char* label) {
-        if (progress)
-        {
-            progress(step, stepCount, label);
-        }
-    };
-
+    const bool useSer = GfxContext::Get().IsShaderExecutionReorderingSupported();
     std::string error;
-    // Build both permutations during the existing DXR warmup window. Switching debug views then
-    // selects already-created state objects instead of compiling in an interactive frame.
-    reportStep(1, "production");
-    if (!EnsurePipeline(false, false, error))
+    if (progress)
     {
-        return false;
+        progress(1, 1, useSer ? "production SER" : "production");
     }
-    reportStep(2, "diagnostic");
-    if (!EnsurePipeline(true, false, error))
-    {
-        return false;
-    }
-    if (!serSupported)
-    {
-        return true;
-    }
-    reportStep(3, "production SER");
-    if (!EnsurePipeline(false, true, error))
-    {
-        return false;
-    }
-    reportStep(4, "diagnostic SER");
-    return EnsurePipeline(true, true, error);
+    // SER is a capability-selected property of this single production pipeline. Diagnostics are
+    // the only remaining lazy permutation.
+    return EnsurePipeline(false, useSer, error);
 }
 
 bool DxrPathTracerDispatch::EnsurePipeline(
@@ -191,51 +139,6 @@ bool DxrPathTracerDispatch::EnsurePipeline(
     const bool serPermutation,
     std::string& outError)
 {
-    DxrPipeline* pipeline = nullptr;
-    ShaderBindingTable* shaderBindingTable = nullptr;
-    bool* pipelineReady = nullptr;
-    const char* traceLabel = nullptr;
-    if (serPermutation)
-    {
-        pipeline = diagnosticPermutation ? &m_serDiagnosticPipeline : &m_serPipeline;
-        shaderBindingTable = diagnosticPermutation ? &m_serDiagnosticShaderBindingTable : &m_serShaderBindingTable;
-        pipelineReady = diagnosticPermutation ? &m_serDiagnosticPipelineReady : &m_serPipelineReady;
-        traceLabel = diagnosticPermutation ? "path-tracer-ser-diagnostic" : "path-tracer-ser";
-    }
-
-    if (serPermutation)
-    {
-        outError.clear();
-        if (*pipelineReady)
-        {
-            return true;
-        }
-        DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline begin");
-        if (!pipeline->CreatePathTracerPipeline(outError, diagnosticPermutation, true))
-        {
-            const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
-            GfxContext::Get().ReportDxrPathTracerPipelineResult(
-                diagnosticPermutation, true, status.compilerLibrary, status.rtpso, outError.c_str());
-            DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline failed: create pipeline");
-            return false;
-        }
-        if (!shaderBindingTable->BuildPathTracerTable(pipeline->GetProperties(), outError))
-        {
-            const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
-            GfxContext::Get().ReportDxrPathTracerPipelineResult(
-                diagnosticPermutation, true, status.compilerLibrary, status.rtpso, outError.c_str());
-            DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline failed: build SBT");
-            pipeline->Release();
-            return false;
-        }
-        const DxrPipeline::PathTracerPipelineStatus& status = pipeline->GetPathTracerPipelineStatus();
-        GfxContext::Get().ReportDxrPathTracerPipelineResult(
-            diagnosticPermutation, true, status.compilerLibrary, status.rtpso, "none");
-        *pipelineReady = true;
-        DxrBreadcrumb(std::string(traceLabel) + " EnsurePipeline ok");
-        return true;
-    }
-
     if (diagnosticPermutation)
     {
         outError.clear();
@@ -245,11 +148,11 @@ bool DxrPathTracerDispatch::EnsurePipeline(
         }
 
         DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline begin");
-        if (!m_diagnosticPipeline.CreatePathTracerPipeline(outError, true, false))
+        if (!m_diagnosticPipeline.CreatePathTracerPipeline(outError, true, serPermutation))
         {
             const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
             GfxContext::Get().ReportDxrPathTracerPipelineResult(
-                true, false, status.compilerLibrary, status.rtpso, outError.c_str());
+                true, serPermutation, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: create pipeline");
             return false;
         }
@@ -258,7 +161,7 @@ bool DxrPathTracerDispatch::EnsurePipeline(
         {
             const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
             GfxContext::Get().ReportDxrPathTracerPipelineResult(
-                true, false, status.compilerLibrary, status.rtpso, outError.c_str());
+                true, serPermutation, status.compilerLibrary, status.rtpso, outError.c_str());
             DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline failed: build SBT");
             m_diagnosticPipeline.Release();
             return false;
@@ -266,7 +169,7 @@ bool DxrPathTracerDispatch::EnsurePipeline(
 
         const DxrPipeline::PathTracerPipelineStatus& status = m_diagnosticPipeline.GetPathTracerPipelineStatus();
         GfxContext::Get().ReportDxrPathTracerPipelineResult(
-            true, false, status.compilerLibrary, status.rtpso, "none");
+            true, serPermutation, status.compilerLibrary, status.rtpso, "none");
         m_diagnosticPipelineReady = true;
         DxrBreadcrumb("path-tracer-diagnostic EnsurePipeline ok");
         return true;
@@ -274,8 +177,8 @@ bool DxrPathTracerDispatch::EnsurePipeline(
 
     const bool basePipelineReady = EnsurePipelineWith(
         "path-tracer",
-        [](DxrPipeline& pipeline, std::string& pipelineError) {
-            return pipeline.CreatePathTracerPipeline(pipelineError, false, false);
+        [serPermutation](DxrPipeline& pipeline, std::string& pipelineError) {
+            return pipeline.CreatePathTracerPipeline(pipelineError, false, serPermutation);
         },
         [](ShaderBindingTable& shaderBindingTable, const DxrPipeline& pipeline, std::string& tableError) {
             return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), tableError);
@@ -283,7 +186,11 @@ bool DxrPathTracerDispatch::EnsurePipeline(
         outError);
     const DxrPipeline::PathTracerPipelineStatus& status = m_pipeline.GetPathTracerPipelineStatus();
     GfxContext::Get().ReportDxrPathTracerPipelineResult(
-        false, false, status.compilerLibrary, status.rtpso, basePipelineReady ? "none" : outError.c_str());
+        false,
+        serPermutation,
+        status.compilerLibrary,
+        status.rtpso,
+        basePipelineReady ? "none" : outError.c_str());
     return basePipelineReady;
 }
 
@@ -352,19 +259,16 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     std::string error;
 
     const bool diagnosticPermutation = ptDebugIsolateMode != 0;
-    const bool serPermutation = ShouldUseSerPermutation(
-        GfxContext::Get().IsShaderExecutionReorderingSupported(), m_serOverride);
+    const bool serPermutation = GfxContext::Get().IsShaderExecutionReorderingSupported();
     const char* const fallbackReason = serPermutation
         ? "none"
-        : (m_serOverride == SerOverride::ForceOff
-            ? "requested_force_off"
-            : "capability_gate_not_supported");
-    GfxContext::Get().SetDxrRuntimeSerPolicy(GetSerPolicyLabel(m_serOverride));
+        : "capability_gate_not_supported";
+    GfxContext::Get().SetDxrRuntimeSerPolicy("capability_selected");
     GfxContext::Get().ReportDxrPathTracerSelection(
         diagnosticPermutation, serPermutation, fallbackReason);
-    const bool selectedPipelineReady = serPermutation
-        ? (diagnosticPermutation ? m_serDiagnosticPipelineReady : m_serPipelineReady)
-        : (diagnosticPermutation ? m_diagnosticPipelineReady : m_pipelineReady);
+    const bool selectedPipelineReady = diagnosticPermutation
+        ? m_diagnosticPipelineReady
+        : m_pipelineReady;
     if (!selectedPipelineReady)
     {
         if (!EnsurePipeline(diagnosticPermutation, serPermutation, error))
@@ -374,15 +278,14 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
         }
     }
 
-    if (viewport.m_activeDiagnosticPermutation != diagnosticPermutation
-        || viewport.m_activeSerPermutation != serPermutation)
+    if (viewport.m_activeDiagnosticPermutation != diagnosticPermutation)
     {
         // Reservoir contents and the displayed PT output must never cross a permutation boundary.
         // This is intentionally the only invalidation performed for a switch.
         viewport.m_dispatchContext.InvalidateRestirHistory();
         viewport.m_activeDiagnosticPermutation = diagnosticPermutation;
-        viewport.m_activeSerPermutation = serPermutation;
     }
+    viewport.m_activeSerPermutation = serPermutation;
 
     DxrBreadcrumb("path-tracer dispatch begin");
     SceneRenderTrace::Scope dispatchScope("dxr-dispatch-path-tracer");
@@ -521,6 +424,7 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     constants.ptDeterministicOpticalSplit = ptDeterministicOpticalSplit ? 1.0f : 0.0f;
     constants.ptPsrParams[0] = static_cast<float>(std::clamp(ptPsrMaxBounces, 1, 32));
     constants.ptPsrParams[1] = std::clamp(ptPsrSubpixelThreshold, 0.0f, 2.0f);
+    constants.ptPsrParams[2] = 0.0f;
 
     viewport.m_lastEnvEquirectSrvCpuHandle = frameInputs.envEquirectSrvCpuHandle;
     viewport.m_lastEnvImportanceCdfSrvIndex = frameInputs.envImportanceCdfSrvIndex;
@@ -563,15 +467,15 @@ bool DxrPathTracerDispatch::DispatchIfEnabled(
     const GfxContext::GpuTimerScope gpuScopePrimary("Path tracer/Primary rays");
     if (!viewport.m_dispatchContext.DispatchPathTracer(
             commandList4,
-            serPermutation
-                ? (diagnosticPermutation ? m_serDiagnosticPipeline.GetStateObject() : m_serPipeline.GetStateObject())
-                : (diagnosticPermutation ? m_diagnosticPipeline.GetStateObject() : m_pipeline.GetStateObject()),
-            serPermutation
-                ? (diagnosticPermutation ? m_serDiagnosticPipeline.GetGlobalRootSignature() : m_serPipeline.GetGlobalRootSignature())
-                : (diagnosticPermutation ? m_diagnosticPipeline.GetGlobalRootSignature() : m_pipeline.GetGlobalRootSignature()),
-            serPermutation
-                ? (diagnosticPermutation ? m_serDiagnosticShaderBindingTable : m_serShaderBindingTable)
-                : (diagnosticPermutation ? m_diagnosticShaderBindingTable : m_shaderBindingTable),
+            diagnosticPermutation
+                ? m_diagnosticPipeline.GetStateObject()
+                : m_pipeline.GetStateObject(),
+            diagnosticPermutation
+                ? m_diagnosticPipeline.GetGlobalRootSignature()
+                : m_pipeline.GetGlobalRootSignature(),
+            diagnosticPermutation
+                ? m_diagnosticShaderBindingTable
+                : m_shaderBindingTable,
             dispatchInputs,
             width,
             height,

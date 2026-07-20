@@ -905,6 +905,7 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
         params.ptDeterministicOpticalSplit ? 1.0f : 0.0f;
     constants.ptPsrParams[0] = static_cast<float>(params.ptPsrMaxBounces);
     constants.ptPsrParams[1] = params.ptPsrSubpixelThreshold;
+    constants.ptPsrParams[2] = 0.0f;
     constants.paddingUnjitteredViewProj[3] = params.motionHistoryValid ? 1.0f : 0.0f;
     constants.paddingUnjitteredViewProj[2] =
         2.0f * std::tan(glm::radians(params.camera->GetFov()) * 0.5f)
