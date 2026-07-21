@@ -6,8 +6,9 @@
 #include "app/inspector/InspectorEditMode.h"
 #include "app/inspector/InspectorMultiEdit.h"
 #include "app/inspector/InspectorTransform.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneComponentCatalog.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "app/scene/document/SceneComponentCatalog.h"
 #include "app/undo/UndoCommand.h"
 #include "app/editor/EditorMouseWrapping.h"
 #include "engine/components/ColliderComponent.h"
@@ -16,13 +17,16 @@
 #include "engine/scene/InspectorComponentOrder.h"
 #include "engine/lighting/Light.h"
 #include "engine/components/LightComponent.h"
-#include "engine/rendering/ColorSpace.h"
-#include "engine/rendering/Material.h"
+#include "engine/rendering/core/ColorSpace.h"
+#include "engine/rendering/resources/Material.h"
 #include "engine/components/RigidBodyComponent.h"
 #include "engine/scene/SceneObject.h"
-#include "engine/rendering/Texture.h"
+#include "engine/rendering/resources/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/scene/Transform.h"
+#include "engine/scene/RotationUtils.h"
+#include "engine/lighting/EnvironmentMap.h"
+#include "engine/lighting/IBL.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -677,6 +681,14 @@ namespace
             }
 
             glm::vec3 rotationDegrees = transform.GetRotationDegrees();
+            const bool rotationLockedByHdrAlignment = object.HasLight()
+                && object.GetLight().type == LightType::Directional
+                && object.GetLight().autoAlignWithHdrSkybox;
+            if (rotationLockedByHdrAlignment)
+            {
+                ImGui::BeginDisabled();
+            }
+            ImGui::BeginGroup();
             if (DrawTransformRow(
                     "Rotation",
                     rotationDegrees,
@@ -686,6 +698,15 @@ namespace
             {
                 transform.SetRotationDegrees(rotationDegrees);
                 scene.MarkDirty();
+            }
+            ImGui::EndGroup();
+            if (rotationLockedByHdrAlignment)
+            {
+                ImGui::EndDisabled();
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                {
+                    ImGui::SetTooltip("Rotation is controlled by HDR skybox auto-alignment.");
+                }
             }
 
             if (DrawTransformRow(
@@ -761,6 +782,31 @@ namespace
 
         if (light.type == LightType::Directional)
         {
+            bool autoAlignWithHdrSkybox = light.autoAlignWithHdrSkybox;
+            if (ImGui::Checkbox("Auto-align with HDR skybox", &autoAlignWithHdrSkybox))
+            {
+                light.autoAlignWithHdrSkybox = autoAlignWithHdrSkybox;
+                if (autoAlignWithHdrSkybox)
+                {
+                    const IBL& ibl = scene.GetRenderer().GetEnvironmentMap().GetIBL();
+                    if (ibl.HasDetectedSunDirection())
+                    {
+                        Transform worldTransform = Transform::FromMatrix(scene.GetWorldMatrix(objectIndex));
+                        worldTransform.rotation = RotationUtils::QuatFromLocalYAxis(
+                            ibl.GetDetectedSunDirection());
+                        scene.SetObjectWorldMatrix(objectIndex, worldTransform.ToMatrix());
+                    }
+                }
+                scene.MarkDirty();
+            }
+            HandleLightFieldEditEvents(editContext);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip(
+                    "Keeps this light's direction synchronized when the HDR skybox is rotated. "
+                    "It does not override manual scene-light edits.");
+            }
+
             bool castsShadow = light.castsShadow;
             if (ImGui::Checkbox("Cast shadows", &castsShadow))
             {

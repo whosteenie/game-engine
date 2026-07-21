@@ -1,44 +1,21 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorUndoWidgets.h"
-#include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/RenderDiagnostics.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/raytracing/DxrDiagnostics.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
+#include "engine/rhi/DlssContext.h"
+#include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
+#include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <vector>
+
 
 void DrawAntiAliasingSection(const LightingPanelContext& ctx)
 {
@@ -72,7 +49,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         const DlssContext& dlss = DlssContext::Get();
         if (!dlss.IsReady())
         {
-            ImGui::TextDisabled("DLSS: initializing…");
+            ImGui::TextDisabled("DLSS: initializing...");
         }
         else if (dlss.IsDlssSupported())
         {
@@ -139,7 +116,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 const bool selected = currentAaMode == mode;
                 if (ImGui::Selectable(AntiAliasingModeLabel(mode), selected) && !selected && !disabled)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "aa_mode",
                         editContext,
                         scene,
                         "Anti-aliasing",
@@ -164,7 +142,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                             ImGui::SetTooltip(
                                 DlssContext::Get().IsReady()
                                     ? "Requires an NVIDIA RTX GPU with a recent driver."
-                                    : "DLSS is still initializing…");
+                            : "DLSS is still initializing...");
                         }
                         else if (geometryMsaaBlocksResolve && modeOwnsResolve)
                         {
@@ -176,6 +154,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
 
             ImGui::EndCombo();
         }
+
+        RendererSettingUi::MarkRendered("aa_mode");
 
         // DLSS SR quality preset (drives the internal render resolution). Enabled only in DLSS SR.
         if (currentAaMode == AntiAliasingMode::DLSS)
@@ -194,7 +174,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     const bool selected = currentPreset == preset;
                     if (ImGui::Selectable(DlssPresetLabel(preset), selected) && !selected)
                     {
-                        ApplyRendererChange(
+                        RendererSettingUi::ApplyChange(
+                            "dlss_preset",
                             editContext,
                             scene,
                             "DLSS preset",
@@ -211,6 +192,9 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 }
                 ImGui::EndCombo();
             }
+            RendererSettingUi::MarkRendered("dlss_preset");
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Trades image detail for performance. Quality renders at a higher internal resolution than Performance modes.");
 
             const int renderWidth = screenSpaceEffects.GetRenderWidth();
             const int renderHeight = screenSpaceEffects.GetRenderHeight();
@@ -227,7 +211,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
             else
             {
-                ImGui::TextDisabled("DLSS GPU pass: (collecting…)");
+                ImGui::TextDisabled("DLSS GPU pass: (collecting...)");
             }
         }
         else if (currentAaMode == AntiAliasingMode::DLAA)
@@ -271,6 +255,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetRayReconstruction(enabled);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ray_reconstruction");
             if (ImGui::IsItemHovered())
             {
                 ImGui::SetTooltip(
@@ -298,7 +283,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
 
             // D4 (rr-gi-diagnosis.md): RR model preset A/B. DLSSDOptions are pushed every frame,
-            // so Streamline hot-swaps the model on change — no restart; history resets on switch.
+            // so Streamline hot-swaps the model on change - no restart; history resets on switch.
             {
                 const bool rrPresetSelectable = rrAvailable && rayReconstruction;
                 if (!rrPresetSelectable)
@@ -317,7 +302,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                         IM_ARRAYSIZE(rrPresetLabels)))
                 {
                     const auto preset = static_cast<DlssRrPreset>(rrPresetIndex);
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "rr_model_preset",
                         editContext,
                         scene,
                         "RR model preset",
@@ -338,6 +324,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                     ImGui::EndDisabled();
                 }
             }
+            RendererSettingUi::MarkRendered("rr_model_preset");
 
             float dlssSharpness = screenSpaceEffects.GetDlssSharpness();
             UndoableRendererSliderFloat(
@@ -367,27 +354,27 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         if (geometryMsaaBlocksResolve || resolveBlocksGeometryMsaa)
         {
             LightingPanelUi::DrawWrappedNote(
-                "Geometry MSAA above 1× and TAA/DLAA/DLSS are mutually exclusive. "
+                    "Geometry MSAA above 1x and TAA/DLAA/DLSS are mutually exclusive. "
                 "Incompatible options are grayed out; choosing MSAA while a resolve owner is active switches post AA to None.");
         }
         else
         {
             LightingPanelUi::DrawWrappedNote(
-                "Geometry MSAA supersamples the scene pass before post AA. Pick 1× for standard single-sample rendering.");
+                "Geometry MSAA supersamples the scene pass before post AA. Pick 1x for standard single-sample rendering.");
         }
 
-        const char* msaaPreview = "1× (None)";
+        const char* msaaPreview = "1x (None)";
         if (msaaSampleCount == 2)
         {
-            msaaPreview = "2× MSAA";
+            msaaPreview = "2x MSAA";
         }
         else if (msaaSampleCount == 4)
         {
-            msaaPreview = "4× MSAA";
+            msaaPreview = "4x MSAA";
         }
         else if (msaaSampleCount == 8)
         {
-            msaaPreview = "8× MSAA";
+            msaaPreview = "8x MSAA";
         }
 
         static constexpr struct MsaaPreset
@@ -395,10 +382,10 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             int count;
             const char* label;
         } kMsaaPresets[] = {
-            {1, "1× (None)"},
-            {2, "2× MSAA"},
-            {4, "4× MSAA"},
-            {8, "8× MSAA"},
+                {1, "1x (None)"},
+                {2, "2x MSAA"},
+                {4, "4x MSAA"},
+                {8, "8x MSAA"},
         };
 
         if (ImGui::BeginCombo("Geometry MSAA", msaaPreview))
@@ -416,7 +403,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 const bool selected = msaaSampleCount == preset.count;
                 if (ImGui::Selectable(preset.label, selected) && !selected && !disabled)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "geometry_msaa",
                         editContext,
                         scene,
                         "Geometry MSAA",
@@ -451,6 +439,9 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             }
             ImGui::EndCombo();
         }
+        RendererSettingUi::MarkRendered("geometry_msaa");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Smooths polygon edges by sampling geometry multiple times. Higher sample counts cost more GPU time and memory.");
 
         const bool reloadRequested = renderer.IsGeometryMsaaReloadRequested();
         if (screenSpaceEffects.IsMsaaPendingReload())
@@ -479,7 +470,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
             ImGui::SameLine();
             if (reloadRequested)
             {
-                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "Applying…");
+                ImGui::TextColored(ImVec4(0.55f, 0.85f, 1.0f, 1.0f), "Applying...");
             }
             else
             {
@@ -488,7 +479,7 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
         }
         else if (msaaSampleCount > 1)
         {
-            ImGui::TextDisabled("Geometry MSAA active: %d×", msaaSampleCount);
+            ImGui::TextDisabled("Geometry MSAA active: %dx", msaaSampleCount);
         }
 
         if (renderer.HasGeometryMsaaReloadFailed() && !renderer.GetGeometryMsaaReloadError().empty())
@@ -506,6 +497,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Higher values smooth more fine detail, but may make the image look softer.");
 
             float fxaaEdge = screenSpaceEffects.GetFxaaEdgeThreshold();
             if (ImGui::SliderFloat("FXAA edge threshold", &fxaaEdge, 0.03125f, 0.5f))
@@ -514,6 +507,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls which contrast changes count as edges. Lower values smooth more edges at extra cost.");
         }
         else if (currentAaMode == AntiAliasingMode::SMAA)
         {
@@ -525,6 +520,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls how sensitive SMAA is to edges. Lower values catch subtler edges but may over-smooth detail.");
 
             int smaaSteps = screenSpaceEffects.GetSmaaSearchSteps();
             if (ImGui::SliderInt("SMAA search steps", &smaaSteps, 1, 8))
@@ -533,6 +530,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How far SMAA searches along an edge. More steps improve long edges but cost more GPU time.");
         }
         else if (currentAaMode == AntiAliasingMode::TAA)
         {
@@ -545,6 +544,8 @@ void DrawAntiAliasingSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How much of previous frames is reused. Higher values reduce shimmer but can leave trails behind motion.");
         }
         else if (currentAaMode == AntiAliasingMode::SSAA)
         {

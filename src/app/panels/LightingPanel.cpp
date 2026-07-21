@@ -2,15 +2,16 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorWidgets.h"
+#include "app/editor/EditorSettings.h"
 #include "app/panels/lighting/LightingPanelContext.h"
 #include "app/panels/lighting/LightingPanelSections.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
 #include "engine/camera/Camera.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
@@ -18,11 +19,13 @@
 
 void LightingPanel::Draw(
     Scene& scene,
-    const Camera& camera,
+    Camera& camera,
     const int viewportWidth,
     const int viewportHeight,
-    UndoStack* undoStack) const
+    UndoStack* undoStack,
+    EditorSettings* editorSettings) const
 {
+    UpdateRayTracingDiagnosticCapture(scene, camera, viewportWidth, viewportHeight);
     EditorPanelConstraints::ApplySideColumnPanel();
     if (!EditorPanelConstraints::BeginDockedPanel("Renderer Tuning", m_showPanel))
     {
@@ -36,10 +39,24 @@ void LightingPanel::Draw(
     glm::vec3 cameraPosition = camera.GetPosition();
     EditorWidgets::SanitizeSignedZero(cameraPosition);
     ImGui::Text(
-        "Camera: (%.1f, %.1f, %.1f)",
+        "Camera position: (%.4f, %.4f, %.4f)",
         cameraPosition.x,
         cameraPosition.y,
         cameraPosition.z);
+    ImGui::Text(
+        "Camera rotation (deg): yaw %.4f, pitch %.4f",
+        camera.GetYaw(),
+        camera.GetPitch());
+    ImGui::Text("Fly speed: %.2fx", camera.GetFlySpeed());
+
+    if (ImGui::TreeNodeEx("Scene View Controls"))
+    {
+        ImGui::TextUnformatted("LMB: select/deselect or drag gizmo.");
+        ImGui::TextUnformatted("Move gizmo center + Alt: surface snap.");
+        ImGui::TextUnformatted("Rotate gizmo + Ctrl: snap 15 degrees.");
+        ImGui::TextUnformatted("RMB + WASD/Q/E: fly camera. Wheel: speed. Shift: move faster.");
+        ImGui::TreePop();
+    }
 
     SceneRenderer& renderer = scene.GetRenderer();
     if (renderer.HasPendingRendererSettings())
@@ -73,6 +90,7 @@ void LightingPanel::Draw(
         ibl,
         environmentMap,
         screenSpaceEffects,
+        editorSettings,
     };
 
     DrawSceneSection(panelContext);

@@ -1,6 +1,6 @@
 #include "engine/lighting/SceneLighting.h"
 
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 
 #include <glm/glm.hpp>
 #include <stdexcept>

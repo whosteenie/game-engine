@@ -1,9 +1,11 @@
 #include "app/editor/TuningSectionState.h"
+#include "app/editor/SettingRegistry.h"
 
 #include <imgui.h>
 #include <imgui_internal.h>
 
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -15,6 +17,11 @@ namespace
 
     std::map<std::string, bool> g_sectionOpen;
     bool g_handlerRegistered = false;
+    std::string g_searchSection;
+    std::string g_activeSection;
+    std::string g_searchTarget;
+    int g_searchHighlightFrames = 0;
+    bool g_searchScrollPending = false;
 
     // ImGui ini keys must be free of spaces and '='; derive a stable key from the label.
     std::string MakeKey(const char* label)
@@ -86,6 +93,7 @@ namespace TuningSectionState
 
     bool SectionHeader(const char* label, const bool defaultOpen)
     {
+        g_activeSection = label != nullptr ? label : "";
         const std::string key = MakeKey(label);
 
         bool seeded = defaultOpen;
@@ -93,6 +101,12 @@ namespace TuningSectionState
         if (persisted != g_sectionOpen.end())
         {
             seeded = persisted->second;
+        }
+        // Search navigation must take precedence over the saved collapsed state; otherwise a
+        // target inside a previously closed section can never render to scroll to or highlight.
+        if (g_searchSection == label)
+        {
+            seeded = true;
         }
 
         // NoSavedSettings: dock/imgui.ini window state must not override our custom handler.
@@ -111,5 +125,84 @@ namespace TuningSectionState
         }
 
         return open;
+    }
+
+    const char* ActiveSection() { return g_activeSection.c_str(); }
+
+    void RequestSearchNavigation(const char* sectionLabel, const char* targetId)
+    {
+        g_searchSection = sectionLabel != nullptr ? sectionLabel : "";
+        g_searchTarget = targetId != nullptr ? targetId : "";
+        g_searchHighlightFrames = 90;
+        g_searchScrollPending = true;
+    }
+
+    bool IsSearchTarget(const char* targetId)
+    {
+        return targetId != nullptr && g_searchTarget == targetId;
+    }
+
+    void MarkSearchTarget(const char* targetId)
+    {
+        if (!IsSearchTarget(targetId)) return;
+        if (g_searchScrollPending)
+        {
+            ImGui::SetScrollHereY(0.35f);
+            g_searchScrollPending = false;
+        }
+        if (g_searchHighlightFrames > 0)
+        {
+            const float alpha = 0.18f + 0.16f * std::sin(static_cast<float>(g_searchHighlightFrames) * 0.18f);
+            ImGui::GetWindowDrawList()->AddRectFilled(
+                ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), IM_COL32(255, 210, 70, static_cast<int>(alpha * 255.0f)), 4.0f);
+            --g_searchHighlightFrames;
+        }
+    }
+
+    void MarkCurrentItemIfSearchTarget()
+    {
+        if (g_searchTarget.empty() || ImGui::GetCurrentContext() == nullptr)
+        {
+            return;
+        }
+
+        const SettingRegistry::Descriptor* descriptor = SettingRegistry::FindById(g_searchTarget);
+        if (descriptor == nullptr || descriptor->section != g_activeSection)
+        {
+            return;
+        }
+
+        ImGuiWindow* const window = ImGui::GetCurrentWindow();
+        if (window != nullptr && window->GetID(descriptor->label.data()) == GImGui->LastItemData.ID)
+        {
+            MarkSearchTarget(descriptor->id.data());
+        }
+    }
+
+    bool CurrentItemIsUndoable()
+    {
+        if (ImGui::GetCurrentContext() == nullptr)
+        {
+            return true;
+        }
+
+        ImGuiWindow* const window = ImGui::GetCurrentWindow();
+        if (window == nullptr)
+        {
+            return true;
+        }
+
+        for (const SettingRegistry::Descriptor& descriptor : SettingRegistry::GetAll())
+        {
+            if (descriptor.section != g_activeSection)
+            {
+                continue;
+            }
+            if (window->GetID(descriptor.label.data()) == GImGui->LastItemData.ID)
+            {
+                return descriptor.undoPolicy == SettingRegistry::UndoPolicy::Undoable;
+            }
+        }
+        return true;
     }
 }

@@ -10,6 +10,8 @@ struct SelectionMeshDraw
 {
     const Mesh* mesh = nullptr;
     glm::mat4 worldMatrix = glm::mat4(1.0f);
+    glm::vec3 localBoundsMin{0.0f};
+    glm::vec3 localBoundsMax{0.0f};
 };
 
 void CollectRenderableSelectionMeshes(

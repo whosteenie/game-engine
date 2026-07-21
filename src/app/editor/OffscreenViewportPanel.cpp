@@ -23,12 +23,25 @@ namespace OffscreenViewportPanel
     {
         state.renderWidth = 0;
         state.renderHeight = 0;
+        state.resizeStabilizer.Reset();
         state.hasReadyCompositeFrame = false;
     }
 
     bool HasValidRenderTarget(const State& state)
     {
         return state.showPanel && state.renderWidth > 0 && state.renderHeight > 0;
+    }
+
+    bool IsLiveResizePending(const State& state)
+    {
+        return state.resizeStabilizer.IsPending();
+    }
+
+    bool HasReadyCompositeFrame(const State& state)
+    {
+        return state.hasReadyCompositeFrame
+            && state.framebuffer.IsValid()
+            && state.framebuffer.GetColorTexture() != 0;
     }
 
     std::uintptr_t GetFramebuffer(const State& state)
@@ -88,6 +101,13 @@ namespace OffscreenViewportPanel
         state.compositeDrawList = nullptr;
     }
 
+    void InvalidateCompositeFrame(State& state)
+    {
+        state.hasReadyCompositeFrame = false;
+        state.hasCompositeTarget = false;
+        state.compositeDrawList = nullptr;
+    }
+
     bool UpdateRenderSize(State& state, const ImVec2& available)
     {
         const ImVec2 framebufferScale = ImGui::GetIO().DisplayFramebufferScale;
@@ -96,10 +116,16 @@ namespace OffscreenViewportPanel
         const int requestedHeight =
             std::max(1, static_cast<int>(available.y * framebufferScale.y + 0.5f));
 
-        if (state.renderWidth <= 0
-            || state.renderHeight <= 0
-            || std::abs(requestedWidth - state.renderWidth) > 1
-            || std::abs(requestedHeight - state.renderHeight) > 1)
+        // Keep the committed framebuffer while the panel is moving. DrawViewportRegion already
+        // scales that texture to the current ImGui rectangle, so no GPU target or Streamline
+        // feature needs to be recreated until the requested extent has settled.
+        const ViewportResizeStabilizer::Decision decision = state.resizeStabilizer.Update(
+            state.renderWidth,
+            state.renderHeight,
+            requestedWidth,
+            requestedHeight,
+            ImGui::GetTime());
+        if (decision == ViewportResizeStabilizer::Decision::Commit)
         {
             state.renderWidth = requestedWidth;
             state.renderHeight = requestedHeight;

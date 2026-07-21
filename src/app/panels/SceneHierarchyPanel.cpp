@@ -4,8 +4,8 @@
 #include "app/editor/EditorClipboard.h"
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/project/ProjectSession.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneImportService.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/import/SceneImportService.h"
 #include "app/undo/UndoCommand.h"
 #include "engine/assets/FileDialog.h"
 #include "engine/lighting/Light.h"
@@ -504,6 +504,22 @@ namespace
             });
         }
 
+        const SceneObject& contextObject = scene.GetSceneObject(static_cast<std::size_t>(objectIndex));
+        if (!contextObject.GetImportAssetPath().empty()
+            && ImGui::MenuItem("Create Model Instance"))
+        {
+            panel.PushInsertMutation(scene, "Create Model Instance", [objectIndex](Scene& target) {
+                const int duplicatedIndex = target.DuplicateObject(objectIndex);
+                if (duplicatedIndex >= 0)
+                {
+                    target.SelectSingle(duplicatedIndex);
+                    return std::vector<int>{duplicatedIndex};
+                }
+
+                return std::vector<int>{};
+            });
+        }
+
         ImGui::Separator();
 
         if (ImGui::MenuItem("Cut", "Ctrl+X"))
@@ -552,10 +568,10 @@ namespace
             ImGui::SetKeyboardFocusHere();
         }
 
-        const float textLineHeight = ImGui::GetTextLineHeight();
-        const float rawFramePaddingY = (textLineHeight - ImGui::GetFontSize()) * 0.5f;
-        const float framePaddingY = rawFramePaddingY > 0.0f ? rawFramePaddingY : 0.0f;
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, framePaddingY));
+        // Match the TreeNode row's vertical padding so swapping its label for an input does not
+        // move the text baseline or change the row height. Keep horizontal padding tight because
+        // the input begins at the label position rather than the tree-node origin.
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, ImGui::GetStyle().FramePadding.y));
 
         const float inputWidth = ImGui::GetContentRegionAvail().x;
         ImGui::SetNextItemWidth(inputWidth > 0.0f ? inputWidth : -FLT_MIN);

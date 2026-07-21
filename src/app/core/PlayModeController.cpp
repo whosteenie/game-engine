@@ -1,9 +1,9 @@
 #include "app/core/PlayModeController.h"
 
 #include "app/core/PhysicsWorld.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneEditor.h"
-#include "engine/platform/EngineLog.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/editing/SceneEditor.h"
+#include "engine/platform/diagnostics/EngineLog.h"
 #include "engine/scene/Transform.h"
 
 #include <exception>

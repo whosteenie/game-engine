@@ -21,6 +21,8 @@ struct ProjectEditorState
     bool showSceneView = true;
     bool showGameView = true;
     bool showPerformance = true;
+    bool performanceGpuPassSmoothing = false;
+    bool performanceCpuPassSmoothing = false;
 
     std::unordered_map<SceneObjectId, bool> hierarchyNodeOpenStates;
 

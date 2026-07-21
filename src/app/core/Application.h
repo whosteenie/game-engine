@@ -3,6 +3,7 @@
 #include "app/project/ProjectEditorState.h"
 #include "app/core/PlayModeController.h"
 #include "app/undo/UndoStack.h"
+#include "app/panels/PerformancePanel.h"
 
 #include "app/editor/EditorClipboard.h"
 
@@ -14,7 +15,6 @@ class EditorDockSpace;
 class EditorTopToolbar;
 class EditorSettings;
 class LightingPanel;
-class PerformancePanel;
 class MainMenuBar;
 class ProjectChooser;
 class ProjectFilesPanel;
@@ -41,12 +41,13 @@ public:
 private:
     void InitGLFW();
 
-    void Update(double deltaTime);
+    void Update(double deltaTime, ApplicationFrameDiagnostics& frameDiagnostics);
     void Render();
     void OnFramebufferResize(int width, int height);
     void RequestClose();
     void RequestForcedClose();
     void RequestNewProject();
+    void RequestOpenProject();
     void DrawUnsavedChangesDialog();
     void CaptureProjectEditorState(ProjectEditorState& editorState) const;
     void ApplyProjectEditorState(const ProjectEditorState& editorState);
@@ -60,6 +61,11 @@ private:
     void PumpStartupFramesUntilDlssReady();
     void UpdatePendingProjectStartupProgress(const char* message) const;
     void ProcessQueuedProjectOpenIfReady();
+    void ProcessPendingProjectTeardown();
+    void ApplyS1p6CaptureModeIfRequested();
+    void ApplyS2p1CaptureModeIfRequested();
+    void ApplyS2p4CaptureModeIfRequested();
+    bool RunS2p2ExtentQueryMatrixIfRequested();
 
     Scene* GetEditorTargetScene();
     const Scene* GetEditorTargetScene() const;
@@ -71,7 +77,10 @@ private:
 
     bool m_pendingClose = false;
     bool m_pendingNewProject = false;
+    bool m_pendingOpenProject = false;
+    bool m_pendingProjectTeardown = false;
     bool m_fatalGpuLossHandled = false;
+    bool m_projectLoadBenchmarkAwaitingGpuCompletion = false;
 
     int m_width;
     int m_height;
@@ -95,6 +104,8 @@ private:
     std::unique_ptr<SceneViewportPanel> m_sceneViewportPanel;
     std::unique_ptr<GameViewportPanel> m_gameViewportPanel;
     std::unique_ptr<EditorDockSpace> m_editorDockSpace;
+    std::unique_ptr<class AutomatedBenchmarkCapture> m_automatedBenchmarkCapture;
+    std::unique_ptr<class AutomatedOpticalOrbitCapture> m_automatedOpticalOrbitCapture;
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<Input> m_input;
     std::unique_ptr<Scene> m_scene;
@@ -107,6 +118,12 @@ private:
     bool m_globalEditorLayoutLoaded = false;
     bool m_editorLayoutRestoredFromDisk = false;
     bool m_pendingEditorLayoutValidation = false;
+    int m_editorLayoutStabilizationFrames = 0;
+    bool m_automationDualViewportLayout = false;
+    bool m_s1p6CaptureModeApplied = false;
+    bool m_s2p1CaptureModeApplied = false;
+    bool m_s2p4CaptureModeApplied = false;
+    bool m_s2p2ExtentQueryMatrixComplete = false;
     UndoStack m_undoStack;
     EditorClipboard m_editorClipboard;
     ProjectEditorState m_projectEditorState;

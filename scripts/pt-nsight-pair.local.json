@@ -1,0 +1,23 @@
+{
+  "sessionName": "pt-floor-sky-env-bsdf-fusion-20260714",
+  "engineExe": "build/Release/game-engine.exe",
+  "workingDirectory": "build/Release",
+  "warmupSeconds": 10,
+  "traceFrames": 5,
+  "captureTimestampBaseline": true,
+  "baselineWarmupSeconds": 10,
+  "baselineWarmupFrames": 120,
+  "baselineSampleFrames": 300,
+  "captureFrame": true,
+  "architecture": "Ada",
+  "views": [
+    {
+      "name": "sky",
+      "project": "test_proj/pt_bench_sky/pt_bench_sky.gameproject"
+    },
+    {
+      "name": "floor",
+      "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject"
+    }
+  ]
+}

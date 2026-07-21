@@ -2,8 +2,8 @@
 
 #include "engine/camera/Camera.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/SkyboxRenderer.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/passes/SkyboxRenderer.h"
 
 #include <glm/gtc/constants.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -92,8 +92,20 @@ void EnvironmentMap::SetRotationDegrees(const float degrees)
     if (std::abs(degrees - m_rotationDegrees) > 1e-4f)
     {
         m_rotationDegrees = degrees;
+    }
+}
+
+void EnvironmentMap::CommitRotation()
+{
+    if (std::abs(m_rotationDegrees - m_lastLoadedRotationDegrees) > 1e-4f)
+    {
         RequestReload();
     }
+}
+
+float EnvironmentMap::GetRotationYRadians() const
+{
+    return glm::radians(m_rotationDegrees);
 }
 
 void EnvironmentMap::SetExposure(const float exposure)
@@ -161,7 +173,6 @@ void EnvironmentMap::SyncGpuResources()
     }
 
     const bool sourceChanged = m_hdrPath != m_lastLoadedPath
-        || std::abs(m_rotationDegrees - m_lastLoadedRotationDegrees) > 1e-4f
         || m_iblCubemapResolution != m_lastLoadedIblCubemapResolution;
 
     if (!m_reloadPending && !sourceChanged && m_ibl->IsReady())

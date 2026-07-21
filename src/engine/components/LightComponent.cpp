@@ -25,7 +25,8 @@ bool operator==(const LightComponent& left, const LightComponent& right)
         && FloatsEqual(left.range, right.range)
         && FloatsEqual(left.innerCutoffDegrees, right.innerCutoffDegrees)
         && FloatsEqual(left.outerCutoffDegrees, right.outerCutoffDegrees)
-        && left.castsShadow == right.castsShadow;
+        && left.castsShadow == right.castsShadow
+        && left.autoAlignWithHdrSkybox == right.autoAlignWithHdrSkybox;
 }
 
 json LightComponentToJson(const LightComponent& light)
@@ -41,6 +42,7 @@ json LightComponentToJson(const LightComponent& light)
         {"innerCutoffDegrees", light.innerCutoffDegrees},
         {"outerCutoffDegrees", light.outerCutoffDegrees},
         {"castsShadow", light.castsShadow},
+        {"autoAlignWithHdrSkybox", light.autoAlignWithHdrSkybox},
     };
 }
 
@@ -62,6 +64,7 @@ LightComponent LightComponentFromJson(const json& value)
     light.innerCutoffDegrees = value.value("innerCutoffDegrees", light.innerCutoffDegrees);
     light.outerCutoffDegrees = value.value("outerCutoffDegrees", light.outerCutoffDegrees);
     light.castsShadow = value.value("castsShadow", light.castsShadow);
+    light.autoAlignWithHdrSkybox = value.value("autoAlignWithHdrSkybox", light.autoAlignWithHdrSkybox);
     return light;
 }
 

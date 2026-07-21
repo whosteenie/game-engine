@@ -22,6 +22,8 @@ struct PostProcessDepthTarget
     void* resource = nullptr;
     void* allocation = nullptr;
     std::uint32_t dsvIndex = UINT32_MAX;
+    std::uint32_t srvIndex = UINT32_MAX;
+    std::uintptr_t srvCpuHandle = 0;
     int width = 0;
     int height = 0;
     mutable std::uint32_t resourceState = 0;

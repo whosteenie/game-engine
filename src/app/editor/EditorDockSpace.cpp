@@ -24,9 +24,17 @@ void EditorDockSpace::BuildLayoutIfNeeded()
     }
 
     const ImGuiID dockspaceId = ImGui::GetID("EditorDockSpace");
-    if (m_forceDefaultLayout || !HasPersistedDockLayout(dockspaceId))
+    if (m_automationDualViewportLayout || m_forceDefaultLayout || !HasPersistedDockLayout(dockspaceId))
     {
-        EditorDockLayout::BuildDefaultLayout(dockspaceId);
+        if (m_automationDualViewportLayout)
+        {
+            EditorDockLayout::BuildDualViewportLayout(
+                dockspaceId, m_automationGameViewportFraction);
+        }
+        else
+        {
+            EditorDockLayout::BuildDefaultLayout(dockspaceId);
+        }
     }
 
     m_layoutBuilt = true;

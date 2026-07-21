@@ -1,10 +1,10 @@
 #include "app/project/SceneSubtreeArchive.h"
 
-#include "app/scene/Scene.h"
-#include "app/scene/SceneMeshLibrary.h"
-#include "app/scene/SceneObjectStore.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/document/SceneMeshLibrary.h"
+#include "app/scene/document/SceneObjectStore.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectComponents.h"
 
@@ -256,6 +256,7 @@ bool Scene::CreateDeleteArchive(
     archive.removedObjects.reserve(removalIndices.size());
     archive.removedRootIds.clear();
     archive.removedRootIds.reserve(rootIndices.size());
+    archive.importedMeshes.clear();
     for (int rootIndex : rootIndices)
     {
         if (rootIndex < 0 || rootIndex >= static_cast<int>(GetObjects().size()))
@@ -406,6 +407,7 @@ bool Scene::RestoreDeleteArchive(SceneSubtreeArchive& archive, const ArchivedSel
     }
 
     ApplyArchivedSelection(*this, selection);
+    NotifyRenderContentChanged();
     MarkDirty();
     return true;
 }

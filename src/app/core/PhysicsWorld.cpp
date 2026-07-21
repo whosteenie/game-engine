@@ -1,9 +1,9 @@
 #include "app/core/PhysicsWorld.h"
 
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/components/RigidBodyComponent.h"
-#include "engine/platform/EngineLog.h"
+#include "engine/platform/diagnostics/EngineLog.h"
 #include "engine/scene/SceneHierarchy.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"

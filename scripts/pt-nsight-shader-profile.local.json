@@ -1,0 +1,24 @@
+{
+  "sessionName": "pt-primary-shader-profile-restored-20260714",
+  "engineExe": "build/Release/game-engine.exe",
+  "workingDirectory": "build/Release",
+  "warmupSeconds": 10,
+  "traceFrames": 5,
+  "captureTimestampBaseline": false,
+  "captureFrame": false,
+  "architecture": "Ada",
+  "metricSetId": "1",
+  "multiPassMetrics": true,
+  "realTimeShaderProfiler": true,
+  "perLineActiveThreadsPerWarp": true,
+  "views": [
+    {
+      "name": "sky",
+      "project": "test_proj/pt_bench_sky/pt_bench_sky.gameproject"
+    },
+    {
+      "name": "floor",
+      "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject"
+    }
+  ]
+}

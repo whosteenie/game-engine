@@ -13,6 +13,7 @@ public:
 
     void ProcessKeyboard(const Input& input, float deltaTime);
     void ProcessMouseMovement(float xOffset, float yOffset);
+    void AdjustFlySpeed(float scrollSteps);
 
     glm::mat4 GetViewMatrix() const;
     glm::mat4 GetProjectionMatrix() const;
@@ -35,6 +36,7 @@ public:
     float GetFarPlane() const;
     float GetFov() const;
     float GetAspect() const;
+    float GetFlySpeed() const;
 
     void SetProjectionJitter(const glm::vec2& jitterNdc);
     void ClearProjectionJitter();
@@ -54,7 +56,10 @@ private:
     float m_yaw;
     float m_pitch;
 
-    float m_movementSpeed = 4.0f;
+    static constexpr float kBaseMovementSpeed = 4.0f;
+    static constexpr float kFastMovementMultiplier = 3.0f;
+    int m_flySpeedStep = 7;
+    float m_flySpeed = 1.0f;
     float m_mouseSensitivity = 0.1f;
 
     float m_fov = 45.0f;

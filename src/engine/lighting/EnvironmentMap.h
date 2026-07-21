@@ -46,6 +46,9 @@ public:
 
     float GetRotationDegrees() const { return m_rotationDegrees; }
     void SetRotationDegrees(float degrees);
+    // Rebuild the baked cubemap/prefilter after interactive rotation editing has finished.
+    void CommitRotation();
+    float GetRotationYRadians() const;
 
     float GetExposure() const { return m_exposure; }
     void SetExposure(float exposure);

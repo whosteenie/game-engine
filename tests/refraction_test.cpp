@@ -1,4 +1,4 @@
-// CPU mirrors of the dielectric refraction convention from assets/shaders/dxr/pt_dielectric.hlsli.
+// CPU mirror of assets/shaders/raytracing/path_tracing/pt_dielectric.hlsli.
 // Keep in sync when the shader formulas change. These guard the S1 audit fixes (devdoc/dxr/pt/
 // pt-audit.md): RefractSnell's tangential sign (B1) and RefractThinSlab straight-through (B1b),
 // plus the two-face slab Fresnel remap (A3). A revert of the sign bug fails RefractSnellMatchesTruth.

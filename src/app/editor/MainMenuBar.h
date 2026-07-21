@@ -4,6 +4,7 @@
 #include "app/undo/UndoStack.h"
 
 #include <functional>
+#include <string>
 
 struct GLFWwindow;
 
@@ -27,10 +28,13 @@ struct EditorPanelVisibility
 
 using CaptureEditorStateFn = std::function<void(ProjectEditorState&)>;
 using ApplyEditorStateFn = std::function<void(const ProjectEditorState&)>;
+using QueueProjectOpenFn = std::function<bool(const std::string&)>;
 
 class MainMenuBar
 {
 public:
+    void ShowOpenProjectModal();
+
     void Draw(
         Scene& scene,
         ProjectSession& project,
@@ -40,12 +44,23 @@ public:
         ProjectEditorState& editorState,
         const CaptureEditorStateFn& captureEditorState,
         const ApplyEditorStateFn& applyEditorState,
+        const QueueProjectOpenFn& queueProjectOpen,
         const std::function<void()>& requestClose,
         const std::function<void()>& requestNewProject,
+        const std::function<void()>& requestOpenProject,
         const std::function<void()>& requestResetLayout,
         const std::function<void()>& alignSelectionToView,
         PlayModeController& playMode,
         UndoStack& undoStack,
         EditorClipboard& clipboard,
         bool allowUndoRedo = true);
+
+private:
+    bool m_showOpenProjectModal = false;
+    std::string m_openProjectError;
+    bool m_showSaveAsModal = false;
+    bool m_focusSaveAsName = false;
+    char m_saveAsProjectName[64] = {};
+    char m_saveAsParentDirectory[512] = {};
+    std::string m_saveAsError;
 };

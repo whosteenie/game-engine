@@ -1,12 +1,13 @@
 #include "app/panels/lighting/LightingPanelSections.h"
 
 #include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/TuningSectionState.h"
 #include "app/panels/lighting/LightingPanelUi.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoCommand.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
@@ -22,7 +23,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
         bool enabled = screenSpaceEffects.IsEnabled();
         if (ImGui::Checkbox("Enable HDR post-processing", &enabled))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_processing_enabled",
                 editContext,
                 scene,
                 "HDR post-processing",
@@ -31,6 +33,7 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_processing_enabled");
 
         if (!enabled)
         {
@@ -52,12 +55,14 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                 target.GetRenderer().GetScreenSpaceEffects().SetExposure(exposureValue);
                 target.MarkDirty();
             });
+        RendererSettingUi::MarkRendered("post_exposure");
 
         int tonemapMode = static_cast<int>(screenSpaceEffects.GetTonemapMode());
         const char* tonemapModes[] = {"Gamma", "Reinhard", "ACES"};
         if (ImGui::Combo("Tonemap", &tonemapMode, tonemapModes, IM_ARRAYSIZE(tonemapModes)))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_tonemap",
                 editContext,
                 scene,
                 "Tonemap",
@@ -66,11 +71,15 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_tonemap");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Maps HDR lighting into the displayable range. ACES is cinematic; Reinhard is softer and simpler.");
 
         bool bloomEnabled = screenSpaceEffects.IsBloomEnabled();
         if (ImGui::Checkbox("Bloom", &bloomEnabled))
         {
-            ApplyRendererChange(
+            RendererSettingUi::ApplyChange(
+                "post_bloom",
                 editContext,
                 scene,
                 "Bloom",
@@ -79,6 +88,7 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
         }
+        RendererSettingUi::MarkRendered("post_bloom");
 
         if (bloomEnabled)
         {
@@ -94,6 +104,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomThreshold(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Only pixels brighter than this value contribute to bloom.");
 
             float bloomSoftKnee = screenSpaceEffects.GetBloomSoftKnee();
             UndoableRendererSliderFloat(
@@ -107,6 +119,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomSoftKnee(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Softens the transition around the threshold to avoid a hard bloom cutoff.");
 
             float bloomIntensity = screenSpaceEffects.GetBloomIntensity();
             UndoableRendererSliderFloat(
@@ -133,6 +147,8 @@ void DrawPostProcessingSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetBloomBlurRadius(value);
                     target.MarkDirty();
                 });
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Controls how far bright highlights spread across nearby pixels.");
         }
 
         if (features.debugViewActive)

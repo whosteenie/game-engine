@@ -1,44 +1,15 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/EditorUndoWidgets.h"
-#include "app/editor/EditorWidgets.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/RenderDiagnostics.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/raytracing/DxrDiagnostics.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/lighting/IBL.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
-#include <cmath>
-#include <cstring>
-#include <vector>
 
 void DrawSsgiSection(const LightingPanelContext& ctx)
 {
@@ -71,14 +42,14 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
         LightingPanelUi::DrawWrappedHelp(
             "Screen-space indirect from the radiance buffer. Use Diagnostics > SSGI views to inspect the pipeline.");
 
+        ImGui::PushID("SSGI");
         if (sectionDisabled)
         {
             ImGui::BeginDisabled();
         }
 
-        if (ImGui::TreeNode("GI temporal"))
-        {
-            float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
+        ImGui::SeparatorText("GI temporal");
+        float giBlend = screenSpaceEffects.GetGiTemporalBlendFactor();
             UndoableRendererSliderFloat(
                 "GI history blend",
                 &giBlend,
@@ -107,12 +78,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                 });
             ImGui::TextDisabled(
                 "Lower rejects more history at geometry changes; higher keeps more accumulation.");
-            ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Denoise"))
-        {
-            bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
+        ImGui::SeparatorText("Denoise");
+        bool denoiseEnabled = screenSpaceEffects.IsSsgiDenoiseEnabled();
             UndoableRendererCheckbox(
                 "Enable spatial + temporal denoise",
                 &denoiseEnabled,
@@ -167,13 +134,9 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
             ImGui::TextDisabled(
-                "Optional noise → spatial → temporal. Disable synthetic noise for real trace.");
-            ImGui::TreePop();
-        }
-
-        if (ImGui::TreeNode("Trace & inject"))
-        {
-            bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
+            "Optional noise -> spatial -> temporal. Disable synthetic noise for real trace.");
+        ImGui::SeparatorText("Trace & inject");
+        bool ssgiEnabled = screenSpaceEffects.IsSsgiEnabled();
             UndoableRendererCheckbox(
                 "Enable SSGI",
                 &ssgiEnabled,
@@ -182,6 +145,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetSsgiEnabled(ssgiEnabledValue);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ssgi_enabled");
+
             float ssgiStrength = screenSpaceEffects.GetSsgiStrength();
             UndoableRendererSliderFloat(
                 "SSGI strength",
@@ -194,6 +159,8 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.GetRenderer().GetScreenSpaceEffects().SetSsgiStrength(ssgiStrength);
                     target.MarkDirty();
                 });
+            RendererSettingUi::MarkRendered("ssgi_strength");
+
             float traceDistance = screenSpaceEffects.GetSsgiMaxTraceDistance();
             UndoableRendererSliderFloat(
                 "Max trace distance",
@@ -218,13 +185,11 @@ void DrawSsgiSection(const LightingPanelContext& ctx)
                     target.MarkDirty();
                 });
             ImGui::TextDisabled(
-                "Trace → denoise → inject into indirect before SSAO. AA = None recommended for tuning.");
-            ImGui::TreePop();
-        }
-
+            "Trace -> denoise -> inject into indirect before SSAO. AA = None recommended for tuning.");
         if (sectionDisabled)
         {
             ImGui::EndDisabled();
         }
+        ImGui::PopID();
     }
 }

@@ -31,6 +31,7 @@ void GameViewportPanel::ClearRenderTarget() const
 
 void GameViewportPanel::Draw(const bool hasSceneCamera, const bool willRenderThisFrame)
 {
+    m_hasSceneCamera = hasSceneCamera;
     OffscreenViewportPanel::ResetFrameState(m_viewport);
 
     EditorPanelConstraints::ApplySceneViewPanel();
@@ -45,11 +46,6 @@ void GameViewportPanel::Draw(const bool hasSceneCamera, const bool willRenderThi
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
     OffscreenViewportPanel::UpdateRenderSize(m_viewport, available);
-
-    if (hasSceneCamera && HasValidRenderTarget())
-    {
-        EnsureFramebufferSized();
-    }
 
     const bool canCompositeFrame = hasSceneCamera
         && OffscreenViewportPanel::CanCompositeFrame(m_viewport, willRenderThisFrame);

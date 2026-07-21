@@ -11,6 +11,44 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(MSVC)
     # Allow parallel CL.exe invocations (MSBuild /m) without vc143.pdb lock failures.
     add_compile_options(/FS)
+
+    # MSBuild /m schedules projects, but does not parallelize translation units within one project.
+    # Keep enough capacity free for an interactive workstation while allowing an explicit CI/user
+    # override. Zero retains MSVC's unbounded /MP behavior.
+    set(GAME_ENGINE_COMPILE_JOBS "" CACHE STRING
+        "Maximum MSVC compiler processes per project; empty selects half the logical CPUs (4-12), 0 uses unbounded /MP")
+    if(GAME_ENGINE_COMPILE_JOBS STREQUAL "")
+        cmake_host_system_information(
+            RESULT GAME_ENGINE_EFFECTIVE_COMPILE_JOBS
+            QUERY NUMBER_OF_LOGICAL_CORES)
+        math(EXPR GAME_ENGINE_EFFECTIVE_COMPILE_JOBS
+            "${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS} / 2")
+        if(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS LESS 4)
+            set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS 4)
+        elseif(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS GREATER 12)
+            set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS 12)
+        endif()
+    elseif(GAME_ENGINE_COMPILE_JOBS MATCHES "^[0-9]+$")
+        set(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS "${GAME_ENGINE_COMPILE_JOBS}")
+    else()
+        message(FATAL_ERROR
+            "GAME_ENGINE_COMPILE_JOBS must be empty or a non-negative integer, got: "
+            "${GAME_ENGINE_COMPILE_JOBS}")
+    endif()
+    message(STATUS "MSVC compiler processes per project: ${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS}")
+
+    # Apply the bounded /MP option explicitly to repository-owned targets; fetched dependency
+    # targets remain untouched.
+    function(game_engine_enable_msvc_parallel_compile target)
+        if(GAME_ENGINE_EFFECTIVE_COMPILE_JOBS EQUAL 0)
+            target_compile_options(${target} PRIVATE /MP)
+        else()
+            target_compile_options(${target} PRIVATE "/MP${GAME_ENGINE_EFFECTIVE_COMPILE_JOBS}")
+        endif()
+    endfunction()
+else()
+    function(game_engine_enable_msvc_parallel_compile target)
+    endfunction()
 endif()
 
 option(GAME_ENGINE_D3D12_DEBUG_LAYER "Enable the D3D12 debug layer (Debug builds only; see devdoc/dxr/shader-infrastructure.md)" OFF)
@@ -60,7 +98,7 @@ FetchContent_Declare(
 
     GIT_REPOSITORY https://github.com/g-truc/glm.git
 
-    GIT_TAG 1.0.1
+    GIT_TAG 1.0.3
 
 )
 
@@ -113,7 +151,7 @@ FetchContent_MakeAvailable(json)
 # MathLib) and compiles its internal shaders at build time; DXIL blobs are embedded in the
 # static lib. If the build cannot locate a dxc.exe for ShaderMake, set SHADERMAKE_DXC_PATH.
 set(NRD_STATIC_LIBRARY ON CACHE BOOL "" FORCE)
-# Guide-buffer encoding contract — must match assets/shaders/dxr/reflections.hlsl:
+# Guide-buffer encoding contract — must match assets/shaders/raytracing/libraries/reflections.hlsl:
 #   NRD_NORMAL_ENCODING 3 = RGBA16_UNORM: rgb = worldNormal * 0.5 + 0.5, a = roughness
 #   (same packing math as RGBA8, 16-bit precision — 8-bit normals quantize on curved
 #   surfaces and break RELAX's normal edge-stopping, reading as blur bands/shimmer)
@@ -132,7 +170,23 @@ FetchContent_Declare(
 
 )
 
-FetchContent_MakeAvailable(nrd)
+FetchContent_GetProperties(nrd)
+if(NOT nrd_POPULATED)
+    FetchContent_Populate(nrd)
+endif()
+
+# NRD 4.17.3 declares its embedded-shader target without outputs, so Visual Studio runs all 159
+# DXIL tasks on every build and then relinks every downstream target. Apply a pinned, idempotent
+# project-owned patch before adding NRD; the patch fails if the expected upstream block changes.
+execute_process(
+    COMMAND ${CMAKE_COMMAND}
+        "-DNRD_SOURCE_DIR=${nrd_SOURCE_DIR}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/PatchNrdIncremental.cmake"
+    RESULT_VARIABLE _nrd_patch_result)
+if(NOT _nrd_patch_result EQUAL 0)
+    message(FATAL_ERROR "Failed to apply the NRD incremental shader patch")
+endif()
+add_subdirectory("${nrd_SOURCE_DIR}" "${nrd_BINARY_DIR}")
 
 # NVIDIA Streamline (DLSS SR, devdoc/rendering/dlss-super-resolution.md Phase S0). Pinned to v2.12.0. The
 # release zip carries headers (include/), the import lib (lib/x64/sl.interposer.lib), and the
@@ -183,25 +237,9 @@ endif()
 
 
 
-FetchContent_Declare(
-
-    imguizmo
-
-    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
-
-    GIT_TAG be8aa4aeab86b402701c8c1df011bd8cd776760b
-
-)
-
-
-
-FetchContent_GetProperties(imguizmo)
-
-if(NOT imguizmo_POPULATED)
-    FetchContent_Populate(imguizmo)
-endif()
-
-
+# Vendored ImGuizmo (based on CedricGuillemet/ImGuizmo@be8aa4a) with edge-on
+# rotation screen-space drag. See vendor/imguizmo for LICENSE.
+set(imguizmo_SOURCE_DIR "${CMAKE_SOURCE_DIR}/vendor/imguizmo")
 
 set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -220,6 +258,12 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(JoltPhysics)
+if(MSVC)
+    # Jolt 5.3.0 hard-codes unbounded /MP in its top-level CMAKE_CXX_FLAGS. A fresh build reached
+    # 27 cl.exe processes even after project-owned targets were capped, so apply the same explicit
+    # per-project limit to this one measured dependency without changing its fetched sources.
+    game_engine_enable_msvc_parallel_compile(Jolt)
+endif()
 
 FetchContent_Declare(
     D3D12MemoryAllocator
@@ -306,37 +350,95 @@ target_link_libraries(imguizmo_lib PUBLIC imgui_lib glm::glm)
 
 
 
+include("${CMAKE_SOURCE_DIR}/cmake/AgilitySdk.cmake")
 include("${CMAKE_SOURCE_DIR}/cmake/EngineLibraries.cmake")
 
-set(GAME_ENGINE_APP_SOURCES
-    src/main.cpp
-
-    src/app/core/Application.cpp
-
-    src/app/editor/EditorSettings.cpp
+# Scene/document domain.  This owns scene state and its mutations, including the
+# editor-facing scene tools and renderer coordination.  Keeping it below the
+# application shell makes the scene usable by tests or a future non-editor host.
+set(APP_SCENE_SOURCES
+    src/app/editor/SettingRegistry.cpp
     src/app/editor/TuningSectionState.cpp
 
+    src/app/undo/UndoCommand.cpp
+    src/app/undo/commands/ComponentCommands.cpp
+    src/app/undo/commands/RendererCommands.cpp
+    src/app/undo/commands/SystemComponentCommands.cpp
+    src/app/undo/commands/TransformCommands.cpp
+    src/app/undo/UndoStack.cpp
+
+    src/app/project/SceneDocument.cpp
+    src/app/project/SceneSubtreeArchive.cpp
+    src/app/project/SceneProjectIO.cpp
+
+    src/app/scene/document/SceneComponentCatalog.cpp
+    src/app/scene/document/Scene.cpp
+    src/app/scene/document/SceneMeshLibrary.cpp
+    src/app/scene/document/SceneObjectStore.cpp
+    src/app/scene/editing/SceneCamera.cpp
+    src/app/scene/editing/SceneEditor.cpp
+    src/app/scene/editing/SceneEditingController.cpp
+    src/app/scene/editing/SceneHierarchyOps.cpp
+    src/app/scene/editing/SceneObjectOperations.cpp
+    src/app/scene/import/SceneImportService.cpp
+    src/app/scene/rendering/GpuSceneBuilder.cpp
+    src/app/scene/rendering/renderer/Dispatch.cpp
+    src/app/scene/rendering/renderer/Gizmos.cpp
+    src/app/scene/rendering/renderer/Lighting.cpp
+    src/app/scene/rendering/renderer/Raster.cpp
+    src/app/scene/rendering/renderer/RayTracing.cpp
+    src/app/scene/rendering/renderer/Renderer.cpp
+    src/app/scene/rendering/renderer/Resources.cpp
+    src/app/scene/selection/SceneSelectionController.cpp
+    src/app/scene/spawn/SceneSpawnService.cpp
+    src/app/scene/spawn/SceneSpawnBuilders.cpp
+)
+
+add_library(app-scene STATIC ${APP_SCENE_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-scene)
+target_include_directories(app-scene PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-scene PUBLIC
+    engine-render
+    engine-dxr
+    imgui_lib
+    imguizmo_lib
+    nlohmann_json::nlohmann_json)
+
+set(APP_STATE_SOURCES
+    src/app/editor/EditorSettings.cpp
+    src/app/project/ProjectEditorState.cpp
+    src/app/project/ProjectSession.cpp
+    src/app/core/PlayModeController.cpp
+    src/app/core/PhysicsWorld.cpp
+)
+
+add_library(app-state STATIC ${APP_STATE_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-state)
+target_include_directories(app-state PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-state PUBLIC
+    app-scene
+    imgui_lib
+    Jolt)
+
+set(APP_EDITOR_SOURCES
     src/app/editor/EditorDockSpace.cpp
     src/app/editor/EditorDockLayout.cpp
     src/app/editor/MainMenuBar.cpp
     src/app/editor/EditorTopToolbar.cpp
     src/app/editor/EditorClipboard.cpp
     src/app/editor/EditorMouseWrapping.cpp
+    src/app/editor/EditorWidgets.cpp
+    src/app/editor/OffscreenViewportPanel.cpp
 
-    src/app/undo/UndoCommand.cpp
-    src/app/undo/UndoStack.cpp
-
-    src/app/project/SceneDocument.cpp
-    src/app/project/SceneSubtreeArchive.cpp
     src/app/project/ProjectChooser.cpp
-    src/app/project/ProjectEditorState.cpp
-    src/app/project/ProjectSession.cpp
-
-    src/app/core/PlayModeController.cpp
-    src/app/core/PhysicsWorld.cpp
-
-    src/app/scene/SceneComponentCatalog.cpp
-    src/app/project/SceneProjectIO.cpp
 
     src/app/panels/ProjectFilesPanel.cpp
     src/app/panels/LightingPanel.cpp
@@ -355,47 +457,54 @@ set(GAME_ENGINE_APP_SOURCES
     src/app/panels/lighting/RayTracingSection.cpp
     src/app/panels/lighting/DiagnosticsSection.cpp
     src/app/panels/PerformancePanel.cpp
-    src/app/scene/RenderDiagnostics.cpp
-
-    src/app/editor/EditorWidgets.cpp
-    src/app/editor/OffscreenViewportPanel.cpp
-
     src/app/panels/SceneHierarchyPanel.cpp
     src/app/panels/SceneInspectorPanel.cpp
-
-    src/app/inspector/InspectorEditMode.cpp
-    src/app/inspector/InspectorMultiEdit.cpp
-    src/app/inspector/InspectorTransform.cpp
-
     src/app/panels/SceneToolbarPanel.cpp
     src/app/panels/SceneViewportPanel.cpp
     src/app/panels/GameViewportPanel.cpp
 
-    src/app/scene/SceneEditor.cpp
-    src/app/scene/SceneEditingController.cpp
-    src/app/scene/GpuScene.cpp
-    src/app/scene/Scene.cpp
-    src/app/scene/SceneHierarchyOps.cpp
-    src/app/scene/SceneImportService.cpp
-    src/app/scene/SceneMeshLibrary.cpp
-    src/app/scene/SceneObjectOperations.cpp
-    src/app/scene/SceneObjectStore.cpp
-    src/app/scene/SceneRenderer.cpp
-    src/app/scene/SceneSelectionController.cpp
-    src/app/scene/SceneSpawnService.cpp
-    src/app/scene/SceneSpawnBuilders.cpp
-    src/app/scene/SceneCamera.cpp
+    src/app/scene/rendering/RenderDiagnostics.cpp
+    src/app/inspector/InspectorEditMode.cpp
+    src/app/inspector/InspectorMultiEdit.cpp
+    src/app/inspector/InspectorTransform.cpp
 )
 
-add_executable(game-engine ${GAME_ENGINE_APP_SOURCES})
+add_library(app-editor STATIC ${APP_EDITOR_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-editor)
+target_include_directories(app-editor PUBLIC
+    vendor/stb
+    vendor/IconFontCppHeaders
+    src
+    ${tinygltf_SOURCE_DIR})
+target_link_libraries(app-editor PUBLIC
+    app-state
+    app-scene
+    imgui_lib
+    imguizmo_lib)
 
-target_include_directories(game-engine PRIVATE
+set(APP_RUNTIME_SOURCES
+    src/app/core/Application.cpp
+    src/app/core/application/Frame.cpp
+    src/app/core/application/Loop.cpp
+    src/app/core/application/Project.cpp
+    src/app/core/application/Startup.cpp
+    src/app/core/benchmark/Capture.cpp
+
+)
+
+add_library(app-runtime STATIC ${APP_RUNTIME_SOURCES})
+game_engine_enable_msvc_parallel_compile(app-runtime)
+
+target_include_directories(app-runtime PUBLIC
     vendor/stb
     vendor/IconFontCppHeaders
     src
     ${tinygltf_SOURCE_DIR})
 
-target_link_libraries(game-engine PRIVATE
+target_link_libraries(app-runtime PUBLIC
+    app-editor
+    app-state
+    app-scene
     engine-render
     engine-dxr
     imgui_lib
@@ -404,9 +513,15 @@ target_link_libraries(game-engine PRIVATE
     Jolt
 )
 
-if(WIN32)
-    target_link_libraries(game-engine PRIVATE comctl32)
-endif()
+add_executable(game-engine
+    src/main.cpp
+    # Must remain in the executable: the D3D12 Agility loader discovers these
+    # exports before static-library objects would necessarily be linked.
+    src/app/core/AgilitySdkExports.cpp)
+game_engine_enable_msvc_parallel_compile(game-engine)
+target_link_libraries(game-engine PRIVATE app-runtime)
+
+game_engine_enable_agility_sdk(game-engine)
 
 # Streamline (DLSS SR, Phase S0): headers only + copy the prebuilt SL/DLSS plugin DLLs next to the
 # exe. We do NOT statically link sl.interposer.lib — it exports DXGI/D3D entry points that would
@@ -526,18 +641,36 @@ add_executable(engine-tests
     tests/path_rng_test.cpp
     tests/restir_types_test.cpp
     tests/restir_wrs_test.cpp
+    tests/restir_gi_test.cpp
+    tests/restir_di_test.cpp
     tests/restir_surface_validation_test.cpp
     tests/dxr_shader_infrastructure_test.cpp
     tests/material_test.cpp
     tests/guide_encoding_test.cpp
+    tests/pt_mirror_chain_guide_math_test.cpp
+    tests/payload_pack_test.cpp
+    tests/restir_temporal_chain_test.cpp
     tests/refraction_test.cpp
     tests/brdf_energy_test.cpp
     tests/mis_nee_test.cpp
     tests/env_importance_test.cpp
     tests/nee_mis_integration_test.cpp
     tests/frustum_cull_test.cpp
+    tests/capture_manifest_test.cpp
+    tests/temporal_camera_packet_test.cpp
+    tests/dlss_frame_token_test.cpp
+    tests/dlss_extent_planner_test.cpp
+    tests/rr_temporal_validity_test.cpp
+    tests/reconstruction_exposure_test.cpp
+    tests/reconstruction_jitter_test.cpp
+    tests/history_compatibility_test.cpp
+    tests/viewport_resize_stabilizer_test.cpp
+    tests/project_viewport_reveal_gate_test.cpp
+    tests/background_work_test.cpp
+    tests/pt_viewport_ownership_test.cpp
     tests/shader_compile_test.cpp
 )
+game_engine_enable_msvc_parallel_compile(engine-tests)
 
 target_include_directories(engine-tests PRIVATE src tests)
 target_link_libraries(engine-tests PRIVATE engine-render)
@@ -550,6 +683,9 @@ add_custom_command(TARGET engine-tests POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:engine-tests>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/tests/fixtures"
+        "$<TARGET_FILE_DIR:engine-tests>/fixtures"
     COMMENT "Copying assets for engine-tests")
 
 add_test(NAME engine-tests COMMAND engine-tests)
@@ -561,6 +697,7 @@ add_executable(descriptor-heap-tests
     tests/descriptor_heap_test.cpp
     src/engine/rhi/d3d12/FixedDescriptorHeap.cpp
 )
+game_engine_enable_msvc_parallel_compile(descriptor-heap-tests)
 
 target_include_directories(descriptor-heap-tests PRIVATE src tests)
 add_test(NAME descriptor-heap-tests COMMAND descriptor-heap-tests)
@@ -582,6 +719,7 @@ if(WIN32 AND GAME_ENGINE_BUILD_D3D12_RENDER_TESTS)
         tests/d3d12_test_runner.cpp
         tests/pt_test_harness.cpp
     )
+    game_engine_enable_msvc_parallel_compile(d3d12-render-tests)
 
     target_include_directories(d3d12-render-tests PRIVATE tests ${json_SOURCE_DIR}/include)
     target_link_libraries(d3d12-render-tests PRIVATE

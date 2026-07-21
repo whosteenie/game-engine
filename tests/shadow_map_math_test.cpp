@@ -1,4 +1,4 @@
-﻿#include <glm/glm.hpp>
+#include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
 #include <array>
@@ -6,7 +6,7 @@
 #include <vector>
 #include "engine/lighting/ShadowMapMath.h"
 #include "engine/lighting/LightingProbe.h"
-#include "engine/platform/ExceptionMessage.h"
+#include "engine/platform/system/ExceptionMessage.h"
 
 #include "test_expect.h"
 

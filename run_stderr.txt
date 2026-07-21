@@ -1,4 +1,0 @@
-[2026-06-25 09:34:24] [info] [project] Opening project: C:\Users\justi\Desktop\whoengine-tests\d12test8\d12test8.gameproject
-[2026-06-25 09:34:24] [info] [project] Loading project file
-[2026-06-25 09:34:29] [info] [project] Applying editor state
-[2026-06-25 09:34:29] [info] [project] Project opened: C:\Users\justi\Desktop\whoengine-tests\d12test8\d12test8.gameproject

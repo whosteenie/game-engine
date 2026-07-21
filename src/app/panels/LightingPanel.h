@@ -5,16 +5,18 @@
 class Camera;
 class Scene;
 class UndoStack;
+class EditorSettings;
 
 class LightingPanel
 {
 public:
     void Draw(
         Scene& scene,
-        const Camera& camera,
+        Camera& camera,
         int viewportWidth,
         int viewportHeight,
-        UndoStack* undoStack = nullptr) const;
+        UndoStack* undoStack = nullptr,
+        EditorSettings* editorSettings = nullptr) const;
 
     bool& ShowPanel() const { return m_showPanel; }
 

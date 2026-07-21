@@ -1,6 +1,19 @@
 #include "engine/rhi/DlssContext.h"
 
-#include "engine/platform/EngineLog.h"
+#include "engine/platform/system/BackgroundWork.h"
+
+#include "engine/platform/diagnostics/FrameDiagnostics.h"
+
+#include "engine/rhi/GfxContext.h"
+
+#include "engine/platform/diagnostics/EngineLog.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <initializer_list>
+#include <sstream>
+#include <tuple>
 
 #ifdef GAME_ENGINE_ENABLE_DLSS
 #include <windows.h>
@@ -31,6 +44,7 @@ PFun_slGetNewFrameToken* g_slGetNewFrameToken = nullptr;
 PFun_slSetConstants* g_slSetConstants = nullptr;
 PFun_slSetTagForFrame* g_slSetTagForFrame = nullptr;
 PFun_slEvaluateFeature* g_slEvaluateFeature = nullptr;
+PFun_slFreeResources* g_slFreeResources = nullptr;
 PFun_slGetFeatureFunction* g_slGetFeatureFunction = nullptr;
 PFun_slUpgradeInterface* g_slUpgradeInterface = nullptr;
 
@@ -39,9 +53,9 @@ PFun_slDLSSSetOptions* g_slDLSSSetOptions = nullptr;
 PFun_slDLSSGetOptimalSettings* g_slDLSSGetOptimalSettings = nullptr;
 // DLSS-RR (Ray Reconstruction) feature function (kFeatureDLSS_RR).
 PFun_slDLSSDSetOptions* g_slDLSSDSetOptions = nullptr;
+PFun_slDLSSDGetOptimalSettings* g_slDLSSDGetOptimalSettings = nullptr;
 
 // Single viewport — the editor drives one scene view through DLSS at a time.
-constexpr uint32_t kDlssViewport = 0;
 
 // NVIDIA's public sample/development application id. It lets NGX/DLSS load in a dev context; a
 // title shipping DLSS must swap this for an NVIDIA-issued application id (or engine id + project
@@ -91,6 +105,7 @@ const char* ResultToString(sl::Result r)
     case sl::Result::eErrorAdapterNotSupported: return "adapter not supported";
     case sl::Result::eErrorNoPlugins: return "SL plugins not found next to the executable";
     case sl::Result::eErrorNGXFailed: return "NGX init failed";
+    case sl::Result::eErrorInvalidParameter: return "invalid parameter";
     case sl::Result::eErrorFeatureNotSupported: return "feature not supported";
     case sl::Result::eErrorMissingOrInvalidAPI: return "missing/invalid API";
     default: return "unsupported/unknown error";
@@ -98,6 +113,211 @@ const char* ResultToString(sl::Result r)
 }
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
+
+namespace
+{
+const char* ExtentFeatureName(const DlssReconstructionFeature feature)
+{
+    return feature == DlssReconstructionFeature::RayReconstruction ? "rr" : "dlss";
+}
+
+const char* ExtentQualityName(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::DLAA: return "dlaa";
+    case DlssQuality::Quality: return "quality";
+    case DlssQuality::Balanced: return "balanced";
+    case DlssQuality::Performance: return "performance";
+    case DlssQuality::UltraPerformance: return "ultra-performance";
+    }
+    return "unknown";
+}
+
+float LegacyFallbackScale(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::Quality: return 0.667f;
+    case DlssQuality::Balanced: return 0.58f;
+    case DlssQuality::Performance: return 0.5f;
+    case DlssQuality::UltraPerformance: return 0.333f;
+    case DlssQuality::DLAA: return 1.0f;
+    }
+    return 1.0f;
+}
+
+DlssPlannedExtent MakeExplicitFallback(
+    const DlssExtentRecommendationKey& key,
+    std::string reason)
+{
+    DlssPlannedExtent plan{};
+    plan.key = key;
+    plan.source = DlssExtentPlanSource::ExplicitFallback;
+    plan.fallbackReason = reason.empty() ? "query-failed-without-reason" : std::move(reason);
+    plan.rrNoArbitraryDrs = key.feature == DlssReconstructionFeature::RayReconstruction;
+
+    // RR never invents a DRS ratio. If its recommendation query fails, native is the only planned
+    // fallback. Ordinary SR retains the legacy active ratio, but labels it explicitly as fallback;
+    // it is never represented as an SDK recommendation. Active allocation remains separate.
+    const float scale = key.feature == DlssReconstructionFeature::RayReconstruction
+        ? 1.0f
+        : LegacyFallbackScale(key.quality);
+    const auto scaled = [scale](const std::uint32_t value) {
+        return std::max<std::uint32_t>(
+            1u,
+            static_cast<std::uint32_t>(std::lround(static_cast<double>(value) * scale)));
+    };
+    plan.extent.recommended = {scaled(key.outputExtent.width), scaled(key.outputExtent.height)};
+    plan.extent.minimum = plan.extent.recommended;
+    plan.extent.maximum = plan.extent.recommended;
+    return plan;
+}
+
+bool IsValidSdkRecommendation(
+    const DlssExtentRecommendationKey& key,
+    const DlssExtentRecommendation& recommendation,
+    std::string& reason)
+{
+    const DlssExtent& value = recommendation.recommended;
+    const DlssExtent& minimum = recommendation.minimum;
+    const DlssExtent& maximum = recommendation.maximum;
+    if (key.outputExtent.width == 0 || key.outputExtent.height == 0)
+    {
+        reason = "invalid-output-extent";
+        return false;
+    }
+    if (value.width == 0 || value.height == 0 || minimum.width == 0 || minimum.height == 0
+        || maximum.width == 0 || maximum.height == 0)
+    {
+        reason = "sdk-returned-zero-extent";
+        return false;
+    }
+    if (minimum.width > value.width || value.width > maximum.width
+        || minimum.height > value.height || value.height > maximum.height)
+    {
+        reason = "sdk-recommendation-outside-returned-range";
+        return false;
+    }
+    if (key.quality == DlssQuality::DLAA && !(value == key.outputExtent))
+    {
+        reason = "sdk-dlaa-recommendation-is-not-native";
+        return false;
+    }
+    return true;
+}
+} // namespace
+
+bool DlssExtentRecommendationKey::operator==(const DlssExtentRecommendationKey& other) const
+{
+    return viewportId == other.viewportId && outputExtent == other.outputExtent
+        && feature == other.feature && quality == other.quality;
+}
+
+bool DlssExtentRecommendationKey::operator<(const DlssExtentRecommendationKey& other) const
+{
+    return std::tie(viewportId, outputExtent.width, outputExtent.height, feature, quality)
+        < std::tie(
+            other.viewportId,
+            other.outputExtent.width,
+            other.outputExtent.height,
+            other.feature,
+            other.quality);
+}
+
+bool DlssPlannedExtent::IsValid() const
+{
+    return extent.recommended.width > 0 && extent.recommended.height > 0
+        && extent.minimum.width > 0 && extent.minimum.height > 0
+        && extent.maximum.width > 0 && extent.maximum.height > 0;
+}
+
+DlssExtent ResolveDlssActiveRenderExtent(
+    const DlssPlannedExtent& plan,
+    const DlssExtentRecommendationKey& activeKey,
+    std::string& reason)
+{
+    reason.clear();
+    if (!(plan.key == activeKey))
+    {
+        reason = "planned-tuple-does-not-match-active-tuple";
+        return {};
+    }
+    if (!plan.IsValid())
+    {
+        reason = "planned-extent-is-invalid";
+        return {};
+    }
+    const DlssExtent& render = plan.extent.recommended;
+    if (render.width < plan.extent.minimum.width || render.width > plan.extent.maximum.width
+        || render.height < plan.extent.minimum.height || render.height > plan.extent.maximum.height)
+    {
+        reason = "planned-extent-is-outside-supported-range";
+        return {};
+    }
+    if (activeKey.quality == DlssQuality::DLAA && !(render == activeKey.outputExtent))
+    {
+        reason = "dlaa-active-extent-is-not-native";
+        return {};
+    }
+    if (activeKey.feature == DlssReconstructionFeature::RayReconstruction)
+    {
+        if (!plan.rrNoArbitraryDrs)
+        {
+            reason = "rr-plan-does-not-enforce-no-arbitrary-drs";
+            return {};
+        }
+        if (!plan.IsSdkRecommendation() && !(render == activeKey.outputExtent))
+        {
+            reason = "rr-fallback-is-not-native";
+            return {};
+        }
+    }
+    return render;
+}
+
+DlssExtentPlanLookup DlssExtentRecommendationCache::Plan(
+    const DlssExtentRecommendationKey& key,
+    const QueryFunction query,
+    void* const userData)
+{
+    const auto found = m_entries.find(key);
+    if (found != m_entries.end())
+    {
+        return {found->second, true};
+    }
+
+    DlssExtentRecommendation recommendation{};
+    std::string failureReason;
+    bool succeeded = query != nullptr && query(userData, key, recommendation, failureReason);
+    if (succeeded)
+    {
+        succeeded = IsValidSdkRecommendation(key, recommendation, failureReason);
+    }
+
+    DlssPlannedExtent plan{};
+    if (succeeded)
+    {
+        plan.key = key;
+        plan.extent = recommendation;
+        plan.source = DlssExtentPlanSource::Sdk;
+        plan.fallbackReason.clear();
+        plan.rrNoArbitraryDrs = key.feature == DlssReconstructionFeature::RayReconstruction;
+    }
+    else
+    {
+        plan = MakeExplicitFallback(
+            key,
+            query == nullptr ? "query-entrypoint-unavailable" : std::move(failureReason));
+    }
+    m_entries.emplace(key, plan);
+    return {plan, false};
+}
+
+void DlssExtentRecommendationCache::Erase(const DlssExtentRecommendationKey& key)
+{
+    m_entries.erase(key);
+}
 
 DlssContext& DlssContext::Get()
 {
@@ -148,6 +368,7 @@ void DlssContext::BeginAsyncInitialize(ID3D12Device* device, IDXGIAdapter* adapt
 void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
 {
 #ifdef GAME_ENGINE_ENABLE_DLSS
+    BackgroundWork::LowerCurrentThreadPriority();
     HMODULE hmod = ::LoadLibraryW(L"sl.interposer.dll");
     if (hmod == nullptr)
     {
@@ -178,6 +399,7 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
     SL_RESOLVE(slSetConstants)
     SL_RESOLVE(slSetTagForFrame)
     SL_RESOLVE(slEvaluateFeature)
+    SL_RESOLVE(slFreeResources)
     SL_RESOLVE(slGetFeatureFunction)
     SL_RESOLVE(slUpgradeInterface)
 #undef SL_RESOLVE
@@ -251,6 +473,13 @@ void DlssContext::RunInitialize(ID3D12Device* device, IDXGIAdapter* adapter)
         {
             g_slDLSSDSetOptions = reinterpret_cast<PFun_slDLSSDSetOptions*>(fn);
         }
+        fn = nullptr;
+        if (g_slGetFeatureFunction(
+                sl::kFeatureDLSS_RR, "slDLSSDGetOptimalSettings", fn) == sl::Result::eOk)
+        {
+            g_slDLSSDGetOptimalSettings =
+                reinterpret_cast<PFun_slDLSSDGetOptimalSettings*>(fn);
+        }
     }
 
     DXGI_ADAPTER_DESC desc{};
@@ -315,6 +544,7 @@ void DlssContext::Shutdown()
     {
         m_worker.join();
     }
+    ClearPlannedExtentCache();
 #ifdef GAME_ENGINE_ENABLE_DLSS
     if (m_initialized.load(std::memory_order_acquire) && g_slShutdown != nullptr)
     {
@@ -332,10 +562,12 @@ void DlssContext::Shutdown()
     g_slSetConstants = nullptr;
     g_slSetTagForFrame = nullptr;
     g_slEvaluateFeature = nullptr;
+    g_slFreeResources = nullptr;
     g_slGetFeatureFunction = nullptr;
     g_slDLSSSetOptions = nullptr;
     g_slDLSSGetOptimalSettings = nullptr;
     g_slDLSSDSetOptions = nullptr;
+    g_slDLSSDGetOptimalSettings = nullptr;
     g_slUpgradeInterface = nullptr;
     if (m_interposer != nullptr)
     {
@@ -343,6 +575,45 @@ void DlssContext::Shutdown()
         m_interposer = nullptr;
     }
     SetStatus("DLSS: shut down");
+#endif
+}
+
+void DlssContext::ReleaseViewportResources(const std::uint32_t viewportId)
+{
+#ifdef GAME_ENGINE_ENABLE_DLSS
+    if (!IsRuntimeInitialized() || g_slFreeResources == nullptr)
+    {
+        return;
+    }
+
+    const auto releaseFeature = [&](const std::uint32_t id, const sl::Feature feature, const char* const label) {
+        const sl::Result result = g_slFreeResources(feature, sl::ViewportHandle(id));
+        // Streamline uses eErrorInvalidParameter to mean this viewport never created an instance
+        // for the feature (for example SR when the project used RR). That is already the desired
+        // released state and should not surface as a teardown warning.
+        if (result != sl::Result::eOk && result != sl::Result::eErrorInvalidParameter)
+        {
+            EngineLog::Warn(
+                "dlss",
+                std::string("slFreeResources(") + label + ", viewport "
+                    + std::to_string(id) + ") failed (" + ResultToString(result) + ")");
+        }
+    };
+
+    constexpr std::uint32_t kOpticalTransmissionViewportBit = 0x80000000u;
+    for (const std::uint32_t id : {viewportId, viewportId ^ kOpticalTransmissionViewportBit})
+    {
+        if (IsDlssSupported())
+        {
+            releaseFeature(id, sl::kFeatureDLSS, "DLSS");
+        }
+        if (IsRrSupported())
+        {
+            releaseFeature(id, sl::kFeatureDLSS_RR, "DLSS-RR");
+        }
+    }
+#else
+    (void)viewportId;
 #endif
 }
 
@@ -376,19 +647,268 @@ sl::Resource MakeTex(void* native, unsigned int state, unsigned int width, unsig
     sl::Resource resource(sl::ResourceType::eTex2d, native, static_cast<uint32_t>(state));
     resource.width = width;
     resource.height = height;
+    if (native != nullptr)
+    {
+        const D3D12_RESOURCE_DESC desc = static_cast<ID3D12Resource*>(native)->GetDesc();
+        resource.nativeFormat = static_cast<std::uint32_t>(desc.Format);
+        resource.mipLevels = desc.MipLevels;
+        resource.arrayLayers = desc.DepthOrArraySize;
+    }
     return resource;
+}
+
+bool ValidateTaggedTexture(
+    void* const native,
+    const std::uint32_t expectedWidth,
+    const std::uint32_t expectedHeight,
+    const std::initializer_list<DXGI_FORMAT> allowedFormats,
+    const char* const label,
+    std::string& reason)
+{
+    if (native == nullptr)
+    {
+        reason = std::string(label) + "-resource-is-null";
+        return false;
+    }
+    const D3D12_RESOURCE_DESC desc = static_cast<ID3D12Resource*>(native)->GetDesc();
+    if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D
+        || desc.Width != expectedWidth || desc.Height != expectedHeight)
+    {
+        std::ostringstream message;
+        message << label << "-resource-extent=" << desc.Width << 'x' << desc.Height
+                << "-expected=" << expectedWidth << 'x' << expectedHeight;
+        reason = message.str();
+        return false;
+    }
+    if (allowedFormats.size() != 0
+        && std::find(allowedFormats.begin(), allowedFormats.end(), desc.Format)
+            == allowedFormats.end())
+    {
+        reason = std::string(label) + "-unsupported-format-"
+            + std::to_string(static_cast<unsigned int>(desc.Format));
+        return false;
+    }
+    return true;
+}
+
+const char* ToTraceQuality(const DlssQuality quality)
+{
+    switch (quality)
+    {
+    case DlssQuality::DLAA: return "dlaa";
+    case DlssQuality::Quality: return "quality";
+    case DlssQuality::Balanced: return "balanced";
+    case DlssQuality::Performance: return "performance";
+    case DlssQuality::UltraPerformance: return "ultra-performance";
+    }
+    return "unknown";
+}
+
+const char* ToTraceFeature(const DlssFrameInputs& inputs)
+{
+    return inputs.useRayReconstruction ? "rr" : "dlss";
 }
 } // namespace
 #endif // GAME_ENGINE_ENABLE_DLSS
 
-bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
+namespace
 {
+bool QuerySdkExtentRecommendation(
+    void* const userData,
+    const DlssExtentRecommendationKey& key,
+    DlssExtentRecommendation& recommendation,
+    std::string& failureReason)
+{
+    auto& context = *static_cast<DlssContext*>(userData);
+    if (std::getenv("GAME_ENGINE_S2P2_FORCE_QUERY_FAILURE") != nullptr)
+    {
+        failureReason = "forced-query-failure";
+        return false;
+    }
 #ifndef GAME_ENGINE_ENABLE_DLSS
-    (void)inputs;
+    (void)context;
+    (void)key;
+    (void)recommendation;
+    failureReason = "dlss-compiled-out";
     return false;
 #else
+    if (!context.IsReady() || !context.IsRuntimeInitialized())
+    {
+        failureReason = "runtime-unavailable";
+        return false;
+    }
+
+    if (key.feature == DlssReconstructionFeature::RayReconstruction)
+    {
+        if (!context.IsRrSupported())
+        {
+            failureReason = "rr-feature-unavailable";
+            return false;
+        }
+        if (g_slDLSSDGetOptimalSettings == nullptr)
+        {
+            failureReason = "rr-optimal-settings-entrypoint-unavailable";
+            return false;
+        }
+        sl::DLSSDOptions options{};
+        options.mode = ToDlssMode(key.quality);
+        options.outputWidth = key.outputExtent.width;
+        options.outputHeight = key.outputExtent.height;
+        sl::DLSSDOptimalSettings settings{};
+        const sl::Result result = g_slDLSSDGetOptimalSettings(options, settings);
+        if (result != sl::Result::eOk)
+        {
+            failureReason = std::string("rr-optimal-settings-query-failed-") + ResultToString(result);
+            return false;
+        }
+        recommendation = {
+            {settings.optimalRenderWidth, settings.optimalRenderHeight},
+            {settings.renderWidthMin, settings.renderHeightMin},
+            {settings.renderWidthMax, settings.renderHeightMax}};
+        return true;
+    }
+
+    if (!context.IsDlssSupported())
+    {
+        failureReason = "dlss-feature-unavailable";
+        return false;
+    }
+    if (g_slDLSSGetOptimalSettings == nullptr)
+    {
+        failureReason = "dlss-optimal-settings-entrypoint-unavailable";
+        return false;
+    }
+    sl::DLSSOptions options{};
+    options.mode = ToDlssMode(key.quality);
+    options.outputWidth = key.outputExtent.width;
+    options.outputHeight = key.outputExtent.height;
+    sl::DLSSOptimalSettings settings{};
+    const sl::Result result = g_slDLSSGetOptimalSettings(options, settings);
+    if (result != sl::Result::eOk)
+    {
+        failureReason = std::string("dlss-optimal-settings-query-failed-") + ResultToString(result);
+        return false;
+    }
+    recommendation = {
+        {settings.optimalRenderWidth, settings.optimalRenderHeight},
+        {settings.renderWidthMin, settings.renderHeightMin},
+        {settings.renderWidthMax, settings.renderHeightMax}};
+    return true;
+#endif
+}
+} // namespace
+
+DlssPlannedExtent DlssContext::PlanReconstructionExtent(
+    const DlssExtentRecommendationKey& key)
+{
+    std::lock_guard<std::mutex> lock(m_extentPlanMutex);
+    DlssExtentPlanLookup lookup =
+        m_extentPlanCache.Plan(key, &QuerySdkExtentRecommendation, this);
+
+    // A viewport can request its first plan while asynchronous SDK initialization is still in
+    // flight. Retry that one transient fallback once the runtime becomes queryable.
+    if (lookup.cacheHit && lookup.plan.fallbackReason == "runtime-unavailable"
+        && IsReady() && IsRuntimeInitialized())
+    {
+        m_extentPlanCache.Erase(key);
+        lookup = m_extentPlanCache.Plan(key, &QuerySdkExtentRecommendation, this);
+    }
+
+    if (!lookup.cacheHit)
+    {
+        std::ostringstream message;
+        message << "extent-plan viewport=" << key.viewportId
+                << " feature=" << ExtentFeatureName(key.feature)
+                << " quality=" << ExtentQualityName(key.quality)
+                << " output=" << key.outputExtent.width << 'x' << key.outputExtent.height
+                << " planned=" << lookup.plan.extent.recommended.width << 'x'
+                << lookup.plan.extent.recommended.height
+                << " range=" << lookup.plan.extent.minimum.width << 'x'
+                << lookup.plan.extent.minimum.height << ".."
+                << lookup.plan.extent.maximum.width << 'x'
+                << lookup.plan.extent.maximum.height
+                << " source=" << (lookup.plan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
+                << " rr-no-arbitrary-drs=" << (lookup.plan.rrNoArbitraryDrs ? "true" : "false")
+                << " active-allocation=s2-p4-plan-owned";
+        if (lookup.plan.IsSdkRecommendation())
+        {
+            EngineLog::Info("dlss", message.str());
+        }
+        else
+        {
+            message << " fallback-reason=" << lookup.plan.fallbackReason;
+            EngineLog::Warn("dlss", message.str());
+        }
+    }
+    return lookup.plan;
+}
+
+void DlssContext::ClearPlannedExtentCache()
+{
+    std::lock_guard<std::mutex> lock(m_extentPlanMutex);
+    m_extentPlanCache.Clear();
+}
+
+DlssFrameToken DlssFrameTokenState::BeginFrame(
+    const AcquireFunction acquire,
+    void* const userData)
+{
+    const std::uint32_t requestedFrameIndex = m_nextFrameIndex++;
+    m_current = DlssFrameToken{nullptr, requestedFrameIndex};
+    if (acquire == nullptr)
+    {
+        return m_current;
+    }
+
+    void* nativeToken = nullptr;
+    std::uint32_t actualFrameIndex = requestedFrameIndex;
+    if (acquire(userData, requestedFrameIndex, nativeToken, actualFrameIndex)
+        && nativeToken != nullptr)
+    {
+        m_current = DlssFrameToken{nativeToken, actualFrameIndex};
+    }
+    return m_current;
+}
+
+void DlssContext::BeginFrame()
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    m_frameTokenState.BeginFrame(nullptr, nullptr);
+#else
+    const auto acquire = [](void*, const std::uint32_t requestedFrameIndex,
+                            void*& nativeToken, std::uint32_t& actualFrameIndex) -> bool
+    {
+        sl::FrameToken* token = nullptr;
+        const std::uint32_t frameIndex = requestedFrameIndex;
+        if (g_slGetNewFrameToken(token, &frameIndex) != sl::Result::eOk || token == nullptr)
+        {
+            return false;
+        }
+        nativeToken = token;
+        actualFrameIndex = static_cast<std::uint32_t>(*token);
+        return true;
+    };
+    const DlssFrameTokenState::AcquireFunction acquireFunction =
+        IsRuntimeInitialized() && g_slGetNewFrameToken != nullptr ? +acquire : nullptr;
+    m_frameTokenState.BeginFrame(acquireFunction, nullptr);
+#endif
+}
+
+bool DlssContext::Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs)
+{
+#ifndef GAME_ENGINE_ENABLE_DLSS
+    FrameDiagnostics::LogDlssEvent(inputs.viewportId, "dlss", "unknown", "skipped", "compiled-out", false, 0, false, 0);
+    return false;
+#else
+    const auto logSkip = [&](const char* reason)
+    {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "skipped", reason,
+            false, 0, false, 0);
+    };
     if (!IsReady() || !IsRuntimeInitialized())
     {
+        logSkip("runtime-unavailable");
         return false;
     }
     if (inputs.useRayReconstruction)
@@ -396,37 +916,166 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         if (!IsRrSupported() || g_slDLSSDSetOptions == nullptr || inputs.diffuseAlbedo == nullptr
             || inputs.specularAlbedo == nullptr || inputs.normalRoughness == nullptr)
         {
+            logSkip("rr-unavailable-or-guides-missing");
             return false;
         }
     }
     else if (!IsDlssSupported() || g_slDLSSSetOptions == nullptr)
     {
+        logSkip("dlss-unavailable");
         return false;
     }
     if (g_slGetNewFrameToken == nullptr || g_slSetConstants == nullptr
         || g_slSetTagForFrame == nullptr || g_slEvaluateFeature == nullptr)
     {
+        logSkip("streamline-entrypoint-missing");
         return false;
     }
     if (inputs.commandList == nullptr || inputs.colorInput == nullptr
         || inputs.colorOutput == nullptr || inputs.depth == nullptr
         || inputs.motionVectors == nullptr)
     {
+        logSkip("required-input-missing");
         return false;
     }
 
     auto* cmdList = static_cast<sl::CommandBuffer*>(inputs.commandList);
-    const sl::ViewportHandle viewport(kDlssViewport);
+    const sl::ViewportHandle viewport(inputs.viewportId);
 
-    const uint32_t frameIndex = m_evaluateFrameIndex++;
-    sl::FrameToken* frameToken = nullptr;
-    if (g_slGetNewFrameToken(frameToken, &frameIndex) != sl::Result::eOk || frameToken == nullptr)
+    if (!frameToken.IsValid())
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "application-frame-token-unavailable", false, 0, false, 0);
         return false;
     }
 
-    // Tag the four buffers DLSS SR consumes/produces. eValidUntilPresent is the recommended default;
-    // the generating GPU work (tonemap/scene passes) is already recorded on cmdList before this call.
+    DlssExtentRecommendationKey activeKey{};
+    activeKey.viewportId = inputs.viewportId;
+    activeKey.outputExtent = {inputs.displayWidth, inputs.displayHeight};
+    activeKey.feature = inputs.useRayReconstruction
+        ? DlssReconstructionFeature::RayReconstruction
+        : DlssReconstructionFeature::SuperResolution;
+    activeKey.quality = inputs.quality;
+    std::string contractReason;
+    const DlssExtent activeRenderExtent =
+        ResolveDlssActiveRenderExtent(inputs.extentPlan, activeKey, contractReason);
+    if (activeRenderExtent.width != inputs.renderWidth
+        || activeRenderExtent.height != inputs.renderHeight)
+    {
+        if (contractReason.empty())
+        {
+            contractReason = "active-allocation-does-not-match-planned-extent";
+        }
+        EngineLog::Error("dlss", "S2-P4 extent contract failed: " + contractReason);
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            contractReason.c_str(), false, 0, false, 0);
+        return false;
+    }
+
+    const auto validate = [&](void* const resource, const std::uint32_t width,
+                              const std::uint32_t height,
+                              const std::initializer_list<DXGI_FORMAT> formats,
+                              const char* const label)
+    {
+        return ValidateTaggedTexture(resource, width, height, formats, label, contractReason);
+    };
+    bool resourcesValid =
+        validate(inputs.colorInput, inputs.renderWidth, inputs.renderHeight, {}, "color-input")
+        && validate(inputs.colorOutput, inputs.displayWidth, inputs.displayHeight, {}, "color-output")
+        && validate(
+            inputs.depth,
+            inputs.renderWidth,
+            inputs.renderHeight,
+            {DXGI_FORMAT_R24G8_TYPELESS, DXGI_FORMAT_D24_UNORM_S8_UINT,
+             DXGI_FORMAT_R32_TYPELESS, DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_D32_FLOAT},
+            "depth")
+        && validate(
+            inputs.motionVectors,
+            inputs.renderWidth,
+            inputs.renderHeight,
+            {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R32G32_FLOAT},
+            "motion");
+    const DlssOptionalTagPlan optionalTags = BuildDlssOptionalTagPlan(inputs);
+    if (!HasExclusiveRrTemporalMask(optionalTags))
+    {
+        contractReason = "multiple-temporal-masks";
+        resourcesValid = false;
+    }
+    if (resourcesValid && inputs.useRayReconstruction)
+    {
+        resourcesValid =
+            validate(inputs.diffuseAlbedo, inputs.renderWidth, inputs.renderHeight, {}, "diffuse-albedo")
+            && validate(inputs.specularAlbedo, inputs.renderWidth, inputs.renderHeight, {}, "specular-albedo")
+            && validate(inputs.normalRoughness, inputs.renderWidth, inputs.renderHeight, {}, "normal-roughness")
+            && (inputs.specularHitDistance == nullptr
+                || validate(
+                    inputs.specularHitDistance,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R32_FLOAT},
+                    "specular-hit-distance"))
+            && (!optionalTags.specularMotionVectors
+                || validate(
+                    inputs.specularMotionVectors,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16G16_FLOAT, DXGI_FORMAT_R32G32_FLOAT},
+                    "specular-motion"))
+            && (!optionalTags.responsivityMask
+                || validate(
+                    inputs.responsivityMask,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT, DXGI_FORMAT_R8_SNORM},
+                    "responsivity-mask"))
+            && (!optionalTags.disocclusionMask
+                || validate(
+                    inputs.disocclusionMask,
+                    inputs.renderWidth,
+                    inputs.renderHeight,
+                    {DXGI_FORMAT_R16_FLOAT},
+                    "disocclusion-mask"));
+    }
+    std::vector<unsigned int> requiredStates = {
+        inputs.colorInputState, inputs.colorOutputState, inputs.depthState,
+        inputs.motionVectorsState};
+    if (inputs.useRayReconstruction)
+    {
+        requiredStates.push_back(inputs.diffuseAlbedoState);
+        requiredStates.push_back(inputs.specularAlbedoState);
+        requiredStates.push_back(inputs.normalRoughnessState);
+        if (optionalTags.specularHitDistance)
+            requiredStates.push_back(inputs.specularHitDistanceState);
+        if (optionalTags.specularMotionVectors)
+            requiredStates.push_back(inputs.specularMotionVectorsState);
+        if (optionalTags.responsivityMask)
+            requiredStates.push_back(inputs.responsivityMaskState);
+        if (optionalTags.disocclusionMask)
+            requiredStates.push_back(inputs.disocclusionMaskState);
+    }
+    if (resourcesValid && std::find(requiredStates.begin(), requiredStates.end(), UINT_MAX)
+            != requiredStates.end())
+    {
+        contractReason = "required-tag-state-is-unknown";
+        resourcesValid = false;
+    }
+    if (!resourcesValid)
+    {
+        EngineLog::Error("dlss", "S2-P4 resource contract failed: " + contractReason);
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            contractReason.c_str(), false, 0, false, 0);
+        return false;
+    }
+    auto* const nativeFrameToken = static_cast<sl::FrameToken*>(frameToken.native);
+    const std::uint32_t frameIndex = frameToken.frameIndex;
+
+    // Tags use the exact active allocation rectangles. All resources are per-viewport allocations
+    // retained and unmodified until present; tracked states describe their state at this call.
+    const sl::Extent inputExtent{0, 0, inputs.renderWidth, inputs.renderHeight};
+    const sl::Extent outputExtent{0, 0, inputs.displayWidth, inputs.displayHeight};
     sl::Resource colorIn =
         MakeTex(inputs.colorInput, inputs.colorInputState, inputs.renderWidth, inputs.renderHeight);
     sl::Resource colorOut = MakeTex(
@@ -441,16 +1090,20 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     sl::Resource specularAlbedo{};
     sl::Resource normalRoughness{};
     sl::Resource specularHitDistance{};
+    sl::Resource specularMotionVectors{};
+    sl::Resource responsivityMask{};
+    sl::Resource disocclusionMask{};
 
     std::vector<sl::ResourceTag> tags;
-    tags.reserve(8);
-    tags.emplace_back(&depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent);
+    tags.reserve(11);
     tags.emplace_back(
-        &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent);
+        &depth, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
     tags.emplace_back(
-        &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent);
+        &mvec, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
     tags.emplace_back(
-        &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent);
+        &colorIn, sl::kBufferTypeScalingInputColor, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+    tags.emplace_back(
+        &colorOut, sl::kBufferTypeScalingOutputColor, sl::ResourceLifecycle::eValidUntilPresent, &outputExtent);
     if (inputs.useRayReconstruction)
     {
         // RR material guides (devdoc/dxr/dlss-rr.md). normalRoughness is PACKED (DLSSDNormalRoughnessMode::ePacked).
@@ -461,25 +1114,76 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         normalRoughness = MakeTex(
             inputs.normalRoughness, inputs.normalRoughnessState, inputs.renderWidth, inputs.renderHeight);
         tags.emplace_back(
-            &diffuseAlbedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+            &diffuseAlbedo, sl::kBufferTypeAlbedo, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         tags.emplace_back(
-            &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent);
+            &specularAlbedo, sl::kBufferTypeSpecularAlbedo, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         tags.emplace_back(
-            &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent);
+            &normalRoughness, sl::kBufferTypeNormalRoughness, sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         // Optional spec hit-distance guide (RR4): present only when reflections ran this frame.
-        if (inputs.specularHitDistance != nullptr)
+        if (optionalTags.specularHitDistance)
         {
             specularHitDistance = MakeTex(
                 inputs.specularHitDistance, inputs.specularHitDistanceState,
                 inputs.renderWidth, inputs.renderHeight);
             tags.emplace_back(
                 &specularHitDistance, sl::kBufferTypeSpecularHitDistance,
-                sl::ResourceLifecycle::eValidUntilPresent);
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (optionalTags.specularMotionVectors)
+        {
+            specularMotionVectors = MakeTex(
+                inputs.specularMotionVectors, inputs.specularMotionVectorsState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &specularMotionVectors, sl::kBufferTypeSpecularMotionVectors,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (optionalTags.responsivityMask)
+        {
+            responsivityMask = MakeTex(
+                inputs.responsivityMask, inputs.responsivityMaskState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &responsivityMask, sl::kBufferTypeResponsivityMask,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
+        }
+        if (optionalTags.disocclusionMask)
+        {
+            disocclusionMask = MakeTex(
+                inputs.disocclusionMask, inputs.disocclusionMaskState,
+                inputs.renderWidth, inputs.renderHeight);
+            tags.emplace_back(
+                &disocclusionMask, sl::kBufferTypeDisocclusionMask,
+                sl::ResourceLifecycle::eValidUntilPresent, &inputExtent);
         }
     }
-    if (g_slSetTagForFrame(*frameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
+    if (inputs.reset)
+    {
+        const auto motionDesc = static_cast<ID3D12Resource*>(inputs.motionVectors)->GetDesc();
+        const auto depthDesc = static_cast<ID3D12Resource*>(inputs.depth)->GetDesc();
+        std::ostringstream message;
+        message << "active-contract viewport=" << inputs.viewportId
+                << " feature=" << ToTraceFeature(inputs)
+                << " quality=" << ToTraceQuality(inputs.quality)
+                << " render=" << inputs.renderWidth << 'x' << inputs.renderHeight
+                << " output=" << inputs.displayWidth << 'x' << inputs.displayHeight
+                << " source=" << (inputs.extentPlan.IsSdkRecommendation() ? "sdk" : "explicit-fallback")
+                << " motion-format=" << static_cast<unsigned int>(motionDesc.Format)
+                << " depth-format=" << static_cast<unsigned int>(depthDesc.Format)
+                << " states=" << inputs.colorInputState << ',' << inputs.colorOutputState << ','
+                << inputs.depthState << ',' << inputs.motionVectorsState
+                << " motion-scale=" << inputs.mvecScaleX << ',' << inputs.mvecScaleY
+                << " tag-extents=explicit lifetimes=valid-until-present"
+                << " rr-no-arbitrary-drs="
+                << (inputs.extentPlan.rrNoArbitraryDrs ? "true" : "false");
+        EngineLog::Info("dlss", message.str());
+    }
+    if (g_slSetTagForFrame(*nativeFrameToken, viewport, tags.data(), static_cast<uint32_t>(tags.size()), cmdList)
         != sl::Result::eOk)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "tagging-failed", false, 0, true, frameIndex);
         return false;
     }
 
@@ -502,14 +1206,17 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
     consts.cameraFOV = inputs.cameraFovVertical;
     consts.cameraAspectRatio = inputs.cameraAspect;
     consts.depthInverted = inputs.depthInverted ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    consts.cameraMotionIncluded = sl::Boolean::eTrue;
+    consts.cameraMotionIncluded = inputs.cameraMotionIncluded ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.orthographicProjection = sl::Boolean::eFalse;
     consts.motionVectors3D = sl::Boolean::eFalse;
-    consts.motionVectorsDilated = sl::Boolean::eFalse;
+    consts.motionVectorsDilated = inputs.motionVectorsDilated ? sl::Boolean::eTrue : sl::Boolean::eFalse;
     consts.motionVectorsJittered = sl::Boolean::eFalse;
     consts.reset = inputs.reset ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-    if (g_slSetConstants(consts, *frameToken, viewport) != sl::Result::eOk)
+    if (g_slSetConstants(consts, *nativeFrameToken, viewport) != sl::Result::eOk)
     {
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "constants-failed", false, 0, true, frameIndex);
         return false;
     }
 
@@ -533,14 +1240,17 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         rrOptions.outputWidth = inputs.displayWidth;
         rrOptions.outputHeight = inputs.displayHeight;
         rrOptions.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
-        rrOptions.preExposure = inputs.preExposure;
-        rrOptions.exposureScale = inputs.exposureScale;
+        // S2-P1: the integrated RR programming contract does not define exposure guidance.
+        // Leave the SDK defaults untouched; authored display EV is applied after reconstruction.
         rrOptions.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
         rrOptions.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
         CopyMatrix(rrOptions.worldToCameraView, inputs.worldToCameraView);
         CopyMatrix(rrOptions.cameraViewToWorld, inputs.cameraViewToWorld);
         if (g_slDLSSDSetOptions(viewport, rrOptions) != sl::Result::eOk)
         {
+            FrameDiagnostics::LogDlssEvent(
+                inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+                "rr-options-failed", false, 0, true, frameIndex);
             return false;
         }
         feature = sl::kFeatureDLSS_RR;
@@ -552,18 +1262,23 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
         options.outputWidth = inputs.displayWidth;
         options.outputHeight = inputs.displayHeight;
         options.colorBuffersHDR = inputs.colorIsHdr ? sl::Boolean::eTrue : sl::Boolean::eFalse;
+        // Ordinary DLSS accepts reconstruction guidance. These values are deliberately distinct
+        // from authored display EV, which is applied after reconstruction by the renderer.
         options.preExposure = inputs.preExposure;
         options.exposureScale = inputs.exposureScale;
         options.sharpness = std::clamp(inputs.sharpness, 0.0f, 1.0f);
         if (g_slDLSSSetOptions(viewport, options) != sl::Result::eOk)
         {
+            FrameDiagnostics::LogDlssEvent(
+                inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+                "dlss-options-failed", false, 0, true, frameIndex);
             return false;
         }
     }
 
     const sl::BaseStructure* evalInputs[] = {&viewport};
     const sl::Result evalResult = g_slEvaluateFeature(
-        feature, *frameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
+        feature, *nativeFrameToken, evalInputs, static_cast<uint32_t>(std::size(evalInputs)),
         cmdList);
     if (evalResult != sl::Result::eOk)
     {
@@ -575,8 +1290,14 @@ bool DlssContext::Evaluate(const DlssFrameInputs& inputs)
                 "dlss",
                 std::string("slEvaluateFeature failed (") + ResultToString(evalResult) + ")");
         }
+        FrameDiagnostics::LogDlssEvent(
+            inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "failed",
+            "evaluate-failed", false, 0, true, frameIndex);
         return false;
     }
+    FrameDiagnostics::LogDlssEvent(
+        inputs.viewportId, ToTraceFeature(inputs), ToTraceQuality(inputs.quality), "evaluated", "none",
+        false, 0, true, frameIndex);
     return true;
 #endif
 }

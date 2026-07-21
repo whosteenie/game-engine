@@ -6,12 +6,13 @@ class IBL;
 class Scene;
 class SceneRenderer;
 class ScreenSpaceEffects;
+class EditorSettings;
 struct RendererEditContext;
 
 struct LightingPanelContext
 {
     Scene& scene;
-    const Camera& camera;
+    Camera& camera;
     int viewportWidth;
     int viewportHeight;
     RendererEditContext& editContext;
@@ -19,4 +20,5 @@ struct LightingPanelContext
     IBL& ibl;
     EnvironmentMap& environmentMap;
     ScreenSpaceEffects& screenSpaceEffects;
+    EditorSettings* editorSettings = nullptr;
 };

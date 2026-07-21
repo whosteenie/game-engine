@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/platform/SystemResources.h"
+#include "engine/platform/system/SystemResources.h"
 
 #include <cstdint>
 #include <string>
@@ -9,10 +9,30 @@
 class Scene;
 class SceneRenderer;
 
+struct ApplicationFrameDiagnostics
+{
+    double updateCpuMs = 0.0;
+    double renderCpuMs = 0.0;
+    double frameCpuMs = 0.0;
+    double imguiBeginCpuMs = 0.0;
+    double projectChooserUiCpuMs = 0.0;
+    double viewportUiCpuMs = 0.0;
+    double hierarchyUiCpuMs = 0.0;
+    double inspectorUiCpuMs = 0.0;
+    double projectFilesUiCpuMs = 0.0;
+    double lightingUiCpuMs = 0.0;
+    double performanceUiCpuMs = 0.0;
+    double sceneEditorCpuMs = 0.0;
+};
+
 class PerformancePanel
 {
 public:
     void OnFrame(double deltaTimeSeconds);
+    void SetApplicationFrameDiagnostics(const ApplicationFrameDiagnostics& diagnostics)
+    {
+        m_applicationFrameDiagnostics = diagnostics;
+    }
 
     void Draw(
         const Scene& scene,
@@ -24,6 +44,8 @@ public:
         bool playModeActive) const;
 
     bool& ShowPanel() const { return m_showPanel; }
+    bool& GpuPassSmoothingEnabled() const { return m_gpuPassSmoothingEnabled; }
+    bool& CpuPassSmoothingEnabled() const { return m_cpuPassSmoothingEnabled; }
 
 private:
     static void SmoothResourceValue(
@@ -61,7 +83,12 @@ private:
     mutable float m_sumFrameMs = 0.0f;
     mutable std::uint64_t m_frameCounter = 0;
     mutable int m_gpuTimingSampleCounter = 0;
+    mutable bool m_cpuTimingSamplePending = true;
+    mutable bool m_gpuPassSmoothingEnabled = false;
+    mutable bool m_cpuPassSmoothingEnabled = false;
     mutable std::unordered_map<std::string, float> m_smoothedGpuPassMs;
+    mutable std::unordered_map<std::string, float> m_smoothedCpuPassMs;
+    ApplicationFrameDiagnostics m_applicationFrameDiagnostics{};
     mutable SmoothedSystemResourceDisplay m_smoothedSystemResources;
     SystemResourcesMonitor m_systemResources;
 };

@@ -1,10 +1,10 @@
 #include "pt_test_harness.h"
 
 #include "engine/lighting/IBL.h"
-#include "engine/raytracing/DxrContext.h"
-#include "engine/raytracing/DxrInstanceTransform.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rendering/Mesh.h"
+#include "engine/raytracing/core/DxrContext.h"
+#include "engine/raytracing/acceleration/DxrInstanceTransform.h"
+#include "engine/raytracing/core/DxrTrace.h"
+#include "engine/rendering/resources/Mesh.h"
 #include "engine/rhi/GfxContext.h"
 
 #include "primitives/Cube.h"
@@ -166,6 +166,41 @@ namespace
         return material;
     }
 
+    DxrMaterialEntry MakeCheckerMaterial(const bool bright)
+    {
+        DxrMaterialEntry material{};
+        const float value = bright ? 0.95f : 0.03f;
+        material.albedo[0] = value;
+        material.albedo[1] = bright ? 0.8f : value;
+        material.albedo[2] = bright ? 0.1f : value;
+        material.roughness = 0.35f;
+        return material;
+    }
+
+    DxrMaterialEntry MakeMirrorMaterial()
+    {
+        DxrMaterialEntry material{};
+        material.albedo[0] = 0.95f;
+        material.albedo[1] = 0.95f;
+        material.albedo[2] = 0.95f;
+        material.roughness = 0.0f;
+        material.metallic = 1.0f;
+        material.transmission = 0.0f;
+        return material;
+    }
+
+    DxrMaterialEntry MakeMirrorReceiverMaterial()
+    {
+        DxrMaterialEntry material{};
+        material.albedo[0] = 0.06f;
+        material.albedo[1] = 0.85f;
+        material.albedo[2] = 0.18f;
+        material.roughness = 0.65f;
+        material.metallic = 0.0f;
+        material.transmission = 0.0f;
+        return material;
+    }
+
     bool UploadGeometryBuffersForInstances(
         const std::vector<MinimalPtGlassScene::InstanceDesc>& instances,
         ID3D12GraphicsCommandList* commandList,
@@ -212,6 +247,11 @@ namespace
             entry.vertexFloatOffset = static_cast<std::uint32_t>(vertexFloats.size());
             entry.vertexStrideFloats = vertexStrideFloats;
             entry.indexUintOffset = static_cast<std::uint32_t>(indices.size());
+            // The shader resolves a hit's material through geometryLookup[InstanceID()].materialId.
+            // Keep the compact fixture's one-material-per-instance table aligned with that index;
+            // leaving the default zero silently turns every instance (including the glass pane)
+            // into the first backdrop material.
+            entry.materialId = static_cast<std::uint32_t>(objectIndex);
 
             vertexFloats.resize(vertexFloats.size() + vertexFloatCount, 0.0f);
             if (meshVertexData.size() >= vertexFloatCount)
@@ -390,6 +430,7 @@ bool MinimalPtGlassScene::Build(
     ID3D12GraphicsCommandList4* commandList,
     DxrGpuResource& scratch,
     const bool includeGlassPane,
+    const bool checkerBackdrop,
     std::string& outError)
 {
     outError.clear();
@@ -414,13 +455,33 @@ bool MinimalPtGlassScene::Build(
         return false;
     }
 
-    m_instances = {
-        InstanceDesc{
-            m_backdropMesh.get(),
-            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f))
-                * glm::scale(glm::mat4(1.0f), glm::vec3(6.0f, 6.0f, 0.2f)),
-            MakeBackdropMaterial()},
-    };
+    if (checkerBackdrop)
+    {
+        // A static two-band checker deliberately crosses the center ray under lateral camera
+        // motion. It is an albedo oracle for reprojection, not a radiance-quality fixture.
+        m_instances = {
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(-1.5f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(3.0f, 6.0f, 0.2f)),
+                MakeCheckerMaterial(false)},
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(1.5f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(3.0f, 6.0f, 0.2f)),
+                MakeCheckerMaterial(true)},
+        };
+    }
+    else
+    {
+        m_instances = {
+            InstanceDesc{
+                m_backdropMesh.get(),
+                glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -4.0f))
+                    * glm::scale(glm::mat4(1.0f), glm::vec3(6.0f, 6.0f, 0.2f)),
+                MakeBackdropMaterial()},
+        };
+    }
     if (includeGlassPane)
     {
         m_instances.push_back(InstanceDesc{
@@ -428,6 +489,137 @@ bool MinimalPtGlassScene::Build(
             glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, 0.5f))
                 * glm::scale(glm::mat4(1.0f), glm::vec3(6.0f, 6.0f, 0.01f)),
             MakeGlassMaterial()});
+    }
+
+    if (!UploadGeometryBuffersForInstances(m_instances, commandList,
+            m_geometryLookupStaging,
+            m_sceneVertexFloatsStaging,
+            m_sceneIndicesStaging,
+            m_materialStaging,
+            m_geometryLookupGpu,
+            m_sceneVertexFloatsGpu,
+            m_sceneIndicesGpu,
+            m_materialGpu,
+            m_geometryLookupSrvIndices,
+            m_sceneVertexFloatsSrvIndices,
+            m_sceneIndicesSrvIndices,
+            m_materialSrvIndices,
+            outError))
+    {
+        return false;
+    }
+
+    const std::uint32_t frameIndex = GfxContext::Get().GetFrameIndex();
+    m_geometryLookupSrvIndex = m_geometryLookupSrvIndices[frameIndex];
+    m_sceneVertexFloatsSrvIndex = m_sceneVertexFloatsSrvIndices[frameIndex];
+    m_sceneIndicesSrvIndex = m_sceneIndicesSrvIndices[frameIndex];
+    m_materialSrvIndex = m_materialSrvIndices[frameIndex];
+
+    std::vector<D3D12_RAYTRACING_INSTANCE_DESC> tlasInstances(m_instances.size());
+    for (std::size_t instanceIndex = 0; instanceIndex < m_instances.size(); ++instanceIndex)
+    {
+        WriteD3D12InstanceTransform(
+            m_instances[instanceIndex].transform,
+            reinterpret_cast<float*>(tlasInstances[instanceIndex].Transform));
+        tlasInstances[instanceIndex].InstanceID = static_cast<UINT>(instanceIndex);
+        tlasInstances[instanceIndex].InstanceMask = 0xFF;
+        tlasInstances[instanceIndex].AccelerationStructure =
+            m_backdropBlas.GetGpuVirtualAddress();
+    }
+
+    if (!m_tlas.Build(commandList, tlasInstances, scratch, outError))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool MinimalPtGlassScene::BuildMirrorChain(
+    ID3D12GraphicsCommandList4* commandList,
+    DxrGpuResource& scratch,
+    const bool glassReceiver,
+    std::string& outError)
+{
+    outError.clear();
+    Release();
+
+    if (commandList == nullptr)
+    {
+        outError = "invalid command list for PT mirror-chain scene";
+        return false;
+    }
+
+    m_backdropMesh = CreateCubeMesh();
+    if (m_backdropMesh == nullptr)
+    {
+        outError = "failed to create PT mirror-chain scene mesh";
+        return false;
+    }
+
+    m_backdropMesh->EnsureGpuResources();
+    if (!m_backdropBlas.Build(commandList, m_backdropMesh.get(), scratch, outError))
+    {
+        return false;
+    }
+
+    // XZ plan (Y is panel height):
+    //   camera (0, 4) -> A (0, 0) -> B (3, -3) -> receiver (0, -6).
+    // A's +Z normal is yawed 67.5 degrees, reflecting -Z to (+X,-Z). B is an X-normal
+    // panel, reflecting that segment to (-X,-Z). The receiver is deliberately rough and green.
+    const glm::mat4 mirrorATransform =
+        glm::rotate(
+            glm::mat4(1.0f),
+            glm::radians(67.5f),
+            glm::vec3(0.0f, 1.0f, 0.0f))
+        * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.02f));
+    const glm::mat4 mirrorBTransform =
+        glm::translate(glm::mat4(1.0f), glm::vec3(3.0f, 0.0f, -3.0f))
+        * glm::rotate(
+            glm::mat4(1.0f),
+            glm::half_pi<float>(),
+            glm::vec3(0.0f, 1.0f, 0.0f))
+        * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.02f));
+    const glm::mat4 receiverTransform =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f))
+        * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.2f));
+    if (glassReceiver)
+    {
+        // The final mirror segment travels diagonally toward (-X,-Z). A thin glass receiver at the
+        // old rough-receiver position preserves that deterministic chain, and the red backdrop
+        // farther along the same ray makes successful transmission unambiguous in readback.
+        const glm::mat4 glassTransform =
+            glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -6.0f))
+            * glm::rotate(
+                glm::mat4(1.0f),
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f))
+            * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.02f));
+        const glm::mat4 backdropTransform =
+            glm::translate(glm::mat4(1.0f), glm::vec3(-2.0f, 0.0f, -8.0f))
+            * glm::rotate(
+                glm::mat4(1.0f),
+                glm::radians(45.0f),
+                glm::vec3(0.0f, 1.0f, 0.0f))
+            * glm::scale(glm::mat4(1.0f), glm::vec3(4.0f, 4.0f, 0.2f));
+        DxrMaterialEntry emissiveBackdrop = MakeBackdropMaterial();
+        emissiveBackdrop.emissive[0] = 4.0f;
+        emissiveBackdrop.emissive[1] = 0.2f;
+        emissiveBackdrop.emissive[2] = 0.1f;
+        m_instances = {
+            InstanceDesc{m_backdropMesh.get(), glassTransform, MakeGlassMaterial()},
+            InstanceDesc{m_backdropMesh.get(), backdropTransform, emissiveBackdrop},
+            InstanceDesc{m_backdropMesh.get(), mirrorATransform, MakeMirrorMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorBTransform, MakeMirrorMaterial()},
+        };
+    }
+    else
+    {
+        m_instances = {
+            InstanceDesc{m_backdropMesh.get(), receiverTransform, MakeMirrorReceiverMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorATransform, MakeMirrorMaterial()},
+            InstanceDesc{m_backdropMesh.get(), mirrorBTransform, MakeMirrorMaterial()},
+        };
     }
 
     if (!UploadGeometryBuffersForInstances(m_instances, commandList,
@@ -596,15 +788,25 @@ void PtDummyGbufferBindings::Release()
     m_ownedSrvIndices.clear();
 }
 
-bool PtDispatchStack::EnsureReady(std::string& outError)
+bool PtDispatchStack::EnsureReady(std::string& outError, const bool diagnosticPermutation)
 {
     outError.clear();
-    if (!pipeline.CreatePathTracerPipeline(outError))
+    if (m_ready && m_diagnosticPermutation == diagnosticPermutation)
+    {
+        return true;
+    }
+    if (!pipeline.CreatePathTracerPipeline(outError, diagnosticPermutation))
     {
         return false;
     }
 
-    return shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), outError);
+    if (!shaderBindingTable.BuildPathTracerTable(pipeline.GetProperties(), outError))
+    {
+        return false;
+    }
+    m_ready = true;
+    m_diagnosticPermutation = diagnosticPermutation;
+    return true;
 }
 
 void PtDispatchStack::Release()
@@ -612,6 +814,8 @@ void PtDispatchStack::Release()
     shaderBindingTable.Release();
     pipeline.Release();
     dispatchContext.Release();
+    m_ready = false;
+    m_diagnosticPermutation = false;
 }
 
 bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::string& outError)
@@ -638,7 +842,7 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
         return false;
     }
 
-    if (!params.stack->EnsureReady(outError))
+    if (!params.stack->EnsureReady(outError, params.ptDebugIsolateMode != 0))
     {
         return false;
     }
@@ -689,12 +893,24 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     constants.environmentIntensity = params.environmentIbl->GetEnvironmentIntensity();
     constants.maxReflectionLod = params.environmentIbl->GetMaxReflectionLod();
     constants.frameIndex = params.frameIndex;
-    constants.samplesPerPixel = 1;
+    constants.samplesPerPixel = std::clamp(params.ptMaxBounces, 1u, 16u);
     constants.roughnessCutoff = 1.0f;
+    constants.restirDiCandidateCount = static_cast<float>(params.restirDiCandidateCount);
+    constexpr std::uint32_t kIndependentOpticalRrFlag = 1u << 1u;
+    constexpr std::uint32_t kMirrorChainPsrFlag = 1u << 2u;
+    constants.ptOpticalStabilityFlags = static_cast<float>(
+        (params.ptIndependentOpticalRrLayers ? kIndependentOpticalRrFlag : 0u)
+        | (params.ptMirrorChainPsr ? kMirrorChainPsrFlag : 0u));
+    constants.ptDeterministicOpticalSplit =
+        params.ptDeterministicOpticalSplit ? 1.0f : 0.0f;
+    constants.ptPsrParams[0] = static_cast<float>(params.ptPsrMaxBounces);
+    constants.ptPsrParams[1] = params.ptPsrSubpixelThreshold;
+    constants.ptPsrParams[2] = 0.0f;
     constants.paddingUnjitteredViewProj[3] = params.motionHistoryValid ? 1.0f : 0.0f;
     constants.paddingUnjitteredViewProj[2] =
         2.0f * std::tan(glm::radians(params.camera->GetFov()) * 0.5f)
         / static_cast<float>(std::max(params.height, 1));
+    constants.ptDebugIsolateMode = static_cast<float>(params.ptDebugIsolateMode);
 
     DxrDispatchContext::ReflectionDispatchInputs dispatchInputs{};
     dispatchInputs.tlasResource = params.scene->GetTlasResource();
@@ -711,6 +927,8 @@ bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::st
     dispatchInputs.sceneVertexFloatsSrvIndex = params.scene->GetSceneVertexFloatsSrvIndex();
     dispatchInputs.sceneIndicesSrvIndex = params.scene->GetSceneIndicesSrvIndex();
     dispatchInputs.materialSrvIndex = params.scene->GetMaterialSrvIndex();
+    dispatchInputs.envImportanceCdfSrvIndex = params.environmentIbl->GetEnvImportanceCdfSrvIndex();
+    dispatchInputs.envEquirectSrvCpuHandle = params.environmentIbl->GetHdrEquirectSrvCpuHandle();
 
     return params.stack->dispatchContext.DispatchPathTracer(
         commandList4,
@@ -730,7 +948,9 @@ bool ReadbackPtGuideCenterPixel(
     const int width,
     const int height,
     const DXGI_FORMAT format,
-    float outRgba[4])
+    float outRgba[4],
+    const int pixelX,
+    const int pixelY)
 {
     if (textureResource == nullptr || width <= 0 || height <= 0)
     {
@@ -782,8 +1002,14 @@ bool ReadbackPtGuideCenterPixel(
         return false;
     }
 
-    const int centerX = width / 2;
-    const int centerY = height / 2;
+    const int centerX = pixelX >= 0 ? pixelX : width / 2;
+    const int centerY = pixelY >= 0 ? pixelY : height / 2;
+    if (centerX < 0 || centerY < 0 || centerX >= width || centerY >= height)
+    {
+        readbackAllocation->Release();
+        readbackResource->Release();
+        return false;
+    }
     const D3D12_RESOURCE_STATES stateBefore = static_cast<D3D12_RESOURCE_STATES>(resourceState);
 
     GfxContext::Get().ExecuteImmediate([&](void* commandListPtr) {
@@ -837,6 +1063,13 @@ bool ReadbackPtGuideCenterPixel(
         {
             outRgba[channel] = static_cast<float>(bytes[channel]) / 255.0f;
         }
+    }
+    else if (format == DXGI_FORMAT_R32_FLOAT)
+    {
+        outRgba[0] = *static_cast<const float*>(mapped);
+        outRgba[1] = 0.0f;
+        outRgba[2] = 0.0f;
+        outRgba[3] = 0.0f;
     }
     else if (format == DXGI_FORMAT_R16G16B16A16_FLOAT)
     {

@@ -2,9 +2,9 @@
 
 #include "app/editor/EditorPanelConstraints.h"
 #include "app/editor/EditorWidgets.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/scene/SceneObject.h"
 
@@ -258,11 +258,101 @@ namespace
         return smoothed;
     }
 
+    std::vector<GpuProfiler::Entry> BuildCpuTimings(
+        const RenderFrameDiagnostics& diagnostics,
+        const GfxContext::FramePacingDiagnostics& pacingDiagnostics,
+        const ApplicationFrameDiagnostics& applicationDiagnostics)
+    {
+        const float rendererMs = static_cast<float>(diagnostics.rendererCpuMs);
+        const float pacingMs = static_cast<float>(
+            pacingDiagnostics.previousFrameFenceWaitMs + pacingDiagnostics.presentCallMs);
+        const float renderMs = static_cast<float>(applicationDiagnostics.renderCpuMs);
+        const float frameMs = static_cast<float>(applicationDiagnostics.frameCpuMs);
+        const float renderOtherMs = std::max(0.0f, renderMs - rendererMs - pacingMs);
+        const float applicationOtherMs = std::max(
+            0.0f,
+            frameMs - static_cast<float>(applicationDiagnostics.updateCpuMs) - renderMs);
+        const float measuredUpdateMs = static_cast<float>(
+            applicationDiagnostics.imguiBeginCpuMs
+            + applicationDiagnostics.projectChooserUiCpuMs
+            + applicationDiagnostics.viewportUiCpuMs
+            + applicationDiagnostics.hierarchyUiCpuMs
+            + applicationDiagnostics.inspectorUiCpuMs
+            + applicationDiagnostics.projectFilesUiCpuMs
+            + applicationDiagnostics.lightingUiCpuMs
+            + applicationDiagnostics.performanceUiCpuMs
+            + applicationDiagnostics.sceneEditorCpuMs);
+        const float updateOtherMs = std::max(
+            0.0f, static_cast<float>(applicationDiagnostics.updateCpuMs) - measuredUpdateMs);
+        const float topLevelMeasuredMs = static_cast<float>(
+            diagnostics.gpuSceneBuildCpuMs
+            + diagnostics.gpuSceneUploadCpuMs
+            + diagnostics.lightingSyncCpuMs
+            + diagnostics.shadowRecordCpuMs
+            + diagnostics.rasterTargetSetupCpuMs
+            + diagnostics.rasterRecordCpuMs
+            + diagnostics.postProcessCpuMs
+            + diagnostics.gizmoCpuMs);
+        const float otherRendererMs = std::max(
+            0.0f,
+            rendererMs - topLevelMeasuredMs);
+
+        return {
+            {"Application", frameMs},
+            {"Application/Update", static_cast<float>(applicationDiagnostics.updateCpuMs)},
+            {"Application/Update/ImGui frame begin", static_cast<float>(applicationDiagnostics.imguiBeginCpuMs)},
+            {"Application/Update/Project chooser UI", static_cast<float>(applicationDiagnostics.projectChooserUiCpuMs)},
+            {"Application/Update/Viewport UI", static_cast<float>(applicationDiagnostics.viewportUiCpuMs)},
+            {"Application/Update/Hierarchy UI", static_cast<float>(applicationDiagnostics.hierarchyUiCpuMs)},
+            {"Application/Update/Inspector UI", static_cast<float>(applicationDiagnostics.inspectorUiCpuMs)},
+            {"Application/Update/Project files UI", static_cast<float>(applicationDiagnostics.projectFilesUiCpuMs)},
+            {"Application/Update/Lighting UI", static_cast<float>(applicationDiagnostics.lightingUiCpuMs)},
+            {"Application/Update/Performance UI", static_cast<float>(applicationDiagnostics.performanceUiCpuMs)},
+            {"Application/Update/Scene editor interaction", static_cast<float>(applicationDiagnostics.sceneEditorCpuMs)},
+            {"Application/Update/Other update work", updateOtherMs},
+            {"Application/Render", renderMs},
+            {"Application/Render/Renderer", rendererMs},
+            {"Application/Render/Renderer/Scene tables/Build", static_cast<float>(diagnostics.gpuSceneBuildCpuMs)},
+            {"Application/Render/Renderer/Scene tables/Upload", static_cast<float>(diagnostics.gpuSceneUploadCpuMs)},
+            {"Application/Render/Renderer/Lighting sync", static_cast<float>(diagnostics.lightingSyncCpuMs)},
+            {"Application/Render/Renderer/Shadow maps", static_cast<float>(diagnostics.shadowRecordCpuMs)},
+            {"Application/Render/Renderer/Raster target setup", static_cast<float>(diagnostics.rasterTargetSetupCpuMs)},
+            {"Application/Render/Renderer/Raster command recording", static_cast<float>(diagnostics.rasterRecordCpuMs)},
+            {"Application/Render/Renderer/Post process", static_cast<float>(diagnostics.postProcessCpuMs)},
+            {"Application/Render/Renderer/Post process/DXR scene preparation", static_cast<float>(diagnostics.dxrScenePrepCpuMs)},
+            {"Application/Render/Renderer/Post process/PT frame data", static_cast<float>(diagnostics.pathTracerFrameDataCpuMs)},
+            {"Application/Render/Renderer/Gizmos", static_cast<float>(diagnostics.gizmoCpuMs)},
+            {"Application/Render/Renderer/Other renderer work", otherRendererMs},
+            {"Application/Render/Frame pacing", pacingMs},
+            {"Application/Render/Frame pacing/Previous GPU completion wait", static_cast<float>(
+                pacingDiagnostics.previousFrameFenceWaitMs)},
+            {"Application/Render/Frame pacing/Present", static_cast<float>(pacingDiagnostics.presentCallMs)},
+            {"Application/Render/Other render work", renderOtherMs},
+            {"Application/Other application work", applicationOtherMs},
+        };
+    }
+
+    float FindGpuTimingMilliseconds(const std::vector<GpuProfiler::Entry>& timings, const char* name)
+    {
+        for (const GpuProfiler::Entry& entry : timings)
+        {
+            if (entry.name == name)
+            {
+                return entry.milliseconds;
+            }
+        }
+        return 0.0f;
+    }
+
     std::vector<GpuPassNode> BuildGpuPassTree(const std::vector<GpuProfiler::Entry>& timings)
     {
         std::vector<GpuPassNode> roots;
         for (const GpuProfiler::Entry& entry : timings)
         {
+            if (entry.name == "Frame GPU span")
+            {
+                continue;
+            }
             InsertGpuTiming(roots, entry.name, entry.milliseconds);
         }
         SortGpuPassRoots(roots);
@@ -527,6 +617,7 @@ void PerformancePanel::OnFrame(const double deltaTimeSeconds)
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         RefreshSmoothedGpuTimings(timings, m_smoothedGpuPassMs, kPerfSmoothAlpha);
         RefreshSmoothedSystemResources(m_systemResources.GetSnapshot(), kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = true;
     }
 }
 
@@ -723,6 +814,7 @@ void PerformancePanel::Draw(
 
     if (ImGui::CollapsingHeader("GPU passes", ImGuiTreeNodeFlags_DefaultOpen))
     {
+        ImGui::Checkbox("Smooth display##gpu_passes", &m_gpuPassSmoothingEnabled);
         const std::vector<GpuProfiler::Entry>& timings = GfxContext::Get().GetGpuTimings();
         if (timings.empty())
         {
@@ -732,11 +824,13 @@ void PerformancePanel::Draw(
         }
         else
         {
-            const std::vector<GpuProfiler::Entry> displayTimings =
-                BuildSmoothedGpuTimings(timings, m_smoothedGpuPassMs);
+            const std::vector<GpuProfiler::Entry> displayTimings = m_gpuPassSmoothingEnabled
+                ? BuildSmoothedGpuTimings(timings, m_smoothedGpuPassMs)
+                : timings;
             const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
             const float gpuTotalMs = ComputeGpuRootTotalMs(passTree);
             const float maxPassMs = MaxGpuRootMilliseconds(passTree);
+            const float gpuFrameSpanMs = FindGpuTimingMilliseconds(displayTimings, "Frame GPU span");
 
             if (ImGui::BeginTable(
                     "perf_gpu_passes",
@@ -756,11 +850,60 @@ void PerformancePanel::Draw(
                 ImGui::EndTable();
             }
 
-            ImGui::Text("GPU total (top-level passes): %.3f ms", gpuTotalMs);
-            EditorWidgets::TextWrappedDisabled(
-                "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
-                "double-counted. Pass order is fixed; timings are smoothed (~8 Hz).");
+            ImGui::Text("GPU frame span (command list): %.3f ms", gpuFrameSpanMs);
+            ImGui::Text("GPU total (instrumented passes): %.3f ms", gpuTotalMs);
+            EditorWidgets::TextWrappedDisabled(m_gpuPassSmoothingEnabled
+                ? "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
+                  "double-counted. Pass order is fixed; display is smoothed (~8 Hz)."
+                : "Expand categories for sub-pass breakdown. ~1-2 frame latency; nested scopes are not "
+                  "double-counted. Pass order is fixed; display shows live timestamp results.");
         }
+    }
+
+    const std::vector<GpuProfiler::Entry> cpuTimings =
+        BuildCpuTimings(
+            renderer.GetRenderFrameDiagnostics(),
+            GfxContext::Get().GetFramePacingDiagnostics(),
+            m_applicationFrameDiagnostics);
+    if (m_cpuTimingSamplePending)
+    {
+        RefreshSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs, kPerfSmoothAlpha);
+        m_cpuTimingSamplePending = false;
+    }
+
+    if (ImGui::CollapsingHeader("CPU passes", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        ImGui::Checkbox("Smooth display##cpu_passes", &m_cpuPassSmoothingEnabled);
+        const std::vector<GpuProfiler::Entry> displayTimings = m_cpuPassSmoothingEnabled
+            ? BuildSmoothedGpuTimings(cpuTimings, m_smoothedCpuPassMs)
+            : cpuTimings;
+        const std::vector<GpuPassNode> passTree = BuildGpuPassTree(displayTimings);
+        const float cpuTotalMs = ComputeGpuRootTotalMs(passTree);
+        const float maxPassMs = MaxGpuRootMilliseconds(passTree);
+
+        if (ImGui::BeginTable(
+                "perf_cpu_passes",
+                3,
+                ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+        {
+            ImGui::TableSetupColumn("Pass");
+            ImGui::TableSetupColumn("ms");
+            ImGui::TableSetupColumn("Share");
+            ImGui::TableHeadersRow();
+
+            for (const GpuPassNode& root : passTree)
+            {
+                DrawGpuPassRow(root, maxPassMs, cpuTotalMs, 0);
+            }
+
+            ImGui::EndTable();
+        }
+
+        ImGui::Text("CPU total (application work): %.3f ms", cpuTotalMs);
+        EditorWidgets::TextWrappedDisabled(m_cpuPassSmoothingEnabled
+            ? "Sampled whole-application CPU work with renderer and presentation detail. Display is "
+              "smoothed (~8 Hz)."
+            : "Live whole-application CPU work with renderer and presentation detail.");
     }
 
     if (ImGui::CollapsingHeader("Scene", ImGuiTreeNodeFlags_DefaultOpen))
@@ -827,11 +970,11 @@ void PerformancePanel::Draw(
         const ScreenSpaceEffects& effects = renderer.GetScreenSpaceEffects();
         if (effects.IsPathTracerBoilMetricValid())
         {
-            ImGui::Text("PT boil metric: %.5f", effects.GetPathTracerBoilMetric());
+            ImGui::Text("PT frame-instability metric: %.5f", effects.GetPathTracerBoilMetric());
         }
         else
         {
-            ImGui::TextDisabled("PT boil metric: pending");
+            ImGui::TextDisabled("PT frame-instability metric: pending");
         }
         ImGui::Text("PT temporal stats samples: %u", effects.GetPathTracerTemporalStatsSampleCount());
         ImGui::Separator();

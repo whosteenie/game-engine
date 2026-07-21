@@ -1,10 +1,13 @@
 #include "engine/lighting/IBL.h"
-#include "engine/lighting/EnvironmentImportanceSampling.h"
+#include "engine/lighting/environment/Importance.h"
 #include "engine/lighting/IrradianceSh.h"
 
-#include "engine/platform/SceneRenderTrace.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Shader.h"
+#include "engine/platform/tooling/NativeProgressWindow.h"
+#include "engine/platform/tooling/ProjectLoadBenchmark.h"
+#include "engine/platform/tooling/ProjectLoadProgress.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/D3D12Throw.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
@@ -21,12 +24,26 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace
 {
+    glm::vec3 EquirectUvToDirection(const float u, const float v)
+    {
+        const float phi = (u - 0.5f) * glm::two_pi<float>();
+        const float y = std::sin(glm::pi<float>() * (v - 0.5f));
+        const float horizontal = std::sqrt(std::max(0.0f, 1.0f - y * y));
+        return glm::vec3(std::cos(phi) * horizontal, y, std::sin(phi) * horizontal);
+    }
+
+    glm::vec3 RotateY(const glm::vec3& direction, const float angle)
+    {
+        const float c = std::cos(angle); const float s = std::sin(angle);
+        return glm::vec3(c * direction.x + s * direction.z, direction.y, -s * direction.x + c * direction.z);
+    }
     const float kCubeVertices[] = {
         -1.0f,  1.0f, -1.0f,
         -1.0f, -1.0f, -1.0f,
@@ -415,20 +432,18 @@ void IBL::DestroyGpuTexture(GpuTexture& texture)
 
     if (texture.srvDescriptorIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(texture.srvDescriptorIndex);
+        // IBL regeneration happens between frames, but the previous frame can still be executing.
+        // Its command list may retain both this descriptor and the underlying resource, so recycle
+        // neither synchronously.  Reusing the slot early redirects an in-flight draw to unrelated
+        // data; releasing the resource early can trigger a device removal.
+        GfxContext::Get().DeferredFreeOffscreenSrv(texture.srvDescriptorIndex);
     }
 
     // Both the ID3D12Resource and its D3D12MA allocation are created with an owning ref
-    // (CreateResource with IID_PPV_ARGS), so both must be released. Releasing only the allocation
-    // leaked the resource object every reload — release the resource first, then the allocation.
-    if (texture.resource != nullptr)
+    // (CreateResource with IID_PPV_ARGS), so transfer both to the deferred-release queue.
+    if (texture.resource != nullptr || texture.allocation != nullptr)
     {
-        static_cast<ID3D12Resource*>(texture.resource)->Release();
-    }
-
-    if (texture.allocation != nullptr)
-    {
-        static_cast<D3D12MA::Allocation*>(texture.allocation)->Release();
+        GfxContext::Get().DeferredReleaseResource(texture.allocation, texture.resource);
     }
 
     texture = {};
@@ -449,26 +464,25 @@ void IBL::DestroyEnvImportanceCdf()
 {
     if (GfxContext::Get().IsInitialized() && m_envImportanceCdfSrvIndex != UINT32_MAX)
     {
-        GfxContext::Get().FreeOffscreenSrv(m_envImportanceCdfSrvIndex);
+        GfxContext::Get().DeferredFreeOffscreenSrv(m_envImportanceCdfSrvIndex);
     }
 
-    if (m_envImportanceCdfResource != nullptr)
+    if (m_envImportanceCdfResource != nullptr || m_envImportanceCdfAllocation != nullptr)
     {
-        static_cast<ID3D12Resource*>(m_envImportanceCdfResource)->Release();
-        m_envImportanceCdfResource = nullptr;
+        GfxContext::Get().DeferredReleaseResource(
+            m_envImportanceCdfAllocation,
+            m_envImportanceCdfResource);
     }
 
-    if (m_envImportanceCdfAllocation != nullptr)
-    {
-        static_cast<D3D12MA::Allocation*>(m_envImportanceCdfAllocation)->Release();
-        m_envImportanceCdfAllocation = nullptr;
-    }
+    m_envImportanceCdfResource = nullptr;
+    m_envImportanceCdfAllocation = nullptr;
 
     m_envImportanceCdfSrvIndex = UINT32_MAX;
     m_envImportanceSampleCount = 0;
     m_envImportanceCdfWidth = 0;
     m_envImportanceCdfHeight = 0;
     m_envImportanceWeightSum = 0.0f;
+    m_envDirectLightingLuminanceClamp = 0.0f;
 }
 
 void IBL::BuildAndUploadEnvImportanceCdf(
@@ -579,6 +593,7 @@ void IBL::BuildAndUploadEnvImportanceCdf(
     m_envImportanceCdfWidth = build.cdfWidth;
     m_envImportanceCdfHeight = build.cdfHeight;
     m_envImportanceWeightSum = build.weightSum;
+    m_envDirectLightingLuminanceClamp = build.directLightingLuminanceClamp;
 }
 
 void IBL::DestroyResources()
@@ -712,6 +727,30 @@ void IBL::LoadHdrEquirectangular(const char* hdrPath)
     m_hdrHeight = height;
 
     m_irradianceSh = ProjectIrradianceSh9FromEquirect(rgba, width, height);
+
+    // Heuristic by design: choose the brightest non-negative-elevation HDR texel as the sun.
+    // This favors a visible sky sun over ground reflections; lamps/windows can still win in an
+    // ambiguous HDR, which is why alignment remains opt-in per directional light.
+    float brightestLuminance = 0.0f;
+    m_hasDetectedSunDirection = false;
+    for (int y = 0; y < height; ++y)
+    {
+        const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
+        const glm::vec3 direction = EquirectUvToDirection(0.5f, v);
+        if (direction.y < 0.0f) continue;
+        for (int x = 0; x < width; ++x)
+        {
+            const std::size_t index = (static_cast<std::size_t>(y) * width + x) * 4;
+            const float luminance = 0.2126f * rgba[index] + 0.7152f * rgba[index + 1] + 0.0722f * rgba[index + 2];
+            if (luminance > brightestLuminance)
+            {
+                brightestLuminance = luminance;
+                m_detectedSunDirectionLocal = EquirectUvToDirection(
+                    (static_cast<float>(x) + 0.5f) / static_cast<float>(width), v);
+                m_hasDetectedSunDirection = true;
+            }
+        }
+    }
 
     float maxHdrChannel = 0.0f;
     for (const float channel : rgba)
@@ -1106,25 +1145,46 @@ void IBL::ReloadFromHdr(const char* hdrPath, const float rotationYRadians)
     m_hdrPath = nextPath;
     m_rotationYRadians = rotationYRadians;
     DestroyEnvironmentTextures();
+    ProjectLoadBenchmark::ScopedPhase iblReloadPhase("ibl.reload.total");
 
     try
     {
         SceneRenderTrace::Step("ibl: reload begin");
+        ProjectLoadProgress::Report("Building IBL capture targets...", ProjectLoadProgress::kIblCaptureTargets);
         if (m_captureDepthResource == nullptr)
         {
             SceneRenderTrace::Step("ibl: create capture resources");
             CreateCaptureResources();
         }
 
+        {
+            const std::string hdrName = std::filesystem::path(m_hdrPath).filename().string();
+            ProjectLoadProgress::Report(
+                hdrName.empty() ? "Loading HDR environment..." : ("Loading HDR: " + hdrName),
+                ProjectLoadProgress::kIblHdrLoad);
+        }
         SceneRenderTrace::Step("ibl: load hdr equirect");
-        LoadHdrEquirectangular(m_hdrPath.c_str());
+        {
+            ProjectLoadBenchmark::ScopedPhase loadHdrPhase("ibl.load_hdr_and_importance");
+            LoadHdrEquirectangular(m_hdrPath.c_str());
+        }
+        ProjectLoadProgress::Report("Generating environment cubemap...", ProjectLoadProgress::kIblCubemap);
         SceneRenderTrace::Step("ibl: create environment cubemap");
-        CreateEnvironmentCubemap();
+        {
+            ProjectLoadBenchmark::ScopedPhase cubemapPhase("ibl.create_environment_cubemap");
+            CreateEnvironmentCubemap();
+        }
+        ProjectLoadProgress::Report("Prefiltering specular IBL...", ProjectLoadProgress::kIblPrefilter);
         SceneRenderTrace::Step("ibl: create prefilter map");
-        CreatePrefilterMap();
+        {
+            ProjectLoadBenchmark::ScopedPhase prefilterPhase("ibl.create_prefilter_map");
+            CreatePrefilterMap();
+        }
         if (m_brdfLutGpu.resource == nullptr)
         {
+            ProjectLoadProgress::Report("Generating BRDF lookup table...", ProjectLoadProgress::kIblBrdfLut);
             SceneRenderTrace::Step("ibl: create brdf lut");
+            ProjectLoadBenchmark::ScopedPhase brdfLutPhase("ibl.create_brdf_lut");
             CreateBrdfLut();
         }
         SceneRenderTrace::Step("ibl: reload ok");
@@ -1163,6 +1223,11 @@ const std::string& IBL::GetHdrPath() const
 float IBL::GetRotationYRadians() const
 {
     return m_rotationYRadians;
+}
+
+glm::vec3 IBL::GetDetectedSunDirection() const
+{
+    return RotateY(m_detectedSunDirectionLocal, -m_rotationYRadians);
 }
 
 std::uintptr_t IBL::GetEnvironmentCubemapSrvCpuHandle() const

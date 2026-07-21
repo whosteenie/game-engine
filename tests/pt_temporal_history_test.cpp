@@ -1,6 +1,6 @@
-#include "engine/rendering/PtTemporalHistory.h"
+#include "engine/rendering/core/PtTemporalHistory.h"
 
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/core/DxrSettings.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -36,5 +36,26 @@ void RunPtTemporalHistoryTests(int& failures)
     ExpectTrue(
         fingerprintA != ComputePtSettingsFingerprint(settingsC),
         "PtSettingsFingerprint changes when ambient AO ray count changes",
+        failures);
+
+    DxrSettings settingsD{};
+    settingsD.SetPtDeterministicOpticalSplitEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsD),
+        "PtSettingsFingerprint changes when deterministic optical split changes",
+        failures);
+
+    DxrSettings settingsE{};
+    settingsE.SetPtOpticalMotionReplayEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsE),
+        "PtSettingsFingerprint changes when optical motion replay changes",
+        failures);
+
+    DxrSettings settingsF{};
+    settingsF.SetPtMirrorChainPsrEnabled(true);
+    ExpectTrue(
+        fingerprintA != ComputePtSettingsFingerprint(settingsF),
+        "PtSettingsFingerprint changes when mirror-chain PSR changes",
         failures);
 }

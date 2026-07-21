@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/core/DxrSettings.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessTarget.h"
 

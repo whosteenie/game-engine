@@ -1,6 +1,6 @@
 #include "app/project/SceneDocument.h"
 
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "app/project/SceneProjectIO.h"
 #include "app/project/SceneProjectIODetail.h"
 

@@ -21,16 +21,33 @@ void RunPtTemporalHistoryTests(int& failures);
 void RunPathRngTests(int& failures);
 void RunRestirTypesTests(int& failures);
 void RunRestirWrsTests(int& failures);
+void RunRestirGiTests(int& failures);
+void RunRestirTemporalChainTests(int& failures);
+void RunRestirDiTests(int& failures);
 void RunRestirSurfaceValidationTests(int& failures);
 void RunDxrShaderInfrastructureTests(int& failures);
 void RunMaterialTests();
 void RunGuideEncodingTests();
+void RunPtMirrorChainGuideMathTests(int& failures);
+void RunPayloadPackTests();
 void RunRefractionTests();
 void RunBrdfEnergyTests();
 void RunMisNeeTests();
 void RunEnvImportanceTests();
 void RunNeeMisIntegrationTests();
 void RunFrustumCullTests();
+void RunCaptureManifestTests(int& failures);
+void RunTemporalCameraPacketTests(int& failures);
+void RunDlssFrameTokenTests(int& failures);
+void RunDlssExtentPlannerTests(int& failures);
+void RunRrTemporalValidityTests(int& failures);
+void RunReconstructionExposureTests(int& failures);
+void RunReconstructionJitterTests(int& failures);
+void RunHistoryCompatibilityTests(int& failures);
+void RunViewportResizeStabilizerTests(int& failures);
+void RunProjectViewportRevealGateTests(int& failures);
+void RunBackgroundWorkTests(int& failures);
+void RunPtViewportOwnershipTests(int& failures);
 void RunShaderCompileTests();
 
 namespace
@@ -81,18 +98,55 @@ namespace
         maybeRun("path_rng", [] { RunPathRngTests(test::FailureCount()); });
         maybeRun("restir_types", [] { RunRestirTypesTests(test::FailureCount()); });
         maybeRun("restir_wrs", [] { RunRestirWrsTests(test::FailureCount()); });
+        maybeRun("restir_gi", [] { RunRestirGiTests(test::FailureCount()); });
+        maybeRun("restir_temporal_chain", [] { RunRestirTemporalChainTests(test::FailureCount()); });
+        maybeRun("restir_di", [] { RunRestirDiTests(test::FailureCount()); });
         maybeRun("restir_surface_validation", [] { RunRestirSurfaceValidationTests(test::FailureCount()); });
         maybeRun(
             "dxr_shader_infrastructure",
             [] { RunDxrShaderInfrastructureTests(test::FailureCount()); });
         maybeRun("material", RunMaterialTests);
         maybeRun("guide_encoding", RunGuideEncodingTests);
+        maybeRun(
+            "pt_mirror_chain_guide_math",
+            [] { RunPtMirrorChainGuideMathTests(test::FailureCount()); });
+        maybeRun("payload_pack", RunPayloadPackTests);
         maybeRun("refraction", RunRefractionTests);
         maybeRun("brdf_energy", RunBrdfEnergyTests);
         maybeRun("mis_nee", RunMisNeeTests);
         maybeRun("env_importance", RunEnvImportanceTests);
         maybeRun("nee_mis_integration", RunNeeMisIntegrationTests);
         maybeRun("frustum_cull", RunFrustumCullTests);
+        maybeRun("capture_manifest", [] { RunCaptureManifestTests(test::FailureCount()); });
+        maybeRun(
+            "temporal_camera_packet",
+            [] { RunTemporalCameraPacketTests(test::FailureCount()); });
+        maybeRun("dlss_frame_token", [] { RunDlssFrameTokenTests(test::FailureCount()); });
+        maybeRun(
+            "dlss_extent_planner",
+            [] { RunDlssExtentPlannerTests(test::FailureCount()); });
+        maybeRun(
+            "rr_temporal_validity",
+            [] { RunRrTemporalValidityTests(test::FailureCount()); });
+        maybeRun(
+            "reconstruction_exposure",
+            [] { RunReconstructionExposureTests(test::FailureCount()); });
+        maybeRun(
+            "reconstruction_jitter",
+            [] { RunReconstructionJitterTests(test::FailureCount()); });
+        maybeRun(
+            "history_compatibility",
+            [] { RunHistoryCompatibilityTests(test::FailureCount()); });
+        maybeRun(
+            "viewport_resize_stabilizer",
+            [] { RunViewportResizeStabilizerTests(test::FailureCount()); });
+        maybeRun(
+            "project_viewport_reveal_gate",
+            [] { RunProjectViewportRevealGateTests(test::FailureCount()); });
+        maybeRun("background_work", [] { RunBackgroundWorkTests(test::FailureCount()); });
+        maybeRun(
+            "pt_viewport_ownership",
+            [] { RunPtViewportOwnershipTests(test::FailureCount()); });
         maybeRun("shader_compile", RunShaderCompileTests);
     }
 }

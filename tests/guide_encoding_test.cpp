@@ -1,5 +1,5 @@
-// CPU mirrors of guide / motion math from assets/shaders/dxr/path_tracer.hlsl and
-// assets/shaders/dxr/pt_dielectric.hlsli. Keep in sync when shader formulas change.
+// CPU mirrors of guide / motion math from assets/shaders/raytracing/path_tracing/path_tracer.hlsl
+// and pt_dielectric.hlsli. Keep in sync when shader formulas change.
 
 #include "test_expect.h"
 
@@ -326,7 +326,7 @@ void RunGuideEncodingTests()
         test::ExpectNear(diffuseGuide.r, 0.0f, 1e-4f, "Metal diffuse guide is black R");
         test::ExpectNear(diffuseGuide.g, 0.0f, 1e-4f, "Metal diffuse guide is black G");
         // EnvBRDFApprox2 rescales F0 (scale may be < 1 at some roughness/NoV; bias adds back) —
-        // assert the guide stays colored like the metal and above the 0.04 floor, not a strict lift.
+        // Canonical output must not invent a per-channel dielectric floor on saturated metals.
         test::ExpectTrue(specGuide.g >= 0.04f, "Metal spec guide respects the 0.04 floor");
         test::ExpectTrue(
             specGuide.g > specGuide.r && specGuide.g > specGuide.b,

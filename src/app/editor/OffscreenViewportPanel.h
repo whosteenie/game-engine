@@ -1,8 +1,9 @@
 #pragma once
 
-#include "app/editor/EditorViewportRect.h"
+#include "app/scene/editing/ViewportRect.h"
+#include "app/editor/ViewportResizeStabilizer.h"
 
-#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/resources/Framebuffer.h"
 
 #include <imgui.h>
 
@@ -16,7 +17,8 @@ namespace OffscreenViewportPanel
         mutable Framebuffer framebuffer;
         mutable int renderWidth = 0;
         mutable int renderHeight = 0;
-        mutable EditorViewportRect interactionRect{};
+        ViewportResizeStabilizer resizeStabilizer{};
+        mutable ViewportRect interactionRect{};
         ImDrawList* compositeDrawList = nullptr;
         ImVec2 compositeMin{};
         ImVec2 compositeMax{};
@@ -35,12 +37,15 @@ namespace OffscreenViewportPanel
     void OnPanelHidden(State& state);
 
     bool HasValidRenderTarget(const State& state);
+    bool IsLiveResizePending(const State& state);
+    bool HasReadyCompositeFrame(const State& state);
     std::uintptr_t GetFramebuffer(const State& state);
     std::uintptr_t GetColorTexture(const State& state);
     void EnsureFramebufferSized(const State& state);
     void ClearRenderTarget(const State& state);
     bool CanCompositeFrame(const State& state, bool willRenderThisFrame);
     void CompositeRenderedFrame(State& state);
+    void InvalidateCompositeFrame(State& state);
 
     bool UpdateRenderSize(State& state, const ImVec2& available);
     ViewportRegion DrawViewportRegion(State& state, const ImVec2& available, bool canComposite);

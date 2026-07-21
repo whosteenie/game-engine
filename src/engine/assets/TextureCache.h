@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine/rendering/Texture.h"
+#include "engine/rendering/resources/Texture.h"
 
 #include <memory>
 #include <string>

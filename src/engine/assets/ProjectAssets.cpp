@@ -1,5 +1,7 @@
 #include "engine/assets/ProjectAssets.h"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <stdexcept>
 
@@ -18,6 +20,17 @@ namespace
         }
 
         return path;
+    }
+
+    std::string NormalizePathForComparison(const fs::path& path)
+    {
+        std::string normalized = NormalizeSlashes(path.generic_string());
+#ifdef _WIN32
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+#endif
+        return normalized;
     }
 
     std::string GetExtensionLower(const fs::path& path)
@@ -49,6 +62,33 @@ namespace
         }
 
         return modelsRoot / (baseName + "_copy");
+    }
+
+    bool IsPathInsideOrEqual(const fs::path& candidate, const fs::path& root)
+    {
+        std::error_code error;
+        const fs::path absoluteCandidate = fs::weakly_canonical(candidate, error);
+        if (error)
+        {
+            return false;
+        }
+
+        const fs::path absoluteRoot = fs::weakly_canonical(root, error);
+        if (error)
+        {
+            return false;
+        }
+
+        const fs::path normalizedCandidate = fs::path(NormalizePathForComparison(absoluteCandidate));
+        const fs::path normalizedRoot = fs::path(NormalizePathForComparison(absoluteRoot));
+        const fs::path relativePath = normalizedCandidate.lexically_relative(normalizedRoot);
+        if (relativePath.empty() || relativePath.is_absolute())
+        {
+            return false;
+        }
+
+        const auto firstPart = relativePath.begin();
+        return firstPart == relativePath.end() || *firstPart != "..";
     }
 
     void CopyFileCreateParents(const fs::path& source, const fs::path& destination)
@@ -163,6 +203,14 @@ ImportModelAssetResult ImportModelToProject(
     }
 
     const fs::path modelsRoot = fs::path(projectRoot) / "Assets" / "Models";
+    if (IsPathInsideOrEqual(sourcePath, fs::path(projectRoot)))
+    {
+        result.success = true;
+        result.absolutePath = sourcePath.string();
+        result.projectRelativePath = MakeProjectRelativePath(projectRoot, result.absolutePath);
+        return result;
+    }
+
     const fs::path destinationDirectory = MakeUniqueAssetDirectory(modelsRoot, sourcePath.stem().string());
     fs::create_directories(destinationDirectory, error);
     if (error)

@@ -1,4 +1,4 @@
-#include "engine/rendering/DxrSettings.h"
+#include "engine/rendering/core/DxrSettings.h"
 
 #include <nlohmann/json.hpp>
 
@@ -12,6 +12,15 @@ void RunDxrSettingsTests(int& failures)
     };
 
     DxrSettings settings;
+    expectTrue(
+        !settings.IsPtOpticalMotionReplayEnabled(),
+        "optical motion replay defaults off");
+    expectTrue(
+        !settings.IsPtMirrorChainPsrEnabled(),
+        "mirror-chain PSR defaults off");
+    expectTrue(
+        settings.IsPtRrTemporalValidityEnabled(),
+        "RR temporal validity defaults on");
     settings.SetEnabled(true);
     settings.SetReflectionsEnabled(true);
     settings.ClampToHardwareCapabilities(false);
@@ -22,6 +31,18 @@ void RunDxrSettingsTests(int& failures)
     settings.SetReflectionsSamplesPerPixel(32);
     settings.SetMaxTraceDistance(1000.0f);
     settings.SetTemporalBlend(2.0f);
+    settings.SetRestirDiCandidateCount(4);
+    settings.SetRestirDiTemporalEnabled(true);
+    settings.SetRestirGiInitialEnabled(true);
+    settings.SetRestirGiTemporalEnabled(true);
+    settings.SetRestirGiSpatialEnabled(true);
+    settings.SetRestirGiDiagnosticOrbitRevolutions(13);
+    settings.SetPtDeterministicOpticalSplitEnabled(true);
+    settings.SetPtOpticalMotionReplayEnabled(true);
+    settings.SetPtMirrorChainPsrEnabled(true);
+    settings.SetPtRrTemporalValidityEnabled(false);
+    settings.SetPtPsrMaxBounces(999);
+    settings.SetPtPsrSubpixelThreshold(9.0f);
     settings.ClampToHardwareCapabilities(true);
     expectTrue(settings.IsEnabled(), "enabled preserved when RT supported");
     expectTrue(settings.GetReflectionsSamplesPerPixel() == 16, "samples clamped to 16");
@@ -40,4 +61,35 @@ void RunDxrSettingsTests(int& failures)
     expectTrue(
         roundTrip.GetGiStrength() == settings.GetGiStrength(),
         "json round-trip gi strength");
+    expectTrue(roundTrip.GetRestirDiCandidateCount() == 4, "json round-trip ReSTIR DI candidates");
+    expectTrue(roundTrip.IsRestirDiTemporalEnabled(), "json round-trip ReSTIR DI temporal toggle");
+    expectTrue(roundTrip.IsRestirGiInitialEnabled(), "json round-trip ReSTIR GI initial toggle");
+    expectTrue(roundTrip.IsRestirGiTemporalEnabled(), "json round-trip ReSTIR GI temporal toggle");
+    expectTrue(roundTrip.IsRestirGiSpatialEnabled(), "json round-trip ReSTIR GI spatial toggle");
+    expectTrue(
+        roundTrip.IsPtDeterministicOpticalSplitEnabled(),
+        "json round-trip deterministic optical split toggle");
+    expectTrue(
+        roundTrip.IsPtOpticalMotionReplayEnabled(),
+        "json round-trip optical motion replay toggle");
+    expectTrue(
+        roundTrip.IsPtMirrorChainPsrEnabled(),
+        "json round-trip mirror-chain PSR toggle");
+    expectTrue(
+        !roundTrip.IsPtRrTemporalValidityEnabled(),
+        "json round-trip RR temporal validity toggle");
+    expectTrue(roundTrip.GetPtPsrMaxBounces() == 32, "json round-trip PSR max bounce clamp");
+    expectTrue(roundTrip.GetPtPsrSubpixelThreshold() == 2.0f, "json round-trip PSR threshold clamp");
+    expectTrue(
+        roundTrip.GetRestirGiDiagnosticOrbitRevolutions() == 13,
+        "json round-trip ReSTIR GI diagnostic orbit revolutions");
+
+    DxrSettings copied;
+    copied.CopySettingsFrom(settings);
+    expectTrue(
+        copied.IsPtMirrorChainPsrEnabled(),
+        "copy preserves mirror-chain PSR toggle");
+    expectTrue(
+        !copied.IsPtRrTemporalValidityEnabled(),
+        "copy preserves RR temporal validity toggle");
 }

@@ -40,6 +40,8 @@ public:
     const std::string& GetLoadError() const;
     const std::string& GetHdrPath() const;
     float GetRotationYRadians() const;
+    bool HasDetectedSunDirection() const { return m_hasDetectedSunDirection; }
+    glm::vec3 GetDetectedSunDirection() const;
     std::uintptr_t GetEnvironmentCubemapSrvCpuHandle() const;
     std::uintptr_t GetPrefilterMapSrvCpuHandle() const;
     std::uintptr_t GetBrdfLutSrvCpuHandle() const;
@@ -52,6 +54,7 @@ public:
     int GetEnvImportanceCdfWidth() const { return m_envImportanceCdfWidth; }
     int GetEnvImportanceCdfHeight() const { return m_envImportanceCdfHeight; }
     float GetEnvImportanceWeightSum() const { return m_envImportanceWeightSum; }
+    float GetEnvDirectLightingLuminanceClamp() const { return m_envDirectLightingLuminanceClamp; }
 
     void ReloadFromHdr(const char* hdrPath, float rotationYRadians = 0.0f);
 
@@ -122,6 +125,8 @@ private:
     std::string m_hdrPath;
     std::string m_loadError;
     float m_rotationYRadians = 0.0f;
+    glm::vec3 m_detectedSunDirectionLocal{0.0f, 1.0f, 0.0f};
+    bool m_hasDetectedSunDirection = false;
 
     float m_maxPrefilterMipLevel = 4.0f;
     float m_environmentIntensity = 0.4f;
@@ -139,4 +144,5 @@ private:
     int m_envImportanceCdfWidth = 0;
     int m_envImportanceCdfHeight = 0;
     float m_envImportanceWeightSum = 0.0f;
+    float m_envDirectLightingLuminanceClamp = 0.0f;
 };

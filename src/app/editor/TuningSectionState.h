@@ -13,4 +13,10 @@ namespace TuningSectionState
     // toggles and marks the ini dirty so the state saves with the rest of the editor UI. Returns
     // whether the section is open (same semantics as ImGui::CollapsingHeader).
     bool SectionHeader(const char* label, bool defaultOpen);
+    const char* ActiveSection();
+    void RequestSearchNavigation(const char* sectionLabel, const char* targetId);
+    bool IsSearchTarget(const char* targetId);
+    void MarkSearchTarget(const char* targetId);
+    void MarkCurrentItemIfSearchTarget();
+    bool CurrentItemIsUndoable();
 }

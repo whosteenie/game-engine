@@ -1,8 +1,8 @@
 #include "engine/rendering/post/ScreenSpaceGiPass.h"
 
-#include "engine/platform/SceneRenderTrace.h"
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/Shader.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <d3d12.h>

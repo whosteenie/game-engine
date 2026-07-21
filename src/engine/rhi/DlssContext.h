@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -18,6 +20,99 @@ enum class DlssQuality
     Balanced,
     Performance,
     UltraPerformance,
+};
+
+enum class DlssReconstructionFeature
+{
+    SuperResolution,
+    RayReconstruction,
+};
+
+struct DlssExtent
+{
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
+
+    bool operator==(const DlssExtent& other) const
+    {
+        return width == other.width && height == other.height;
+    }
+};
+
+// S2-P4 active-allocation cache identity. Viewport remains part of the key because the SDK
+// query itself is viewport-independent: Scene and Game own independent planned and active state.
+struct DlssExtentRecommendationKey
+{
+    std::uint32_t viewportId = 0;
+    DlssExtent outputExtent{};
+    DlssReconstructionFeature feature = DlssReconstructionFeature::SuperResolution;
+    DlssQuality quality = DlssQuality::DLAA;
+
+    bool operator==(const DlssExtentRecommendationKey& other) const;
+    bool operator<(const DlssExtentRecommendationKey& other) const;
+};
+
+struct DlssExtentRecommendation
+{
+    DlssExtent recommended{};
+    DlssExtent minimum{};
+    DlssExtent maximum{};
+};
+
+enum class DlssExtentPlanSource
+{
+    Sdk,
+    ExplicitFallback,
+};
+
+// The only planned-extent object exposed by the reconstruction integration. S2-P2 introduced the
+// recommendation; S2-P4 makes active per-viewport allocations and tag extents consume it.
+struct DlssPlannedExtent
+{
+    DlssExtentRecommendationKey key{};
+    DlssExtentRecommendation extent{};
+    DlssExtentPlanSource source = DlssExtentPlanSource::ExplicitFallback;
+    std::string fallbackReason = "not-planned";
+    bool rrNoArbitraryDrs = false;
+
+    bool IsValid() const;
+    bool IsSdkRecommendation() const { return source == DlssExtentPlanSource::Sdk; }
+};
+
+// S2-P4 activation boundary shared by production and deterministic CPU tests. A plan may drive
+// allocation only when its complete tuple matches the active viewport/output/feature/quality key.
+// An empty extent is returned on contradiction and reason explains the rejected contract.
+DlssExtent ResolveDlssActiveRenderExtent(
+    const DlssPlannedExtent& plan,
+    const DlssExtentRecommendationKey& activeKey,
+    std::string& reason);
+
+struct DlssExtentPlanLookup
+{
+    DlssPlannedExtent plan{};
+    bool cacheHit = false;
+};
+
+// SDK-independent query/cache core used by DlssContext and deterministic CPU contract tests.
+class DlssExtentRecommendationCache
+{
+public:
+    using QueryFunction = bool(*)(
+        void* userData,
+        const DlssExtentRecommendationKey& key,
+        DlssExtentRecommendation& recommendation,
+        std::string& failureReason);
+
+    DlssExtentPlanLookup Plan(
+        const DlssExtentRecommendationKey& key,
+        QueryFunction query,
+        void* userData);
+    void Erase(const DlssExtentRecommendationKey& key);
+    void Clear() { m_entries.clear(); }
+    std::size_t Size() const { return m_entries.size(); }
+
+private:
+    std::map<DlssExtentRecommendationKey, DlssPlannedExtent> m_entries;
 };
 
 // DLSS-RR model preset (D4 experiment, devdoc/dxr/pt/rr-gi-diagnosis.md). Maps to sl::DLSSDPreset
@@ -48,19 +143,27 @@ struct DlssFrameInputs
     unsigned int depthState = 0;
     void* motionVectors = nullptr; // render res
     unsigned int motionVectorsState = 0;
+    bool motionVectorsDilated = false;
+    // False asks Streamline to reconstruct camera motion from depth + clipToPrevClip. The supplied
+    // motion texture must then contain object-only motion (the diagnostic path supplies zeroes).
+    bool cameraMotionIncluded = true;
+
+    // Exact S2-P2 recommendation that owns this evaluation's S2-P4 allocation and tag extents.
+    DlssPlannedExtent extentPlan{};
 
     unsigned int renderWidth = 0;
     unsigned int renderHeight = 0;
     unsigned int displayWidth = 0;
     unsigned int displayHeight = 0;
+    // Stable Streamline viewport identity. Concurrent editor viewports must never share it.
+    std::uint32_t viewportId = 0;
 
     DlssQuality quality = DlssQuality::DLAA;
     bool colorIsHdr = false;
     bool depthInverted = false;
     bool reset = false; // break temporal history (camera cut, resize, mode/preset change, load)
-
-    float mvecScaleX = -0.5f; // NDC normalization; SL multiplies by render width internally
-    float mvecScaleY = 0.5f;  // Y-flip for texture space; SL multiplies by render height internally
+    float mvecScaleX = -0.5f; // NDC current-prev to pixel-space previous-current (times width in SL)
+    float mvecScaleY = 0.5f;  // NDC Y-up to pixel-space Y-down (times height in SL)
     float jitterX = 0.0f; // pixel-space jitter applied to the projection this frame
     float jitterY = 0.0f;
 
@@ -78,6 +181,8 @@ struct DlssFrameInputs
     float cameraUp[3] = {};
     float cameraForward[3] = {};
 
+    // Reconstruction guidance for ordinary DLSS only. DlssContext intentionally does not copy
+    // these fields into RR options. They are never authored display exposure.
     float exposureScale = 1.0f;
     float preExposure = 1.0f;
     float sharpness = 0.0f; // [0,1]; 0 disables NGX sharpening (deprecated in SL but still honored)
@@ -97,8 +202,80 @@ struct DlssFrameInputs
     // Tagged only when non-null (reflections on); RR runs without it otherwise. Sharpens reflections.
     void* specularHitDistance = nullptr;
     unsigned int specularHitDistanceState = 0;
+    // Optional RR guide: dense specular-domain motion in the same NDC convention as main motion.
+    void* specularMotionVectors = nullptr;
+    unsigned int specularMotionVectorsState = 0;
+    // Canonical application-owned RR temporal-response signal. Streamline 2.12 added the
+    // DLSS-RR-specific responsivity input as a one-channel R16F/R8_SNORM resource in [-1, 1].
+    // This integration interprets positive responsivity as favoring current information and
+    // supplies 1 for invalid history and 0 for stable history. Keep the sign isolated behind the
+    // submission A/B until the active NGX model's response is confirmed at runtime.
+    void* responsivityMask = nullptr;
+    unsigned int responsivityMaskState = 0;
+    void* disocclusionMask = nullptr;
+    unsigned int disocclusionMaskState = 0;
     float worldToCameraView[16] = {}; // DLSSDOptions requires the view + inverse-view matrices
     float cameraViewToWorld[16] = {};
+};
+
+// SDK-independent declaration of the optional tag set for one evaluation.  Resolve code builds a
+// fresh DlssFrameInputs for every viewport; this value type makes accidental optional-resource
+// inheritance directly testable without loading Streamline.
+struct DlssOptionalTagPlan
+{
+    bool specularHitDistance = false;
+    bool specularMotionVectors = false;
+    bool responsivityMask = false;
+    bool disocclusionMask = false;
+};
+
+inline DlssOptionalTagPlan BuildDlssOptionalTagPlan(const DlssFrameInputs& inputs)
+{
+    if (!inputs.useRayReconstruction)
+    {
+        return {};
+    }
+    return {
+        inputs.specularHitDistance != nullptr,
+        inputs.specularMotionVectors != nullptr,
+        inputs.responsivityMask != nullptr,
+        inputs.disocclusionMask != nullptr};
+}
+
+inline bool HasExclusiveRrTemporalMask(const DlssOptionalTagPlan& plan)
+{
+    return !(plan.responsivityMask && plan.disocclusionMask);
+}
+
+// Application-frame identity passed explicitly to every Streamline evaluation. The native token is
+// owned by Streamline; this value only carries the borrowed handle for the current application
+// frame. Viewport identity remains a separate DlssFrameInputs field.
+struct DlssFrameToken
+{
+    void* native = nullptr;
+    std::uint32_t frameIndex = 0;
+
+    bool IsValid() const { return native != nullptr; }
+};
+
+// Small SDK-independent cadence state used by DlssContext and its CPU contract tests. BeginFrame is
+// the only operation that advances identity; reading the current token for skipped, reordered, or
+// failed evaluations cannot consume it.
+class DlssFrameTokenState
+{
+public:
+    using AcquireFunction = bool(*)(
+        void* userData,
+        std::uint32_t requestedFrameIndex,
+        void*& nativeToken,
+        std::uint32_t& actualFrameIndex);
+
+    DlssFrameToken BeginFrame(AcquireFunction acquire, void* userData);
+    DlssFrameToken Current() const { return m_current; }
+
+private:
+    std::uint32_t m_nextFrameIndex = 0;
+    DlssFrameToken m_current{};
 };
 
 // NVIDIA DLSS via Streamline (devdoc/rendering/dlss-super-resolution.md).
@@ -136,12 +313,26 @@ public:
     // Thread-safe snapshot of the human-readable status (worker updates it as it progresses).
     std::string StatusString() const;
 
+    // Acquire and cache exactly one Streamline token for this application BeginFrame. Must be
+    // called on the render thread before any Scene/Game DLSS or RR evaluation for the frame.
+    void BeginFrame();
+    DlssFrameToken CurrentFrameToken() const { return m_frameTokenState.Current(); }
+
     // Records the DLSS upscale onto inputs.commandList and returns true if it evaluated. No-op that
     // returns false unless IsReady() && IsRuntimeInitialized() && IsDlssSupported(). Streamline
     // recreates the feature internally when the render/display extent or quality changes. NOT thread
     // safe — call only from the render thread, and rebind your descriptor heaps afterward (SL runs
     // with eDisableCLStateTracking so it does not restore command-list state).
-    bool Evaluate(const DlssFrameInputs& inputs);
+    bool Evaluate(const DlssFrameToken& frameToken, const DlssFrameInputs& inputs);
+
+    // Query/cache the SDK's optimal render extent and supported range. This is planning only in
+    // S2-P4: this recommendation owns allocation, tag extents, and motion/depth scale inputs.
+    DlssPlannedExtent PlanReconstructionExtent(const DlssExtentRecommendationKey& key);
+    void ClearPlannedExtentCache();
+
+    // Releases Streamline's lazy per-viewport allocations for both SR and Ray Reconstruction.
+    // The caller must flush every command list that could contain an evaluation first.
+    void ReleaseViewportResources(std::uint32_t viewportId);
 
     // Upgrades the native swapchain to Streamline's DXGI proxy so Present/ResizeBuffers run
     // presentCommon() + GC (required for dynamic-load integrations; slHookPresent is not exported
@@ -171,7 +362,9 @@ private:
     std::atomic<bool> m_swapChainUpgraded{false};
 
     mutable std::mutex m_statusMutex;
+    mutable std::mutex m_extentPlanMutex;
+    DlssExtentRecommendationCache m_extentPlanCache;
     std::string m_status = "DLSS: initializing…";
     void* m_interposer = nullptr; // HMODULE for sl.interposer.dll (dynamic load)
-    unsigned int m_evaluateFrameIndex = 0; // monotonic frame id fed to slGetNewFrameToken
+    DlssFrameTokenState m_frameTokenState;
 };

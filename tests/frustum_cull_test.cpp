@@ -1,10 +1,10 @@
-// Validates ExtractFrustumPlanesZO (engine/rendering/FrustumCull.h) against the engine's actual
+// Validates ExtractFrustumPlanesZO (engine/rendering/core/FrustumCull.h) against the engine's actual
 // projection convention (glm::perspectiveLH_ZO), and the sphere-vs-frustum test mirrored from
 // meshlet_cull.hlsli. This is the mathematically risky half of C5.5 meshlet culling; the AS/MS
 // plumbing is mechanical, but a wrong plane sign or depth convention here would silently cull
 // visible geometry.
 
-#include "engine/rendering/FrustumCull.h"
+#include "engine/rendering/core/FrustumCull.h"
 #include "test_expect.h"
 
 #include <glm/glm.hpp>

@@ -1,6 +1,6 @@
 #include "engine/rhi/GpuProfiler.h"
 
-#include "engine/platform/EngineLog.h"
+#include "engine/platform/diagnostics/EngineLog.h"
 
 #include <d3d12.h>
 

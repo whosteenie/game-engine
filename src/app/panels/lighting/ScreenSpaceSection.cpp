@@ -1,44 +1,15 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
-#include "app/editor/EditorUndoWidgets.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
 #include "app/editor/EditorWidgets.h"
+#include "app/editor/EditorUndoWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/RenderDiagnostics.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
-#include "engine/lighting/EnvironmentMap.h"
-#include "engine/lighting/EnvironmentPresets.h"
-#include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/raytracing/DxrDiagnostics.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
 #include "app/panels/lighting/LightingPanelUi.h"
 #include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
-#include <cmath>
-#include <cstring>
-#include <vector>
 
 void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
 {
@@ -82,7 +53,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 const bool selected = aoMode == mode;
                 if (ImGui::Selectable(AmbientOcclusionModeLabel(mode), selected) && !selected)
                 {
-                    ApplyRendererChange(
+                    RendererSettingUi::ApplyChange(
+                        "ao_mode",
                         editContext,
                         scene,
                         "Ambient occlusion mode",
@@ -99,6 +71,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
             }
             ImGui::EndCombo();
         }
+
+        RendererSettingUi::MarkRendered("ao_mode");
 
         if (aoMode == AmbientOcclusionMode::SSAO)
         {
@@ -118,6 +92,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Offsets the depth comparison to prevent surfaces from falsely occluding themselves. Too much can remove contact shading.");
 
             float ssaoPower = screenSpaceEffects.GetSsaoPower();
             if (ImGui::SliderFloat("SSAO intensity", &ssaoPower, 0.5f, 4.0f))
@@ -144,6 +120,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How thick nearby geometry appears to the occlusion test. Higher values can strengthen contact shadows.");
 
             float gtaoFalloff = screenSpaceEffects.GetGtaoFalloff();
             if (ImGui::SliderFloat("GTAO falloff", &gtaoFalloff, 0.25f, 6.0f))
@@ -152,6 +130,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "How quickly occlusion fades with distance. Higher values keep the effect closer to surfaces.");
 
             float gtaoPower = screenSpaceEffects.GetGtaoPower();
             if (ImGui::SliderFloat("GTAO intensity", &gtaoPower, 0.25f, 4.0f))
@@ -168,6 +148,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Number of angles sampled around each pixel. More directions reduce banding but cost more GPU time.");
 
             int gtaoSteps = screenSpaceEffects.GetGtaoSteps();
             if (ImGui::SliderInt("GTAO steps", &gtaoSteps, 2, 12))
@@ -176,6 +158,8 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
                 scene.MarkDirty();
             }
             HandleRendererFieldEditEvents(editContext);
+            LightingPanelUi::DrawTooltipForLastItem(
+                "Samples taken along each direction. More steps improve range and stability but cost more GPU time.");
 
             bool gtaoDenoise = screenSpaceEffects.IsGtaoDenoiseEnabled();
             UndoableRendererCheckbox(
@@ -293,12 +277,12 @@ void DrawAmbientOcclusionSection(const LightingPanelContext& ctx)
             if (ssaoDiag.normalSrv == 0)
             {
                 EditorWidgets::TextColoredError(
-                    "normalSrv is null — geometry-normal G-buffer missing");
+                    "normalSrv is null - geometry-normal G-buffer missing");
             }
             if (ssaoDiag.shadowFactorSrv != 0 && ssaoDiag.normalSrv == ssaoDiag.shadowFactorSrv)
             {
                 EditorWidgets::TextColoredError(
-                    "normalSrv == shadowFactorSrv — bindings swapped?");
+                    "normalSrv == shadowFactorSrv - bindings swapped?");
             }
             ImGui::TextDisabled("Toggle SSAO with GAME_ENGINE_RENDER_DEBUG=1 for stderr snapshot.");
             ImGui::TreePop();

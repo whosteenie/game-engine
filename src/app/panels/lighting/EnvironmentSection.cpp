@@ -1,44 +1,29 @@
-#include "app/panels/lighting/LightingPanelSections.h"
-
-#include "app/editor/EditorPanelConstraints.h"
-#include "app/editor/EditorUndoWidgets.h"
+﻿#include "app/panels/lighting/LightingPanelSections.h"
 #include "app/editor/EditorWidgets.h"
+#include "app/editor/RendererSettingUi.h"
 #include "app/editor/TuningSectionState.h"
-#include "app/scene/RenderDiagnostics.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneRenderer.h"
-#include "app/undo/UndoCommand.h"
-#include "engine/camera/Camera.h"
-#include "engine/lighting/CascadedShadowMap.h"
-#include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/lighting/EnvironmentIblSettings.h"
+#include "app/panels/lighting/LightingPanelUi.h"
+#include "app/panels/lighting/LightingPanelShared.h"
+#include "app/scene/document/Scene.h"
+#include "engine/assets/FileDialog.h"
+#include "engine/components/LightComponent.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/EnvironmentPresets.h"
 #include "engine/lighting/IBL.h"
-#include "engine/lighting/ShadowMapMath.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/DxrCapabilities.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/raytracing/DxrDiagnostics.h"
-#include "engine/raytracing/DxrTrace.h"
-#include "engine/rhi/DlssContext.h"
-#include "engine/rhi/GfxContext.h"
-#include "engine/assets/FileDialog.h"
-#include "app/panels/lighting/LightingPanelUi.h"
-#include "app/panels/lighting/LightingPanelShared.h"
+#include "engine/scene/Transform.h"
 
 #include <imgui.h>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/type_ptr.hpp>
-
-#include <filesystem>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
+#include <string>
 #include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 
 void DrawEnvironmentSection(const LightingPanelContext& ctx)
 {
@@ -58,7 +43,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 static_cast<EnvironmentBackgroundMode>(backgroundMode));
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("environment_background", editContext);
+        RendererSettingUi::MarkRendered("environment_background");
 
         const bool skyboxBackground =
             environmentMap.GetBackgroundMode() == EnvironmentBackgroundMode::Skybox;
@@ -116,6 +102,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             scene.MarkDirty();
         }
         HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::MarkRendered("skybox_hdr_path");
 
         ImGui::SameLine();
         if (ImGui::Button("Browse##SkyboxHdr"))
@@ -131,10 +118,39 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
         float skyboxRotation = environmentMap.GetRotationDegrees();
         if (ImGui::SliderFloat("Rotation Y (deg)", &skyboxRotation, 0.0f, 360.0f))
         {
+            const float previousRotation = environmentMap.GetRotationDegrees();
             environmentMap.SetRotationDegrees(skyboxRotation);
+            // Environment lookup rotates world directions by +Y; the visible HDR (and linked
+            // directional light) therefore moves through world space by the inverse angle.
+            const float deltaRadians = -glm::radians(skyboxRotation - previousRotation);
+            if (std::abs(deltaRadians) > 1e-6f)
+            {
+                for (std::size_t objectIndex = 0; objectIndex < scene.GetObjects().size(); ++objectIndex)
+                {
+                    const SceneObject& object = scene.GetObjects()[objectIndex];
+                    if (!object.HasLight()
+                        || object.GetLight().type != LightType::Directional
+                        || !object.GetLight().autoAlignWithHdrSkybox)
+                    {
+                        continue;
+                    }
+                    Transform worldTransform = Transform::FromMatrix(
+                        scene.GetWorldMatrix(static_cast<int>(objectIndex)));
+                    worldTransform.rotation = glm::normalize(
+                        glm::angleAxis(deltaRadians, glm::vec3(0.0f, 1.0f, 0.0f))
+                        * worldTransform.rotation);
+                    // Preserve the directional-light gizmo anchor: only its direction follows sky rotation.
+                    scene.SetObjectWorldMatrix(static_cast<int>(objectIndex), worldTransform.ToMatrix());
+                }
+            }
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            environmentMap.CommitRotation();
+        }
+        RendererSettingUi::HandleFieldEdit("skybox_rotation", editContext);
+        RendererSettingUi::MarkRendered("skybox_rotation");
 
         float skyboxExposure = environmentMap.GetExposure();
         if (ImGui::SliderFloat("Skybox exposure", &skyboxExposure, 0.1f, 4.0f))
@@ -142,7 +158,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             environmentMap.SetExposure(skyboxExposure);
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("skybox_exposure", editContext);
+        RendererSettingUi::MarkRendered("skybox_exposure");
 
         int iblCubemapResolutionIndex =
             IblCubemapResolutionToComboIndex(environmentMap.GetIblCubemapResolution());
@@ -163,7 +180,10 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 IblCubemapResolutionFromComboIndex(iblCubemapResolutionIndex));
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("ibl_cubemap_resolution", editContext);
+        RendererSettingUi::MarkRendered("ibl_cubemap_resolution");
+        LightingPanelUi::DrawTooltipForLastItem(
+            "Resolution used for environment lighting and reflections. Higher values improve detail but use more GPU memory.");
         LightingPanelUi::DrawWrappedNote(
             "Sky background uses the HDR file at full resolution. IBL cubemap resolution affects reflections only.");
 
@@ -181,7 +201,7 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
                 {
                     ImGui::TextColored(
                         ImVec4(1.0f, 0.75f, 0.35f, 1.0f),
-                        "Low-res 1K asset — re-pick preset or use a 2K/4K HDR for sharper sky.");
+                        "Low-res 1K asset - re-pick preset or use a 2K/4K HDR for sharper sky.");
                 }
             }
 
@@ -207,7 +227,8 @@ void DrawEnvironmentSection(const LightingPanelContext& ctx)
             ibl.SetEnvironmentIntensity(environmentIntensity);
             scene.MarkDirty();
         }
-        HandleRendererFieldEditEvents(editContext);
+        RendererSettingUi::HandleFieldEdit("environment_intensity", editContext);
+        RendererSettingUi::MarkRendered("environment_intensity");
         LightingPanelUi::DrawWrappedNote(
             "Scales diffuse and specular IBL in the deferred composite. Lower this if RT GI or SSGI washes the scene out.");
     }

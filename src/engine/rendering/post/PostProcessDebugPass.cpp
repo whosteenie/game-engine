@@ -1,8 +1,8 @@
 #include "engine/rendering/post/PostProcessDebugPass.h"
 
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/shaders/Shader.h"
 
 #include <glm/glm.hpp>
 
@@ -19,6 +19,9 @@ namespace
                IsRadianceDebugMode(mode) ||
                IsGiTemporalDebugMode(mode) ||
                IsPtTemporalStatsDebugMode(mode) ||
+               IsPtMotionReprojectionDebugMode(mode) ||
+               IsPtDepthReprojectionDebugMode(mode) ||
+               IsPtMatrixDepthReprojectionDebugMode(mode) ||
                IsSsgiDenoiseDebugMode(mode) ||
                IsSsrDebugMode(mode) ||
                IsDxrDebugMode(mode);
@@ -70,7 +73,8 @@ namespace
 
     int PtTemporalStatsDebugModeIndex(const RenderDebugMode mode)
     {
-        return mode == RenderDebugMode::PtTemporalFrameDelta ? 1 : 0;
+        return mode == RenderDebugMode::PtTemporalFrameDelta
+            || mode == RenderDebugMode::PtRestirGiSpatialMotionDelta ? 1 : 0;
     }
 
     int GBufferDebugModeIndex(const RenderDebugMode mode)
@@ -494,15 +498,75 @@ bool PostProcessDebugPass::TryExecute(
             PtTemporalStatsDebugModeIndex(inputs.debugMode));
         inputs.ptTemporalStatsDebugShader->SetFloat("uDeltaGain", 25.0f);
         inputs.ptTemporalStatsDebugShader->SetFloat("uRelativeSigmaGain", 1.0f);
+        inputs.ptTemporalStatsDebugShader->SetVec2(
+            "uRoiMin", glm::vec2(inputs.ptGiDiagnosticRoi));
+        inputs.ptTemporalStatsDebugShader->SetVec2(
+            "uRoiMax", glm::vec2(inputs.ptGiDiagnosticRoi.z, inputs.ptGiDiagnosticRoi.w));
         inputs.ptTemporalStatsDebugShader->BindTextureSlot(0, inputs.ptTemporalStatsTarget->srvCpuHandle);
         inputs.ptTemporalStatsDebugShader->FlushUniforms();
         context.draw.DrawFullscreenQuad();
         FinishDebugView(
             inputs,
             outputs,
-            inputs.debugMode == RenderDebugMode::PtTemporalFrameDelta
-                ? "pt_temporal_frame_delta"
-                : "pt_temporal_relative_sigma");
+            inputs.debugMode == RenderDebugMode::PtRestirGiSpatialMotionDelta
+                ? "pt_restir_gi_spatial_motion_delta"
+                : (inputs.debugMode == RenderDebugMode::PtRestirGiSpatialStaticVariance
+                    ? "pt_restir_gi_spatial_static_variance"
+                    : (inputs.debugMode == RenderDebugMode::PtTemporalFrameDelta
+                        ? "pt_temporal_frame_delta"
+                        : "pt_temporal_relative_sigma")));
+        return true;
+    }
+    else if (
+        (IsPtMotionReprojectionDebugMode(inputs.debugMode)
+            || IsPtDepthReprojectionDebugMode(inputs.debugMode)
+            || IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)) &&
+        inputs.ptCurrentRadianceSrv != 0 &&
+        inputs.ptPreviousRadianceSrv != 0 &&
+        inputs.ptCurrentDepthSrv != 0 &&
+        inputs.ptPreviousDepthSrv != 0 &&
+        (IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode) || inputs.ptMotionSrv != 0) &&
+        inputs.ptMotionReprojectionDebugShader != nullptr)
+    {
+        inputs.ptMotionReprojectionDebugShader->Use(false, true);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uCurrentRadiance", 0);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uPreviousRadiance", 1);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uMotion", 2);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uCurrentDepth", 3);
+        inputs.ptMotionReprojectionDebugShader->SetInt("uPreviousDepth", 4);
+        inputs.ptMotionReprojectionDebugShader->SetInt(
+            "uDebugMode",
+            IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)
+                ? 2
+                : (IsPtDepthReprojectionDebugMode(inputs.debugMode) ? 1 : 0));
+        inputs.ptMotionReprojectionDebugShader->SetMat4(
+            "uClipToPrevClip", inputs.ptClipToPrevClip);
+        inputs.ptMotionReprojectionDebugShader->SetInt(
+            "uPreviousFrameValid", inputs.ptPreviousRadianceValid ? 1 : 0);
+        // These are the exact NDC-to-UV conversion scales passed to Streamline for this source.
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uMotionScaleX", -0.5f);
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uMotionScaleY", 0.5f);
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uDifferenceGain", 8.0f);
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uTexelSizeX", 1.0f / context.renderWidth);
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uTexelSizeY", 1.0f / context.renderHeight);
+        // Raw PT is intentionally noisy. The audit averages a small footprint and only shows
+        // residual above this floor, exposing structural reprojection failure instead of grain.
+        inputs.ptMotionReprojectionDebugShader->SetFloat("uResidualThreshold", 0.075f);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(0, inputs.ptCurrentRadianceSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(1, inputs.ptPreviousRadianceSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(2, inputs.ptMotionSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(3, inputs.ptCurrentDepthSrv);
+        inputs.ptMotionReprojectionDebugShader->BindTextureSlot(4, inputs.ptPreviousDepthSrv);
+        inputs.ptMotionReprojectionDebugShader->FlushUniforms();
+        context.draw.DrawFullscreenQuad();
+        FinishDebugView(
+            inputs,
+            outputs,
+            IsPtMatrixDepthReprojectionDebugMode(inputs.debugMode)
+                ? "pt_matrix_depth_reprojection_disocclusion"
+                : (IsPtDepthReprojectionDebugMode(inputs.debugMode)
+                      ? "pt_depth_reprojection_disocclusion"
+                      : "pt_motion_reprojection_residual"));
         return true;
     }
 

@@ -4,20 +4,26 @@
 #include "app/editor/EditorSettings.h"
 #include "app/editor/EditorWidgets.h"
 #include "app/project/ProjectSession.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneMeshLibrary.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/document/SceneMeshLibrary.h"
+#include "app/scene/rendering/SceneRenderer.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/platform/ExceptionMessage.h"
-#include "engine/platform/NativeProgressWindow.h"
-#include "engine/platform/ProjectLoadTrace.h"
-#include "engine/platform/SceneRenderTrace.h"
-#include "engine/raytracing/DxrTrace.h"
+#include "engine/assets/TextureCache.h"
+#include "engine/platform/diagnostics/EngineLog.h"
+#include "engine/platform/system/ExceptionMessage.h"
+#include "engine/platform/tooling/NativeProgressWindow.h"
+#include "engine/platform/tooling/ProjectLoadBenchmark.h"
+#include "engine/platform/tooling/ProjectLoadProgress.h"
+#include "engine/platform/diagnostics/ProjectLoadTrace.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
+#include "engine/raytracing/core/DxrTrace.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/HresultFormat.h"
+#include "engine/rhi/DlssContext.h"
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -49,7 +55,14 @@ void ProjectChooser::OpenNewProjectForm(EditorSettings& settings)
 
 bool ProjectChooser::IsBlockingEditor() const
 {
-    return m_showNewProjectForm || m_startupMode;
+    // A project open can be queued from the editor menu near the end of Update. Do not render the
+    // old scene during that remainder of the frame: its resource-prewarm progress reports would
+    // otherwise overwrite the newly displayed 0% state before the queued project begins loading.
+    // Once a project has opened, build its editor layout underneath the still-visible startup
+    // screen. Rendering remains gated until that layout has settled, so the load presentation does
+    // not need a synthetic offscreen viewport.
+    return m_showNewProjectForm || (m_startupMode && !m_projectLoadInProgress)
+        || !m_pendingProjectPath.empty();
 }
 
 void ProjectChooser::ClearProjectLoadPresentation()
@@ -85,6 +98,14 @@ void ProjectChooser::ReturnToStartupWithError(
 
     try
     {
+        if (GfxContext::Get().IsInitialized())
+        {
+            GfxContext::Get().WaitForSwapchainFrames(false);
+            DlssContext::Get().ReleaseViewportResources(0);
+            DlssContext::Get().ReleaseViewportResources(1);
+        }
+        scene.ResetForProjectTransition();
+        TextureCache::Get().Clear();
         scene.ResetToDefault();
     }
     catch (const std::exception& exception)
@@ -113,6 +134,7 @@ bool ProjectChooser::OpenProjectAtPath(
     std::string& outError)
 {
     outError.clear();
+    ProjectLoadBenchmark::ScopedPhase projectOpenPhase("project.open.total");
     m_lastOpenFailedDueToDeviceRemoved = false;
     ProjectLoadTrace::Reset();
     ProjectLoadTrace::Step("OpenProjectAtPath");
@@ -139,7 +161,7 @@ bool ProjectChooser::OpenProjectAtPath(
     {
         NativeProgressWindow::Instance().SetMessage("Opening project...");
     }
-    NativeProgressWindow::Instance().SetProgress(0.02f);
+    ProjectLoadProgress::SetProgress(ProjectLoadProgress::kOpeningProject);
     bool keepProgressOpenForFirstFrame = false;
 
     try
@@ -148,10 +170,15 @@ bool ProjectChooser::OpenProjectAtPath(
         {
             ProjectLoadTrace::Step("wait for GPU before open");
             NativeProgressWindow::Instance().SetMessage("Finishing previous GPU work...");
-            NativeProgressWindow::Instance().SetProgress(0.05f);
+            ProjectLoadProgress::SetProgress(ProjectLoadProgress::kFinishingPreviousGpuWork);
             // Do not pump GLFW events here: OpenProjectAtPath runs during Update before
             // the current frame's ImGui NewFrame and resize callbacks can corrupt GPU state.
-            GfxContext::Get().WaitForSwapchainFrames(false);
+            {
+                ProjectLoadBenchmark::ScopedPhase waitForGpuPhase("project.open.wait_for_previous_gpu");
+                GfxContext::Get().WaitForSwapchainFrames(false);
+                DlssContext::Get().ReleaseViewportResources(0);
+                DlssContext::Get().ReleaseViewportResources(1);
+            }
 
             std::string deviceRemovedReason;
             if (GfxContext::Get().IsDeviceRemoved(&deviceRemovedReason))
@@ -165,10 +192,24 @@ bool ProjectChooser::OpenProjectAtPath(
             }
         }
 
+        if (project.HasActiveProject())
+        {
+            project.CloseProject();
+        }
+
+        // Clear every project-owned renderer reference/history while retaining warm pipelines and
+        // current CPU mesh assets. Deserialization can adopt matching meshes from the old scene.
+        scene.ResetForProjectTransition();
+
         NativeProgressWindow::Instance().SetMessage("Loading project file...");
-        NativeProgressWindow::Instance().SetProgress(0.08f);
+        ProjectLoadProgress::SetProgress(ProjectLoadProgress::kReadingProjectFile);
         ProjectLoadTrace::Scope openProjectScope("ProjectSession::OpenProject");
-        if (!project.OpenProject(scene, projectFilePath, editorState))
+        bool projectOpened = false;
+        {
+            ProjectLoadBenchmark::ScopedPhase deserializeProjectPhase("project.open.deserialize_project");
+            projectOpened = project.OpenProject(scene, projectFilePath, editorState);
+        }
+        if (!projectOpened)
         {
             outError = SanitizeLogText(project.GetStatusMessage(), "Failed to open project.");
             EngineLog::LogFailure("project", "OpenProject", outError);
@@ -178,13 +219,12 @@ bool ProjectChooser::OpenProjectAtPath(
         }
         openProjectScope.Success();
         ProjectLoadTrace::Step("scene and project file loaded");
-        NativeProgressWindow::Instance().SetProgress(0.78f);
+        ProjectLoadProgress::Report("Scene loaded.", ProjectLoadProgress::kProjectOpened);
 
         undoStack.Clear();
         clipboard.Clear();
         ProjectLoadTrace::Step("undo and clipboard cleared");
-        NativeProgressWindow::Instance().SetMessage("Saving recent project settings...");
-        NativeProgressWindow::Instance().SetProgress(0.82f);
+        ProjectLoadProgress::Report("Saving recent project settings...", ProjectLoadProgress::kProjectOpened);
         settings.AddRecentProject(project.GetProjectFilePath());
         settings.SetLastNewProjectParentDirectoryFromProjectFile(project.GetProjectFilePath());
         settings.Save();
@@ -192,8 +232,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (applyEditorState)
         {
-            NativeProgressWindow::Instance().SetMessage("Applying editor preferences...");
-            NativeProgressWindow::Instance().SetProgress(0.86f);
+            ProjectLoadProgress::Report("Applying editor preferences...", ProjectLoadProgress::kProjectOpened);
             ProjectLoadTrace::Scope editorStateScope("apply editor state");
             try
             {
@@ -212,8 +251,7 @@ bool ProjectChooser::OpenProjectAtPath(
 
         if (finalizeEditorOpen)
         {
-            NativeProgressWindow::Instance().SetMessage("Preparing editor...");
-            NativeProgressWindow::Instance().SetProgress(0.90f);
+            ProjectLoadProgress::Report("Preparing editor layout...", ProjectLoadProgress::kEditorReady);
             ProjectLoadTrace::Scope layoutScope("prepare editor open");
             finalizeEditorOpen();
             layoutScope.Success();
@@ -221,9 +259,12 @@ bool ProjectChooser::OpenProjectAtPath(
 
         m_showNewProjectForm = false;
         m_errorMessage.clear();
-        NativeProgressWindow::Instance().SetMessage("Preparing first frame...");
-        NativeProgressWindow::Instance().SetProgress(0.96f);
-        m_startupMode = false;
+        ProjectLoadProgress::Report(
+            "Preparing GPU resources for first frame...",
+            ProjectLoadProgress::kEditorReady);
+        // Keep the startup screen visible until the first project frame has completed in the
+        // hidden Scene View target.
+        m_startupMode = true;
         m_projectLoadInProgress = true;
         m_finishPresentationAfterPresent = false;
         keepProgressOpenForFirstFrame = true;
@@ -275,8 +316,20 @@ void ProjectChooser::FinishScheduledPresentation()
         return;
     }
 
-    m_finishPresentationAfterPresent = false;
     FinishProjectLoadPresentation(true);
+}
+
+void ProjectChooser::RaiseProjectLoadPresentation()
+{
+    if (!m_projectLoadInProgress)
+    {
+        return;
+    }
+
+    if (ImGuiWindow* window = ImGui::FindWindowByName("Project Chooser"))
+    {
+        ImGui::BringWindowToDisplayFront(window->RootWindow);
+    }
 }
 
 void ProjectChooser::TickProjectLoadTimeout(const bool gpuResourcesFailed)
@@ -320,7 +373,9 @@ bool ProjectChooser::QueueProjectOpen(const std::string& projectFilePath)
     {
         NativeProgressWindow::Instance().SetMessage("Waiting to start...");
     }
-    NativeProgressWindow::Instance().SetProgress(-1.0f);
+    // Begin() has synchronously displayed 0%; preserve that visible starting state until the
+    // next frame begins the actual load rather than immediately replacing it with a marquee.
+    NativeProgressWindow::Instance().SetProgress(0.0f);
 
     m_pendingProjectPath = projectFilePath;
     m_errorMessage.clear();
@@ -535,13 +590,28 @@ bool ProjectChooser::DrawStartupScreen(
     EditorClipboard& clipboard)
 {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos);
-    ImGui::SetNextWindowSize(viewport->WorkSize);
+    // The editor layout is intentionally built while project loading remains visible. Cover the
+    // entire platform viewport rather than its mutable work area: the editor menu bar and toolbar
+    // claim work-area space later in the frame and must not become visible before the first
+    // selected viewport image is ready.
+    ImGui::SetNextWindowPos(viewport->Pos);
+    ImGui::SetNextWindowSize(viewport->Size);
+    ImGui::SetNextWindowViewport(viewport->ID);
 
-    const ImGuiWindowFlags windowFlags =
-        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings;
+    ImGuiWindowFlags windowFlags =
+        ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings
+        | ImGuiWindowFlags_NoDocking;
+    if (m_projectLoadInProgress)
+    {
+        windowFlags |= ImGuiWindowFlags_NoInputs;
+    }
 
-    if (!ImGui::Begin("Project Chooser", nullptr, windowFlags))
+    ImVec4 chooserBackground = ImGui::GetStyleColorVec4(ImGuiCol_WindowBg);
+    chooserBackground.w = 1.0f;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, chooserBackground);
+    const bool chooserVisible = ImGui::Begin("Project Chooser", nullptr, windowFlags);
+    ImGui::PopStyleColor();
+    if (!chooserVisible)
     {
         ImGui::End();
         return false;
@@ -550,12 +620,13 @@ bool ProjectChooser::DrawStartupScreen(
     const float panelWidth = 520.0f;
     const float mainPanelHeight = 400.0f;
     const float errorPanelMaxHeight = 120.0f;
+    const ImVec2 surfaceSize = viewport->Size;
 
     const bool showStartupError = !m_errorMessage.empty() && !m_showNewProjectForm;
     const float groupHeight = mainPanelHeight + (showStartupError ? (ImGui::GetStyle().ItemSpacing.y + errorPanelMaxHeight) : 0.0f);
     ImGui::SetCursorPos(ImVec2(
-        (viewport->WorkSize.x - panelWidth) * 0.5f,
-        std::max((viewport->WorkSize.y - groupHeight) * 0.5f, ImGui::GetStyle().WindowPadding.y)));
+        (surfaceSize.x - panelWidth) * 0.5f,
+        std::max((surfaceSize.y - groupHeight) * 0.5f, ImGui::GetStyle().WindowPadding.y)));
 
     ImGui::BeginGroup();
 
@@ -564,35 +635,12 @@ bool ProjectChooser::DrawStartupScreen(
         ImVec2(panelWidth, mainPanelHeight),
         ImGuiChildFlags_Borders);
 
-    ImGui::TextUnformatted("Game Engine Editor");
+    ImGui::TextUnformatted("Who Engine Editor");
     ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::TextUnformatted("Open an existing project or create a new one to begin.");
     ImGui::Spacing();
-
-    if (ImGui::Button("Open Project...", ImVec2(-FLT_MIN, 0.0f)))
-    {
-        settings.ValidateLastNewProjectParentDirectory();
-        std::string projectPath;
-        if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
-        {
-            std::string error;
-                if (!TryOpenProject(
-                    project,
-                    scene,
-                    settings,
-                    editorState,
-                    projectPath,
-                    applyEditorState,
-                    undoStack,
-                    clipboard,
-                    error))
-                {
-                    m_errorMessage = error.empty() ? "Failed to open project." : error;
-                }
-        }
-    }
 
     if (ImGui::Button("New Project...", ImVec2(-FLT_MIN, 0.0f)))
     {
@@ -609,7 +657,9 @@ bool ProjectChooser::DrawStartupScreen(
 
         const float recentListHeight = std::max(
             80.0f,
-            mainPanelHeight - ImGui::GetCursorPosY() - ImGui::GetFrameHeightWithSpacing() * 3.0f);
+            // Reserve the separator, its surrounding spacing, and the footer button row. Three
+            // full rows left an obvious empty band below Exit/Browse in the fixed-height panel.
+            mainPanelHeight - ImGui::GetCursorPosY() - ImGui::GetFrameHeightWithSpacing() * 2.0f);
         ImGui::BeginChild("ProjectChooserRecentList", ImVec2(0.0f, recentListHeight), ImGuiChildFlags_None);
 
         for (const std::string& projectPath : recentProjects)
@@ -656,6 +706,30 @@ bool ProjectChooser::DrawStartupScreen(
         if (requestClose)
         {
             requestClose();
+        }
+    }
+
+    ImGui::SameLine(ImGui::GetContentRegionMax().x - 120.0f);
+    if (ImGui::Button("Browse...", ImVec2(120.0f, 0.0f)))
+    {
+        settings.ValidateLastNewProjectParentDirectory();
+        std::string projectPath;
+        if (FileDialog::OpenProjectFile(projectPath, settings.GetLastNewProjectParentDirectory()))
+        {
+            std::string error;
+            if (!TryOpenProject(
+                    project,
+                    scene,
+                    settings,
+                    editorState,
+                    projectPath,
+                    applyEditorState,
+                    undoStack,
+                    clipboard,
+                    error))
+            {
+                m_errorMessage = error.empty() ? "Failed to open project." : error;
+            }
         }
     }
 

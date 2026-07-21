@@ -7,6 +7,7 @@ namespace LightingPanelUi
 {
     void DrawWrappedNote(const char* text);
     void DrawWrappedHelp(const char* text);
+    void DrawTooltipForLastItem(const char* text);
 
     struct FeatureState
     {

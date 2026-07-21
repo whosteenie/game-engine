@@ -1,23 +1,23 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 #include "d3d12_test_harness.h"
 
 #include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/lighting/IBL.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/raytracing/DxrRootSignature.h"
-#include "engine/raytracing/DxrShaderCache.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/shaders/ShaderCache.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
+#include "engine/raytracing/pipeline/DxrShaderCache.h"
 
 #include <d3d12.h>
 #include <imgui.h>
 #include <imgui_impl_dx12.h>
 #include <imgui_impl_glfw.h>
-
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#endif
 
 #include <cmath>
 #include <filesystem>

@@ -25,10 +25,24 @@ public:
         const std::unordered_map<std::string, bool>& folderOpenStates);
 
 private:
+    enum class FileViewMode
+    {
+        Details,
+        Icons
+    };
+
+    enum class SelectionGesture
+    {
+        None,
+        Blank,
+        Entry
+    };
+
     void ResetBrowseState(const std::string& projectRoot);
     void DrawToolbar(ProjectSession& project);
     void DrawFolderTree(ProjectSession& project, const std::string& directory);
-    void DrawFileList(ProjectSession& project, const std::string& directory);
+    void DrawFileDetailsView(ProjectSession& project, const std::string& directory);
+    void DrawFileIconView(ProjectSession& project, const std::string& directory);
     void DrawEntryContextMenu(
         ProjectSession& project,
         const std::string& entryPath,
@@ -41,6 +55,9 @@ private:
     bool TryDeletePath(const std::string& entryPath);
     void HandleFilesPanelHotkeys();
     void ImportModelIntoScene(ProjectSession& project, const std::string& modelPath);
+    void BeginEntrySelectionGesture(const std::string& entryPath);
+    void BeginBlankSelectionGesture();
+    void CommitSelectionGesture();
 
     mutable bool m_showPanel = true;
     mutable std::string m_browsedDirectory;
@@ -48,6 +65,9 @@ private:
     mutable std::string m_trackedProjectRoot;
     mutable std::unordered_map<std::string, bool> m_folderOpenStates;
     mutable bool m_scrollSelectionIntoView = false;
+    mutable FileViewMode m_fileViewMode = FileViewMode::Details;
+    mutable SelectionGesture m_selectionGesture = SelectionGesture::None;
+    mutable std::string m_selectionGesturePath;
 
     mutable std::string m_renamePath;
     mutable char m_renameBuffer[260] = {};

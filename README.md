@@ -1,8 +1,12 @@
 # game-engine
 
-A Windows D3D12 scene editor built around a deferred PBR renderer. You import glTF models, place lights and objects in a docked ImGui UI, tune the render pipeline from the Renderer Tuning panel, and preview in Scene View or Game View. Play mode runs the scene with Jolt physics.
+A Windows D3D12 scene editor and real-time rendering sandbox. Import glTF assets, assemble and
+inspect scenes in a docked ImGui editor, tune the renderer live, and switch between raster, hybrid
+DXR, and path-traced views. Play mode runs the authored scene with Jolt physics.
 
-Most of the codebase is the renderer and the editor hooks that drive it.
+The project focuses on renderer architecture and the editor tooling needed to iterate on it: modern
+deferred PBR, optional hardware ray tracing, temporal rendering, neural reconstruction, and GPU
+diagnostics all live in the same application.
 
 ## Build
 
@@ -101,40 +105,51 @@ ctest -C Debug -L gpu --output-on-failure
 
 **Tiers:** `1` gpu-smoke, `2` gpu-pbr, `3` gpu-editor, `4` gpu-dxr, `5` gpu-dxr-pt. Use `--tier=N` for a single tier, `--through=N` for cumulative 1..N, `--tiers=EXPR` for ranges/sets (`1,3`, `2-4`, `1-3,5`), or `--all`.
 
-On success you should see `[PASS]` lines per test and `N/N tests passed.` with exit code `0`. Failures print `[FAIL]` and assertion details to stderr. DXR tests print `SKIP: ... (no RTX tier)` and exit `0` when hardware lacks ray tracing.
+On success you should see `[PASS]` lines per test and `N/N tests passed.` with exit code `0`. Failures print `[FAIL]` and assertion details to stderr. DXR tests print `SKIP: ... (no RTX tier)` and exit `0` when hardware lacks ray tracing. Use `--list` to inspect the tests available in a built configuration.
 
-See [devdoc/testing/renderer-tests-plan.md](devdoc/testing/renderer-tests-plan.md) for the full inventory and roadmap.
+## Features
 
-## Renderer
+### Scene editor and runtime
+
+- Docked Scene View, Game View, Hierarchy, Inspector, Renderer Tuning, Project Files, and Performance panels
+- glTF mesh, material, and texture import with scene-project serialization
+- Object placement, transform gizmos, multi-selection, undo/redo, and scene hierarchy editing
+- Play mode backed by Jolt physics
+- Runtime feature/capability reporting for the active GPU and ray-tracing support
 
 ### Core lighting
 
-- Split direct/indirect deferred PBR with a multi-render-target G-buffer
-- Image-based lighting from HDR environment maps (skybox or solid background, diffuse + specular)
-- Directional sun with shadow maps (PCF and PCSS filtering options)
-- HDR rendering with selectable tonemap (gamma, Reinhard, ACES)
-- Bloom
+- Deferred metallic/roughness PBR with a multi-render-target G-buffer
+- HDR image-based lighting from environment maps, including skybox or solid-background modes
+- Directional sun lighting with cascaded shadow maps and PCF/PCSS filtering options
+- HDR composition, selectable gamma/Reinhard/ACES tonemapping, and bloom
+- Material textures, normal mapping, tangent-space generation, and GPU-friendly asset handling
 
 ### Screen space
 
 - Ambient occlusion: SSAO or GTAO (edge-aware denoise on GTAO)
 - Screen-space reflections (SSR) with trace quality scaling and SVGF spatial/temporal denoise
 - Screen-space global illumination (SSGI) with noise injection, spatial blur, and temporal accumulation
-- Anti-aliasing: none, TAA, FXAA, SMAA, SSAA, MSAA
-- Motion vectors for temporal passes
+- Anti-aliasing: none, TAA, FXAA, SMAA, SSAA, and MSAA
+- Motion vectors, depth, normal, albedo, and roughness guides for temporal rendering and reconstruction
 
-### Ray tracing (DXR 1.1, optional hardware)
+### Ray tracing and path tracing (optional DXR hardware)
 
 Hybrid mode keeps the raster base and adds RT passes on top:
 
 - Specular reflections (stochastic trace, NRD RELAX specular denoise)
 - Soft directional sun shadows (NRD SIGMA shadow denoise)
 - One-bounce diffuse GI (NRD RELAX diffuse denoise; mutually exclusive with SSGI inject)
+- Hardware acceleration structures, opaque visibility queries, and capability-based DXR fallbacks
 
 Path traced mode replaces the hybrid stack with a unified path tracer:
 
-- Real-time (single frame, pairs with upscaling/denoise below)
-- Reference (progressive accumulation)
+- Real-time single-frame rendering for interactive work
+- Progressive reference accumulation
+- Environment and emissive direct lighting, multiple bounces, transmissive visibility, and HDR environments
+- ReSTIR direct illumination with initial candidates plus temporal and spatial reuse
+- ReSTIR GI reservoir generation and temporal reuse
+- Depth, motion, material, and lighting guides for denoising and reconstruction
 
 ### NVIDIA upscaling (Streamline, optional)
 
@@ -143,16 +158,9 @@ Path traced mode replaces the hybrid stack with a unified path tracer:
 
 DLSS features compile out or no-op on non-NVIDIA hardware.
 
-### Debug
+### Diagnostics and validation
 
-- Large set of G-buffer, lighting, AO, SSR, SSGI, and RT debug views
-- GPU pass timings in the Performance panel
-- Render diagnostics export from the Renderer Tuning panel
-
-## Editor
-
-- Docked panels: Scene View, Game View, Hierarchy, Inspector, Renderer Tuning, Project Files, Performance
-- glTF mesh and material import
-- Transform gizmos, multi-select, undo/redo
-- Scene projects with serialized renderer settings
-- Play mode with physics simulation
+- Debug views for G-buffer, lighting, AO, SSR, SSGI, ray tracing, ReSTIR, and reconstruction inputs
+- Per-pass GPU timings in the Performance panel
+- Render-diagnostics export and automated CPU/GPU test coverage
+- Optional D3D12 debug layer for resource lifetime and barrier investigation

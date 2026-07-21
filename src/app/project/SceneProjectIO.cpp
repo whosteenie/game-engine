@@ -2,41 +2,44 @@
 
 #include "app/project/ProjectEditorState.h"
 #include "app/project/SceneImportedMeshPool.h"
-#include "engine/platform/NativeProgressWindow.h"
+#include "engine/platform/tooling/NativeProgressWindow.h"
 
-#include "app/scene/Scene.h"
-#include "app/scene/SceneMeshLibrary.h"
-#include "app/scene/SceneObjectStore.h"
-#include "app/scene/SceneRenderer.h"
-#include "app/scene/SceneSpawnService.h"
-#include "engine/rendering/Constants.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/import/SceneImportService.h"
+#include "app/scene/document/SceneMeshLibrary.h"
+#include "app/scene/document/SceneObjectStore.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "app/scene/spawn/SceneSpawnService.h"
+#include "engine/rendering/core/Constants.h"
 #include "engine/lighting/EnvironmentMap.h"
 #include "engine/lighting/IBL.h"
 #include "engine/components/CameraComponent.h"
 #include "engine/components/ColliderComponent.h"
 #include "engine/scene/InspectorComponentOrder.h"
 #include "engine/components/ComponentSerialization.h"
-#include "engine/scene/InspectorComponentOrderJson.h"
+#include "engine/scene/inspector/ComponentOrderJson.h"
 #include "engine/scene/JsonMath.h"
 #include "engine/components/LightComponent.h"
 #include "engine/components/RigidBodyComponent.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/Mesh.h"
-#include "engine/rendering/RenderingPipelineCache.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/resources/Mesh.h"
+#include "engine/rendering/core/RenderingPipelineCache.h"
 #include "engine/assets/ModelImporter.h"
-#include "engine/platform/EngineLog.h"
-#include "engine/platform/ExceptionMessage.h"
-#include "engine/platform/ProjectLoadTrace.h"
-#include "engine/platform/SceneRenderTrace.h"
+#include "engine/platform/diagnostics/EngineLog.h"
+#include "engine/platform/system/ExceptionMessage.h"
+#include "engine/platform/tooling/ProjectLoadBenchmark.h"
+#include "engine/platform/tooling/ProjectLoadProgress.h"
+#include "engine/platform/diagnostics/ProjectLoadTrace.h"
+#include "engine/platform/diagnostics/SceneRenderTrace.h"
 #include "engine/scene/SceneObject.h"
 #include "engine/scene/SceneObjectId.h"
 #include "engine/scene/ScenePrimitive.h"
 #include "engine/lighting/DirectionalShadowSettings.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
-#include "engine/rendering/ScreenSpaceEffectsSettings.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/TextureSamplerSettings.h"
-#include "engine/rendering/Texture.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
+#include "engine/rendering/post/effects/Settings.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/resources/TextureSamplerSettings.h"
+#include "engine/rendering/resources/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/DlssContext.h"
@@ -57,8 +60,8 @@ using json = nlohmann::json;
 namespace SceneProjectIODetail
 {
     constexpr const char* kFormatId = "game-engine-project";
-    constexpr float kProjectObjectLoadProgressStart = 0.15f;
-    constexpr float kProjectObjectLoadProgressEnd = 0.75f;
+    constexpr float kProjectObjectLoadProgressStart = ProjectLoadProgress::kDeserializingSceneStart;
+    constexpr float kProjectObjectLoadProgressEnd = ProjectLoadProgress::kDeserializingSceneEnd;
 
     std::string NormalizeSlashes(std::string path)
     {
@@ -211,24 +214,34 @@ namespace SceneProjectIODetail
         std::string errorMessage;
     };
 
+    using LoadedImportedMeshMap = std::unordered_map<ImportMeshKey, Mesh*, ImportMeshKeyHash>;
+
     Mesh* AcquireImportedMesh(
         Scene& scene,
         const std::string& projectRoot,
         const std::string& storedAssetPath,
         int nodeIndex,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        LoadedImportedMeshMap& loadedImportedMeshes,
         ImportedMeshReusePool* meshReusePool,
         std::string& outError)
     {
         const std::string resolvedPath = ResolveProjectPath(projectRoot, storedAssetPath);
+        const ImportMeshKey meshKey{resolvedPath, nodeIndex};
+        const auto loadedIterator = loadedImportedMeshes.find(meshKey);
+        if (loadedIterator != loadedImportedMeshes.end())
+        {
+            return loadedIterator->second;
+        }
+
         if (meshReusePool != nullptr)
         {
-            const ImportMeshKey reuseKey{resolvedPath, nodeIndex};
-            const auto reuseIterator = meshReusePool->find(reuseKey);
+            const auto reuseIterator = meshReusePool->find(meshKey);
             if (reuseIterator != meshReusePool->end())
             {
                 Mesh* reusedMesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(reuseIterator->second));
                 meshReusePool->erase(reuseIterator);
+                loadedImportedMeshes.emplace(meshKey, reusedMesh);
                 return reusedMesh;
             }
         }
@@ -236,6 +249,8 @@ namespace SceneProjectIODetail
         ImportedAssetCacheEntry& cacheEntry = importCache[resolvedPath];
         if (!cacheEntry.loaded)
         {
+            ProjectLoadBenchmark::ScopedPhase geometryLoadPhase(
+                "project.deserialize.imported_model_geometry_load");
             cacheEntry.model = LoadModelFromFile(
                 resolvedPath,
                 projectRoot,
@@ -264,7 +279,9 @@ namespace SceneProjectIODetail
             return nullptr;
         }
 
-        return scene.GetMeshLibrary().AdoptImportedMesh(std::move(node.mesh));
+        Mesh* importedMesh = scene.GetMeshLibrary().AdoptImportedMesh(std::move(node.mesh));
+        loadedImportedMeshes.emplace(meshKey, importedMesh);
+        return importedMesh;
     }
 
     bool DeserializeObjectMesh(
@@ -272,6 +289,7 @@ namespace SceneProjectIODetail
         const json& meshValue,
         const std::string& projectRoot,
         std::unordered_map<std::string, ImportedAssetCacheEntry>& importCache,
+        LoadedImportedMeshMap& loadedImportedMeshes,
         ImportedMeshReusePool* meshReusePool,
         Mesh*& outMesh,
         std::string& outImportAssetPath,
@@ -311,6 +329,7 @@ namespace SceneProjectIODetail
                 assetPath,
                 nodeIndex,
                 importCache,
+                loadedImportedMeshes,
                 meshReusePool,
                 outError);
             if (outMesh == nullptr)
@@ -769,6 +788,11 @@ namespace SceneProjectIODetail
                  {"sceneView", editorState.showSceneView},
                  {"gameView", editorState.showGameView},
              }},
+            {"performance",
+             json{
+                 {"gpuPassSmoothing", editorState.performanceGpuPassSmoothing},
+                 {"cpuPassSmoothing", editorState.performanceCpuPassSmoothing},
+             }},
             {"hierarchyOpenNodes", SerializeHierarchyOpenStates(editorState.hierarchyNodeOpenStates)},
             {"projectFiles",
              json{
@@ -807,6 +831,15 @@ namespace SceneProjectIODetail
             editorState.showProjectFiles = panelsValue.value("projectFiles", editorState.showProjectFiles);
             editorState.showSceneView = panelsValue.value("sceneView", editorState.showSceneView);
             editorState.showGameView = panelsValue.value("gameView", editorState.showGameView);
+        }
+
+        if (editorValue.contains("performance"))
+        {
+            const json& performanceValue = editorValue.at("performance");
+            editorState.performanceGpuPassSmoothing =
+                performanceValue.value("gpuPassSmoothing", editorState.performanceGpuPassSmoothing);
+            editorState.performanceCpuPassSmoothing =
+                performanceValue.value("cpuPassSmoothing", editorState.performanceCpuPassSmoothing);
         }
 
         if (editorValue.contains("hierarchyOpenNodes"))
@@ -974,7 +1007,9 @@ namespace SceneProjectIODetail
         ImportedMeshReusePool* meshReusePool,
         bool showProgress)
     {
+        ProjectLoadBenchmark::ScopedPhase deserializeObjectsPhase("project.deserialize.objects");
         std::unordered_map<std::string, ImportedAssetCacheEntry> importCache;
+        LoadedImportedMeshMap loadedImportedMeshes;
         std::vector<SceneObject>& sceneObjects = scene.GetObjects();
         sceneObjects.reserve(objectValues.size());
 
@@ -1034,6 +1069,7 @@ namespace SceneProjectIODetail
                     objectValue.at("mesh"),
                     projectRoot,
                     importCache,
+                    loadedImportedMeshes,
                     meshReusePool,
                     mesh,
                     importAssetPath,
@@ -1043,6 +1079,7 @@ namespace SceneProjectIODetail
                 return false;
             }
 
+            ProjectLoadBenchmark::ScopedPhase objectRecordPhase("project.deserialize.object_record");
             std::unique_ptr<Material> material;
             if (objectValue.contains("material"))
             {
@@ -1177,6 +1214,19 @@ namespace SceneProjectIODetail
             }
         }
 
+        for (auto& [importPath, cacheEntry] : importCache)
+        {
+            if (!cacheEntry.loaded || !cacheEntry.errorMessage.empty())
+            {
+                continue;
+            }
+
+            scene.GetImportService().CacheLoadedProjectModel(
+                scene,
+                importPath,
+                std::move(cacheEntry.model));
+        }
+
         ProjectLoadTrace::Step("deserialize scene objects ok");
         return true;
     }
@@ -1228,6 +1278,7 @@ namespace SceneProjectIODetail
         }
 
         scene.GetObjectStore().Clear();
+        scene.ClearImportedModelCache();
         scene.GetMeshLibrary().ClearImportedMeshes();
 
         if (!DeserializeObjects(
@@ -1240,6 +1291,7 @@ namespace SceneProjectIODetail
                 showProgress))
         {
             scene.GetObjectStore().Clear();
+            scene.ClearImportedModelCache();
             scene.GetMeshLibrary().ClearImportedMeshes();
             scene.ClearSelection();
             return false;
@@ -1325,7 +1377,10 @@ bool SceneProjectIO::DeserializeScene(
             return false;
         }
 
+        ImportedMeshReusePool reusableMeshes;
+        scene.GetMeshLibrary().HarvestImportedMeshes(scene.GetObjects(), reusableMeshes);
         scene.GetObjectStore().Clear();
+        scene.ClearImportedModelCache();
         scene.GetMeshLibrary().ClearImportedMeshes();
         ProjectLoadTrace::Step("scene stores cleared");
 
@@ -1335,10 +1390,11 @@ bool SceneProjectIO::DeserializeScene(
                 version,
                 projectRoot,
                 outError,
-                nullptr,
+                &reusableMeshes,
                 true))
         {
             scene.GetObjectStore().Clear();
+            scene.ClearImportedModelCache();
             scene.GetMeshLibrary().ClearImportedMeshes();
             scene.ClearSelection();
             return false;
@@ -1437,30 +1493,35 @@ bool SceneProjectIO::Load(
 
     try
     {
+        ProjectLoadBenchmark::ScopedPhase loadProjectFilePhase("project.file.total");
         ProjectLoadTrace::Step("set material texture resolver");
         SetMaterialTexturePathResolver(projectRoot);
 
         ScopedNativeProgress progress("Loading Project", "Reading project file...");
-        progress.SetProgress(0.04f);
-
-        ProjectLoadTrace::Step("open project file");
-        std::ifstream input(projectFilePath, std::ios::binary);
-        if (!input)
-        {
-            outError = "Failed to open project file for reading.";
-            ProjectLoadTrace::Step("open project file failed");
-            return false;
-        }
+        progress.SetProgress(ProjectLoadProgress::kReadingProjectFile);
 
         json root;
-        progress.SetMessage("Parsing project file...");
-        progress.SetProgress(0.10f);
-        ProjectLoadTrace::Step("parse project json");
-        input >> root;
-        ProjectLoadTrace::Step("parse project json ok");
+        {
+            ProjectLoadBenchmark::ScopedPhase parseProjectFilePhase("project.file.read_and_parse_json");
+            ProjectLoadTrace::Step("open project file");
+            std::ifstream input(projectFilePath, std::ios::binary);
+            if (!input)
+            {
+                outError = "Failed to open project file for reading.";
+                ProjectLoadTrace::Step("open project file failed");
+                return false;
+            }
+
+            progress.SetMessage("Parsing project file...");
+            progress.SetProgress(ProjectLoadProgress::kParsingProjectFile);
+            ProjectLoadTrace::Step("parse project json");
+            input >> root;
+            ProjectLoadTrace::Step("parse project json ok");
+        }
 
         progress.SetMessage("Loading scene...");
         progress.SetProgress(SceneProjectIODetail::kProjectObjectLoadProgressStart);
+        ProjectLoadBenchmark::ScopedPhase deserializeScenePhase("project.deserialize.scene");
         return SceneProjectIO::DeserializeScene(scene, editorState, root, projectRoot, outError);
     }
     catch (const std::exception& exception)

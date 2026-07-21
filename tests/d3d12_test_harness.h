@@ -3,7 +3,7 @@
 // Shared harness for tests/d3d12_render_tests.cpp (manual GPU suite only).
 // See the banner comment in d3d12_render_tests.cpp — do not auto-run.
 
-#include "engine/rendering/Framebuffer.h"
+#include "engine/rendering/resources/Framebuffer.h"
 
 #include <GLFW/glfw3.h>
 

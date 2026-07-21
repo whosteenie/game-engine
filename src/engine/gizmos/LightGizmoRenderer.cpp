@@ -4,10 +4,10 @@
 #include "engine/components/LightComponent.h"
 #include "engine/gizmos/GizmoDraw.h"
 #include "engine/gizmos/GizmoGeometry.h"
-#include "engine/rendering/Constants.h"
+#include "engine/rendering/core/Constants.h"
 #include "engine/lighting/Light.h"
 #include "engine/scene/SceneObject.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/constants.hpp>

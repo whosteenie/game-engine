@@ -1,10 +1,10 @@
 #include "app/panels/lighting/LightingPanelWidgets.h"
 
 #include "app/panels/lighting/LightingPanelUi.h"
-#include "app/scene/SceneRenderer.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <imgui.h>
@@ -129,6 +129,35 @@ namespace
         RenderDebugMode::RrDiffuseAlbedo,
         RenderDebugMode::RrSpecularAlbedo,
         RenderDebugMode::RrNormalRoughness,
+        RenderDebugMode::RrTransmissionDiffuseAlbedo,
+        RenderDebugMode::RrTransmissionSpecularAlbedo,
+        RenderDebugMode::RrTransmissionNormalRoughness,
+        RenderDebugMode::RrTemporalValidity,
+        RenderDebugMode::RrTransmissionTemporalValidity,
+    };
+
+    const RenderDebugMode kPtOpticalLayerModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::PtOpticalRawReflection,
+        RenderDebugMode::PtOpticalRawTransmission,
+        RenderDebugMode::PtOpticalReconstructedReflection,
+        RenderDebugMode::PtOpticalReconstructedTransmission,
+        RenderDebugMode::PtOpticalReflectionReconstructionDelta,
+        RenderDebugMode::PtOpticalTransmissionReconstructionDelta,
+    };
+
+    const RenderDebugMode kPtMirrorChainModes[] = {
+        RenderDebugMode::None,
+        RenderDebugMode::PtMirrorChainOwner,
+        RenderDebugMode::PtMirrorChainLength,
+        RenderDebugMode::PtMirrorChainConfidence,
+        RenderDebugMode::PtMirrorChainReceiverId,
+        RenderDebugMode::PtMirrorChainReceiverDepth,
+        RenderDebugMode::PtMirrorChainReceiverMotion,
+        RenderDebugMode::PtPsrTerminalReason,
+        RenderDebugMode::PtPsrProjectedSpan,
+        RenderDebugMode::PtPsrThroughput,
+        RenderDebugMode::PtPsrReceiverSignal,
     };
 
     const RenderDebugMode kPtIsolateModes[] = {
@@ -146,12 +175,66 @@ namespace
         RenderDebugMode::PtRestirGeometricNormal,
         RenderDebugMode::PtRestirMaterialId,
         RenderDebugMode::PtRestirLobeClass,
+        RenderDebugMode::PtRestirReservoirM,
+        RenderDebugMode::PtRestirReservoirAge,
+        RenderDebugMode::PtRestirChosenSource,
+        RenderDebugMode::PtRestirTemporalRejection,
+        RenderDebugMode::PtRestirSpatialSource,
+        RenderDebugMode::PtRestirSpatialRejection,
+        RenderDebugMode::PtRestirGiReservoirM,
+        RenderDebugMode::PtRestirGiReservoirAge,
+        RenderDebugMode::PtRestirGiChosenSource,
+        RenderDebugMode::PtRestirGiTemporalRejection,
+        RenderDebugMode::PtRestirGiUcw,
+        RenderDebugMode::PtRestirGiContribution,
+        RenderDebugMode::PtRestirGiReuseMinusFresh,
+        RenderDebugMode::PtRestirGiReusedRadiance,
+        RenderDebugMode::PtRestirGiSpatialSource,
+        RenderDebugMode::PtRestirGiSpatialRejection,
+        RenderDebugMode::PtRestirGiSpatialUcw,
+        RenderDebugMode::PtRestirGiSpatialContribution,
+        RenderDebugMode::PtRestirGiSpatialDelta,
+        RenderDebugMode::PtRestirGiSpatialEffectiveWeight,
+        RenderDebugMode::PtRestirGiSpatialJacobian,
+        RenderDebugMode::PtRestirGiSpatialNormalization,
+        RenderDebugMode::PtRestirGiSpatialMisWeights,
+        RenderDebugMode::PtRestirGiSpatialSupport,
+        RenderDebugMode::PtRestirGiSpatialFilterScore,
+        RenderDebugMode::PtRestirGiSpatialStaticVariance,
+        RenderDebugMode::PtRestirGiSpatialMotionDelta,
+        RenderDebugMode::PtEnvDiProbeSampling,
+        RenderDebugMode::PtEnvDiProbeBsdfMis,
+        RenderDebugMode::PtEnvDiProbeCandidate,
+        RenderDebugMode::PtEnvDiProbeRadiance,
+        RenderDebugMode::PtEnvDiProbeMetadata,
+        RenderDebugMode::PtCameraOpaqueMotion,
+        RenderDebugMode::PtTransmissionVirtualMotion,
+        RenderDebugMode::PtRestirPreviousReceiverTargetAgreement,
+        RenderDebugMode::PtOpticalInterfaceNormal,
+        RenderDebugMode::PtOpticalInterfaceEvent,
+        RenderDebugMode::PtOpticalReflectCandidate,
+        RenderDebugMode::PtOpticalRefractCandidate,
+        RenderDebugMode::PtOpticalGuideReceiverId,
+        RenderDebugMode::PtOpticalGuideFallback,
+        RenderDebugMode::PtOpticalReceiverReprojection,
+        RenderDebugMode::PtOpticalCoverageFresnel,
+        RenderDebugMode::PtOpticalReflectionReprojection,
+        RenderDebugMode::PtOpticalTransmissionReprojection,
+        RenderDebugMode::PtOpticalReflectionReplayStatus,
+        RenderDebugMode::PtOpticalTransmissionReplayStatus,
+        RenderDebugMode::PtOpticalTransmissionAttribution,
+        RenderDebugMode::PtOpticalTransmissionEnvironment,
+        RenderDebugMode::PtOpticalTransmissionReceiver,
+        RenderDebugMode::PtOpticalTransmissionDeepBounce,
     };
 
     const RenderDebugMode kPtDiagnosticModes[] = {
         RenderDebugMode::None,
         RenderDebugMode::PtTemporalRelativeSigma,
         RenderDebugMode::PtTemporalFrameDelta,
+        RenderDebugMode::PtMotionReprojectionResidual,
+        RenderDebugMode::PtDepthReprojectionDisocclusion,
+        RenderDebugMode::PtMatrixDepthReprojectionDisocclusion,
     };
 
     const DebugViewCategory kDebugViewCategories[] = {
@@ -166,6 +249,8 @@ namespace
         {"SSR", kSsrModes, IM_ARRAYSIZE(kSsrModes)},
         {"Ray tracing", kRayTracingModes, IM_ARRAYSIZE(kRayTracingModes)},
         {"DLSS RR guides", kRrGuideModes, IM_ARRAYSIZE(kRrGuideModes)},
+        {"PT optical RR layers", kPtOpticalLayerModes, IM_ARRAYSIZE(kPtOpticalLayerModes)},
+        {"PT mirror-chain PSR", kPtMirrorChainModes, IM_ARRAYSIZE(kPtMirrorChainModes)},
         {"Path tracer isolate", kPtIsolateModes, IM_ARRAYSIZE(kPtIsolateModes)},
         {"Path tracer diagnostics", kPtDiagnosticModes, IM_ARRAYSIZE(kPtDiagnosticModes)},
     };
@@ -364,8 +449,27 @@ namespace LightingPanelWidgets
 
         if (IsRrGuideDebugMode(mode))
         {
-            return screenSpaceEffects.GetRayReconstruction()
-                || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled);
+            const bool transmissionGuide = mode == RenderDebugMode::RrTransmissionDiffuseAlbedo
+                || mode == RenderDebugMode::RrTransmissionSpecularAlbedo
+                || mode == RenderDebugMode::RrTransmissionNormalRoughness;
+            return (screenSpaceEffects.GetRayReconstruction()
+                    && (!transmissionGuide || pathTracingActive))
+                || (screenSpaceEffects.IsRayReconstructionActive() && dxrEnabled
+                    && (!transmissionGuide || pathTracingActive));
+        }
+
+        if (IsPtOpticalLayerDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled
+                && screenSpaceEffects.IsRayReconstructionActive();
+        }
+
+        if (IsPtRestirGiSpatialDebugMode(mode))
+        {
+            return pathTracingActive && postEnabled
+                && dxrSettings.IsRestirGiInitialEnabled()
+                && (IsPtRestirGiSpatialStatsDebugMode(mode)
+                    || dxrSettings.IsRestirGiSpatialEnabled());
         }
 
         if (IsPtIsolateDebugMode(mode))
@@ -373,7 +477,9 @@ namespace LightingPanelWidgets
             return pathTracingActive && postEnabled;
         }
 
-        if (IsPtTemporalStatsDebugMode(mode))
+        if (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode)
+            || IsPtDepthReprojectionDebugMode(mode)
+            || IsPtMatrixDepthReprojectionDebugMode(mode))
         {
             return pathTracingActive && postEnabled;
         }
@@ -431,6 +537,32 @@ namespace LightingPanelWidgets
             return "Requires DLSS Ray Reconstruction to be enabled.";
         }
 
+        if (IsPtOpticalLayerDebugMode(mode))
+        {
+            return "Requires real-time path tracing with DLSS Ray Reconstruction active.";
+        }
+
+        if (IsPtRestirGiSpatialDebugMode(mode))
+        {
+            if (!postEnabled)
+            {
+                return "Enable post-processing first.";
+            }
+            if (!pathTracingActive)
+            {
+                return "Enable path tracing first.";
+            }
+            if (!dxrSettings.IsRestirGiInitialEnabled())
+            {
+                return "Enable PT ReSTIR GI initial sampling (P5) first.";
+            }
+            if (!IsPtRestirGiSpatialStatsDebugMode(mode)
+                && !dxrSettings.IsRestirGiSpatialEnabled())
+            {
+                return "Enable PT ReSTIR GI spatial reuse (P7) first.";
+            }
+        }
+
         if (IsPtIsolateDebugMode(mode))
         {
             if (!postEnabled)
@@ -443,7 +575,9 @@ namespace LightingPanelWidgets
             }
         }
 
-        if (IsPtTemporalStatsDebugMode(mode))
+        if (IsPtTemporalStatsDebugMode(mode) || IsPtMotionReprojectionDebugMode(mode)
+            || IsPtDepthReprojectionDebugMode(mode)
+            || IsPtMatrixDepthReprojectionDebugMode(mode))
         {
             if (!postEnabled)
             {
@@ -593,6 +727,25 @@ namespace LightingPanelWidgets
         case RenderDebugMode::RrSpecularAlbedo:
         case RenderDebugMode::RrNormalRoughness:
             return "DLSS Ray Reconstruction material guide buffers fed to Streamline.";
+        case RenderDebugMode::RrTransmissionDiffuseAlbedo:
+        case RenderDebugMode::RrTransmissionSpecularAlbedo:
+        case RenderDebugMode::RrTransmissionNormalRoughness:
+            return "Independent transmission-layer material guide fed to its Streamline RR evaluation. Black/neutral outside supported smooth dielectric coverage is expected.";
+        case RenderDebugMode::RrTemporalValidity:
+            return "Primary RR effective rejection: red=invalid history or UV, green=path owner change, blue=depth disocclusion, yellow=normal incompatibility. Static geometry disagreement is omitted exactly as in production. The view does not alter the mask.";
+        case RenderDebugMode::RrTransmissionTemporalValidity:
+            return "Transmission RR effective rejection: red=invalid history or UV, green=path owner change, blue=depth disocclusion, yellow=normal incompatibility. Static geometry disagreement is omitted exactly as in production. This is independent from the primary RR viewport.";
+        case RenderDebugMode::PtOpticalRawReflection:
+            return "Exact primary RR color input: full raw PT radiance minus the weighted transmission layer. Reinhard display mapping; RR remains active.";
+        case RenderDebugMode::PtOpticalRawTransmission:
+            return "Exact weighted smooth-dielectric transmission radiance submitted to the independent transmission RR history. Reinhard display mapping.";
+        case RenderDebugMode::PtOpticalReconstructedReflection:
+            return "Primary RR evaluation output before reconstructed transmission is added. It currently contains opaque radiance plus smooth optical reflection.";
+        case RenderDebugMode::PtOpticalReconstructedTransmission:
+            return "Independent transmission RR evaluation output before final optical composition.";
+        case RenderDebugMode::PtOpticalReflectionReconstructionDelta:
+        case RenderDebugMode::PtOpticalTransmissionReconstructionDelta:
+            return "RR output minus its raw layer input. Black=close; yellow=RR brighter; cyan=RR darker. Luminance delta is amplified 4x before display.";
         case RenderDebugMode::PtIsolateDirectSun:
         case RenderDebugMode::PtIsolateDirectEmissive:
         case RenderDebugMode::PtIsolateSurfaceEmissive:
@@ -603,6 +756,108 @@ namespace LightingPanelWidgets
         case RenderDebugMode::PtIsolatePreClamp:
         case RenderDebugMode::PtIsolateSpecHitDist:
             return "Raw PT term (DLSS/RR/bloom off). Scalar views (AO, sun vis, spec hit dist) are smooth; radiance views are noisy 1 spp. Sky is black except indirect / pre-clamp.";
+        case RenderDebugMode::PtRestirReservoirM:
+        case RenderDebugMode::PtRestirReservoirAge:
+        case RenderDebugMode::PtRestirChosenSource:
+        case RenderDebugMode::PtRestirTemporalRejection:
+            return "ReSTIR DI P3 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=accepted, red=no history/match, magenta=ineligible transmission/delta.";
+        case RenderDebugMode::PtRestirSpatialSource:
+        case RenderDebugMode::PtRestirSpatialRejection:
+            return "ReSTIR DI P4 spatial diagnostics. Source: green=center, blue=neighbor. Rejection: green=compatible neighbor accepted, yellow=boiling-filter discard, purple=smooth-metal temporal fallback, red=no compatible candidate, magenta=ineligible surface.";
+        case RenderDebugMode::PtRestirGiReservoirM:
+        case RenderDebugMode::PtRestirGiReservoirAge:
+        case RenderDebugMode::PtRestirGiChosenSource:
+        case RenderDebugMode::PtRestirGiTemporalRejection:
+            return "ReSTIR GI P6 temporal diagnostics. Source: green=fresh, blue=history. Rejection: green=history accepted, yellow=Jacobian rejection, purple=visibility rejection/fresh fallback, red=no history/surface match, magenta=ineligible or invalid fresh GI sample.";
+        case RenderDebugMode::PtRestirGiUcw:
+            return "ReSTIR GI reservoir UCW (unbiased contribution weight), Reinhard-normalized grayscale. Spatial discontinuities here (e.g. a hard line at a selection boundary) mean the reused weight differs from the fresh weight = BASIC bias; frame-to-frame flicker means weight variance.";
+        case RenderDebugMode::PtRestirGiContribution:
+            return "ReSTIR GI final shaded contribution only (base signal excluded), tonemapped grayscale. Isolates exactly what P6 adds: use this to see whether the fly-in grain / curved-surface line lives in the GI term itself.";
+        case RenderDebugMode::PtRestirGiReuseMinusFresh:
+            return "ReSTIR GI reuse-minus-fresh bias map. 0.5 gray = no bias; brighter = temporal reuse over-brightens vs the fresh P5 estimate; darker = reuse darkens. In reference/path-traced convergence this averages to the exact mean P6 bias, localized per pixel.";
+        case RenderDebugMode::PtRestirGiReusedRadiance:
+            return "ReSTIR GI reused reservoir's stored secondary radiance (tonemapped). Compare across the line to see whether the held secondary's radiance (vs the weight) carries the bias.";
+        case RenderDebugMode::PtRestirGiSpatialSource:
+        case RenderDebugMode::PtRestirGiSpatialRejection:
+            return "ReSTIR GI P7 spatial diagnostics. Source: green=center; a neighbor encodes normalized screen offset in RG and source index in B. Rejection: green=useful support, cyan=zero receiver target/visibility, yellow=filter, orange=Jacobian, purple=normalization fallback, red=no compatible candidate, magenta=ineligible/invalid input.";
+        case RenderDebugMode::PtRestirGiSpatialUcw:
+            return "Post-P7 unbiased contribution weight (UCW), Reinhard-normalized. This is the final spatial reservoir, not the P6 input.";
+        case RenderDebugMode::PtRestirGiSpatialContribution:
+            return "Post-P7 GI contribution only, RGB tonemapped before direct/base lighting and RR. Bright blobs here originate in the P7 GI estimator.";
+        case RenderDebugMode::PtRestirGiSpatialDelta:
+            return "Signed P7-minus-P6 luminance. Gray=no change, warm=P7 brighter, blue=P7 darker. Use reference accumulation to distinguish variance from mean bias.";
+        case RenderDebugMode::PtRestirGiSpatialEffectiveWeight:
+            return "Effective reservoir strength luminance(stored radiance) * UCW. This is the signal consumed by the pre-spatial 16x16 GI boiling filter.";
+        case RenderDebugMode::PtRestirGiSpatialJacobian:
+            return "Selected spatial Jacobian on a signed log2 scale. Gray=1, warm=>1, blue=<1; saturation indicates the validation window boundary.";
+        case RenderDebugMode::PtRestirGiSpatialNormalization:
+            return "BASIC correction multiplier selectedSourceTarget / (centerTarget * piSum), signed log2. Gray=1; spikes correlated with splotches identify normalization variance.";
+        case RenderDebugMode::PtRestirGiSpatialMisWeights:
+            return "Final-shading MIS weights: R=fresh P5 input, G=reused P7 output, B=selected sample's input complement. Roughness >=0.3 normally appears near (0.125, 0.875, 0.125).";
+        case RenderDebugMode::PtRestirGiSpatialSupport:
+            return "Spatial support: R=compatible-neighbor fraction, G=nonzero-target source fraction, B=selected source index. Low/unstable green at the capsule contact indicates visibility/support churn.";
+        case RenderDebugMode::PtRestirGiSpatialFilterScore:
+            return "GI outlier-filter score relative to its configured cutoff. Navy=low, green=moderate, yellow=near cutoff, red=actually filtered, magenta=ineligible. At the default 0.2 strength the cutoff is 41x the 16x16 tile mean.";
+        case RenderDebugMode::PtRestirGiSpatialStaticVariance:
+            return "GI-only output running relative sigma for a stable camera. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. The configured ROI is outlined and reported numerically.";
+        case RenderDebugMode::PtRestirGiSpatialMotionDelta:
+            return "GI-only output motion-reprojected frame delta. Measures post-P7 when P7 is on, or the P6/P5 baseline when P7 is off. Motion and expected previous linear depth reject disocclusions.";
+        case RenderDebugMode::PtCameraOpaqueMotion:
+            return "Camera-domain AOV: opaque current-minus-previous NDC motion. This diagnostic only changes the displayed PT output; the RGBA16F motion guide remains authoritative.";
+        case RenderDebugMode::PtTransmissionVirtualMotion:
+            return "Camera-domain AOV: refraction-replayed current-minus-previous NDC motion through a dielectric. This diagnostic only changes the displayed PT output; the RGBA16F motion guide remains authoritative.";
+        case RenderDebugMode::PtRestirPreviousReceiverTargetAgreement:
+            return "ReSTIR camera-domain AOV: R is normalized current/previous receiver error, G is fresh-sample target error, and B means a compatible prior receiver was found. A static compatible view is (0,0,1).";
+        case RenderDebugMode::PtOpticalInterfaceNormal:
+            return "Optical AOV: Ns-oriented smooth interface normal used by both bounce-zero radiance and its deterministic guide.";
+        case RenderDebugMode::PtOpticalInterfaceEvent:
+            return "Optical AOV: sampled smooth event (red reflection, green transmission, blue total internal reflection).";
+        case RenderDebugMode::PtOpticalReflectCandidate:
+            return "Optical AOV: deterministic smooth reflection candidate direction.";
+        case RenderDebugMode::PtOpticalRefractCandidate:
+            return "Optical AOV: deterministic smooth transmission candidate direction; black means TIR or no supported event.";
+        case RenderDebugMode::PtOpticalGuideReceiverId:
+            return "Optical AOV: hashed deterministic transmission-guide receiver ID; black means sky or no receiver.";
+        case RenderDebugMode::PtOpticalGuideFallback:
+            return "Optical fallback AOV: red=unsupported rough optics, green=moving optical interface, blue=moving receiver. These paths omit RR optical history.";
+        case RenderDebugMode::PtOpticalReceiverReprojection:
+            return "Legacy optical receiver reprojection AOV. Reflection wins when both deterministic lobes run; prefer the separate reflection/transmission views below.";
+        case RenderDebugMode::PtOpticalCoverageFresnel:
+            return "Smooth dielectric coverage and interface weights: R=covered, G=Fresnel reflection weight F, B=transmission weight 1-F. TIR appears yellow (1,1,0).";
+        case RenderDebugMode::PtOpticalReflectionReprojection:
+        case RenderDebugMode::PtOpticalTransmissionReprojection:
+            return "Selected lobe receiver reprojection: R=normalized receiver-position residual, G=previous receiver instance matches, B=previous optical path exists at the exported history pixel. Ideal static optics are cyan (0,1,1).";
+        case RenderDebugMode::PtOpticalReflectionReplayStatus:
+        case RenderDebugMode::PtOpticalTransmissionReplayStatus:
+            return "Inverse optical replay status: green=solved and low residual, yellow=solved but high residual, magenta=previous path reaches a different receiver, red=no valid previous optical path/solve, blue=no temporal history yet, black=no supported lobe.";
+        case RenderDebugMode::PtOpticalTransmissionAttribution:
+            return "Transmission-tail attribution: R=deterministic primary split accepted, G=stored transmission continuation resumed, B=finite nonzero radiance accumulated into the owned tail. Supported deterministic glass should be white.";
+        case RenderDebugMode::PtOpticalTransmissionEnvironment:
+            return "Raw owned transmission radiance that escapes to the environment before shading an opaque receiver.";
+        case RenderDebugMode::PtOpticalTransmissionReceiver:
+            return "Raw owned transmission radiance produced while shading the first opaque receiver behind the glass (direct lights, emitter hits, and local terminal lighting).";
+        case RenderDebugMode::PtOpticalTransmissionDeepBounce:
+            return "Raw owned transmission radiance produced after the first opaque receiver scatters the path. This is the floor/object GI-bounce hypothesis isolate.";
+        case RenderDebugMode::PtMirrorChainOwner:
+            return "Mirror-chain guide owner: gray=primary; red/green/blue=exact delta receiver at chain length 1/2/3+; cyan=sky; yellow=bounce-cap or roulette fallback; magenta=non-delta, moving, or unsupported fallback.";
+        case RenderDebugMode::PtMirrorChainLength:
+            return "Actual sampled delta-chain length as grayscale length/8 (saturated). A mirror -> mirror -> receiver path is 0.25.";
+        case RenderDebugMode::PtMirrorChainConfidence:
+            return "Exact receiver/sky confidence is white. Non-delta glossy confidence is continuous and diagnostic-only; production retains the bounce-zero bundle because RR has no per-pixel validity input.";
+        case RenderDebugMode::PtMirrorChainReceiverId:
+            return "Stable hash of the selected receiver instance. Black means primary fallback or sky.";
+        case RenderDebugMode::PtMirrorChainReceiverDepth:
+            return "Unfolded virtual-receiver linear view depth divided by max trace distance. Sky is white; primary fallback is black.";
+        case RenderDebugMode::PtMirrorChainReceiverMotion:
+            return "Unfolded virtual-receiver current-minus-previous NDC motion: RG are signed motion * 4 + 0.5 and B marks a valid exact receiver. The RGBA16F PT motion guide remains authoritative.";
+        case RenderDebugMode::PtPsrTerminalReason:
+            return "PSR terminal: green=receiver, cyan=sky, blue=sub-pixel, mint=spatially filtered deep tail, red=significant hard cap, magenta=ineligible, orange=invalid projection.";
+        case RenderDebugMode::PtPsrProjectedSpan:
+            return "Conservative unjittered mirror span at RR input resolution; white is 16 pixels or more.";
+        case RenderDebugMode::PtPsrThroughput:
+            return "Physical delta-prefix mirror throughput, kept separate from receiver material guides.";
+        case RenderDebugMode::PtPsrReceiverSignal:
+            return "Receiver-domain radiance before post-RR throughput remodulation.";
         case RenderDebugMode::PtTemporalRelativeSigma:
             return "Running luminance sigma / mean for the raw PT output. Hot stable-camera regions identify persistent temporal variance.";
         case RenderDebugMode::PtTemporalFrameDelta:

@@ -2,13 +2,14 @@
 
 #include "app/editor/EditorIcons.h"
 #include "app/editor/EditorPanelConstraints.h"
+#include "app/editor/ModelDragDrop.h"
 #include "app/project/ProjectSession.h"
-#include "app/scene/Scene.h"
-#include "app/scene/SceneImportService.h"
+#include "app/scene/document/Scene.h"
+#include "app/scene/import/SceneImportService.h"
 #include "app/undo/UndoCommand.h"
 #include "app/undo/UndoStack.h"
 #include "engine/assets/FileDialog.h"
-#include "engine/platform/ImGuiFonts.h"
+#include "engine/platform/ui/ImGuiFonts.h"
 
 #include <imgui.h>
 
@@ -90,6 +91,41 @@ namespace
     std::string BuildEntryLabel(bool isDirectory, const std::string& name, bool isOpen = false)
     {
         return std::string(EntryIcon(isDirectory, isOpen)) + "  " + name;
+    }
+
+    void DrawCenteredWrappedText(const std::string& text, float width)
+    {
+        const float left = ImGui::GetCursorPosX();
+        std::vector<std::string> lines;
+        std::string line;
+        for (const char character : text)
+        {
+            const std::string candidate = line + character;
+            if (!line.empty() && ImGui::CalcTextSize(candidate.c_str()).x > width)
+            {
+                lines.push_back(std::move(line));
+                line.assign(1, character);
+            }
+            else
+            {
+                line = candidate;
+            }
+        }
+
+        if (!line.empty())
+        {
+            lines.push_back(std::move(line));
+        }
+
+        for (const std::string& wrappedLine : lines)
+        {
+            const float lineWidth = ImGui::CalcTextSize(wrappedLine.c_str()).x;
+            ImGui::SetCursorPosX(left + std::max(0.0f, (width - lineWidth) * 0.5f));
+            ImGui::TextUnformatted(wrappedLine.c_str());
+        }
+
+        // Restore the tile's left edge before the caller submits its remaining tile area.
+        ImGui::SetCursorPosX(left);
     }
 
     bool CollectDirectoryEntries(const std::string& directory, std::vector<DirectoryEntry>& outEntries)
@@ -255,14 +291,15 @@ namespace
         std::size_t renameBufferSize,
         bool& focusRenameInput,
         bool& renameInputEngaged,
-        bool& cancelRename)
+        bool& cancelRename,
+        float inputWidth = -FLT_MIN)
     {
         if (focusRenameInput)
         {
             ImGui::SetKeyboardFocusHere();
         }
 
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        ImGui::SetNextItemWidth(inputWidth);
         const ImGuiInputTextFlags inputFlags =
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll;
         const bool confirmed = ImGui::InputText("##ProjectFileRename", renameBuffer, renameBufferSize, inputFlags);
@@ -580,6 +617,45 @@ bool ProjectFilesPanel::TryDeletePath(const std::string& entryPath)
     return true;
 }
 
+void ProjectFilesPanel::BeginEntrySelectionGesture(const std::string& entryPath)
+{
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    {
+        m_selectionGesture = SelectionGesture::Entry;
+        m_selectionGesturePath = entryPath;
+    }
+}
+
+void ProjectFilesPanel::BeginBlankSelectionGesture()
+{
+    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        && m_selectionGesture == SelectionGesture::None)
+    {
+        m_selectionGesture = SelectionGesture::Blank;
+    }
+}
+
+void ProjectFilesPanel::CommitSelectionGesture()
+{
+    if (!ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+    {
+        return;
+    }
+
+    if (m_selectionGesture == SelectionGesture::Entry)
+    {
+        m_selectedEntryPath = m_selectionGesturePath;
+    }
+    else if (m_selectionGesture == SelectionGesture::Blank)
+    {
+        m_selectedEntryPath.clear();
+        CancelRename();
+    }
+
+    m_selectionGesture = SelectionGesture::None;
+    m_selectionGesturePath.clear();
+}
+
 void ProjectFilesPanel::ImportModelIntoScene(ProjectSession& project, const std::string& modelPath)
 {
     if (m_drawScene == nullptr || m_drawUndoStack == nullptr)
@@ -599,7 +675,7 @@ void ProjectFilesPanel::ImportModelIntoScene(ProjectSession& project, const std:
     const std::string& projectRoot = project.GetProjectRootDirectory();
 
     PushInsertSubtree(undoStack, scene, "Import Model", [&](Scene& target) {
-        const std::vector<int> importedIndices = target.ImportModel(modelPath, -1, projectRoot);
+        const std::vector<int> importedIndices = target.ImportModel(modelPath, -1, projectRoot, true);
         if (!importedIndices.empty())
         {
             target.SelectSingle(importedIndices.front());
@@ -821,10 +897,10 @@ void ProjectFilesPanel::DrawFolderTree(ProjectSession& project, const std::strin
             m_folderOpenStates[entry.path] = opened;
         }
 
-        if (ImGui::IsItemClicked())
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
         {
             m_browsedDirectory = entry.path;
-            m_selectedEntryPath = entry.path;
+            BeginEntrySelectionGesture(entry.path);
             m_scrollSelectionIntoView = false;
         }
 
@@ -846,7 +922,7 @@ void ProjectFilesPanel::DrawFolderTree(ProjectSession& project, const std::strin
     }
 }
 
-void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string& directory)
+void ProjectFilesPanel::DrawFileDetailsView(ProjectSession& project, const std::string& directory)
 {
     std::vector<DirectoryEntry> entries;
     if (!CollectDirectoryEntries(directory, entries))
@@ -855,6 +931,8 @@ void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string&
         return;
     }
 
+    const ImVec2 tableMin = ImGui::GetCursorScreenPos();
+    const ImVec2 tableSize = ImGui::GetContentRegionAvail();
     if (ImGui::BeginTable(
             "ProjectFilesTable",
             3,
@@ -903,18 +981,31 @@ void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string&
             else
             {
                 const std::string label = BuildEntryLabel(entry.isDirectory, entry.name);
-                if (ImGui::Selectable(
-                        label.c_str(),
-                        isSelected,
-                        ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                ImGui::Selectable(
+                    label.c_str(),
+                    isSelected,
+                    ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+                if (ImGui::IsItemHovered())
                 {
-                    m_selectedEntryPath = entry.path;
+                    BeginEntrySelectionGesture(entry.path);
                 }
 
                 if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
                     && entry.isDirectory)
                 {
                     m_browsedDirectory = entry.path;
+                }
+
+                if (!entry.isDirectory && IsImportableModelFile(entry.path)
+                    && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+                {
+                    ImGui::SetDragDropPayload(
+                        ModelDragDrop::kModelFilePayload,
+                        entry.path.c_str(),
+                        entry.path.size() + 1);
+                    ImGui::TextUnformatted("Import model into scene");
+                    ImGui::TextDisabled("%s", entry.name.c_str());
+                    ImGui::EndDragDropSource();
                 }
 
                 DrawEntryContextMenu(project, entry.path, entry.name, entry.isDirectory);
@@ -937,6 +1028,118 @@ void ProjectFilesPanel::DrawFileList(ProjectSession& project, const std::string&
         }
 
         ImGui::EndTable();
+    }
+
+    if (ImGui::IsMouseHoveringRect(tableMin, tableMin + tableSize))
+    {
+        BeginBlankSelectionGesture();
+    }
+}
+
+void ProjectFilesPanel::DrawFileIconView(ProjectSession& project, const std::string& directory)
+{
+    std::vector<DirectoryEntry> entries;
+    if (!CollectDirectoryEntries(directory, entries))
+    {
+        ImGui::TextDisabled("Unable to read folder.");
+        return;
+    }
+
+    constexpr float tileWidth = 96.0f;
+    constexpr float tileHeight = 104.0f;
+    const float iconFontSize = ImGui::GetStyle().FontSizeBase * 2.5f;
+    const float iconHeight = iconFontSize + ImGui::GetStyle().FramePadding.y * 2.0f;
+    const float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
+    const int columns = std::max(
+        1,
+        static_cast<int>((ImGui::GetContentRegionAvail().x + itemSpacing) / (tileWidth + itemSpacing)));
+
+    for (std::size_t index = 0; index < entries.size(); ++index)
+    {
+        const DirectoryEntry& entry = entries[index];
+        ImGui::PushID(entry.path.c_str());
+        ImGui::BeginGroup();
+        const float tileTop = ImGui::GetCursorPosY();
+
+        const bool isSelected = entry.path == m_selectedEntryPath;
+        const bool isRenaming = entry.path == m_renamePath;
+        if (isRenaming)
+        {
+            bool cancelRename = false;
+            if (DrawInlineRenameField(
+                    m_renameBuffer,
+                    sizeof(m_renameBuffer),
+                    m_focusRenameInput,
+                    m_renameInputEngaged,
+                    cancelRename,
+                    tileWidth))
+            {
+                TryCommitRename();
+            }
+            else if (cancelRename)
+            {
+                CancelRename();
+            }
+        }
+        else
+        {
+            ImGui::PushFont(nullptr, iconFontSize);
+            ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.5f, 0.5f));
+            ImGui::Selectable(
+                EntryIcon(entry.isDirectory),
+                isSelected,
+                ImGuiSelectableFlags_AllowDoubleClick,
+                ImVec2(tileWidth, iconHeight));
+            ImGui::PopStyleVar();
+            ImGui::PopFont();
+            const bool isTileHovered = ImGui::IsItemHovered();
+            if (isTileHovered)
+            {
+                BeginEntrySelectionGesture(entry.path);
+            }
+
+            if (isTileHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)
+                && entry.isDirectory)
+            {
+                m_browsedDirectory = entry.path;
+            }
+
+            if (!entry.isDirectory && IsImportableModelFile(entry.path)
+                && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID))
+            {
+                ImGui::SetDragDropPayload(
+                    ModelDragDrop::kModelFilePayload,
+                    entry.path.c_str(),
+                    entry.path.size() + 1);
+                ImGui::TextUnformatted("Import model into scene");
+                ImGui::TextDisabled("%s", entry.name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
+            DrawEntryContextMenu(project, entry.path, entry.name, entry.isDirectory);
+
+            DrawCenteredWrappedText(entry.name, tileWidth);
+        }
+
+        const float remainingTileHeight = tileHeight - (ImGui::GetCursorPosY() - tileTop);
+        if (remainingTileHeight > 0.0f)
+        {
+            ImGui::Dummy(ImVec2(tileWidth, remainingTileHeight));
+        }
+
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (index + 1 < entries.size()
+            && (index + 1) % static_cast<std::size_t>(columns) != 0)
+        {
+            ImGui::SameLine();
+        }
+    }
+
+    if (ImGui::IsWindowHovered() && m_renamePath.empty())
+    {
+        BeginBlankSelectionGesture();
     }
 }
 
@@ -1028,15 +1231,15 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     {
         m_folderOpenStates[projectRoot] = rootOpen;
     }
-    if (ImGui::IsItemClicked())
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         m_browsedDirectory = projectRoot;
-        m_selectedEntryPath = projectRoot;
+        BeginEntrySelectionGesture(projectRoot);
     }
 
     DrawEntryContextMenu(project, projectRoot, rootName, true);
 
-    if (rootOpen)
+    if (rootOpen && rootHasChildren)
     {
         DrawFolderTree(project, projectRoot);
         ImGui::TreePop();
@@ -1049,8 +1252,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
             ImGui::InvisibleButton("##ProjectFoldersBackground", backgroundSpace);
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             {
-                m_selectedEntryPath.clear();
-                CancelRename();
+                BeginBlankSelectionGesture();
             }
         }
     }
@@ -1060,9 +1262,32 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     ImGui::SameLine();
     ImGui::BeginChild("ProjectFiles", ImVec2(0.0f, -footerHeight), ImGuiChildFlags_Borders);
     ImGui::TextDisabled("Files");
+    ImGui::SameLine();
+    const float viewButtonsWidth = ImGui::CalcTextSize("Details").x
+        + ImGui::CalcTextSize("Icons").x + ImGui::GetStyle().ItemSpacing.x
+        + ImGui::GetStyle().FramePadding.x * 4.0f;
+    const float viewButtonsStart = ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - viewButtonsWidth;
+    ImGui::SetCursorPosX(std::max(ImGui::GetCursorPosX(), viewButtonsStart));
+    if (ImGui::SmallButton("Details"))
+    {
+        m_fileViewMode = FileViewMode::Details;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Icons"))
+    {
+        m_fileViewMode = FileViewMode::Icons;
+    }
     ImGui::Separator();
-    DrawFileList(project, m_browsedDirectory);
+    if (m_fileViewMode == FileViewMode::Details)
+    {
+        DrawFileDetailsView(project, m_browsedDirectory);
+    }
+    else
+    {
+        DrawFileIconView(project, m_browsedDirectory);
+    }
 
+    if (m_fileViewMode == FileViewMode::Details)
     {
         const ImVec2 backgroundSpace = ImGui::GetContentRegionAvail();
         if (backgroundSpace.y > 0.0f)
@@ -1070,8 +1295,7 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
             ImGui::InvisibleButton("##ProjectFilesBackground", backgroundSpace);
             if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
             {
-                m_selectedEntryPath.clear();
-                CancelRename();
+                BeginBlankSelectionGesture();
             }
         }
     }
@@ -1080,6 +1304,18 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
 
     HandleFilesPanelHotkeys();
     DrawDeleteConfirmPopup();
+
+    // Clear selection when clicking outside this panel (other panels, viewport, etc.).
+    // Skip while any popup is open so context-menu actions like Rename still apply.
+    if (!m_selectedEntryPath.empty()
+        && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
+        && !ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
+        && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
+    {
+        BeginBlankSelectionGesture();
+    }
+
+    CommitSelectionGesture();
 
     if (!m_statusMessage.empty())
     {
@@ -1092,17 +1328,6 @@ void ProjectFilesPanel::Draw(Scene& scene, ProjectSession& project, UndoStack& u
     else
     {
         ImGui::TextDisabled("%s", m_selectedEntryPath.c_str());
-    }
-
-    // Clear selection when clicking outside this panel (other panels, viewport, etc.).
-    // Skip while any popup is open so context-menu actions like Rename still apply.
-    if (!m_selectedEntryPath.empty()
-        && ImGui::IsMouseClicked(ImGuiMouseButton_Left)
-        && !ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows)
-        && !ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopup))
-    {
-        m_selectedEntryPath.clear();
-        CancelRename();
     }
 
     ImGui::End();

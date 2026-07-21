@@ -6,7 +6,7 @@
 //   C3 — emissive-NEE area sampling must agree with BSDF sampling of the same area light.
 //   C4 — env-IS pdf must be intensity-invariant and integrate to 1 over the sphere.
 
-#include "engine/lighting/EnvironmentImportanceSampling.h"
+#include "engine/lighting/environment/Importance.h"
 #include "test_expect.h"
 
 #include <glm/glm.hpp>

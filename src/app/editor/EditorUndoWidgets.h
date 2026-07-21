@@ -6,12 +6,24 @@
 // Apply callbacks receive the current widget value after ImGui has updated it.
 // Do not capture locals by value in call-site lambdas — use the callback parameter.
 
-#include "app/scene/Scene.h"
+#include "app/scene/document/Scene.h"
 #include "app/undo/UndoCommand.h"
+#include "app/editor/SettingRegistry.h"
+#include "app/editor/TuningSectionState.h"
 
 #include <imgui.h>
 
 #include <functional>
+
+inline void MarkRendererSettingByLabel(const char* label)
+{
+    const SettingRegistry::Descriptor* descriptor =
+        SettingRegistry::FindBySectionAndLabel(TuningSectionState::ActiveSection(), label != nullptr ? label : "");
+    if (descriptor != nullptr)
+    {
+        TuningSectionState::MarkSearchTarget(descriptor->id.data());
+    }
+}
 
 inline void ApplyRendererChange(
     RendererEditContext& editContext,
@@ -19,6 +31,14 @@ inline void ApplyRendererChange(
     const char* commandName,
     const std::function<void(Scene&)>& mutate)
 {
+    const SettingRegistry::Descriptor* descriptor = SettingRegistry::FindBySectionAndLabel(
+        TuningSectionState::ActiveSection(), commandName != nullptr ? commandName : "");
+    if (descriptor != nullptr && descriptor->undoPolicy == SettingRegistry::UndoPolicy::NotUndoable)
+    {
+        mutate(scene);
+        return;
+    }
+
     if (editContext.undoStack != nullptr)
     {
         PushRendererMutation(*editContext.undoStack, scene, commandName, mutate);
@@ -38,6 +58,7 @@ inline bool UndoableRendererSliderFloat(
     const std::function<void(Scene&, float)>& apply)
 {
     const bool changed = ImGui::SliderFloat(label, value, min, max, format);
+    MarkRendererSettingByLabel(label);
     if (changed && context.scene != nullptr)
     {
         apply(*context.scene, *value);
@@ -56,6 +77,7 @@ inline bool UndoableRendererSliderInt(
     const std::function<void(Scene&, int)>& apply)
 {
     const bool changed = ImGui::SliderInt(label, value, min, max);
+    MarkRendererSettingByLabel(label);
     if (changed && context.scene != nullptr)
     {
         apply(*context.scene, *value);
@@ -72,6 +94,7 @@ inline bool UndoableRendererCheckbox(
     const std::function<void(Scene&, bool)>& apply)
 {
     const bool changed = ImGui::Checkbox(label, value);
+    MarkRendererSettingByLabel(label);
     if (changed && context.scene != nullptr)
     {
         ApplyRendererChange(context, *context.scene, label, [&](Scene& scene) {

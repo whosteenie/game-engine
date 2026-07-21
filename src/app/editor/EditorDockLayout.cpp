@@ -25,12 +25,45 @@ void EditorDockLayout::BuildDefaultLayout(ImGuiID dockspaceId)
         ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, kBottomRowFraction, nullptr, &dockMain);
 
     ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
-    ImGui::DockBuilderDockWindow("Inspector", dockRight);
     ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);
+    ImGui::DockBuilderDockWindow("Performance", dockRight);
+    // Docking a tab last selects it. Keep Inspector focused on startup while retaining the
+    // renderer and performance panels as adjacent tabs.
+    ImGui::DockBuilderDockWindow("Inspector", dockRight);
+    ImGui::DockBuilderDockWindow("Project", dockBottom);
+    ImGui::DockBuilderDockWindow("Game View", dockMain);
+    // Scene View is the editor's default working surface; Game View stays one tab away.
+    ImGui::DockBuilderDockWindow("Scene View", dockMain);
+
+    ImGui::DockBuilderFinish(dockspaceId);
+}
+
+void EditorDockLayout::BuildDualViewportLayout(
+    ImGuiID dockspaceId,
+    const float gameViewportFraction)
+{
+    ImGui::DockBuilderRemoveNode(dockspaceId);
+    ImGui::DockBuilderAddNode(dockspaceId, ImGuiDockNodeFlags_DockSpace);
+    ImGui::DockBuilderSetNodeSize(dockspaceId, ImGui::GetMainViewport()->WorkSize);
+
+    ImGuiID dockMain = dockspaceId;
+    const ImGuiID dockLeft =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Left, kLeftColumnFraction, nullptr, &dockMain);
+    const ImGuiID dockRight =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Right, kRightColumnFraction, nullptr, &dockMain);
+    const ImGuiID dockBottom =
+        ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, kBottomRowFraction, nullptr, &dockMain);
+    const ImGuiID dockGame =
+        ImGui::DockBuilderSplitNode(
+            dockMain, ImGuiDir_Right, gameViewportFraction, nullptr, &dockMain);
+
+    ImGui::DockBuilderDockWindow("Hierarchy", dockLeft);
+    ImGui::DockBuilderDockWindow("Renderer Tuning", dockRight);
+    ImGui::DockBuilderDockWindow("Performance", dockRight);
+    ImGui::DockBuilderDockWindow("Inspector", dockRight);
     ImGui::DockBuilderDockWindow("Project", dockBottom);
     ImGui::DockBuilderDockWindow("Scene View", dockMain);
-    ImGui::DockBuilderDockWindow("Game View", dockMain);
-
+    ImGui::DockBuilderDockWindow("Game View", dockGame);
     ImGui::DockBuilderFinish(dockspaceId);
 }
 

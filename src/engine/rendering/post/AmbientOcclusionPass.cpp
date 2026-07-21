@@ -1,6 +1,6 @@
 #include "engine/rendering/post/AmbientOcclusionPass.h"
 
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 
 #include <algorithm>
 

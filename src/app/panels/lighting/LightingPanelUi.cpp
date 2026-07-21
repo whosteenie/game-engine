@@ -1,10 +1,10 @@
 #include "app/panels/lighting/LightingPanelUi.h"
 
 #include "app/editor/EditorWidgets.h"
-#include "app/scene/SceneRenderer.h"
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/ScreenSpaceEffects.h"
+#include "app/scene/rendering/SceneRenderer.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/post/ScreenSpaceEffects.h"
 
 #include <imgui.h>
 
@@ -19,6 +19,20 @@ namespace LightingPanelUi
     {
         const EditorWidgets::TextWrapScope wrap;
         ImGui::TextWrapped("%s", text);
+    }
+
+    void DrawTooltipForLastItem(const char* text)
+    {
+        if (!ImGui::IsItemHovered() || text == nullptr || *text == '\0')
+        {
+            return;
+        }
+
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 28.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
     }
 
     FeatureState QueryFeatures(const SceneRenderer& renderer, const ScreenSpaceEffects& screenSpaceEffects)

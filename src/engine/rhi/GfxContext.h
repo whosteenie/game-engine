@@ -1,6 +1,7 @@
 #pragma once
 
-#include "engine/rendering/TextureSamplerSettings.h"
+#include "engine/rendering/resources/TextureSamplerSettings.h"
+#include "engine/rendering/core/DxrRuntimeSnapshot.h"
 #include "engine/rhi/GpuProfiler.h"
 
 #include <cstdint>
@@ -31,6 +32,8 @@ public:
     bool Initialize(GLFWwindow* window, int width, int height);
     void Shutdown();
     bool IsInitialized() const { return m_impl != nullptr; }
+    bool IsVsyncEnabled() const { return m_vsyncEnabled; }
+    void SetVsyncEnabled(bool enabled) { m_vsyncEnabled = enabled; }
     void WaitForGpuIdle();
     // Full device idle + deferred-release flush for teardown (ImGui upload queue, command list reset).
     void PrepareForDeviceShutdown();
@@ -66,6 +69,10 @@ public:
     // Takes ownership of one resource reference (the one returned by D3D12MA::CreateResource,
     // which call sites previously leaked) and of the allocation reference.
     void DeferredReleaseResource(void* d3d12maAllocation, void* d3d12Resource);
+    // Takes ownership of one COM reference to a GPU object such as a pipeline state or root
+    // signature.  These objects are also retained by submitted command lists, so releasing them
+    // synchronously during scene/material destruction is unsafe.
+    void DeferredReleaseGpuObject(void* d3d12Object);
     void DeferredFreeOffscreenSrv(std::uint32_t descriptorIndex);
     void DeferredFreeOffscreenRtvBlock(std::uint32_t baseIndex, std::uint32_t count);
     void DeferredFreeOffscreenDsv(std::uint32_t descriptorIndex);
@@ -154,6 +161,18 @@ public:
     // Reads a pixel from the swapchain buffer most recently presented by EndFrame().
     bool ReadbackPresentedColorPixel(int x, int y, float outRgba[4]) const;
 
+    // S0-P5: capture-only, fence-owned final-output copy. The copy is recorded on the normal frame
+    // command list before Present; it never submits a separate command list or changes renderer state.
+    struct PresentedImageCapture
+    {
+        int width = 0;
+        int height = 0;
+        std::vector<std::uint8_t> rgba8;
+    };
+    bool RequestPresentedImageCapture();
+    bool TryConsumePresentedImageCapture(PresentedImageCapture& outCapture);
+    bool HasPendingPresentedImageCapture() const;
+
     static std::string GetLastGpuAllocationError();
     void GetSrvDescriptorUsage(std::uint32_t& outUsed, std::uint32_t& outCapacity) const;
     bool IsDeviceRemoved(std::string* outReason = nullptr) const;
@@ -180,12 +199,37 @@ public:
     // Monotonic counter incremented once per BeginFrame (not the swapchain ring index).
     std::uint64_t GetSubmissionFrameNumber() const { return m_submissionFrameNumber; }
 
+    struct FramePacingDiagnostics
+    {
+        double previousFrameFenceWaitMs = 0.0;
+        double presentCallMs = 0.0;
+    };
+    const FramePacingDiagnostics& GetFramePacingDiagnostics() const { return m_framePacingDiagnostics; }
+
     // DXR capability probe (D3D12_OPTIONS5 RaytracingTier). Tier 0 = not supported.
     bool IsRaytracingSupported() const;
     int GetRaytracingTier() const { return m_raytracingTier; }
+    int GetHighestShaderModel() const { return m_highestShaderModel; }
+    bool IsInlineRaytracingSupported() const;
+    bool IsShaderExecutionReorderingSupported() const;
+    bool SupportsModernDxrLibrary() const;
+    const char* GetPreferredDxrLibraryProfile() const;
     bool IsMeshShaderSupported() const { return m_meshShaderTier > 0; }
     int GetMeshShaderTier() const { return m_meshShaderTier; }
     const std::string& GetAdapterDescription() const { return m_adapterDescription; }
+    const DxrRuntimeSnapshot& GetDxrRuntimeSnapshot() const { return m_dxrRuntimeSnapshot; }
+    void SetDxrRuntimeSerPolicy(const char* policy);
+    void ReportDxrPathTracerPipelineResult(
+        bool diagnosticPermutation,
+        bool serPermutation,
+        const char* compilerLibraryResult,
+        const char* rtpsoResult,
+        const char* fallbackReason);
+    void ReportDxrPathTracerSelection(
+        bool diagnosticPermutation,
+        bool serPermutation,
+        const char* fallbackReason);
+    void ReportDxrPathTracerDispatch(bool diagnosticPermutation, bool serPermutation);
 
     struct GpuMemoryInfo
     {
@@ -237,6 +281,8 @@ private:
     void ProcessPendingResize();
     void ResizeInternal(int width, int height);
     void EnsureStreamlineSwapChainUpgraded();
+    void RecordPresentedImageCapture(void* commandList, void* renderTarget);
+    void ReleasePresentedImageCapture();
     void CreateRenderTargets();
     void ReleaseRenderTargets();
     void RenderImGui(ImDrawData* drawData);
@@ -253,9 +299,12 @@ private:
     std::uint64_t m_fenceValues[FrameCount] = {};
     // Monotonic fence for immediate uploads; never aliased into swapchain frame fences.
     std::uint64_t m_submissionFenceValue = 0;
+    FramePacingDiagnostics m_framePacingDiagnostics{};
     const Framebuffer* m_boundOutputFramebuffer = nullptr;
     bool m_frameRecording = false;
+    bool m_vsyncEnabled = true;
     bool m_frameCommandsSubmitted = false;
+    int m_frameGpuScopeId = -1;
     int m_pendingResizeWidth = 0;
     int m_pendingResizeHeight = 0;
     TextureFilterMode m_materialTextureFilterMode = TextureFilterMode::Trilinear;
@@ -264,8 +313,10 @@ private:
     int m_activeMsaaSampleCount = 1;
     std::uint8_t m_supportedMsaaSampleCountsMask = 0;
     int m_raytracingTier = 0;
+    int m_highestShaderModel = 0;
     int m_meshShaderTier = 0;
     std::string m_adapterDescription;
     std::uint64_t m_adapterDedicatedVideoMemory = 0;
+    DxrRuntimeSnapshot m_dxrRuntimeSnapshot;
     GpuProfiler m_gpuProfiler;
 };

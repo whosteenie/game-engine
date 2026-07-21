@@ -30,6 +30,13 @@ public:
         const std::string& directory,
         const std::string& projectName,
         const ProjectEditorState& editorState);
+    // Creates an independent project folder, copies the source project's Assets tree, then saves
+    // the current scene into the new project. The active project is changed only on success.
+    bool DuplicateAsNewProject(
+        Scene& scene,
+        const std::string& parentDirectory,
+        const std::string& projectName,
+        const ProjectEditorState& editorState);
     bool OpenProject(Scene& scene, const std::string& projectFilePath, ProjectEditorState& editorState);
 
     bool Save(Scene& scene, const ProjectEditorState& editorState);

@@ -1,3 +1,8 @@
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
+#endif
+
 #include "d3d12_test_harness.h"
 #include "test_expect.h"
 #include "d3d12_test_runner.h"
@@ -19,28 +24,30 @@
 #include "engine/lighting/Light.h"
 #include "engine/lighting/SceneLighting.h"
 #include "engine/gizmos/GizmoDraw.h"
-#include "engine/rendering/Constants.h"
-#include "engine/rendering/GridRenderer.h"
-#include "engine/rendering/Material.h"
-#include "engine/rendering/MaterialTextures.h"
-#include "engine/rendering/Mesh.h"
-#include "engine/rendering/RenderDebug.h"
-#include "engine/rendering/Shader.h"
-#include "engine/rendering/ShaderCache.h"
-#include "engine/rendering/Texture.h"
+#include "engine/rendering/core/Constants.h"
+#include "engine/rendering/passes/GridRenderer.h"
+#include "engine/rendering/resources/Material.h"
+#include "engine/rendering/resources/MaterialTextures.h"
+#include "engine/rendering/resources/Mesh.h"
+#include "engine/rendering/core/RenderDebug.h"
+#include "engine/rendering/shaders/Shader.h"
+#include "engine/rendering/shaders/ShaderCache.h"
+#include "engine/rendering/resources/Texture.h"
 #include "engine/assets/TextureCache.h"
 #include "engine/rhi/GfxContext.h"
 #include "engine/rhi/d3d12/FixedDescriptorHeap.h"
 #include "engine/rhi/d3d12/GpuBuffer.h"
-#include "engine/raytracing/Blas.h"
-#include "engine/raytracing/DxrContext.h"
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrGpuResource.h"
-#include "engine/raytracing/DxrInstanceTransform.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/DxrRootSignature.h"
-#include "engine/raytracing/ShaderBindingTable.h"
-#include "engine/raytracing/Tlas.h"
+#include "engine/raytracing/acceleration/Blas.h"
+#include "engine/raytracing/core/DxrContext.h"
+#include "engine/raytracing/dispatch/DxrDispatchContext.h"
+#include "engine/raytracing/core/DxrGpuResource.h"
+#include "engine/raytracing/core/PtRrGuideMath.h"
+#include "engine/raytracing/acceleration/DxrInstanceTransform.h"
+#include "engine/raytracing/pipeline/DxrPipeline.h"
+#include "engine/raytracing/dispatch/DxrRestirDispatch.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
+#include "engine/raytracing/pipeline/ShaderBindingTable.h"
+#include "engine/raytracing/acceleration/Tlas.h"
 
 #include "primitives/Cube.h"
 #include "primitives/Plane.h"
@@ -54,6 +61,7 @@
 #include <D3D12MemAlloc.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 #include <iostream>
 #include <cmath>
@@ -2077,7 +2085,11 @@ namespace render_tests
         IBL* environmentIbl = nullptr;
         std::string lastError;
 
-        bool Setup(const bool includeGlassPane = true)
+        bool Setup(
+            const bool includeGlassPane = true,
+            const bool checkerBackdrop = false,
+            const bool mirrorChain = false,
+            const bool mirrorChainGlassReceiver = false)
         {
             lastError.clear();
             if (!GfxContext::Get().IsRaytracingSupported())
@@ -2100,10 +2112,31 @@ namespace render_tests
                 CreateDxrDefaultBuffer(16ull * 1024ull * 1024ull, true, scratch),
                 "PT glass scratch buffer alloc");
 
-            test::ExpectTrue(scene.Build(commandList4, scratch, includeGlassPane, lastError), lastError.c_str());
-            test::ExpectTrue(gbuffer.Create(lastError), lastError.c_str());
-            test::ExpectTrue(stack.EnsureReady(lastError), lastError.c_str());
-            return true;
+            const bool sceneBuilt = mirrorChain
+                ? scene.BuildMirrorChain(
+                    commandList4, scratch, mirrorChainGlassReceiver, lastError)
+                : scene.Build(
+                    commandList4,
+                    scratch,
+                    includeGlassPane,
+                    checkerBackdrop,
+                    lastError);
+            test::ExpectTrue(sceneBuilt, lastError.c_str());
+            const bool gbufferCreated = gbuffer.Create(lastError);
+            test::ExpectTrue(gbufferCreated, lastError.c_str());
+            const bool stackReady = stack.EnsureReady(lastError);
+            test::ExpectTrue(stackReady, lastError.c_str());
+            return sceneBuilt && gbufferCreated && stackReady;
+        }
+
+        bool SetupMirrorChain()
+        {
+            return Setup(false, false, true, false);
+        }
+
+        bool SetupMirrorChainGlassReceiver()
+        {
+            return Setup(false, false, true, true);
         }
 
         void Teardown()
@@ -2123,7 +2156,13 @@ namespace render_tests
         const glm::mat4& prevView,
         const glm::vec3& prevCameraPos,
         const bool motionHistoryValid,
-        const std::uint32_t frameIndex)
+        const std::uint32_t frameIndex,
+        const int ptDebugIsolateMode = 0,
+        const std::uint32_t restirDiCandidateCount = 0,
+        const bool ptMirrorChainPsr = false,
+        const std::uint32_t ptMaxBounces = 1,
+        const bool ptIndependentOpticalRrLayers = false,
+        const bool ptDeterministicOpticalSplit = false)
     {
         PtFrameDispatchParams params{};
         params.scene = &fixture.scene;
@@ -2138,9 +2177,83 @@ namespace render_tests
         params.prevCameraPos = prevCameraPos;
         params.motionHistoryValid = motionHistoryValid;
         params.frameIndex = frameIndex;
+        params.ptDebugIsolateMode = ptDebugIsolateMode;
+        params.restirDiCandidateCount = restirDiCandidateCount;
+        params.ptMirrorChainPsr = ptMirrorChainPsr;
+        params.ptIndependentOpticalRrLayers = ptIndependentOpticalRrLayers;
+        params.ptDeterministicOpticalSplit = ptDeterministicOpticalSplit;
+        params.ptMaxBounces = ptMaxBounces;
 
         std::string dispatchError;
         const bool dispatched = DispatchMinimalPathTracerFrame(params, dispatchError);
+        test::ExpectTrue(dispatched, dispatchError.c_str());
+        return dispatched;
+    }
+
+    bool DispatchPtRestirTemporalAov(
+        PtGlassTestFixture& fixture,
+        const Camera& camera,
+        const glm::vec3& previousCameraPos,
+        const bool historyValid,
+        const std::uint32_t frameIndex,
+        DxrRestirDispatch& restirDispatch)
+    {
+        test::ExpectTrue(
+            restirDispatch.WarmUpPipelineIfNeeded(),
+            "ReSTIR temporal pipeline should warm for S1-P2 AOV");
+        if (!restirDispatch.IsPipelineReady())
+        {
+            return false;
+        }
+
+        auto* commandList4 = DxrContext::Get().QueryCommandList4(GfxContext::Get().GetCommandList());
+        test::ExpectTrue(commandList4 != nullptr, "Command list 4 should be available for ReSTIR temporal AOV");
+        if (commandList4 == nullptr)
+        {
+            return false;
+        }
+
+        DxrRootSignature::RestirTemporalConstants constants{};
+        constants.outputWidth = kPtFramebufferSize;
+        constants.outputHeight = kPtFramebufferSize;
+        constants.historyValid = historyValid ? 1u : 0u;
+        constants.frameIndex = frameIndex;
+        const glm::mat4 inverseViewProjection = glm::inverse(
+            camera.GetProjectionMatrix() * camera.GetViewMatrix());
+        std::memcpy(constants.invViewProj, glm::value_ptr(inverseViewProjection), sizeof(constants.invViewProj));
+        const glm::vec3 cameraPos = camera.GetPosition();
+        constants.cameraPos[0] = cameraPos.x;
+        constants.cameraPos[1] = cameraPos.y;
+        constants.cameraPos[2] = cameraPos.z;
+        constants.prevCameraPos[0] = previousCameraPos.x;
+        constants.prevCameraPos[1] = previousCameraPos.y;
+        constants.prevCameraPos[2] = previousCameraPos.z;
+        constants.maxTraceDistance = 100.0f;
+        constants.shadeOutput = 1u;
+        constants.debugMode = 48u;
+        constants.enableDiTemporal = 0u;
+        constants.enableGiTemporal = 0u;
+        constants.environmentIntensity = fixture.environmentIbl->GetEnvironmentIntensity();
+        constants.environmentRotationYRadians = fixture.environmentIbl->GetRotationYRadians();
+        constants.envDirectLuminanceClamp = fixture.environmentIbl->GetEnvDirectLightingLuminanceClamp();
+        constants.envImportanceCount = fixture.environmentIbl->GetEnvImportanceSampleCount();
+        constants.envCdfWidth = static_cast<std::uint32_t>(fixture.environmentIbl->GetEnvImportanceCdfWidth());
+        constants.envCdfHeight = static_cast<std::uint32_t>(fixture.environmentIbl->GetEnvImportanceCdfHeight());
+
+        std::string dispatchError;
+        const bool dispatched = fixture.stack.dispatchContext.DispatchRestirTemporal(
+            commandList4,
+            restirDispatch.GetStateObject(),
+            restirDispatch.GetGlobalRootSignature(),
+            restirDispatch.GetTemporalShaderBindingTable(),
+            fixture.scene.GetTlasResource(),
+            fixture.scene.GetTlasGpuVirtualAddress(),
+            fixture.scene.GetGeometryLookupSrvIndex(),
+            fixture.scene.GetGeometryLookupSrvIndex(),
+            fixture.environmentIbl->GetEnvImportanceCdfSrvIndex(),
+            fixture.environmentIbl->GetHdrEquirectSrvCpuHandle(),
+            constants,
+            dispatchError);
         test::ExpectTrue(dispatched, dispatchError.c_str());
         return dispatched;
     }
@@ -2319,8 +2432,8 @@ namespace render_tests
         float motionGuide[4]{};
         test::ExpectTrue(
             ReadbackPtGuideCenterPixel(
-                fixture.stack.dispatchContext.GetPathTracerMotionResource(),
-                fixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                fixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResource(),
+                fixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResourceState(),
                 kPtFramebufferSize,
                 kPtFramebufferSize,
                 DXGI_FORMAT_R16G16B16A16_FLOAT,
@@ -2332,6 +2445,828 @@ namespace render_tests
             motionMagnitude > 0.002f,
             "Virtual refracted motion should exceed threshold when camera orbits through glass pane");
 
+        fixture.Teardown();
+    }
+
+    void TestPtStaticOffOriginOpaqueMotion()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT static off-origin opaque motion (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup(false))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera camera(glm::vec3(1.25f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 viewProj =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        if (!DispatchPtGlassFrame(
+                fixture, camera, viewProj, camera.GetViewMatrix(), camera.GetPosition(), true, 1u))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float motion[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                fixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, motion),
+            "Static off-origin opaque motion readback should succeed");
+        test::ExpectNear(motion[0], 0.0f, 0.001f,
+            "Static off-origin opaque geometry must have zero current-minus-previous NDC X motion");
+        test::ExpectNear(motion[1], 0.0f, 0.001f,
+            "Static off-origin opaque geometry must have zero current-minus-previous NDC Y motion");
+        fixture.Teardown();
+    }
+
+    void TestPtTransmissionVirtualMotionLateralChecker()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission lateral checker (no RTX tier)\n";
+            return;
+        }
+
+        // Render the same immutable two-band backdrop in separate previous/current fixtures. The
+        // current center guide is bright and its exported NDC motion must land on the bright band
+        // of the previous image. This validates reprojection itself, without assuming a world-X
+        // to NDC-X sign for this left-handed camera.
+        PtGlassTestFixture previousFixture;
+        if (!previousFixture.Setup(true, true))
+        {
+            previousFixture.Teardown();
+            return;
+        }
+
+        Camera prevCamera(glm::vec3(-0.35f, 0.0f, 4.0f), -90.0f, 0.0f);
+        prevCamera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        Camera camera(glm::vec3(0.35f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 prevViewProj =
+            prevCamera.GetUnjitteredProjectionMatrix() * prevCamera.GetViewMatrix();
+        if (!DispatchPtGlassFrame(
+                previousFixture,
+                prevCamera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                false,
+                0u))
+        {
+            EndOffscreenPass();
+            previousFixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        PtGlassTestFixture currentFixture;
+        if (!currentFixture.Setup(true, true))
+        {
+            currentFixture.Teardown();
+            previousFixture.Teardown();
+            return;
+        }
+        if (!DispatchPtGlassFrame(
+                currentFixture, camera, prevViewProj, prevCamera.GetViewMatrix(), prevCamera.GetPosition(), true, 1u))
+        {
+            EndOffscreenPass();
+            currentFixture.Teardown();
+            previousFixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float motion[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionMotionResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, motion),
+            "Lateral transmission motion readback should succeed");
+        const int currentX = kPtFramebufferSize / 2;
+        const int currentY = kPtFramebufferSize / 2;
+        const float currentNdcX =
+            2.0f * (static_cast<float>(currentX) + 0.5f) / static_cast<float>(kPtFramebufferSize) - 1.0f;
+        const float currentNdcY =
+            1.0f - 2.0f * (static_cast<float>(currentY) + 0.5f) / static_cast<float>(kPtFramebufferSize);
+        const float previousNdcX = currentNdcX - motion[0];
+        const float previousNdcY = currentNdcY - motion[1];
+        const int previousX = static_cast<int>(std::lround(
+            ((previousNdcX + 1.0f) * 0.5f) * static_cast<float>(kPtFramebufferSize) - 0.5f));
+        const int previousY = static_cast<int>(std::lround(
+            ((1.0f - previousNdcY) * 0.5f) * static_cast<float>(kPtFramebufferSize) - 0.5f));
+        float currentAlbedo[4]{};
+        float previousAlbedo[4]{};
+        float previousCenterAlbedo[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                currentFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, currentAlbedo,
+                currentX, currentY),
+            "Current lateral-checker albedo readback should succeed");
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousAlbedo,
+                previousX, previousY),
+            "Reprojected previous lateral-checker albedo readback should succeed");
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResource(),
+                previousFixture.stack.dispatchContext.GetPathTracerOpticalTransmissionDiffuseAlbedoResourceState(),
+                kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R8G8B8A8_UNORM, previousCenterAlbedo,
+                currentX, currentY),
+            "Unreprojected previous lateral-checker albedo readback should succeed");
+        std::cout << "S1-P2 lateral checker: motion=(" << motion[0] << ", " << motion[1]
+                  << ") previousPixel=(" << previousX << ", " << previousY
+                  << ") currentAlbedo=" << currentAlbedo[0]
+                  << " previousAlbedo=" << previousAlbedo[0]
+                  << " previousCenterAlbedo=" << previousCenterAlbedo[0] << "\n";
+        test::ExpectTrue(
+            std::abs(currentAlbedo[0] - previousAlbedo[0]) < 0.1f,
+            "Lateral checker reprojection must land on the matching previous checker band");
+        test::ExpectTrue(
+            std::abs(currentAlbedo[0] - previousCenterAlbedo[0]) > 0.5f,
+            "Lateral checker must cross a band at the unreprojected previous pixel");
+        currentFixture.Teardown();
+        previousFixture.Teardown();
+    }
+
+    void TestPtTransmissionDiagnosticsOffEquivalence()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT transmission diagnostics equivalence (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture diagnosticsOffFixture;
+        if (!diagnosticsOffFixture.Setup())
+        {
+            diagnosticsOffFixture.Teardown();
+            return;
+        }
+        Camera prevCamera = MakePtGlassCamera(-90.0f);
+        const glm::mat4 prevViewProj =
+            prevCamera.GetUnjitteredProjectionMatrix() * prevCamera.GetViewMatrix();
+        Camera camera = MakePtGlassCamera(-75.0f);
+        float diagnosticsOff[4]{};
+        float diagnosticsOn[4]{};
+        if (DispatchPtGlassFrame(
+                diagnosticsOffFixture,
+                camera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                true,
+                1u))
+        {
+            EndOffscreenPass();
+            test::ExpectTrue(
+                ReadbackPtGuideCenterPixel(
+                    diagnosticsOffFixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                    diagnosticsOffFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                    kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, diagnosticsOff),
+                "Diagnostics-off transmission motion readback should succeed");
+        }
+        else { EndOffscreenPass(); diagnosticsOffFixture.Teardown(); return; }
+        diagnosticsOffFixture.Teardown();
+
+        PtGlassTestFixture diagnosticsOnFixture;
+        if (!diagnosticsOnFixture.Setup())
+        {
+            diagnosticsOnFixture.Teardown();
+            return;
+        }
+        if (DispatchPtGlassFrame(
+                diagnosticsOnFixture,
+                camera,
+                prevViewProj,
+                prevCamera.GetViewMatrix(),
+                prevCamera.GetPosition(),
+                true,
+                1u,
+                47))
+        {
+            EndOffscreenPass();
+            test::ExpectTrue(
+                ReadbackPtGuideCenterPixel(
+                    diagnosticsOnFixture.stack.dispatchContext.GetPathTracerMotionResource(),
+                    diagnosticsOnFixture.stack.dispatchContext.GetPathTracerMotionResourceState(),
+                    kPtFramebufferSize, kPtFramebufferSize, DXGI_FORMAT_R16G16B16A16_FLOAT, diagnosticsOn),
+                "Diagnostics-on transmission motion readback should succeed");
+            test::ExpectNear(diagnosticsOn[0], diagnosticsOff[0], 0.0001f,
+                "Transmission diagnostic permutation must preserve motion-guide X");
+            test::ExpectNear(diagnosticsOn[1], diagnosticsOff[1], 0.0001f,
+                "Transmission diagnostic permutation must preserve motion-guide Y");
+        }
+        else { EndOffscreenPass(); }
+        diagnosticsOnFixture.Teardown();
+    }
+
+    void TestPtMirrorChainPsrOpaqueParity()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain RR guide opaque parity (no RTX tier)\n";
+            return;
+        }
+
+        struct CenterSample
+        {
+            float hdr[4]{};
+            float depth[4]{};
+            float motion[4]{};
+            float diffuseAlbedo[4]{};
+            float specularAlbedo[4]{};
+            float normalRoughness[4]{};
+        };
+
+        const auto readCenterSample = [](PtGlassTestFixture& fixture, CenterSample& sample) {
+            bool succeeded = true;
+            const auto read = [&](ID3D12Resource* resource,
+                                  const std::uint32_t state,
+                                  const DXGI_FORMAT format,
+                                  float (&channels)[4],
+                                  const char* message) {
+                const bool readbackSucceeded = ReadbackPtGuideCenterPixel(
+                    resource,
+                    state,
+                    kPtFramebufferSize,
+                    kPtFramebufferSize,
+                    format,
+                    channels);
+                test::ExpectTrue(readbackSucceeded, message);
+                succeeded = succeeded && readbackSucceeded;
+            };
+
+            DxrDispatchContext& context = fixture.stack.dispatchContext;
+            read(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.hdr,
+                "Mirror-chain opaque parity PT HDR readback should succeed");
+            read(
+                context.GetPathTracerDepthResource(),
+                context.GetPathTracerDepthResourceState(),
+                DXGI_FORMAT_R32_FLOAT,
+                sample.depth,
+                "Mirror-chain opaque parity depth readback should succeed");
+            read(
+                context.GetPathTracerMotionResource(),
+                context.GetPathTracerMotionResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.motion,
+                "Mirror-chain opaque parity motion readback should succeed");
+            read(
+                context.GetPathTracerDiffuseAlbedoResource(),
+                context.GetPathTracerDiffuseAlbedoResourceState(),
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                sample.diffuseAlbedo,
+                "Mirror-chain opaque parity diffuse-albedo readback should succeed");
+            read(
+                context.GetPathTracerSpecularAlbedoResource(),
+                context.GetPathTracerSpecularAlbedoResourceState(),
+                DXGI_FORMAT_R8G8B8A8_UNORM,
+                sample.specularAlbedo,
+                "Mirror-chain opaque parity specular-albedo readback should succeed");
+            read(
+                context.GetPathTracerNormalRoughnessResource(),
+                context.GetPathTracerNormalRoughnessResourceState(),
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.normalRoughness,
+                "Mirror-chain opaque parity normal-roughness readback should succeed");
+            return succeeded;
+        };
+
+        const auto dispatchAndRead = [&](const bool enabled, CenterSample& sample) {
+            PtGlassTestFixture fixture;
+            if (!fixture.Setup(false))
+            {
+                fixture.Teardown();
+                return false;
+            }
+
+            Camera camera = MakePtGlassCamera();
+            const glm::mat4 viewProjection =
+                camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+            if (!DispatchPtGlassFrame(
+                    fixture,
+                    camera,
+                    viewProjection,
+                    camera.GetViewMatrix(),
+                    camera.GetPosition(),
+                    false,
+                    7u,
+                    0,
+                    0u,
+                    enabled))
+            {
+                EndOffscreenPass();
+                fixture.Teardown();
+                return false;
+            }
+
+            EndOffscreenPass();
+            const bool readbackSucceeded = readCenterSample(fixture, sample);
+            fixture.Teardown();
+            return readbackSucceeded;
+        };
+
+        CenterSample disabled{};
+        CenterSample enabled{};
+        if (!dispatchAndRead(false, disabled) || !dispatchAndRead(true, enabled))
+        {
+            return;
+        }
+
+        test::ExpectTrue(
+            disabled.depth[0] > 0.0f,
+            "Mirror-chain opaque parity fixture must hit ordinary opaque geometry at center");
+
+        const auto expectChannelsNear = [](const float (&actual)[4],
+                                           const float (&expected)[4],
+                                           const float tolerance,
+                                           const char* label) {
+            for (int channel = 0; channel < 4; ++channel)
+            {
+                std::ostringstream message;
+                message << label << " channel " << channel;
+                test::ExpectNear(actual[channel], expected[channel], tolerance, message.str().c_str());
+            }
+        };
+
+        expectChannelsNear(enabled.hdr, disabled.hdr, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque PT HDR");
+        test::ExpectNear(enabled.depth[0], disabled.depth[0], 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR depth");
+        expectChannelsNear(enabled.motion, disabled.motion, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque RR motion");
+        expectChannelsNear(enabled.diffuseAlbedo, disabled.diffuseAlbedo, 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR diffuse albedo");
+        expectChannelsNear(enabled.specularAlbedo, disabled.specularAlbedo, 0.000001f,
+            "Mirror-chain flag must preserve ordinary opaque RR specular albedo");
+        expectChannelsNear(enabled.normalRoughness, disabled.normalRoughness, 0.0001f,
+            "Mirror-chain flag must preserve ordinary opaque RR normal/roughness");
+    }
+
+    void TestPtMirrorChainPsrTwoBounceReceiver()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain two-bounce receiver (no RTX tier)\n";
+            return;
+        }
+
+        constexpr int kMirrorOwnerMode = 65;
+        constexpr int kMirrorChainLengthMode = 66;
+        constexpr int kMirrorReceiverDepthMode = 69;
+        constexpr int kMirrorReceiverMotionMode = 70;
+        constexpr std::uint32_t kMirrorMaxBounces = 4u;
+        constexpr std::uint32_t kMirrorFrameIndex = 7u;
+
+        struct DiagnosticSample
+        {
+            float aov[4]{};
+            float motion[4]{};
+            float normalRoughness[4]{};
+        };
+
+        PtGlassTestFixture fixture;
+        if (!fixture.SetupMirrorChain())
+        {
+            fixture.Teardown();
+            return;
+        }
+        // Setup opens the fixture's upload pass. Each diagnostic below gets an explicit pass so
+        // identical mode evaluations cannot accidentally share a caller-owned framebuffer.
+        EndOffscreenPass();
+
+        Camera previousCamera = MakePtGlassCamera();
+        previousCamera.SetPosition(glm::vec3(0.5f, 0.0f, 4.0f));
+        const glm::mat4 previousViewProjection =
+            previousCamera.GetUnjitteredProjectionMatrix() * previousCamera.GetViewMatrix();
+        Camera camera = MakePtGlassCamera();
+
+        const auto dispatchDiagnostic = [&](const int mode,
+                                            const bool enabled,
+                                            const std::uint32_t frameIndex,
+                                            DiagnosticSample& sample) {
+            Framebuffer framebuffer;
+            if (!framebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize))
+            {
+                test::ExpectTrue(false, "PT mirror-chain diagnostic framebuffer resize should succeed");
+                return false;
+            }
+            BeginOffscreenPass(framebuffer, false);
+            if (!DispatchPtGlassFrame(
+                    fixture,
+                    camera,
+                    previousViewProjection,
+                    previousCamera.GetViewMatrix(),
+                    previousCamera.GetPosition(),
+                    true,
+                    frameIndex,
+                    mode,
+                    0u,
+                    enabled,
+                    kMirrorMaxBounces))
+            {
+                EndOffscreenPass();
+                return false;
+            }
+            EndOffscreenPass();
+
+            DxrDispatchContext& context = fixture.stack.dispatchContext;
+            const bool aovRead = ReadbackPtGuideCenterPixel(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.aov);
+            test::ExpectTrue(aovRead, "PT mirror-chain diagnostic AOV readback should succeed");
+            const bool motionRead = ReadbackPtGuideCenterPixel(
+                context.GetPathTracerMotionResource(),
+                context.GetPathTracerMotionResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.motion);
+            test::ExpectTrue(motionRead, "PT mirror-chain receiver motion readback should succeed");
+            const bool normalRead = ReadbackPtGuideCenterPixel(
+                context.GetPathTracerNormalRoughnessResource(),
+                context.GetPathTracerNormalRoughnessResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                sample.normalRoughness);
+            test::ExpectTrue(normalRead, "PT mirror-chain receiver normal readback should succeed");
+            return aovRead && motionRead && normalRead;
+        };
+
+        DiagnosticSample owner{};
+        DiagnosticSample chainLength{};
+        DiagnosticSample receiverDepth{};
+        DiagnosticSample receiverMotion{};
+        DiagnosticSample disabled{};
+        if (!dispatchDiagnostic(kMirrorOwnerMode, true, kMirrorFrameIndex, owner)
+            || !dispatchDiagnostic(kMirrorChainLengthMode, true, kMirrorFrameIndex, chainLength)
+            || !dispatchDiagnostic(kMirrorReceiverDepthMode, true, kMirrorFrameIndex, receiverDepth)
+            || !dispatchDiagnostic(kMirrorReceiverMotionMode, true, kMirrorFrameIndex, receiverMotion)
+            || !dispatchDiagnostic(kMirrorChainLengthMode, false, kMirrorFrameIndex, disabled))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        std::cout << "mirror-chain center: owner=(" << owner.aov[0] << ", "
+                  << owner.aov[1] << ", " << owner.aov[2] << ") length="
+                  << chainLength.aov[0] * 8.0f << " motion=(" << receiverMotion.motion[0]
+                  << ", " << receiverMotion.motion[1] << ") virtualDepth="
+                  << receiverDepth.aov[0] * 100.0f << " enabledRoughness="
+                  << chainLength.normalRoughness[3] << " disabledRoughness="
+                  << disabled.normalRoughness[3] << "\n";
+
+        // Final owner palette contract: exact receiver length 2 is green.
+        test::ExpectNear(owner.aov[0], 0.0f, 0.001f,
+            "Two-bounce mirror owner AOV must have zero red");
+        test::ExpectNear(owner.aov[1], 1.0f, 0.001f,
+            "Two-bounce mirror owner AOV must report exact length-2 green");
+        test::ExpectNear(owner.aov[2], 0.0f, 0.001f,
+            "Two-bounce mirror owner AOV must have zero blue");
+
+        const float expectedLengthEncoding = 2.0f / 8.0f;
+        test::ExpectNear(chainLength.aov[0], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV must report two exact delta links");
+        test::ExpectNear(chainLength.aov[1], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV grayscale G must match R");
+        test::ExpectNear(chainLength.aov[2], expectedLengthEncoding, 0.001f,
+            "Mirror-chain length AOV grayscale B must match R");
+        test::ExpectNear(disabled.aov[0], 0.0f, 0.001f,
+            "Disabled mirror-chain feature must report zero chain length");
+
+        // The receiver's guide geometry must live in the unfolded virtual world. The physical
+        // receiver is only about 9.8 units from the camera; the exact two-plane virtual receiver is
+        // over 12 units deep and its +Z normal is rotated by the composed reflections.
+        test::ExpectTrue(
+            receiverDepth.aov[0] * 100.0f > 11.5f,
+            "Mirror-chain RR depth must describe unfolded virtual geometry, not the physical receiver");
+        test::ExpectNear(chainLength.normalRoughness[0], -0.7071068f, 0.03f,
+            "Mirror-chain RR normal X must be unfolded through both mirror planes");
+        test::ExpectNear(chainLength.normalRoughness[2], 0.7071068f, 0.03f,
+            "Mirror-chain RR normal Z must be unfolded through both mirror planes");
+
+        const float motionMagnitude = std::sqrt(
+            receiverMotion.motion[0] * receiverMotion.motion[0]
+            + receiverMotion.motion[1] * receiverMotion.motion[1]);
+        test::ExpectTrue(
+            motionMagnitude > 0.005f,
+            "Mirror-chain receiver guide must carry nonzero motion under camera translation");
+        test::ExpectNear(receiverMotion.aov[0], receiverMotion.motion[0] * 4.0f + 0.5f, 0.001f,
+            "Mirror receiver-motion AOV R must encode authoritative guide motion X");
+        test::ExpectNear(receiverMotion.aov[1], receiverMotion.motion[1] * 4.0f + 0.5f, 0.001f,
+            "Mirror receiver-motion AOV G must encode authoritative guide motion Y");
+        test::ExpectNear(receiverMotion.aov[2], 1.0f, 0.001f,
+            "Mirror receiver-motion AOV B must report a valid virtual receiver");
+
+        const auto directPhysicalProjection = PtRrGuideMath::ProjectStaticReceiver(
+            glm::vec3(0.0f, 0.0f, -5.8f),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            previousViewProjection,
+            true);
+        PtRrGuideMath::VirtualReflectionTransform expectedVirtualTransform{};
+        const float mirrorAAngle = glm::radians(67.5f);
+        const bool expectedTransformValid = expectedVirtualTransform.AppendReflection(
+            glm::vec3(0.0f),
+            glm::vec3(std::sin(mirrorAAngle), 0.0f, std::cos(mirrorAAngle)))
+            && expectedVirtualTransform.AppendReflection(
+                glm::vec3(3.0f, 0.0f, -3.0f),
+                glm::vec3(1.0f, 0.0f, 0.0f));
+        test::ExpectTrue(expectedTransformValid,
+            "Two-plane CPU mirror-chain oracle transform must be valid");
+        const auto expectedVirtualProjection = PtRrGuideMath::ProjectVirtualReceiver(
+            expectedVirtualTransform,
+            glm::vec3(0.0f, 0.0f, -5.8f),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix(),
+            previousViewProjection,
+            true);
+        test::ExpectTrue(directPhysicalProjection.valid,
+            "Direct physical receiver projection used by the mirror-chain oracle must be valid");
+        test::ExpectTrue(expectedVirtualProjection.valid,
+            "Unfolded receiver projection used by the mirror-chain oracle must be valid");
+        test::ExpectNear(
+            receiverMotion.motion[0], expectedVirtualProjection.motionNdc.x, 0.001f,
+            "Mirror-chain RR motion X must match the exact unfolded receiver projection");
+        test::ExpectNear(
+            receiverMotion.motion[1], expectedVirtualProjection.motionNdc.y, 0.001f,
+            "Mirror-chain RR motion Y must match the exact unfolded receiver projection");
+        test::ExpectTrue(
+            std::abs(receiverMotion.motion[0] - directPhysicalProjection.motionNdc.x) > 0.005f,
+            "Mirror-chain RR motion must differ from ordinary direct projection of the receiver");
+
+        // Repeating the identical frame/camera through three diagnostic modes must leave the
+        // production guide untouched. This is the stability gate, not a tolerant visual heuristic.
+        test::ExpectNear(owner.motion[0], chainLength.motion[0], 0.0001f,
+            "Mirror receiver motion X must be stable across owner/length diagnostics");
+        test::ExpectNear(owner.motion[1], chainLength.motion[1], 0.0001f,
+            "Mirror receiver motion Y must be stable across owner/length diagnostics");
+        test::ExpectNear(chainLength.motion[0], receiverMotion.motion[0], 0.0001f,
+            "Mirror receiver motion X must be stable in motion diagnostic mode");
+        test::ExpectNear(chainLength.motion[1], receiverMotion.motion[1], 0.0001f,
+            "Mirror receiver motion Y must be stable in motion diagnostic mode");
+
+        test::ExpectTrue(
+            chainLength.normalRoughness[3] > 0.5f,
+            "Enabled mirror-chain guides must export the rough ordinary receiver");
+        test::ExpectTrue(
+            disabled.normalRoughness[3] < 0.05f,
+            "Disabled mirror-chain guides must preserve the smooth primary-mirror baseline");
+
+        // The former 0.9 lobe-probability ceiling made this pass for a lucky seed while injecting
+        // black/unsupported samples in other frames. Exercise a seed range so the GPU contract also
+        // requires every zero-diffuse delta mirror to stay on the exact two-link path.
+        for (std::uint32_t frameIndex = 0u; frameIndex < 16u; ++frameIndex)
+        {
+            DiagnosticSample seededOwner{};
+            if (!dispatchDiagnostic(kMirrorOwnerMode, true, frameIndex, seededOwner))
+            {
+                fixture.Teardown();
+                return;
+            }
+            std::ostringstream message;
+            message << "Perfect-metal mirror chain must retain its exact length-2 owner for RNG seed "
+                    << frameIndex;
+            test::ExpectTrue(
+                seededOwner.aov[0] < 0.001f
+                    && seededOwner.aov[1] > 0.999f
+                    && seededOwner.aov[2] < 0.001f,
+                message.str().c_str());
+        }
+
+        fixture.Teardown();
+    }
+
+    void TestPtMirrorChainPsrGlassReceiver()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT mirror-chain glass receiver (no RTX tier)\n";
+            return;
+        }
+
+        PtGlassTestFixture fixture;
+        if (!fixture.SetupMirrorChainGlassReceiver())
+        {
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        Camera camera = MakePtGlassCamera();
+        const glm::mat4 viewProjection =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        Framebuffer framebuffer;
+        test::ExpectTrue(
+            framebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize),
+            "PT mirror-chain glass framebuffer resize should succeed");
+        BeginOffscreenPass(framebuffer, false);
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                viewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                true,
+                3u,
+                71,
+                0u,
+                true,
+                4u,
+                true,
+                true))
+        {
+            EndOffscreenPass();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        DxrDispatchContext& context = fixture.stack.dispatchContext;
+        float terminal[4]{};
+        float throughput[4]{};
+        float transmission[4]{};
+        float transmissionDepth[4]{};
+        const bool readbackOk =
+            ReadbackPtGuideCenterPixel(
+                context.GetPrimaryOutputResource(),
+                context.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                terminal)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerPsrThroughputResource(),
+                context.GetPathTracerPsrThroughputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                throughput)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerOpticalTransmissionOutputResource(),
+                context.GetPathTracerOpticalTransmissionOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                transmission)
+            && ReadbackPtGuideCenterPixel(
+                context.GetPathTracerOpticalTransmissionDepthResource(),
+                context.GetPathTracerOpticalTransmissionDepthResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R32_FLOAT,
+                transmissionDepth);
+        test::ExpectTrue(readbackOk, "PT mirror-chain glass outputs should read back");
+        if (readbackOk)
+        {
+            std::cout << "mirror-chain glass center: terminal=(" << terminal[0] << ", "
+                      << terminal[1] << ", " << terminal[2] << ") throughput=("
+                      << throughput[0] << ", " << throughput[1] << ", "
+                      << throughput[2] << ", owner=" << throughput[3]
+                      << ") transmission=(" << transmission[0] << ", "
+                      << transmission[1] << ", " << transmission[2]
+                      << ") txDepth=" << transmissionDepth[0] << "\n";
+            test::ExpectNear(terminal[0], 0.0f, 0.001f,
+                "Glass after a mirror chain must not use an ineligible terminal");
+            test::ExpectNear(terminal[1], 1.0f, 0.001f,
+                "Glass after a mirror chain must remain a resolved PSR receiver");
+            test::ExpectNear(terminal[2], 0.0f, 0.001f,
+                "Resolved PSR glass terminal must use the receiver diagnostic color");
+            test::ExpectTrue(throughput[3] > 0.99f,
+                "PSR glass receiver must retain mirror-prefix ownership");
+            test::ExpectTrue(
+                std::isfinite(transmission[0]) && std::isfinite(transmission[1])
+                    && std::isfinite(transmission[2])
+                    && transmission[0] + transmission[1] + transmission[2] > 1.0e-4f,
+                "PSR glass receiver must export finite non-black transmission radiance");
+            test::ExpectTrue(
+                std::isfinite(transmissionDepth[0]) && transmissionDepth[0] < 0.999f,
+                "PSR glass transmission must export a finite virtual receiver depth");
+        }
+
+        fixture.Teardown();
+    }
+
+    void TestPtRestirStaticPreviousReceiverTargetAgreement()
+    {
+        if (!GfxContext::Get().IsRaytracingSupported())
+        {
+            std::cout << "SKIP: PT ReSTIR static previous-receiver/target agreement (no RTX tier)\n";
+            return;
+        }
+
+        // Frame zero seeds the reservoir and copies the primary surface records.  Frame one uses
+        // the exact same off-origin camera, so diagnostic mode 48 must find the prior receiver
+        // and independently recompute the same target for the current fresh sample.
+        PtGlassTestFixture fixture;
+        if (!fixture.Setup(false))
+        {
+            fixture.Teardown();
+            return;
+        }
+
+        Camera camera(glm::vec3(1.25f, 0.0f, 4.0f), -90.0f, 0.0f);
+        camera.SetAspectFromFramebuffer(kPtFramebufferSize, kPtFramebufferSize);
+        const glm::mat4 staticViewProjection =
+            camera.GetUnjitteredProjectionMatrix() * camera.GetViewMatrix();
+        DxrRestirDispatch restirDispatch;
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                staticViewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                false,
+                0u,
+                48,
+                1u)
+            || !DispatchPtRestirTemporalAov(
+                fixture, camera, camera.GetPosition(), false, 0u, restirDispatch))
+        {
+            EndOffscreenPass();
+            restirDispatch.Release();
+            fixture.Teardown();
+            return;
+        }
+        fixture.stack.dispatchContext.FinalizePathTracerSurfaceHistory(
+            static_cast<ID3D12GraphicsCommandList*>(GfxContext::Get().GetCommandList()));
+        EndOffscreenPass();
+
+        Framebuffer frameOneFramebuffer;
+        test::ExpectTrue(
+            frameOneFramebuffer.Resize(kPtFramebufferSize, kPtFramebufferSize),
+            "PT ReSTIR agreement frame-one framebuffer resize should succeed");
+        BeginOffscreenPass(frameOneFramebuffer, false);
+        if (!DispatchPtGlassFrame(
+                fixture,
+                camera,
+                staticViewProjection,
+                camera.GetViewMatrix(),
+                camera.GetPosition(),
+                true,
+                1u,
+                48,
+                1u)
+            || !DispatchPtRestirTemporalAov(
+                fixture, camera, camera.GetPosition(), true, 1u, restirDispatch))
+        {
+            EndOffscreenPass();
+            restirDispatch.Release();
+            fixture.Teardown();
+            return;
+        }
+        EndOffscreenPass();
+
+        float agreement[4]{};
+        test::ExpectTrue(
+            ReadbackPtGuideCenterPixel(
+                fixture.stack.dispatchContext.GetPrimaryOutputResource(),
+                fixture.stack.dispatchContext.GetPrimaryOutputResourceState(),
+                kPtFramebufferSize,
+                kPtFramebufferSize,
+                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                agreement),
+            "ReSTIR previous-receiver/target agreement AOV readback should succeed");
+        std::cout << "S1-P2 ReSTIR static agreement: receiverError=" << agreement[0]
+                  << " targetError=" << agreement[1]
+                  << " historyAccepted=" << agreement[2] << "\n";
+        test::ExpectNear(
+            agreement[0], 0.0f, 0.001f,
+            "Static ReSTIR receiver reconstruction must agree with the previous receiver");
+        test::ExpectNear(
+            agreement[1], 0.0f, 0.001f,
+            "Static ReSTIR fresh-sample target must agree at current and previous receivers");
+        test::ExpectNear(
+            agreement[2], 1.0f, 0.001f,
+            "Static ReSTIR scene must accept a compatible previous receiver");
+
+        restirDispatch.Release();
         fixture.Teardown();
     }
 
@@ -2464,5 +3399,12 @@ namespace render_tests
 
         add("PtTransmissionGuideAlbedoBands", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionGuideAlbedoBands);
         add("PtTransmissionVirtualMotionOnOrbit", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionOnOrbit);
+        add("PtStaticOffOriginOpaqueMotion", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtStaticOffOriginOpaqueMotion);
+        add("PtTransmissionVirtualMotionLateralChecker", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionVirtualMotionLateralChecker);
+        add("PtTransmissionDiagnosticsOffEquivalence", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtTransmissionDiagnosticsOffEquivalence);
+        add("PtMirrorChainPsrOpaqueParity", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrOpaqueParity);
+        add("PtMirrorChainPsrTwoBounceReceiver", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrTwoBounceReceiver);
+        add("PtMirrorChainPsrGlassReceiver", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtMirrorChainPsrGlassReceiver);
+        add("PtRestirStaticPreviousReceiverTargetAgreement", gpu_render_tests::kTierPathTracing, "gpu-dxr-pt", TestPtRestirStaticPreviousReceiverTargetAgreement);
     }
 }

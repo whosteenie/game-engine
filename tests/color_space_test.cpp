@@ -1,4 +1,4 @@
-#include "engine/rendering/ColorSpace.h"
+#include "engine/rendering/core/ColorSpace.h"
 
 #include <glm/glm.hpp>
 

@@ -2,7 +2,7 @@
 
 #include "app/project/SceneSubtreeArchive.h"
 
-#include "engine/rendering/Mesh.h"
+#include "engine/rendering/resources/Mesh.h"
 
 EditorClipboard::EditorClipboard() = default;
 

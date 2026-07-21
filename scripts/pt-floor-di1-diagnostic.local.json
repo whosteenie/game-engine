@@ -1,0 +1,20 @@
+{
+  "sessionName": "pt-floor-di1-diagnostic-20260714",
+  "engineExe": "build/Release/game-engine.exe",
+  "workingDirectory": "build/Release",
+  "warmupSeconds": 10,
+  "traceFrames": 5,
+  "captureTimestampBaseline": true,
+  "baselineWarmupSeconds": 10,
+  "baselineWarmupFrames": 120,
+  "baselineSampleFrames": 300,
+  "captureFrame": false,
+  "architecture": "Ada",
+  "metricSetId": "1",
+  "views": [
+    {
+      "name": "floor_di1",
+      "project": "test_proj/pt_bench_floor_fill/pt_bench_floor_fill.gameproject"
+    }
+  ]
+}

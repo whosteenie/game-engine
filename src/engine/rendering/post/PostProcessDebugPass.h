@@ -1,12 +1,14 @@
 #pragma once
 
-#include "engine/rendering/Framebuffer.h"
-#include "engine/rendering/RenderDebug.h"
+#include "engine/rendering/resources/Framebuffer.h"
+#include "engine/rendering/core/RenderDebug.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessTarget.h"
 
 #include <cstdint>
 #include <functional>
+
+#include <glm/glm.hpp>
 
 class Shader;
 
@@ -68,6 +70,15 @@ struct PostProcessDebugPassInputs
     PostProcessTarget* ssrIndirectTarget = nullptr;
     PostProcessTarget* rtIndirectTarget = nullptr;
     PostProcessTarget* ptTemporalStatsTarget = nullptr;
+    glm::vec4 ptGiDiagnosticRoi{0.0f, 0.0f, 1.0f, 1.0f};
+
+    std::uintptr_t ptCurrentRadianceSrv = 0;
+    std::uintptr_t ptPreviousRadianceSrv = 0;
+    std::uintptr_t ptCurrentDepthSrv = 0;
+    std::uintptr_t ptPreviousDepthSrv = 0;
+    std::uintptr_t ptMotionSrv = 0;
+    bool ptPreviousRadianceValid = false;
+    glm::mat4 ptClipToPrevClip{1.0f};
 
     Shader* debugChannelShader = nullptr;
     Shader* velocityDebugShader = nullptr;
@@ -79,6 +90,7 @@ struct PostProcessDebugPassInputs
     Shader* ssgiDenoiseDebugShader = nullptr;
     Shader* giTemporalDebugShader = nullptr;
     Shader* ptTemporalStatsDebugShader = nullptr;
+    Shader* ptMotionReprojectionDebugShader = nullptr;
 
     CaptureSsaoDiagnosticsFn captureSsaoDiagnostics;
     bool logSsaoApplySnapshot = false;

@@ -1,3 +1,5 @@
+#include <Windows.h>
+
 #include "d3d12_test_runner.h"
 
 #include "d3d12_test_harness.h"

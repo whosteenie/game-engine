@@ -1,14 +1,14 @@
 #pragma once
 
 #include "engine/camera/Camera.h"
-#include "engine/raytracing/Blas.h"
-#include "engine/raytracing/DxrAccelerationStructures.h"
-#include "engine/raytracing/DxrDispatchContext.h"
-#include "engine/raytracing/DxrGpuResource.h"
-#include "engine/raytracing/DxrPipeline.h"
-#include "engine/raytracing/DxrRootSignature.h"
-#include "engine/raytracing/ShaderBindingTable.h"
-#include "engine/raytracing/Tlas.h"
+#include "engine/raytracing/acceleration/Blas.h"
+#include "engine/raytracing/acceleration/DxrAccelerationStructures.h"
+#include "engine/raytracing/dispatch/DxrDispatchContext.h"
+#include "engine/raytracing/core/DxrGpuResource.h"
+#include "engine/raytracing/pipeline/DxrPipeline.h"
+#include "engine/raytracing/pipeline/DxrRootSignature.h"
+#include "engine/raytracing/pipeline/ShaderBindingTable.h"
+#include "engine/raytracing/acceleration/Tlas.h"
 
 #include <glm/glm.hpp>
 
@@ -22,7 +22,8 @@ class Mesh;
 
 struct ID3D12GraphicsCommandList4;
 
-// Minimal two-instance PT scene (glass pane + colored backdrop) without the app Scene class.
+// Minimal primitive-only PT fixture scene without the app Scene class. Supports the established
+// glass/backdrop layouts and the deterministic mirror-chain Tier-5 layout.
 class MinimalPtGlassScene
 {
 public:
@@ -33,7 +34,19 @@ public:
         DxrMaterialEntry material{};
     };
 
-    bool Build(ID3D12GraphicsCommandList4* commandList, DxrGpuResource& scratch, bool includeGlassPane, std::string& outError);
+    bool Build(
+        ID3D12GraphicsCommandList4* commandList,
+        DxrGpuResource& scratch,
+        bool includeGlassPane,
+        bool checkerBackdrop,
+        std::string& outError);
+    // Deterministic camera -> mirror A -> mirror B -> ordinary receiver layout used by the
+    // mirror-chain RR guide Tier-5 gate. All instances use the built-in cube primitive.
+    bool BuildMirrorChain(
+        ID3D12GraphicsCommandList4* commandList,
+        DxrGpuResource& scratch,
+        bool glassReceiver,
+        std::string& outError);
     void Release();
 
     bool IsReady() const { return m_tlas.IsBuilt() && m_geometryLookupSrvIndex != UINT32_MAX; }
@@ -94,8 +107,12 @@ struct PtDispatchStack
     ShaderBindingTable shaderBindingTable;
     DxrDispatchContext dispatchContext;
 
-    bool EnsureReady(std::string& outError);
+    bool EnsureReady(std::string& outError, bool diagnosticPermutation = false);
     void Release();
+
+private:
+    bool m_ready = false;
+    bool m_diagnosticPermutation = false;
 };
 
 struct PtFrameDispatchParams
@@ -114,6 +131,22 @@ struct PtFrameDispatchParams
     glm::vec3 prevCameraPos{0.0f};
     bool motionHistoryValid = false;
     std::uint32_t frameIndex = 0;
+    // Production packs PT max bounces through samplesPerPixel. One preserves the established
+    // glass fixtures; mirror-chain tests opt into enough depth to reach their receiver.
+    std::uint32_t ptMaxBounces = 1;
+    // Enables the existing ReSTIR-DI candidate generation for the temporal AOV fixture.  Zero
+    // remains the default so the established transmission tests keep their original transport.
+    std::uint32_t restirDiCandidateCount = 0;
+    // Mirrors production ptOpticalStabilityFlags bit 2. The default keeps every existing PT GPU
+    // fixture on the feature-disabled compatibility path.
+    bool ptMirrorChainPsr = false;
+    bool ptIndependentOpticalRrLayers = false;
+    bool ptDeterministicOpticalSplit = false;
+    std::uint32_t ptPsrMaxBounces = 24;
+    float ptPsrSubpixelThreshold = 0.0f; // harness has no production per-instance bounds stream
+    // Test-only selection of the existing PT diagnostic permutation. It must not change guide
+    // resources; S1-P2 compares its output with diagnostics disabled.
+    int ptDebugIsolateMode = 0;
 };
 
 bool DispatchMinimalPathTracerFrame(const PtFrameDispatchParams& params, std::string& outError);
@@ -124,4 +157,6 @@ bool ReadbackPtGuideCenterPixel(
     int width,
     int height,
     DXGI_FORMAT format,
-    float outRgba[4]);
+    float outRgba[4],
+    int pixelX = -1,
+    int pixelY = -1);

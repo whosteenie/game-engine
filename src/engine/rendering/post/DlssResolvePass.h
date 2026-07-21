@@ -1,7 +1,7 @@
 #pragma once
 
-#include "engine/rendering/DxrSettings.h"
-#include "engine/rendering/MotionVectorFrameState.h"
+#include "engine/rendering/core/DxrSettings.h"
+#include "engine/rendering/core/MotionVectorFrameState.h"
 #include "engine/rendering/post/BloomTonemapPass.h"
 #include "engine/rendering/post/PostProcessContext.h"
 #include "engine/rendering/post/PostProcessTarget.h"
@@ -13,15 +13,43 @@
 class Camera;
 class Framebuffer;
 
+struct RrTemporalValidityInputs
+{
+    bool transmission = false;
+    bool historyValid = false;
+    std::uintptr_t depthSrv = 0;
+    std::uintptr_t normalRoughnessSrv = 0;
+    std::uintptr_t ownerSrv = 0;
+    void* ownerResource = nullptr;
+    std::uint32_t ownerResourceState = UINT32_MAX;
+    std::uintptr_t motionSrv = 0;
+    float mvecScaleX = -0.5f;
+    float mvecScaleY = 0.5f;
+    float currentJitterNdcX = 0.0f;
+    float currentJitterNdcY = 0.0f;
+    float previousJitterNdcX = 0.0f;
+    float previousJitterNdcY = 0.0f;
+    float clipToPrevClip[16] = {};
+};
+
+struct RrTemporalValidityResult
+{
+    std::uintptr_t maskSrv = 0;
+    bool ready = false;
+};
+
 struct DlssResolvePassInputs
 {
     const Camera* camera = nullptr;
     Framebuffer* sceneFramebuffer = nullptr;
     const Framebuffer* outputTarget = nullptr;
     MotionVectorFrameState motionVectorState{};
+    bool cameraCutKnown = false;
+    bool cameraCut = false;
 
     int viewportWidth = 0;
     int viewportHeight = 0;
+    std::uint32_t dlssViewportId = 0;
 
     std::uintptr_t hdrColorSrv = 0;
     PostProcessTarget* hdrCompositeTarget = nullptr;
@@ -35,6 +63,7 @@ struct DlssResolvePassInputs
     bool pathTracerGridOverlayEnabled = false;
 
     DlssQuality quality = DlssQuality::DLAA;
+    DlssPlannedExtent plannedExtent{};
     float exposure = 1.0f;
     float meanInputLuminance = 0.0f;
     bool meanInputLuminanceValid = false;
@@ -43,6 +72,13 @@ struct DlssResolvePassInputs
     int tonemapMode = 0;
 
     bool dlssHistoryValid = false;
+    bool opticalTransmissionHistoryValid = false;
+    // Session-only diagnostic: forces Streamline's actual reset flag every evaluation. This is a
+    // decisive history-boundary test, unlike optional responsiveness/bias hints.
+    bool forceDlssResetEveryFrame = false;
+    bool useDilatedDlssMotionVectors = false;
+    bool reconstructDlssCameraMotion = false;
+    bool rrTemporalValidityEnabled = true;
     bool bloomEnabled = false;
     float bloomThreshold = 1.0f;
     float bloomSoftKnee = 0.5f;
@@ -55,13 +91,28 @@ struct DlssResolvePassInputs
     int dlssBloomTemporalWarmupFrames = 0;
 
     bool rayReconstructionActive = false;
+    bool independentOpticalRrLayers = true;
+    bool mirrorChainPsr = false;
+    std::uintptr_t pathTracerPsrThroughputSrv = 0;
+    void* pathTracerSpecularMotionResource = nullptr;
+    std::uint32_t pathTracerSpecularMotionResourceState = 0;
 
     PostProcessTarget* dlssOutputTarget = nullptr;
+    PostProcessTarget* dlssOpticalTransmissionOutputTarget = nullptr;
+    PostProcessTarget* dlssOpticalCompositeTarget = nullptr;
+    PostProcessTarget* ptOpticalReflectionInputTarget = nullptr;
     PostProcessTarget* ptDlssMotionTarget = nullptr;
+    PostProcessTarget* dlssDilatedMotionTarget = nullptr;
+    PostProcessTarget* dlssOpticalTransmissionMotionTarget = nullptr;
+    PostProcessTarget* rrTemporalPrimaryMotionTarget = nullptr;
+    PostProcessTarget* rrTemporalTransmissionMotionTarget = nullptr;
     PostProcessTarget* rrDiffuseAlbedoTarget = nullptr;
     PostProcessTarget* rrSpecularAlbedoTarget = nullptr;
     PostProcessTarget* rrNormalRoughnessTarget = nullptr;
     PostProcessTarget* rrSpecularHitDistanceTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionDiffuseAlbedoTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionSpecularAlbedoTarget = nullptr;
+    PostProcessTarget* rrOpticalTransmissionNormalRoughnessTarget = nullptr;
 
     PostProcessTarget* dlssBloomExtractTarget = nullptr;
     PostProcessTarget* dlssBloomBlurTarget = nullptr;
@@ -73,12 +124,22 @@ struct DlssResolvePassInputs
     Shader* bloomBlurShader = nullptr;
     Shader* bloomTemporalShader = nullptr;
     Shader* tonemapShader = nullptr;
+    Shader* dlssMotionDilateShader = nullptr;
+    Shader* ptOpticalLayersShader = nullptr;
+    std::function<bool()> generateZeroDlssMotion;
+    std::function<bool(bool transmission, std::uintptr_t motionSrv, std::uintptr_t maskSrv)>
+        generateValidityFilteredRrMotion;
 
     TonemapPassInputs fallbackTonemapInputs{};
 
     std::function<bool()> patchPathTracerSkyMotion;
     std::function<void()> generateRrGuides;
+    std::function<bool(std::uintptr_t depthSrv, std::uintptr_t motionSrv)> generateDilatedDlssMotion;
+    std::function<bool(std::uintptr_t motionSrv)> generateSupportedDlssMotion;
+    std::function<bool(std::uintptr_t motionSrv)> generateSupportedOpticalTransmissionDlssMotion;
     std::function<void(PostProcessTarget&, int width, int height)> drawPathTracerGridOverlay;
+    std::function<RrTemporalValidityResult(const RrTemporalValidityInputs&)>
+        prepareRrTemporalValidity;
 
     // P4b PT RR bundle (devdoc/dxr/pt/full-rr-guides.md). The prepare callback copies the PT
     // bounce-0 material guides into the rr* targets and/or resolves PT depth into
@@ -88,11 +149,42 @@ struct DlssResolvePassInputs
     std::function<std::uint32_t()> preparePathTracerRrBundle;
     int ptRrBundleMode = 0;
     PostProcessDepthTarget* ptDlssDepthTarget = nullptr;
+    PostProcessDepthTarget* ptOpticalTransmissionDlssDepthTarget = nullptr;
     void* pathTracerMotionResource = nullptr;
     std::uint32_t pathTracerMotionResourceState = 0;
     // P4b: PT primary depth (R32) and motion SRVs for bloom temporal when DLSS uses the PT bundle.
     std::uintptr_t pathTracerDepthSrv = 0;
     std::uintptr_t pathTracerMotionSrv = 0;
+    std::uintptr_t pathTracerRrPrimaryOwnerSrv = 0;
+    void* pathTracerRrPrimaryOwnerResource = nullptr;
+    std::uint32_t pathTracerRrPrimaryOwnerResourceState = UINT32_MAX;
+    std::uintptr_t pathTracerRrTransmissionOwnerSrv = 0;
+    void* pathTracerRrTransmissionOwnerResource = nullptr;
+    std::uint32_t pathTracerRrTransmissionOwnerResourceState = UINT32_MAX;
+    void* pathTracerOpticalTransmissionOutputResource = nullptr;
+    std::uint32_t pathTracerOpticalTransmissionOutputResourceState = 0;
+    std::uintptr_t pathTracerOpticalTransmissionOutputSrv = 0;
+    void* pathTracerOpticalTransmissionMotionResource = nullptr;
+    std::uint32_t pathTracerOpticalTransmissionMotionResourceState = 0;
+    std::uintptr_t pathTracerOpticalTransmissionMotionSrv = 0;
+};
+
+// The depth/motion resources selected for a Streamline evaluation. Kept as a small public value
+// type so the PT reprojection audits can sample the same motion input (including optional
+// dilation) and the depth source used to prepare the Streamline depth resource.
+struct DlssTemporalGuideInputs
+{
+    void* depth = nullptr;
+    std::uint32_t depthState = 0;
+    std::uintptr_t depthSrv = 0;
+    void* motion = nullptr;
+    std::uint32_t motionState = 0;
+    std::uintptr_t motionSrv = 0;
+    bool motionVectorsDilated = false;
+    bool cameraMotionReconstructed = false;
+    bool usesPathTracerDepth = false;
+    bool usesPathTracerMotion = false;
+    std::uint32_t pathTracerBundleReady = 0;
 };
 
 struct DlssResolvePassOutputs
@@ -102,6 +194,7 @@ struct DlssResolvePassOutputs
     bool pathTracerOutputResourceStateValid = false;
     std::uint32_t pathTracerOutputResourceState = 0;
     bool dlssHistoryValid = false;
+    bool opticalTransmissionHistoryValid = false;
     bool dlssBloomHistoryValid = false;
     int dlssBloomTemporalWarmupFrames = 0;
     std::uintptr_t prevFrameBloomSrv = 0;
@@ -110,6 +203,15 @@ struct DlssResolvePassOutputs
 class DlssResolvePass
 {
 public:
+    static bool DetectCameraCut(
+        const glm::mat4& currentView,
+        const MotionVectorFrameState& motionState);
+    // May prepare the selected PT bundle / sky patch because those are part of the exact guide
+    // path that Evaluate uses. Callers must have the scene framebuffer in SRV state.
+    static DlssTemporalGuideInputs ResolveTemporalGuideInputs(const DlssResolvePassInputs& inputs);
+    // Exact unjittered clip-space transform copied into Streamline's Constants this frame.
+    static glm::mat4 BuildClipToPrevClip(const DlssResolvePassInputs& inputs);
+
     static void Execute(
         const PostProcessContext& context,
         const DlssResolvePassInputs& inputs,

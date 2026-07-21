@@ -1,7 +1,7 @@
 #include "engine/gizmos/GizmoDraw.h"
 
 #include "engine/camera/Camera.h"
-#include "engine/rendering/Shader.h"
+#include "engine/rendering/shaders/Shader.h"
 #include "engine/rhi/GfxContext.h"
 
 #include <d3d12.h>
