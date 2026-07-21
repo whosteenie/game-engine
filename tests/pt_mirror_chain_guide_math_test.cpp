@@ -399,6 +399,17 @@ void RunPtMirrorChainGuideMathTests(int& failures)
             shader,
             "RWStructuredBuffer<uint4> g_PsrResolvedCurrent : register(u24);",
             "The resolver exports a compact persistent record instead of nine texture UAVs");
+        test::ExpectContains(
+            shader,
+            "const bool selectReflectionReceiver = !opaqueMirrorOwnedByRadiancePath",
+            "Curved delta mirrors retain nonlinear reflected-receiver guides when planar PSR is enabled");
+        expectTrue(
+            shader.find("mirrorFeatureClaimsOpaqueMetal") == std::string::npos,
+            "Planar PSR does not claim unsupported curved mirrors as an empty fallback domain");
+        test::ExpectContains(
+            shader,
+            "return SolvePreviousOpticalReceiverMotion(\n        pixel,\n        currGuide.receiverWorldPos",
+            "Curved reflected receivers use inverse previous-frame optical replay for motion");
 
         const std::string opticalComposition = ReadTextFile(
             "assets/shaders/post/utility/pt_optical_layers.ps.hlsl");

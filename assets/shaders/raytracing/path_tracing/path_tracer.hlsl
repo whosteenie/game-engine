@@ -4118,17 +4118,15 @@ void PathTracerShadeRayGen()
                 && (kPtLegacyOpticalRouting
                     ? transmissionLobeDominant
                     : firstOpticalInterface.refractValid);
-            // Exact virtual geometry requires a static planar, normal-map-free, zero-diffuse delta
-            // link. The feature claims opaque mirror primaries as one domain: unsupported curved,
-            // glossy, mixed, or moving links retain the complete bounce-zero bundle instead of
-            // silently falling back to the incompatible one-hop/direct-projection representation.
-            const bool mirrorFeatureClaimsOpaqueMetal = kPtMirrorChainPsrEnabled
-                && dielectricWeight <= 0.0
-                && surfaceMetallic >= 0.5;
-            const bool opaqueMirrorOwnedByRadiancePath = mirrorFeatureClaimsOpaqueMetal
+            // Affine multi-link PSR owns only surfaces for which a single exact reflection plane
+            // exists. A smooth curved mirror is still a deterministic optical receiver, but its
+            // screen mapping is nonlinear: keep it in the one-reflection path below, whose inverse
+            // replay follows the previous curved surface instead of fabricating an affine plane.
+            // This capability arbitration must not change merely because planar PSR is enabled.
+            const bool opaqueMirrorOwnedByRadiancePath = kPtMirrorChainPsrEnabled
                 && IsPtExactPlanarDeltaMirror(
                     payload, albedo, surfaceRoughness, surfaceMetallic, dielectricWeight);
-            const bool selectReflectionReceiver = !mirrorFeatureClaimsOpaqueMetal
+            const bool selectReflectionReceiver = !opaqueMirrorOwnedByRadiancePath
                 && smoothOptical
                 && (kPtLegacyOpticalRouting
                     ? ((dielectricWeight > 0.0 && reflectionLobeDominant)
@@ -4136,14 +4134,13 @@ void PathTracerShadeRayGen()
                     : (dielectricWeight > 0.0 || surfaceMetallic >= 0.5));
             const bool opticalMaterial = dielectricWeight > 0.0 || surfaceMetallic >= 0.5;
             const bool legacyOpticalMaterial = dielectricWeight > 0.0
-                || (surfaceMetallic >= 0.5 && !mirrorFeatureClaimsOpaqueMetal);
+                || (surfaceMetallic >= 0.5 && !opaqueMirrorOwnedByRadiancePath);
             const bool primaryOpticalMoved = PayloadInstanceMoved(payload);
             // Block 3 fallback policy: rough optical BSDFs and any moving optical interface or
             // receiver are omitted.  Previous replay still traces the current TLAS, so exporting
             // it as valid history for those paths would be knowingly incorrect.
             bool omitOpticalGuide = (dielectricWeight > 0.0
                     && !selectTransmissionReceiver && !selectReflectionReceiver)
-                || (mirrorFeatureClaimsOpaqueMetal && !opaqueMirrorOwnedByRadiancePath)
                 || (!opaqueMirrorOwnedByRadiancePath
                     && surfaceMetallic >= 0.5 && !smoothOptical)
                 || (legacyOpticalMaterial && primaryOpticalMoved);
