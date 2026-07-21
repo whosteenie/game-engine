@@ -31,14 +31,14 @@
 *.out
 *.app
 
-build/
-devdoc/
-test_proj/
-artifacts/
+/build/
+/devdoc/
+/test_proj/
+/artifacts/
 
 # Local build trees and CMake user configuration
-cmake-build-*/
-out/
+/cmake-build-*/
+/out/
 CMakeUserPresets.json
 compile_commands.json
 
@@ -46,18 +46,18 @@ compile_commands.json
 .idea/
 .vs/
 .vscode/
+.agents/
+.editor/
 
 # Generated diagnostics, captures, and local UI state
-diagnostics/
+/diagnostics/
 imgui.ini
 *.ngfx-capture
 *.ngfx-gputrace
 
-# `diagnostics/` also matches this source directory. Keep the capture-manifest contract visible
-# without surfacing generated diagnostics or the rest of the pre-existing ignored subtree.
-!src/engine/platform/diagnostics/
-src/engine/platform/diagnostics/*
-!src/engine/platform/diagnostics/CaptureManifest.h
+# Locally/CI-provisioned contents of the pinned Agility SDK NuGet package. Keep the checked-in
+# package metadata and provisioning contract visible while excluding the extracted payload.
+/vendor/agility-sdk/*/build/
 
 # Ad-hoc local test and startup logs
 err.txt
