@@ -207,8 +207,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 <em>Asset Rendering: imported glTF assets rendered through the path-traced pipeline.</em>
 </p>
 
-<details>
-<summary>Editor & Runtime Demos</summary>
+<hr>
 
 ### Hierarchy Editing
 
@@ -218,6 +217,8 @@ https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
 <em>Reparenting: objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
 </p>
 
+<hr>
+
 ### Play Mode & Physics
 
 https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
@@ -226,6 +227,8 @@ https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
 <em>Play Mode: the authored scene can be simulated at runtime with Jolt physics.</em>
 </p>
 
+<hr>
+
 ### Multi-Selection & Undo/Redo
 
 https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
@@ -233,5 +236,3 @@ https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
 <p align="center">
 <em>Multi-Selection & Undo/Redo: marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
 </p>
-
-</details>
