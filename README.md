@@ -86,7 +86,7 @@ https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
 https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
 
 <p align="center">
-<em>The authored scene can be simulated at runtime with Jolt physics.</em>
+<em>The authored scene can be simulated at runtime with Jolt physics, and the original scene setup is restored on exiting play mode.</em>
 </p>
 
 <hr>
