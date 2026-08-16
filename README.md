@@ -1,4 +1,4 @@
-# game-engine
+# D3D12 Scene Editor & Renderer
 
 A Windows D3D12 scene editor and real-time rendering sandbox. Import glTF assets, assemble and
 inspect scenes in a docked ImGui editor, tune the renderer live, and switch between raster, hybrid
@@ -55,7 +55,7 @@ Validation messages and GPU-based validation slow things down noticeably; use th
 
 Menu-driven runner with green `[PASS]` / red `[FAIL]` output and a final `x/y tests passed in …` summary. Supports all CPU tests, GPU tiers, individual test selection, and listing what's available.
 
-### CPU tests (fast — run these routinely)
+### CPU tests
 
 Registered with CTest; no GPU window required.
 
@@ -75,9 +75,9 @@ ctest -C Debug -L cpu --output-on-failure
 
 `engine-tests` covers shadow math, lighting probes, materials, guide encoding, shader compile smoke, and related CPU-side checks. `descriptor-heap-tests` covers the fixed descriptor heap allocator.
 
-### GPU render tests (opt-in)
+### GPU render tests
 
-Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest` — use the `gpu` label explicitly.
+Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest`, use the `gpu` label explicitly.
 
 ```powershell
 cmake -S . -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
@@ -164,3 +164,87 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 - Per-pass GPU timings in the Performance panel
 - Render-diagnostics export and automated CPU/GPU test coverage
 - Optional D3D12 debug layer for resource lifetime and barrier investigation
+
+## Visual Showcase
+
+### Path Tracing
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/f1f847e0-a28a-416a-a78a-3d56f7bf46c0" alt="Path tracing, wide scene" width="90%"><br>
+<em>Real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.</em>
+</p>
+
+<hr>
+
+### Transmissive Path Tracing
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/409a8fac-e362-4e26-bf5e-07656b7104a8" alt="Path tracing, mirror ball refraction" width="90%"><br>
+<em>Refraction and transmissive visibility through the sphere, including objects visible through the refracted path.</em>
+</p>
+
+<hr>
+
+### Recursive Reflections
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/52a57d7f-0159-4cb8-895d-3253323e7309" alt="Hall of mirrors" width="90%"><br>
+<em>Multiple reflection bounces between opposing mirrors. The dark termination in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.</em>
+</p>
+
+<hr>
+
+### Deferred Raster Rendering
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/a7253be2-0b67-4b02-8490-9b74bb3db27f" alt="Raster rendering, demo scene" width="90%"><br>
+<em>The demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.</em>
+</p>
+
+<hr>
+
+### Scene Editing
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/39cc5275-7524-4c0b-b960-24e5299ca5dc" alt="Scene editor, selected object and mirror floor" width="90%"><br>
+<em>Interactive scene editing with object selection, transform gizmos, and real-time renderer updates.</em>
+</p>
+
+<hr>
+
+### Asset Rendering
+
+<p align="center">
+<img src="https://github.com/user-attachments/assets/165259d5-fd41-4b91-9bbf-a6d300aa57da" alt="Path tracing, imported Spyro asset" width="90%"><br>
+<em>Imported glTF assets rendered through the path-traced pipeline.</em>
+</p>
+
+<hr>
+
+### Hierarchy Editing
+
+https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
+
+<p align="center">
+<em>Objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
+</p>
+
+<hr>
+
+### Play Mode & Physics
+
+https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
+
+<p align="center">
+<em>The authored scene can be simulated at runtime with Jolt physics.</em>
+</p>
+
+<hr>
+
+### Multi-Selection & Undo/Redo
+
+https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
+
+<p align="center">
+<em>Marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
+</p>
