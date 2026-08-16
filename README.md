@@ -164,3 +164,55 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 - Per-pass GPU timings in the Performance panel
 - Render-diagnostics export and automated CPU/GPU test coverage
 - Optional D3D12 debug layer for resource lifetime and barrier investigation
+
+## Visual Showcase
+
+### Renderer
+
+![Path tracing — wide scene](previews/images/pt.png)
+
+**Path Tracing** — Real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.
+
+![Path tracing — mirror ball refraction](previews/images/pt-mirror-ball.png)
+
+**Transmissive Path Tracing** — Refraction and transmissive visibility through the sphere, including objects visible through the refracted path.
+
+![Hall of mirrors](previews/images/hall-of-mirrors.png)
+
+**Recursive Reflections** — Multiple reflection bounces between opposing mirrors. The dark termination visible in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.
+
+![Raster rendering — demo scene](previews/images/raster-perf.png)
+
+**Deferred Raster Rendering** — The demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.
+
+![Scene editor — selected object and mirror floor](previews/images/mirror-floor-selection.png)
+
+**Scene Editing** — Interactive scene editing with object selection, transform gizmos, and real-time renderer updates.
+
+![Path tracing — imported Spyro asset](previews/images/spyro-pt.png)
+
+**Asset Rendering** — Imported glTF assets rendered through the path-traced pipeline.
+
+<details>
+<summary>Editor & Runtime Demos</summary>
+
+### Hierarchy Editing
+
+<img src="previews/images/REPARENTING_OBJECTS_FILENAME_HERE.gif" alt="Reparenting objects demo" width="100%">
+
+**Reparenting** — Objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.
+
+### Play Mode & Physics
+
+<img src="previews/images/PLAY_MODE_JOLT_PHYSICS_FILENAME_HERE.gif" alt="Play mode physics demo" width="100%">
+
+**Play Mode** — The authored scene can be simulated at runtime with Jolt physics.
+
+### Multi-Selection & Undo/Redo
+
+<img src="previews/images/MARQUEE_MULTISELECT_UNDO_FILENAME_HERE.gif" alt="Multi-select and undo demo" width="100%">
+
+**Multi-Selection & Undo/Redo** — Marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor.
+
+</details>
+
