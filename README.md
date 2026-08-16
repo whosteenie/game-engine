@@ -167,52 +167,68 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 
 ## Visual Showcase
 
-### Renderer
+<p align="center">
+<img src="previews/images/pt.png" alt="Path tracing, wide scene" width="90%"><br>
+<em>Path Tracing: real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.</em>
+</p>
 
-![Path tracing — wide scene](previews/images/pt.png)
+<hr>
 
-**Path Tracing** — Real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.
+<p align="center">
+<img src="previews/images/pt-mirror-ball.png" alt="Path tracing, mirror ball refraction" width="90%"><br>
+<em>Transmissive Path Tracing: refraction and transmissive visibility through the sphere, including objects visible through the refracted path.</em>
+</p>
 
-![Path tracing — mirror ball refraction](previews/images/pt-mirror-ball.png)
+<hr>
 
-**Transmissive Path Tracing** — Refraction and transmissive visibility through the sphere, including objects visible through the refracted path.
+<p align="center">
+<img src="previews/images/hall-of-mirrors.png" alt="Hall of mirrors" width="90%"><br>
+<em>Recursive Reflections: multiple reflection bounces between opposing mirrors. The dark termination in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.</em>
+</p>
 
-![Hall of mirrors](previews/images/hall-of-mirrors.png)
+<hr>
 
-**Recursive Reflections** — Multiple reflection bounces between opposing mirrors. The dark termination visible in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.
+<p align="center">
+<img src="previews/images/raster-perf.png" alt="Raster rendering, demo scene" width="90%"><br>
+<em>Deferred Raster Rendering: the demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.</em>
+</p>
 
-![Raster rendering — demo scene](previews/images/raster-perf.png)
+<hr>
 
-**Deferred Raster Rendering** — The demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.
+<p align="center">
+<img src="previews/images/mirror-floor-selection.png" alt="Scene editor, selected object and mirror floor" width="90%"><br>
+<em>Scene Editing: interactive scene editing with object selection, transform gizmos, and real-time renderer updates.</em>
+</p>
 
-![Scene editor — selected object and mirror floor](previews/images/mirror-floor-selection.png)
+<hr>
 
-**Scene Editing** — Interactive scene editing with object selection, transform gizmos, and real-time renderer updates.
-
-![Path tracing — imported Spyro asset](previews/images/spyro-pt.png)
-
-**Asset Rendering** — Imported glTF assets rendered through the path-traced pipeline.
+<p align="center">
+<img src="previews/images/spyro-pt.png" alt="Path tracing, imported Spyro asset" width="90%"><br>
+<em>Asset Rendering: imported glTF assets rendered through the path-traced pipeline.</em>
+</p>
 
 <details>
 <summary>Editor & Runtime Demos</summary>
 
 ### Hierarchy Editing
 
-<img src="previews/images/REPARENTING_OBJECTS_FILENAME_HERE.gif" alt="Reparenting objects demo" width="100%">
-
-**Reparenting** — Objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.
+<p align="center">
+<img src="previews/images/REPARENTING_OBJECTS_FILENAME_HERE.gif" alt="Reparenting objects demo" width="100%"><br>
+<em>Reparenting: objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
+</p>
 
 ### Play Mode & Physics
 
-<img src="previews/images/PLAY_MODE_JOLT_PHYSICS_FILENAME_HERE.gif" alt="Play mode physics demo" width="100%">
-
-**Play Mode** — The authored scene can be simulated at runtime with Jolt physics.
+<p align="center">
+<img src="previews/images/PLAY_MODE_JOLT_PHYSICS_FILENAME_HERE.gif" alt="Play mode physics demo" width="100%"><br>
+<em>Play Mode: the authored scene can be simulated at runtime with Jolt physics.</em>
+</p>
 
 ### Multi-Selection & Undo/Redo
 
-<img src="previews/images/MARQUEE_MULTISELECT_UNDO_FILENAME_HERE.gif" alt="Multi-select and undo demo" width="100%">
-
-**Multi-Selection & Undo/Redo** — Marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor.
+<p align="center">
+<img src="previews/images/MARQUEE_MULTISELECT_UNDO_FILENAME_HERE.gif" alt="Multi-select and undo demo" width="100%"><br>
+<em>Multi-Selection & Undo/Redo: marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor.</em>
+</p>
 
 </details>
-
