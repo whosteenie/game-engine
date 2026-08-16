@@ -1,4 +1,4 @@
-# game-engine
+# D3D12 Scene Editor & Renderer
 
 A Windows D3D12 scene editor and real-time rendering sandbox. Import glTF assets, assemble and
 inspect scenes in a docked ImGui editor, tune the renderer live, and switch between raster, hybrid
@@ -77,7 +77,7 @@ ctest -C Debug -L cpu --output-on-failure
 
 ### GPU render tests
 
-Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest` — use the `gpu` label explicitly.
+Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest`, use the `gpu` label explicitly.
 
 ```powershell
 cmake -S . -B build -DGAME_ENGINE_BUILD_D3D12_RENDER_TESTS=ON
@@ -212,23 +212,26 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 
 ### Hierarchy Editing
 
+https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
+
 <p align="center">
-<img src="previews/images/REPARENTING_OBJECTS_FILENAME_HERE.gif" alt="Reparenting objects demo" width="100%"><br>
 <em>Reparenting: objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
 </p>
 
 ### Play Mode & Physics
 
+https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
+
 <p align="center">
-https://github.com/user-attachments/assets/303aba6d-d8b2-4488-a45b-dfc8966acb67<br>
 <em>Play Mode: the authored scene can be simulated at runtime with Jolt physics.</em>
 </p>
 
 ### Multi-Selection & Undo/Redo
 
+https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
+
 <p align="center">
-<img src="previews/images/MARQUEE_MULTISELECT_UNDO_FILENAME_HERE.gif" alt="Multi-select and undo demo" width="100%"><br>
-<em>Multi-Selection & Undo/Redo: marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor.</em>
+<em>Multi-Selection & Undo/Redo: marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
 </p>
 
 </details>
