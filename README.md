@@ -55,7 +55,7 @@ Validation messages and GPU-based validation slow things down noticeably; use th
 
 Menu-driven runner with green `[PASS]` / red `[FAIL]` output and a final `x/y tests passed in …` summary. Supports all CPU tests, GPU tiers, individual test selection, and listing what's available.
 
-### CPU tests (fast — run these routinely)
+### CPU tests
 
 Registered with CTest; no GPU window required.
 
@@ -75,7 +75,7 @@ ctest -C Debug -L cpu --output-on-failure
 
 `engine-tests` covers shadow math, lighting probes, materials, guide encoding, shader compile smoke, and related CPU-side checks. `descriptor-heap-tests` covers the fixed descriptor heap allocator.
 
-### GPU render tests (opt-in)
+### GPU render tests
 
 Requires a real D3D12 device and RTX for tier 4 (DXR). **Not** part of default `ctest` — use the `gpu` label explicitly.
 
