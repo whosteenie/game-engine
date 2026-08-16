@@ -170,7 +170,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Path Tracing
 
 <p align="center">
-<img src="previews/images/pt.png" alt="Path tracing, wide scene" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/f1f847e0-a28a-416a-a78a-3d56f7bf46c0" alt="Path tracing, wide scene" width="90%"><br>
 <em>Real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.</em>
 </p>
 
@@ -179,7 +179,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Transmissive Path Tracing
 
 <p align="center">
-<img src="previews/images/pt-mirror-ball.png" alt="Path tracing, mirror ball refraction" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/409a8fac-e362-4e26-bf5e-07656b7104a8" alt="Path tracing, mirror ball refraction" width="90%"><br>
 <em>Refraction and transmissive visibility through the sphere, including objects visible through the refracted path.</em>
 </p>
 
@@ -188,7 +188,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Recursive Reflections
 
 <p align="center">
-<img src="previews/images/hall-of-mirrors.png" alt="Hall of mirrors" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/52a57d7f-0159-4cb8-895d-3253323e7309" alt="Hall of mirrors" width="90%"><br>
 <em>Multiple reflection bounces between opposing mirrors. The dark termination in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.</em>
 </p>
 
@@ -197,7 +197,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Deferred Raster Rendering
 
 <p align="center">
-<img src="previews/images/raster-perf.png" alt="Raster rendering, demo scene" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/a7253be2-0b67-4b02-8490-9b74bb3db27f" alt="Raster rendering, demo scene" width="90%"><br>
 <em>The demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.</em>
 </p>
 
@@ -206,7 +206,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Scene Editing
 
 <p align="center">
-<img src="previews/images/mirror-floor-selection.png" alt="Scene editor, selected object and mirror floor" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/39cc5275-7524-4c0b-b960-24e5299ca5dc" alt="Scene editor, selected object and mirror floor" width="90%"><br>
 <em>Interactive scene editing with object selection, transform gizmos, and real-time renderer updates.</em>
 </p>
 
@@ -215,7 +215,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Asset Rendering
 
 <p align="center">
-<img src="previews/images/spyro-pt.png" alt="Path tracing, imported Spyro asset" width="90%"><br>
+<img src="https://github.com/user-attachments/assets/165259d5-fd41-4b91-9bbf-a6d300aa57da" alt="Path tracing, imported Spyro asset" width="90%"><br>
 <em>Imported glTF assets rendered through the path-traced pipeline.</em>
 </p>
 
