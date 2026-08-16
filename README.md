@@ -220,7 +220,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 ### Play Mode & Physics
 
 <p align="center">
-<img src="previews/images/PLAY_MODE_JOLT_PHYSICS_FILENAME_HERE.gif" alt="Play mode physics demo" width="100%"><br>
+https://github.com/user-attachments/assets/303aba6d-d8b2-4488-a45b-dfc8966acb67<br>
 <em>Play Mode: the authored scene can be simulated at runtime with Jolt physics.</em>
 </p>
 
