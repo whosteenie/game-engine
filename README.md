@@ -167,44 +167,56 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 
 ## Visual Showcase
 
+### Path Tracing
+
 <p align="center">
 <img src="previews/images/pt.png" alt="Path tracing, wide scene" width="90%"><br>
-<em>Path Tracing: real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.</em>
+<em>Real-time multi-bounce path tracing with environment lighting, emissive lighting, and progressive accumulation.</em>
 </p>
 
 <hr>
+
+### Transmissive Path Tracing
 
 <p align="center">
 <img src="previews/images/pt-mirror-ball.png" alt="Path tracing, mirror ball refraction" width="90%"><br>
-<em>Transmissive Path Tracing: refraction and transmissive visibility through the sphere, including objects visible through the refracted path.</em>
+<em>Refraction and transmissive visibility through the sphere, including objects visible through the refracted path.</em>
 </p>
 
 <hr>
+
+### Recursive Reflections
 
 <p align="center">
 <img src="previews/images/hall-of-mirrors.png" alt="Hall of mirrors" width="90%"><br>
-<em>Recursive Reflections: multiple reflection bounces between opposing mirrors. The dark termination in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.</em>
+<em>Multiple reflection bounces between opposing mirrors. The dark termination in the deepest self-reflections is a known limitation in the current mirror bounce/termination handling.</em>
 </p>
 
 <hr>
+
+### Deferred Raster Rendering
 
 <p align="center">
 <img src="previews/images/raster-perf.png" alt="Raster rendering, demo scene" width="90%"><br>
-<em>Deferred Raster Rendering: the demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.</em>
+<em>The demo scene rendered through the rasterized PBR pipeline with ray tracing and path tracing disabled.</em>
 </p>
 
 <hr>
+
+### Scene Editing
 
 <p align="center">
 <img src="previews/images/mirror-floor-selection.png" alt="Scene editor, selected object and mirror floor" width="90%"><br>
-<em>Scene Editing: interactive scene editing with object selection, transform gizmos, and real-time renderer updates.</em>
+<em>Interactive scene editing with object selection, transform gizmos, and real-time renderer updates.</em>
 </p>
 
 <hr>
 
+### Asset Rendering
+
 <p align="center">
 <img src="previews/images/spyro-pt.png" alt="Path tracing, imported Spyro asset" width="90%"><br>
-<em>Asset Rendering: imported glTF assets rendered through the path-traced pipeline.</em>
+<em>Imported glTF assets rendered through the path-traced pipeline.</em>
 </p>
 
 <hr>
@@ -214,7 +226,7 @@ DLSS features compile out or no-op on non-NVIDIA hardware.
 https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
 
 <p align="center">
-<em>Reparenting: objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
+<em>Objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
 </p>
 
 <hr>
@@ -224,7 +236,7 @@ https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
 https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
 
 <p align="center">
-<em>Play Mode: the authored scene can be simulated at runtime with Jolt physics.</em>
+<em>The authored scene can be simulated at runtime with Jolt physics.</em>
 </p>
 
 <hr>
@@ -234,5 +246,5 @@ https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
 https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
 
 <p align="center">
-<em>Multi-Selection & Undo/Redo: marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
+<em>Marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
 </p>
