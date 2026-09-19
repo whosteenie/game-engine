@@ -73,7 +73,7 @@ diagnostics all live in the same application.
 
 ### Hierarchy Editing
 
-https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
+https://github.com/user-attachments/assets/1af4612e-9e6e-4d15-8f1d-97fc0e2eb449
 
 <p align="center">
 <em>Objects can be reorganized through the scene hierarchy and transformed interactively, with parent/child relationships preserved.</em>
@@ -83,7 +83,7 @@ https://github.com/user-attachments/assets/f7d93836-051a-48bd-a2f6-694be10b0d00
 
 ### Play Mode & Physics
 
-https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
+https://github.com/user-attachments/assets/41d7157c-461a-4d4f-bcd0-0a106373060c
 
 <p align="center">
 <em>The authored scene can be simulated at runtime with Jolt physics, and the original scene setup is restored on exiting play mode.</em>
@@ -93,7 +93,7 @@ https://github.com/user-attachments/assets/88ee3d03-7c22-4b75-9dbe-af48fd0d1dcb
 
 ### Multi-Selection & Undo/Redo
 
-https://github.com/user-attachments/assets/81c6b969-9c3d-4880-acf2-6ccbb3dc2f28
+https://github.com/user-attachments/assets/8dc939aa-f674-45c4-85e0-7c1c82a53c0f
 
 <p align="center">
 <em>Marquee selection, multi-object transforms, scaling, and undoing scene edits directly in the editor. Note the leftover splotch on the skybox where the Spyro asset previously sat after an undo, a known rendering artifact still being tracked down.</em>
